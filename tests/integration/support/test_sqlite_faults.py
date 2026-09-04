@@ -3,8 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from google_work_agent.adapters.persistence import apply_migrations, connect_sqlite
-from google_work_agent.application import CompleteAnswerOnlyRunCommand, CompleteAnswerOnlyRunService
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.application.use_cases.run.complete_answer_only_run import (
+    CompleteAnswerOnlyRunCommand,
+    CompleteAnswerOnlyRunHandler,
+)
 from tests.support.fakes import (
     SQLiteFaultPlan,
     SQLiteFaultStage,
@@ -55,11 +59,11 @@ def answer_only_database(tmp_path: Path) -> Path:
         SQLiteFaultStage.BEFORE_RECEIPT_FINALIZE,
     ],
 )
-def test_sqlite_fault_injection_rolls_back_answer_only_write_set(
+def test_sqlite_fault_injection__rolls_back_answer__only_write_set(
     answer_only_database: Path,
     stage: SQLiteFaultStage,
 ) -> None:
-    service = CompleteAnswerOnlyRunService(
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=fault_injecting_unit_of_work_factory(
             answer_only_database,
             SQLiteFaultPlan(stage=stage),
@@ -94,10 +98,10 @@ def test_sqlite_fault_injection_rolls_back_answer_only_write_set(
         connection.close()
 
 
-def test_sqlite_fault_injection_normal_path_leaves_existing_answer_only_behavior_unchanged(
+def test_sqlite_fault_injection__normal_path_leaves_existing__answer_only_behavior_unchanged(
     answer_only_database: Path,
 ) -> None:
-    service = CompleteAnswerOnlyRunService(
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=fault_injecting_unit_of_work_factory(answer_only_database, None),
         now_ms=lambda: 1000,
         message_id_factory=lambda: "message-1",

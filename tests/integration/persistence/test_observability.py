@@ -3,19 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from google_work_agent.adapters.persistence import (
-    apply_migrations,
-    connect_sqlite,
-    sqlite_unit_of_work_factory,
-)
-from google_work_agent.application.observability import (
-    MAX_PURGE_BATCH,
-    PurgeBlockedError,
-    PurgeObservabilityDataCommand,
-    PurgeObservabilityDataService,
-    StaticMaintenanceGate,
-)
-from google_work_agent.ports import AuditEventRecord, TraceEventRecord
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
+from google_work_agent.domain.audit_event.model import AuditEvent as AuditEventRecord
+from google_work_agent.domain.trace_event.model import TraceEvent as TraceEventRecord
+from google_work_agent.ports.persistence.audit_event_repository import AuditEventCursor
+from google_work_agent.ports.persistence.trace_event_repository import TraceEventCursor
 
 
 @pytest.fixture()
@@ -53,11 +47,11 @@ def observability_database(tmp_path: Path) -> Path:
     return database_path
 
 
-def test_trace_and_audit_rows_are_wrapped_as_sanitized_envelopes(
+def test_trace_and_audit__rows_are_wrapped__as_sanitized_envelopes(
     observability_database: Path,
 ) -> None:
     with sqlite_unit_of_work_factory(observability_database)() as unit_of_work:
-        unit_of_work.traces.add(
+        unit_of_work.traces.append(
             TraceEventRecord(
                 run_id="run-1",
                 action_id=None,
@@ -71,7 +65,7 @@ def test_trace_and_audit_rows_are_wrapped_as_sanitized_envelopes(
                 created_at_ms=1000,
             )
         )
-        unit_of_work.audits.add(
+        unit_of_work.audits.append(
             AuditEventRecord(
                 account_id="account-1",
                 run_id="run-1",
@@ -104,7 +98,7 @@ def test_trace_and_audit_rows_are_wrapped_as_sanitized_envelopes(
         connection.close()
 
 
-def test_trace_and_audit_cursor_queries_and_purge_work(
+def test_trace_and__audit_cursor_queries__and_purge_work(
     observability_database: Path,
 ) -> None:
     connection = connect_sqlite(observability_database)
@@ -134,33 +128,17 @@ def test_trace_and_audit_cursor_queries_and_purge_work(
         connection.close()
 
     with sqlite_unit_of_work_factory(observability_database)() as unit_of_work:
-        trace_rows = unit_of_work.traces.list_by_run_after_cursor(
-            run_id="run-1",
-            cursor_after=1,
-            limit=10,
+        trace_rows = unit_of_work.traces.list_page(
+            TraceEventCursor(run_id="run-1", after_id=1),
+            10,
         )
-        audit_rows = unit_of_work.audits.list_by_aggregate(
-            run_id="run-1",
-            cursor_after=1,
-            limit=10,
+        audit_rows = unit_of_work.audits.list_page(
+            AuditEventCursor(run_id="run-1", after_id=1),
+            10,
         )
         assert [row.id for row in trace_rows] == [2, 3]
         assert [row.id for row in audit_rows] == [2, 3]
 
-    purge_service = PurgeObservabilityDataService(
-        unit_of_work_factory=sqlite_unit_of_work_factory(observability_database),
-        maintenance_gate=StaticMaintenanceGate(),
-    )
-    result = purge_service(PurgeObservabilityDataCommand(now_ms=100 * 24 * 60 * 60 * 1000))
-    assert result.trace_deleted <= MAX_PURGE_BATCH
-    assert result.audit_deleted <= MAX_PURGE_BATCH
-
-
-def test_purge_is_blocked_by_active_write(observability_database: Path) -> None:
-    service = PurgeObservabilityDataService(
-        unit_of_work_factory=sqlite_unit_of_work_factory(observability_database),
-        maintenance_gate=StaticMaintenanceGate(has_active_write=True),
-    )
-
-    with pytest.raises(PurgeBlockedError):
-        service(PurgeObservabilityDataCommand(now_ms=1000))
+        assert unit_of_work.traces.purge_before(3) == 2
+        assert unit_of_work.audits.purge_before(3) == 2
+        unit_of_work.commit()

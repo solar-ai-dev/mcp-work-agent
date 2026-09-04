@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "experiment_id": "prompt-mcp-research-smoke-template",
+  "experiment_kind": "PROMPT",
+  "product_sha": "21e8e8cc26a5c5fe985f05525ee04bef50d0af9e",
+  "dataset": {
+    "path": "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
+    "sha256": "52c5967da7e9606582cc05cbf5017996f0ddeafed7f5957ebe94d79a2416bfd8",
+    "case_ids": [
+      "CASE-CORE-001",
+      "CASE-CORE-002",
+      "CASE-CORE-003"
+    ]
+  },
+  "candidate_config": {
+    "path": "evaluation/configs/candidates/candidate-e01-finalist-prompt-baseline.template.json",
+    "sha256": "31fe90455e7b006f5620f952fe9c6c13f7cfd3da3532863c4b296148f67fc826"
+  },
+  "prompt_candidate": {
+    "kind": "DRAFT_BUNDLE",
+    "candidate_id": "mcp-tool-use-research-2026-v1",
+    "path": "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.json",
+    "bundle_hash": "c8dac65c279a24874ed868a5d42aea89ad0f4fd8bbb9c168533004dd5d5a3af8",
+    "product_binding_status": "PENDING_DEV_LAUNCH_INTEGRATION"
+  },
+  "repetitions": 3,
+  "randomization_policy": "CASE_MAJOR",
+  "trial_failure_policy": "CONTINUE",
+  "grader": {
+    "path": "evaluation/grader.py",
+    "sha256": "f6bbc4709d9fee3d2f732a3d4868ffe9d1f188dbee5b4050a424e7b63695d8c1"
+  },
+  "comparison_group": "prompt-mcp-research-smoke-v1",
+  "results_root": "evaluation/results",
+  "notes": "Template only; Product Prompt binding and final Model candidate remain unresolved."
+}

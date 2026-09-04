@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+SRC = ROOT / "src" / "google_work_agent"
+ROUTE_DIR = SRC / "api" / "routes"
+USE_CASE_DIR = SRC / "application" / "use_cases"
+PROVIDER_PREFIXES = (
+    "googleapiclient",
+    "google_auth_oauthlib",
+    "google.auth",
+    "google.oauth2",
+    "google.api_core",
+    "google.cloud",
+)
+
+
+def _source(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _tree(path: Path) -> ast.Module:
+    return ast.parse(_source(path), filename=str(path))
+
+
+def _imports(path: Path) -> set[str]:
+    result: set[str] = set()
+    for node in ast.walk(_tree(path)):
+        if isinstance(node, ast.Import):
+            result.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            result.add(node.module)
+    return result
+
+
+def _called_names(path: Path) -> set[str]:
+    result: set[str] = set()
+    for node in ast.walk(_tree(path)):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            result.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            result.add(node.func.attr)
+    return result
+
+
+def test_resource_attachment__google_routes_hide__concrete_connector_exceptions() -> None:
+    forbidden = (
+        "GoogleWorkspaceGatewayError",
+        "GoogleWorkspaceErrorCode",
+        "MCPClientPortError",
+        "MCPClientPortErrorCode",
+        "AttachmentStagingError",
+    )
+    for route_name in ("resources.py", "attachments.py", "google_connections.py"):
+        source = _source(ROUTE_DIR / route_name)
+        for symbol in forbidden:
+            assert symbol not in source, (route_name, symbol)
+
+
+def test_routes_actually__invoke_canonical__application_handlers() -> None:
+    expected = {
+        "resources.py": {
+            "ListResourcesHandler",
+            "GetResourceCountHandler",
+            "GetResourceDetailHandler",
+        },
+        "attachments.py": {
+            "GetAttachmentHandler",
+            "CreateStagedAttachmentHandler",
+        },
+        "google_connections.py": {
+            "StartAuthorizationHandler",
+            "GetConnectionStatusHandler",
+            "RevokeConnectionHandler",
+        },
+    }
+    for route_name, handlers in expected.items():
+        source = _source(ROUTE_DIR / route_name)
+        missing = {handler for handler in handlers if handler not in source}
+        assert not missing, (route_name, missing)
+        assert _called_names(ROUTE_DIR / route_name).intersection(handlers) or "handler(" in source
+
+
+def test_route_wire__ownership_uses_canonical__multipart_attachment_boundary() -> None:
+    calls = _called_names(ROUTE_DIR / "attachments.py")
+    assert "read" in calls
+    source = _source(ROUTE_DIR / "attachments.py")
+    assert "UploadFile" in source
+    assert "data_base64" not in source
+
+
+def test_owned_routes_and__use_cases_have__zero_provider_sdk_dependencies() -> None:
+    paths = [
+        ROUTE_DIR / "resources.py",
+        ROUTE_DIR / "attachments.py",
+        ROUTE_DIR / "google_connections.py",
+        *(USE_CASE_DIR / "resource_ref").glob("*.py"),
+        *(USE_CASE_DIR / "attachment").glob("*.py"),
+        *(USE_CASE_DIR / "connector_connection").glob("*.py"),
+    ]
+    violations: list[tuple[str, str]] = []
+    for path in paths:
+        for module in _imports(path):
+            if module.startswith(PROVIDER_PREFIXES):
+                violations.append((str(path.relative_to(ROOT)), module))
+    assert violations == []
+
+
+def test_application_use_cases__do_not_depend__on_api_schemas() -> None:
+    violations: list[tuple[str, str]] = []
+    for owner in ("resource_ref", "attachment", "connector_connection"):
+        for path in (USE_CASE_DIR / owner).glob("*.py"):
+            for module in _imports(path):
+                if module.startswith("google_work_agent.api"):
+                    violations.append((str(path.relative_to(ROOT)), module))
+    assert violations == []
+
+
+def test_canonical_handlers_do__not_call_broad__legacy_semantic_surfaces() -> None:
+    forbidden_calls = {
+        "list_gmail_threads",
+        "list_tasks",
+        "list_calendar_resources",
+        "count_gmail_threads",
+        "count_tasks",
+        "count_calendar_resources",
+        "get_gmail_thread_detail",
+    }
+    resource_paths = (
+        USE_CASE_DIR / "resource" / "list_resources.py",
+        USE_CASE_DIR / "resource" / "get_resource_count.py",
+        USE_CASE_DIR / "resource" / "get_resource_detail.py",
+    )
+    for path in resource_paths:
+        assert _called_names(path).isdisjoint(forbidden_calls), path
+
+    get_connection = USE_CASE_DIR / "connection" / "get_connection_status.py"
+    imports = _imports(get_connection)
+    assert "google_work_agent.application.google_connection" not in imports
+
+
+def test_revoke_connection__operation_filename__matches_symbol_grammar() -> None:
+    path = USE_CASE_DIR / "connection" / "revoke_connection.py"
+    assert path.is_file()
+    assert not (USE_CASE_DIR / "connector_connection" / "disconnect_connector.py").exists()
+    tree = _tree(path)
+    classes = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+    assert {
+        "RevokeConnectionCommand",
+        "RevokeConnectionResult",
+        "RevokeConnectionHandler",
+    } <= classes

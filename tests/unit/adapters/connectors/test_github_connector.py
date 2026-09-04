@@ -1,106 +1,100 @@
-from typing import Any
+from pathlib import Path
 
 import pytest
 
-from google_work_agent.adapters.connectors.github import (
+from google_work_agent.adapters.connectors.github.github import composition
+from google_work_agent.adapters.connectors.github.github.composition import (
     GITHUB_CONNECTOR_ID,
     GitHubConnector,
     build_github_connector_descriptor,
 )
-from google_work_agent.adapters.mcp import MCPArtifactConfig, MCPConnectorDescriptor
-from google_work_agent.domain.github_tool_registry import build_github_tool_registry
-from google_work_agent.ports import MCPControlResponse, MCPRuntimeMetadata, MCPToolResponse
+from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
+    ConnectorRuntimeRegistry,
+)
+from google_work_agent.adapters.connectors.runtime.stdio_mcp_client import (
+    MCPArtifactConfig,
+    MCPConnectorDescriptor,
+)
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
 
 
-class _Transport:
+def test_github_connector_descriptor__uses_signed__registry_subset() -> None:
+    expected = tuple(load_signed_tool_registry().descriptor_expectations("github"))
+
+    descriptor = build_github_connector_descriptor(
+        _artifact_config(),
+        expected_tool_descriptors=expected,
+    )
+
+    assert descriptor.connector_id == GITHUB_CONNECTOR_ID
+    assert descriptor.expected_tool_descriptors == expected
+
+
+def test_github_connector__rejects_descriptor__with_wrong_connector_id() -> None:
+    descriptor = MCPConnectorDescriptor(
+        connector_id="not_github",
+        artifact_config=_artifact_config(),
+        expected_tool_descriptors=(),
+    )
+
+    with pytest.raises(ValueError, match="descriptor id mismatch"):
+        GitHubConnector(
+            descriptor=descriptor,
+            runtime_registry=ConnectorRuntimeRegistry(),
+        )
+
+
+def test_github_connector__owns_one__client_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients: list[_FakeClient] = []
+
+    def build_client(**_kwargs: object) -> _FakeClient:
+        client = _FakeClient()
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(composition, "StdioMCPClientAdapter", build_client)
+    connector = GitHubConnector(
+        descriptor=build_github_connector_descriptor(
+            _artifact_config(),
+            expected_tool_descriptors=tuple(
+                load_signed_tool_registry().descriptor_expectations("github")
+            ),
+        ),
+        runtime_registry=ConnectorRuntimeRegistry(),
+    )
+
+    assert connector.start() is connector.start()
+    assert len(clients) == 1
+
+    connector.close()
+
+    assert clients[0].closed is True
+
+
+class _FakeClient:
     def __init__(self) -> None:
-        self.restart_count = 0
         self.closed = False
-
-    def call_tool(self, *, tool_name: str, arguments: dict[str, Any]) -> MCPToolResponse:
-        return MCPToolResponse(payload={}, request_id="req-fake-1")
-
-    def call_control(self, *, method: str, arguments: dict[str, Any]) -> MCPControlResponse:
-        return MCPControlResponse(payload={}, request_id="req-fake-1")
-
-    def runtime_metadata(self) -> MCPRuntimeMetadata:
-        return _metadata(restart_count=self.restart_count)
-
-    def restart(self) -> MCPRuntimeMetadata:
-        self.restart_count += 1
-        return self.runtime_metadata()
 
     def close(self) -> None:
         self.closed = True
 
 
-def test_github_connector_id_matches_frozen_contract() -> None:
-    assert GITHUB_CONNECTOR_ID == "github"
-
-
-def test_build_github_connector_descriptor_uses_github_tool_registry() -> None:
-    descriptor = build_github_connector_descriptor(_artifact_config())
-
-    assert descriptor.connector_id == GITHUB_CONNECTOR_ID
-    assert descriptor.expected_tool_registry.list_entries() == (
-        build_github_tool_registry().list_entries()
-    )
-
-
-def test_github_connector_rejects_descriptor_with_wrong_connector_id() -> None:
-    wrong_descriptor = MCPConnectorDescriptor(
-        connector_id="not_github",
-        artifact_config=_artifact_config(),
-        expected_tool_registry=build_github_tool_registry(),
-    )
-
-    with pytest.raises(ValueError, match="descriptor id mismatch"):
-        GitHubConnector(descriptor=wrong_descriptor)
-
-
-def test_github_connector_owns_start_health_restart_and_close() -> None:
-    transport = _Transport()
-    connector = GitHubConnector(
-        descriptor=build_github_connector_descriptor(_artifact_config()),
-        transport_factory=lambda _descriptor: transport,
-    )
-
-    assert connector.connector_id == GITHUB_CONNECTOR_ID
-    assert connector.start() is transport
-    assert connector.health().process_status == "READY"
-    assert connector.restart().restart_count == 1
-
-    connector.close()
-
-    assert transport.closed
-
-
 def _artifact_config() -> MCPArtifactConfig:
     return MCPArtifactConfig(
-        executable_path="unused",
-        manifest_path="unused",
-        expected_binary_sha256="unused",
-        expected_manifest_sha256="unused",
-        expected_manifest_version="v1",
-        expected_protocol_version="v1",
-        expected_tool_registry_version="v1",
+        executable_path=str(Path("unused.exe")),
+        manifest_path=str(Path("unused.json")),
+        expected_binary_sha256="0" * 64,
+        expected_manifest_sha256="0" * 64,
+        expected_manifest_version="2026-08-07.p0",
+        expected_protocol_version="2026-08-07.p0",
+        expected_registry_manifest_hash="0" * 64,
         startup_timeout_ms=1,
         request_timeout_ms=1,
         max_restart_count=1,
         environment="TEST",
-        service_instance_id="svc-test",
-        module_name="google_work_agent.mcp.github_server",
-    )
-
-
-def _metadata(*, restart_count: int) -> MCPRuntimeMetadata:
-    return MCPRuntimeMetadata(
-        process_status="READY",
-        protocol_version="v1",
-        manifest_version="v1",
-        tool_registry_version="v1",
-        available_tool_count=6,
-        last_safe_error_code=None,
-        restart_count=restart_count,
-        process_instance_id="mcp-1",
+        service_instance_id="service-1",
     )

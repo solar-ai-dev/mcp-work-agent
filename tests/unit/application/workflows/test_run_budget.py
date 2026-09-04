@@ -1,6 +1,6 @@
 import pytest
 
-from google_work_agent.application.workflows import (
+from google_work_agent.application.use_cases.run.guard_run_budget import (
     ABSOLUTE_MAX_LLM_CALLS,
     MAX_ADDITIONAL_ACQUISITIONS,
     NORMAL_MAX_LLM_CALLS,
@@ -19,43 +19,41 @@ from google_work_agent.application.workflows import (
     check_llm_call_budget,
     consume_llm_provider_calls,
     promote_budget_profile,
-    validate_run_budget_v1,
+    validate_run_budget_v2,
 )
 
 
-def test_default_run_budget_is_valid_and_checkpoint_safe() -> None:
-    budget = validate_run_budget_v1(build_default_run_budget())
+def test_default_run__budget_is_valid__and_checkpoint_safe() -> None:
+    budget = validate_run_budget_v2(build_default_run_budget())
 
-    assert budget == {
-        "schema_version": 1,
-        "profile": BudgetProfile.NORMAL.value,
-        "llm_calls_used": 0,
-        "additional_acquisitions_used": 0,
-        "planning_revisions_used": 0,
-        "last_rechecked_planning_revision": 0,
-        "semantic_revision_signatures_used": [],
-    }
+    assert budget["schema_version"] == 2
+    assert budget["profile"] == BudgetProfile.NORMAL.value
+    assert budget["llm_calls_used"] == 0
+    assert budget["started_at_ms"] == 0
+    assert budget["absolute_llm_call_limit"] == ABSOLUTE_MAX_LLM_CALLS
+    assert budget["schema_repairs_used_by_node"] == {}
+    assert budget["semantic_revisions_used_by_failure"] == {}
 
 
-def test_run_budget_validator_rejects_invalid_counters_profile_and_duplicates() -> None:
+def test_run_budget_validator__rejects_invalid_counters__profile_and_duplicates() -> None:
     with pytest.raises(ValueError, match="run budget llm_calls_used must be non-negative"):
-        validate_run_budget_v1(
+        validate_run_budget_v2(
             {
                 **build_default_run_budget(),
                 "llm_calls_used": -1,
             }
         )
 
-    with pytest.raises(ValueError, match="run budget additional_acquisitions_used exceeds"):
-        validate_run_budget_v1(
+    with pytest.raises(ValueError, match="run budget additional_retrieval_rounds_used exceeds"):
+        validate_run_budget_v2(
             {
                 **build_default_run_budget(),
-                "additional_acquisitions_used": MAX_ADDITIONAL_ACQUISITIONS + 1,
+                "additional_retrieval_rounds_used": MAX_ADDITIONAL_ACQUISITIONS + 1,
             }
         )
 
     with pytest.raises(ValueError, match="run budget planning_revisions_used exceeds"):
-        validate_run_budget_v1(
+        validate_run_budget_v2(
             {
                 **build_default_run_budget(),
                 "planning_revisions_used": PLANNING_REVISION_PER_RUN + 1,
@@ -64,41 +62,37 @@ def test_run_budget_validator_rejects_invalid_counters_profile_and_duplicates() 
 
     with pytest.raises(
         ValueError,
-        match="last_rechecked_planning_revision must be less than or equal",
+        match="review_rechecks_used exceeds planning revisions",
     ):
-        validate_run_budget_v1(
+        validate_run_budget_v2(
             {
                 **build_default_run_budget(),
                 "planning_revisions_used": 1,
-                "last_rechecked_planning_revision": 2,
+                "review_rechecks_used": 2,
             }
         )
 
     with pytest.raises(ValueError, match="run budget profile is invalid"):
-        validate_run_budget_v1(
+        validate_run_budget_v2(
             {
                 **build_default_run_budget(),
                 "profile": "ABSOLUTE",
             }
         )
 
-    signature = build_semantic_failure_signature_v1(
-        node_id="review.inspect",
-        failure_reason_codes=["PLAN_REQUIRED_ACTION_MISSING"],
-    )
     with pytest.raises(
         ValueError,
-        match="run budget semantic_revision_signatures_used contains duplicates",
+        match="semantic revisions must be a non-negative counter map",
     ):
-        validate_run_budget_v1(
+        validate_run_budget_v2(
             {
                 **build_default_run_budget(),
-                "semantic_revision_signatures_used": [signature, signature],
+                "semantic_revisions_used_by_failure": [],
             }
         )
 
 
-def test_semantic_failure_signature_is_canonicalized_by_node_and_reason_set() -> None:
+def test_semantic_failure_signature__is_canonicalized_by__node_and_reason_set() -> None:
     first = build_semantic_failure_signature_v1(
         node_id="review.inspect",
         failure_reason_codes=["B", "A", "B"],
@@ -117,7 +111,7 @@ def test_semantic_failure_signature_is_canonicalized_by_node_and_reason_set() ->
     assert first != third
 
 
-def test_profile_promotion_is_monotonic_and_has_no_absolute_profile() -> None:
+def test_profile_promotion_is__monotonic_and_has__no_absolute_profile() -> None:
     assert (
         promote_budget_profile(BudgetProfile.NORMAL, BudgetProfile.REVISION_HEAVY)
         is BudgetProfile.REVISION_HEAVY
@@ -136,7 +130,7 @@ def test_profile_promotion_is_monotonic_and_has_no_absolute_profile() -> None:
     )
 
 
-def test_llm_budget_gate_and_accounting_follow_profile_and_absolute_limits() -> None:
+def test_llm_budget_gate__and_accounting_follow__profile_and_absolute_limits() -> None:
     budget = {
         **build_default_run_budget(),
         "llm_calls_used": NORMAL_MAX_LLM_CALLS - 1,
@@ -154,6 +148,7 @@ def test_llm_budget_gate_and_accounting_follow_profile_and_absolute_limits() -> 
     absolute_budget = {
         **build_default_run_budget(),
         "profile": BudgetProfile.RETRIEVAL_HEAVY.value,
+        "llm_call_limit": RETRIEVAL_HEAVY_MAX_LLM_CALLS,
         "llm_calls_used": ABSOLUTE_MAX_LLM_CALLS,
     }
     deny_absolute = check_llm_call_budget(absolute_budget)
@@ -163,9 +158,9 @@ def test_llm_budget_gate_and_accounting_follow_profile_and_absolute_limits() -> 
     )
 
 
-def test_neither_revision_nor_retrieval_triggered_keeps_the_plain_normal_cap() -> None:
+def test_neither_revision_nor__retrieval_triggered_keeps__the_plain_normal_cap() -> None:
     """G3 Final Closure F: with neither planning_revisions_used nor
-    additional_acquisitions_used ever incremented, the effective cap stays
+    additional_retrieval_rounds_used ever incremented, the effective cap stays
     exactly NORMAL_MAX_LLM_CALLS -- no combined-cap headroom leaks in just
     because the Run happens to be NORMAL."""
     budget = {**build_default_run_budget(), "llm_calls_used": NORMAL_MAX_LLM_CALLS - 1}
@@ -180,12 +175,12 @@ def test_neither_revision_nor_retrieval_triggered_keeps_the_plain_normal_cap() -
     assert deny["budget_reason_code"] == BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED.value
 
 
-def test_revision_and_retrieval_both_triggered_raises_effective_cap_to_absolute() -> None:
+def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolute() -> None:
     """G3 Final Closure E (docs/06 SS11, docs/15 SS8.2): once a Run has
     actually triggered both a planning revision (Review REVISE or mandatory
     Modify Review -- both consume planning_revisions_used via
     approve_planning_revision) and an additional acquisition
-    (additional_acquisitions_used via approve_additional_acquisition), the
+    (additional_retrieval_rounds_used via approve_additional_acquisition), the
     profile's own ceiling (here RETRIEVAL_HEAVY=14, the higher of the two
     since promote_budget_profile is monotonic) no longer applies alone --
     the Run may use up to ABSOLUTE_MAX_LLM_CALLS. Reusing only the two
@@ -194,7 +189,7 @@ def test_revision_and_retrieval_both_triggered_raises_effective_cap_to_absolute(
     combined = approve_additional_acquisition(revised["run_budget"])
     assert combined["run_budget"]["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
     assert combined["run_budget"]["planning_revisions_used"] == 1
-    assert combined["run_budget"]["additional_acquisitions_used"] == 1
+    assert combined["run_budget"]["additional_retrieval_rounds_used"] == 1
 
     budget_at_profile_cap = {
         **combined["run_budget"],
@@ -218,7 +213,7 @@ def test_revision_and_retrieval_both_triggered_raises_effective_cap_to_absolute(
     )
 
 
-def test_only_one_of_revision_or_retrieval_triggered_keeps_its_own_single_profile_cap() -> None:
+def test_only_one_of_revision__or_retrieval_triggered_keeps__its_own_single_profile_cap() -> None:
     """Combined effective cap requires BOTH conditions actually triggered --
     only one triggered still uses that profile's own ceiling, not 16."""
     revision_only = approve_planning_revision(build_default_run_budget())
@@ -246,7 +241,7 @@ def test_only_one_of_revision_or_retrieval_triggered_keeps_its_own_single_profil
     )
 
 
-def test_mandatory_modify_review_reuses_planning_revision_to_allow_call_past_normal_cap() -> None:
+def test_mandatory_modify_review_reuses__planning_revision_to_allow__call_past_normal_cap() -> None:
     """G3 Final Closure A: approve_planning_revision is the same function
     runtime.py's _prepare_modify_review_state calls for a mandatory Modify
     Review re-entry. Even when a Run already exhausted NORMAL(8) on one
@@ -263,17 +258,17 @@ def test_mandatory_modify_review_reuses_planning_revision_to_allow_call_past_nor
     assert next_call["decision"] == BudgetDecision.ALLOW.value
 
 
-def test_additional_acquisition_counter_promotes_profile_and_denies_third_round() -> None:
+def test_additional_acquisition_counter__promotes_profile_and__denies_third_round() -> None:
     first = approve_additional_acquisition(build_default_run_budget())
     second = approve_additional_acquisition(first["run_budget"])
     third = approve_additional_acquisition(second["run_budget"])
 
     assert first["decision"] == BudgetDecision.ALLOW.value
-    assert first["run_budget"]["additional_acquisitions_used"] == 1
+    assert first["run_budget"]["additional_retrieval_rounds_used"] == 1
     assert first["run_budget"]["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
 
     assert second["decision"] == BudgetDecision.ALLOW.value
-    assert second["run_budget"]["additional_acquisitions_used"] == 2
+    assert second["run_budget"]["additional_retrieval_rounds_used"] == 2
     assert second["run_budget"]["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
 
     assert third["decision"] == BudgetDecision.DENY.value
@@ -282,7 +277,7 @@ def test_additional_acquisition_counter_promotes_profile_and_denies_third_round(
     )
 
 
-def test_planning_revision_counter_is_shared_by_answer_and_plan_revisions() -> None:
+def test_planning_revision_counter__is_shared_by__answer_and_plan_revisions() -> None:
     answer_revision = approve_planning_revision(build_default_run_budget())
     plan_revision = approve_planning_revision(answer_revision["run_budget"])
     third_revision = approve_planning_revision(plan_revision["run_budget"])
@@ -302,7 +297,7 @@ def test_planning_revision_counter_is_shared_by_answer_and_plan_revisions() -> N
     )
 
 
-def test_review_recheck_requires_revision_and_allows_once_per_revision() -> None:
+def test_review_recheck_requires__revision_and_allows__once_per_revision() -> None:
     no_revision = approve_review_recheck(build_default_run_budget())
     first_revision = approve_planning_revision(build_default_run_budget())
     first_recheck = approve_review_recheck(first_revision["run_budget"])
@@ -316,7 +311,7 @@ def test_review_recheck_requires_revision_and_allows_once_per_revision() -> None
     )
 
     assert first_recheck["decision"] == BudgetDecision.ALLOW.value
-    assert first_recheck["run_budget"]["last_rechecked_planning_revision"] == 1
+    assert first_recheck["run_budget"]["review_rechecks_used"] == 1
 
     assert second_recheck["decision"] == BudgetDecision.DENY.value
     assert (
@@ -326,10 +321,10 @@ def test_review_recheck_requires_revision_and_allows_once_per_revision() -> None
 
     assert second_revision["run_budget"]["planning_revisions_used"] == 2
     assert recheck_after_second_revision["decision"] == BudgetDecision.ALLOW.value
-    assert recheck_after_second_revision["run_budget"]["last_rechecked_planning_revision"] == 2
+    assert recheck_after_second_revision["run_budget"]["review_rechecks_used"] == 2
 
 
-def test_semantic_same_failure_gate_denies_same_node_and_reason_set_only() -> None:
+def test_semantic_same_failure__gate_denies_same_node__and_reason_set_only() -> None:
     signature = build_semantic_failure_signature_v1(
         node_id="review.inspect",
         failure_reason_codes=["PLAN_REQUIRED_ACTION_MISSING", "EVIDENCE_SUPPORTED"],
@@ -348,7 +343,7 @@ def test_semantic_same_failure_gate_denies_same_node_and_reason_set_only() -> No
     different = approve_semantic_revision(first["run_budget"], signature=different_node)
 
     assert first["decision"] == BudgetDecision.ALLOW.value
-    assert len(first["run_budget"]["semantic_revision_signatures_used"]) == 1
+    assert len(first["run_budget"]["semantic_revisions_used_by_failure"]) == 1
 
     assert same["decision"] == BudgetDecision.DENY.value
     assert (
@@ -356,11 +351,11 @@ def test_semantic_same_failure_gate_denies_same_node_and_reason_set_only() -> No
     )
 
     assert different["decision"] == BudgetDecision.ALLOW.value
-    assert len(different["run_budget"]["semantic_revision_signatures_used"]) == 2
+    assert len(different["run_budget"]["semantic_revisions_used_by_failure"]) == 2
 
 
-def test_budget_profile_constants_match_frozen_contract() -> None:
-    assert NORMAL_MAX_LLM_CALLS == 8
-    assert REVISION_HEAVY_MAX_LLM_CALLS == 12
-    assert RETRIEVAL_HEAVY_MAX_LLM_CALLS == 14
-    assert ABSOLUTE_MAX_LLM_CALLS == 16
+def test_budget_profile__constants_match__frozen_contract() -> None:
+    assert NORMAL_MAX_LLM_CALLS == 14
+    assert REVISION_HEAVY_MAX_LLM_CALLS == 18
+    assert RETRIEVAL_HEAVY_MAX_LLM_CALLS == 20
+    assert ABSOLUTE_MAX_LLM_CALLS == 24

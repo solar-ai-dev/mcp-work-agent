@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
-from google_work_agent.ports import (
+from google_work_agent.ports.llm.llm_runtime_status_port import LlmProviderRuntimeStatus
+from google_work_agent.ports.llm.structured_inference_contracts import (
     ApprovedModelInfo,
     AvailabilityState,
     HardwareCapability,
@@ -16,7 +17,53 @@ from google_work_agent.ports import (
     ProbeResult,
     PromptReference,
     ProviderResponsePayload,
+    ToolCallProviderResponse,
+    ToolDefinition,
 )
+from google_work_agent.ports.llm.structured_inference_port import StructuredInferenceResultV1
+
+
+class DisabledLlmRuntimeStatusPort:
+    def get_status(self, provider: str) -> LlmProviderRuntimeStatus:
+        return LlmProviderRuntimeStatus(1, provider, False, "DISABLED", None, None)
+
+
+@dataclass
+class FakeStructuredInferencePort:
+    """Queued fake for the canonical structured-inference Port."""
+
+    outputs: list[object]
+    calls: list[dict[str, object]] = field(default_factory=list)
+
+    def infer(
+        self,
+        requested_mode: str,
+        prompt_ref: PromptReference,
+        input_projection: Mapping[str, object],
+        output_schema_ref: OutputSchemaDefinition,
+    ) -> StructuredInferenceResultV1:
+        self.calls.append(
+            {
+                "requested_mode": requested_mode,
+                "prompt_ref": prompt_ref,
+                "prompt_input": dict(input_projection),
+                "output_schema": output_schema_ref,
+            }
+        )
+        output = self.outputs.pop(0)
+        if isinstance(output, Exception):
+            raise output
+        return StructuredInferenceResultV1(
+            schema_version=1,
+            structured_output=cast(dict[str, object], output),
+            provider="fake",
+            model="fake",
+            actual_runtime="API_LLM",
+            input_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+            fallback_reason=None,
+        )
 
 
 @dataclass
@@ -114,6 +161,38 @@ class FakeOllamaTransport:
         if isinstance(payload, Exception):
             raise payload
         return cast(ProviderResponsePayload, payload)
+
+    def invoke_tool_call(
+        self,
+        *,
+        endpoint: str,
+        model_id: str,
+        prompt_ref: PromptReference,
+        prompt_input: Mapping[str, object],
+        tools: Sequence[ToolDefinition],
+        timeout_seconds: int,
+        instruction_text: str,
+        sampling_temperature: float | None = None,
+        sampling_seed: int | None = None,
+    ) -> ToolCallProviderResponse:
+        self.invocations.append(
+            {
+                "kind": "tool_call",
+                "endpoint": endpoint,
+                "model_id": model_id,
+                "prompt_id": prompt_ref.prompt_id,
+                "prompt_input": dict(prompt_input),
+                "tools": list(tools),
+                "timeout_seconds": timeout_seconds,
+                "instruction_text": instruction_text,
+                "sampling_temperature": sampling_temperature,
+                "sampling_seed": sampling_seed,
+            }
+        )
+        payload = self.queued_payloads.popleft()
+        if isinstance(payload, Exception):
+            raise payload
+        return cast(ToolCallProviderResponse, payload)
 
 
 @dataclass(frozen=True, slots=True)

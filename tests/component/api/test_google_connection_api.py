@@ -7,60 +7,87 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import HTTPRedirectHandler, build_opener
 
 from fastapi.testclient import TestClient
-from tests.support.fakes import DeterministicUUID, FakeClock
-
-from google_work_agent.adapters.connectors import build_google_workspace_connector_descriptor
-from google_work_agent.adapters.mcp import (
-    MCPArtifactConfig,
-    MCPGoogleOAuthCredentialProvider,
-    MCPRuntimeStatusProvider,
-    SubprocessMCPTransport,
-    build_manifest_payload,
-    calculate_file_sha256,
-)
-from google_work_agent.adapters.readiness.composite import (
+from tests.support.fakes import DeterministicUUID, FakeClockPort
+from tests.support.fakes.llm import DisabledLlmRuntimeStatusPort
+from tests.support.mcp_manifest import build_manifest_payload
+from tests.support.readiness import (
     StaticLauncherProbeVerifier,
     StaticReadinessAggregator,
 )
-from google_work_agent.api import ApiContainer, create_app
-from google_work_agent.api.security import (
-    InMemoryBootstrapGrantStore,
-    InMemoryLocalSessionManager,
-    LocalApiAccessGuard,
+
+from google_work_agent.adapters.connectors.google.workspace.composition import (
+    GOOGLE_WORKSPACE_CONNECTOR_ID,
+    build_google_workspace_connector_descriptor,
 )
-from google_work_agent.application import (
-    DisconnectGoogleService,
-    GetGoogleConnectionService,
-    StartGoogleOAuthService,
+from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
+    ConnectorRuntimeRegistry,
 )
-from google_work_agent.ports import LauncherProbeDecision, ReadinessReport, ReadinessState
+from google_work_agent.adapters.connectors.runtime.mcp_oauth_credential import (
+    McpOAuthCredentialAdapter,
+)
+from google_work_agent.adapters.connectors.runtime.stdio_mcp_client import (
+    MCPArtifactConfig,
+    StdioMCPClientAdapter,
+    calculate_file_sha256,
+)
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.sqlite.connected_account_store import (
+    sqlite_connected_account_store_factory,
+)
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import (
+    sqlite_unit_of_work_factory,
+)
+from google_work_agent.adapters.system.filesystem_operational_command_replay import (
+    FilesystemOperationalCommandReplayAdapter,
+)
+from google_work_agent.adapters.system.process_component_circuit_state import (
+    ProcessComponentCircuitStateAdapter,
+)
+from google_work_agent.adapters.system.process_runtime_mode import ProcessRuntimeModeAdapter
+from google_work_agent.api.app import create_app
+from google_work_agent.api.container import ApiContainer
+from google_work_agent.api.security.access_guard import LocalApiAccessGuard
+from google_work_agent.api.security.bootstrap import InMemoryBootstrapGrantStore
+from google_work_agent.api.security.sessions import InMemoryLocalSessionManager
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
+from google_work_agent.application.use_cases.connection.get_connection_status import (
+    GetConnectionStatusHandler,
+)
+from google_work_agent.application.use_cases.connection.revoke_connection import (
+    RevokeConnectionHandler,
+)
+from google_work_agent.application.use_cases.connection.start_authorization import (
+    StartAuthorizationHandler,
+)
+from google_work_agent.application.use_cases.runtime_status.get_runtime_status import (
+    GetRuntimeStatusHandler,
+)
+from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
+from google_work_agent.ports.system.launcher_probe_port import LauncherProbeDecision
+from google_work_agent.ports.system.readiness_port import (
+    ReadinessReport,
+    ReadinessState,
+)
 
 
-class _CoordinatorStub:
-    def start(self) -> None:
-        return None
-
-    def stop(self) -> None:
-        return None
-
-
-class _QueryStub:
-    def __init__(self, runtime_provider: MCPRuntimeStatusProvider) -> None:
-        self._runtime_provider = runtime_provider
-
-    def get_runtime_summary(self):  # type: ignore[no-untyped-def]
-        return self._runtime_provider.get_summary()
-
-
-def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> None:
+def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> None:
     manifest_path = tmp_path / "mcp-manifest.json"
     manifest_path.write_text(json.dumps(build_manifest_payload(), sort_keys=True), encoding="utf-8")
-    keyring_path = tmp_path / "test-keyring.json"
     fixture_manifest = (
-        Path(__file__).resolve().parents[2] / "fixtures" / "product" / "manifest.json"
+        Path(__file__).resolve().parents[2]
+        / "fixtures"
+        / "data"
+        / "google"
+        / "workspace"
+        / "product_fixture_v1.json"
     )
     executable = Path(sys.executable).resolve()
-    transport = SubprocessMCPTransport(
+    registry = load_signed_tool_registry()
+    runtime_registry = ConnectorRuntimeRegistry()
+    transport = StdioMCPClientAdapter(
         descriptor=build_google_workspace_connector_descriptor(
             MCPArtifactConfig(
                 executable_path=str(executable),
@@ -69,31 +96,32 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
                 expected_manifest_sha256=calculate_file_sha256(manifest_path.resolve()),
                 expected_manifest_version="2026-08-07.p0",
                 expected_protocol_version="2026-08-07.p0",
-                expected_tool_registry_version="2026-08-06.p0",
+                expected_registry_manifest_hash=registry.entries_hash,
                 startup_timeout_ms=5_000,
                 request_timeout_ms=5_000,
                 max_restart_count=1,
                 environment="DEVELOPMENT",
                 service_instance_id="svc-google-api",
+                module_name="tests.fakes.google_workspace_mcp_server",
                 working_directory=str(Path(__file__).resolve().parents[3]),
                 extra_environment={
-                    "GWA_TEST_KEYRING_PATH": str(keyring_path.resolve()),
                     "GWA_PRODUCT_FIXTURE_MANIFEST": str(fixture_manifest.resolve()),
                     "GOOGLE_OAUTH_CLIENT_ID": "test-desktop-client-id",
                     "GOOGLE_OAUTH_CLIENT_SECRET": "compatibility-client-secret",
                 },
-            )
-        )
+            ),
+            expected_tool_descriptors=tuple(
+                registry.descriptor_expectations(GOOGLE_WORKSPACE_CONNECTOR_ID)
+            ),
+        ),
+        runtime_registry=runtime_registry,
     )
-    provider = MCPGoogleOAuthCredentialProvider(transport=transport)
-    runtime_provider = MCPRuntimeStatusProvider(
-        google_provider=provider,
-        transport=transport,
-        api_llm="NOT_CONFIGURED",
-        ollama="NOT_AVAILABLE",
-        deployment_profile="test",
+    provider = McpOAuthCredentialAdapter(
+        runtime_registry=runtime_registry,
+        mcp_client=transport,
     )
-    clock = FakeClock(100)
+    operational_replay = FilesystemOperationalCommandReplayAdapter(tmp_path / "operational-replay")
+    clock = FakeClockPort(100)
     bootstrap_store = InMemoryBootstrapGrantStore()
     bootstrap_store.provision(
         secret="bootstrap-secret",
@@ -101,10 +129,19 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
         now_ms=clock.now_ms(),
     )
     session_manager = InMemoryLocalSessionManager()
+    database_path = tmp_path / "google-connection-api.db"
+    connection = connect_sqlite(database_path)
+    apply_migrations(connection, now_ms=clock.now_ms)
+    connection.execute(
+        "INSERT INTO google_accounts VALUES ('current', 'u@example.com', NULL, 1, NULL);"
+    )
+    connection.commit()
+    connection.close()
+    unit_of_work_factory = sqlite_unit_of_work_factory(database_path)
+    connected_account_store_factory = sqlite_connected_account_store_factory(database_path)
     container = ApiContainer(
-        unit_of_work_factory=lambda: None,
-        query_service=_QueryStub(runtime_provider),
-        create_conversation_service=lambda command: command,
+        unit_of_work_factory=unit_of_work_factory,
+        create_conversation_handler=lambda command: command,
         start_run_service=lambda command: command,
         approve_action_service=lambda command: command,
         modify_action_service=lambda command: command,
@@ -112,7 +149,6 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
         prepare_retry_service=lambda command: command,
         cancel_run_service=lambda command: command,
         resume_run_service=lambda command: command,
-        local_run_coordinator=_CoordinatorStub(),
         workflow_runtime=type("Runtime", (), {"close": lambda self: None})(),
         event_publisher=type(
             "Publisher",
@@ -131,7 +167,6 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
         readiness_aggregator=StaticReadinessAggregator(
             ReadinessReport(state=ReadinessState.READY, checks=())
         ),
-        runtime_status_provider=runtime_provider,
         api_access_guard=LocalApiAccessGuard(
             expected_host="127.0.0.1:8766",
             expected_origin="http://127.0.0.1:8766",
@@ -152,9 +187,26 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
         local_session_manager=session_manager,
         launcher_probe_verifier=StaticLauncherProbeVerifier(LauncherProbeDecision(allowed=True)),
         client_address_resolver=lambda _request: "127.0.0.1",
-        start_google_oauth_service=StartGoogleOAuthService(provider=provider),
-        get_google_connection_service=GetGoogleConnectionService(provider=provider),
-        disconnect_google_service=DisconnectGoogleService(provider=provider),
+        start_authorization_handler=StartAuthorizationHandler(
+            credentials=provider,
+            replay=operational_replay,
+        ),
+        get_connection_status_handler=GetConnectionStatusHandler(provider),
+        revoke_connection_handler=RevokeConnectionHandler(
+            credentials=provider,
+            replay=operational_replay,
+            connected_account_store_factory=connected_account_store_factory,
+            now_ms=clock.now_ms,
+        ),
+        current_account_id_provider=lambda: "current",
+        oauth_environment=OAuthEnvironment.DEVELOPMENT,
+        oauth_requested_scopes=("openid",),
+        get_runtime_status_handler=GetRuntimeStatusHandler(
+            runtime_mode=ProcessRuntimeModeAdapter("AUTO"),
+            oauth=provider,
+            llm_status=DisabledLlmRuntimeStatusPort(),
+            circuits=ProcessComponentCircuitStateAdapter(),
+        ),
     )
     headers = {
         "Origin": "http://127.0.0.1:8766",
@@ -167,19 +219,23 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
             bootstrap = client.post(
                 "/api/v1/session/bootstrap",
                 json={
+                    "schema_version": 1,
                     "bootstrap_secret": "bootstrap-secret",
-                    "service_instance_id": "svc-google-api",
-                    "api_contract_version": "1",
+                    "frontend_api_contract_version": "1",
                 },
                 headers=headers,
             )
             assert bootstrap.status_code == 200
 
-            before = client.get("/api/v1/google/connection", headers=headers)
+            before = client.get("/api/v1/connections/google/status", headers=headers)
             assert before.status_code == 200
-            assert before.json()["connected"] is False
+            assert before.json()["connection_status"] == "DISCONNECTED"
 
-            started = client.post("/api/v1/google/oauth/start", headers=headers, json={})
+            started = client.post(
+                "/api/v1/connections/google/start",
+                headers=headers,
+                json={"schema_version": 1, "command_id": "oauth-start-1"},
+            )
             assert started.status_code == 200
             payload = started.json()
             assert "test-desktop-client-id" not in started.text
@@ -191,19 +247,47 @@ def test_google_connection_api_flow_over_local_mcp_process(tmp_path: Path) -> No
             assert response.code == 302
             assert urlparse(response.headers["Location"]).netloc == "accounts.google.com"
 
-            connected = client.get("/api/v1/google/connection", headers=headers)
+            connected = client.get("/api/v1/connections/google/status", headers=headers)
             assert connected.status_code == 200
-            assert connected.json()["connected"] is False
+            assert connected.json()["connection_status"] == "DISCONNECTED"
 
             runtime = client.get("/api/v1/runtime", headers=headers)
             assert runtime.status_code == 200
-            summary = runtime.json()["summary"]
-            assert summary["google_connection"]["connected"] is False
-            assert summary["mcp_runtime"]["process_status"] == "READY"
+            summary = runtime.json()
+            assert summary["connectors"][0]["connection_status"] == "DISCONNECTED"
+            assert summary["runtime_mode"]["requested_mode"] == "AUTO"
+            assert set(summary) == {
+                "schema_version",
+                "service_instance_id",
+                "connectors",
+                "llm_providers",
+                "component_circuits",
+                "active_run_budget",
+                "recovery_required",
+                "release_version",
+                "frontend_build_version",
+                "api_contract_version",
+                "deployment_profile",
+                "runtime_mode",
+                "database_status",
+                "migration_status",
+                "sse_status",
+                "recent_sanitized_error_code",
+                "launcher_status",
+                "manifest_status",
+                "session_status",
+                "safe_mode",
+                "last_backup_status",
+                "last_migration_status",
+            }
 
-            disconnected = client.post("/api/v1/google/disconnect", headers=headers, json={})
+            disconnected = client.post(
+                "/api/v1/connections/google/disconnect",
+                headers=headers,
+                json={"schema_version": 1, "command_id": "oauth-disconnect-1"},
+            )
             assert disconnected.status_code == 200
-            assert disconnected.json()["disconnected"] is True
+            assert disconnected.json()["connection_status"] == "DISCONNECTED"
     finally:
         transport.close()
 

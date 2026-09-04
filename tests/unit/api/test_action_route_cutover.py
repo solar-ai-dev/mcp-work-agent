@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import inspect
+
+from google_work_agent.api.routes import actions
+
+
+def test_action_route__has_zero_uow__or_repository_traversal() -> None:
+    source = inspect.getsource(actions)
+
+    assert "with dependencies.unit_of_work_factory()" not in source
+    assert ".actions.get(" not in source
+    assert ".plans.load_bundle(" not in source
+    assert ".runs.get_by_id(" not in source
+    assert ".conversations.get_by_id(" not in source
+
+
+def test_action_route__binds_only_canonical__action_use_cases() -> None:
+    source = inspect.getsource(actions)
+
+    assert "application.use_cases.action.approve_action" in source
+    assert "application.use_cases.action.modify_action" in source
+    assert "application.use_cases.action.reject_action" in source
+    assert "application.use_cases.action.prepare_write_retry" in source
+    assert "application.write_actions import" not in source
+    assert "application.start_run import" not in source
+    assert "application.projections import" not in source
+
+
+def test_action_route_does__not_invoke_legacy_semantics__for_approve_reject_retry() -> None:
+    source = inspect.getsource(actions)
+
+    assert "approve_action_service()" not in source
+    assert "reject_action_service()" not in source
+    assert "prepare_retry_service()" not in source
+    assert "ApproveWriteAction" not in source
+    assert "RejectWriteAction" not in source
+    assert "PrepareWriteRetryService" not in source
+
+
+def test_modify_uses__exact_injected_handler__without_legacy_surface() -> None:
+    source = inspect.getsource(actions)
+
+    assert "modify_action_service()" not in source
+    assert "_modify_gateway" not in source
+    assert "dependencies.modify_action_handler(" in source
+    assert "ModifyActionHandler(" not in source
+
+
+def test_action_route__has_no_provider__or_persistence_import() -> None:
+    source = inspect.getsource(actions)
+
+    assert "google_work_agent.adapters." not in source
+    assert "google_work_agent.persistence." not in source
+    assert "google_work_agent.adapters.connectors" not in source

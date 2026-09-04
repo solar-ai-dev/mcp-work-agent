@@ -1,0 +1,361 @@
+"""Architecture guards for Wave-B API runtime/control ownership."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+ROUTES = ROOT / "src" / "google_work_agent" / "api" / "routes"
+USE_CASES = ROOT / "src" / "google_work_agent" / "application" / "use_cases"
+
+RUNTIME_CONTROL_BINDINGS = (
+    ("runtime_summaries.py", "get_runtime", "GetRuntimeStatusHandler"),
+    ("runtime_summaries.py", "update_runtime_mode", "UpdateRuntimeModeHandler"),
+    ("google_connections.py", "start_google_oauth", "StartAuthorizationHandler"),
+    ("google_connections.py", "get_google_connection", "GetConnectionStatusHandler"),
+    ("google_connections.py", "disconnect_google", "RevokeConnectionHandler"),
+    ("llm_connections.py", "get_llm_connection", "GetLlmCredentialStatusHandler"),
+    ("llm_connections.py", "store_llm_api_key", "StoreLlmCredentialHandler"),
+    ("llm_connections.py", "delete_llm_api_key", "DeleteLlmCredentialHandler"),
+    ("settings.py", "get_settings", "GetSettingsHandler"),
+    ("settings.py", "patch_settings", "UpdateSettingsHandler"),
+    ("settings.py", "list_backups", "ListBackupsHandler"),
+    ("settings.py", "create_backup", "CreateBackupHandler"),
+    ("settings.py", "restore_backup", "RestoreBackupHandler"),
+    ("settings.py", "shutdown", "RequestShutdownHandler"),
+    ("diagnostics.py", "create_diagnostic_bundle", "CreateDiagnosticBundleHandler"),
+)
+RUNTIME_CONTROL_ROUTES = {
+    ("GET", "/api/v1/runtime"),
+    ("POST", "/api/v1/runtime/mode"),
+    ("POST", "/api/v1/connections/google/start"),
+    ("GET", "/api/v1/connections/google/status"),
+    ("POST", "/api/v1/connections/google/disconnect"),
+    ("PUT", "/api/v1/credentials/llm/{provider}"),
+    ("GET", "/api/v1/credentials/llm/{provider}"),
+    ("DELETE", "/api/v1/credentials/llm/{provider}"),
+    ("GET", "/api/v1/settings"),
+    ("PUT", "/api/v1/settings"),
+    ("GET", "/api/v1/backups"),
+    ("POST", "/api/v1/backups"),
+    ("POST", "/api/v1/restore"),
+    ("POST", "/api/v1/diagnostics/bundles"),
+    ("POST", "/api/v1/control/shutdown"),
+}
+APPLICATION_RUNTIME_CONTROL_OWNERS = (
+    "runtime_status",
+    "runtime_mode",
+    "connection",
+    "llm_credential",
+    "setting",
+    "backup",
+    "shutdown",
+)
+PROVIDER_BOUNDARY_ROUTES = (
+    "runtime_summaries.py",
+    "google_connections.py",
+    "identities.py",
+    "llm_connections.py",
+    "settings.py",
+    "diagnostics.py",
+    "health.py",
+)
+
+
+def _parse(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def _imported_modules(tree: ast.AST) -> set[str]:
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.add(f"{'.' * node.level}{node.module or ''}")
+    return modules
+
+
+def _imports_symbol_from_application_use_cases(tree: ast.AST, symbol: str) -> bool:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if not (
+            node.module.startswith("google_work_agent.application.use_cases.")
+            or (
+                symbol == "GetReadinessHandler"
+                and node.module == "google_work_agent.api.dependencies.health_checks"
+            )
+        ):
+            continue
+        if any(alias.name == symbol for alias in node.names):
+            return True
+    return False
+
+
+def _route_function(tree: ast.Module, function_name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
+            return node
+    raise AssertionError(f"route endpoint function not found: {function_name}")
+
+
+def _is_route_endpoint(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for decorator in function.decorator_list:
+        if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+            continue
+        if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
+            continue
+        if decorator.func.attr in {"get", "post", "put", "patch", "delete"}:
+            return True
+    return False
+
+
+def _calls_handler(function: ast.AST, handler_name: str) -> bool:
+    """Require the endpoint to execute the imported exact Handler."""
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "handle":
+            constructor = node.func.value.func if isinstance(node.func.value, ast.Call) else None
+            if isinstance(constructor, ast.Name) and constructor.id == handler_name:
+                return True
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "isinstance"
+            and len(node.args) == 2
+            and isinstance(node.args[1], ast.Name)
+            and node.args[1].id == handler_name
+        ):
+            return True
+    return False
+
+
+def _reaches_local_call(tree: ast.Module, function: ast.AST, target: str) -> bool:
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    pending = [function]
+    visited: set[str] = set()
+    while pending:
+        current = pending.pop()
+        for call in ast.walk(current):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                continue
+            if call.func.id == target:
+                return True
+            if call.func.id in functions and call.func.id not in visited:
+                visited.add(call.func.id)
+                pending.append(functions[call.func.id])
+    return False
+
+
+def _runtime_control_application_files() -> list[Path]:
+    files: list[Path] = []
+    for owner in APPLICATION_RUNTIME_CONTROL_OWNERS:
+        owner_root = USE_CASES / owner
+        files.extend(path for path in owner_root.rglob("*.py") if path.is_file())
+    return files
+
+
+def _matches_module(module: str, prefix: str) -> bool:
+    normalized = module.lstrip(".")
+    return normalized == prefix or normalized.startswith(f"{prefix}.")
+
+
+def test_all_runtime__control_routes_bind__expected_application_handlers() -> None:
+    """VAPI4-001: route endpoint -> canonical Handler -> handle(...) must remain exact."""
+    assert len(RUNTIME_CONTROL_BINDINGS) == 15
+    for route_name, endpoint_name, handler_name in RUNTIME_CONTROL_BINDINGS:
+        tree = _parse(ROUTES / route_name)
+        endpoint = _route_function(tree, endpoint_name)
+        assert _is_route_endpoint(endpoint), (
+            f"{route_name}:{endpoint_name} is no longer a route endpoint"
+        )
+        assert _imports_symbol_from_application_use_cases(tree, handler_name), (
+            f"{route_name}:{endpoint_name} no longer imports canonical {handler_name}"
+        )
+        assert _calls_handler(endpoint, handler_name), (
+            f"{route_name}:{endpoint_name} must execute {handler_name}"
+        )
+
+
+def test_runtime_control_route__surface_is_exact_and__has_no_legacy_alternative() -> None:
+    actual: set[tuple[str, str]] = set()
+    for route_name in {item[0] for item in RUNTIME_CONTROL_BINDINGS}:
+        tree = _parse(ROUTES / route_name)
+        prefix = ""
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(
+                isinstance(target, ast.Name) and target.id == "router" for target in node.targets
+            ):
+                continue
+            if isinstance(node.value, ast.Call):
+                for keyword in node.value.keywords:
+                    if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant):
+                        prefix = str(keyword.value.value)
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call) or not isinstance(
+                    decorator.func, ast.Attribute
+                ):
+                    continue
+                if not isinstance(decorator.func.value, ast.Name) or (
+                    decorator.func.value.id != "router"
+                ):
+                    continue
+                if decorator.func.attr not in {"get", "post", "put", "delete"}:
+                    continue
+                if decorator.args and isinstance(decorator.args[0], ast.Constant):
+                    actual.add((decorator.func.attr.upper(), prefix + str(decorator.args[0].value)))
+    assert actual == RUNTIME_CONTROL_ROUTES
+
+
+def test_runtime_control_mutations__with_command_identity__have_no_legacy_authority() -> (
+    None
+):
+    route_source = "\n".join(
+        (ROUTES / name).read_text(encoding="utf-8")
+        for name in {item[0] for item in RUNTIME_CONTROL_BINDINGS}
+    )
+    assert "command_id=request.state.request_id" not in route_source
+    assert '"/llm/test"' not in route_source
+    assert not (USE_CASES / "llm/test_llm_connection.py").exists()
+    legacy_schema = ROOT / (
+        "src/google_work_agent/api/schemas/llm_connections/test_llm_connection.py"
+    )
+    assert not legacy_schema.exists()
+
+
+def test_runtime_and_identity__routes_do_not_call__broad_query_service_semantics() -> None:
+    runtime = (ROUTES / "runtime_summaries.py").read_text(encoding="utf-8")
+    identity = (ROUTES / "identities.py").read_text(encoding="utf-8")
+    assert ".query_service().get_runtime_summary()" not in runtime
+    assert ".query_service().get_current_google_account()" not in identity
+
+
+def test_runtime_control_application__has_no_api__or_http_reverse_dependency() -> None:
+    """VAPI4-002: Application cannot depend back on API/FastAPI/HTTP transport types."""
+    prohibited_prefixes = ("google_work_agent.api", "api", "fastapi", "starlette")
+    violations: list[str] = []
+    for path in _runtime_control_application_files():
+        for module in sorted(_imported_modules(_parse(path))):
+            if any(_matches_module(module, prefix) for prefix in prohibited_prefixes):
+                violations.append(f"{path.relative_to(ROOT)} -> {module}")
+    assert not violations, "Application -> API/HTTP reverse dependencies found:\n" + "\n".join(
+        violations
+    )
+
+
+def test_runtime_control_routes_and__application_do_not_import__provider_or_concrete_adapters() -> (
+    None
+):
+    """Keep runtime-control paths on Ports and away from concrete providers."""
+    prohibited_prefixes = (
+        "google",
+        "googleapiclient",
+        "requests",
+        "httpx",
+        "openai",
+        "anthropic",
+        "ollama",
+        "keyring",
+        "google_work_agent.adapters",
+        "adapters",
+    )
+    targets = [ROUTES / route_name for route_name in PROVIDER_BOUNDARY_ROUTES]
+    targets.extend(_runtime_control_application_files())
+    violations: list[str] = []
+    for path in targets:
+        for module in sorted(_imported_modules(_parse(path))):
+            if any(_matches_module(module, prefix) for prefix in prohibited_prefixes):
+                violations.append(f"{path.relative_to(ROOT)} -> {module}")
+    assert not violations, (
+        "direct Provider SDK/client/concrete adapter imports found:\n" + "\n".join(violations)
+    )
+
+
+def test_application_use_cases__do_not_depend__on_api_schemas() -> None:
+    """Keep the pre-existing schema-specific gate as an explicit regression check."""
+    for path in _runtime_control_application_files():
+        source = path.read_text(encoding="utf-8")
+        assert "google_work_agent.api.schemas" not in source
+
+
+def test_target_routes__do_not_bypass__locked_dependency_boundary() -> None:
+    prohibited = ("google_work_agent.api.container", "google_work_agent.api.route_dependencies")
+    for route_name in (
+        "runtime_summaries.py",
+        "identities.py",
+        "llm_connections.py",
+        "settings.py",
+        "session.py",
+        "health.py",
+    ):
+        source = (ROUTES / route_name).read_text(encoding="utf-8")
+        for dependency in prohibited:
+            assert dependency not in source
+
+
+def test_session_bootstrap__stays_transport__security_owned() -> None:
+    route = (ROUTES / "session.py").read_text(encoding="utf-8")
+    bootstrap = (ROOT / "src/google_work_agent/api/security/bootstrap_session.py").read_text(
+        encoding="utf-8"
+    )
+    validator = (ROOT / "src/google_work_agent/api/dependencies/local_session.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "bootstrap_session_service" in route
+    assert ".consume(" not in route
+    assert ".issue(" not in route
+    assert "grant_store.consume(" in bootstrap
+    assert "session_manager.issue(" in bootstrap
+    assert "def validate_local_session(" in validator
+    assert ".issue(" not in validator
+    assert "httponly=True" in route
+    assert 'samesite="strict"' in route
+    assert not (ROUTES / "sessions.py").exists()
+    assert not (ROUTES / "health_checks.py").exists()
+
+
+def test_every_local_api__route_has_an__explicit_access_guard() -> None:
+    offenders: list[str] = []
+    for path in ROUTES.glob("*.py"):
+        if path.name in {"__init__.py", "frontend_assets.py"}:
+            continue
+        tree = _parse(path)
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _is_route_endpoint(node):
+                continue
+            calls_guard = _reaches_local_call(tree, node, "enforce_access")
+            if not calls_guard:
+                offenders.append(f"{path.name}:{node.name}")
+
+    assert offenders == []
+
+
+def test_local_security_has__no_wildcard_cors__or_secret_response_projection() -> None:
+    api_root = ROOT / "src/google_work_agent/api"
+    source = "\n".join(path.read_text(encoding="utf-8") for path in api_root.rglob("*.py"))
+    response_schema = (
+        (api_root / "schemas/sessions/bootstrap_session.py")
+        .read_text(encoding="utf-8")
+        .split("class BootstrapSessionResponse", 1)[1]
+    )
+
+    assert 'allow_origins=["*"]' not in source
+    assert "CORSMiddleware" not in source
+    assert "bootstrap_secret" not in response_schema
+    assert "session_token" not in response_schema
+    assert not (api_root / "security/policies.py").exists()
+    assert "endpoint_policy_registry" not in source

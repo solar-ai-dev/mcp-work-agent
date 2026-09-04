@@ -33,96 +33,29 @@ export type ReadyResponse = {
 };
 
 export type BootstrapResponse = {
+  schema_version: 1;
   session_established: boolean;
   service_instance_id: string;
   api_contract_version: string;
-};
-
-export type RuntimeSummary = {
-  google: string;
-  mcp: string;
-  api_llm: string;
-  ollama: string;
-  deployment_profile: string;
-  recovery_required_run_ids: string[];
-  open_run_ids: string[];
-  google_connection?: Record<string, unknown> | null;
-  mcp_runtime?: Record<string, unknown> | null;
-  llm?: Record<string, unknown> | null;
-  safe_mode?: boolean;
-  safe_mode_reason_codes?: string[];
-  allowed_operations?: string[];
-};
-
-export type RuntimeResponse = {
-  summary: RuntimeSummary;
-  api_contract_version: string;
-};
-
-export type SettingsResponse = {
-  settings: Record<string, unknown>;
-  api_contract_version: string;
-};
-
-export type LLMConnectionResponse = {
-  llm: Record<string, unknown>;
-  api_contract_version: string;
-};
-
-export type LLMApiKeyResponse = {
-  credential_state: string;
-  api_contract_version: string;
-};
-
-export type GoogleConnectionResponse = {
-  connected: boolean;
-  credential_state: string;
-  account_email: string | null;
-  display_name: string | null;
-  granted_scopes: string[];
-  missing_scopes: string[];
-  reauth_required: boolean;
-  oauth_environment: string;
-  last_checked_at_ms: number;
-  safe_error_code?: string | null;
-  safe_error_description?: string | null;
-  api_contract_version: string;
-};
-
-export type GoogleOAuthStartResponse = {
-  flow_id: string;
-  authorization_url: string;
-  callback_url: string;
-  expires_at_ms: number;
-  oauth_environment: string;
-  scopes: string[];
-  api_contract_version: string;
-};
-
-export type CurrentGoogleAccountResponse = {
-  account: {
-    account_id: string;
-    email: string;
-    display_name?: string | null;
-  } | null;
-  api_contract_version: string;
+  compatibility: "COMPATIBLE" | "INCOMPATIBLE";
 };
 
 export type ConversationItem = {
-  id: string;
-  account_id: string;
-  title: string;
-  updated_at_ms: number;
-  created_at_ms: number;
+  schema_version: 1;
+  conversation_id: string;
+  title: string | null;
+  latest_message_at_ms: number | null;
+  open_run_id: string | null;
 };
 
 export type ConversationListResponse = {
+  schema_version: 1;
   items: ConversationItem[];
   next_cursor: string | null;
-  api_contract_version: string;
 };
 
 export type ConversationMessage = {
+  schema_version: 1;
   id: string;
   run_id: string | null;
   role: "USER" | "ASSISTANT" | "SYSTEM";
@@ -131,6 +64,7 @@ export type ConversationMessage = {
 };
 
 export type ConversationHistoryRun = {
+  schema_version: 1;
   run_id: string;
   status: string;
   started_at_ms: number;
@@ -138,21 +72,11 @@ export type ConversationHistoryRun = {
 };
 
 export type ConversationHistoryResponse = {
+  schema_version: 1;
   conversation: ConversationItem;
   messages: ConversationMessage[];
   runs: ConversationHistoryRun[];
   truncated: boolean;
-  api_contract_version: string;
-};
-
-export type LatestConversationRunResponse = {
-  run: {
-    run_id: string;
-    status: string;
-    version: number;
-    started_at_ms: number;
-  } | null;
-  api_contract_version: string;
 };
 
 export type RunAction = {
@@ -165,6 +89,10 @@ export type RunAction = {
   verification_policy: string;
   risk: Record<string, unknown>;
   next_allowed_commands: string[];
+  required_acknowledgements: ("TASK_DUPLICATE" | "CALENDAR_CONFLICT")[];
+  editable_fields: string[];
+  attachment_allowed: boolean;
+  delivery_certainty: "NOT_SENT" | "MAY_HAVE_BEEN_SENT" | "SENT_RESPONSE_LOST" | null;
 };
 
 export type ApprovalSnapshot = {
@@ -175,17 +103,67 @@ export type ApprovalSnapshot = {
   expires_at_ms: number;
 };
 
-export type RunSnapshot = {
+export type ContextPreviewItem = {
+  segment_id: string;
+  role: "SUPPORTS" | "CONTRADICTS" | "CONTEXT";
+  source: "gmail" | "tasks" | "calendar";
+  resource_type: string;
+  resource_id: string;
+  display_label: string;
+  excerpt: string | null;
+};
+
+export type ContextPreview = {
+  schema_version: 1;
   run_id: string;
-  conversation_id: string;
-  status: string;
-  version: number;
-  entry_mode: string;
-  requested_mode: string;
-  actual_runtime?: string | null;
-  started_at_ms: number;
-  finished_at_ms?: number | null;
-  active_plan?: {
+  retrieval_revision: number;
+  items: ContextPreviewItem[];
+  gmail_count: number;
+  tasks_count: number;
+  calendar_count: number;
+  adjustment_allowed: boolean;
+  allowed_adjustments: ("EXCLUDE_EVIDENCE" | "RETRIEVE_MORE")[];
+};
+
+export type ExternalLlmTransferScope = {
+  schema_version: 1;
+  run_id: string;
+  scope_revision: number;
+  scope_hash: string;
+  source_kinds: string[];
+  data_classes: ("USER_REQUEST" | "RESOURCE_METADATA" | "EVIDENCE_EXCERPT" | "PLAN_CONTEXT")[];
+};
+
+export type PendingInterrupt = {
+  schema_version: 1;
+  interrupt_id: string;
+  semantic_owner_id:
+    | "REQUEST_UNDERSTANDING"
+    | "TOOL_ROUTE"
+    | "RETRIEVAL"
+    | "WORK_ANALYSIS"
+    | "PLANNING"
+    | "REVIEW";
+  question: string;
+  options: string[];
+  response_mode: "OPTION" | "FREE_TEXT";
+};
+
+export type RunSnapshot = {
+  run: {
+    run_id: string;
+    conversation_id: string;
+    status: string;
+    version: number;
+    entry_mode: string;
+    requested_mode: string;
+    actual_runtime: string | null;
+    started_at_ms: number;
+    finished_at_ms: number | null;
+    next_allowed_commands: string[];
+  };
+  messages: ConversationMessage[];
+  current_plan: {
     plan_id: string;
     revision_no: number;
     status: string;
@@ -193,6 +171,7 @@ export type RunSnapshot = {
     created_at_ms: number;
   } | null;
   actions: RunAction[];
+  context_preview: ContextPreview | null;
   approvals: ApprovalSnapshot[];
   execution_status: {
     action_count: number;
@@ -205,14 +184,25 @@ export type RunSnapshot = {
   recovery_summary: {
     unknown_result_action_count: number;
   };
-  result_kind?: string | null;
-  next_allowed_commands: string[];
-  snapshot_version: number;
-};
-
-export type RunSnapshotResponse = {
-  snapshot: RunSnapshot;
-  api_contract_version: string;
+  pending_interrupt?: PendingInterrupt | null;
+  recovery?: {
+    reason_code: "UNKNOWN_RESULT" | "VERIFICATION_MISMATCH" | "CHECKPOINT_MISMATCH" | "CONTRACT_VIOLATION";
+    target: { target_kind: "RUN" } | { target_kind: "ACTION"; action_id: string };
+    allowed_resolution_kinds: ("RECHECK" | "ACCEPT_PARTIAL" | "CREATE_CORRECTIVE_PLAN" | "CANCEL" | "FAIL")[];
+  } | null;
+  error?: {
+    schema_version: number;
+    error_code: string;
+    message: string;
+    actions: {
+      kind: "PREPARE_RETRY" | "REAUTHENTICATE_GOOGLE" | "RESUME_SAFE_CHECKPOINT" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS";
+      action_id?: string | null;
+      resume_kind?: "SAFE_CHECKPOINT_RESUME" | null;
+    }[];
+  } | null;
+  external_llm_transfer_scope: ExternalLlmTransferScope | null;
+  terminal_result_kind: "SUCCESS" | "PARTIAL" | "BLOCKED" | "FAILED" | "CANCELLED" | "NONE";
+  projection_version: number;
 };
 
 export type RunContext = {
@@ -233,17 +223,12 @@ export type RunContextResponse = {
 };
 
 export type StartRunResponse = {
-  applied: boolean;
-  result_code: string;
   run_id: string;
   conversation_id: string;
-  run_status: string;
-  run_version: number;
-  user_message_id: string;
-  workflow_key: string;
-  enqueued: boolean;
-  request_replayed: boolean;
-  conflict_detail?: string | null;
+  langgraph_thread_id: string;
+  status: string;
+  version: number;
+  event_stream_url: string;
 };
 
 export type ActionCommandResponse = {
@@ -268,17 +253,37 @@ export type RunCommandResponse = {
   result_kind?: string | null;
 };
 
+export type ResourceItemMetadata = {
+  subject?: string;
+  sender_name?: string | null;
+  sender_email?: string | null;
+  received_at?: string | null;
+  snippet?: string | null;
+  has_attachments?: boolean;
+  task_status?: "incomplete" | "completed";
+  scheduled_date?: string | null;
+  completed_at?: string | null;
+  tasklist_id?: string;
+  start?: string;
+  end?: string;
+  timezone?: string;
+  calendar_id?: string;
+  location?: string | null;
+};
+
 export type ResourceItem = {
-  source: string;
-  resource_type: string;
+  schema_version: 1;
+  selection_handle: string;
+  source: "gmail" | "tasks" | "calendar";
+  resource_type: "gmail_thread" | "task" | "calendar_event";
   resource_id: string;
   parent_id?: string | null;
   title: string;
   subtitle?: string | null;
-  link_url: string;
+  link_url: string | null;
   version: string;
   related_resource_ids: string[];
-  metadata: Record<string, unknown>;
+  metadata: ResourceItemMetadata;
   sender_name?: string | null;
   sender_email?: string | null;
   subject?: string | null;
@@ -286,21 +291,62 @@ export type ResourceItem = {
   snippet?: string | null;
 };
 
-export type ResourceListResponse = {
-  source: string;
-  items: ResourceItem[];
-  next_page_token: string | null;
-  api_contract_version: string;
+export type GmailListItemWire = {
+  schema_version: 1;
+  selection_handle: string;
+  resource_id: string;
+  subject: string;
+  sender_name: string | null;
+  sender_email: string | null;
+  received_at: string | null;
+  snippet: string | null;
+  has_attachments: boolean;
 };
 
+export type TaskListItemWire = {
+  schema_version: 1;
+  selection_handle: string;
+  resource_id: string;
+  title: string;
+  task_status: "incomplete" | "completed";
+  scheduled_date: string | null;
+  completed_at: string | null;
+  tasklist_id: string;
+};
+
+export type CalendarListItemWire = {
+  schema_version: 1;
+  selection_handle: string;
+  resource_id: string;
+  title: string;
+  start: string;
+  end: string;
+  timezone: string;
+  calendar_id: string;
+  location: string | null;
+};
+
+export type ResourceListItemWire = GmailListItemWire | TaskListItemWire | CalendarListItemWire;
+
+export type ResourceListWireResponse = {
+  schema_version: 1;
+  items: ResourceListItemWire[];
+  next_page_token: string | null;
+  total_count: number | null;
+  projection_version: string;
+};
+
+export type ResourceListResponse = Omit<ResourceListWireResponse, "items"> & { items: ResourceItem[] };
+
 export type ResourceCountResponse = {
-  source: string;
-  total_count: number;
-  api_contract_version: string;
+  schema_version: 1;
+  source: "gmail" | "tasks" | "calendar";
+  exact_count: number;
+  as_of_ms: number;
 };
 
 export type GmailAttachmentMetadata = {
-  message_id: string;
+  schema_version: 1;
   attachment_id: string;
   filename: string;
   mime_type: string;
@@ -308,22 +354,53 @@ export type GmailAttachmentMetadata = {
 };
 
 export type GmailResourceDetailResponse = {
+  schema_version: 1;
   resource_id: string;
   message_id: string;
   sender_name: string | null;
-  sender_email: string | null;
+  sender_email: string;
   recipients: string[];
   cc: string[];
-  subject: string | null;
-  received_at: string | null;
-  body: string | null;
+  subject: string;
+  received_at: string;
+  body: string;
   attachments: GmailAttachmentMetadata[];
   canonical_url: string;
-  api_contract_version: string;
 };
 
-export type EventEnvelope = {
-  eventId: string;
-  eventType: string;
-  payload: Record<string, unknown>;
+export type TaskResourceDetailResponse = {
+  schema_version: 1;
+  resource_id: string;
+  title: string;
+  task_status: "incomplete" | "completed";
+  scheduled_date: string | null;
+  completed_at: string | null;
+  tasklist_id: string;
+  notes: string | null;
+};
+
+export type CalendarResourceDetailResponse = {
+  schema_version: 1;
+  resource_id: string;
+  title: string;
+  start: string;
+  end: string;
+  timezone: string;
+  calendar_id: string;
+  attendees: string[];
+  location: string | null;
+  description: string | null;
+};
+
+export type TaskListContainer = {
+  schema_version: 1;
+  tasklist_id: string;
+  title: string;
+};
+
+export type CalendarContainer = {
+  schema_version: 1;
+  calendar_id: string;
+  title: string;
+  primary: boolean;
 };

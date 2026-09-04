@@ -1,0 +1,13 @@
+{
+  "resource_type": "calendar",
+  "resource_id": "calendar-primary",
+  "parent_id": null,
+  "related_resource_ids": ["event-focus", "event-review"],
+  "version": "1",
+  "recovery_fingerprint": "rf-calendar-primary",
+  "payload": {
+    "summary": "Primary",
+    "time_zone": "America/Los_Angeles",
+    "primary": true
+  }
+}

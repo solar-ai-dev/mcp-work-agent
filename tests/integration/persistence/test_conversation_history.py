@@ -5,20 +5,21 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from google_work_agent.adapters.persistence import apply_migrations, connect_sqlite
-from google_work_agent.application.queries import MAX_HISTORY_MESSAGES, QueryService
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
+from google_work_agent.application.use_cases.conversation.get_conversation_history import (
+    GetConversationHistoryHandler,
+    GetConversationHistoryQuery,
+)
+from google_work_agent.application.use_cases.message.list_conversation_messages import (
+    DEFAULT_HISTORY_MESSAGE_LIMIT,
+)
 
 
-class _UnusedRuntimeStatusProvider:
-    def get_summary(self) -> object:
-        raise NotImplementedError
-
-
-def _query_service(database_path: Path) -> QueryService:
-    return QueryService(
-        database_path=database_path,
-        connection_factory=connect_sqlite,
-        runtime_status_provider=_UnusedRuntimeStatusProvider(),
+def _history_handler(database_path: Path) -> GetConversationHistoryHandler:
+    return GetConversationHistoryHandler(
+        unit_of_work_factory=sqlite_unit_of_work_factory(database_path),
     )
 
 
@@ -98,7 +99,7 @@ def _insert_message(
     )
 
 
-def test_history_returns_every_turn_of_one_conversation_in_time_order(tmp_path: Path) -> None:
+def test_history_returns_every__turn_of_one__conversation_in_time_order(tmp_path: Path) -> None:
     database_path = _seeded_database(tmp_path)
     connection = connect_sqlite(database_path)
     try:
@@ -150,10 +151,12 @@ def test_history_returns_every_turn_of_one_conversation_in_time_order(tmp_path: 
     finally:
         connection.close()
 
-    history = _query_service(database_path).get_conversation_history("conversation-1")
+    history = _history_handler(database_path)(
+        GetConversationHistoryQuery(conversation_id="conversation-1")
+    )
 
     assert history is not None
-    assert history.conversation.id == "conversation-1"
+    assert history.conversation.conversation_id == "conversation-1"
     assert [(item.role, item.content) for item in history.messages] == [
         ("USER", "요청 1"),
         ("ASSISTANT", "응답 1"),
@@ -166,7 +169,7 @@ def test_history_returns_every_turn_of_one_conversation_in_time_order(tmp_path: 
     assert history.truncated is False
 
 
-def test_history_keeps_a_failed_run_and_an_open_run_in_the_projection(tmp_path: Path) -> None:
+def test_history_keeps_a_failed__run_and_an_open__run_in_the_projection(tmp_path: Path) -> None:
     database_path = _seeded_database(tmp_path)
     connection = connect_sqlite(database_path)
     try:
@@ -208,7 +211,9 @@ def test_history_keeps_a_failed_run_and_an_open_run_in_the_projection(tmp_path: 
     finally:
         connection.close()
 
-    history = _query_service(database_path).get_conversation_history("conversation-1")
+    history = _history_handler(database_path)(
+        GetConversationHistoryQuery(conversation_id="conversation-1")
+    )
 
     assert history is not None
     assert [(item.run_id, item.status, item.finished_at_ms) for item in history.runs] == [
@@ -218,10 +223,12 @@ def test_history_keeps_a_failed_run_and_an_open_run_in_the_projection(tmp_path: 
     assert [item.content for item in history.messages] == ["실패한 요청", "진행 중 요청"]
 
 
-def test_history_is_empty_for_a_conversation_without_messages(tmp_path: Path) -> None:
+def test_history_is__empty_for_a__conversation_without_messages(tmp_path: Path) -> None:
     database_path = _seeded_database(tmp_path)
 
-    history = _query_service(database_path).get_conversation_history("conversation-1")
+    history = _history_handler(database_path)(
+        GetConversationHistoryQuery(conversation_id="conversation-1")
+    )
 
     assert history is not None
     assert history.messages == ()
@@ -229,15 +236,18 @@ def test_history_is_empty_for_a_conversation_without_messages(tmp_path: Path) ->
     assert history.truncated is False
 
 
-def test_history_is_none_for_an_unknown_conversation(tmp_path: Path) -> None:
+def test_history_is__none_for__an_unknown_conversation(tmp_path: Path) -> None:
     database_path = _seeded_database(tmp_path)
 
-    assert _query_service(database_path).get_conversation_history("missing") is None
+    assert (
+        _history_handler(database_path)(GetConversationHistoryQuery(conversation_id="missing"))
+        is None
+    )
 
 
-def test_history_keeps_the_newest_messages_and_reports_truncation(tmp_path: Path) -> None:
+def test_history_keeps__the_newest_messages__and_reports_truncation(tmp_path: Path) -> None:
     database_path = _seeded_database(tmp_path)
-    total = MAX_HISTORY_MESSAGES + 5
+    total = DEFAULT_HISTORY_MESSAGE_LIMIT + 5
     connection = connect_sqlite(database_path)
     try:
         for index in range(total):
@@ -254,10 +264,12 @@ def test_history_keeps_the_newest_messages_and_reports_truncation(tmp_path: Path
     finally:
         connection.close()
 
-    history = _query_service(database_path).get_conversation_history("conversation-1")
+    history = _history_handler(database_path)(
+        GetConversationHistoryQuery(conversation_id="conversation-1")
+    )
 
     assert history is not None
     assert history.truncated is True
-    assert len(history.messages) == MAX_HISTORY_MESSAGES
-    assert history.messages[0].content == f"요청 {total - MAX_HISTORY_MESSAGES}"
+    assert len(history.messages) == DEFAULT_HISTORY_MESSAGE_LIMIT
+    assert history.messages[0].content == f"요청 {total - DEFAULT_HISTORY_MESSAGE_LIMIT}"
     assert history.messages[-1].content == f"요청 {total - 1}"

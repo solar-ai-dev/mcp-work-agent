@@ -10,13 +10,20 @@ adapters/llm/gemini.py and adapters/llm/api_provider.py module comments).
 from __future__ import annotations
 
 import json
+from typing import cast
 from urllib.request import Request
 
 import pytest
 
-from google_work_agent.adapters.llm.api_provider import ApiStructuredLLMProvider
-from google_work_agent.adapters.llm.gemini import GeminiHTTPClient
-from google_work_agent.ports import OutputSchemaDefinition, PromptReference, RuntimePolicy
+from google_work_agent.adapters.llm.gemini.structured_inference import (
+    GeminiStructuredInferenceAdapter,
+)
+from google_work_agent.adapters.llm.gemini.transport import GeminiHTTPClient
+from google_work_agent.ports.llm.structured_inference_contracts import (
+    OutputSchemaDefinition,
+    PromptReference,
+    RuntimePolicy,
+)
 
 
 class _HTTPResponse:
@@ -31,6 +38,11 @@ class _HTTPResponse:
 
     def read(self) -> bytes:
         return self._body
+
+
+def _request_body(request: Request) -> dict[str, object]:
+    assert isinstance(request.data, bytes)
+    return cast(dict[str, object], json.loads(request.data.decode("utf-8")))
 
 
 def _prompt_ref() -> PromptReference:
@@ -60,7 +72,7 @@ def _fake_response() -> bytes:
     ).encode("utf-8")
 
 
-def test_invoke_structured_omits_temperature_when_sampling_is_unset(
+def test_invoke_structured__omits_temperature_when__sampling_is_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Production dispatch (sampling_temperature None) must produce the
@@ -72,7 +84,7 @@ def test_invoke_structured_omits_temperature_when_sampling_is_unset(
         captured.append(request)
         return _HTTPResponse(_fake_response())
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.transport.urlopen", fake_urlopen)
 
     GeminiHTTPClient().invoke_structured(
         model_id="gemini-flash-latest",
@@ -84,11 +96,11 @@ def test_invoke_structured_omits_temperature_when_sampling_is_unset(
         instruction_text="You are a test assistant.",
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["generationConfig"] == {"responseMimeType": "application/json"}
 
 
-def test_invoke_structured_sends_fixed_temperature_when_set(
+def test_invoke_structured__sends_fixed__temperature_when_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[Request] = []
@@ -98,7 +110,7 @@ def test_invoke_structured_sends_fixed_temperature_when_set(
         captured.append(request)
         return _HTTPResponse(_fake_response())
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.transport.urlopen", fake_urlopen)
 
     GeminiHTTPClient().invoke_structured(
         model_id="gemini-flash-latest",
@@ -111,7 +123,7 @@ def test_invoke_structured_sends_fixed_temperature_when_set(
         sampling_temperature=0.0,
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["generationConfig"] == {
         "responseMimeType": "application/json",
         "temperature": 0.0,
@@ -119,7 +131,7 @@ def test_invoke_structured_sends_fixed_temperature_when_set(
     assert "seed" not in sent_body["generationConfig"]
 
 
-def test_gemini_transport_never_accepts_a_seed_argument(
+def test_gemini_transport__never_accepts__a_seed_argument(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GeminiHTTPClient.invoke_structured has no sampling_seed parameter at
@@ -130,7 +142,7 @@ def test_gemini_transport_never_accepts_a_seed_argument(
     assert "sampling_seed" not in signature.parameters
 
 
-def test_provider_forwards_temperature_but_never_seed_to_gemini_transport(
+def test_provider_forwards_temperature__but_never_seed__to_gemini_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[Request] = []
@@ -140,9 +152,9 @@ def test_provider_forwards_temperature_but_never_seed_to_gemini_transport(
         captured.append(request)
         return _HTTPResponse(_fake_response())
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.transport.urlopen", fake_urlopen)
 
-    provider = ApiStructuredLLMProvider(
+    provider = GeminiStructuredInferenceAdapter(
         provider_name="gemini",
         transport=GeminiHTTPClient(),
         model="gemini-flash-latest",
@@ -156,17 +168,18 @@ def test_provider_forwards_temperature_but_never_seed_to_gemini_transport(
         api_key="test-key",
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
-    assert sent_body["generationConfig"]["temperature"] == 0.0
-    assert "seed" not in sent_body["generationConfig"]
+    sent_body = _request_body(captured[0])
+    generation_config = cast(dict[str, object], sent_body["generationConfig"])
+    assert generation_config["temperature"] == 0.0
+    assert "seed" not in generation_config
     assert "seed" not in sent_body
 
 
-def test_provider_omits_temperature_when_runtime_policy_leaves_sampling_unset(
+def test_provider_omits_temperature__when_runtime_policy__leaves_sampling_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Pins the production path: a bare ``RuntimePolicy()`` (what
-    launcher/dev.py always constructs) must never add a temperature key."""
+    api/composition.py always constructs) must never add a temperature key."""
     captured: list[Request] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -174,9 +187,9 @@ def test_provider_omits_temperature_when_runtime_policy_leaves_sampling_unset(
         captured.append(request)
         return _HTTPResponse(_fake_response())
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.gemini.transport.urlopen", fake_urlopen)
 
-    provider = ApiStructuredLLMProvider(
+    provider = GeminiStructuredInferenceAdapter(
         provider_name="gemini",
         transport=GeminiHTTPClient(),
         model="gemini-flash-latest",
@@ -190,5 +203,5 @@ def test_provider_omits_temperature_when_runtime_policy_leaves_sampling_unset(
         api_key="test-key",
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["generationConfig"] == {"responseMimeType": "application/json"}

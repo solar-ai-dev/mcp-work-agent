@@ -1,0 +1,1 @@
+"""Canonical LangGraph profile contracts."""

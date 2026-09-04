@@ -1,0 +1,164 @@
+"""Canonical application use case for entering Run analysis."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from json import dumps, loads
+
+from google_work_agent.domain.audit_event.model import AuditEvent as AuditEventRecord
+from google_work_agent.domain.command_receipt.model import CommandReceipt as CommandReceiptRecord
+from google_work_agent.domain.command_receipt.model import CommandReceiptStatus
+from google_work_agent.domain.results import ResultCode
+from google_work_agent.domain.run.model import (
+    RunStatusV1,
+    RunTransitionRejected,
+    next_allowed_run_commands,
+)
+from google_work_agent.domain.run.transitions.start_analysis import transition_start_analysis
+from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
+
+
+@dataclass(frozen=True, slots=True)
+class StartAnalysisCommand:
+    run_id: str
+    expected_version: int
+    command_id: str
+    request_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class StartAnalysisResult:
+    applied: bool
+    result_code: str
+    current_status: str
+    current_version: int
+    next_allowed_commands: tuple[str, ...]
+    conflict_detail: str | None = None
+
+
+class StartAnalysisHandler:
+    def __init__(
+        self, *, unit_of_work_factory: Callable[[], UnitOfWork], now_ms: Callable[[], int]
+    ) -> None:
+        self._unit_of_work_factory = unit_of_work_factory
+        self._now_ms = now_ms
+
+    def __call__(self, command: StartAnalysisCommand) -> StartAnalysisResult:
+        with self._unit_of_work_factory() as unit_of_work:
+            existing = unit_of_work.command_receipts.get_by_command_id(command.command_id)
+            if existing is not None:
+                return self._replay(unit_of_work, command, existing)
+            run = unit_of_work.runs.get(command.run_id)
+            if run is None:
+                raise LookupError(f"run not found: {command.run_id}")
+            now_ms = self._now_ms()
+            unit_of_work.command_receipts.reserve_or_replay(
+                command_id=command.command_id,
+                command_type="StartAnalysis",
+                request_hash=command.request_hash,
+                aggregate_type="Run",
+                aggregate_id=command.run_id,
+                created_at_ms=now_ms,
+            )
+            result = self._apply(unit_of_work, command, run.status, run.version)
+            if result.applied:
+                unit_of_work.audits.append(_audit(command.run_id, command.command_id, now_ms))
+            _finish_receipt(unit_of_work, command.command_id, result, now_ms)
+            unit_of_work.commit()
+            return result
+
+    @staticmethod
+    def _apply(
+        unit_of_work: UnitOfWork, command: StartAnalysisCommand, status: RunStatusV1, version: int
+    ) -> StartAnalysisResult:
+        if version != command.expected_version:
+            return _result(False, ResultCode.VERSION_CONFLICT, status, version, "version mismatch")
+        try:
+            next_status = transition_start_analysis(status)
+        except RunTransitionRejected as error:
+            return _result(False, ResultCode.STATE_CONFLICT, status, version, str(error))
+        applied = unit_of_work.runs.update_if_version_and_status(
+            command.run_id,
+            command.expected_version,
+            frozenset({status}),
+            {"status": next_status.value, "version": version + 1, "finished_at_ms": None},
+        )
+        if not applied:
+            current = unit_of_work.runs.get(command.run_id)
+            if current is None:
+                raise LookupError(f"run not found: {command.run_id}")
+            return _result(
+                False,
+                ResultCode.VERSION_CONFLICT,
+                current.status,
+                current.version,
+                "compare-and-set rejected the transition",
+            )
+        return _result(True, ResultCode.TRANSITION_APPLIED, next_status, version + 1)
+
+    @staticmethod
+    def _replay(
+        unit_of_work: UnitOfWork,
+        command: StartAnalysisCommand,
+        receipt: CommandReceiptRecord,
+    ) -> StartAnalysisResult:
+        if receipt.request_hash != command.request_hash:
+            run = unit_of_work.runs.get(command.run_id)
+            return _result(
+                False,
+                ResultCode.DUPLICATE_COMMAND,
+                RunStatusV1.CREATED if run is None else run.status,
+                0 if run is None else run.version,
+                "command_id already exists with a different request_hash",
+            )
+        if receipt.status is CommandReceiptStatus.RECEIVED or receipt.response_json is None:
+            raise RuntimeError("RECEIVED receipt requires transaction recovery before replay")
+        payload = loads(receipt.response_json)
+        payload["next_allowed_commands"] = tuple(payload.get("next_allowed_commands", ()))
+        return StartAnalysisResult(**payload)
+
+
+def _result(
+    applied: bool,
+    result_code: ResultCode,
+    status: RunStatusV1,
+    version: int,
+    conflict_detail: str | None = None,
+) -> StartAnalysisResult:
+    return StartAnalysisResult(
+        applied=applied,
+        result_code=result_code.value,
+        current_status=status.value,
+        current_version=version,
+        next_allowed_commands=tuple(command.value for command in next_allowed_run_commands(status)),
+        conflict_detail=conflict_detail,
+    )
+
+
+def _audit(run_id: str, command_id: str, now_ms: int) -> AuditEventRecord:
+    return AuditEventRecord(
+        account_id=None,
+        run_id=run_id,
+        action_id=None,
+        actor_type="SYSTEM",
+        actor_id="run_lifecycle",
+        actor_display="Run lifecycle",
+        event_type="RUN_ANALYSIS_STARTED",
+        outcome=ResultCode.TRANSITION_APPLIED.value,
+        metadata_json=dumps({"command_id": command_id}, sort_keys=True),
+        created_at_ms=now_ms,
+    )
+
+
+def _finish_receipt(
+    unit_of_work: UnitOfWork, command_id: str, result: StartAnalysisResult, now_ms: int
+) -> None:
+    unit_of_work.command_receipts.store_result(
+        command_id=command_id,
+        applied=result.applied,
+        result_code=ResultCode(result.result_code),
+        result_version=result.current_version,
+        response_json=dumps(asdict(result), sort_keys=True),
+        completed_at_ms=now_ms,
+    )

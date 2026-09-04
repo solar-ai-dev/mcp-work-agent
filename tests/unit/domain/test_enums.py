@@ -1,19 +1,19 @@
-from google_work_agent.domain import (
-    ActionStatus,
+from google_work_agent.domain.action.model import (
+    ActionStatusV1,
     ApprovalRequirement,
-    ApprovalStatus,
     EffectType,
-    ExecutionAttemptStatus,
     RecoveryPolicy,
-    ResultCode,
-    RunStatus,
     VerificationPolicy,
-    VerificationStatus,
 )
+from google_work_agent.domain.approval.model import ApprovalStatusV1
+from google_work_agent.domain.execution_attempt.model import ExecutionAttemptStatusV1
+from google_work_agent.domain.results import ResultCode
+from google_work_agent.domain.run.model import RunStatusV1
+from google_work_agent.domain.verification.model import VerificationStatus
 
 
-def test_run_status_values_match_sql() -> None:
-    assert tuple(status.value for status in RunStatus) == (
+def test_run_status__values_match__sql() -> None:
+    assert tuple(status.value for status in RunStatusV1) == (
         "CREATED",
         "ANALYZING",
         "RETRIEVING",
@@ -32,8 +32,8 @@ def test_run_status_values_match_sql() -> None:
     )
 
 
-def test_action_status_values_match_sql() -> None:
-    assert tuple(status.value for status in ActionStatus) == (
+def test_action_status__values_match__sql() -> None:
+    assert tuple(status.value for status in ActionStatusV1) == (
         "PROPOSED",
         "MODIFIED",
         "APPROVED",
@@ -51,15 +51,15 @@ def test_action_status_values_match_sql() -> None:
     )
 
 
-def test_other_enum_values_match_contract() -> None:
-    assert tuple(status.value for status in ApprovalStatus) == (
+def test_other_enum__values_match__contract() -> None:
+    assert tuple(status.value for status in ApprovalStatusV1) == (
         "ACTIVE",
         "EXPIRED",
         "CONSUMED",
         "REVOKED",
     )
     assert tuple(requirement.value for requirement in ApprovalRequirement) == ("NONE", "REQUIRED")
-    assert tuple(status.value for status in ExecutionAttemptStatus) == (
+    assert tuple(status.value for status in ExecutionAttemptStatusV1) == (
         "CLAIMED",
         "EXECUTING",
         "UNKNOWN_RESULT",
@@ -69,8 +69,6 @@ def test_other_enum_values_match_contract() -> None:
     assert tuple(status.value for status in VerificationStatus) == (
         "VERIFIED",
         "MISMATCH",
-        "NOT_FOUND",
-        "ERROR",
     )
     assert tuple(policy.value for policy in VerificationPolicy) == (
         "NONE",
@@ -98,14 +96,16 @@ def test_other_enum_values_match_contract() -> None:
         "DUPLICATE_COMMAND",
         "RECOVERY_REQUIRED",
         "SCHEMA_VIOLATION",
+        "NO_PROGRESS",
+        "RESOLUTION_NOT_ALLOWED",
     )
 
 
-def test_effect_type_includes_send_and_delete() -> None:
+def test_effect_type__includes_send__and_delete() -> None:
     assert {"SEND", "DELETE"} <= {effect.value for effect in EffectType}
 
 
-def test_status_values_are_unique() -> None:
-    for enum_type in (RunStatus, ActionStatus):
+def test_status_values__are__unique() -> None:
+    for enum_type in (RunStatusV1, ActionStatusV1):
         values = [status.value for status in enum_type]
         assert len(values) == len(set(values))

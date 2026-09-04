@@ -5,24 +5,26 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from google_work_agent.api.security.content_type import is_allowed_json_content_type
+from google_work_agent.api.dependencies.local_session import validate_local_session
+from google_work_agent.api.security.content_type import is_allowed_mutation_content_type
 from google_work_agent.api.security.fetch_metadata import (
     validate_fetch_metadata,
     validate_mutation_fetch_metadata,
 )
 from google_work_agent.api.security.origin import is_exact_origin_match
-from google_work_agent.application.observability import (
-    EventCategory,
-    ObservabilityContext,
-    Severity,
-    append_operational_log,
-    create_event_envelope,
-)
-from google_work_agent.ports import (
+from google_work_agent.ports.system.api_access_port import (
     AccessDecision,
     ApiRequestContext,
     EndpointPolicy,
+)
+from google_work_agent.ports.system.contracts.observability import (
+    EventCategory,
+    ObservabilityContext,
+    OperationalLogRecord,
     OperationalLogSink,
+    Severity,
+    create_event_envelope,
+    serialize_event_envelope,
 )
 
 from .sessions import LocalSessionManager
@@ -78,7 +80,12 @@ class LocalApiAccessGuard:
                 result_code=decision.error_code,
                 status="DENIED",
             )
-            append_operational_log(self.operational_log_sink, envelope=envelope)
+            self.operational_log_sink.append(
+                OperationalLogRecord(
+                    event_json=serialize_event_envelope(envelope),
+                    occurred_at_ms=envelope.occurred_at_ms,
+                )
+            )
         return decision
 
     def _authorize(
@@ -111,7 +118,10 @@ class LocalApiAccessGuard:
                 destination=request_context.sec_fetch_dest,
             ):
                 return _deny(403, "REQUEST_FORGERY_BLOCKED", "FETCH_METADATA_INVALID")
-            if not is_allowed_json_content_type(request_context.content_type):
+            if not is_allowed_mutation_content_type(
+                content_type=request_context.content_type,
+                path=request_context.path,
+            ):
                 return _deny(415, "INVALID_ARGUMENT", "CONTENT_TYPE_INVALID")
         else:
             if request_context.origin is not None and not is_exact_origin_match(
@@ -128,12 +138,18 @@ class LocalApiAccessGuard:
             ):
                 return _deny(403, "REQUEST_FORGERY_BLOCKED", "FETCH_METADATA_INVALID")
         if endpoint_policy is EndpointPolicy.API_SESSION_REQUIRED:
-            is_valid_session = self.session_manager.validate(
+            session = validate_local_session(
+                session_manager=self.session_manager,
                 token=request_context.session_token,
                 service_instance_id=self.service_instance_id,
+                now_ms=self.now_ms(),
             )
-            if not is_valid_session:
+            if not session.valid:
                 return _deny(401, "LOCAL_SESSION_INVALID", "LOCAL_SESSION_REQUIRED")
+            if not session.compatible and (
+                method in _MUTATION_METHODS or request_context.path.endswith("/events")
+            ):
+                return _deny(409, "VERSION_CONFLICT", "API_CONTRACT_INCOMPATIBLE")
         return AccessDecision(allowed=True)
 
 

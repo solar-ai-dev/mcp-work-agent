@@ -5,40 +5,50 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
+from tests.support.claim_context import sign_claim_context
 
-from google_work_agent.mcp import server
-from google_work_agent.mcp.settings import GoogleOAuthSettings
+from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
+    credential_provider as server,
+)
+from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
+    entrypoint as verified_server,
+)
+from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    GoogleOAuthSettings,
+)
+from google_work_agent.domain.canonical import calculate_canonical_json_hash
 
 SESSION_KEY = "22" * 32
 SERVICE_INSTANCE_ID = "svc-recovery-1"
 
 
-def _state() -> server._WorkspaceState:
-    state = server._WorkspaceState(keyring=_MemorySecretStore())
+def _state() -> server.GoogleWorkspaceCredentialProvider:
+    state = server.GoogleWorkspaceCredentialProvider(keyring=_MemorySecretStorePort())
     state.oauth_settings = GoogleOAuthSettings(
         google_oauth_client_id="desktop-client",
-        google_oauth_client_secret="compatibility-client-secret",
     )
     state.session_key = SESSION_KEY
     state.service_instance_id = SERVICE_INSTANCE_ID
     return state
 
 
-class _MemorySecretStore:
-    def set_secret(self, *, service: str, account: str, secret: str) -> None:
-        del service, account, secret
+class _MemorySecretStorePort:
+    def put(self, key: str, secret_bytes: bytes) -> None:
+        del key, secret_bytes
 
-    def get_secret(self, *, service: str, account: str) -> str | None:
-        del service, account
+    def get(self, key: str) -> bytes | None:
+        del key
         return None
 
-    def delete_secret(self, *, service: str, account: str) -> bool:
-        del service, account
-        return True
+    def delete(self, key: str) -> None:
+        del key
 
 
 def _build_claim(
-    *, state: server._WorkspaceState, tool_name: str, execution_arguments: dict[str, object]
+    *,
+    state: server.GoogleWorkspaceCredentialProvider,
+    tool_name: str,
+    execution_arguments: dict[str, object],
 ) -> dict[str, object]:
     issued_at_ms = server._now_ms()
     claim: dict[str, object] = {
@@ -47,15 +57,17 @@ def _build_claim(
         "approval_id": "approval-1",
         "execution_attempt_id": "attempt-1",
         "tool_name": tool_name,
-        "approval_arguments_hash": server._canonical_json_hash(execution_arguments),
-        "execution_arguments_hash": server._canonical_json_hash(execution_arguments),
+        "approval_arguments_hash": calculate_canonical_json_hash(execution_arguments),
+        "execution_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "service_instance_id": state.service_instance_id,
         "mcp_process_instance_id": state.process_instance_id,
         "issued_at_ms": issued_at_ms,
         "expires_at_ms": issued_at_ms + 30_000,
         "nonce": "nonce-recovery-1",
     }
-    claim["signature"] = server._sign_claim_context(state.session_key, claim)
+    session_key = state.session_key
+    assert session_key is not None
+    claim["signature"] = sign_claim_context(session_key, claim)
     return claim
 
 
@@ -64,11 +76,13 @@ def _build_claim(
 # --------------------------------------------------------------------------
 
 
-def test_gmail_create_draft_embeds_recovery_marker_in_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_create__draft_embeds_recovery__marker_in_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -90,7 +104,7 @@ def test_gmail_create_draft_embeds_recovery_marker_in_body(monkeypatch) -> None:
         state=state, tool_name="gmail_create_draft", execution_arguments={"payload": payload}
     )
 
-    server._tool_call(
+    verified_server._tool_call(
         state,
         tool_name="gmail_create_draft",
         arguments={"payload": payload, "claim_context": claim},
@@ -102,11 +116,11 @@ def test_gmail_create_draft_embeds_recovery_marker_in_body(monkeypatch) -> None:
     assert server._recovery_marker("fp-create-1").encode("utf-8") in raw_bytes
 
 
-def test_gmail_update_draft_never_embeds_a_marker(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_update__draft_never__embeds_a_marker(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -125,7 +139,7 @@ def test_gmail_update_draft_never_embeds_a_marker(monkeypatch) -> None:  # type:
         execution_arguments={"draft_id": "draft-1", "payload": payload},
     )
 
-    server._tool_call(
+    verified_server._tool_call(
         state,
         tool_name="gmail_update_draft",
         arguments={"draft_id": "draft-1", "payload": payload, "claim_context": claim},
@@ -137,11 +151,13 @@ def test_gmail_update_draft_never_embeds_a_marker(monkeypatch) -> None:  # type:
     assert server.RECOVERY_MARKER_PREFIX.encode("utf-8") not in raw_bytes
 
 
-def test_tasks_create_task_embeds_recovery_marker_in_notes(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_create__task_embeds_recovery__marker_in_notes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -164,7 +180,7 @@ def test_tasks_create_task_embeds_recovery_marker_in_notes(monkeypatch) -> None:
         execution_arguments={"task_list_id": "list-1", "payload": payload},
     )
 
-    server._tool_call(
+    verified_server._tool_call(
         state,
         tool_name="tasks_create_task",
         arguments={"task_list_id": "list-1", "payload": payload, "claim_context": claim},
@@ -176,11 +192,13 @@ def test_tasks_create_task_embeds_recovery_marker_in_notes(monkeypatch) -> None:
     assert server._recovery_marker("fp-task-1") in notes
 
 
-def test_calendar_create_event_embeds_recovery_marker_in_description(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_calendar_create__event_embeds_recovery__marker_in_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -204,7 +222,7 @@ def test_calendar_create_event_embeds_recovery_marker_in_description(monkeypatch
         execution_arguments={"calendar_id": "primary", "payload": payload},
     )
 
-    server._tool_call(
+    verified_server._tool_call(
         state,
         tool_name="calendar_create_event",
         arguments={"calendar_id": "primary", "payload": payload, "claim_context": claim},
@@ -214,7 +232,9 @@ def test_calendar_create_event_embeds_recovery_marker_in_description(monkeypatch
     assert server._recovery_marker("fp-event-1") in cast(str, body["description"])
 
 
-def test_gmail_send_rewrites_draft_with_marker_before_sending(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_send__rewrites_draft_with__marker_before_sending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, str]] = []
     original_mime = server.EmailMessage()
     original_mime["To"] = "a@example.com"
@@ -223,7 +243,7 @@ def test_gmail_send_rewrites_draft_with_marker_before_sending(monkeypatch) -> No
     encoded_raw = server._b64url_encode(original_mime.as_bytes())
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -241,7 +261,7 @@ def test_gmail_send_rewrites_draft_with_marker_before_sending(monkeypatch) -> No
         return {"id": "draft-1", "message": {"id": "msg-1"}}
 
     def google_api_post(
-        _state: server._WorkspaceState, url: str, body: dict[str, object]
+        _state: server.GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object]
     ) -> dict[str, object]:
         calls.append(("POST", url))
         assert body == {"id": "draft-1"}
@@ -256,7 +276,7 @@ def test_gmail_send_rewrites_draft_with_marker_before_sending(monkeypatch) -> No
         execution_arguments={"draft_id": "draft-1", "recovery_fingerprint": "fp-send-1"},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="gmail_send",
         arguments={
@@ -270,12 +290,14 @@ def test_gmail_send_rewrites_draft_with_marker_before_sending(monkeypatch) -> No
     assert [call[0] for call in calls] == ["GET", "PUT", "POST"]
 
 
-def test_gmail_send_without_fingerprint_never_touches_the_draft(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_send__without_fingerprint_never__touches_the_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fail_on_any_call(*_args: object, **_kwargs: object) -> dict[str, object]:
         pytest.fail("draft must not be re-read or rewritten when no fingerprint is supplied")
 
     def google_api_post(
-        _state: server._WorkspaceState, url: str, body: dict[str, object]
+        _state: server.GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object]
     ) -> dict[str, object]:
         assert body == {"id": "draft-1"}
         return {"id": "msg-sent-1", "threadId": "thread-1"}
@@ -289,7 +311,7 @@ def test_gmail_send_without_fingerprint_never_touches_the_draft(monkeypatch) -> 
         execution_arguments={"draft_id": "draft-1", "recovery_fingerprint": None},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="gmail_send",
         arguments={"draft_id": "draft-1", "recovery_fingerprint": None, "claim_context": claim},
@@ -303,7 +325,9 @@ def test_gmail_send_without_fingerprint_never_touches_the_draft(monkeypatch) -> 
 # --------------------------------------------------------------------------
 
 
-def test_search_gmail_draft_returns_full_snapshot_for_a_single_match(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_search_gmail_draft__returns_full_snapshot__for_a_single_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses = [
         {"drafts": [{"id": "draft-1"}]},
         {
@@ -317,12 +341,14 @@ def test_search_gmail_draft_returns_full_snapshot_for_a_single_match(monkeypatch
     ]
 
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         return cast(dict[str, object], responses.pop(0))
 
     monkeypatch.setattr(server, "_google_api", google_api)
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
         arguments={"resource_type": "gmail_draft", "recovery_fingerprint": "fp-1"},
@@ -332,9 +358,11 @@ def test_search_gmail_draft_returns_full_snapshot_for_a_single_match(monkeypatch
     assert items[0]["resource_id"] == "draft-1"
 
 
-def test_search_gmail_draft_returns_no_candidates_when_zero_matches(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_search_gmail_draft__returns_no_candidates__when_zero_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api", lambda *a, **k: {"drafts": []})
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
         arguments={"resource_type": "gmail_draft", "recovery_fingerprint": "fp-missing"},
@@ -342,11 +370,13 @@ def test_search_gmail_draft_returns_no_candidates_when_zero_matches(monkeypatch)
     assert result["items"] == []
 
 
-def test_search_gmail_draft_returns_all_candidates_when_ambiguous(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_search_gmail__draft_returns_all__candidates_when_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         server, "_google_api", lambda *a, **k: {"drafts": [{"id": "d1"}, {"id": "d2"}]}
     )
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
         arguments={"resource_type": "gmail_draft", "recovery_fingerprint": "fp-dup"},
@@ -355,7 +385,9 @@ def test_search_gmail_draft_returns_all_candidates_when_ambiguous(monkeypatch) -
     assert {item["resource_id"] for item in items} == {"d1", "d2"}
 
 
-def test_search_gmail_message_returns_full_snapshot_for_a_single_match(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_search_gmail_message__returns_full_snapshot__for_a_single_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses = [
         {"messages": [{"id": "msg-1"}]},
         {
@@ -367,12 +399,14 @@ def test_search_gmail_message_returns_full_snapshot_for_a_single_match(monkeypat
     ]
 
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         return cast(dict[str, object], responses.pop(0))
 
     monkeypatch.setattr(server, "_google_api", google_api)
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
         arguments={"resource_type": "gmail_message", "recovery_fingerprint": "fp-send-1"},
@@ -382,9 +416,11 @@ def test_search_gmail_message_returns_full_snapshot_for_a_single_match(monkeypat
     assert items[0]["payload"] == {"subject": "Sent", "sent": True}
 
 
-def test_search_tasks_scans_all_task_lists_and_filters_by_marker(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_search_tasks_scans__all_task_lists__and_filters_by_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     marker = server._recovery_marker("fp-task-1")
-    responses = {
+    responses: dict[str, dict[str, object]] = {
         "https://tasks.googleapis.com/tasks/v1/users/@me/lists": {
             "items": [{"id": "list-1"}, {"id": "list-2"}]
         },
@@ -398,12 +434,14 @@ def test_search_tasks_scans_all_task_lists_and_filters_by_marker(monkeypatch) ->
     }
 
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         return responses[url]
 
     monkeypatch.setattr(server, "_google_api", google_api)
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
         arguments={"resource_type": "task", "recovery_fingerprint": "fp-task-1"},
@@ -414,8 +452,10 @@ def test_search_tasks_scans_all_task_lists_and_filters_by_marker(monkeypatch) ->
     assert items[0]["parent_id"] == "list-1"
 
 
-def test_search_calendar_events_scans_all_calendars_with_query(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    responses = {
+def test_search_calendar__events_scans_all__calendars_with_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses: dict[str, dict[str, object]] = {
         "https://www.googleapis.com/calendar/v3/users/me/calendarList": {
             "items": [{"id": "primary"}, {"id": "team"}]
         },
@@ -426,14 +466,16 @@ def test_search_calendar_events_scans_all_calendars_with_query(monkeypatch) -> N
     }
 
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         if url.endswith("/events"):
             assert params is not None and "q" in params
         return responses[url]
 
     monkeypatch.setattr(server, "_google_api", google_api)
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
         arguments={"resource_type": "calendar_event", "recovery_fingerprint": "fp-event-1"},
@@ -444,10 +486,12 @@ def test_search_calendar_events_scans_all_calendars_with_query(monkeypatch) -> N
     assert items[0]["parent_id"] == "primary"
 
 
-def test_search_by_recovery_fingerprint_rejects_unknown_resource_type(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_search_by__recovery_fingerprint_rejects__unknown_resource_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api", lambda *a, **k: pytest.fail("must not call Google"))
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             _state(),
             tool_name="search_by_recovery_fingerprint",
             arguments={"resource_type": "task_list", "recovery_fingerprint": "fp-1"},

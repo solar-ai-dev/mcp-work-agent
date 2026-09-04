@@ -7,44 +7,57 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from tests.support.claim_context import sign_claim_context
 
-from google_work_agent.adapters.runtime.attachment_staging import (
-    AttachmentDescriptor,
-    LocalAttachmentStaging,
+from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
+    credential_provider as server,
 )
-from google_work_agent.mcp import server
-from google_work_agent.mcp.settings import GoogleOAuthSettings
+from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
+    entrypoint as verified_server,
+)
+from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    GoogleOAuthSettings,
+)
+from google_work_agent.adapters.system.filesystem_attachment_staging import (
+    FilesystemAttachmentStagingAdapter,
+)
+from google_work_agent.domain.canonical import calculate_canonical_json_hash
+from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.system.attachment_staging_port import (
+    StagedAttachmentDescriptorV1,
+)
 
 SESSION_KEY = "33" * 32
 SERVICE_INSTANCE_ID = "svc-attachment-1"
 
 
-def _state() -> server._WorkspaceState:
-    state = server._WorkspaceState(keyring=_MemorySecretStore())
+def _state() -> server.GoogleWorkspaceCredentialProvider:
+    state = server.GoogleWorkspaceCredentialProvider(keyring=_MemorySecretStorePort())
     state.oauth_settings = GoogleOAuthSettings(
         google_oauth_client_id="desktop-client",
-        google_oauth_client_secret="compatibility-client-secret",
     )
     state.session_key = SESSION_KEY
     state.service_instance_id = SERVICE_INSTANCE_ID
     return state
 
 
-class _MemorySecretStore:
-    def set_secret(self, *, service: str, account: str, secret: str) -> None:
-        del service, account, secret
+class _MemorySecretStorePort:
+    def put(self, key: str, secret_bytes: bytes) -> None:
+        del key, secret_bytes
 
-    def get_secret(self, *, service: str, account: str) -> str | None:
-        del service, account
+    def get(self, key: str) -> bytes | None:
+        del key
         return None
 
-    def delete_secret(self, *, service: str, account: str) -> bool:
-        del service, account
-        return True
+    def delete(self, key: str) -> None:
+        del key
 
 
 def _build_claim(
-    *, state: server._WorkspaceState, tool_name: str, execution_arguments: dict[str, object]
+    *,
+    state: server.GoogleWorkspaceCredentialProvider,
+    tool_name: str,
+    execution_arguments: dict[str, object],
 ) -> dict[str, object]:
     issued_at_ms = server._now_ms()
     claim: dict[str, object] = {
@@ -53,15 +66,16 @@ def _build_claim(
         "approval_id": "approval-1",
         "execution_attempt_id": "attempt-1",
         "tool_name": tool_name,
-        "approval_arguments_hash": server._canonical_json_hash(execution_arguments),
-        "execution_arguments_hash": server._canonical_json_hash(execution_arguments),
+        "approval_arguments_hash": calculate_canonical_json_hash(execution_arguments),
+        "execution_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "service_instance_id": state.service_instance_id,
         "mcp_process_instance_id": state.process_instance_id,
         "issued_at_ms": issued_at_ms,
         "expires_at_ms": issued_at_ms + 30_000,
         "nonce": "nonce-attachment-1",
     }
-    claim["signature"] = server._sign_claim_context(state.session_key, claim)
+    assert state.session_key is not None
+    claim["signature"] = sign_claim_context(state.session_key, claim)
     return claim
 
 
@@ -74,17 +88,21 @@ def _reject_google_calls(*_args: object, **_kwargs: object) -> dict[str, object]
 # --------------------------------------------------------------------------
 
 
-def test_gmail_get_attachment_returns_bytes_and_hash(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_get__attachment_returns__bytes_and_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     raw = b"file content bytes"
 
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         assert "messages/msg-1/attachments/att-1" in url
         return {"size": len(raw), "data": server._b64url_encode(raw)}
 
     monkeypatch.setattr(server, "_google_api", google_api)
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="gmail_get_attachment",
         arguments={"message_id": "msg-1", "attachment_id": "att-1"},
@@ -95,17 +113,21 @@ def test_gmail_get_attachment_returns_bytes_and_hash(monkeypatch) -> None:  # ty
     assert server._b64url_decode(cast(str, result["data_base64url"])) == raw
 
 
-def test_gmail_get_attachment_rejects_oversized_payload(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_get__attachment_rejects__oversized_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     oversized = b"x" * (server.MAX_ATTACHMENT_READ_BYTES + 1)
 
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         return {"size": len(oversized), "data": server._b64url_encode(oversized)}
 
     monkeypatch.setattr(server, "_google_api", google_api)
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             _state(),
             tool_name="gmail_get_attachment",
             arguments={"message_id": "msg-1", "attachment_id": "att-1"},
@@ -113,7 +135,9 @@ def test_gmail_get_attachment_rejects_oversized_payload(monkeypatch) -> None:  #
     assert exc_info.value.safe_code == "ATTACHMENT_TOO_LARGE"
 
 
-def test_gmail_get_attachment_never_leaves_the_read_tool_boundary(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_get_attachment__never_leaves_the__read_tool_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The attachment READ tool itself performs no claim/persistence/trace side
     effects -- it is a pure request/response mapping, matching the contract
     that only the calling FastAPI route (not this process) streams bytes to
@@ -125,7 +149,7 @@ def test_gmail_get_attachment_never_leaves_the_read_tool_boundary(monkeypatch) -
         "_google_api",
         lambda *a, **k: {"size": len(raw), "data": server._b64url_encode(raw)},
     )
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(),
         tool_name="gmail_get_attachment",
         arguments={"message_id": "msg-1", "attachment_id": "att-1"},
@@ -139,23 +163,26 @@ def test_gmail_get_attachment_never_leaves_the_read_tool_boundary(monkeypatch) -
 
 
 @pytest.fixture
-def staging(tmp_path: Path, monkeypatch) -> LocalAttachmentStaging:  # type: ignore[no-untyped-def]
+def staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FilesystemAttachmentStagingAdapter:
     staging_dir = tmp_path / "attachments"
     monkeypatch.setenv(server.ATTACHMENT_STAGING_DIR_ENV, str(staging_dir))
-    return LocalAttachmentStaging(staging_dir=staging_dir)
+    return FilesystemAttachmentStagingAdapter(staging_dir=staging_dir)
 
 
-def test_gmail_create_draft_embeds_a_verified_staged_attachment(
-    monkeypatch,
-    staging: LocalAttachmentStaging,  # type: ignore[no-untyped-def]
+def test_gmail_create__draft_embeds_a__verified_staged_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+    staging: FilesystemAttachmentStagingAdapter,
 ) -> None:
     descriptor = staging.stage(
-        data=b"report bytes", filename="report.pdf", mime_type="application/pdf"
+        operation_ref="stage-report",
+        file_bytes=b"report bytes",
+        filename="report.pdf",
+        mime_type="application/pdf",
     )
     captured: dict[str, object] = {}
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -177,7 +204,7 @@ def test_gmail_create_draft_embeds_a_verified_staged_attachment(
         state=state, tool_name="gmail_create_draft", execution_arguments={"payload": payload}
     )
 
-    server._tool_call(
+    verified_server._tool_call(
         state,
         tool_name="gmail_create_draft",
         arguments={"payload": payload, "claim_context": claim},
@@ -191,18 +218,20 @@ def test_gmail_create_draft_embeds_a_verified_staged_attachment(
     assert b"application/pdf" in raw_bytes
 
 
-def test_gmail_create_draft_rejects_missing_staged_attachment(
-    monkeypatch,
-    staging: LocalAttachmentStaging,  # type: ignore[no-untyped-def]
+def test_gmail_create__draft_rejects__missing_staged_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+    staging: FilesystemAttachmentStagingAdapter,
 ) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
-    fake_descriptor = AttachmentDescriptor(
+    fake_descriptor = StagedAttachmentDescriptorV1(
+        schema_version=1,
         staged_attachment_id="never-staged",
         filename="a.txt",
         mime_type="text/plain",
         size_bytes=1,
         sha256="0" * 64,
+        expires_at_ms=server._now_ms() + 30_000,
     )
     payload: dict[str, object] = {
         "to": ["a@example.com"],
@@ -215,28 +244,35 @@ def test_gmail_create_draft_rejects_missing_staged_attachment(
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "ATTACHMENT_STAGING_MISSING"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_gmail_create_draft_rejects_hash_mismatched_staged_attachment(
-    monkeypatch,
-    staging: LocalAttachmentStaging,  # type: ignore[no-untyped-def]
+def test_gmail_create__draft_rejects_hash__mismatched_staged_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+    staging: FilesystemAttachmentStagingAdapter,
 ) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
-    real_descriptor = staging.stage(data=b"real bytes", filename="a.txt", mime_type="text/plain")
-    tampered_descriptor = AttachmentDescriptor(
+    real_descriptor = staging.stage(
+        operation_ref="stage-real",
+        file_bytes=b"real bytes",
+        filename="a.txt",
+        mime_type="text/plain",
+    )
+    tampered_descriptor = StagedAttachmentDescriptorV1(
+        schema_version=1,
         staged_attachment_id=real_descriptor.staged_attachment_id,
         filename=real_descriptor.filename,
         mime_type=real_descriptor.mime_type,
         size_bytes=real_descriptor.size_bytes,
         sha256="f" * 64,
+        expires_at_ms=real_descriptor.expires_at_ms,
     )
     state = _state()
     payload: dict[str, object] = {
@@ -250,22 +286,31 @@ def test_gmail_create_draft_rejects_hash_mismatched_staged_attachment(
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "ATTACHMENT_HASH_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_gmail_create_draft_rejects_expired_staged_attachment(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_create__draft_rejects__expired_staged_attachment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     clock = {"now": 1_000_000}
     staging_dir = tmp_path / "attachments"
     monkeypatch.setenv(server.ATTACHMENT_STAGING_DIR_ENV, str(staging_dir))
-    expiring_staging = LocalAttachmentStaging(staging_dir=staging_dir, now_ms=lambda: clock["now"])
-    descriptor = expiring_staging.stage(data=b"bytes", filename="a.txt", mime_type="text/plain")
+    expiring_staging = FilesystemAttachmentStagingAdapter(
+        staging_dir=staging_dir, now_ms=lambda: clock["now"]
+    )
+    descriptor = expiring_staging.stage(
+        operation_ref="stage-expiring",
+        file_bytes=b"bytes",
+        filename="a.txt",
+        mime_type="text/plain",
+    )
     clock["now"] += 20 * 60 * 1000  # advance past the 15 minute TTL
 
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
@@ -281,18 +326,18 @@ def test_gmail_create_draft_rejects_expired_staged_attachment(monkeypatch, tmp_p
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "ATTACHMENT_STAGING_EXPIRED"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_gmail_create_draft_without_staging_env_rejects_attachment_use(
-    monkeypatch,  # type: ignore[no-untyped-def]
+def test_gmail_create_draft__without_staging_env__rejects_attachment_use(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(server.ATTACHMENT_STAGING_DIR_ENV, raising=False)
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
@@ -316,23 +361,23 @@ def test_gmail_create_draft_without_staging_env_rejects_attachment_use(
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "ATTACHMENT_STAGING_UNAVAILABLE"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_gmail_create_draft_without_attachments_key_never_touches_staging(
-    monkeypatch,  # type: ignore[no-untyped-def]
+def test_gmail_create_draft__without_attachments_key__never_touches_staging(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(server.ATTACHMENT_STAGING_DIR_ENV, raising=False)
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -348,7 +393,7 @@ def test_gmail_create_draft_without_attachments_key_never_touches_staging(
         state=state, tool_name="gmail_create_draft", execution_arguments={"payload": payload}
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="gmail_create_draft",
         arguments={"payload": payload, "claim_context": claim},

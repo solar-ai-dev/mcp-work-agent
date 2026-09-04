@@ -3,22 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from google_work_agent.adapters.persistence import (
-    apply_migrations,
-    connect_sqlite,
-    sqlite_unit_of_work_factory,
-)
-from google_work_agent.application import (
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
+from google_work_agent.application.use_cases.run.block_run import (
     BlockRunCommand,
-    BlockRunService,
-    FailRunCommand,
-    FailRunService,
-    RequireReauthCommand,
-    RequireReauthService,
-    RunTransitionResponse,
+    BlockRunHandler,
 )
+from google_work_agent.application.use_cases.run.run_terminal import RunTransitionResponse
 
-TerminalCommand = BlockRunCommand | FailRunCommand | RequireReauthCommand
+TerminalCommand = BlockRunCommand
 TerminalService = Callable[..., RunTransitionResponse]
 TerminalServiceFactory = Callable[[Path], TerminalService]
 
@@ -77,8 +71,9 @@ def _insert_active_approval(database_path: Path) -> None:
     connection = connect_sqlite(database_path)
     try:
         connection.execute(
-            "INSERT INTO plans (id, run_id, revision_no, status, created_at_ms) "
-            "VALUES ('plan-1', 'run-1', 1, 'WAITING_APPROVAL', 1);"
+            "INSERT INTO plans (id, run_id, revision_no, status, created_at_ms, "
+            "review_status, review_version, review_disposition) "
+            "VALUES ('plan-1', 'run-1', 1, 'WAITING_APPROVAL', 1, 'PASSED', 1, 'PASS');"
         )
         connection.execute(
             """
@@ -123,7 +118,7 @@ def _insert_active_approval(database_path: Path) -> None:
     ),
     (
         (
-            lambda path: BlockRunService(
+            lambda path: BlockRunHandler(
                 unit_of_work_factory=sqlite_unit_of_work_factory(path),
                 now_ms=lambda: 1000,
             ),
@@ -139,43 +134,9 @@ def _insert_active_approval(database_path: Path) -> None:
             "RUN_BLOCKED",
             1000,
         ),
-        (
-            lambda path: FailRunService(
-                unit_of_work_factory=sqlite_unit_of_work_factory(path),
-                now_ms=lambda: 1000,
-            ),
-            FailRunCommand(
-                command_id="command-fail",
-                request_hash="b" * 64,
-                run_id="run-1",
-                expected_version=0,
-                reason_code="OUTPUT_SCHEMA_INVALID",
-            ),
-            "ANALYZING",
-            "FAILED",
-            "RUN_FAILED",
-            1000,
-        ),
-        (
-            lambda path: RequireReauthService(
-                unit_of_work_factory=sqlite_unit_of_work_factory(path),
-                now_ms=lambda: 1000,
-            ),
-            RequireReauthCommand(
-                command_id="command-reauth",
-                request_hash="c" * 64,
-                run_id="run-1",
-                expected_version=0,
-                reason_code="AUTH_REQUIRED",
-            ),
-            "RETRIEVING",
-            "REAUTH_REQUIRED",
-            "RUN_REAUTH_REQUIRED",
-            None,
-        ),
     ),
 )
-def test_run_terminal_services_persist_transition_receipt_and_events(
+def test_run_terminal__services_persist_transition__receipt_and_events(
     run_terminal_database: Path,
     service_factory: TerminalServiceFactory,
     command: TerminalCommand,
@@ -239,12 +200,12 @@ def test_run_terminal_services_persist_transition_receipt_and_events(
         connection.close()
 
 
-def test_block_run_revokes_active_approval_before_terminal_transition(
+def test_block_run__revokes_active_approval__before_terminal_transition(
     run_terminal_database: Path,
 ) -> None:
     _set_run_status(run_terminal_database, status="WAITING_APPROVAL")
     _insert_active_approval(run_terminal_database)
-    service = BlockRunService(
+    service = BlockRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(run_terminal_database),
         now_ms=lambda: 1000,
     )
@@ -256,6 +217,7 @@ def test_block_run_revokes_active_approval_before_terminal_transition(
             run_id="run-1",
             expected_version=0,
             reason_code="POLICY_BLOCKED",
+            policy_origin=True,
         )
     )
 
@@ -268,16 +230,28 @@ def test_block_run_revokes_active_approval_before_terminal_transition(
             ]
             == "REVOKED"
         )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM messages WHERE run_id='run-1' AND role='ASSISTANT';"
+            ).fetchone()[0]
+            == 1
+        )
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT event_type FROM audit_events WHERE run_id='run-1' ORDER BY id;"
+            ).fetchall()
+        ] == ["RUN_BLOCKED", "POLICY_BLOCKED"]
     finally:
         connection.close()
 
 
-def test_block_run_version_conflict_does_not_revoke_active_approval(
+def test_block_run_version__conflict_does_not__revoke_active_approval(
     run_terminal_database: Path,
 ) -> None:
     _set_run_status(run_terminal_database, status="WAITING_APPROVAL")
     _insert_active_approval(run_terminal_database)
-    service = BlockRunService(
+    service = BlockRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(run_terminal_database),
         now_ms=lambda: 1000,
     )
@@ -310,7 +284,7 @@ def test_block_run_version_conflict_does_not_revoke_active_approval(
     ("service_factory", "command", "initial_status"),
     (
         (
-            lambda path: BlockRunService(
+            lambda path: BlockRunHandler(
                 unit_of_work_factory=sqlite_unit_of_work_factory(path),
                 now_ms=lambda: 1000,
             ),
@@ -323,37 +297,9 @@ def test_block_run_version_conflict_does_not_revoke_active_approval(
             ),
             "ANALYZING",
         ),
-        (
-            lambda path: FailRunService(
-                unit_of_work_factory=sqlite_unit_of_work_factory(path),
-                now_ms=lambda: 1000,
-            ),
-            FailRunCommand(
-                command_id="command-fail-repeat",
-                request_hash="e" * 64,
-                run_id="run-1",
-                expected_version=0,
-                reason_code="OUTPUT_SCHEMA_INVALID",
-            ),
-            "RETRIEVING",
-        ),
-        (
-            lambda path: RequireReauthService(
-                unit_of_work_factory=sqlite_unit_of_work_factory(path),
-                now_ms=lambda: 1000,
-            ),
-            RequireReauthCommand(
-                command_id="command-reauth-repeat",
-                request_hash="f" * 64,
-                run_id="run-1",
-                expected_version=0,
-                reason_code="AUTH_REQUIRED",
-            ),
-            "RETRIEVING",
-        ),
     ),
 )
-def test_run_terminal_services_return_stored_result_for_same_command_id_and_hash(
+def test_run_terminal_services_return__stored_result_for_same__command_id_and_hash(
     run_terminal_database: Path,
     service_factory: TerminalServiceFactory,
     command: TerminalCommand,
@@ -372,7 +318,7 @@ def test_run_terminal_services_return_stored_result_for_same_command_id_and_hash
     ("service_factory", "command", "initial_status", "expected_status"),
     (
         (
-            lambda path: BlockRunService(
+            lambda path: BlockRunHandler(
                 unit_of_work_factory=sqlite_unit_of_work_factory(path),
                 now_ms=lambda: 1000,
             ),
@@ -386,39 +332,9 @@ def test_run_terminal_services_return_stored_result_for_same_command_id_and_hash
             "ANALYZING",
             "ANALYZING",
         ),
-        (
-            lambda path: FailRunService(
-                unit_of_work_factory=sqlite_unit_of_work_factory(path),
-                now_ms=lambda: 1000,
-            ),
-            FailRunCommand(
-                command_id="command-fail-stale",
-                request_hash="h" * 64,
-                run_id="run-1",
-                expected_version=9,
-                reason_code="OUTPUT_SCHEMA_INVALID",
-            ),
-            "RETRIEVING",
-            "RETRIEVING",
-        ),
-        (
-            lambda path: RequireReauthService(
-                unit_of_work_factory=sqlite_unit_of_work_factory(path),
-                now_ms=lambda: 1000,
-            ),
-            RequireReauthCommand(
-                command_id="command-reauth-stale",
-                request_hash="i" * 64,
-                run_id="run-1",
-                expected_version=9,
-                reason_code="AUTH_REQUIRED",
-            ),
-            "RETRIEVING",
-            "RETRIEVING",
-        ),
     ),
 )
-def test_run_terminal_services_reject_stale_version_and_record_receipt(
+def test_run_terminal_services__reject_stale_version__and_record_receipt(
     run_terminal_database: Path,
     service_factory: TerminalServiceFactory,
     command: TerminalCommand,

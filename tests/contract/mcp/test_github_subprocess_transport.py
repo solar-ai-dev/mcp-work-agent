@@ -4,135 +4,116 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
-from google_work_agent.adapters.connectors.github import build_github_connector_descriptor
-from google_work_agent.adapters.mcp import (
+from google_work_agent.adapters.connectors.github.github.composition import (
+    build_github_connector_descriptor,
+)
+from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
+    ConnectorRuntimeRegistry,
+)
+from google_work_agent.adapters.connectors.runtime.stdio_mcp_client import (
     MCPArtifactConfig,
-    SubprocessMCPTransport,
+    StdioMCPClientAdapter,
+    build_manifest_payload_for_descriptors,
     calculate_file_sha256,
 )
-from google_work_agent.adapters.mcp.transport import build_manifest_payload_for_registry
-from google_work_agent.domain.github_tool_registry import build_github_tool_registry
-from google_work_agent.ports import MCPTransportError, MCPTransportErrorCode
-
-
-def test_github_mcp_skeleton_handshakes_and_advertises_registered_tools(tmp_path: Path) -> None:
-    manifest_path = _write_manifest(tmp_path)
-    descriptor = build_github_connector_descriptor(_artifact_config(manifest_path))
-
-    transport = SubprocessMCPTransport(descriptor=descriptor)
-    try:
-        runtime = transport.runtime_metadata()
-        assert runtime.process_status == "READY"
-        assert runtime.process_instance_id is not None
-        assert runtime.available_tool_count == len(build_github_tool_registry().list_entries())
-    finally:
-        transport.close()
-
-
-@pytest.mark.parametrize(
-    "tool_name",
-    (
-        "github_list_issues",
-        "github_get_issue",
-        "github_create_issue",
-        "github_update_issue",
-        "github_close_issue",
-        "github_reopen_issue",
-    ),
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
 )
-def test_github_mcp_skeleton_all_declared_tools_are_active_not_tool_not_available(
-    tmp_path: Path, tool_name: str
-) -> None:
-    """All six P0 tools must reach a real handler (and fail on missing/
-    invalid arguments) instead of the GITHUB-1 TOOL_NOT_AVAILABLE
-    short-circuit -- GITHUB-3A activates the last four (WRITE).
-    """
 
-    manifest_path = _write_manifest(tmp_path)
-    descriptor = build_github_connector_descriptor(_artifact_config(manifest_path))
+GITHUB_MODULE = (
+    "google_work_agent.adapters.connectors.github.github.mcp_server.entrypoint"
+)
 
-    transport = SubprocessMCPTransport(descriptor=descriptor)
+
+def test_github_mcp__handshakes_and_advertises__signed_tools(tmp_path: Path) -> None:
+    client, registry = _start_client(tmp_path)
     try:
-        with pytest.raises(MCPTransportError) as captured:
-            transport.call_tool(tool_name=tool_name, arguments={})
-
-        assert captured.value.code is MCPTransportErrorCode.TOOL_REJECTED
-        assert str(captured.value) != "TOOL_NOT_AVAILABLE"
-        assert str(captured.value) == "REPOSITORY_INVALID"
+        metadata = client.runtime_metadata()
+        assert metadata.process_status == "READY"
+        assert metadata.process_instance_id is not None
+        assert registry.connector_ids() == ("github",)
+        assert {tool.tool_id for tool in client.list_tools("github")} == {
+            "github_list_issues",
+            "github_get_issue",
+            "github_create_issue",
+            "github_update_issue",
+            "github_close_issue",
+            "github_reopen_issue",
+        }
     finally:
-        transport.close()
+        registry.close_all()
 
 
-def test_github_mcp_skeleton_reports_tool_not_available_for_an_unregistered_tool(
+def test_github_write__rejects_invalid_claim__before_provider_access(tmp_path: Path) -> None:
+    client, registry = _start_client(tmp_path)
+    try:
+        result = client.call_tool(
+            "github",
+            "github_create_issue",
+            {
+                "repository": "acme/repo",
+                "title": "Issue",
+                "claim_context": {"signature": "not-yet-consumed"},
+            },
+            5_000,
+        )
+
+        assert result.transport_status == "ERROR"
+        assert result.error_code == "TOOL_REJECTED"
+        assert result.payload["delivery_certainty"] == "NOT_SENT"
+    finally:
+        registry.close_all()
+
+
+def test_github_control__is_reachable_and_fails_closed__without_client_id(
     tmp_path: Path,
 ) -> None:
-    """A tool name outside the P0 scope (e.g. a future comment/milestone
-    tool) must still fall through to TOOL_NOT_AVAILABLE, not crash.
-    """
-
-    manifest_path = _write_manifest(tmp_path)
-    descriptor = build_github_connector_descriptor(_artifact_config(manifest_path))
-
-    transport = SubprocessMCPTransport(descriptor=descriptor)
+    client, registry = _start_client(tmp_path)
     try:
-        with pytest.raises(MCPTransportError) as captured:
-            transport.call_tool(tool_name="github_add_comment", arguments={})
+        result = client.call_tool("github", "github.connection.get", {}, 5_000)
 
-        assert captured.value.code is MCPTransportErrorCode.TOOL_REJECTED
-        assert str(captured.value) == "TOOL_NOT_AVAILABLE"
-        assert captured.value.dispatch_started is False
+        assert result.transport_status == "ERROR"
+        assert result.error_code == "CONFIGURATION_ERROR"
+        assert result.payload["delivery_certainty"] == "NOT_SENT"
     finally:
-        transport.close()
+        registry.close_all()
 
 
-def test_github_mcp_skeleton_reports_configuration_error_without_app_client_id(
-    tmp_path: Path,
-) -> None:
-    """The auth control boundary is reachable but safe-by-default: with no
-    GITHUB_APP_CLIENT_ID in the child process environment, it must fail
-    closed with a CONFIGURATION_ERROR instead of touching the network or the
-    OS keyring.
-    """
-
-    manifest_path = _write_manifest(tmp_path)
-    descriptor = build_github_connector_descriptor(_artifact_config(manifest_path))
-
-    transport = SubprocessMCPTransport(descriptor=descriptor)
-    try:
-        with pytest.raises(MCPTransportError) as captured:
-            transport.call_control(method="github.connection.get", arguments={})
-
-        assert captured.value.code is MCPTransportErrorCode.CONFIGURATION_ERROR
-        assert str(captured.value) == "GITHUB_APP_CLIENT_ID_MISSING"
-    finally:
-        transport.close()
-
-
-def _write_manifest(tmp_path: Path) -> Path:
+def _start_client(tmp_path: Path) -> tuple[StdioMCPClientAdapter, ConnectorRuntimeRegistry]:
+    signed = load_signed_tool_registry()
+    descriptors = tuple(signed.descriptor_expectations("github"))
     manifest_path = tmp_path / "github-mcp-manifest.json"
-    payload = build_manifest_payload_for_registry(build_github_tool_registry())
-    manifest_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-    return manifest_path
-
-
-def _artifact_config(manifest_path: Path) -> MCPArtifactConfig:
-    executable = Path(sys.executable).resolve()
-    payload = build_manifest_payload_for_registry(build_github_tool_registry())
-    return MCPArtifactConfig(
-        executable_path=str(executable),
-        manifest_path=str(manifest_path.resolve()),
-        expected_binary_sha256=calculate_file_sha256(executable),
-        expected_manifest_sha256=calculate_file_sha256(manifest_path.resolve()),
-        expected_manifest_version=str(payload["manifest_version"]),
-        expected_protocol_version=str(payload["protocol_version"]),
-        expected_tool_registry_version=str(payload["tool_registry_version"]),
-        startup_timeout_ms=5_000,
-        request_timeout_ms=5_000,
-        max_restart_count=1,
-        environment="DEVELOPMENT",
-        service_instance_id="svc-contract-github",
-        working_directory=str(Path(__file__).resolve().parents[3]),
-        module_name="google_work_agent.mcp.github_server",
+    manifest_path.write_text(
+        json.dumps(
+            build_manifest_payload_for_descriptors(
+                connector_id="github",
+                registry_manifest_hash=signed.entries_hash,
+                descriptors=descriptors,
+            ),
+            sort_keys=True,
+        ),
+        encoding="utf-8",
     )
+    executable = Path(sys.executable).resolve()
+    descriptor = build_github_connector_descriptor(
+        MCPArtifactConfig(
+            executable_path=str(executable),
+            manifest_path=str(manifest_path.resolve()),
+            expected_binary_sha256=calculate_file_sha256(executable),
+            expected_manifest_sha256=calculate_file_sha256(manifest_path),
+            expected_manifest_version="2026-08-07.p0",
+            expected_protocol_version="2026-08-07.p0",
+            expected_registry_manifest_hash=signed.entries_hash,
+            startup_timeout_ms=5_000,
+            request_timeout_ms=5_000,
+            max_restart_count=1,
+            environment="DEVELOPMENT",
+            service_instance_id="service-contract-github",
+            module_name=GITHUB_MODULE,
+            working_directory=str(Path(__file__).resolve().parents[3]),
+            extra_environment={"GITHUB_APP_CLIENT_ID": ""},
+        ),
+        expected_tool_descriptors=descriptors,
+    )
+    registry = ConnectorRuntimeRegistry()
+    return StdioMCPClientAdapter(descriptor=descriptor, runtime_registry=registry), registry

@@ -1,27 +1,80 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
-from tests.support.fakes import DeterministicUUID, FakeClock
-
-from google_work_agent.adapters.readiness.composite import (
+from tests.support.fakes import DeterministicUUID, FakeClockPort
+from tests.support.readiness import (
     StaticLauncherProbeVerifier,
     StaticReadinessAggregator,
-    StaticRuntimeStatusProvider,
 )
-from google_work_agent.api import ApiContainer, create_app
-from google_work_agent.application.queries import ActionSnapshot, RunSnapshot
-from google_work_agent.application.start_run import ResumeRunResponse
-from google_work_agent.application.write_actions import WriteRunResponse
-from google_work_agent.ports import (
+
+from google_work_agent.adapters.langgraph.registry.node_registry import NodeRegistry
+from google_work_agent.adapters.langgraph.registry.resume_target_registry import (
+    ResumeTargetRegistry,
+)
+from google_work_agent.api.app import create_app
+from google_work_agent.api.container import ApiContainer
+from google_work_agent.application.use_cases.execution_attempt.write_execution_contracts import (
+    WriteRunResponse,
+)
+from google_work_agent.application.use_cases.recovery.project_recovery_options import (
+    ProjectRecoveryOptionsResultV1,
+)
+from google_work_agent.application.use_cases.recovery.resolve_recovery import (
+    ResolveRecoveryResult,
+)
+from google_work_agent.application.use_cases.resource.issue_selection_handle import (
+    IssueSelectionHandle,
+)
+from google_work_agent.application.use_cases.resource.resolve_selection_handle import (
+    ResolveSelectionHandle,
+)
+from google_work_agent.application.use_cases.run.confirm_run import ConfirmRunResult
+from google_work_agent.application.use_cases.run.get_run_snapshot import (
+    ActionSnapshotResult as ActionSnapshot,
+)
+from google_work_agent.application.use_cases.run.get_run_snapshot import (
+    GetRunSnapshotResult as RunSnapshot,
+)
+from google_work_agent.application.use_cases.run.get_run_snapshot import RunSnapshotRunV1
+from google_work_agent.application.use_cases.run.request_cancel import RequestCancelResult
+from google_work_agent.application.use_cases.run.resume_after_reauth import (
+    ResumeAfterReauthResult as ResumeRunResponse,
+)
+from google_work_agent.ports.system.api_access_port import (
     AccessDecision,
     ApiRequestContext,
     EndpointPolicy,
-    LauncherProbeDecision,
+)
+from google_work_agent.ports.system.launcher_probe_port import LauncherProbeDecision
+from google_work_agent.ports.system.readiness_port import (
     ReadinessCheckResult,
     ReadinessReport,
     ReadinessState,
-    RuntimeSummary,
 )
+
+
+class _RecoveryContextRepositoryStub:
+    def load_current_context(self, run_id: str) -> dict[str, object] | None:
+        if run_id != "run-1":
+            return None
+        return {
+            "run_id": run_id,
+            "scope": "ACTION",
+            "action_id": "action-1",
+            "version": 4,
+        }
+
+
+class _RecoveryMaterializationUnitOfWork:
+    def __init__(self) -> None:
+        self.recovery_contexts = _RecoveryContextRepositoryStub()
+
+    def __enter__(self) -> "_RecoveryMaterializationUnitOfWork":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
 
 
 class _CoordinatorStub:
@@ -38,6 +91,9 @@ class _CoordinatorStub:
 
     def enqueue_resume(self, **kwargs: object) -> None:
         self.resume_calls.append(dict(kwargs))
+
+    def request_cancel(self, **kwargs: object) -> None:
+        del kwargs
 
 
 class _AllowGuard:
@@ -67,26 +123,15 @@ class _DenyGuard:
         )
 
 
-@dataclass
-class _QueryStub:
-    def get_runtime_summary(self) -> RuntimeSummary:
-        return RuntimeSummary(
-            google="NOT_CONFIGURED",
-            mcp="NOT_CONFIGURED",
-            api_llm="NOT_CONFIGURED",
-            ollama="NOT_AVAILABLE",
-            deployment_profile="test",
-            recovery_required_run_ids=(),
-            open_run_ids=(),
-        )
-
-
 def _build_container(guard: _AllowGuard | _DenyGuard) -> tuple[ApiContainer, _CoordinatorStub]:
     coordinator = _CoordinatorStub()
+    clock = FakeClockPort(100)
+    graph_version = "resume-contract-v1"
+    resume_target_registry = ResumeTargetRegistry(NodeRegistry(graph_version), graph_version)
+    signing_secret = b"test-selection-handle-secret-32b"
     container = ApiContainer(
         unit_of_work_factory=lambda: None,
-        query_service=_QueryStub(),
-        create_conversation_service=lambda command: command,
+        create_conversation_handler=lambda command: command,
         start_run_service=lambda command: command,
         approve_action_service=lambda command: command,
         modify_action_service=lambda command: command,
@@ -94,7 +139,6 @@ def _build_container(guard: _AllowGuard | _DenyGuard) -> tuple[ApiContainer, _Co
         prepare_retry_service=lambda command: command,
         cancel_run_service=lambda command: command,
         resume_run_service=lambda command: command,
-        local_run_coordinator=coordinator,
         workflow_runtime=type("Runtime", (), {"close": lambda self: None})(),
         event_publisher=type(
             "Publisher",
@@ -118,40 +162,60 @@ def _build_container(guard: _AllowGuard | _DenyGuard) -> tuple[ApiContainer, _Co
                 ),
             )
         ),
-        runtime_status_provider=StaticRuntimeStatusProvider(
-            RuntimeSummary(
-                google="NOT_CONFIGURED",
-                mcp="NOT_CONFIGURED",
-                api_llm="NOT_CONFIGURED",
-                ollama="NOT_AVAILABLE",
-                deployment_profile="test",
-                recovery_required_run_ids=(),
-                open_run_ids=(),
-            )
-        ),
         api_access_guard=guard,
-        clock=FakeClock(100),
+        clock=clock,
         id_generator=DeterministicUUID(prefix="req"),
         release_version="test",
         environment="test",
         service_instance_id="svc-test",
         launcher_probe_verifier=StaticLauncherProbeVerifier(LauncherProbeDecision(allowed=True)),
+        schedule_run_execution=lambda command: command,
+        resume_target_registry=resume_target_registry,
+        checkpoint_port=MagicMock(),
+        approve_action_handler=MagicMock(),
+        modify_action_handler=MagicMock(),
+        reject_action_handler=MagicMock(),
+        prepare_write_retry_handler=MagicMock(),
+        issue_selection_handle=IssueSelectionHandle(
+            signing_secret=signing_secret,
+            service_instance_id="svc-test",
+            now_ms=clock.now_ms,
+            ttl_ms=60_000,
+        ),
+        resolve_selection_handle=ResolveSelectionHandle(
+            signing_secret=signing_secret,
+            service_instance_id="svc-test",
+            now_ms=clock.now_ms,
+        ),
     )
     return container, coordinator
 
 
-def test_app_lifespan_starts_and_stops_coordinator() -> None:
-    container, coordinator = _build_container(_AllowGuard())
+def test_app_lifespan__runs_startup__then_shutdown_callbacks() -> None:
+    container, _ = _build_container(_AllowGuard())
+    lifecycle: list[str] = []
+
+    async def startup() -> None:
+        lifecycle.append("startup")
+
+    def shutdown() -> None:
+        lifecycle.append("shutdown")
+
+    container = replace(
+        container,
+        startup_callbacks=(startup,),
+        shutdown_callbacks=(shutdown,),
+    )
 
     with TestClient(create_app(container)) as client:
+        assert lifecycle == ["startup"]
         response = client.get("/health/live")
         assert response.status_code == 200
 
-    assert coordinator.started == 1
-    assert coordinator.stopped == 1
+    assert lifecycle == ["startup", "shutdown"]
 
 
-def test_app_lifespan_runs_all_resource_cleanup_callbacks() -> None:
+def test_app_lifespan__runs_all__resource_cleanup_callbacks() -> None:
     container, _ = _build_container(_AllowGuard())
     cleaned: list[str] = []
 
@@ -169,7 +233,7 @@ def test_app_lifespan_runs_all_resource_cleanup_callbacks() -> None:
     assert cleaned == ["first", "second"]
 
 
-def test_health_routes_and_runtime_respect_guard() -> None:
+def test_health_routes__and_runtime__respect_guard() -> None:
     container, _ = _build_container(_DenyGuard())
 
     with TestClient(create_app(container)) as client:
@@ -181,8 +245,12 @@ def test_health_routes_and_runtime_respect_guard() -> None:
     assert runtime.json()["error_code"] == "LOCAL_SESSION_INVALID"
 
 
-def test_typed_confirmation_and_recovery_routes_derive_server_authority() -> None:
+def test_typed_confirmation__and_recovery_routes__derive_server_authority() -> None:
     container, coordinator = _build_container(_AllowGuard())
+    container = replace(
+        container,
+        unit_of_work_factory=lambda: _RecoveryMaterializationUnitOfWork(),
+    )
     captured: dict[str, object] = {}
 
     def resume_service(command: object) -> ResumeRunResponse:
@@ -197,23 +265,38 @@ def test_typed_confirmation_and_recovery_routes_derive_server_authority() -> Non
             request_replayed=False,
         )
 
-    def recovery_service(command: object) -> WriteRunResponse:
-        captured["recovery"] = command
-        return WriteRunResponse(
-            applied=True,
-            result_code="TRANSITION_APPLIED",
-            run_id="run-1",
-            run_status="COMPLETED",
-            run_version=3,
-            plan_id="plan-1",
-            plan_status="COMPLETED",
-            result_kind="PARTIAL",
-        )
-
     container = replace(
         container,
         resume_run_service=resume_service,
-        resolve_recovery_service=recovery_service,
+    )
+
+    def confirm_handler(command: object) -> ConfirmRunResult:
+        captured["confirm"] = command
+        return ConfirmRunResult(
+            applied=True,
+            result_code="TRANSITION_APPLIED",
+            run_id="run-1",
+            run_status="PLANNING",
+            run_version=3,
+            should_enqueue=True,
+            request_replayed=False,
+        )
+
+    class RecoveryHandler:
+        def resolve_current(self, **command: object) -> ResolveRecoveryResult:
+            captured["recovery"] = command
+            return ResolveRecoveryResult(
+                applied=True,
+                result_code="TRANSITION_APPLIED",
+                current_status="COMPLETED",
+                current_version=3,
+                next_allowed_commands=(),
+            )
+
+    container = replace(
+        container,
+        confirm_run_handler=confirm_handler,
+        resolve_recovery_handler=RecoveryHandler(),
     )
     with TestClient(create_app(container)) as client:
         confirmed = client.post(
@@ -223,7 +306,7 @@ def test_typed_confirmation_and_recovery_routes_derive_server_authority() -> Non
                 "expected_version": 2,
                 "interrupt_id": "interrupt-1",
                 "response_kind": "FREE_TEXT",
-                "selected_option_ids": [],
+                "selected_option": None,
                 "free_text": "Use the default list.",
                 "api_contract_version": "1",
             },
@@ -233,7 +316,7 @@ def test_typed_confirmation_and_recovery_routes_derive_server_authority() -> Non
             json={
                 "command_id": "recovery-1",
                 "expected_version": 2,
-                "action_id": "action-1",
+                "target": {"target_kind": "ACTION", "action_id": "action-1"},
                 "resolution_kind": "ACCEPT_PARTIAL",
                 "api_contract_version": "1",
             },
@@ -241,18 +324,16 @@ def test_typed_confirmation_and_recovery_routes_derive_server_authority() -> Non
 
     assert confirmed.status_code == 200
     assert resolved.status_code == 200
-    assert captured["resume"].request_hash != "confirm-1"  # type: ignore[attr-defined]
-    assert captured["recovery"].request_hash != "recovery-1"  # type: ignore[attr-defined]
-    assert coordinator.resume_calls[0]["resume_payload"] == {
-        "schema_version": 1,
-        "interrupt_id": "interrupt-1",
-        "response_kind": "FREE_TEXT",
-        "selected_option_ids": [],
-        "free_text": "Use the default list.",
-    }
+    assert captured["confirm"].request_hash != "confirm-1"  # type: ignore[attr-defined]
+    recovery = captured["recovery"]
+    assert isinstance(recovery, dict)
+    assert recovery["request_hash"] != "recovery-1"
+    assert recovery["requested_target_kind"] == "ACTION"
+    assert recovery["requested_target_action_id"] == "action-1"
+    assert coordinator.resume_calls == []
 
 
-def test_cancel_route_returns_partial_result_projection() -> None:
+def test_cancel_route__returns_partial__result_projection() -> None:
     container, _ = _build_container(_AllowGuard())
 
     def cancel_service(_command: object) -> WriteRunResponse:
@@ -268,12 +349,27 @@ def test_cancel_route_returns_partial_result_projection() -> None:
         )
 
     container = replace(container, cancel_run_service=cancel_service)
+
+    def cancel_handler(command: object, request_id: str) -> RequestCancelResult:
+        del request_id
+        legacy = cancel_service(command)
+        return RequestCancelResult(
+            applied=legacy.applied,
+            result_code=legacy.result_code,
+            current_status=legacy.run_status,
+            current_version=legacy.run_version,
+            next_allowed_commands=(),
+            conflict_detail=legacy.conflict_detail,
+            result_kind=legacy.result_kind,
+        )
+
+    container = replace(container, request_cancel_handler=cancel_handler)
     with TestClient(create_app(container)) as client:
         response = client.post(
             "/api/v1/runs/run-1/cancel",
             json={
                 "command_id": "cancel-1",
-                "expected_run_version": 3,
+                "expected_version": 3,
                 "api_contract_version": "1",
             },
         )
@@ -282,20 +378,24 @@ def test_cancel_route_returns_partial_result_projection() -> None:
     assert response.json()["result_kind"] == "PARTIAL"
 
 
-def test_run_snapshot_rest_projection_includes_structured_action_risk() -> None:
+def test_run_snapshot__rest_projection_includes__structured_action_risk() -> None:
     container, _ = _build_container(_AllowGuard())
     risk: dict[str, object] = {"validator": {"outcome": "WARNING"}}
     snapshot = RunSnapshot(
-        run_id="run-1",
-        conversation_id="conversation-1",
-        status="WAITING_APPROVAL",
-        version=1,
-        entry_mode="AGENT_SEARCH",
-        requested_mode="AUTO",
-        actual_runtime="API_LLM",
-        started_at_ms=1,
-        finished_at_ms=None,
-        active_plan={"plan_id": "plan-1"},
+        run=RunSnapshotRunV1(
+            run_id="run-1",
+            conversation_id="conversation-1",
+            status="WAITING_APPROVAL",
+            version=1,
+            entry_mode="AGENT_SEARCH",
+            requested_mode="AUTO",
+            actual_runtime="API_LLM",
+            started_at_ms=1,
+            finished_at_ms=None,
+            next_allowed_commands=("REQUEST_CANCEL",),
+        ),
+        messages=(),
+        current_plan={"plan_id": "plan-1"},
         actions=(
             ActionSnapshot(
                 action_id="action-1",
@@ -306,31 +406,48 @@ def test_run_snapshot_rest_projection_includes_structured_action_risk() -> None:
                 approval_required=True,
                 verification_policy="GET_COMPARE",
                 risk=risk,
-                next_allowed_commands=("APPROVE",),
+                next_allowed_commands=("APPROVE_ACTION",),
+                required_acknowledgements=("TASK_DUPLICATE",),
+                editable_fields=("title",),
+                attachment_allowed=False,
+                delivery_certainty=None,
             ),
         ),
         approvals=(),
         execution_status={"action_count": 1, "terminal_action_count": 0},
         verification_summary={"verified_count": 0, "mismatch_count": 0},
         recovery_summary={"unknown_result_action_count": 0},
-        result_kind=None,
-        next_allowed_commands=("REQUEST_CANCEL",),
-        snapshot_version=1,
+        context_preview=None,
+        pending_interrupt=None,
+        recovery=ProjectRecoveryOptionsResultV1(
+            reason_code="VERIFICATION_MISMATCH",
+            target={"target_kind": "ACTION", "action_id": "action-1"},
+            allowed_resolution_kinds=("RECHECK", "ACCEPT_PARTIAL"),
+        ),
+        error=None,
+        external_llm_transfer_scope=None,
+        terminal_result_kind="NONE",
+        projection_version=1,
     )
 
-    class _RunQueryStub(_QueryStub):
-        def get_run_snapshot(self, run_id: str) -> RunSnapshot | None:
-            return snapshot if run_id == "run-1" else None
-
-    container = replace(container, query_service=_RunQueryStub())
+    container = replace(
+        container,
+        get_run_snapshot_handler=lambda query: snapshot if query.run_id == "run-1" else None,
+    )
     with TestClient(create_app(container)) as client:
         response = client.get("/api/v1/runs/run-1")
 
     assert response.status_code == 200
-    assert response.json()["snapshot"]["actions"][0]["risk"] == risk
+    assert response.json()["actions"][0]["risk"] == risk
+    assert response.json()["recovery"] == {
+        "reason_code": "VERIFICATION_MISMATCH",
+        "target": {"target_kind": "ACTION", "action_id": "action-1"},
+        "allowed_resolution_kinds": ["RECHECK", "ACCEPT_PARTIAL"],
+    }
+    assert "recovery_options" not in response.json()
 
 
-def test_runtime_mutation_routes_reject_browser_authority_and_arbitrary_resume() -> None:
+def test_runtime_mutation_routes__reject_browser_authority__and_arbitrary_resume() -> None:
     container, _ = _build_container(_AllowGuard())
     with TestClient(create_app(container)) as client:
         approval = client.post(
@@ -368,7 +485,7 @@ def test_runtime_mutation_routes_reject_browser_authority_and_arbitrary_resume()
     assert invalid_recovery.status_code == 422
 
 
-def test_ready_route_fails_closed_without_launcher_probe_verifier() -> None:
+def test_ready_route__fails_closed_without__launcher_probe_verifier() -> None:
     container, _ = _build_container(_AllowGuard())
     container = replace(container, launcher_probe_verifier=None)
 

@@ -1,11 +1,20 @@
 from threading import Lock
 from typing import cast
 
-from google_work_agent.adapters.langgraph.runtime import GraphState, LangGraphWorkflowRuntime
-from google_work_agent.ports import WorkflowCancelRequest, WorkflowOutcome
+from google_work_agent.adapters.langgraph.main.routing.route_after_action_execution import (
+    route_after_action_execution,
+)
+from google_work_agent.adapters.langgraph.main.routing.route_after_stage_three import (
+    route_after_stage_three,
+)
+from google_work_agent.adapters.langgraph.main.workflow import GraphState, LangGraphWorkflowRuntime
+from google_work_agent.ports.system.contracts.workflow_execution import (
+    WorkflowCancelRequest,
+    WorkflowOutcome,
+)
 
 
-def test_cancel_signal_routes_the_next_graph_edge_to_end() -> None:
+def test_cancel_signal_routes__the_next_graph__edge_to_end() -> None:
     runtime = object.__new__(LangGraphWorkflowRuntime)
     runtime._cancel_signal_lock = Lock()
     runtime._cancel_signals = set()
@@ -20,4 +29,48 @@ def test_cancel_signal_routes_the_next_graph_edge_to_end() -> None:
 
     assert result.outcome is WorkflowOutcome.ACCEPTED
     state = cast(GraphState, {"run_id": "run-1", "__target__": "action_execution"})
-    assert runtime._route_next_node(state) == "end"
+    assert (
+        route_after_action_execution(
+            state,
+            available_targets={"action_execution", "end"},
+            should_stop_for_cancel=runtime._should_stop_for_cancel,
+        )
+        == "end"
+    )
+
+
+def test_pending_review_settlement__runs_only_after__review_output_exists() -> None:
+    control = {
+        "schema_version": 1,
+        "stage": "REVIEW_PENDING_SETTLEMENT",
+    }
+
+    assert (
+        route_after_stage_three(
+            cast(
+                GraphState,
+                {
+                    "__target__": "stage_three",
+                    "__workflow_control__": control,
+                },
+            ),
+            available_targets={"stage_three", "review_entry", "waiting_approval", "end"},
+            should_stop_for_cancel=lambda _run_id: False,
+        )
+        == "stage_three"
+    )
+    assert (
+        route_after_stage_three(
+            cast(
+                GraphState,
+                {
+                    "__target__": "waiting_approval",
+                    "__workflow_control__": control,
+                    "plan_review": {"status": "PASS"},
+                },
+            ),
+            available_targets={"stage_three", "review_entry", "waiting_approval", "end"},
+            should_stop_for_cancel=lambda _run_id: False,
+        )
+        == "review_entry"
+    )

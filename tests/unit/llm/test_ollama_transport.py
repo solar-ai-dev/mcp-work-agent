@@ -10,14 +10,20 @@ Ollama was running and the model was installed.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from email.message import Message
 from io import BytesIO
+from typing import cast
 from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
 
-from google_work_agent.adapters.llm.ollama import OllamaHTTPClient, OllamaStructuredLLMProvider
-from google_work_agent.ports import (
+from google_work_agent.adapters.llm.ollama.structured_inference import (
+    OllamaStructuredInferenceAdapter,
+)
+from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
+from google_work_agent.ports.llm.structured_inference_contracts import (
     AvailabilityState,
     OutputSchemaDefinition,
     PromptReference,
@@ -39,11 +45,18 @@ class _HTTPResponse:
         return self._body
 
 
-def test_probe_uses_get_for_version_and_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+def _request_body(request: Request) -> dict[str, object]:
+    assert isinstance(request.data, bytes)
+    return cast(dict[str, object], json.loads(request.data.decode("utf-8")))
+
+
+def test_probe_uses__get_for__version_and_tags(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[Request] = []
     responses = [
         json.dumps({"version": "0.32.6"}).encode("utf-8"),
-        json.dumps({"models": [{"name": "qwen2.5:3b"}]}).encode("utf-8"),
+        json.dumps({"models": [{"name": "qwen2.5:3b", "digest": "sha256:" + "a" * 64}]}).encode(
+            "utf-8"
+        ),
     ]
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -51,7 +64,7 @@ def test_probe_uses_get_for_version_and_tags(monkeypatch: pytest.MonkeyPatch) ->
         requests.append(request)
         return _HTTPResponse(responses.pop(0))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
     result = OllamaHTTPClient().probe(
         endpoint="http://127.0.0.1:11434", model_id="qwen2.5:3b", timeout_seconds=5
@@ -64,15 +77,16 @@ def test_probe_uses_get_for_version_and_tags(monkeypatch: pytest.MonkeyPatch) ->
     ]
     assert result.availability is AvailabilityState.AVAILABLE
     assert result.metadata["version"] == "0.32.6"
+    assert result.metadata["model_digest"] == "sha256:" + "a" * 64
 
 
-def test_probe_reports_model_not_found_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_reports__model_not__found_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     responses = [
         json.dumps({"version": "0.32.6"}).encode("utf-8"),
         json.dumps({"models": [{"name": "other-model"}]}).encode("utf-8"),
     ]
     monkeypatch.setattr(
-        "google_work_agent.adapters.llm.ollama.urlopen",
+        "google_work_agent.adapters.llm.ollama.transport.urlopen",
         lambda request, *, timeout: _HTTPResponse(responses.pop(0)),
     )
 
@@ -84,14 +98,18 @@ def test_probe_reports_model_not_found_when_absent(monkeypatch: pytest.MonkeyPat
     assert result.safe_error_code == "MODEL_NOT_FOUND"
 
 
-def test_probe_reports_unavailable_on_real_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_reports__unavailable_on__real_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_405(request: Request, *, timeout: int) -> _HTTPResponse:
         del request, timeout
         raise HTTPError(
-            "http://127.0.0.1:11434/api/version", 405, "method not allowed", None, BytesIO(b"")
+            "http://127.0.0.1:11434/api/version",
+            405,
+            "method not allowed",
+            Message(),
+            BytesIO(b""),
         )
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", raise_405)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", raise_405)
 
     result = OllamaHTTPClient().probe(
         endpoint="http://127.0.0.1:11434", model_id="qwen2.5:3b", timeout_seconds=5
@@ -101,7 +119,7 @@ def test_probe_reports_unavailable_on_real_http_error(monkeypatch: pytest.Monkey
     assert result.safe_error_code == "OLLAMA_UNAVAILABLE"
 
 
-def test_invoke_structured_still_posts_to_generate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[Request] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -109,7 +127,7 @@ def test_invoke_structured_still_posts_to_generate(monkeypatch: pytest.MonkeyPat
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
     OllamaHTTPClient().invoke_structured(
         endpoint="http://127.0.0.1:11434",
@@ -136,7 +154,7 @@ def test_invoke_structured_still_posts_to_generate(monkeypatch: pytest.MonkeyPat
     assert len(captured) == 1
     assert captured[0].get_method() == "POST"
     assert captured[0].full_url == "http://127.0.0.1:11434/api/generate"
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["system"] == "You are a test assistant."
 
 
@@ -156,7 +174,7 @@ def _prompt_ref_for_sampling_tests() -> PromptReference:
     )
 
 
-def test_invoke_structured_omits_options_when_sampling_is_unset(
+def test_invoke_structured__omits_options_when__sampling_is_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """docs/15 section 9.5: production dispatch (sampling_temperature/seed
@@ -169,7 +187,7 @@ def test_invoke_structured_omits_options_when_sampling_is_unset(
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
     OllamaHTTPClient().invoke_structured(
         endpoint="http://127.0.0.1:11434",
@@ -181,11 +199,11 @@ def test_invoke_structured_omits_options_when_sampling_is_unset(
         instruction_text="You are a test assistant.",
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert "options" not in sent_body
 
 
-def test_invoke_structured_sends_fixed_temperature_when_set(
+def test_invoke_structured__sends_fixed__temperature_when_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[Request] = []
@@ -195,7 +213,7 @@ def test_invoke_structured_sends_fixed_temperature_when_set(
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
     OllamaHTTPClient().invoke_structured(
         endpoint="http://127.0.0.1:11434",
@@ -208,11 +226,11 @@ def test_invoke_structured_sends_fixed_temperature_when_set(
         sampling_temperature=0.0,
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["options"] == {"temperature": 0.0}
 
 
-def test_invoke_structured_sends_fixed_seed_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invoke_structured__sends_fixed__seed_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[Request] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -220,7 +238,7 @@ def test_invoke_structured_sends_fixed_seed_when_set(monkeypatch: pytest.MonkeyP
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
     OllamaHTTPClient().invoke_structured(
         endpoint="http://127.0.0.1:11434",
@@ -234,11 +252,11 @@ def test_invoke_structured_sends_fixed_seed_when_set(monkeypatch: pytest.MonkeyP
         sampling_seed=7,
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["options"] == {"temperature": 0.0, "seed": 7}
 
 
-def test_provider_forwards_runtime_policy_sampling_fields_to_transport(
+def test_provider_forwards__runtime_policy_sampling__fields_to_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[Request] = []
@@ -248,9 +266,9 @@ def test_provider_forwards_runtime_policy_sampling_fields_to_transport(
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
-    provider = OllamaStructuredLLMProvider(
+    provider = OllamaStructuredInferenceAdapter(
         provider_name="ollama",
         transport=OllamaHTTPClient(),
         endpoint="http://127.0.0.1:11434",
@@ -265,15 +283,15 @@ def test_provider_forwards_runtime_policy_sampling_fields_to_transport(
         api_key=None,
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert sent_body["options"] == {"temperature": 0.0, "seed": 7}
 
 
-def test_provider_omits_options_when_runtime_policy_leaves_sampling_unset(
+def test_provider_omits_options__when_runtime_policy__leaves_sampling_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Pins the production path: a bare ``RuntimePolicy()`` (what
-    launcher/dev.py always constructs) must never add an "options" key."""
+    api/composition.py always constructs) must never add an "options" key."""
     captured: list[Request] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -281,9 +299,9 @@ def test_provider_omits_options_when_runtime_policy_leaves_sampling_unset(
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
-    provider = OllamaStructuredLLMProvider(
+    provider = OllamaStructuredInferenceAdapter(
         provider_name="ollama",
         transport=OllamaHTTPClient(),
         endpoint="http://127.0.0.1:11434",
@@ -298,11 +316,11 @@ def test_provider_omits_options_when_runtime_policy_leaves_sampling_unset(
         api_key=None,
     )
 
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    sent_body = _request_body(captured[0])
     assert "options" not in sent_body
 
 
-def test_provider_resolves_instruction_text_only_as_a_local_call_boundary(
+def test_provider_assembles_instruction__text_only_as__a_local_call_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``PromptReference`` must never carry instruction text.
@@ -332,35 +350,35 @@ def test_provider_resolves_instruction_text_only_as_a_local_call_boundary(
     assert not hasattr(prompt_ref, "instruction_text")
 
     captured: list[Request] = []
-    resolve_calls: list[str] = []
+    assembly_calls: list[tuple[str, Mapping[str, object]]] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
         del timeout
         captured.append(request)
         return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
 
-    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.urlopen", fake_urlopen)
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
-    def resolve_instruction_text(ref: PromptReference) -> str:
-        resolve_calls.append(ref.prompt_id)
+    def assemble_instruction_text(ref: PromptReference, prompt_input: Mapping[str, object]) -> str:
+        assembly_calls.append((ref.prompt_id, prompt_input))
         return "Resolved instructions for " + ref.prompt_id
 
-    provider = OllamaStructuredLLMProvider(
+    provider = OllamaStructuredInferenceAdapter(
         provider_name="ollama",
         transport=OllamaHTTPClient(),
         endpoint="http://127.0.0.1:11434",
         model_id="qwen2.5:3b",
-        resolve_instruction_text=resolve_instruction_text,
+        assemble_instruction_text=assemble_instruction_text,
     )
 
     provider.invoke_structured(
         prompt_ref=prompt_ref,
-        prompt_input={},
+        prompt_input={"request": "current run"},
         output_schema=OutputSchemaDefinition(schema_version="1", json_schema={}),
         runtime_policy=RuntimePolicy(),
         api_key=None,
     )
 
-    assert resolve_calls == ["a.b"]
-    sent_body = json.loads(captured[0].data.decode("utf-8"))
+    assert assembly_calls == [("a.b", {"request": "current run"})]
+    sent_body = _request_body(captured[0])
     assert sent_body["system"] == "Resolved instructions for a.b"

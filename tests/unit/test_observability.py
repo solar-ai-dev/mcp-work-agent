@@ -1,58 +1,99 @@
+import json
 import os
 from pathlib import Path
+from secrets import token_urlsafe
 from typing import cast
 
 import pytest
 
-from google_work_agent.application.observability import (
+from google_work_agent.adapters.system.sanitized_jsonl_log import (
+    SanitizedJsonlLogSink,
+)
+from google_work_agent.ports.system.contracts.observability import (
     EventCategory,
     EventValidationError,
     ObservabilityContext,
-    SanitizedJsonlLogSink,
+    OperationalLogRecord,
+    SanitizationError,
     Severity,
-    StaticMaintenanceGate,
     create_event_envelope,
     sanitize_event_attributes,
 )
-from google_work_agent.ports import OperationalLogRecord
 
 
-def test_sanitize_event_attributes_removes_forbidden_keys_and_redacts_patterns() -> None:
+def _secret(prefix: str) -> str:
+    return f"{prefix}-{token_urlsafe(24)}"
+
+
+def test_sanitize_event_attributes__removes_secret_keys__independent_of_value() -> None:
+    access_token = _secret("access")
+    refresh_token = _secret("refresh")
+    authorization = f"Bearer {_secret('auth')}"
+    cookie = f"session={_secret('cookie')}"
     sanitized = sanitize_event_attributes(
         {
-            "authorization": "Bearer CANARY_AUTHORIZATION",
-            "nested": {
-                "refreshToken": "CANARY_REFRESH_TOKEN",
-                "email": "user@example.com",
-                "path": r"C:\Users\alice\project",
+            "provider": {
+                "headers": {
+                    "Authorization": authorization,
+                    "Cookie": cookie,
+                },
+                "oauth": {
+                    "access_token": access_token,
+                    "refreshToken": refresh_token,
+                },
             },
             "safe": "hello",
         }
     )
-    nested = cast(dict[str, object], sanitized.values["nested"])
 
-    assert "authorization" not in sanitized.values
-    assert nested["email"] == "<redacted-email>@example.com"
-    assert nested["path"] == r"C:\Users\<redacted-user>\project"
+    provider = cast(dict[str, object], sanitized.values["provider"])
+    headers = cast(dict[str, object], provider["headers"])
+    oauth = cast(dict[str, object], provider["oauth"])
+    serialized = json.dumps(sanitized.values, sort_keys=True)
+
+    assert "Authorization" not in headers
+    assert "Cookie" not in headers
+    assert "access_token" not in oauth
+    assert "refreshToken" not in oauth
+    assert access_token not in serialized
+    assert refresh_token not in serialized
+    assert authorization not in serialized
+    assert cookie not in serialized
     assert sanitized.values["safe"] == "hello"
     assert sanitized.removed_fields
 
 
-def test_sanitize_event_attributes_redacts_llm_canaries() -> None:
+def test_sanitize_event__attributes_preserves_bounded__non_secret_metadata() -> None:
+    allowed = {
+        "credential_state": "READY",
+        "token_expired": True,
+        "page_token_present": True,
+        "continuation_hash": "sha256:abc123",
+        "provider_status_code": 401,
+    }
+
+    sanitized = sanitize_event_attributes(allowed)
+
+    assert sanitized.values == allowed
+    assert sanitized.removed_fields == ()
+
+
+def test_sanitize_event__attributes_redacts_email__and_home_path() -> None:
     sanitized = sanitize_event_attributes(
         {
-            "note": "contains canary_llm_api_key value",
-            "context_preview": "canary_context should never persist",
-            "completion_preview": "canary_completion should never persist",
+            "nested": {
+                "email": "user@example.com",
+                "path": r"C:\Users\alice\project",
+            },
         }
     )
+    nested = cast(dict[str, object], sanitized.values["nested"])
 
-    assert sanitized.values["note"] == "<redacted>"
-    assert sanitized.values["context_preview"] == "<redacted>"
-    assert sanitized.values["completion_preview"] == "<redacted>"
+    assert nested["email"] == "<redacted-email>@example.com"
+    assert nested["path"] == r"C:\Users\<redacted-user>\project"
 
 
-def test_create_event_envelope_rejects_negative_time() -> None:
+def test_create_event__envelope_rejects__negative_time() -> None:
     with pytest.raises(EventValidationError):
         create_event_envelope(
             event_name="COMMAND_APPLIED",
@@ -67,7 +108,58 @@ def test_create_event_envelope_rejects_negative_time() -> None:
         )
 
 
-def test_jsonl_sink_rotates_and_applies_retention(tmp_path: Path) -> None:
+def test_jsonl_sink__scrubs_direct__raw_secret_payload(tmp_path: Path) -> None:
+    access_token = _secret("access")
+    refresh_token = _secret("refresh")
+    authorization = f"Bearer {_secret('authorization')}"
+    sink = SanitizedJsonlLogSink(
+        directory=tmp_path,
+        filename_prefix="service",
+        now_ms=lambda: 1_000,
+    )
+    raw = {
+        "provider": {
+            "headers": {"Authorization": authorization},
+            "oauth": {
+                "access_token": access_token,
+                "refreshToken": refresh_token,
+            },
+        },
+        "credential_state": "READY",
+        "token_expired": True,
+        "page_token_present": True,
+        "continuation_hash": "sha256:def456",
+        "provider_status_code": 401,
+    }
+
+    sink.append(OperationalLogRecord(event_json=json.dumps(raw), occurred_at_ms=1_000))
+
+    persisted = (tmp_path / "service.jsonl").read_text(encoding="utf-8")
+    persisted_json = json.loads(persisted)
+    assert access_token not in persisted
+    assert refresh_token not in persisted
+    assert authorization not in persisted
+    assert persisted_json["credential_state"] == "READY"
+    assert persisted_json["token_expired"] is True
+    assert persisted_json["page_token_present"] is True
+    assert persisted_json["continuation_hash"] == "sha256:def456"
+    assert persisted_json["provider_status_code"] == 401
+
+
+def test_jsonl_sink_rejects__invalid_json_instead__of_persisting_raw_text(tmp_path: Path) -> None:
+    sink = SanitizedJsonlLogSink(
+        directory=tmp_path,
+        filename_prefix="service",
+        now_ms=lambda: 1_000,
+    )
+
+    with pytest.raises(SanitizationError):
+        sink.append(OperationalLogRecord(event_json="not-json", occurred_at_ms=1_000))
+
+    assert not (tmp_path / "service.jsonl").exists()
+
+
+def test_jsonl_sink__rotates_and__applies_retention(tmp_path: Path) -> None:
     now_state = {"value": 1_000}
     sink = SanitizedJsonlLogSink(
         directory=tmp_path,
@@ -100,15 +192,3 @@ def test_jsonl_sink_rotates_and_applies_retention(tmp_path: Path) -> None:
         )
     )
     assert old_file.exists() is False
-
-
-def test_static_maintenance_gate_reports_flags() -> None:
-    snapshot = StaticMaintenanceGate(
-        has_active_write=True,
-        migration_running=False,
-        restore_running=True,
-    ).snapshot()
-
-    assert snapshot.has_active_write is True
-    assert snapshot.migration_running is False
-    assert snapshot.restore_running is True

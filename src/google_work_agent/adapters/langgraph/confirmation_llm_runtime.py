@@ -13,34 +13,44 @@ from collections.abc import Mapping
 from threading import Lock
 from typing import Any
 
-from google_work_agent.application.workflows.contracts import ConfirmationResponseV1
-
+from google_work_agent.ports.system.contracts.confirmation import (
+    ConfirmationResponseProjectionV1,
+)
 
 _ORIGIN_PROMPT_IDS: dict[str, frozenset[str]] = {
-    "request_understanding.classify": frozenset({"request_understanding.classify"}),
-    "tool_route.finalize": frozenset({"tool_route.determine_io_resources"}),
-    "context.assess_sufficiency": frozenset({"retrieval.assess_sufficiency"}),
-    "analysis.analyze": frozenset({"work_analysis.analyze"}),
-    "planning.answer_only": frozenset({"planning.compose_answer"}),
-    "planning.draft_plan": frozenset({"planning.compose_arguments"}),
-    "review.inspect": frozenset({"review.inspect"}),
+    "request.detect_ambiguity": frozenset(
+        {
+            "request_understanding.identify_goal",
+            "request_understanding.detect_ambiguity",
+        }
+    ),
+    "tool_route.finalize": frozenset({"tool_routing.determine_io_resources"}),
+    "acquisition.plan_sources": frozenset({"retrieval.plan_query"}),
+    "retrieval.assess_sufficiency": frozenset({"retrieval.assess_sufficiency"}),
+    "analysis.assess_information_gaps": frozenset({"work_analysis.assess_information_gaps"}),
+    "analysis.assess_operational_risks": frozenset({"work_analysis.assess_operational_risks"}),
+    "planning.outline_answer": frozenset({"planning.outline_answer", "planning.compose_answer"}),
+    "planning.compose_arguments_per_output_route": frozenset(
+        {"planning.compose_arguments_per_output_route"}
+    ),
+    "review.aggregate_findings": frozenset({"review.recheck_affected_dimensions"}),
 }
 
 
 class ConfirmationAwareLLMRuntime:
-    """Delegate StructuredLLMRuntime while adding one bounded owner response."""
+    """Delegate StructuredInferencePort while adding one bounded owner response."""
 
     def __init__(self, delegate: Any) -> None:
         self._delegate = delegate
         self._lock = Lock()
-        self._pending: dict[str, tuple[str, ConfirmationResponseV1]] = {}
+        self._pending: dict[str, tuple[str, ConfirmationResponseProjectionV1]] = {}
 
     def register(
         self,
         *,
         run_id: str,
         origin_target: str,
-        response: ConfirmationResponseV1,
+        response: ConfirmationResponseProjectionV1,
     ) -> None:
         if origin_target not in _ORIGIN_PROMPT_IDS:
             raise ValueError(f"unsupported confirmation origin target: {origin_target}")

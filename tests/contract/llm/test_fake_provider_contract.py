@@ -1,7 +1,9 @@
 from tests.support.fakes import FakeAPIProviderTransport
 
-from google_work_agent.adapters.llm import ApiStructuredLLMProvider
-from google_work_agent.ports import (
+from google_work_agent.adapters.llm.gemini.structured_inference import (
+    GeminiStructuredInferenceAdapter,
+)
+from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
     ProviderResponsePayload,
@@ -9,7 +11,7 @@ from google_work_agent.ports import (
 )
 
 
-def test_fake_api_provider_transport_obeys_structured_contract() -> None:
+def test_fake_api__provider_transport__obeys_structured_contract() -> None:
     transport = FakeAPIProviderTransport()
     transport.queued_payloads.append(
         ProviderResponsePayload(
@@ -21,7 +23,7 @@ def test_fake_api_provider_transport_obeys_structured_contract() -> None:
             latency_ms=30,
         )
     )
-    provider = ApiStructuredLLMProvider(
+    provider = GeminiStructuredInferenceAdapter(
         provider_name="generic-api",
         transport=transport,
         model="fake-api-model",

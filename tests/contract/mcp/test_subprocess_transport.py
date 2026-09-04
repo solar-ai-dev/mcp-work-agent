@@ -6,135 +6,262 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.support.mcp_manifest import build_manifest_payload
 
-from google_work_agent.adapters.connectors import build_google_workspace_connector_descriptor
-from google_work_agent.adapters.mcp import (
+from google_work_agent.adapters.connectors.google.workspace.composition import (
+    build_google_workspace_connector_descriptor,
+)
+from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
+    ConnectorRuntimeRegistry,
+)
+from google_work_agent.adapters.connectors.runtime.stdio_mcp_client import (
     MCPArtifactConfig,
-    MCPGoogleOAuthCredentialProvider,
-    SubprocessMCPTransport,
-    build_manifest_payload,
+    MCPServerManifest,
+    StaticArtifactSignatureVerifier,
+    StdioMCPClientAdapter,
     calculate_file_sha256,
 )
-from google_work_agent.domain import SignedToolRegistry
-from google_work_agent.ports import MCPTransportError, MCPTransportErrorCode
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
+from google_work_agent.ports.connector.mcp_client_port import (
+    MCPClientPortError,
+    MCPClientPortErrorCode,
+)
+from google_work_agent.ports.system.artifact_signature_verifier import (
+    ArtifactSignatureDecision,
+)
 
 
-def test_subprocess_transport_handshakes_without_fixture_google_tools(tmp_path: Path) -> None:
+def test_subprocess_transport__handshakes_and__projects_exact_tools(tmp_path: Path) -> None:
     manifest_path = tmp_path / "mcp-manifest.json"
     manifest_path.write_text(json.dumps(build_manifest_payload(), sort_keys=True), encoding="utf-8")
-    executable = Path(sys.executable).resolve()
-    transport = SubprocessMCPTransport(
-        config=MCPArtifactConfig(
-            executable_path=str(executable),
-            manifest_path=str(manifest_path.resolve()),
-            expected_binary_sha256=calculate_file_sha256(executable),
-            expected_manifest_sha256=calculate_file_sha256(manifest_path.resolve()),
-            expected_manifest_version="2026-08-07.p0",
-            expected_protocol_version="2026-08-07.p0",
-            expected_tool_registry_version="2026-08-06.p0",
-            startup_timeout_ms=5_000,
-            request_timeout_ms=5_000,
-            max_restart_count=1,
-            environment="DEVELOPMENT",
-            service_instance_id="svc-contract",
-            working_directory=str(Path(__file__).resolve().parents[3]),
-            module_name="tests.fakes.mcp_server",
-            extra_environment={"GOOGLE_OAUTH_CLIENT_ID": "test-desktop-client-id"},
+    registry = load_signed_tool_registry()
+    runtime_registry = ConnectorRuntimeRegistry()
+    transport = StdioMCPClientAdapter(
+        descriptor=build_google_workspace_connector_descriptor(
+            _config(manifest_path, registry.entries_hash),
+            expected_tool_descriptors=tuple(registry.descriptor_expectations("google_workspace")),
+        ),
+        runtime_registry=runtime_registry,
+    )
+    try:
+        assert {tool.tool_id for tool in transport.list_tools("google_workspace")} == {
+            entry.tool_id
+            for entry in registry.entries
+            if entry.connector_id == "google_workspace"
+        }
+        call_result = transport.call_tool(
+            "google_workspace", "gmail_get_thread", {"thread_id": "thread-1"}, 1_000
         )
-    )
-    provider = MCPGoogleOAuthCredentialProvider(transport=transport)
-    try:
-        assert provider.get_connection_status().connected is False
-        runtime = transport.runtime_metadata()
-        assert runtime.process_status == "READY"
-        assert runtime.process_instance_id is not None
+        assert call_result.transport_status == "OK"
+        restart_result = transport.restart_once("google_workspace")
+        assert restart_result.restarted is True
+        assert transport.runtime_metadata().restart_count == 1
+        assert transport.runtime_metadata().process_status == "READY"
     finally:
         transport.close()
 
 
-def test_subprocess_transport_rejects_manifest_version_mismatch(tmp_path: Path) -> None:
-    manifest_path = _write_manifest(tmp_path)
-    descriptor = build_google_workspace_connector_descriptor(
-        _artifact_config(manifest_path, expected_manifest_version="unexpected")
+def test_subprocess_transport__rejects_manifest__hash_mismatch(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "mcp-manifest.json"
+    manifest_path.write_text(json.dumps(build_manifest_payload()), encoding="utf-8")
+    registry = load_signed_tool_registry()
+    config = _config(manifest_path, registry.entries_hash)
+    config = replace(config, expected_manifest_sha256="0" * 64)
+
+    with pytest.raises(MCPClientPortError):
+        StdioMCPClientAdapter(
+            descriptor=build_google_workspace_connector_descriptor(
+                config,
+                expected_tool_descriptors=tuple(
+                    registry.descriptor_expectations("google_workspace")
+                ),
+            ),
+            runtime_registry=ConnectorRuntimeRegistry(),
+        )
+
+
+def test_mcp_projection__rejects_duplicate__json_fields(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "mcp-manifest.json"
+    manifest_path.write_text(
+        '{"manifest_version":"2026-08-07.p0",'
+        '"manifest_version":"2026-08-07.p0",'
+        '"protocol_version":"2026-08-07.p0","connector_id":"google_workspace",'
+        '"registry_manifest_hash":"x","tools":[]}',
+        encoding="utf-8",
     )
 
-    with pytest.raises(MCPTransportError) as captured:
-        SubprocessMCPTransport(descriptor=descriptor)
-
-    assert captured.value.code is MCPTransportErrorCode.SCHEMA_MISMATCH
+    with pytest.raises(ValueError, match="duplicate MCP JSON field"):
+        MCPServerManifest.load(manifest_path)
 
 
-def test_subprocess_transport_rejects_manifest_registry_mismatch(tmp_path: Path) -> None:
-    manifest_path = _write_manifest(tmp_path)
-    descriptor = build_google_workspace_connector_descriptor(_artifact_config(manifest_path))
-    descriptor = replace(descriptor, expected_tool_registry=SignedToolRegistry(()))
-
-    with pytest.raises(MCPTransportError) as captured:
-        SubprocessMCPTransport(descriptor=descriptor)
-
-    assert captured.value.code is MCPTransportErrorCode.TOOL_REJECTED
-
-
-def test_subprocess_transport_rejects_tool_schema_mismatch(tmp_path: Path) -> None:
-    payload = build_manifest_payload()
-    tools = payload["tools"]
-    assert isinstance(tools, list)
-    first_tool = tools[0]
-    assert isinstance(first_tool, dict)
-    first_tool["tool_schema_hash"] = "mismatch"
+def test_subprocess_transport__preserves_server__delivery_certainty(tmp_path: Path) -> None:
     manifest_path = tmp_path / "mcp-manifest.json"
-    manifest_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-    descriptor = build_google_workspace_connector_descriptor(_artifact_config(manifest_path))
-
-    with pytest.raises(MCPTransportError) as captured:
-        SubprocessMCPTransport(descriptor=descriptor)
-
-    assert captured.value.code is MCPTransportErrorCode.TOOL_REJECTED
-
-
-def test_subprocess_transport_restarts_once_after_child_process_exit(tmp_path: Path) -> None:
-    manifest_path = _write_manifest(tmp_path)
-    transport = SubprocessMCPTransport(config=_artifact_config(manifest_path))
-    process = transport._process  # noqa: SLF001 - contract test forces the child-exit boundary
-    assert process is not None
-    process.kill()
-    process.wait(timeout=5)
-
+    manifest_path.write_text(json.dumps(build_manifest_payload()), encoding="utf-8")
+    registry = load_signed_tool_registry()
+    transport = StdioMCPClientAdapter(
+        descriptor=build_google_workspace_connector_descriptor(
+            _config(manifest_path, registry.entries_hash),
+            expected_tool_descriptors=tuple(registry.descriptor_expectations("google_workspace")),
+        ),
+        runtime_registry=ConnectorRuntimeRegistry(),
+    )
     try:
-        provider = MCPGoogleOAuthCredentialProvider(transport=transport)
-        assert provider.get_connection_status().connected is False
-        metadata = transport.runtime_metadata()
-        assert metadata.process_status == "READY"
-        assert metadata.restart_count == 1
+        result = transport.call_tool(
+            "google_workspace",
+            "gmail_send",
+            {"__test_delivery_certainty": "SENT_RESPONSE_LOST"},
+            1_000,
+        )
+        assert result.transport_status == "ERROR"
+        assert isinstance(result.payload, dict)
+        assert result.payload["delivery_certainty"] == "SENT_RESPONSE_LOST"
     finally:
         transport.close()
 
 
-def _write_manifest(tmp_path: Path) -> Path:
-    manifest_path = tmp_path / "mcp-manifest.json"
-    manifest_path.write_text(json.dumps(build_manifest_payload(), sort_keys=True), encoding="utf-8")
-    return manifest_path
+def test_installed_transport_executes__verified_binary_without__pythonpath_or_parent_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = (tmp_path / "GoogleWorkspaceMcpServer.exe").resolve()
+    executable.write_bytes(b"installed-mcp")
+    manifest_path = (tmp_path / "tool-descriptor-projection-v1.json").resolve()
+    manifest_path.write_text(json.dumps(build_manifest_payload()), encoding="utf-8")
+    registry = load_signed_tool_registry()
+    captured: dict[str, object] = {}
 
+    class _Process:
+        pass
 
-def _artifact_config(
-    manifest_path: Path,
-    *,
-    expected_manifest_version: str = "2026-08-07.p0",
-) -> MCPArtifactConfig:
-    executable = Path(sys.executable).resolve()
-    return MCPArtifactConfig(
+    def fake_popen(command: list[str], **kwargs: object) -> _Process:
+        captured["command"] = command
+        captured.update(kwargs)
+        return _Process()
+
+    monkeypatch.setenv("BOOTSTRAP_SECRET", "forbidden")
+    monkeypatch.setenv("LLM_API_KEY", "forbidden")
+    monkeypatch.setattr(
+        "google_work_agent.adapters.connectors.runtime.stdio_mcp_client.subprocess.Popen",
+        fake_popen,
+    )
+    monkeypatch.setattr(
+        "google_work_agent.adapters.connectors.runtime.stdio_mcp_client.threading.Thread.start",
+        lambda _thread: None,
+    )
+    monkeypatch.setattr(StdioMCPClientAdapter, "_perform_handshake", lambda _self: None)
+    config = MCPArtifactConfig(
         executable_path=str(executable),
-        manifest_path=str(manifest_path.resolve()),
+        manifest_path=str(manifest_path),
         expected_binary_sha256=calculate_file_sha256(executable),
-        expected_manifest_sha256=calculate_file_sha256(manifest_path.resolve()),
-        expected_manifest_version=expected_manifest_version,
+        expected_manifest_sha256=calculate_file_sha256(manifest_path),
+        expected_manifest_version="2026-08-07.p0",
         expected_protocol_version="2026-08-07.p0",
-        expected_tool_registry_version="2026-08-06.p0",
+        expected_registry_manifest_hash=registry.entries_hash,
         startup_timeout_ms=5_000,
-        request_timeout_ms=5_000,
+        request_timeout_ms=1_000,
         max_restart_count=1,
-        environment="DEVELOPMENT",
-        service_instance_id="svc-contract",
-        working_directory=str(Path(__file__).resolve().parents[3]),
+        environment="PRODUCTION",
+        service_instance_id="service-1",
+        module_name=None,
+        working_directory=str(tmp_path),
+        extra_environment={
+            "GOOGLE_OAUTH_ENV": "PRODUCTION",
+            "GOOGLE_OAUTH_CLIENT_ID": "client-id",
+        },
+    )
+    client = StdioMCPClientAdapter(
+        descriptor=build_google_workspace_connector_descriptor(
+            config,
+            expected_tool_descriptors=tuple(registry.descriptor_expectations("google_workspace")),
+        ),
+        runtime_registry=ConnectorRuntimeRegistry(),
+        signature_verifier=StaticArtifactSignatureVerifier(ArtifactSignatureDecision(allowed=True)),
+    )
+    client._process = None
+
+    child_environment = captured["env"]
+    assert captured["command"] == [str(executable)]
+    assert isinstance(child_environment, dict)
+    assert "PYTHONPATH" not in child_environment
+    assert "PATH" not in child_environment
+    assert "BOOTSTRAP_SECRET" not in child_environment
+    assert "LLM_API_KEY" not in child_environment
+    assert child_environment["GOOGLE_OAUTH_ENV"] == "PRODUCTION"
+
+
+def test_failed_handshake__terminates_spawned__child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "mcp-manifest.json"
+    manifest_path.write_text(json.dumps(build_manifest_payload()), encoding="utf-8")
+    registry = load_signed_tool_registry()
+
+    class _FailedProcess:
+        def __init__(self) -> None:
+            self.killed = False
+            self.waited = False
+
+        def poll(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, *, timeout: int) -> int:
+            assert timeout == 5
+            self.waited = True
+            return 1
+
+    process = _FailedProcess()
+    monkeypatch.setattr(
+        "google_work_agent.adapters.connectors.runtime.stdio_mcp_client.subprocess.Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "google_work_agent.adapters.connectors.runtime.stdio_mcp_client.threading.Thread.start",
+        lambda _thread: None,
+    )
+
+    def fail_handshake(_client: StdioMCPClientAdapter) -> None:
+        raise MCPClientPortError(
+            code=MCPClientPortErrorCode.HANDSHAKE_FAILED,
+            message="fixture handshake failure",
+        )
+
+    monkeypatch.setattr(StdioMCPClientAdapter, "_perform_handshake", fail_handshake)
+
+    with pytest.raises(MCPClientPortError):
+        StdioMCPClientAdapter(
+            descriptor=build_google_workspace_connector_descriptor(
+                _config(manifest_path, registry.entries_hash),
+                expected_tool_descriptors=tuple(
+                    registry.descriptor_expectations("google_workspace")
+                ),
+            ),
+            runtime_registry=ConnectorRuntimeRegistry(),
+        )
+
+    assert process.killed is True
+    assert process.waited is True
+
+
+def _config(manifest_path: Path, registry_hash: str) -> MCPArtifactConfig:
+    executable = str(sys.executable)
+    return MCPArtifactConfig(
+        executable_path=executable,
+        manifest_path=str(manifest_path),
+        expected_binary_sha256=calculate_file_sha256(Path(executable)),
+        expected_manifest_sha256=calculate_file_sha256(manifest_path),
+        expected_manifest_version="2026-08-07.p0",
+        expected_protocol_version="2026-08-07.p0",
+        expected_registry_manifest_hash=registry_hash,
+        startup_timeout_ms=5_000,
+        request_timeout_ms=1_000,
+        max_restart_count=1,
+        environment="TEST",
+        service_instance_id="service-1",
         module_name="tests.fakes.mcp_server",
     )

@@ -1,18 +1,16 @@
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-from google_work_agent.adapters.persistence import (
-    apply_migrations,
-    connect_sqlite,
-    sqlite_unit_of_work_factory,
-)
-from google_work_agent.application import (
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
+from google_work_agent.application.use_cases.run.complete_answer_only_run import (
     CompleteAnswerOnlyRunCommand,
-    CompleteAnswerOnlyRunService,
+    CompleteAnswerOnlyRunHandler,
 )
-from google_work_agent.domain import ResultCode, RunStatus
+from google_work_agent.domain.results import ResultCode
+from google_work_agent.domain.run.model import RunStatusV1
 
 
 @pytest.fixture()
@@ -50,8 +48,8 @@ def answer_only_database(tmp_path: Path) -> Path:
     return database_path
 
 
-def test_answer_only_completion_is_atomic(answer_only_database: Path) -> None:
-    service = CompleteAnswerOnlyRunService(
+def test_answer_only__completion_is__atomic(answer_only_database: Path) -> None:
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 1000,
         message_id_factory=lambda: "message-1",
@@ -70,14 +68,15 @@ def test_answer_only_completion_is_atomic(answer_only_database: Path) -> None:
 
     assert response.applied is True
     assert response.result_code is ResultCode.TRANSITION_APPLIED
-    assert response.current_status is RunStatus.COMPLETED
+    assert response.current_status is RunStatusV1.COMPLETED
     assert response.current_version == 1
     assert response.assistant_message_id == "message-1"
 
     connection = connect_sqlite(answer_only_database)
     try:
         run = connection.execute(
-            "SELECT status, version, finished_at_ms FROM runs WHERE id = 'run-1';"
+            """SELECT status, version, finished_at_ms, terminal_result_kind
+               FROM runs WHERE id = 'run-1';"""
         ).fetchone()
         message = connection.execute(
             """
@@ -121,6 +120,7 @@ def test_answer_only_completion_is_atomic(answer_only_database: Path) -> None:
         assert run["status"] == "COMPLETED"
         assert run["version"] == 1
         assert run["finished_at_ms"] == 1000
+        assert run["terminal_result_kind"] == "SUCCESS"
         assert [(row["id"], row["role"], row["content"]) for row in message] == [
             ("message-1", "ASSISTANT", "done")
         ]
@@ -147,8 +147,8 @@ def test_answer_only_completion_is_atomic(answer_only_database: Path) -> None:
         connection.close()
 
 
-def test_same_command_id_and_hash_returns_stored_result(answer_only_database: Path) -> None:
-    service = CompleteAnswerOnlyRunService(
+def test_same_command__id_and_hash__returns_stored_result(answer_only_database: Path) -> None:
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 1000,
         message_id_factory=lambda: "message-1",
@@ -177,8 +177,47 @@ def test_same_command_id_and_hash_returns_stored_result(answer_only_database: Pa
         connection.close()
 
 
-def test_same_command_id_and_different_hash_is_blocked(answer_only_database: Path) -> None:
-    service = CompleteAnswerOnlyRunService(
+def test_bounded_answer__only_completion_persists__and_replays_partial(
+    answer_only_database: Path,
+) -> None:
+    service = CompleteAnswerOnlyRunHandler(
+        unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
+        now_ms=lambda: 1000,
+        message_id_factory=lambda: "message-partial",
+    )
+    command = CompleteAnswerOnlyRunCommand(
+        command_id="command-partial",
+        conversation_id="conversation-1",
+        run_id="run-1",
+        assistant_message="Only part of the request could be answered.",
+        expected_version=0,
+        request_hash="p" * 64,
+        result_kind="PARTIAL",
+    )
+
+    first = service(command)
+    replay = service(command)
+
+    assert first.result_kind == "PARTIAL"
+    assert replay == first
+    connection = connect_sqlite(answer_only_database)
+    try:
+        run = connection.execute(
+            "SELECT terminal_result_kind FROM runs WHERE id='run-1';"
+        ).fetchone()
+        assert run["terminal_result_kind"] == "PARTIAL"
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM messages WHERE run_id='run-1' AND role='ASSISTANT';"
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        connection.close()
+
+
+def test_same_command__id_and_different__hash_is_blocked(answer_only_database: Path) -> None:
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 1000,
         message_id_factory=lambda: "message-1",
@@ -207,7 +246,7 @@ def test_same_command_id_and_different_hash_is_blocked(answer_only_database: Pat
 
     assert duplicate.applied is False
     assert duplicate.result_code is ResultCode.DUPLICATE_COMMAND
-    assert duplicate.current_status is RunStatus.COMPLETED
+    assert duplicate.current_status is RunStatusV1.COMPLETED
 
     connection = connect_sqlite(answer_only_database)
     try:
@@ -216,8 +255,8 @@ def test_same_command_id_and_different_hash_is_blocked(answer_only_database: Pat
         connection.close()
 
 
-def test_stale_version_is_rejected_and_recorded(answer_only_database: Path) -> None:
-    service = CompleteAnswerOnlyRunService(
+def test_stale_version__is_rejected__and_recorded(answer_only_database: Path) -> None:
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 1000,
         message_id_factory=lambda: "message-1",
@@ -236,7 +275,7 @@ def test_stale_version_is_rejected_and_recorded(answer_only_database: Path) -> N
 
     assert response.applied is False
     assert response.result_code is ResultCode.VERSION_CONFLICT
-    assert response.current_status is RunStatus.ANALYZING
+    assert response.current_status is RunStatusV1.ANALYZING
     assert response.current_version == 0
 
     connection = connect_sqlite(answer_only_database)
@@ -258,16 +297,16 @@ def test_stale_version_is_rejected_and_recorded(answer_only_database: Path) -> N
         connection.close()
 
 
-def test_answer_only_failure_rolls_back_receipt_message_run_trace_and_audit(
+def test_answer_only__rejects_oversized_terminal__input_before_uow(
     answer_only_database: Path,
 ) -> None:
-    service = CompleteAnswerOnlyRunService(
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 1000,
         message_id_factory=lambda: "message-1",
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ValueError, match="1..65536 UTF-8 bytes"):
         service(
             CompleteAnswerOnlyRunCommand(
                 command_id="command-fail",
@@ -300,7 +339,7 @@ def test_answer_only_failure_rolls_back_receipt_message_run_trace_and_audit(
         connection.close()
 
 
-def test_received_receipt_is_recovered_from_completed_run(answer_only_database: Path) -> None:
+def test_received_receipt__is_recovered__from_completed_run(answer_only_database: Path) -> None:
     connection = connect_sqlite(answer_only_database)
     try:
         connection.execute(
@@ -332,7 +371,7 @@ def test_received_receipt_is_recovered_from_completed_run(answer_only_database: 
     finally:
         connection.close()
 
-    service = CompleteAnswerOnlyRunService(
+    service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 2000,
         message_id_factory=lambda: "message-2",
@@ -349,7 +388,7 @@ def test_received_receipt_is_recovered_from_completed_run(answer_only_database: 
     )
 
     assert response.applied is True
-    assert response.current_status is RunStatus.COMPLETED
+    assert response.current_status is RunStatusV1.COMPLETED
     assert response.assistant_message_id == "message-1"
 
     connection = connect_sqlite(answer_only_database)

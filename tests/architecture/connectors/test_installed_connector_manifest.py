@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from google_work_agent.adapters.connectors.runtime.load_installed_connector_manifest import (
+    load_installed_connector_manifest,
+)
+
+
+def test_installed_manifest__has_two_canonical__connector_bindings() -> None:
+    manifest = load_installed_connector_manifest()
+    entry = manifest.get_required("google_workspace")
+    github = manifest.get_required("github")
+
+    assert {item.connector_id for item in manifest.connectors} == {
+        "google_workspace",
+        "github",
+    }
+    assert entry.provider_namespace == "google"
+    assert entry.connector_package == "workspace"
+    assert entry.tool_projection_path.endswith("tool-descriptor-projection-v1.json")
+    assert github.provider_namespace == "github"
+    assert github.connector_package == "github"
+    assert github.executable_path == "mcp/github/GitHubMcpServer.exe"
+
+
+def test_installed_manifest__rejects_duplicate__and_unsafe_paths(tmp_path: Path) -> None:
+    source = load_installed_connector_manifest.__globals__["_IMPLEMENTATION_MANIFEST"]
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["connectors"][0]["executable_path"] = "../escape.exe"
+    path = tmp_path / "installed.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="safe and relative"):
+        load_installed_connector_manifest(path)
+    with pytest.raises(ValueError, match="release hash mismatch"):
+        load_installed_connector_manifest(source, expected_sha256="0" * 64)
+
+    path.write_text(
+        '{"schema_version":1,"schema_version":1,"connectors":[]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate installed connector"):
+        load_installed_connector_manifest(path)

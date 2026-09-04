@@ -79,16 +79,15 @@ config.local.*
 *.sqlite-shm
 *.log
 *.jsonl
+!/evaluation/datasets/**/*.jsonl
 *.dmp
 *.dump
 crash-*.txt
 
-# Experiment outputs: keep curated fixtures/datasets, ignore generated results
-experiments/results/
-experiments/raw-results/
-experiments/cache/
-experiments/artifacts/
-experiments/reports/generated/
+# Evaluation outputs: keep curated fixtures/datasets, ignore transient runs
+/evaluation/results/
+/evaluation/cache/
+/evaluation/raw-results/
 artifacts/
 reports/generated/
 
@@ -146,7 +145,7 @@ colab_outputs/
 colab_tmp/
 wandb/
 mlruns/
-runs/
+/runs/
 lightning_logs/
 .cache/huggingface/
 hf_cache/

@@ -1,14 +1,19 @@
-"""Health routes."""
+"""Process liveness and infrastructure readiness routes."""
 
 from fastapi import APIRouter, Request
 
-from google_work_agent.api.dependencies import (
+from google_work_agent.api.dependencies.access_control import enforce_access
+from google_work_agent.api.dependencies.health_checks import (
+    GetReadinessHandler,
+    GetReadinessQuery,
     HealthRouteDependency,
-    composed_readiness_state,
-    enforce_access,
 )
-from google_work_agent.api.schemas.runtime import LiveResponse, ReadyResponse
-from google_work_agent.ports import EndpointPolicy, ReadinessCheckResult, ReadinessState
+from google_work_agent.api.schemas.health_checks.get_liveness import LiveResponse
+from google_work_agent.api.schemas.health_checks.get_readiness import (
+    ReadinessCheckResponse,
+    ReadyResponse,
+)
+from google_work_agent.ports.system.api_access_port import EndpointPolicy
 
 router = APIRouter()
 
@@ -28,44 +33,22 @@ def live(request: Request, dependencies: HealthRouteDependency) -> LiveResponse:
 @router.get("/health/ready", response_model=ReadyResponse)
 def ready(request: Request, dependencies: HealthRouteDependency) -> ReadyResponse:
     enforce_access(request, policy=EndpointPolicy.HEALTH_PUBLIC)
-    report = dependencies.readiness_aggregator().evaluate()
-    checks = list(report.checks)
-    state = report.state
-    verifier = dependencies.launcher_probe_verifier
-    if verifier is None:
-        checks.append(
-            ReadinessCheckResult(
-                name="launcher_probe",
-                state=ReadinessState.NOT_READY,
-                detail="launcher probe verifier missing",
-            )
-        )
-        state = ReadinessState.NOT_READY
-    else:
-        probe = verifier.verify(service_instance_id=dependencies.service_instance_id)
-        if probe.allowed:
-            checks.append(ReadinessCheckResult(name="launcher_probe", state=ReadinessState.READY))
-        else:
-            checks.append(
-                ReadinessCheckResult(
-                    name="launcher_probe",
-                    state=ReadinessState.NOT_READY,
-                    detail=probe.detail or "launcher probe denied",
-                )
-            )
-            state = ReadinessState.NOT_READY
-    if dependencies.frontend_readiness_check is not None:
-        checks.append(dependencies.frontend_readiness_check())
-    if dependencies.safe_mode_readiness_check is not None:
-        checks.append(dependencies.safe_mode_readiness_check())
-    for factory in dependencies.additional_readiness_checks:
-        checks.append(factory())
-    state = composed_readiness_state(tuple(checks))
+    result = GetReadinessHandler(
+        readiness_aggregator_factory=dependencies.readiness_aggregator,
+        launcher_probe_verifier=dependencies.launcher_probe_verifier,
+        frontend_readiness_check=dependencies.frontend_readiness_check,
+        safe_mode_readiness_check=dependencies.safe_mode_readiness_check,
+        additional_readiness_checks=dependencies.additional_readiness_checks,
+    ).handle(GetReadinessQuery(service_instance_id=dependencies.service_instance_id))
     return ReadyResponse(
-        status=state.value,
+        status=result.state.value,
         checks=[
-            {"name": check.name, "state": check.state.value, "detail": check.detail}
-            for check in checks
+            ReadinessCheckResponse(
+                name=check.name,
+                state=check.state.value,
+                detail=check.detail,
+            )
+            for check in result.checks
         ],
         release_version=dependencies.release_version,
         api_contract_version=dependencies.api_contract_version,

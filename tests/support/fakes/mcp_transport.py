@@ -5,12 +5,13 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 
-from google_work_agent.ports import (
+from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.mcp_client_port import (
+    MCPClientPortError,
+    MCPClientPortErrorCode,
     MCPControlResponse,
     MCPRuntimeMetadata,
     MCPToolResponse,
-    MCPTransportError,
-    MCPTransportErrorCode,
 )
 
 
@@ -26,12 +27,12 @@ class MCPCallRecord:
 class QueuedMCPFailure:
     """One queued MCP transport failure."""
 
-    code: MCPTransportErrorCode
+    code: MCPClientPortErrorCode
     message: str
-    dispatch_started: bool = False
+    delivery_certainty: DeliveryCertainty = DeliveryCertainty.NOT_SENT
 
 
-class FakeMCPTransport:
+class FakeMCPClientPort:
     """Queue-driven MCP transport fake with no subprocess usage."""
 
     def __init__(self) -> None:
@@ -42,7 +43,7 @@ class FakeMCPTransport:
         self._request_counter = 0
 
     def _next_request_id(self) -> str:
-        # Mirrors SubprocessMCPTransport: a fresh id per call, never reused
+        # Mirrors StdioMCPClientAdapter: a fresh id per call, never reused
         # across retries, so tests can assert on real correlation behavior.
         self._request_counter += 1
         return f"req-{self._request_counter}"
@@ -67,10 +68,10 @@ class FakeMCPTransport:
         request_id = self._next_request_id()
         if self._failures:
             failure = self._failures.pop(0)
-            raise MCPTransportError(
+            raise MCPClientPortError(
                 code=failure.code,
                 message=failure.message,
-                dispatch_started=failure.dispatch_started,
+                delivery_certainty=failure.delivery_certainty,
                 request_id=request_id,
             )
         if not self._responses:
@@ -83,10 +84,10 @@ class FakeMCPTransport:
         request_id = self._next_request_id()
         if self._failures:
             failure = self._failures.pop(0)
-            raise MCPTransportError(
+            raise MCPClientPortError(
                 code=failure.code,
                 message=failure.message,
-                dispatch_started=failure.dispatch_started,
+                delivery_certainty=failure.delivery_certainty,
                 request_id=request_id,
             )
         if not self._control_responses:

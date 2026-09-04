@@ -7,8 +7,8 @@ from typing import Any
 from google_work_agent.adapters.langgraph.confirmation_llm_runtime import (
     ConfirmationAwareLLMRuntime,
 )
-from google_work_agent.application.observability import ObservabilityContext
-from google_work_agent.ports import PromptReference
+from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
+from google_work_agent.ports.system.contracts.observability import ObservabilityContext
 
 
 @dataclass
@@ -44,7 +44,7 @@ def _response() -> dict[str, object]:
     return {
         "schema_version": 1,
         "response_kind": "FREE_TEXT",
-        "selected_option_ids": [],
+        "selected_option": None,
         "free_text": "use the existing task",
     }
 
@@ -58,12 +58,12 @@ def _call(runtime: ConfirmationAwareLLMRuntime, prompt_id: str, *, run_id: str =
     )
 
 
-def test_confirmation_is_injected_only_into_originating_prompt_slot() -> None:
+def test_confirmation_is__injected_only_into__originating_prompt_slot() -> None:
     delegate = _Delegate()
     runtime = ConfirmationAwareLLMRuntime(delegate)
     runtime.register(
         run_id="run-1",
-        origin_target="context.assess_sufficiency",
+        origin_target="retrieval.assess_sufficiency",
         response=_response(),  # type: ignore[arg-type]
     )
 
@@ -78,46 +78,46 @@ def test_confirmation_is_injected_only_into_originating_prompt_slot() -> None:
     assert second["confirmation_response"] == _response()
 
 
-def test_confirmation_is_scoped_by_run_id() -> None:
+def test_confirmation_is__scoped_by__run_id() -> None:
     delegate = _Delegate()
     runtime = ConfirmationAwareLLMRuntime(delegate)
     runtime.register(
         run_id="run-1",
-        origin_target="analysis.analyze",
+        origin_target="analysis.assess_information_gaps",
         response=_response(),  # type: ignore[arg-type]
     )
 
-    _call(runtime, "work_analysis.analyze", run_id="run-2")
+    _call(runtime, "work_analysis.assess_information_gaps", run_id="run-2")
 
     assert "confirmation_response" not in delegate.calls[0]["prompt_input"]
 
 
-def test_clear_expires_pending_confirmation() -> None:
+def test_clear_expires__pending__confirmation() -> None:
     delegate = _Delegate()
     runtime = ConfirmationAwareLLMRuntime(delegate)
     runtime.register(
         run_id="run-1",
-        origin_target="review.inspect",
+        origin_target="review.aggregate_findings",
         response=_response(),  # type: ignore[arg-type]
     )
     runtime.clear(run_id="run-1")
 
-    _call(runtime, "review.inspect")
+    _call(runtime, "review.recheck_affected_dimensions")
 
     assert "confirmation_response" not in delegate.calls[0]["prompt_input"]
 
 
-def test_tool_call_path_uses_the_same_bounded_projection() -> None:
+def test_tool_call__path_uses_the__same_bounded_projection() -> None:
     delegate = _Delegate()
     runtime = ConfirmationAwareLLMRuntime(delegate)
     runtime.register(
         run_id="run-1",
-        origin_target="planning.draft_plan",
+        origin_target="planning.compose_arguments_per_output_route",
         response=_response(),  # type: ignore[arg-type]
     )
 
     result = runtime.invoke_tool_call(
-        prompt_ref=_prompt("planning.compose_arguments"),
+        prompt_ref=_prompt("planning.compose_arguments_per_output_route"),
         prompt_input={"output_route": {"route_id": "route-1"}},
         tools=[],
         mapper=lambda value: value,

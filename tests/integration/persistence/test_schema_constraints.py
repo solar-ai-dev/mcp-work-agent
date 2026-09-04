@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from google_work_agent.adapters.persistence import apply_migrations, connect_sqlite
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
 
 HASH = "a" * 64
 
@@ -19,12 +20,12 @@ def migrated_connection(tmp_path: Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
-def test_schema_integrity_checks_pass(migrated_connection: sqlite3.Connection) -> None:
+def test_schema_integrity__checks__pass(migrated_connection: sqlite3.Connection) -> None:
     assert migrated_connection.execute("PRAGMA quick_check;").fetchone()[0] == "ok"
     assert migrated_connection.execute("PRAGMA foreign_key_check;").fetchall() == []
 
 
-def test_conversation_allows_only_one_open_run(
+def test_conversation_allows__only_one__open_run(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_account_conversation_and_run(migrated_connection)
@@ -42,7 +43,7 @@ def test_conversation_allows_only_one_open_run(
         )
 
 
-def test_action_effect_contract_blocks_invalid_combinations(
+def test_action_effect__contract_blocks__invalid_combinations(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -87,7 +88,7 @@ def test_action_effect_contract_blocks_invalid_combinations(
     )
 
 
-def test_json_hash_and_utf8_byte_constraints(
+def test_json_hash__and_utf8__byte_constraints(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_account_conversation_and_run(migrated_connection)
@@ -133,7 +134,7 @@ def test_json_hash_and_utf8_byte_constraints(
         )
 
 
-def test_only_one_active_approval_is_allowed_per_action(
+def test_only_one__active_approval_is__allowed_per_action(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -146,6 +147,7 @@ def test_only_one_active_approval_is_allowed_per_action(
         recovery_policy="RESOURCE_SEARCH",
     )
     migrated_connection.execute("UPDATE plans SET status = 'WAITING_APPROVAL' WHERE id = 'plan-1';")
+    migrated_connection.execute("UPDATE runs SET status = 'WAITING_APPROVAL' WHERE id = 'run-1';")
     migrated_connection.execute(
         "UPDATE actions SET status = 'APPROVED', version = 1 WHERE id = 'action-approval-1';"
     )
@@ -183,7 +185,7 @@ def test_only_one_active_approval_is_allowed_per_action(
         )
 
 
-def test_only_one_active_execution_attempt_is_allowed_per_approval(
+def test_only_one_active__execution_attempt_is__allowed_per_approval(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -196,6 +198,7 @@ def test_only_one_active_execution_attempt_is_allowed_per_approval(
         recovery_policy="GET_TARGET",
     )
     migrated_connection.execute("UPDATE plans SET status = 'WAITING_APPROVAL' WHERE id = 'plan-1';")
+    migrated_connection.execute("UPDATE runs SET status = 'WAITING_APPROVAL' WHERE id = 'run-1';")
     migrated_connection.execute(
         "UPDATE actions SET status = 'APPROVED', version = 1 WHERE id = 'action-attempt-1';"
     )
@@ -241,7 +244,7 @@ def test_only_one_active_execution_attempt_is_allowed_per_approval(
         )
 
 
-def test_active_approval_and_action_status_are_enforced_bidirectionally(
+def test_active_approval__and_action_status__are_enforced_bidirectionally(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -254,6 +257,7 @@ def test_active_approval_and_action_status_are_enforced_bidirectionally(
         recovery_policy="RESOURCE_SEARCH",
     )
     migrated_connection.execute("UPDATE plans SET status = 'WAITING_APPROVAL' WHERE id = 'plan-1';")
+    migrated_connection.execute("UPDATE runs SET status = 'WAITING_APPROVAL' WHERE id = 'run-1';")
     migrated_connection.execute(
         "UPDATE actions SET status = 'REJECTED' WHERE id = 'action-approval-guard';"
     )
@@ -291,7 +295,7 @@ def test_active_approval_and_action_status_are_enforced_bidirectionally(
     )
 
 
-def test_run_and_plan_terminal_states_reject_nonterminal_children_both_directions(
+def test_run_and_plan__terminal_states_reject__nonterminal_children_both_directions(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -308,7 +312,7 @@ def test_run_and_plan_terminal_states_reject_nonterminal_children_both_direction
     migrated_connection.execute("UPDATE plans SET status = 'COMPLETED' WHERE id = 'plan-1';")
     migrated_connection.execute("UPDATE runs SET status = 'COMPLETED' WHERE id = 'run-1';")
 
-    with pytest.raises(sqlite3.IntegrityError, match="NFR019_TERMINAL_PARENT_ACTION"):
+    with pytest.raises(sqlite3.IntegrityError, match="ISSUE128_ACTION_NOT_CURRENT_PLAN_AUTHORITY"):
         migrated_connection.execute(
             "UPDATE actions SET status = 'PROPOSED' WHERE id = 'action-terminal-parent';"
         )
@@ -320,7 +324,7 @@ def test_run_and_plan_terminal_states_reject_nonterminal_children_both_direction
         )
 
 
-def test_cancelled_run_rejects_unknown_result_both_directions(
+def test_cancelled_run__rejects_unknown__result_both_directions(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -356,13 +360,13 @@ def test_cancelled_run_rejects_unknown_result_both_directions(
     )
     migrated_connection.execute("UPDATE plans SET status = 'CANCELLED' WHERE id = 'plan-1';")
     migrated_connection.execute("UPDATE runs SET status = 'CANCELLED' WHERE id = 'run-1';")
-    with pytest.raises(sqlite3.IntegrityError, match="NFR019_ACTION_ATTEMPT"):
+    with pytest.raises(sqlite3.IntegrityError, match="ISSUE128_ACTION_NOT_CURRENT_PLAN_AUTHORITY"):
         migrated_connection.execute(
             "UPDATE actions SET status = 'UNKNOWN_RESULT' WHERE id = 'action-cancel-unknown';"
         )
 
 
-def test_superseded_plan_nonterminal_history_does_not_block_run_completion(
+def test_superseded_plan_nonterminal__history_does_not__block_run_completion(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -372,7 +376,7 @@ def test_superseded_plan_nonterminal_history_does_not_block_run_completion(
 
 
 @pytest.mark.parametrize("verification_status", ("VERIFIED", "MISMATCH"))
-def test_write_verification_terminal_fact_is_allowed_with_matching_record(
+def test_write_verification_terminal__fact_is_allowed__with_matching_record(
     migrated_connection: sqlite3.Connection,
     verification_status: str,
 ) -> None:
@@ -420,7 +424,7 @@ def test_write_verification_terminal_fact_is_allowed_with_matching_record(
         )
 
 
-def test_write_verification_terminal_status_requires_matching_record(
+def test_write_verification__terminal_status__requires_matching_record(
     migrated_connection: sqlite3.Connection,
 ) -> None:
     _insert_plan(migrated_connection)
@@ -488,6 +492,7 @@ def _claim_write_action(
     attempt_id: str,
 ) -> None:
     connection.execute("UPDATE plans SET status = 'WAITING_APPROVAL' WHERE id = 'plan-1';")
+    connection.execute("UPDATE runs SET status = 'WAITING_APPROVAL' WHERE id = 'run-1';")
     connection.execute(
         "UPDATE actions SET status = 'APPROVED', version = 1 WHERE id = ?;", (action_id,)
     )
@@ -544,8 +549,10 @@ def _insert_plan(connection: sqlite3.Connection) -> None:
     _insert_account_conversation_and_run(connection)
     connection.execute(
         """
-        INSERT OR IGNORE INTO plans (id, run_id, revision_no, status, created_at_ms)
-        VALUES ('plan-1', 'run-1', 1, 'DRAFT', 100);
+        INSERT OR IGNORE INTO plans (
+            id, run_id, revision_no, status, created_at_ms,
+            review_status, review_version, review_disposition
+        ) VALUES ('plan-1', 'run-1', 1, 'DRAFT', 100, 'PASSED', 1, 'PASS');
         """
     )
 

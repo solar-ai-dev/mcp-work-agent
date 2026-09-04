@@ -1,24 +1,20 @@
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from google_work_agent.api.dependencies import calculate_server_request_hash
-from google_work_agent.api.schemas.actions import (
-    ApproveActionRequestV2,
-    ModifyActionRequestV2,
-    PrepareRetryRequestV2,
-    RejectActionRequestV2,
-)
-from google_work_agent.api.schemas.runs import (
-    CancelRunRequestV2,
-    ConfirmationResponseV1,
-    ResolveRecoveryRequestV1,
-    ResumeRunRequestV2,
-)
+from google_work_agent.api.dependencies.request_hash import calculate_server_request_hash
+from google_work_agent.api.schemas.actions.approve_action import ApproveActionRequestV2
+from google_work_agent.api.schemas.actions.modify_action import ModifyActionRequestV2
+from google_work_agent.api.schemas.actions.prepare_retry import PrepareRetryRequestV2
+from google_work_agent.api.schemas.actions.reject_action import RejectActionRequestV2
+from google_work_agent.api.schemas.runs.cancel_run import CancelRunRequestV2
+from google_work_agent.api.schemas.runs.confirm_run import ConfirmationResponseV1
+from google_work_agent.api.schemas.runs.resolve_recovery import ResolveRecoveryRequestV1
+from google_work_agent.api.schemas.runs.resume_run import ResumeRunRequestV2
 
 VERSION = "1"
 
 
-def test_server_request_hash_is_canonical_and_semantic() -> None:
+def test_server_request__hash_is__canonical_and_semantic() -> None:
     left = calculate_server_request_hash(
         operation="CancelRunRequestV2",
         payload={"command_id": "cmd-1", "expected_version": 3},
@@ -61,7 +57,7 @@ def test_server_request_hash_is_canonical_and_semantic() -> None:
             PrepareRetryRequestV2,
             {
                 "command_id": "cmd",
-                "expected_action_version": 1,
+                "expected_version": 1,
                 "api_contract_version": VERSION,
             },
         ),
@@ -69,13 +65,13 @@ def test_server_request_hash_is_canonical_and_semantic() -> None:
             CancelRunRequestV2,
             {
                 "command_id": "cmd",
-                "expected_run_version": 1,
+                "expected_version": 1,
                 "api_contract_version": VERSION,
             },
         ),
     ],
 )
-def test_versioned_mutation_schemas_accept_only_client_authority_fields(
+def test_versioned_mutation__schemas_accept_only__client_authority_fields(
     schema: type[BaseModel],
     payload: dict[str, object],
 ) -> None:
@@ -97,7 +93,7 @@ def test_versioned_mutation_schemas_accept_only_client_authority_fields(
             schema.model_validate({**payload, forbidden: "browser-value"})
 
 
-def test_approve_accepts_only_duplicate_acknowledgement_not_duplicate_facts() -> None:
+def test_approve_accepts__only_duplicate_acknowledgement__not_duplicate_facts() -> None:
     payload = {
         "command_id": "approve-duplicate",
         "expected_version": 1,
@@ -117,14 +113,14 @@ def test_approve_accepts_only_duplicate_acknowledgement_not_duplicate_facts() ->
         )
 
 
-def test_confirmation_response_is_typed_and_mutually_exclusive() -> None:
+def test_confirmation_response__is_typed__and_mutually_exclusive() -> None:
     response = ConfirmationResponseV1.model_validate(
         {
             "command_id": "confirm-1",
             "expected_version": 2,
             "interrupt_id": "interrupt-1",
             "response_kind": "FREE_TEXT",
-            "selected_option_ids": [],
+            "selected_option": None,
             "free_text": "  Use the default task list.  ",
             "api_contract_version": VERSION,
         }
@@ -135,12 +131,12 @@ def test_confirmation_response_is_typed_and_mutually_exclusive() -> None:
         ConfirmationResponseV1.model_validate(
             {
                 **response.model_dump(),
-                "selected_option_ids": ["default"],
+                "selected_option": "default",
             }
         )
 
 
-def test_resume_rejects_arbitrary_payload_and_confirmation_kind() -> None:
+def test_resume_rejects__arbitrary_payload__and_confirmation_kind() -> None:
     base = {
         "command_id": "resume-1",
         "expected_version": 2,
@@ -155,19 +151,24 @@ def test_resume_rejects_arbitrary_payload_and_confirmation_kind() -> None:
         ResumeRunRequestV2.model_validate({**base, "resume_kind": "CONFIRMATION"})
 
 
-def test_recovery_schema_allows_only_three_canonical_choices() -> None:
+def test_recovery_schema_uses__shared_target_and__closed_resolution_vocabulary() -> None:
     base = {
         "command_id": "recovery-1",
         "expected_version": 4,
-        "action_id": "action-1",
+        "target": {"target_kind": "ACTION", "action_id": "action-1"},
         "resolution_kind": "ACCEPT_PARTIAL",
         "api_contract_version": VERSION,
     }
     assert ResolveRecoveryRequestV1.model_validate(base)
-    assert ResolveRecoveryRequestV1.model_validate(
-        {**base, "resolution_kind": "CREATE_CORRECTIVE_PLAN"}
-    )
-    assert ResolveRecoveryRequestV1.model_validate({**base, "resolution_kind": "FAIL"})
+    for resolution_kind in ("RECHECK", "CREATE_CORRECTIVE_PLAN", "CANCEL", "FAIL"):
+        assert ResolveRecoveryRequestV1.model_validate({**base, "resolution_kind": resolution_kind})
+    assert ResolveRecoveryRequestV1.model_validate({**base, "target": {"target_kind": "RUN"}})
 
     with pytest.raises(ValidationError):
         ResolveRecoveryRequestV1.model_validate({**base, "resolution_kind": "RETRY_WRITE"})
+    with pytest.raises(ValidationError):
+        ResolveRecoveryRequestV1.model_validate({**base, "target": {"target_kind": "ACTION"}})
+    with pytest.raises(ValidationError):
+        ResolveRecoveryRequestV1.model_validate(
+            {**base, "target": {"target_kind": "RUN", "action_id": "action-1"}}
+        )

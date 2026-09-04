@@ -5,42 +5,49 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
+from tests.support.claim_context import sign_claim_context
 
-from google_work_agent.domain import calculate_canonical_json_hash
-from google_work_agent.mcp import server
-from google_work_agent.mcp.settings import GoogleOAuthSettings
+from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
+    credential_provider as server,
+)
+from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
+    entrypoint as verified_server,
+)
+from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    GoogleOAuthSettings,
+)
+from google_work_agent.domain.canonical import calculate_canonical_json_hash
+from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
 
 SESSION_KEY = "11" * 32
 SERVICE_INSTANCE_ID = "svc-test-1"
 
 
-def _state() -> server._WorkspaceState:
-    state = server._WorkspaceState(keyring=_MemorySecretStore())
+def _state() -> server.GoogleWorkspaceCredentialProvider:
+    state = server.GoogleWorkspaceCredentialProvider(keyring=_MemorySecretStorePort())
     state.oauth_settings = GoogleOAuthSettings(
         google_oauth_client_id="desktop-client",
-        google_oauth_client_secret="compatibility-client-secret",
     )
     state.session_key = SESSION_KEY
     state.service_instance_id = SERVICE_INSTANCE_ID
     return state
 
 
-class _MemorySecretStore:
-    def set_secret(self, *, service: str, account: str, secret: str) -> None:
-        del service, account, secret
+class _MemorySecretStorePort:
+    def put(self, key: str, secret_bytes: bytes) -> None:
+        del key, secret_bytes
 
-    def get_secret(self, *, service: str, account: str) -> str | None:
-        del service, account
+    def get(self, key: str) -> bytes | None:
+        del key
         return None
 
-    def delete_secret(self, *, service: str, account: str) -> bool:
-        del service, account
-        return True
+    def delete(self, key: str) -> None:
+        del key
 
 
 def _build_claim(
     *,
-    state: server._WorkspaceState,
+    state: server.GoogleWorkspaceCredentialProvider,
     tool_name: str,
     execution_arguments: dict[str, object],
     action_id: str = "action-1",
@@ -56,6 +63,7 @@ def _build_claim(
     issued_at_ms = server._now_ms() + issued_offset_ms
     claim: dict[str, object] = {
         "claim_version": 2,
+        "connector_id": "google_workspace",
         "action_id": action_id,
         "approval_id": approval_id,
         "execution_attempt_id": execution_attempt_id,
@@ -72,7 +80,9 @@ def _build_claim(
         "expires_at_ms": issued_at_ms + ttl_ms,
         "nonce": nonce,
     }
-    claim["signature"] = server._sign_claim_context(state.session_key, claim)
+    session_key = state.session_key
+    assert session_key is not None
+    claim["signature"] = sign_claim_context(session_key, claim)
     return claim
 
 
@@ -85,11 +95,11 @@ def _reject_google_calls(*_args: object, **_kwargs: object) -> dict[str, object]
 # --------------------------------------------------------------------------
 
 
-def test_gmail_create_draft_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_create__draft_dispatches__with_valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str, dict[str, object] | None]] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -119,7 +129,7 @@ def test_gmail_create_draft_dispatches_with_valid_claim(monkeypatch) -> None:  #
         state=state, tool_name="gmail_create_draft", execution_arguments={"payload": payload}
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="gmail_create_draft",
         arguments={"payload": payload, "claim_context": claim},
@@ -136,11 +146,11 @@ def test_gmail_create_draft_dispatches_with_valid_claim(monkeypatch) -> None:  #
     assert "raw" in message
 
 
-def test_gmail_update_draft_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_update__draft_dispatches__with_valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -159,7 +169,7 @@ def test_gmail_update_draft_dispatches_with_valid_claim(monkeypatch) -> None:  #
         execution_arguments={"draft_id": "draft-1", "payload": payload},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="gmail_update_draft",
         arguments={"draft_id": "draft-1", "payload": payload, "claim_context": claim},
@@ -169,11 +179,11 @@ def test_gmail_update_draft_dispatches_with_valid_claim(monkeypatch) -> None:  #
     assert calls == ["PUT"]
 
 
-def test_gmail_send_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_send__dispatches_with__valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     def google_api_post(
-        _state: server._WorkspaceState, url: str, body: dict[str, object]
+        _state: server.GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object]
     ) -> dict[str, object]:
         calls.append((url, body))
         return {
@@ -191,7 +201,7 @@ def test_gmail_send_dispatches_with_valid_claim(monkeypatch) -> None:  # type: i
         execution_arguments={"draft_id": "draft-1", "recovery_fingerprint": None},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="gmail_send",
         arguments={"draft_id": "draft-1", "recovery_fingerprint": None, "claim_context": claim},
@@ -205,9 +215,11 @@ def test_gmail_send_dispatches_with_valid_claim(monkeypatch) -> None:  # type: i
     assert calls[0][1] == {"id": "draft-1"}
 
 
-def test_gmail_get_draft_reads_without_a_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_gmail_get__draft_reads__without_a_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     def google_api(
-        _state: server._WorkspaceState, url: str, params: dict[str, str] | None = None
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str] | None = None,
     ) -> dict[str, object]:
         assert url.endswith("/drafts/draft-1")
         return {
@@ -220,7 +232,7 @@ def test_gmail_get_draft_reads_without_a_claim(monkeypatch) -> None:  # type: ig
         }
 
     monkeypatch.setattr(server, "_google_api", google_api)
-    result = server._tool_call(
+    result = verified_server._tool_call(
         _state(), tool_name="gmail_get_draft", arguments={"draft_id": "draft-1"}
     )
     assert cast(dict[str, object], result["item"])["resource_id"] == "draft-1"
@@ -231,19 +243,23 @@ def test_gmail_get_draft_reads_without_a_claim(monkeypatch) -> None:  # type: ig
 # --------------------------------------------------------------------------
 
 
-def test_missing_claim_context_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_missing_claim__context_is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(state, tool_name="gmail_create_draft", arguments={"payload": payload})
+        verified_server._tool_call(
+            state, tool_name="gmail_create_draft", arguments={"payload": payload}
+        )
 
     assert exc_info.value.safe_code == "CLAIM_MISSING"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_malformed_claim_context_missing_field_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_malformed_claim__context_missing__field_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -253,17 +269,17 @@ def test_malformed_claim_context_missing_field_is_rejected(monkeypatch) -> None:
     del claim["nonce"]
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_MISSING"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_invalid_signature_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_invalid_signature__is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -273,17 +289,17 @@ def test_invalid_signature_is_rejected(monkeypatch) -> None:  # type: ignore[no-
     claim["nonce"] = "tampered-nonce"  # signature no longer matches the payload
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_INVALID_SIGNATURE"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_expired_claim_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_expired_claim__is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -296,17 +312,17 @@ def test_expired_claim_is_rejected(monkeypatch) -> None:  # type: ignore[no-unty
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_EXPIRED"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_ttl_exceeding_maximum_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_ttl_exceeding__maximum_is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -318,17 +334,17 @@ def test_ttl_exceeding_maximum_is_rejected(monkeypatch) -> None:  # type: ignore
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_TTL_EXCEEDED"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_wrong_service_instance_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_wrong_service__instance_is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -340,17 +356,17 @@ def test_wrong_service_instance_is_rejected(monkeypatch) -> None:  # type: ignor
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_SERVICE_INSTANCE_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_wrong_mcp_process_instance_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_wrong_mcp__process_instance__is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -362,17 +378,39 @@ def test_wrong_mcp_process_instance_is_rejected(monkeypatch) -> None:  # type: i
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_PROCESS_INSTANCE_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_wrong_tool_binding_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_github_claim__is_rejected__by_google_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
+    state = _state()
+    payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
+    claim = _build_claim(
+        state=state,
+        tool_name="gmail_create_draft",
+        execution_arguments={"payload": payload},
+    )
+    claim["connector_id"] = "github"
+    claim["signature"] = sign_claim_context(SESSION_KEY, claim)
+
+    with pytest.raises(server._WorkspaceToolError) as exc_info:
+        verified_server._tool_call(
+            state,
+            tool_name="gmail_create_draft",
+            arguments={"payload": payload, "claim_context": claim},
+        )
+
+    assert exc_info.value.safe_code == "CLAIM_CONNECTOR_MISMATCH"
+
+
+def test_wrong_tool__binding_is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -381,17 +419,19 @@ def test_wrong_tool_binding_is_rejected(monkeypatch) -> None:  # type: ignore[no
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_TOOL_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_wrong_execution_arguments_hash_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_wrong_execution__arguments_hash__is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
@@ -403,21 +443,23 @@ def test_wrong_execution_arguments_hash_is_rejected(monkeypatch) -> None:  # typ
     tampered_payload["body"] = "A different body approved elsewhere"
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": tampered_payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_ARGUMENTS_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_nonce_reuse_is_rejected_and_google_is_called_at_most_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_nonce_reuse_is__rejected_and_google_is__called_at_most_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -434,7 +476,7 @@ def test_nonce_reuse_is_rejected_and_google_is_called_at_most_once(monkeypatch) 
         state=state, tool_name="gmail_create_draft", execution_arguments={"payload": payload}
     )
 
-    first = server._tool_call(
+    first = verified_server._tool_call(
         state,
         tool_name="gmail_create_draft",
         arguments={"payload": payload, "claim_context": claim},
@@ -443,29 +485,30 @@ def test_nonce_reuse_is_rejected_and_google_is_called_at_most_once(monkeypatch) 
     assert len(calls) == 1
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={"payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_TOKEN_REUSED"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
     assert len(calls) == 1
 
 
-def test_tool_not_available_without_claim_infrastructure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tool_not__available_without__claim_infrastructure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
-    state = server._WorkspaceState(keyring=_MemorySecretStore())
+    state = server.GoogleWorkspaceCredentialProvider(keyring=_MemorySecretStorePort())
     state.oauth_settings = GoogleOAuthSettings(
         google_oauth_client_id="desktop-client",
-        google_oauth_client_secret="compatibility-client-secret",
     )
     # session_key/process binding never established (no handshake performed).
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="gmail_create_draft",
             arguments={
@@ -489,7 +532,7 @@ def test_tool_not_available_without_claim_infrastructure(monkeypatch) -> None:  
         )
 
     assert exc_info.value.safe_code == "CLAIM_SERVICE_UNAVAILABLE"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
 # --------------------------------------------------------------------------
@@ -497,11 +540,11 @@ def test_tool_not_available_without_claim_infrastructure(monkeypatch) -> None:  
 # --------------------------------------------------------------------------
 
 
-def test_tasks_create_task_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_create__task_dispatches__with_valid_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str, dict[str, object] | None]] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -520,7 +563,7 @@ def test_tasks_create_task_dispatches_with_valid_claim(monkeypatch) -> None:  # 
         execution_arguments={"task_list_id": "list-1", "payload": payload},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="tasks_create_task",
         arguments={"task_list_id": "list-1", "payload": payload, "claim_context": claim},
@@ -535,11 +578,11 @@ def test_tasks_create_task_dispatches_with_valid_claim(monkeypatch) -> None:  # 
     assert calls[0][2] == {"title": "Follow up", "notes": "Call customer"}
 
 
-def test_tasks_update_task_supports_completion(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_update__task_supports__completion(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, dict[str, object] | None]] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -558,7 +601,7 @@ def test_tasks_update_task_supports_completion(monkeypatch) -> None:  # type: ig
         execution_arguments={"task_list_id": "list-1", "task_id": "task-1", "payload": payload},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="tasks_update_task",
         arguments={
@@ -574,7 +617,9 @@ def test_tasks_update_task_supports_completion(monkeypatch) -> None:  # type: ig
     assert calls == [("PATCH", {"status": "completed"})]
 
 
-def test_tasks_create_task_claim_rejection_dispatches_zero_calls(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_create__task_claim_rejection__dispatches_zero_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {"title": "Follow up"}
@@ -587,7 +632,7 @@ def test_tasks_create_task_claim_rejection_dispatches_zero_calls(monkeypatch) ->
     tampered_payload["title"] = "A different title"
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="tasks_create_task",
             arguments={
@@ -598,15 +643,17 @@ def test_tasks_create_task_claim_rejection_dispatches_zero_calls(monkeypatch) ->
         )
 
     assert exc_info.value.safe_code == "CLAIM_ARGUMENTS_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_tasks_update_task_missing_claim_dispatches_zero_calls(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_update__task_missing_claim__dispatches_zero_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="tasks_update_task",
             arguments={
@@ -617,7 +664,7 @@ def test_tasks_update_task_missing_claim_dispatches_zero_calls(monkeypatch) -> N
         )
 
     assert exc_info.value.safe_code == "CLAIM_MISSING"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
 # --------------------------------------------------------------------------
@@ -625,11 +672,13 @@ def test_tasks_update_task_missing_claim_dispatches_zero_calls(monkeypatch) -> N
 # --------------------------------------------------------------------------
 
 
-def test_calendar_create_event_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_calendar_create__event_dispatches__with_valid_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, str, dict[str, object] | None]] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -659,7 +708,7 @@ def test_calendar_create_event_dispatches_with_valid_claim(monkeypatch) -> None:
         execution_arguments={"calendar_id": "primary", "payload": payload},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="calendar_create_event",
         arguments={"calendar_id": "primary", "payload": payload, "claim_context": claim},
@@ -675,11 +724,13 @@ def test_calendar_create_event_dispatches_with_valid_claim(monkeypatch) -> None:
     assert body["attendees"] == [{"email": "a@example.com"}, {"email": "b@example.com"}]
 
 
-def test_calendar_update_event_supports_attendee_change(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_calendar_update__event_supports__attendee_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[dict[str, object] | None] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -699,7 +750,7 @@ def test_calendar_update_event_supports_attendee_change(monkeypatch) -> None:  #
         execution_arguments={"calendar_id": "primary", "event_id": "event-1", "payload": payload},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="calendar_update_event",
         arguments={
@@ -714,11 +765,13 @@ def test_calendar_update_event_supports_attendee_change(monkeypatch) -> None:  #
     assert calls == [{"attendees": [{"email": "c@example.com"}]}]
 
 
-def test_calendar_delete_event_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_calendar_delete__event_dispatches__with_valid_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -737,7 +790,7 @@ def test_calendar_delete_event_dispatches_with_valid_claim(monkeypatch) -> None:
         execution_arguments={"calendar_id": "primary", "event_id": "event-1"},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="calendar_delete_event",
         arguments={"calendar_id": "primary", "event_id": "event-1", "claim_context": claim},
@@ -749,11 +802,13 @@ def test_calendar_delete_event_dispatches_with_valid_claim(monkeypatch) -> None:
     assert calls == ["DELETE"]
 
 
-def test_tasks_delete_task_dispatches_with_valid_claim(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_delete__task_dispatches__with_valid_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -772,7 +827,7 @@ def test_tasks_delete_task_dispatches_with_valid_claim(monkeypatch) -> None:  # 
         execution_arguments={"task_list_id": "task-list-default", "task_id": "task-1"},
     )
 
-    result = server._tool_call(
+    result = verified_server._tool_call(
         state,
         tool_name="tasks_delete_task",
         arguments={
@@ -788,11 +843,13 @@ def test_tasks_delete_task_dispatches_with_valid_claim(monkeypatch) -> None:  # 
     assert calls == ["DELETE"]
 
 
-def test_tasks_delete_task_nonce_reuse_dispatches_at_most_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_delete_task__nonce_reuse_dispatches__at_most_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -810,7 +867,7 @@ def test_tasks_delete_task_nonce_reuse_dispatches_at_most_once(monkeypatch) -> N
         execution_arguments={"task_list_id": "task-list-default", "task_id": "task-1"},
     )
 
-    first = server._tool_call(
+    first = verified_server._tool_call(
         state,
         tool_name="tasks_delete_task",
         arguments={
@@ -823,7 +880,7 @@ def test_tasks_delete_task_nonce_reuse_dispatches_at_most_once(monkeypatch) -> N
     assert len(calls) == 1
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="tasks_delete_task",
             arguments={
@@ -837,7 +894,9 @@ def test_tasks_delete_task_nonce_reuse_dispatches_at_most_once(monkeypatch) -> N
     assert len(calls) == 1
 
 
-def test_tasks_delete_task_claim_rejection_dispatches_zero_calls(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_tasks_delete__task_claim_rejection__dispatches_zero_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     claim = _build_claim(
@@ -847,7 +906,7 @@ def test_tasks_delete_task_claim_rejection_dispatches_zero_calls(monkeypatch) ->
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="tasks_delete_task",
             arguments={
@@ -858,10 +917,12 @@ def test_tasks_delete_task_claim_rejection_dispatches_zero_calls(monkeypatch) ->
         )
 
     assert exc_info.value.safe_code == "CLAIM_TOOL_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_calendar_create_event_claim_rejection_dispatches_zero_calls(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_calendar_create__event_claim_rejection__dispatches_zero_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
     state = _state()
     payload: dict[str, object] = {
@@ -876,21 +937,23 @@ def test_calendar_create_event_claim_rejection_dispatches_zero_calls(monkeypatch
     )
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="calendar_create_event",
             arguments={"calendar_id": "primary", "payload": payload, "claim_context": claim},
         )
 
     assert exc_info.value.safe_code == "CLAIM_TOOL_MISMATCH"
-    assert exc_info.value.dispatch_started is False
+    assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
 
 
-def test_calendar_delete_event_nonce_reuse_dispatches_at_most_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_calendar_delete_event__nonce_reuse_dispatches__at_most_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     def google_api_call(
-        _state: server._WorkspaceState,
+        _state: server.GoogleWorkspaceCredentialProvider,
         method: str,
         url: str,
         *,
@@ -908,7 +971,7 @@ def test_calendar_delete_event_nonce_reuse_dispatches_at_most_once(monkeypatch) 
         execution_arguments={"calendar_id": "primary", "event_id": "event-1"},
     )
 
-    first = server._tool_call(
+    first = verified_server._tool_call(
         state,
         tool_name="calendar_delete_event",
         arguments={"calendar_id": "primary", "event_id": "event-1", "claim_context": claim},
@@ -917,7 +980,7 @@ def test_calendar_delete_event_nonce_reuse_dispatches_at_most_once(monkeypatch) 
     assert len(calls) == 1
 
     with pytest.raises(server._WorkspaceToolError) as exc_info:
-        server._tool_call(
+        verified_server._tool_call(
             state,
             tool_name="calendar_delete_event",
             arguments={"calendar_id": "primary", "event_id": "event-1", "claim_context": claim},

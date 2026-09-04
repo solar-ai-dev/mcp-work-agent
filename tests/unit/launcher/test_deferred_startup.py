@@ -1,29 +1,45 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NoReturn, cast
 
 import pytest
 from fastapi.testclient import TestClient
-
-from google_work_agent.adapters.persistence import apply_migrations, connect_sqlite
-from google_work_agent.adapters.runtime import SafeModeController
-from google_work_agent.api import ApiContainer, create_app
-from google_work_agent.launcher.dev import (
-    CoreInitializationError,
-    _DeferredApiContainer,
-    build_container,
+from tests.support.production_runtime import (
+    build_test_production_container as build_container,
 )
+
+from google_work_agent.adapters.langgraph.main.workflow import LangGraphWorkflowRuntime
+from google_work_agent.adapters.llm.runtime.llm_credential_router import (
+    SessionMemorySecretStore,
+)
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.runtime.safe_mode import SafeModeController
+from google_work_agent.adapters.system.filesystem_backup import FilesystemBackupAdapter
+from google_work_agent.adapters.system.process_maintenance_gate import (
+    ProcessMaintenanceGateAdapter,
+)
+from google_work_agent.adapters.system.system_clock import SystemClockAdapter
+from google_work_agent.api.app import create_app
+from google_work_agent.api.composition import (
+    CoreInitializationError,
+    DeferredApiContainer,
+    build_safe_mode_recovery_bindings,
+)
+from google_work_agent.api.container import ApiContainer
 
 
 @pytest.mark.parametrize(
     "safe_code",
     ("MIGRATION_FAILED", "MCP_HANDSHAKE_FAILED", "KEYRING_UNAVAILABLE"),
 )
-def test_core_failure_keeps_health_and_blocks_commands(safe_code: str) -> None:
+def test_core_failure__keeps_health__and_blocks_commands(safe_code: str) -> None:
     def fail_core(**_: object) -> NoReturn:
         raise CoreInitializationError(safe_code)
 
@@ -39,16 +55,14 @@ def test_core_failure_keeps_health_and_blocks_commands(safe_code: str) -> None:
 
         runtime = client.get("/api/v1/runtime", headers=headers)
         assert runtime.status_code == 200
-        assert runtime.json()["summary"]["safe_mode"] is True
+        assert runtime.json()["safe_mode"] is True
 
         command = client.post(
             "/api/v1/conversations",
             headers=headers,
             json={
-                "api_contract_version": "1",
+                "schema_version": 1,
                 "command_id": "command-1",
-                "conversation_id": "conversation-1",
-                "account_id": "account-1",
                 "title": "blocked",
             },
         )
@@ -56,7 +70,7 @@ def test_core_failure_keeps_health_and_blocks_commands(safe_code: str) -> None:
         assert command.json()["detail_code"] == "SAFE_MODE_BLOCKED"
 
 
-def test_initializing_window_is_live_blocked_then_becomes_ready(tmp_path: Path) -> None:
+def test_initializing_window__is_live_blocked__then_becomes_ready(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
 
@@ -77,44 +91,34 @@ def test_initializing_window_is_live_blocked_then_becomes_ready(tmp_path: Path) 
             bootstrap_secret=bootstrap_secret,
             service_instance_id=service_instance_id,
             safe_mode_controller=safe_mode_controller,
+            mcp_module_name="tests.fakes.google_workspace_mcp_server",
+            keyring_store=SessionMemorySecretStore(),
         )
 
     container = _shell(core_builder=delayed_core)
-    with TestClient(create_app(cast(ApiContainer, container))) as client:
-        assert started.wait(timeout=5)
-        headers = _headers()
-        _bootstrap(client, headers)
+    initialization = threading.Thread(target=lambda: asyncio.run(container._initialize()))
+    initialization.start()
+    assert started.wait(timeout=5)
+    assert container.core_initialization_in_progress is True
+    assert container._core is None
 
-        assert client.get("/health/live", headers=headers).json()["status"] == "LIVE"
-        assert client.get("/health/ready", headers=headers).json()["status"] == "NOT_READY"
-        blocked = client.post(
-            "/api/v1/conversations",
-            headers=headers,
-            json={
-                "api_contract_version": "1",
-                "command_id": "command-1",
-                "conversation_id": "conversation-1",
-                "account_id": "account-1",
-                "title": "blocked",
-            },
-        )
-        assert blocked.json()["detail_code"] == "SAFE_MODE_BLOCKED"
-
-        release.set()
-        assert _wait_for_ready(client, headers) == "READY"
+    release.set()
+    initialization.join(timeout=15)
+    assert not initialization.is_alive()
+    assert container.core_initialization_in_progress is False
+    assert container._core is not None
+    container.close()
 
 
-def test_start_run_reaches_the_real_coordinator_once_core_initialization_completes(
+def test_start_run_reaches__the_durable_execution__runtime_after_core_initialization(
     tmp_path: Path,
 ) -> None:
-    """Regression test: POST /api/v1/runs used to return 503 SERVICE_BUSY with
-    detail_code=AttributeError even after core initialization finished,
-    because `local_run_coordinator` never delegated enqueue_start to the
-    real, now-bound LocalRunCoordinator (see _DeferredCoordinator)."""
+    """POST /runs commits and schedules through the bound durable runtime."""
 
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir(parents=True)
-    database_path = runtime_root / "google-work-agent.sqlite3"
+    database_path = runtime_root / "data" / "google_work_agent.db"
+    database_path.parent.mkdir(parents=True)
     connection = connect_sqlite(database_path)
     try:
         apply_migrations(connection)
@@ -134,12 +138,19 @@ def test_start_run_reaches_the_real_coordinator_once_core_initialization_complet
         connection.close()
 
     container = _shell(
-        core_builder=lambda **kwargs: build_container(runtime_root=runtime_root, **kwargs)
+        core_builder=lambda **kwargs: build_container(
+            runtime_root=runtime_root,
+            mcp_module_name="tests.fakes.google_workspace_mcp_server",
+            keyring_store=SessionMemorySecretStore(),
+            **kwargs,
+        )
     )
     with TestClient(create_app(cast(ApiContainer, container))) as client:
         headers = _headers()
         _bootstrap(client, headers)
         assert _wait_for_ready(client, headers) == "READY"
+        assert container._core is not None
+        assert isinstance(container._core.workflow_runtime, LangGraphWorkflowRuntime)
 
         response = client.post(
             "/api/v1/runs",
@@ -148,13 +159,9 @@ def test_start_run_reaches_the_real_coordinator_once_core_initialization_complet
                 "api_contract_version": "1",
                 "command_id": "start-command-1",
                 "conversation_id": "conversation-1",
-                "user_message_id": "message-1",
-                "run_id": "run-1",
-                "workflow_key": "workflow-run-1",
                 "request_text": "hello",
                 "entry_mode": "AGENT_SEARCH",
-                "selected_resource_ids": [],
-                "selected_resources": [],
+                "selected_resource_handles": [],
                 "requested_mode": "AUTO",
             },
         )
@@ -163,7 +170,7 @@ def test_start_run_reaches_the_real_coordinator_once_core_initialization_complet
         assert response.json().get("detail_code") != "AttributeError"
 
 
-def test_shutdown_awaits_inflight_initialization_and_closes_late_core(tmp_path: Path) -> None:
+def test_shutdown_awaits__inflight_initialization_and__closes_late_core(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
 
@@ -184,6 +191,8 @@ def test_shutdown_awaits_inflight_initialization_and_closes_late_core(tmp_path: 
             bootstrap_secret=bootstrap_secret,
             service_instance_id=service_instance_id,
             safe_mode_controller=safe_mode_controller,
+            mcp_module_name="tests.fakes.google_workspace_mcp_server",
+            keyring_store=SessionMemorySecretStore(),
         )
 
     container = _shell(core_builder=delayed_core)
@@ -195,8 +204,127 @@ def test_shutdown_awaits_inflight_initialization_and_closes_late_core(tmp_path: 
     assert container._core is None
 
 
-def _shell(*, core_builder: Callable[..., ApiContainer]) -> _DeferredApiContainer:
-    container = _DeferredApiContainer(
+def test_deferred_initialization_runs__core_reconciliation_startup__and_shutdown_once() -> None:
+    lifecycle: list[str] = []
+
+    async def startup() -> None:
+        lifecycle.append("initial-drain-and-live-start")
+
+    core = SimpleNamespace(
+        readiness_aggregator=SimpleNamespace(),
+        current_account_id_provider=lambda: None,
+        startup_callbacks=(startup,),
+        shutdown_callbacks=(lambda: lifecycle.append("runtime-stop"),),
+    )
+    container = _shell(core_builder=lambda **_: cast(ApiContainer, core))
+
+    asyncio.run(container._initialize())
+    container.close()
+    container.close()
+
+    assert lifecycle == [
+        "initial-drain-and-live-start",
+        "runtime-stop",
+    ]
+
+
+def test_safe_mode__restore_migrates_then__rebinds_ready_core(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    database_path = runtime_root / "data" / "google_work_agent.db"
+    database_path.parent.mkdir(parents=True)
+    connection = connect_sqlite(database_path)
+    try:
+        apply_migrations(connection, now_ms=lambda: 1)
+        connection.execute(
+            "INSERT INTO google_accounts (id, email, display_name, connected_at_ms) "
+            "VALUES ('account-restored', 'restored@example.com', 'Restored', 1);"
+        )
+    finally:
+        connection.close()
+    backup_adapter = FilesystemBackupAdapter(
+        database_path=database_path,
+        backups_dir=runtime_root / "backups",
+        clock=SystemClockAdapter(),
+        maintenance_gate=ProcessMaintenanceGateAdapter(has_active_write=lambda: False),
+        release_version="test",
+        domain_contract_version="1",
+        schema_version="0019",
+    )
+    backup = backup_adapter.create_backup("seed-safe-mode-restore")
+    connection = connect_sqlite(database_path)
+    try:
+        connection.execute(
+            "UPDATE schema_migrations SET checksum=? WHERE version=1;", ("0" * 64,)
+        )
+    finally:
+        connection.close()
+    attempts = 0
+
+    def core_builder(**kwargs: object) -> ApiContainer:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise CoreInitializationError("MIGRATION_FAILED")
+        return build_container(
+            host=cast(str, kwargs["host"]),
+            port=cast(int, kwargs["port"]),
+            runtime_root=runtime_root,
+            bootstrap_secret=cast(str | None, kwargs["bootstrap_secret"]),
+            service_instance_id=cast(str | None, kwargs["service_instance_id"]),
+            safe_mode_controller=cast(
+                SafeModeController | None, kwargs["safe_mode_controller"]
+            ),
+            mcp_module_name="tests.fakes.google_workspace_mcp_server",
+            keyring_store=SessionMemorySecretStore(),
+        )
+
+    container = DeferredApiContainer(
+        host="127.0.0.1",
+        port=8000,
+        service_instance_id="svc-startup",
+        bootstrap_secret="bootstrap-secret",
+        core_builder=core_builder,
+        recovery_builder=lambda retry: build_safe_mode_recovery_bindings(
+            runtime_root=runtime_root,
+            release_version="test",
+            retry_core_after_restore=retry,
+            request_process_exit=lambda: None,
+        ),
+    )
+    container.client_address_resolver = lambda _request: "127.0.0.1"
+    with TestClient(create_app(cast(ApiContainer, container))) as client:
+        headers = _headers()
+        _bootstrap(client, headers)
+        assert client.get("/health/ready", headers=headers).json()["status"] == "SAFE_MODE"
+
+        response = client.post(
+            "/api/v1/restore",
+            headers={**headers, "x-api-contract-version": "1"},
+            json={
+                "schema_version": 1,
+                "command_id": "restore-command-1",
+                "backup_ref": backup.backup_ref,
+            },
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "RESTORED"
+        assert client.get("/health/ready", headers=headers).json()["status"] == "READY"
+        blocked = client.post(
+            "/api/v1/restore",
+            headers={**headers, "x-api-contract-version": "1"},
+            json={
+                "schema_version": 1,
+                "command_id": "restore-command-2",
+                "backup_ref": backup.backup_ref,
+            },
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail_code"] == "RESTORE_REQUIRES_SAFE_MODE"
+
+
+def _shell(*, core_builder: Callable[..., ApiContainer]) -> DeferredApiContainer:
+    container = DeferredApiContainer(
         host="127.0.0.1",
         port=8000,
         service_instance_id="svc-startup",
@@ -222,9 +350,9 @@ def _bootstrap(client: TestClient, headers: dict[str, str]) -> None:
         "/api/v1/session/bootstrap",
         headers=headers,
         json={
+            "schema_version": 1,
             "bootstrap_secret": "bootstrap-secret",
-            "service_instance_id": "svc-startup",
-            "api_contract_version": "1",
+            "frontend_api_contract_version": "1",
         },
     )
     assert response.status_code == 200

@@ -1,77 +1,37 @@
-from google_work_agent.adapters.events.in_memory import InMemoryRunEventPublisher
-from google_work_agent.application.projections import build_projection_event
-from google_work_agent.ports import InvalidReplayCursorError, SnapshotRequiredReplayError
+from google_work_agent.adapters.system.memory.sse_event_buffer import InMemorySseEventBuffer
+from google_work_agent.ports.system.sse_event_buffer_port import (
+    RunSseEventV1,
+    RunStatusSsePayloadV1,
+)
 
 
-def test_in_memory_event_publisher_assigns_monotonic_ids_and_replays() -> None:
-    publisher = InMemoryRunEventPublisher(service_instance_id="svc-a", capacity_per_run=4)
-    first = publisher.publish(
-        build_projection_event(
-            run_id="run-1",
-            occurred_at_ms=1,
-            event_type="run_status",
-            payload={"step": 1},
-        )
-    )
-    second = publisher.publish(
-        build_projection_event(
-            run_id="run-1",
-            occurred_at_ms=2,
-            event_type="phase_changed",
-            payload={"step": 2},
-        )
+def _event(*, event_id: str, occurred_at_ms: int) -> RunSseEventV1:
+    return RunSseEventV1(
+        schema_version=1,
+        event_id=event_id,
+        run_id="run-1",
+        action_id=None,
+        occurred_at_ms=occurred_at_ms,
+        event_type="run_status",
+        payload=RunStatusSsePayloadV1(
+            status="ANALYZING", snapshot_version=occurred_at_ms
+        ),
+        projection_version=1,
     )
 
-    assert first.event_id == "svc-a:1"
-    assert second.event_id == "svc-a:2"
-    assert publisher.replay(run_id="run-1", after_event_id="svc-a:1") == (second,)
+
+def test_in_memory_event__buffer_assigns_monotonic__ids_and_lists() -> None:
+    buffer = InMemorySseEventBuffer(service_instance_id="svc-a", capacity_per_run=4)
+    buffer.append(_event(event_id="", occurred_at_ms=1))
+    buffer.append(_event(event_id="", occurred_at_ms=2))
+    page = buffer.list_after("run-1", "svc-a:1", 4)
+    assert [event.event_id for event in page.events] == ["svc-a:2"]
+    assert page.cursor_status == "OK"
 
 
-def test_in_memory_event_publisher_requires_snapshot_after_eviction() -> None:
-    publisher = InMemoryRunEventPublisher(service_instance_id="svc-a", capacity_per_run=2)
-    publisher.publish(
-        build_projection_event(
-            run_id="run-1",
-            occurred_at_ms=1,
-            event_type="run_status",
-            payload={"step": 1},
-        )
-    )
-    publisher.publish(
-        build_projection_event(
-            run_id="run-1",
-            occurred_at_ms=2,
-            event_type="run_status",
-            payload={"step": 2},
-        )
-    )
-    publisher.publish(
-        build_projection_event(
-            run_id="run-1",
-            occurred_at_ms=3,
-            event_type="run_status",
-            payload={"step": 3},
-        )
-    )
-    publisher.publish(
-        build_projection_event(
-            run_id="run-1",
-            occurred_at_ms=4,
-            event_type="run_status",
-            payload={"step": 4},
-        )
-    )
-
-    try:
-        publisher.replay(run_id="run-1", after_event_id="svc-a:1")
-    except SnapshotRequiredReplayError:
-        pass
-    else:
-        raise AssertionError("expected snapshot fallback after buffer eviction")
-
-    try:
-        publisher.replay(run_id="run-1", after_event_id="bad-cursor")
-    except InvalidReplayCursorError:
-        pass
-    else:
-        raise AssertionError("expected invalid cursor failure")
+def test_in_memory_event__buffer_marks_evicted__or_invalid_cursor_expired() -> None:
+    buffer = InMemorySseEventBuffer(service_instance_id="svc-a", capacity_per_run=2)
+    for occurred_at_ms in range(1, 5):
+        buffer.append(_event(event_id="", occurred_at_ms=occurred_at_ms))
+    assert buffer.list_after("run-1", "svc-a:1", 2).cursor_status == "CURSOR_EXPIRED"
+    assert buffer.list_after("run-1", "bad-cursor", 2).cursor_status == "CURSOR_EXPIRED"
