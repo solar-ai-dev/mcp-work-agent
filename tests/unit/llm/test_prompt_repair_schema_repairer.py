@@ -84,6 +84,11 @@ def test_repair_dispatches_the__same_base_prompt__with_full_input_shape(
         "request_intent": {"goal": "summary"},
         "answer_outline": {"sections": ["summary"]},
         "evidence": [],
+        "temporal_constraints": [{
+            "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
+            "start_local": "2026-09-01", "end_local": "2026-09-08",
+            "timezone": "Asia/Seoul",
+        }],
     }
 
     result = repairer.repair(
@@ -161,6 +166,7 @@ def test_repair_rejects__malformed_json__as_typed_schema_failure(tmp_path: Path)
                 "request_intent": {"goal": "summary"},
                 "answer_outline": {"sections": ["summary"]},
                 "evidence": [],
+                "temporal_constraints": [],
             },
             failed_output={"answer": 123},
             output_schema=OUTPUT_SCHEMA,
