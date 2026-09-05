@@ -175,7 +175,8 @@ def test_constraint_union__rejects_extra_fields__for_declared_kind() -> None:
         RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema,
     )
 
-    assert errors
+    assert "$.route_queries[0].search_spec.constraints[0].calendar_id is not allowed" in errors
+    assert not any(".participants is required" in error for error in errors)
 
 
 def test_runtime_binding__rejects_unvalidated__container_ref() -> None:

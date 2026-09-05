@@ -11,6 +11,30 @@ from __future__ import annotations
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
+def test_discriminated_union__reports_selected_variant_field_without_other_variants() -> None:
+    schema = {"oneOf": [
+        {"type": "object", "required": ["kind", "start"],
+         "properties": {"kind": {"const": "TIME"}, "start": {"type": "string"}}},
+        {"type": "object", "required": ["kind", "identity"],
+         "properties": {"kind": {"const": "PERSON"}, "identity": {"type": "string"}}},
+    ]}
+    assert validate_output_schema({"kind": "TIME", "start": 42}, schema) == [
+        "$ must match exactly one schema in oneOf (matched 0)",
+        "$.start must be string",
+    ]
+    assert validate_output_schema({"kind": "TIME", "start": "2026-09-01"}, schema) == []
+    assert validate_output_schema({"kind": "UNKNOWN"}, schema) == [
+        "$ must match exactly one schema in oneOf (matched 0)",
+    ]
+
+
+def test_overlapping_union__remains_invalid_without_guessing_variant() -> None:
+    branch = {"properties": {"kind": {"const": "TIME"}}}
+    assert validate_output_schema({"kind": "TIME"}, {"oneOf": [branch, branch]}) == [
+        "$ must match exactly one schema in oneOf (matched 2)",
+    ]
+
+
 def test_contains__requires_a_matching_item__including_untyped_fragments() -> None:
     for schema in ({"contains": {"const": "CREATE"}},
                    {"type": "array", "contains": {"const": "CREATE"}}):

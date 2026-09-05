@@ -100,14 +100,39 @@ def _errors_for(*, value: object, schema: Mapping[str, object], path: str) -> li
 def _validate_one_of(
     *, value: object, subschemas: list[object], path: str, errors: list[str]
 ) -> None:
-    matches = sum(
-        1
+    branch_errors = [
+        (subschema, _errors_for(value=value, schema=subschema, path=path))
         for subschema in subschemas
         if isinstance(subschema, Mapping)
-        and not _errors_for(value=value, schema=subschema, path=path)
-    )
+    ]
+    matches = sum(not failures for _, failures in branch_errors)
     if matches != 1:
         errors.append(f"{path} must match exactly one schema in oneOf (matched {matches})")
+    if matches == 0:
+        # Preserve the declared variant's field errors for the single repair
+        # attempt. Other variants' required fields would suggest changing the
+        # operation rather than correcting its invalid payload.
+        selected = [
+            failures
+            for subschema, failures in branch_errors
+            if _matches_declared_variant(value, subschema)
+        ]
+        if len(selected) == 1:
+            errors.extend(selected[0])
+
+
+def _matches_declared_variant(value: object, schema: Mapping[str, object]) -> bool:
+    properties = schema.get("properties")
+    if not isinstance(value, Mapping) or not isinstance(properties, Mapping):
+        return False
+    constants = {
+        name: field["const"]
+        for name, field in properties.items()
+        if isinstance(field, Mapping) and "const" in field
+    }
+    return bool(constants) and all(
+        name in value and value[name] == expected for name, expected in constants.items()
+    )
 
 
 def _validate_if_then(
