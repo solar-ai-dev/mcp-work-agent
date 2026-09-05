@@ -4,15 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    RetrievalV2ValidationError,
     TemporalRangeConstraintV1,
+    validate_participant_identity,
 )
 from google_work_agent.application.agents.retrieval.expand_business_concept import (
     expand_business_concept,
 )
 from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
     has_explicit_gmail_subject,
+)
+from google_work_agent.application.agents.retrieval.match_person_mention import (
+    person_discovery_term,
 )
 from google_work_agent.application.agents.retrieval.resolve_relative_period import (
     resolve_relative_period,
@@ -39,6 +45,19 @@ def resolve_gmail_query_periods(
         for route in frozen_routes
         if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
     }
+
+
+def requested_participant_identities(prompt_input: Mapping[str, object]) -> list[str]:
+    """Only exact user-owned email values authorize initial hard participant filters."""
+    intent = prompt_input.get("request_intent")
+    if not isinstance(intent, Mapping):
+        return []
+    constraints = _explicit_gmail_constraints(intent.get("constraints"), now_ms=None, timezone=None)
+    return sorted({
+        str(person["identity"])
+        for constraint in constraints if constraint["kind"] == "PARTICIPANT"
+        for person in cast(list[dict[str, str]], constraint["participants"])
+    })
 
 
 def preserve_gmail_search_semantics(
@@ -78,6 +97,13 @@ def preserve_gmail_search_semantics(
     if not isinstance(candidate_queries, list):
         return value
     replacement_kinds = {str(item["kind"]) for item in explicit_constraints}
+    # Any person mentioned by the user is projected below as either an exact
+    # email or a discovery term. Do not retain a competing model participant.
+    if any(
+        isinstance(item, Mapping) and item.get("kind") in {"PERSON", "EMAIL"}
+        for item in request_intent.get("constraints", [])
+    ):
+        replacement_kinds.add("PARTICIPANT")
     intent_constraints = request_intent.get("constraints")
     has_topic = isinstance(intent_constraints, list) and any(
         isinstance(item, Mapping)
@@ -149,9 +175,13 @@ def _explicit_gmail_constraints(
         ):
             continue
         if kind in {"EMAIL", "PERSON", "SCOPE"} and field in participant_fields:
-            participants.extend(
-                {"role": participant_fields[field], "identity": entry} for entry in exact_values
-            )
+            for entry in exact_values:
+                try:
+                    identity = validate_participant_identity(entry)
+                except RetrievalV2ValidationError:
+                    search_terms.append(person_discovery_term(entry))
+                else:
+                    participants.append({"role": participant_fields[field], "identity": identity})
         elif kind in {"RESOURCE", "SCOPE", "USER_REQUIREMENT"} and field in {
             "subject",
             "search_criteria_subject",

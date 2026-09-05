@@ -7,6 +7,14 @@ _KOREAN_NAME_TITLE = re.compile(
 )
 
 
+def person_discovery_term(mention: str) -> str:
+    """Broaden an abbreviated surname/title for discovery, not participant filtering."""
+    requested = _KOREAN_NAME_TITLE.fullmatch(mention.strip())
+    if requested is None:
+        return mention.strip()
+    return requested["title"] if len(requested["name"]) == 1 else requested["name"]
+
+
 def match_person_mention(mention: str, display_name: str) -> bool:
     """Surname + title may match several people; this does not resolve identity."""
     target = re.sub(r"\s+", "", mention).casefold()

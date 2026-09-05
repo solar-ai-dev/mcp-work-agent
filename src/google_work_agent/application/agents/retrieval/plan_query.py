@@ -33,6 +33,7 @@ from google_work_agent.application.agents.retrieval.plan_query_expansion import 
 )
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     preserve_gmail_search_semantics,
+    requested_participant_identities,
     resolve_gmail_query_periods,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
@@ -425,6 +426,7 @@ def plan_query(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
         is_followup=is_followup,
+        allowed_participant_identities=requested_participant_identities(prompt_input),
         resolved_temporal_constraints=resolve_gmail_query_periods(
             prompt_input=prompt_input, frozen_routes=frozen_routes,
             now_ms=now_ms, timezone=timezone,

@@ -8,7 +8,11 @@ from typing import TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
-from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ParticipantConstraintV1,
+    SourceFetchPlanV1,
+    validate_participant_identity,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
 )
@@ -367,12 +371,7 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
             else:
                 terms.append(value)
         elif constraint["kind"] == "PARTICIPANT":
-            prefixes = {"SENDER": "from:", "RECIPIENT": "to:", "ATTENDEE": "", "ANY": ""}
-            values = [
-                prefixes[item["role"]] + item["identity"] for item in constraint["participants"]
-            ]
-            joined = " ".join(values)
-            terms.append("{" + joined + "}" if constraint["match_mode"] == "ANY" else joined)
+            terms.append(_gmail_participant_query(constraint))
         elif constraint["kind"] == "TEMPORAL_RANGE" and constraint["axis"] == "MESSAGE_TIME":
             zone = ZoneInfo(constraint["timezone"])
             for boundary, prefix in (
@@ -392,6 +391,24 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
     if not terms:
         raise ValueError("EMAIL retrieval requires a translatable constraint")
     return " ".join(terms)
+
+
+def _gmail_participant_query(constraint: ParticipantConstraintV1) -> str:
+    groups: list[list[str]] = []
+    for person in constraint["participants"]:
+        identity = validate_participant_identity(person["identity"])
+        role = person["role"]
+        if role == "ATTENDEE":
+            raise ValueError("Gmail cannot enforce Calendar attendee membership")
+        prefixes = ["from:", "to:"] if role == "ANY" else [
+            "from:" if role == "SENDER" else "to:",
+        ]
+        groups.append([prefix + identity for prefix in prefixes])
+    if constraint["match_mode"] == "ANY":
+        return "{" + " ".join(term for group in groups for term in group) + "}"
+    return " ".join(
+        group[0] if len(group) == 1 else "{" + " ".join(group) + "}" for group in groups
+    )
 
 
 def _optional_temporal_bounds(plan: SourceFetchPlanV1) -> tuple[str, str] | None:

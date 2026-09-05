@@ -47,7 +47,7 @@ def test_run_relative_period_is_fixed_only_on_its_own_route() -> None:
 
 
 @pytest.mark.parametrize("identity, valid", [
-    ("@default", False), ("primary", False), ("김대리", True),
+    ("@default", False), ("primary", False), ("김대리", False),
     ("bonggyulim0728@gmail.com", True),
 ])
 def test_bound_query_schema__container_alias_is_not__a_participant(

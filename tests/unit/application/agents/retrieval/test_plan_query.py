@@ -1176,12 +1176,7 @@ def test_general_gmail_search__uses_preserved_person_and_search_terms() -> None:
     search_spec = result["route_queries"][0]["search_spec"]
     assert search_spec is not None
     assert search_spec["constraints"] == [
-        {
-            "kind": "PARTICIPANT",
-            "participants": [{"role": "ANY", "identity": "김대리"}],
-            "match_mode": "ALL",
-        },
-        {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ALL"},
+        {"kind": "KEYWORD", "terms": ["대리", "프로젝트", "일정"], "match_mode": "ALL"},
     ]
 
 

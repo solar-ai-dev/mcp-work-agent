@@ -34,6 +34,16 @@ RetrievalValidationReasonCodeV1 = Literal[
 ]
 TemporalAxisV1 = Literal["MESSAGE_TIME", "TASK_SCHEDULED_DATE", "EVENT_TIME", "AVAILABILITY_WINDOW"]
 ParticipantRoleV1 = Literal["ANY", "SENDER", "RECIPIENT", "ATTENDEE"]
+PARTICIPANT_EMAIL_PATTERN = r'^[^\s<>:@"{}()\\]+@[^\s<>:@"{}()\\]+\.[^\s<>:@"{}()\\]+$'
+
+
+def validate_participant_identity(value: object) -> str:
+    """Hard participant constraints require a bare email, never an unresolved name."""
+    if not isinstance(value, str) or re.fullmatch(PARTICIPANT_EMAIL_PATTERN, value) is None:
+        raise RetrievalV2ValidationError("participant identity requires an exact email address")
+    return value
+
+
 StatusScopeValueV1 = Literal[
     "ANY", "INCOMPLETE", "COMPLETED", "DRAFT", "SENT", "CANCELLED", "CONFIRMED", "TENTATIVE"
 ]
@@ -426,6 +436,7 @@ def _validate_constraint(
                 item["identity"]
             ):
                 raise RetrievalV2ValidationError("participant is invalid")
+            validate_participant_identity(item["identity"])
             validated.append(cast(ParticipantMatchV1, item))
         if constraint["match_mode"] not in {"ANY", "ALL"}:
             raise RetrievalV2ValidationError("participant match_mode is invalid")

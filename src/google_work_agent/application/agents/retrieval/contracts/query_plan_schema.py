@@ -9,6 +9,7 @@ from typing import cast
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     CONCEPT_LITERAL_PATTERN,
     CONCEPT_MANIFESTATION_LIMIT,
+    PARTICIPANT_EMAIL_PATTERN,
     TemporalRangeConstraintV1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
@@ -82,7 +83,7 @@ _CONSTRAINT_SCHEMA = {
                         "required": ["role", "identity"],
                         "properties": {
                             "role": {"enum": ["ANY", "SENDER", "RECIPIENT", "ATTENDEE"]},
-                            "identity": _NON_EMPTY_STRING,
+                            "identity": {"type": "string", "pattern": PARTICIPANT_EMAIL_PATTERN},
                         },
                     },
                 },
@@ -286,6 +287,7 @@ def bind_retrieval_query_plan_output_schema(
     detail_candidate_refs: Collection[str] = (),
     is_followup: bool = False,
     resolved_temporal_constraints: Mapping[str, TemporalRangeConstraintV1] | None = None,
+    allowed_participant_identities: Collection[str] | None = None,
 ) -> OutputSchemaDefinition:
     """Bind planner-generated identities to values validated in the current state."""
 
@@ -314,6 +316,7 @@ def bind_retrieval_query_plan_output_schema(
                 allowed_resource_refs=sorted((validated_resource_refs or {}).get(route_id, ())),
                 allowed_container_refs=sorted((validated_container_refs or {}).get(route_id, ())),
                 temporal_constraint=(resolved_temporal_constraints or {}).get(route_id),
+                allowed_participant_identities=allowed_participant_identities,
             )
             bound_operations.append(operation_schema)
     route_queries["items"] = {"oneOf": bound_operations}
@@ -328,8 +331,11 @@ def _bind_route_operation(
     detail_candidate_refs: Collection[str], allowed_constraint_kinds: set[str],
     allowed_resource_refs: list[str], allowed_container_refs: list[str],
     temporal_constraint: TemporalRangeConstraintV1 | None,
+    allowed_participant_identities: Collection[str] | None,
 ) -> None:
     operation_properties = cast(dict[str, object], operation_schema["properties"])
+    if allowed_participant_identities is not None and not allowed_participant_identities:
+        allowed_constraint_kinds = allowed_constraint_kinds - {"PARTICIPANT"}
     operation_properties["route_id"] = {
         "type": "string",
         "const": route_id,
@@ -350,6 +356,7 @@ def _bind_route_operation(
         allowed_resource_refs=allowed_resource_refs,
         allowed_container_refs=allowed_container_refs,
         temporal_constraint=temporal_constraint,
+        allowed_participant_identities=allowed_participant_identities,
     )
 
 
@@ -360,6 +367,7 @@ def _bind_constraint_ref_values(
     allowed_resource_refs: list[str],
     allowed_container_refs: list[str],
     temporal_constraint: TemporalRangeConstraintV1 | None,
+    allowed_participant_identities: Collection[str] | None,
 ) -> None:
     if isinstance(value, list):
         for item in value:
@@ -369,6 +377,7 @@ def _bind_constraint_ref_values(
                 allowed_resource_refs=allowed_resource_refs,
                 allowed_container_refs=allowed_container_refs,
                 temporal_constraint=temporal_constraint,
+                allowed_participant_identities=allowed_participant_identities,
             )
         return
     if not isinstance(value, dict):
@@ -395,12 +404,16 @@ def _bind_constraint_ref_values(
             fields = cast(dict[str, object], item["properties"])
             fields["identity"] = {
                 "type": "string", "minLength": 1,
-                "pattern": r"^(?!@default$|primary$).+",
+                "pattern": PARTICIPANT_EMAIL_PATTERN,
                 "description": (
-                    "A person name or email from the request, never a container alias. "
-                    "@default and primary identify destination containers, not senders."
+                    "An exact requested email or evidence-resolved email only. "
+                    "Names and job titles are discovery needs, not participant identities."
                 ),
             }
+            if allowed_participant_identities is not None:
+                cast(dict[str, object], fields["identity"])["enum"] = sorted(
+                    set(allowed_participant_identities)
+                )
         if kind == "RESOURCE_REF" and allowed_resource_refs:
             refs = properties.get("resource_refs")
             if isinstance(refs, dict):
@@ -416,6 +429,7 @@ def _bind_constraint_ref_values(
             allowed_resource_refs=allowed_resource_refs,
             allowed_container_refs=allowed_container_refs,
             temporal_constraint=temporal_constraint,
+            allowed_participant_identities=allowed_participant_identities,
         )
 
 
