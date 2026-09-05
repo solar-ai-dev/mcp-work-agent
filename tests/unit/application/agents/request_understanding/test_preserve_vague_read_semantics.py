@@ -28,6 +28,22 @@ def _candidate() -> RequestGoalCandidateV1:
     }
 
 
+def test_period_only_listing_does_not_inherit_model_business_topics() -> None:
+    candidate = _candidate()
+    candidate["constraints"].extend([
+        {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정 관련 메일"]},
+        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["일정"]},
+    ])
+    result = operation.preserve_vague_read_semantics(
+        candidate, request_text="9월 첫째주에 온 메일 찾아줘.", entry_mode="AGENT_SEARCH",
+    )
+    by_field = {item["field"]: item["value"] for item in result["constraints"]}
+    assert "business_concepts" not in by_field
+    assert "search_terms" not in by_field
+    assert by_field["temporal_axis"] == ["MESSAGE_TIME"]
+    assert candidate["constraints"][-1]["value"] == ["일정"]
+
+
 @pytest.mark.parametrize(
     ("request_text", "axis"),
     [

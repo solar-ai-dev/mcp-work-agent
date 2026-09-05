@@ -78,6 +78,18 @@ def preserve_gmail_search_semantics(
     if not isinstance(candidate_queries, list):
         return value
     replacement_kinds = {str(item["kind"]) for item in explicit_constraints}
+    intent_constraints = request_intent.get("constraints")
+    has_topic = isinstance(intent_constraints, list) and any(
+        isinstance(item, Mapping)
+        and item.get("field") in {
+            "business_concepts", "search_terms", "subject", "search_criteria_subject",
+        }
+        and item.get("value")
+        for item in intent_constraints
+    )
+    if replacement_kinds == {"TEMPORAL_RANGE"} and not has_topic:
+        # A period-only intent has no topical filter for the planner to specialize.
+        replacement_kinds.update({"KEYWORD", "CONCEPT"})
     if "CONCEPT" in replacement_kinds:
         # A model's literal concept keyword must not AND away its alternatives.
         replacement_kinds.add("KEYWORD")

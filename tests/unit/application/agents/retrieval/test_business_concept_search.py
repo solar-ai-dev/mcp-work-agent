@@ -1,6 +1,8 @@
 """Semantic concept discovery across the production query and evidence boundaries."""
 
+from datetime import datetime
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
@@ -29,6 +31,9 @@ from google_work_agent.application.agents.retrieval.expand_business_concept impo
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
+from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
+    preserve_gmail_search_semantics,
+)
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import rag_retrieve_rerank
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
@@ -43,6 +48,34 @@ ROUTE: InputToolRouteV1 = {
     "required": True, "reason_codes": ["USER_REQUEST"],
 }
 POLICIES = {"gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+
+
+def test_period_only_mail_request_reaches_provider_without_invented_schedule_filter() -> None:
+    request = "9월 첫째주에 온 메일 찾아줘."
+    intent = preserve_vague_read_semantics.preserve_vague_read_semantics(
+        {
+            "goal": request, "completion_conditions": ["메일 조회"], "constraints": [
+                {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},
+            ],
+            "requested_resource_hints": ["GMAIL_THREAD"], "requested_effect_hints": ["READ"],
+            "analysis_requirement": "NONE",
+        }, request_text=request, entry_mode="AGENT_SEARCH",
+    )
+    planned = preserve_gmail_search_semantics(
+        _plan([expand_business_concept("일정"),
+               {"kind": "KEYWORD", "terms": ["회의"], "match_mode": "PHRASE"}]),
+        prompt_input={"request_intent": intent}, frozen_routes=[ROUTE],
+        now_ms=int(datetime(2026, 9, 6, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000),
+        timezone="Asia/Seoul",
+    )
+    fetch = build_query(
+        planned, frozen_routes=[ROUTE], route_policies={
+            "gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT", "TEMPORAL_RANGE"})),
+        },
+    )[0]
+    _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)
+    assert arguments["query"] == "after:1788188400 before:1788793200"
+    assert [item["kind"] for item in fetch["effective_constraints"]] == ["TEMPORAL_RANGE"]
 
 
 def _plan(constraints: list[object]) -> dict[str, object]:

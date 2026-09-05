@@ -179,6 +179,19 @@ def preserve_vague_read_semantics(
         field="required_information",
         values=_required_information(request_text),
     )
+    period_only_listing = bool(periods) and re.fullmatch(
+        r"\s*(?:에\s*)?(?:온|받은|수신된|도착한|보낸|발송된)\s*(?:이메일|메일)"
+        r"(?:을|들|들을)?\s*(?:찾아줘|보여줘|조회해줘|알려줘)[.!?\s]*",
+        _PERIOD_PATTERN.sub("", request_text),
+    )
+    if period_only_listing and set(candidate["requested_effect_hints"]) == {"READ"}:
+        # An unqualified mailbox listing must not inherit an invented business topic.
+        constraints = [
+            item for item in constraints
+            if item["field"] not in {
+                "business_concepts", "search_terms", "subject", "search_criteria_subject",
+            }
+        ]
     return {**candidate, "constraints": constraints}
 
 
