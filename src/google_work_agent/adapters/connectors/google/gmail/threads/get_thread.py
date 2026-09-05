@@ -1,5 +1,8 @@
 """Canonical Google provider operation for gmail get thread."""
 
+from google_work_agent.adapters.connectors.google.gmail.threads.project_message_evidence import (
+    project_message_evidence,
+)
 from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
     credential_provider as workspace_support,
 )
@@ -40,11 +43,15 @@ def _gmail_get_thread(
                 "snippet": workspace_support._optional_text(
                     payload.get("snippet")
                     if payload.get("snippet") is not None
-                    else None if latest is None else latest.get("snippet")
+                    else None
+                    if latest is None
+                    else latest.get("snippet")
                 ),
                 "participants": list(participants),
                 "message_ids": list(message_ids),
                 "body": _thread_body(messages),
+                "messages": project_message_evidence(messages, thread_id=thread_id),
+                "message_count": len(messages),
             },
         )
     }

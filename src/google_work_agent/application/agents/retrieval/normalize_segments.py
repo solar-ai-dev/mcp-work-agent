@@ -18,6 +18,9 @@ from google_work_agent.application.agents.retrieval.contracts.segment_identity i
 from google_work_agent.application.agents.retrieval.format_calendar_freebusy_evidence import (
     format_calendar_freebusy_evidence,
 )
+from google_work_agent.ports.connector.contracts.gmail_message_evidence import (
+    MAX_THREAD_EVIDENCE_MESSAGES,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +76,7 @@ def normalize_segments(
         resources = summary.get("resources", [])
         if not isinstance(resources, list):
             continue
-        for raw in resources:
+        for raw in _normalization_units(resources):
             if not isinstance(raw, dict):
                 raise ValueError("$.source_summaries[].resources[] must be object")
             handle = raw.get("resource_handle")
@@ -85,7 +88,9 @@ def normalize_segments(
                 continue
             seen.add((handle, text))
             chunks = _chunk_text(text, context_budget)
-            resource_segments = segments_by_handle.setdefault(handle, [])
+            message_id = raw.get("message_id")
+            unit_handle = handle if message_id is None else f"{handle}#message={message_id}"
+            resource_segments = segments_by_handle.setdefault(unit_handle, [])
             for index, chunk in enumerate(chunks):
                 if len(resource_segments) >= context_budget.max_segments:
                     break
@@ -117,6 +122,7 @@ def normalize_segments(
                             "position": source_position,
                             "chunk_index": index,
                             "chunk_count": len(chunks),
+                            **({"message_id": message_id} if message_id is not None else {}),
                         },
                         text=normalized_chunk,
                     )
@@ -126,6 +132,84 @@ def normalize_segments(
         list(segments_by_handle.values()),
         max_segments=context_budget.max_segments,
     )
+
+
+def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
+    """Keep each message's headers/body independent of peer signatures and quotes."""
+    units: list[dict[str, object]] = []
+    for raw in resources:
+        if not isinstance(raw, dict):
+            raise ValueError("$.source_summaries[].resources[] must be object")
+        payload = raw.get("payload")
+        if (
+            raw.get("resource_type") != "gmail_thread"
+            or not isinstance(payload, dict)
+            or "messages" not in payload
+        ):
+            # Existing generic snapshots without the additive detail field remain readable.
+            units.append(raw)
+            continue
+        messages = payload["messages"]
+        if not isinstance(messages, list) or len(messages) > MAX_THREAD_EVIDENCE_MESSAGES:
+            raise ValueError("Gmail message evidence must be a bounded list")
+        for message in messages:
+            if not isinstance(message, dict) or set(message) != {
+                "message_id",
+                "thread_id",
+                "sender_name",
+                "sender_email",
+                "recipients",
+                "received_at",
+                "subject",
+                "body",
+                "body_truncated",
+            }:
+                raise ValueError("incomplete Gmail message evidence contract")
+            if (
+                not isinstance(message["message_id"], str)
+                or not message["message_id"]
+                or message["thread_id"] != raw.get("resource_id")
+            ):
+                raise ValueError("Gmail message/thread binding mismatch")
+            if not isinstance(message["recipients"], list) or not all(
+                isinstance(value, str) for value in message["recipients"]
+            ):
+                raise ValueError("invalid Gmail message recipients")
+            if any(
+                message[key] is not None and not isinstance(message[key], str)
+                for key in (
+                    "sender_name",
+                    "sender_email",
+                    "received_at",
+                    "subject",
+                    "body",
+                )
+            ) or not isinstance(message["body_truncated"], bool):
+                raise ValueError("invalid Gmail message metadata")
+            message_count = payload.get("message_count")
+            if not isinstance(message_count, int) or message_count < len(messages):
+                raise ValueError("invalid Gmail message coverage")
+            headers = [
+                f"Message: {message['message_id']}",
+                f"Thread messages collected: {len(messages)}/{message_count}",
+                f"From: {message['sender_name'] or ''} <{message['sender_email'] or ''}>",
+                f"To: {', '.join(message['recipients'])}",
+                f"Received: {message['received_at'] or 'unknown'}",
+            ]
+            body = _strip_email_quote_and_signature(message["body"] or "")
+            if message["body_truncated"]:
+                body += "\n[본문 일부만 수집됨]"
+            units.append(
+                {
+                    **raw,
+                    "message_id": message["message_id"],
+                    "payload": {
+                        "subject": message["subject"],
+                        "body": "\n".join([*headers, body]),
+                    },
+                }
+            )
+    return units
 
 
 def _round_robin_segments(

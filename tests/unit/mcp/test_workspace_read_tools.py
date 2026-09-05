@@ -266,6 +266,20 @@ def test_gmail_thread__detail_tool__includes_full_thread_content(
             "User <user@example.com>",
         ],
         "message_ids": ["message-1"],
+        "message_count": 1,
+        "messages": [
+            {
+                "message_id": "message-1",
+                "thread_id": "thread-1",
+                "sender_name": "Kim Daeri",
+                "sender_email": "kim.daeri@example.com",
+                "recipients": ["User <user@example.com>", "team@example.com"],
+                "received_at": "1970-01-01T00:00:02+00:00",
+                "subject": "Project update",
+                "body": "Please reply with an available date.",
+                "body_truncated": False,
+            }
+        ],
         "body": (
             "From: Kim Daeri <kim.daeri@example.com>\n"
             "To: User <user@example.com>\n"
