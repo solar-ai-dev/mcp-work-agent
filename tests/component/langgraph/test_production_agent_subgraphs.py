@@ -600,6 +600,42 @@ def test_retrieval_cancellation_returns_to_main_without_another_external_call(
     ) == "end"  # Release the invocation for the existing cancellation command owner.
 
 
+@pytest.mark.parametrize("cancel_after_update, expected_reads, expected_prompts", [
+    ("build_query", 0, ["retrieval.plan_query"]),
+    ("rag_retrieve", 1, ["retrieval.plan_query"]),
+    ("select_evidence", 1, ["retrieval.plan_query", "retrieval.select_evidence"]),
+])
+def test_retrieval_cancellation_between_scheduled_nodes_prevents_new_io(
+    cancel_after_update: str, expected_reads: int, expected_prompts: list[str],
+) -> None:
+    cancelled = False
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    llm = _ComponentInferencePort()
+    connector = _ComponentConnectorReadPort()
+    graph = RetrievalSubgraph(
+        should_stop_for_cancel=lambda _run_id: cancelled,
+        now_ms=lambda: 1_000, timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm, prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision), evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector, tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(), confirm_inline=cast(Any, _confirm_early),
+    ).build()
+    updates = []
+    with provider_dispatch_execution_scope():
+        for update in graph.stream(state, stream_mode="updates"):
+            updates.append(update)
+            if cancel_after_update in update:
+                cancelled = True
+    assert cancelled
+    assert connector.call_count == expected_reads
+    assert llm.calls == expected_prompts
+    assert not any("finalize" in update for update in updates)
+
+
 @pytest.mark.parametrize("date_rich", [False, True])
 def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) -> None:
     from datetime import datetime

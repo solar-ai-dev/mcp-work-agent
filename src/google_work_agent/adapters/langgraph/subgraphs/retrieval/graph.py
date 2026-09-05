@@ -8,6 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
+from langchain_core.runnables import RunnableLambda
 from langgraph.graph import END, START, StateGraph
 
 from google_work_agent.adapters.langgraph.agent_kernel import (
@@ -415,14 +416,14 @@ class RetrievalSubgraph:
             input_schema=ContextRetrievalInputState,
             output_schema=GraphState,
         )
-        graph.add_node("plan_query", self._plan_query_node)
-        graph.add_node("build_query", self._build_query_node)
-        graph.add_node("execute_read", self._execute_read_node)
-        graph.add_node("normalize_segments", self._normalize_segments_node)
-        graph.add_node("rag_retrieve", self._rag_retrieve_node)
-        graph.add_node("select_evidence", self._select_evidence_node)
-        graph.add_node("assess_sufficiency", self._assess_sufficiency_node)
-        graph.add_node("finalize", self._finalize_node)
+        graph.add_node("plan_query", self._cancellable_node(self._plan_query_node))
+        graph.add_node("build_query", self._cancellable_node(self._build_query_node))
+        graph.add_node("execute_read", self._cancellable_node(self._execute_read_node))
+        graph.add_node("normalize_segments", self._cancellable_node(self._normalize_segments_node))
+        graph.add_node("rag_retrieve", self._cancellable_node(self._rag_retrieve_node))
+        graph.add_node("select_evidence", self._cancellable_node(self._select_evidence_node))
+        graph.add_node("assess_sufficiency", self._cancellable_node(self._assess_sufficiency_node))
+        graph.add_node("finalize", self._cancellable_node(self._finalize_node))
         graph.add_edge(START, "plan_query")
         boundaries = (
             ("plan_query", route_after_plan_query, ("build_query",)),
@@ -445,6 +446,18 @@ class RetrievalSubgraph:
                 {**{target: target for target in successors}, "end": END},
             )
         return graph.compile(name="retrieval_subgraph")
+
+    def _cancellable_node(
+        self, step: Callable[[ContextRetrievalLocalState], ContextRetrievalLocalState],
+    ) -> RunnableLambda[ContextRetrievalLocalState, ContextRetrievalLocalState]:
+        def invoke(state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
+            # Cancellation can arrive after edge evaluation, while the next
+            # checkpoint/node is being scheduled. Recheck before starting work.
+            if self._should_stop_for_cancel(state["run_id"]):
+                return state
+            return step(state)
+
+        return RunnableLambda(invoke)
 
     def _initialize_state(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         request = request_from_state(state)
