@@ -216,20 +216,54 @@ def repository_authority_requires_confirmation(
     selected_resources: Sequence[SelectedResourceRef],
 ) -> bool:
     repository_constraints = [item for item in constraints if _is_repository_constraint(item)]
-    explicit_values = {
-        item["value"] for item in repository_constraints if isinstance(item["value"], str)
-    }
-    if len(explicit_values) != len(repository_constraints) or len(explicit_values) > 1:
+    try:
+        materialized = materialize_validated_constraint_provenance(
+            repository_constraints,
+            user_request=user_request,
+            confirmation_response_text=confirmation_response_text,
+        )
+        _repository_authority(materialized, selected_resources=selected_resources)
+    except RequestUnderstandingValidationError:
         return True
-    if repository_constraints:
-        try:
-            materialize_validated_constraint_provenance(
-                repository_constraints,
-                user_request=user_request,
-                confirmation_response_text=confirmation_response_text,
+    return False
+
+
+def validated_repository_authority(
+    request_intent: RequestIntentV2,
+    *,
+    selected_resources: Sequence[SelectedResourceRef],
+) -> str | None:
+    """Resolve the sole repository value already authorized for this Run."""
+    if request_intent["ambiguity"]["requires_confirmation"]:
+        raise RequestUnderstandingValidationError(
+            "repository authority cannot be consumed from an ambiguous intent"
+        )
+    return _repository_authority(
+        request_intent["constraints"],
+        selected_resources=selected_resources,
+    )
+
+
+def _repository_authority(
+    constraints: Sequence[ConstraintV1],
+    *,
+    selected_resources: Sequence[SelectedResourceRef],
+) -> str | None:
+    repository_constraints = [item for item in constraints if _is_repository_constraint(item)]
+    explicit_repositories: set[str] = set()
+    for constraint in repository_constraints:
+        value = constraint["value"]
+        if (
+            not isinstance(value, str)
+            or not is_fully_qualified_repository(value)
+            or constraint.get("provenance") is None
+        ):
+            raise RequestUnderstandingValidationError(
+                "repository authority requires validated provenance"
             )
-        except RequestUnderstandingValidationError:
-            return True
+        explicit_repositories.add(value)
+    if len(explicit_repositories) != len(repository_constraints) or len(explicit_repositories) > 1:
+        raise RequestUnderstandingValidationError("repository authority is ambiguous")
 
     selected_repositories: set[str] = set()
     for resource in selected_resources:
@@ -237,7 +271,9 @@ def repository_authority_requires_confirmation(
             continue
         parent = resource.parent_resource_id
         if parent is None or not is_fully_qualified_repository(parent):
-            return True
+            raise RequestUnderstandingValidationError(
+                "selected GitHub Issue repository authority is invalid"
+            )
         prefix, separator, issue_number = resource.resource_id.rpartition("#")
         if (
             prefix != parent
@@ -245,15 +281,15 @@ def repository_authority_requires_confirmation(
             or not issue_number.isdigit()
             or int(issue_number) < 1
         ):
-            return True
+            raise RequestUnderstandingValidationError("selected GitHub Issue identity is invalid")
         selected_repositories.add(parent)
     if len(selected_repositories) > 1:
-        return True
-    return bool(
-        explicit_values
-        and selected_repositories
-        and explicit_values != selected_repositories
-    )
+        raise RequestUnderstandingValidationError("selected repository authority is ambiguous")
+
+    repositories = explicit_repositories | selected_repositories
+    if len(repositories) > 1:
+        raise RequestUnderstandingValidationError("repository authorities conflict")
+    return next(iter(repositories), None)
 
 
 def is_fully_qualified_repository(value: str) -> bool:

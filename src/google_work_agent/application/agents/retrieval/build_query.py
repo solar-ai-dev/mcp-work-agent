@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Collection, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import cast
 
@@ -49,8 +50,13 @@ def build_query(
     prior_read_result_handles = prior_read_result_handles or {}
     route_by_id = {route["route_id"]: route for route in frozen_routes}
     _validate_policies(route_by_id, route_policies)
-    validated = validate_retrieval_query_plan_v2(
+    bound_plan = bind_required_container_constraints(
         plan,
+        route_policies=route_policies,
+        validated_container_refs=validated_container_refs,
+    )
+    validated = validate_retrieval_query_plan_v2(
+        bound_plan,
         frozen_routes=frozen_routes,
         supported_constraint_kinds={
             route_id: policy.supported_kinds for route_id, policy in route_policies.items()
@@ -70,6 +76,51 @@ def build_query(
         )
         for route_id in validated["retrieval_order"]
     ]
+
+
+def bind_required_container_constraints(
+    plan: object,
+    *,
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    validated_container_refs: Mapping[str, Collection[str]] | None,
+) -> object:
+    """Inject only a pre-validated required container into INITIAL SEARCH."""
+    if not isinstance(plan, Mapping):
+        return plan
+    bound = deepcopy(dict(plan))
+    queries = bound.get("route_queries")
+    if not isinstance(queries, list):
+        return bound
+    for raw_query in queries:
+        if not isinstance(raw_query, dict):
+            continue
+        route_id = raw_query.get("route_id")
+        if not isinstance(route_id, str):
+            continue
+        policy = route_policies.get(route_id)
+        if (
+            policy is None
+            or "CONTAINER_REF" not in policy.required_kinds
+            or raw_query.get("operation") != "SEARCH"
+        ):
+            continue
+        refs = list(dict.fromkeys((validated_container_refs or {}).get(route_id, ())))
+        if len(refs) != 1:
+            raise RetrievalV2ValidationError(
+                f"route {route_id} requires one validated container authority"
+            )
+        search_spec = raw_query.get("search_spec")
+        if not isinstance(search_spec, dict) or search_spec.get("mode") != "INITIAL":
+            continue
+        constraints = search_spec.get("constraints")
+        if not isinstance(constraints, list):
+            continue
+        if not any(
+            isinstance(constraint, Mapping) and constraint.get("kind") == "CONTAINER_REF"
+            for constraint in constraints
+        ):
+            constraints.append({"kind": "CONTAINER_REF", "container_refs": refs})
+    return bound
 
 
 def _build_one(

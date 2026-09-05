@@ -1,11 +1,17 @@
 from copy import deepcopy
+from typing import cast
 
 import pytest
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+)
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     RequestUnderstandingValidationError,
     validate_intent,
+    validated_repository_authority,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 
 def _candidate() -> dict[str, object]:
@@ -81,3 +87,74 @@ def test_validate_intent__rejects_forged_repository_value__against_exact_span() 
             candidate,
             provenance_sources={"USER_REQUEST": "acme/repo"},
         )
+
+
+def test_validated_repository_authority__explicit_selected_match__normalizes_once() -> None:
+    repository = "acme/repo"
+
+    assert (
+        validated_repository_authority(
+            _intent(repository),
+            selected_resources=(_selected_issue(repository),),
+        )
+        == repository
+    )
+    assert validated_repository_authority(_intent(repository), selected_resources=()) == repository
+    assert (
+        validated_repository_authority(
+            _intent(None),
+            selected_resources=(_selected_issue(repository),),
+        )
+        == repository
+    )
+
+
+def test_validated_repository_authority__conflict__fails_closed() -> None:
+    with pytest.raises(RequestUnderstandingValidationError, match="conflict"):
+        validated_repository_authority(
+            _intent("owner-a/repo"),
+            selected_resources=(_selected_issue("owner-b/repo"),),
+        )
+
+
+def test_validated_repository_authority__missing_or_unvalidated__is_not_authority() -> None:
+    assert validated_repository_authority(_intent(None), selected_resources=()) is None
+    intent = _intent("acme/repo")
+    intent["constraints"][0].pop("provenance")
+    with pytest.raises(RequestUnderstandingValidationError, match="validated provenance"):
+        validated_repository_authority(intent, selected_resources=())
+
+
+def _intent(repository: str | None) -> RequestIntentV2:
+    constraints = []
+    if repository is not None:
+        constraints.append(
+            {
+                "kind": "RESOURCE",
+                "field": "repository",
+                "value": repository,
+                "provenance": {
+                    "source": "USER_REQUEST",
+                    "start_offset": 0,
+                    "end_offset": len(repository),
+                },
+            }
+        )
+    return cast(
+        RequestIntentV2,
+        {
+            **_candidate(),
+            "constraints": constraints,
+            "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
+        },
+    )
+
+
+def _selected_issue(repository: str) -> SelectedResourceRef:
+    return SelectedResourceRef(
+        resource_ref_id="ref-1",
+        connector_id="github",
+        resource_type="github_issue",
+        resource_id=f"{repository}#7",
+        parent_resource_id=repository,
+    )

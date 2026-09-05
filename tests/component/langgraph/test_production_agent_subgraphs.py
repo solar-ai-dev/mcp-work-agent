@@ -76,6 +76,7 @@ from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import (
+    SelectedResourceRef,
     WorkflowCorrelationContext,
     WorkflowStartRequest,
 )
@@ -90,8 +91,11 @@ class _IdFactory:
 
 
 class _ComponentInferencePort:
-    def __init__(self, *, request_confirmation: bool = False) -> None:
+    def __init__(
+        self, *, request_confirmation: bool = False, github_retrieval: bool = False
+    ) -> None:
         self.request_confirmation = request_confirmation
+        self.github_retrieval = github_retrieval
         self.calls: list[str] = []
 
     def infer(
@@ -148,6 +152,20 @@ class _ComponentInferencePort:
                 "disposition": "NO_TOOL_NEEDED",
             }
         if prompt_id == "retrieval.plan_query":
+            if self.github_retrieval:
+                input_routes = cast(list[Mapping[str, object]], projection["input_routes"])
+                container_refs = input_routes[0].get("container_refs")
+                if container_refs is not None:
+                    assert container_refs == ["acme/repo"]
+                constraints: list[dict[str, object]] = []
+            else:
+                constraints = [
+                    {
+                        "kind": "KEYWORD",
+                        "terms": ["status"],
+                        "match_mode": "ANY",
+                    }
+                ]
             return {
                 "schema_version": 2,
                 "route_queries": [
@@ -157,13 +175,7 @@ class _ComponentInferencePort:
                         "reason_codes": ["USER_REQUEST"],
                         "search_spec": {
                             "mode": "INITIAL",
-                            "constraints": [
-                                {
-                                    "kind": "KEYWORD",
-                                    "terms": ["status"],
-                                    "match_mode": "ANY",
-                                }
-                            ],
+                            "constraints": constraints,
                         },
                         "detail_candidate_ref": None,
                     }
@@ -238,7 +250,27 @@ class _ComponentConnectorReadPort:
         )
 
 
-def _state(*, initial_target: str = "request_understanding") -> GraphState:
+class _ReadBoundaryReached(RuntimeError):
+    pass
+
+
+class _StoppingGitHubReadPort:
+    def __init__(self) -> None:
+        self.arguments: dict[str, Any] | None = None
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        self.call_count += 1
+        assert binding.tool_id == "github_list_issues"
+        self.arguments = tool_arguments
+        raise _ReadBoundaryReached
+
+
+def _state(
+    *,
+    initial_target: str = "request_understanding",
+    selected_resources: tuple[SelectedResourceRef, ...] = (),
+) -> GraphState:
     request = WorkflowStartRequest(
         run_id="component-run-1",
         conversation_id="component-conversation-1",
@@ -249,6 +281,7 @@ def _state(*, initial_target: str = "request_understanding") -> GraphState:
         selected_resource_ids=(),
         run_budget=build_default_run_budget(),
         correlation=WorkflowCorrelationContext("component-request-1", None, "1"),
+        selected_resources=selected_resources,
     )
     return initial_graph_state(
         request,
@@ -304,6 +337,40 @@ def _answer_route_plan(*, with_input_route: bool = False) -> dict[str, object]:
         },
         "tool_registry_version": "component-test",
     }
+
+
+def _github_intent(*, explicit_repository: bool) -> dict[str, object]:
+    intent = _intent()
+    if explicit_repository:
+        intent["constraints"] = [
+            {
+                "kind": "RESOURCE",
+                "field": "repository",
+                "value": "acme/repo",
+                "provenance": {
+                    "source": "USER_REQUEST",
+                    "start_offset": 0,
+                    "end_offset": 9,
+                },
+            }
+        ]
+    return intent
+
+
+def _github_route_plan() -> dict[str, object]:
+    plan = _answer_route_plan()
+    input_plan = cast(dict[str, object], plan["input_plan"])
+    input_plan["input_routes"] = [
+        {
+            "route_id": "route-1",
+            "resource_type": "GITHUB_ISSUE",
+            "connector_id": "github",
+            "allowed_read_tool_ids": ["github_list_issues"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        }
+    ]
+    return plan
 
 
 def _retrieval_result() -> dict[str, object]:
@@ -423,6 +490,101 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     assert connector.call_count == 1
     assert ("assess_sufficiency", "plan_query") in _edge_set(graph)
     assert ("finalize", "finalize") in _edge_set(graph)
+
+
+@pytest.mark.parametrize("authority_source", ["explicit", "selected"])
+def test_retrieval__github_repository_authority__reaches_connector_read(
+    authority_source: str,
+) -> None:
+    selected_resources = (
+        (
+            SelectedResourceRef(
+                resource_ref_id="github_issue:acme/repo#7",
+                connector_id="github",
+                resource_type="github_issue",
+                resource_id="acme/repo#7",
+                parent_resource_id="acme/repo",
+            ),
+        )
+        if authority_source == "selected"
+        else ()
+    )
+    state = _state(
+        initial_target="context_retriever",
+        selected_resources=selected_resources,
+    )
+    state["request_intent"] = cast(
+        Any, _github_intent(explicit_repository=authority_source == "explicit")
+    )
+    state["tool_route_plan"] = cast(Any, _github_route_plan())
+    connector = _StoppingGitHubReadPort()
+    graph = RetrievalSubgraph(
+        llm_runtime=_ComponentInferencePort(github_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope(), pytest.raises(_ReadBoundaryReached):
+        graph.invoke(state)
+
+    assert connector.arguments == {"repository": "acme/repo", "state": "ALL"}
+
+
+@pytest.mark.parametrize("authority_case", ["missing", "conflict", "unvalidated"])
+def test_retrieval__invalid_repository_authority__stops_before_connector_read(
+    authority_case: str,
+) -> None:
+    explicit_repository = authority_case != "missing"
+    intent = _github_intent(explicit_repository=explicit_repository)
+    selected_resources: tuple[SelectedResourceRef, ...] = ()
+    if authority_case == "conflict":
+        selected_resources = (
+            SelectedResourceRef(
+                resource_ref_id="github_issue:other/repo#7",
+                connector_id="github",
+                resource_type="github_issue",
+                resource_id="other/repo#7",
+                parent_resource_id="other/repo",
+            ),
+        )
+    elif authority_case == "unvalidated":
+        constraints = cast(list[dict[str, object]], intent["constraints"])
+        constraints[0].pop("provenance")
+    state = _state(
+        initial_target="context_retriever",
+        selected_resources=selected_resources,
+    )
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, _github_route_plan())
+    connector = _StoppingGitHubReadPort()
+    graph = RetrievalSubgraph(
+        llm_runtime=_ComponentInferencePort(github_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope(), pytest.raises(ValueError):
+        graph.invoke(state)
+
+    assert connector.call_count == 0
 
 
 def test_work_analysis__compiled_normal_path__produces_analysis() -> None:
