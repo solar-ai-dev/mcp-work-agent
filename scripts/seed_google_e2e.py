@@ -16,11 +16,16 @@ import re
 import sqlite3
 from datetime import date, datetime
 from email.message import EmailMessage
+from email.utils import format_datetime, formataddr
 from pathlib import Path
 from typing import Any
 
 TEST_ACCOUNTS = ("bonggyulim0728@gmail.com", "qhdrbdhkdwks2@gmail.com")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MAIL_IMPORT_URL = (
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/import"
+    "?internalDateSource=dateHeader&processForCalendar=false"
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -42,6 +47,13 @@ def parser() -> argparse.ArgumentParser:
     mail.add_argument("--to", choices=TEST_ACCOUNTS, required=True)
     mail.add_argument("--subject", required=True)
     mail.add_argument("--body", required=True)
+    imported = commands.add_parser("mail-import", help="과거 수신일의 테스트 메일 추가 (발송 없음)")
+    imported.add_argument("--to", choices=TEST_ACCOUNTS, required=True)
+    imported.add_argument("--sender", choices=TEST_ACCOUNTS, required=True)
+    imported.add_argument("--sender-name", required=True)
+    imported.add_argument("--received-at", type=datetime.fromisoformat, required=True)
+    imported.add_argument("--subject", required=True)
+    imported.add_argument("--body", required=True)
     return result
 
 
@@ -69,9 +81,38 @@ def build_fixture(arguments: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         }
     if arguments.to not in TEST_ACCOUNTS:
         raise ValueError("메일 수신자는 지정된 테스트 계정만 허용합니다.")
+    if arguments.command == "mail-import":
+        if arguments.sender not in TEST_ACCOUNTS or arguments.received_at.tzinfo is None:
+            raise ValueError("테스트 발신 계정과 UTC offset이 있는 수신일이 필요합니다.")
+        if not arguments.sender_name.strip() or any(c in arguments.sender_name for c in "\r\n"):
+            raise ValueError("테스트 발신자 표시 이름이 올바르지 않습니다.")
+        return MAIL_IMPORT_URL, {
+            "to": arguments.to, "sender": arguments.sender,
+            "sender_name": arguments.sender_name,
+            "received_at": arguments.received_at.isoformat(),
+            "subject": prefix + arguments.subject,
+            "body": "제품 검색 검증을 위해 가져온 테스트 자료입니다.\n\n" + arguments.body,
+        }
     return "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
         "to": arguments.to, "subject": prefix + arguments.subject, "body": arguments.body,
     }
+
+
+def encode_mail_payload(
+    payload: dict[str, Any], *, account: str, fingerprint: str,
+) -> dict[str, str]:
+    message = EmailMessage()
+    message["From"] = (
+        formataddr((payload["sender_name"], payload["sender"]))
+        if "sender" in payload else account
+    )
+    message["To"] = payload["to"]
+    message["Subject"] = payload["subject"]
+    message["Message-ID"] = f"<gwa-e2e-{fingerprint}@example.invalid>"
+    if "received_at" in payload:
+        message["Date"] = format_datetime(datetime.fromisoformat(payload["received_at"]))
+    message.set_content(payload["body"])
+    return {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
 
 
 def execute_fixture(url: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -86,6 +127,8 @@ def execute_fixture(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     state.ensure_access_token()
     if state.account_email not in TEST_ACCOUNTS:
         raise ValueError("연결된 Google 계정이 허용된 테스트 계정이 아닙니다.")
+    if url == MAIL_IMPORT_URL and payload["to"] != state.account_email:
+        raise ValueError("가져오기 수신 계정은 현재 연결된 테스트 계정과 같아야 합니다.")
     identity = json.dumps([state.account_email, url, payload], sort_keys=True, ensure_ascii=False)
     fingerprint = hashlib.sha256(identity.encode()).hexdigest()
     receipt_path = PROJECT_ROOT / ".runtime" / "e2e-fixtures.sqlite3"
@@ -108,14 +151,10 @@ def execute_fixture(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
         receipts.commit()
         body = payload
-        if url.endswith("/messages/send"):
-            message = EmailMessage()
-            message["From"] = state.account_email
-            message["To"] = payload["to"]
-            message["Subject"] = payload["subject"]
-            message["Message-ID"] = f"<gwa-e2e-{fingerprint}@example.invalid>"
-            message.set_content(payload["body"])
-            body = {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
+        if url.endswith("/messages/send") or url == MAIL_IMPORT_URL:
+            body = encode_mail_payload(
+                payload, account=state.account_email, fingerprint=fingerprint,
+            )
         # No automatic resend on timeout or uncertain delivery.
         created = credential_provider._google_api_call(state, "POST", url, body=body)
         resource_id = created.get("id")
