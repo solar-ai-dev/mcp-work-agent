@@ -9,6 +9,9 @@ from google_work_agent.application.agents.retrieval.normalize_segments import (
     ContextBudget,
     normalize_segments,
 )
+from google_work_agent.application.agents.retrieval.select_evidence import (
+    materialize_evidence_drafts,
+)
 
 
 def _result(text: str) -> AcquisitionResultV1:
@@ -109,6 +112,53 @@ def test_partial_message_metadata_fails_closed_instead_of_using_flattened_body()
     ]
     with pytest.raises(ValueError, match="incomplete Gmail message evidence"):
         normalize_segments(acquisition)
+
+
+def test_identical_chunks_in_two_messages_retain_distinct_identity_and_header_provenance() -> None:
+    acquisition = _result("unused")
+    messages = [
+        {
+            "message_id": f"m{index}", "thread_id": "thread-1",
+            "sender_name": "김철수 대리", "sender_email": "kim_0728@example.com",
+            "recipients": ["recipient@example.com"], "received_at": "2026-08-20T10:00:00Z",
+            "subject": "체육대회", "body": " ".join(["동일한 본문 내용"] * 100),
+            "body_truncated": False,
+        }
+        for index in range(2)
+    ]
+    acquisition["source_summaries"][0]["resources"] = [{
+        "resource_handle": "gmail_thread:thread-1", "resource_type": "gmail_thread",
+        "resource_id": "thread-1", "version": "1",
+        "payload": {"messages": messages, "message_count": 2},
+    }]
+    segments = normalize_segments(
+        acquisition,
+        context_budget=ContextBudget(
+            chunk_target_tokens=30, chunk_max_tokens=40, chunk_overlap_tokens=0,
+        ),
+    )
+    assert len(segments) > 4
+    assert len({segment.segment_id for segment in segments}) == len(segments)
+    assert all(segment.locator["sender_email"] == "kim_0728@example.com" for segment in segments)
+    assert all(segment.locator["sender_name"] == "김철수 대리" for segment in segments)
+    assert all(segment.locator["thread_id"] == "thread-1" for segment in segments)
+    assert all(segment.locator["received_at"] == "2026-08-20T10:00:00Z" for segment in segments)
+    assert all(segment.locator["recipients"] == ["recipient@example.com"] for segment in segments)
+    selected = segments[-2:]
+    drafts = materialize_evidence_drafts(
+        {
+            "schema_version": 2,
+            "selected_segment_ids": [segment.segment_id for segment in selected],
+            "excluded_segment_ids": [],
+            "evidence_drafts": [
+                {"segment_id": segment.segment_id, "role": "CONTEXT", "relevance_reason": "후보"}
+                for segment in selected
+            ],
+        },
+        segments=segments,
+    )
+    assert [draft["locator"] for draft in drafts] == [segment.locator for segment in selected]
+    assert len({draft["evidence_id"] for draft in drafts}) == 2
 
 
 @pytest.mark.parametrize(

@@ -37,6 +37,7 @@ class ContextBudget:
 
 DEFAULT_CONTEXT_BUDGET = ContextBudget()
 CHUNK_SCHEMA_VERSION = 1
+MESSAGE_CHUNK_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +95,10 @@ def normalize_segments(
             for index, chunk in enumerate(chunks):
                 if len(resource_segments) >= context_budget.max_segments:
                     break
-                normalized_chunk = _truncate(chunk, context_budget.max_segment_chars)
+                # Every chunk retains its provider message provenance, not just
+                # the first header chunk. Identical bodies from peers are not one fact.
+                provenance = "" if message_id is None else f"Message: {message_id}\n"
+                normalized_chunk = _truncate(provenance + chunk, context_budget.max_segment_chars)
                 identity: SourceSegmentIdentityV1 = {
                     "schema_version": 1,
                     "connector_id": _connector_id(raw, summary),
@@ -102,7 +106,9 @@ def normalize_segments(
                     "resource_type": resource_type,
                     "resource_id": str(raw.get("resource_id", "")),
                     "source_version_ref": _optional_string(raw.get("version")),
-                    "chunk_schema_version": CHUNK_SCHEMA_VERSION,
+                    "chunk_schema_version": (
+                        CHUNK_SCHEMA_VERSION if message_id is None else MESSAGE_CHUNK_SCHEMA_VERSION
+                    ),
                     "chunk_ordinal": index,
                     "normalized_content_sha256": hashlib.sha256(
                         normalized_chunk.encode("utf-8")
@@ -122,7 +128,7 @@ def normalize_segments(
                             "position": source_position,
                             "chunk_index": index,
                             "chunk_count": len(chunks),
-                            **({"message_id": message_id} if message_id is not None else {}),
+                            **cast(dict[str, object], raw.get("_message_locator", {})),
                         },
                         text=normalized_chunk,
                     )
@@ -190,7 +196,6 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
             if not isinstance(message_count, int) or message_count < len(messages):
                 raise ValueError("invalid Gmail message coverage")
             headers = [
-                f"Message: {message['message_id']}",
                 f"Thread messages collected: {len(messages)}/{message_count}",
                 f"From: {message['sender_name'] or ''} <{message['sender_email'] or ''}>",
                 f"To: {', '.join(message['recipients'])}",
@@ -203,6 +208,13 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
                 {
                     **raw,
                     "message_id": message["message_id"],
+                    "_message_locator": {
+                        key: message[key]
+                        for key in (
+                            "message_id", "thread_id", "sender_name", "sender_email",
+                            "recipients", "received_at",
+                        )
+                    },
                     "payload": {
                         "subject": message["subject"],
                         "body": "\n".join([*headers, body]),
