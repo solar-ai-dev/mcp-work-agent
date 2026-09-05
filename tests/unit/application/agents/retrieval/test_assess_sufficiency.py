@@ -329,16 +329,28 @@ def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence(
 
 
 @pytest.mark.parametrize(
-    "analysis,axis,used",
-    [("REQUIRED", "MESSAGE_TIME", 0), ("NONE", "EVENT_TIME", 0), ("NONE", "EVENT_TIME", 2)],
+    "analysis,axis,used,person,concept",
+    [
+        ("REQUIRED", "MESSAGE_TIME", 0, False, False),
+        ("NONE", "EVENT_TIME", 0, False, False),
+        ("NONE", "EVENT_TIME", 2, False, False),
+        ("NONE", "MESSAGE_TIME", 0, True, False),
+        ("NONE", "MESSAGE_TIME", 0, False, True),
+    ],
 )
 def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_analysis(
-    analysis: str, axis: str, used: int
+    analysis: str, axis: str, used: int, person: bool, concept: bool
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
     intent["analysis_requirement"] = analysis
     intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": axis}]
+    if person:
+        intent["constraints"].append({"kind": "PERSON", "field": "person", "value": "김대리"})
+    if concept:
+        intent["constraints"].append(
+            {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]}
+        )
     intent["requested_effect_hints"] = ["READ"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
     route_plan = _tool_route_plan(

@@ -602,12 +602,16 @@ def _require_gmail_candidate_details(
     evidence_drafts: list[EvidenceDraftV1],
     attempted_detail_candidate_refs: Collection[str],
 ) -> SufficiencyResultV2:
-    """Do not let search metadata satisfy an analysis request that needs message content."""
+    """Hydrate semantic matches before treating search previews as business evidence."""
 
     if (
         tool_route_plan is None
         or not (
             request_intent["analysis_requirement"] == "REQUIRED"
+            or any(
+                item["kind"] == "PERSON" or item["field"] == "business_concepts"
+                for item in request_intent["constraints"]
+            )
             or any(
                 item["field"] == "temporal_axis"
                 and "EVENT_TIME"
