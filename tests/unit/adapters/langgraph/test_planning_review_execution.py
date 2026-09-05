@@ -60,6 +60,7 @@ def test_compiled_planning__answer_executes__canonical_operations() -> None:
             "user_request",
             "request_intent",
             "answer_outline",
+            "temporal_constraints",
             "work_analysis",
             "evidence",
         }

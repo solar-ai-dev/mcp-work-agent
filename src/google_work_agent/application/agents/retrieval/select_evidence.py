@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -12,6 +12,7 @@ from google_work_agent.application.agents.retrieval.contracts.evidence_selection
     bind_evidence_selection_schema,
     required_resource_segments,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
     EvidenceRoleDraftV2,
@@ -26,6 +27,9 @@ from google_work_agent.application.agents.retrieval.normalize_segments import (
 from google_work_agent.application.agents.retrieval.prioritize_material_gmail_evidence import (
     prioritize_material_gmail_evidence,
     select_explicit_lineage_gmail_evidence,
+)
+from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
+    project_query_temporal_constraints,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
 from google_work_agent.application.prompt_runtime.contracts.failure_record import (
@@ -56,6 +60,7 @@ def select_evidence(
     retry_budget: RunBudgetV2,
     context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
     exclusion_obligation_segment_ids: Collection[str] = (),
+    query_attempts: Sequence[QueryAttemptV1] = (),
 ) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
     """Select evidence only from the bounded ranked segments supplied by RAG."""
     obligations = _stable_unique(exclusion_obligation_segment_ids)
@@ -93,7 +98,11 @@ def select_evidence(
     result = llm_runtime.infer(
         requested_mode,
         prompt_ref,
-        {"request_intent": request_intent, "ranked_segments": projection},
+        {
+            "request_intent": request_intent,
+            "ranked_segments": projection,
+            "temporal_constraints": project_query_temporal_constraints(query_attempts),
+        },
         output_schema,
     )
     try:
@@ -140,6 +149,7 @@ def select_evidence(
                 "base_projection": {
                     "request_intent": request_intent,
                     "ranked_segments": projection,
+                    "temporal_constraints": project_query_temporal_constraints(query_attempts),
                 },
                 "candidate_output": result.structured_output,
                 "failure_record": build_failure_record_v1(

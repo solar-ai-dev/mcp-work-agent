@@ -534,6 +534,24 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
 
 
 def test_retrieval__three_details__preserve_one_search_round() -> None:
+    from datetime import datetime
+
+    run_start = int(datetime.fromisoformat("2026-09-06T23:59:55+09:00").timestamp() * 1000)
+
+    class TemporalInference(_ComponentInferencePort):
+        def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
+            if prompt_id in {"retrieval.select_evidence", "retrieval.assess_sufficiency"}:
+                assert projection["temporal_constraints"] == [
+                    {
+                        "kind": "TEMPORAL_RANGE",
+                        "axis": "EVENT_TIME",
+                        "timezone": "Asia/Seoul",
+                        "start_local": "2026-08-31T00:00:00",
+                        "end_local": "2026-09-07T00:00:00",
+                    }
+                ]
+            return super()._response(prompt_id, projection)
+
     class DetailConnector:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -570,6 +588,8 @@ def test_retrieval__three_details__preserve_one_search_round() -> None:
     intent = _intent()
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
     intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": "EVENT_TIME"}]
+    intent["constraints"].append({"kind": "DATE", "field": "period", "value": "이번주"})
+    state["retry_budget"]["started_at_ms"] = run_start
     state["request_intent"] = cast(Any, intent)
     routes = _answer_route_plan(with_input_route=True)
     cast(Any, routes)["input_plan"]["input_routes"][0]["allowed_read_tool_ids"].append(
@@ -579,9 +599,9 @@ def test_retrieval__three_details__preserve_one_search_round() -> None:
     state["tool_route_plan"] = cast(Any, routes)
     connector = DetailConnector()
     graph = RetrievalSubgraph(
-        now_ms=lambda: 1_000,
+        now_ms=lambda: run_start + 10_000,
         timezone_provider=lambda: "Asia/Seoul",
-        llm_runtime=_ComponentInferencePort(),
+        llm_runtime=TemporalInference(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -611,6 +631,15 @@ def test_retrieval__three_details__preserve_one_search_round() -> None:
     assert result["retry_budget"]["source_page_calls_used"] == 1
     assert result["retry_budget"]["additional_retrieval_rounds_used"] == 0
     assert {attempt["round_no"] for attempt in result["__context_query_attempts__"]} == {0}
+    assert result["retrieval_result"]["temporal_constraints"] == [
+        {
+            "kind": "TEMPORAL_RANGE",
+            "axis": "EVENT_TIME",
+            "timezone": "Asia/Seoul",
+            "start_local": "2026-08-31T00:00:00",
+            "end_local": "2026-09-07T00:00:00",
+        }
+    ]
 
 
 def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:

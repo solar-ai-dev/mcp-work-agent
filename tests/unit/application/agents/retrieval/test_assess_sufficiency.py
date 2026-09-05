@@ -52,6 +52,7 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
         "selected_evidence",
         "source_statuses",
         "budget_state",
+        "temporal_constraints",
     }
 
 

@@ -1,8 +1,11 @@
 """Retrieval planning, local evidence, and parent-result contracts."""
 
 from enum import StrEnum
-from typing import Literal, Required, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    TemporalRangeConstraintV1,
+)
 from google_work_agent.application.agents.state_artifact import StateArtifactMetaV1
 
 
@@ -164,3 +167,5 @@ class RetrievalResultV1(TypedDict):
     availability_results: list[dict[str, object]]
     missing_information: list[MissingInformationV1]
     retrieval_rounds: int
+    # Absent only in pre-temporal-projection checkpoints; consumers must not infer bounds.
+    temporal_constraints: NotRequired[list[TemporalRangeConstraintV1]]

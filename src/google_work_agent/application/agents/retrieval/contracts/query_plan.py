@@ -396,7 +396,7 @@ def _validate_constraint(
         _exact_keys(
             constraint, {"kind", "axis", "start_local", "end_local", "timezone"}, "constraint"
         )
-        return _validate_temporal(constraint)
+        return validate_temporal_range_constraint(constraint)
     if kind == "PARTICIPANT":
         _exact_keys(constraint, {"kind", "participants", "match_mode"}, "constraint")
         participants = constraint["participants"]
@@ -458,7 +458,9 @@ def _validate_constraint(
             raise RetrievalV2ValidationError(
                 "container refs must be validated for route",
                 reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
-                affected_field_paths=("$.route_queries[].search_spec.constraints[].container_refs",),
+                affected_field_paths=(
+                    "$.route_queries[].search_spec.constraints[].container_refs",
+                ),
             )
         return {"kind": "CONTAINER_REF", "container_refs": ref_values}
     _exact_keys(constraint, {"kind", "values"}, "constraint")
@@ -481,7 +483,10 @@ def _validate_constraint(
     return {"kind": "STATUS_SCOPE", "values": cast(list[StatusScopeValueV1], status_values)}
 
 
-def _validate_temporal(value: Mapping[str, object]) -> TemporalRangeConstraintV1:
+def validate_temporal_range_constraint(value: Mapping[str, object]) -> TemporalRangeConstraintV1:
+    _exact_keys(value, {"kind", "axis", "start_local", "end_local", "timezone"}, "temporal range")
+    if value["kind"] != "TEMPORAL_RANGE":
+        raise RetrievalV2ValidationError("temporal constraint kind is invalid")
     axis = value["axis"]
     start = value["start_local"]
     end = value["end_local"]

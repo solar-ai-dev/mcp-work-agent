@@ -592,6 +592,7 @@ class RetrievalSubgraph:
                 {
                     "request_intent": request_intent,
                     "rag_candidates": rag_candidates,
+                    "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
                     "exclusion_obligation_segment_ids": state.get(
                         "exclusion_obligation_segment_ids", []
                     ),
@@ -786,6 +787,7 @@ class RetrievalSubgraph:
                         state["request_intent"], "request_intent"
                     ),
                     "evidence_selection": state[CONTEXT_SELECTION_OUTPUT_KEY],
+                    "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
                 },
             ),
             llm_runtime=self._llm_runtime,
@@ -1037,7 +1039,7 @@ class RetrievalSubgraph:
                             "validated_container_refs": validated_container_refs,
                             "detail_candidate_refs": detail_candidate_refs,
                             "attempted_detail_candidate_refs": attempted_detail_candidate_refs,
-                            "now_ms": self._now_ms(),
+                            "now_ms": state["retry_budget"]["started_at_ms"],
                             "timezone": self._timezone_provider(),
                         }
                     }
@@ -1608,6 +1610,7 @@ class RetrievalSubgraph:
                         "evidence_selection": selection,
                         "sufficiency": sufficiency,
                         "availability_results": state.get("availability_results", []),
+                        "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
                         "exclusion_obligation_segment_ids": state.get(
                             "exclusion_obligation_segment_ids", []
                         ),

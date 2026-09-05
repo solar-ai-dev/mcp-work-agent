@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -12,6 +12,7 @@ import google_work_agent.application.agents.retrieval.contracts.schema_validatio
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     ContextResult,
@@ -29,6 +30,9 @@ from google_work_agent.application.agents.retrieval.is_complete_create_policy_re
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     RetrievalValidationError,
+)
+from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
+    project_query_temporal_constraints,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -65,6 +69,7 @@ def assess_sufficiency(
     retry_budget: RunBudgetV2,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     attempted_detail_candidate_refs: Collection[str] = (),
+    query_attempts: Sequence[QueryAttemptV1] = (),
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
     if _is_complete_selected_gmail_read(
@@ -90,6 +95,7 @@ def assess_sufficiency(
             acquisition_result=acquisition_result,
         ),
         "budget_state": budget_state_prompt_projection(retry_budget),
+        "temporal_constraints": project_query_temporal_constraints(query_attempts),
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)

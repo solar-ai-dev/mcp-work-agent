@@ -52,5 +52,6 @@ def assess_sufficiency_node(
             retry_budget=retry_budget,
             confirmation_response=confirmation_response,
             attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+            query_attempts=state.get("query_attempts", []),
         )
     }

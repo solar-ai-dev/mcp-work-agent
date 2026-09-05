@@ -26,7 +26,7 @@ _PLACEHOLDER_VALUES = frozenset(
 )
 _PERSON_PATTERN = re.compile(r"[가-힣]{1,4}(?:대리|과장|차장|부장|팀장|실장|이사|님)")
 _PERIOD_PATTERN = re.compile(
-    r"(?:\d{4}년\s*)?(?:1[0-2]|[1-9])월(?:\s*첫째\s*주)?"
+    r"(?<!\d)(?:\d{4}년\s*)?(?:1[0-2]|[1-9])월(?:\s*첫째\s*주)?(?!\s*\d{1,2}\s*일)"
     r"|지난\s*주|이번\s*주|다음\s*주|지난\s*달|이번\s*달|최근|오늘|어제|그제"
 )
 _EXPLICIT_SUBJECT_PATTERNS = (
@@ -142,6 +142,13 @@ def preserve_vague_read_semantics(
     )
     periods = list(_PERIOD_PATTERN.finditer(request_text))
     if periods:
+        if set(candidate["requested_effect_hints"]) == {"READ"}:
+            # RU preserves period meaning; only Retrieval resolves absolute bounds.
+            constraints = [
+                item
+                for item in constraints
+                if item["field"] not in {"date_period_start", "date_period_end"}
+            ]
         axes = []
         for period in periods:
             tail = request_text[period.end() :]

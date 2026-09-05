@@ -90,4 +90,5 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
         "availability_results",
         "missing_information",
         "retrieval_rounds",
+        "temporal_constraints",
     }

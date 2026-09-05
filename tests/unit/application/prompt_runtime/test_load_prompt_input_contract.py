@@ -44,6 +44,7 @@ def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
         {
             "request_intent": {},
             "selected_evidence": [],
+            "temporal_constraints": [],
             "source_statuses": [],
             "budget_state": {
                 "additional_rounds_used": 0,

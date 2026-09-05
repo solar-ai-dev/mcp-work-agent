@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -13,6 +13,7 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     missing_information_projection,
     source_statuses_prompt_projection,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceDraftV1,
@@ -20,6 +21,9 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     RetrievalResultV1,
     RetrievalSourceStatusV1,
     SufficiencyResultV2,
+)
+from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
+    project_query_temporal_constraints,
 )
 from google_work_agent.application.agents.retrieval.resolve_availability import (
     AvailableIntervalV1,
@@ -42,6 +46,7 @@ def finalize_retrieval(
     availability_results: list[AvailableIntervalV1] | None = None,
     exclusion_obligation_segment_ids: Iterable[str] = (),
     prior_result: RetrievalResultV1 | None = None,
+    query_attempts: Sequence[QueryAttemptV1] = (),
 ) -> RetrievalResultV1:
     """Materialize the only parent-facing Retrieval business artifact."""
     selected_ids = list(selection_result["selected_segment_ids"])
@@ -98,6 +103,7 @@ def finalize_retrieval(
         "availability_results": [dict(item) for item in (availability_results or [])],
         "missing_information": missing_information_projection(sufficiency_result["issues"]),
         "retrieval_rounds": retrieval_round_count(current_round_no=current_round_no),
+        "temporal_constraints": project_query_temporal_constraints(query_attempts),
     }
 
 

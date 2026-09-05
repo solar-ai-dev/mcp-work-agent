@@ -45,6 +45,28 @@ def test_temporal_meaning_is_preserved_separately_from_message_receipt(
     assert fields["period"]
 
 
+def test_relative_period_does_not_keep_llm_invented_absolute_bounds() -> None:
+    candidate = _candidate()
+    candidate["constraints"] += [
+        {"kind": "DATE", "field": "date_period_start", "value": "2026-09-07"},
+        {"kind": "DATE", "field": "date_period_end", "value": "2026-09-13"},
+    ]
+    result = operation.preserve_vague_read_semantics(
+        candidate, request_text="9월 첫째주 일정 메일 찾아줘", entry_mode="AGENT_SEARCH"
+    )
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["period"] == ["9월첫째주"]
+    assert "date_period_start" not in fields
+    assert "date_period_end" not in fields
+
+
+def test_explicit_day_is_not_expanded_to_whole_month() -> None:
+    result = operation.preserve_vague_read_semantics(
+        _candidate(), request_text="9월 3일 체육대회 관련 메일 찾아줘", entry_mode="AGENT_SEARCH"
+    )
+    assert not any(item["field"] == "period" for item in result["constraints"])
+
+
 def test_vague_read_semantics__restores_search_meaning_and_removes_placeholder() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(),

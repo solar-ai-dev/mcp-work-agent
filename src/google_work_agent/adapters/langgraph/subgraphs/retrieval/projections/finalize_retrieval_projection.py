@@ -6,6 +6,7 @@ from typing import TypedDict, cast
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceSelectionResultV2,
     SufficiencyResultV2,
@@ -19,6 +20,7 @@ class FinalizeRetrievalInput(TypedDict):
     sufficiency_result: SufficiencyResultV2
     availability_results: list[AvailableIntervalV1]
     exclusion_obligation_segment_ids: list[str]
+    query_attempts: list[QueryAttemptV1]
 
 
 def project_finalize_retrieval_input(state: Mapping[str, object]) -> FinalizeRetrievalInput:
@@ -43,6 +45,7 @@ def project_finalize_retrieval_input(state: Mapping[str, object]) -> FinalizeRet
         "sufficiency_result": cast(SufficiencyResultV2, sufficiency),
         "availability_results": cast(list[AvailableIntervalV1], availability),
         "exclusion_obligation_segment_ids": list(exclusions),
+        "query_attempts": cast(list[QueryAttemptV1], state.get("query_attempts", [])),
     }
 
 

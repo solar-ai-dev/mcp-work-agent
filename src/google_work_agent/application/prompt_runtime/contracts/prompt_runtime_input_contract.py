@@ -56,8 +56,8 @@ class PromptRuntimeInputContractEntryV1:
     def __post_init__(self) -> None:
         if not self.prompt_slot_id or not self.runtime_node_id:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
-        if self.input_schema_version != 1 or self.output_schema_version != 1:
-            raise PromptRuntimeInputContractError("prompt schema versions must be 1")
+        if self.input_schema_version not in {1, 2} or self.output_schema_version != 1:
+            raise PromptRuntimeInputContractError("unsupported prompt input/output schema version")
         required = set(self.required_root_fields)
         optional = set(self.optional_root_fields)
         if len(required) != len(self.required_root_fields):

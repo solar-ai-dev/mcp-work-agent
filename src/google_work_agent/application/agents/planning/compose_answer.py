@@ -32,6 +32,9 @@ from google_work_agent.application.agents.planning.project_task_read_answer impo
 from google_work_agent.application.agents.planning.sanitize_user_visible_answer import (
     sanitize_user_visible_answer,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    validate_temporal_range_constraint,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 PROMPT_ID = "planning.compose_answer"
@@ -90,14 +93,18 @@ def compose_answer(
     if not user_request.strip():
         raise ValueError("user_request is required")
     approved_refs = set(answer_outline["evidence_refs"])
-    approved_evidence = [
-        dict(item) for item in evidence if _evidence_ref(item) in approved_refs
-    ]
+    approved_evidence = [dict(item) for item in evidence if _evidence_ref(item) in approved_refs]
     prompt_input: dict[str, object] = {
         "user_request": user_request,
         "request_intent": dict(request_intent),
         "answer_outline": dict(answer_outline),
         "evidence": approved_evidence,
+        "temporal_constraints": [
+            validate_temporal_range_constraint(item)
+            for item in cast(
+                list[Mapping[str, object]], (retrieval_result or {}).get("temporal_constraints", [])
+            )
+        ],
     }
     gmail_projection = project_gmail_read_planning(
         user_request=user_request,

@@ -53,7 +53,49 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
         "request_intent",
         "answer_outline",
         "evidence",
+        "temporal_constraints",
     }
+
+
+@pytest.mark.parametrize(
+    "retrieval",
+    [
+        None,
+        {"temporal_constraints": []},
+        {
+            "temporal_constraints": [
+                {
+                    "kind": "TEMPORAL_RANGE",
+                    "axis": "EVENT_TIME",
+                    "start_local": "2026-09-01T00:00:00",
+                    "end_local": "2026-09-08T00:00:00",
+                    "timezone": "Asia/Seoul",
+                }
+            ]
+        },
+    ],
+)
+def test_compose_preserves_resolved_period_and_does_not_invent_legacy_bounds(
+    retrieval: dict[str, object] | None,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        captured.update(prompt_input)
+        return {"schema_version": 2, "answer": "확인한 자료의 일정입니다.", "evidence_refs": ["e1"]}
+
+    compose_answer(
+        user_request="9월 첫째주 일정 관련 메일 찾아줘.",
+        request_intent={"goal": "일정"},
+        answer_outline={"sections": ["일정"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[{"evidence_id": "e1", "excerpt": "9월 3일 행사"}],
+        invoke=invoke,
+        retrieval_result=retrieval,
+    )
+    assert captured["temporal_constraints"] == (
+        [] if retrieval is None else retrieval["temporal_constraints"]
+    )
 
 
 def test_compose_answer__with_unapproved_evidence__projects_only_outline_refs() -> None:
@@ -79,9 +121,7 @@ def test_compose_answer__with_unapproved_evidence__projects_only_outline_refs() 
         invoke=invoke,
     )
 
-    assert captured["evidence"] == [
-        {"evidence_id": "e-decision", "excerpt": "네비게이션바로 확정"}
-    ]
+    assert captured["evidence"] == [{"evidence_id": "e-decision", "excerpt": "네비게이션바로 확정"}]
 
 
 def test_compose_normalizes__harmless_surrounding_whitespace() -> None:
@@ -153,11 +193,7 @@ def test_gmail_read__with_intermediate_analysis__omits_it_from_final_prompt() ->
             "analysis_requirement": "REQUIRED",
         },
         answer_outline={"sections": ["최신 결정"], "evidence_refs": ["e-decision"]},
-        work_analysis={
-            "work_facts": [
-                {"fact_id": "fact-internal", "value": "근거 없는 마감일"}
-            ]
-        },
+        work_analysis={"work_facts": [{"fact_id": "fact-internal", "value": "근거 없는 마감일"}]},
         evidence=[{"evidence_id": "e-decision", "excerpt": "네비게이션바로 확정"}],
         invoke=invoke,
     )
@@ -317,8 +353,7 @@ def test_compose_answer__with_nested_section_string__projects_natural_markdown()
     )
 
     assert result["answer"] == (
-        "## 최신 결정\n\n네비게이션바로 확정되었습니다.\n"
-        "* 좌측: 로고\n* 우측: 알림"
+        "## 최신 결정\n\n네비게이션바로 확정되었습니다.\n* 좌측: 로고\n* 우측: 알림"
     )
     assert "evidence_refs" not in result["answer"]
 
