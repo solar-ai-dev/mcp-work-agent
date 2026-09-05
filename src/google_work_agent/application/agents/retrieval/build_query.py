@@ -213,8 +213,22 @@ def build_query_attempt(
     page_state_hash: str | None,
     candidate_count: int | None,
     stop_reason: str | None,
+    prior_query_attempts: Sequence[QueryAttemptV1],
+    change_reason_code: str | None,
 ) -> QueryAttemptV1:
     """Record validated read meaning without raw provider continuation."""
+    previous = next((attempt for attempt in reversed(prior_query_attempts)
+                     if attempt["run_id"] == run_id
+                     and attempt["route_id"] == plan["route_id"]), None)
+    previous_constraints = {
+        item["kind"]: item for item in
+        ([] if previous is None else previous["normalized_intent_constraints"])
+    }
+    current_constraints = {item["kind"]: item for item in plan["effective_constraints"]}
+    added: list[str] = sorted(kind for kind, value in current_constraints.items()
+                   if previous_constraints.get(kind) != value)
+    removed: list[str] = sorted(kind for kind, value in previous_constraints.items()
+                     if current_constraints.get(kind) != value)
     return {
         "schema_version": 1,
         "query_attempt_id": query_attempt_id,
@@ -233,9 +247,9 @@ def build_query_attempt(
         },
         "previous_query_hash": previous_query_hash,
         "page_state_hash": page_state_hash,
-        "added_constraints": [],
-        "removed_constraints": [],
-        "change_reason_code": None,
+        "added_constraints": added,
+        "removed_constraints": removed,
+        "change_reason_code": change_reason_code,
         "candidate_count": candidate_count,
         "top_score": None,
         "score_margin": None,

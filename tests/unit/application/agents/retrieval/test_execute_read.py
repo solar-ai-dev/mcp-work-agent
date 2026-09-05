@@ -183,6 +183,7 @@ def test_repeated_read__blocked_before_provider_and_budget_charge(operation: str
         tool_id="gmail_search_threads", canonical_arguments=args,
         previous_query_hash=None, page_state_hash=sha256(b"opaque").hexdigest(),
         candidate_count=1, stop_reason="COMPLETE",
+        prior_query_attempts=[], change_reason_code="USER_REQUEST",
     )
     # A -> B -> A is not merely an immediate-repeat check.
     different = {**attempt, "query_spec": {**attempt["query_spec"],
@@ -221,6 +222,7 @@ def test_first_unread_page__is_not_mistaken_for_repeat() -> None:
         round_no=0, attempt_no=0, tool_id="gmail_search_threads",
         canonical_arguments={"query": "bounded"}, previous_query_hash=None,
         page_state_hash=sha256(b"opaque").hexdigest(), candidate_count=1, stop_reason="COMPLETE",
+        prior_query_attempts=[], change_reason_code="USER_REQUEST",
     )
     reader = _Reader()
     result = execute_read(

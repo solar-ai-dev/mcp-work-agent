@@ -1197,11 +1197,21 @@ class RetrievalSubgraph:
                     previous_query_hash=(
                         None
                         if plan["prior_read_result_handle"] is None
-                        else plan["query_identity_hash"]
+                        else cast(Mapping[str, str], bindings[plan["prior_read_result_handle"]])[
+                            "query_identity_hash"
+                        ]
                     ),
                     page_state_hash=(None if token is None else sha256(token.encode()).hexdigest()),
                     candidate_count=execution.total_count,
                     stop_reason=execution.status,
+                    prior_query_attempts=attempts,
+                    change_reason_code=next(
+                        query["reason_codes"][0]
+                        for query in _require_state_value(state.get("query_plan"), "query_plan")[
+                            "route_queries"
+                        ]
+                        if query["route_id"] == plan["route_id"]
+                    ),
                 )
             )
         all_handles = [
