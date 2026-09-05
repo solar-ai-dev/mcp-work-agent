@@ -33,7 +33,7 @@ from google_work_agent.ports.connector.mcp_client_port import (
 @dataclass
 class _Client:
     response: MCPToolCallResultV1
-    process_instance_id: str = "process-1"
+    process_id: str = "process-1"
     calls: list[tuple[str, str, Any, int]] = field(default_factory=list)
     sign_calls: int = 0
 
@@ -49,9 +49,16 @@ class _Client:
     def restart_once(self, connector_id: str) -> MCPRestartResultV1:
         return MCPRestartResultV1(1, True, connector_id)
 
-    def sign_claim_context(self, payload: dict[str, object]) -> str:
+    def process_instance_id(self, connector_id: str) -> str:
+        assert connector_id == "google_workspace"
+        return self.process_id
+
+    def sign_claim_context(
+        self, connector_id: str, payload: dict[str, object]
+    ) -> str:
         self.sign_calls += 1
-        assert payload["mcp_process_instance_id"] == self.process_instance_id
+        assert connector_id == "google_workspace"
+        assert payload["mcp_process_instance_id"] == self.process_id
         return "signature-1"
 
     def close(self) -> None:
@@ -73,6 +80,9 @@ class _Runtime:
 
     def restart_once(self) -> MCPRestartResultV1:
         return self.client.restart_once("google_workspace")
+
+    def sign_claim_context(self, payload: dict[str, object]) -> str:
+        return self.client.sign_claim_context("google_workspace", payload)
 
     def close(self) -> None:
         self.client.close()
@@ -129,6 +139,7 @@ def test_write_adapter__forwards_application__signed_claim_unchanged() -> None:
 
     claim: dict[str, JsonValue] = {
         "claim_id": "claim-1",
+        "connector_id": "google_workspace",
         "mcp_process_instance_id": "process-1",
         "signature": "application-signature",
     }
@@ -165,6 +176,7 @@ def test_write_adapter__normalizes_raised__transport_certainty() -> None:
         binding,
         {"draft_id": "draft-1"},
         {
+            "connector_id": "google_workspace",
             "mcp_process_instance_id": "process-1",
             "signature": "application-signature",
         },

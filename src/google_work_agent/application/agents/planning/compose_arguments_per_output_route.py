@@ -81,6 +81,7 @@ def compose_arguments_per_output_route(
         if (
             bound_schema["selected_tool_id"] != route.get("selected_tool_id")
             or bound_schema["connector_id"] != route.get("connector_id")
+            or bound_schema["resource_type"] != route.get("resource_type")
             or bound_schema["effect"] != route.get("effect")
         ):
             raise ValueError("bound Tool schema escaped frozen route identity")

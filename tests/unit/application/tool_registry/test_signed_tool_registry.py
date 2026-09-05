@@ -10,13 +10,31 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 )
 
 
-def test_signed_registry__loads_exact_google__workspace_tool_set() -> None:
+def test_signed_registry__loads_exact__installed_connector_tool_set() -> None:
     registry = load_signed_tool_registry()
 
-    assert len(registry.entries) == 21
-    assert {entry.connector_id for entry in registry.entries} == {"google_workspace"}
+    assert len(registry.entries) == 27
+    assert {entry.connector_id for entry in registry.entries} == {
+        "github",
+        "google_workspace",
+    }
     assert registry.entries_hash == (
-        "3092c76bfea70c819a244f4f47f5a41babd8726fbc902031087254d754fbd67d"
+        "115b4f3a159ba955023aeb858dec569257138c373dac050eefd931a896058666"
+    )
+
+    github = [entry for entry in registry.entries if entry.connector_id == "github"]
+    assert {entry.tool_id for entry in github} == {
+        "github_list_issues",
+        "github_get_issue",
+        "github_create_issue",
+        "github_update_issue",
+        "github_close_issue",
+        "github_reopen_issue",
+    }
+    assert {entry.resource_type for entry in github} == {"github_issue"}
+    assert all(
+        entry.retry_class == ("READ_BOUNDED" if entry.effect == "READ" else "WRITE_NO_AUTO_RETRY")
+        for entry in github
     )
 
 

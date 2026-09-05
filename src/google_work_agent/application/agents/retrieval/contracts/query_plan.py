@@ -28,7 +28,16 @@ RetrievalOperationV2 = Literal["SEARCH", "NEXT_PAGE", "DETAIL_FETCH", "FREEBUSY"
 TemporalAxisV1 = Literal["MESSAGE_TIME", "TASK_SCHEDULED_DATE", "EVENT_TIME", "AVAILABILITY_WINDOW"]
 ParticipantRoleV1 = Literal["ANY", "SENDER", "RECIPIENT", "ATTENDEE"]
 StatusScopeValueV1 = Literal[
-    "ANY", "INCOMPLETE", "COMPLETED", "DRAFT", "SENT", "CANCELLED", "CONFIRMED", "TENTATIVE"
+    "ANY",
+    "INCOMPLETE",
+    "COMPLETED",
+    "OPEN",
+    "CLOSED",
+    "DRAFT",
+    "SENT",
+    "CANCELLED",
+    "CONFIRMED",
+    "TENTATIVE",
 ]
 
 
@@ -419,6 +428,8 @@ def _validate_constraint(
         "ANY",
         "INCOMPLETE",
         "COMPLETED",
+        "OPEN",
+        "CLOSED",
         "DRAFT",
         "SENT",
         "CANCELLED",

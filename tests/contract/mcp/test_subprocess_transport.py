@@ -47,7 +47,9 @@ def test_subprocess_transport__handshakes_and__projects_exact_tools(tmp_path: Pa
     )
     try:
         assert {tool.tool_id for tool in transport.list_tools("google_workspace")} == {
-            entry.tool_id for entry in registry.entries
+            entry.tool_id
+            for entry in registry.entries
+            if entry.connector_id == "google_workspace"
         }
         call_result = transport.call_tool(
             "google_workspace", "gmail_get_thread", {"thread_id": "thread-1"}, 1_000

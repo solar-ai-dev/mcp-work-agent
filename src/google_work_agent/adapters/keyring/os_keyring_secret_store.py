@@ -61,7 +61,7 @@ def keyring_service_name(*, environment: str, credential_type: str) -> str:
     normalized_type = credential_type.strip().lower()
     if normalized_environment not in {"development", "staging", "production"}:
         raise ValueError("unsupported keyring environment")
-    if normalized_type not in {"google-oauth", "llm-api-key"}:
+    if normalized_type not in {"google-oauth", "github-oauth", "llm-api-key"}:
         raise ValueError("unsupported keyring credential type")
     return f"GoogleWorkAgent/{normalized_environment}/{normalized_type}"
 

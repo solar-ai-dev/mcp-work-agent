@@ -54,24 +54,6 @@ from google_work_agent.ports.system.contracts.workflow_handoff import (
 )
 from google_work_agent.ports.system.settings_port import SettingsViewV1
 
-_REGISTRY_RESOURCE_SOURCES = {
-    "gmail_thread": "GMAIL",
-    "gmail_message": "GMAIL",
-    "gmail_draft": "GMAIL",
-    "task_list": "TASKS",
-    "task": "TASKS",
-    "calendar": "CALENDAR",
-    "calendar_event": "CALENDAR",
-    "calendar_freebusy": "CALENDAR",
-}
-
-
-def _resource_source(resource_type: str) -> str:
-    try:
-        return _REGISTRY_RESOURCE_SOURCES[resource_type]
-    except KeyError as error:
-        raise ValueError(f"unsupported selected resource type: {resource_type}") from error
-
 
 @dataclass(frozen=True, slots=True)
 class StartRunCommand:
@@ -365,7 +347,6 @@ class StartRunHandler:
             if key in seen:
                 raise ValueError("resolved resource selections must be unique")
             seen.add(key)
-            source = _resource_source(identity.resource_type)
             resource_ref_id = self._id_factory()
             persisted = persist_registered_resource_ref(
                 unit_of_work,
@@ -387,7 +368,8 @@ class StartRunHandler:
             )
             selected.append(
                 SelectedResourceRef(
-                    source=source,
+                    resource_ref_id=persisted.id,
+                    connector_id=persisted.connector_id,
                     resource_type=persisted.resource_type,
                     resource_id=persisted.resource_id,
                     parent_resource_id=persisted.parent_resource_id,

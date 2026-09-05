@@ -30,7 +30,7 @@ ContextStatusValue = Literal[
 SufficiencyIssueTypeValue = Literal["MISSING", "CONFLICT"]
 
 
-SufficiencyResolutionSourceValue = Literal["USER", "GOOGLE", "POLICY", "ROUTE"]
+SufficiencyResolutionSourceValue = Literal["USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"]
 
 
 MissingInformationRequiredForValue = Literal[

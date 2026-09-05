@@ -131,7 +131,11 @@ def test_initial_workflow_binding__port_is_narrower__than_checkpoint_port() -> N
 def test_google_mcp_dispatch__has_exact_signed__registry_operation_set() -> None:
     registry = load_signed_tool_registry()
 
-    assert set(dispatch_tool._OPERATIONS) == {entry.tool_id for entry in registry.entries}
+    assert set(dispatch_tool._OPERATIONS) == {
+        entry.tool_id
+        for entry in registry.entries
+        if entry.connector_id == "google_workspace"
+    }
     assert set(dispatch_tool._INTERNAL_OPERATIONS) == {
         "gmail_get_ui_thread_detail",
         "search_by_recovery_fingerprint",
@@ -190,8 +194,13 @@ def test_entrypoint_routes_public__tools_through_operation__per_file_dispatch() 
     assert "dispatch_tool(" in entrypoint
     assert "dispatch_internal_tool(" in entrypoint
     assert "getattr(workspace_tools" not in entrypoint
-    assert set(_OPERATIONS) == {entry.tool_id for entry in load_signed_tool_registry().entries}
-    for entry in load_signed_tool_registry().entries:
+    google_entries = tuple(
+        entry
+        for entry in load_signed_tool_registry().entries
+        if entry.connector_id == "google_workspace"
+    )
+    assert set(_OPERATIONS) == {entry.tool_id for entry in google_entries}
+    for entry in google_entries:
         operation = _OPERATIONS[entry.tool_id]
         operation_path = SRC / (
             operation.__class__.__module__.replace(".", "/") + ".py"

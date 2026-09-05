@@ -1,5 +1,6 @@
-"""Connector OAuth boundary implemented through MCP runtime operations."""
+"""Connector OAuth boundary implemented through connector-owned MCP controls."""
 
+from dataclasses import dataclass
 from typing import Literal, cast
 
 from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
@@ -37,12 +38,15 @@ class McpOAuthCredentialAdapter:
         operation_ref: str,
     ) -> OAuthAuthorizationStart:
         _require_connector_id(connector_id)
-        if not requested_scopes or any(not scope.strip() for scope in requested_scopes):
+        if any(not scope.strip() for scope in requested_scopes) or (
+            connector_id == "google_workspace" and not requested_scopes
+        ):
             raise ValueError("requested_scopes must contain nonblank values")
         _require_operation_ref(operation_ref)
+        controls = _controls(connector_id)
         payload = self._call(
             connector_id,
-            "google.oauth.start",
+            controls.start,
             {
                 "environment": environment.value,
                 "requested_scopes": list(requested_scopes),
@@ -52,7 +56,14 @@ class McpOAuthCredentialAdapter:
         return OAuthAuthorizationStart(
             schema_version=1,
             authorization_url=str(payload["authorization_url"]),
-            callback_id=str(payload["flow_id"]),
+            callback_id=str(payload.get("callback_id", payload.get("flow_id", ""))),
+            flow_kind=(
+                "DEVICE_CODE" if payload.get("flow_kind") == "DEVICE_CODE" else "AUTHORIZATION_CODE"
+            ),
+            verification_uri=_optional_string(payload.get("verification_uri")),
+            user_code=_optional_string(payload.get("user_code")),
+            expires_at_ms=_optional_int(payload.get("expires_at_ms")),
+            poll_interval_seconds=_optional_int(payload.get("poll_interval_seconds")),
         )
 
     def reconcile_authorization_start(
@@ -62,7 +73,7 @@ class McpOAuthCredentialAdapter:
         _require_operation_ref(operation_ref)
         return self._reconcile(
             connector_id,
-            "google.oauth.reconcile_start",
+            _controls(connector_id).reconcile_start,
             {"operation_ref": operation_ref},
         )
 
@@ -71,7 +82,7 @@ class McpOAuthCredentialAdapter:
         _require_account_id(account_id)
         payload = self._call(
             connector_id,
-            "google.connection.refresh",
+            _controls(connector_id).refresh,
             {"account_id": account_id},
         )
         return str(payload["access_context_handle"])
@@ -80,7 +91,7 @@ class McpOAuthCredentialAdapter:
         _require_connector_id(connector_id)
         return self._status(
             connector_id,
-            self._call(connector_id, "google.connection.get", {}),
+            self._call(connector_id, _controls(connector_id).status, {}),
         )
 
     def revoke_connection(
@@ -94,7 +105,7 @@ class McpOAuthCredentialAdapter:
         _require_operation_ref(operation_ref)
         payload = self._call(
             connector_id,
-            "google.connection.disconnect",
+            _controls(connector_id).disconnect,
             {"account_id": account_id, "operation_ref": operation_ref},
         )
         return OAuthRevokeResult(
@@ -115,7 +126,7 @@ class McpOAuthCredentialAdapter:
         _require_operation_ref(operation_ref)
         return self._reconcile(
             connector_id,
-            "google.connection.reconcile_disconnect",
+            _controls(connector_id).reconcile_disconnect,
             {"account_id": account_id, "operation_ref": operation_ref},
         )
 
@@ -145,6 +156,8 @@ class McpOAuthCredentialAdapter:
             if bool(payload["reauth_required"])
             else "UNAVAILABLE"
             if raw_state in {"KEYRING_UNAVAILABLE", "ERROR"}
+            else "CONNECTING"
+            if raw_state == "CONNECTING"
             else "DISCONNECTED"
         )
         return OAuthConnectionMetadata(
@@ -154,10 +167,11 @@ class McpOAuthCredentialAdapter:
             display_email=_optional_string(payload.get("account_email")),
             connection_status=status,
             granted_scopes=tuple(
-                str(item) for item in cast(list[object], payload["granted_scopes"])
+                str(item) for item in cast(list[object], payload.get("granted_scopes", []))
             ),
             missing_required_scopes=tuple(
-                str(item) for item in cast(list[object], payload["missing_scopes"])
+                str(item)
+                for item in cast(list[object], payload.get("missing_scopes", []))
             ),
         )
 
@@ -177,6 +191,49 @@ class McpOAuthCredentialAdapter:
 
 def _optional_string(value: JsonValue) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _optional_int(value: JsonValue) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+@dataclass(frozen=True, slots=True)
+class _OAuthControlMethods:
+    start: str
+    reconcile_start: str
+    refresh: str
+    status: str
+    disconnect: str
+    reconcile_disconnect: str
+
+
+_CONTROL_METHODS = {
+    "google_workspace": _OAuthControlMethods(
+        start="google.oauth.start",
+        reconcile_start="google.oauth.reconcile_start",
+        refresh="google.connection.refresh",
+        status="google.connection.get",
+        disconnect="google.connection.disconnect",
+        reconcile_disconnect="google.connection.reconcile_disconnect",
+    ),
+    "github": _OAuthControlMethods(
+        start="github.device_flow.start",
+        reconcile_start="github.device_flow.reconcile_start",
+        refresh="github.connection.refresh",
+        status="github.connection.get",
+        disconnect="github.connection.disconnect",
+        reconcile_disconnect="github.connection.reconcile_disconnect",
+    ),
+}
+
+
+def _controls(connector_id: str) -> _OAuthControlMethods:
+    try:
+        return _CONTROL_METHODS[connector_id]
+    except KeyError as error:
+        raise LookupError(
+            f"OAuth controls are not registered for connector: {connector_id}"
+        ) from error
 
 
 def _require_connector_id(value: str) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -21,6 +22,12 @@ from google_work_agent.adapters.connectors.google.workspace.composition import (
     GoogleWorkspaceConnector,
     build_google_workspace_connector_descriptor,
     google_workspace_internal_read_binding,
+)
+from google_work_agent.adapters.connectors.github.github.composition import (
+    GITHUB_CONNECTOR_ID,
+    GitHubConnector,
+    build_github_connector_descriptor,
+    github_internal_read_binding,
 )
 from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
     ConnectorRuntimeRegistry,
@@ -580,7 +587,7 @@ def _build_workflow_application_services(
     checkpoint: CheckpointPort,
     resume_target_registry: ResumeTargetRegistry,
     runtime_hooks: WorkflowRuntimeHooks,
-    claim_context_signer: Callable[[dict[str, object]], str] | None,
+    claim_context_signer: Callable[[str, dict[str, object]], str] | None,
     work_hours_provider: Callable[[], CalendarWorkHours],
     sse_event_buffer: SseEventBufferPort | None,
     environment: str,
@@ -668,7 +675,8 @@ def _build_workflow_application_services(
         unit_of_work_factory=unit_of_work_factory,
         now_ms=now_ms,
         id_factory=id_factory,
-        sign_claim_context=claim_context_signer or (lambda _payload: "test-signature"),
+        sign_claim_context=claim_context_signer
+        or (lambda _connector_id, _payload: "test-signature"),
     )
     begin_execution_attempt = BeginExecutionAttemptHandler(
         unit_of_work_factory=unit_of_work_factory,
@@ -787,6 +795,11 @@ def _build_workflow_application_services(
             recovery_search_binding=google_workspace_internal_read_binding(
                 "search_by_recovery_fingerprint"
             ),
+            recovery_search_bindings={
+                GITHUB_CONNECTOR_ID: github_internal_read_binding(
+                    "search_by_recovery_fingerprint"
+                )
+            },
             unit_of_work_factory=unit_of_work_factory,
         ),
         recover_existing_result=RecoverExistingResultHandler(
@@ -995,6 +1008,8 @@ class ProductionRuntimeConfig:
     deployment_profile: Literal["API_ONLY", "LOCAL_CAPABLE"]
     oauth_environment: OAuthEnvironment
     oauth_client_id: str
+    github_oauth_client_id: str | None
+    github_oauth_scope: str
     api_contract_version: str
     mcp_manifest_version: str
     policy_version: str
@@ -1018,6 +1033,8 @@ class ProductionRuntimeConfig:
         if any(not value.strip() for value in values):
             raise ValueError("runtime configuration fields must be non-empty")
         if self.configuration_source == "SIGNED_RELEASE_MANIFEST":
+            if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
+                raise ValueError("signed GitHub OAuth client ID must be non-empty")
             paths = [entry.file_path for entry in self.verified_release_files]
             if not paths or len(paths) != len(set(paths)):
                 raise ValueError("signed runtime release file set is invalid")
@@ -1059,6 +1076,8 @@ class ProductionRuntimeConfig:
             deployment_profile="LOCAL_CAPABLE",
             oauth_environment=OAuthEnvironment.DEVELOPMENT,
             oauth_client_id="development-client-id",
+            github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID", "").strip() or None,
+            github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", "").strip(),
             api_contract_version=API_CONTRACT_VERSION,
             mcp_manifest_version=mcp_manifest_version,
             policy_version="2026-08-06.p0",
@@ -1089,6 +1108,8 @@ class ProductionRuntimeConfig:
             "deployment_profile",
             "oauth_env",
             "oauth_client_id",
+            "github_oauth_client_id",
+            "github_oauth_scope",
             "api_contract_version",
             "mcp_schema_version",
             "policy_version",
@@ -1110,6 +1131,12 @@ class ProductionRuntimeConfig:
                 raise ValueError(f"signed build configuration field is invalid: {field}")
             return value
 
+        def optional_string(field: str) -> str:
+            value = payload.get(field)
+            if not isinstance(value, str):
+                raise ValueError(f"signed build configuration field is invalid: {field}")
+            return value
+
         if not isinstance(verified_release_files, list):
             raise ValueError("verified release file set is invalid")
         release_files = tuple(
@@ -1128,6 +1155,8 @@ class ProductionRuntimeConfig:
             deployment_profile=cast(Literal["API_ONLY", "LOCAL_CAPABLE"], deployment_profile),
             oauth_environment=oauth_environment,
             oauth_client_id=required_string("oauth_client_id"),
+            github_oauth_client_id=required_string("github_oauth_client_id"),
+            github_oauth_scope=optional_string("github_oauth_scope"),
             api_contract_version=required_string("api_contract_version"),
             mcp_manifest_version=required_string("mcp_schema_version"),
             policy_version=required_string("policy_version"),
@@ -1169,6 +1198,9 @@ def drain_workflow_handoffs_to_quiescence(
 GOOGLE_WORKSPACE_MCP_MODULE = (
     "google_work_agent.adapters.connectors.google.workspace.mcp_server.entrypoint"
 )
+GITHUB_MCP_MODULE = "google_work_agent.adapters.connectors.github.github.mcp_server.entrypoint"
+
+type ProductionConnector = GoogleWorkspaceConnector | GitHubConnector
 
 
 @dataclass(frozen=True, slots=True)
@@ -1176,7 +1208,13 @@ class DevelopmentConnectorBundle:
     runtime_registry: ConnectorRuntimeRegistry
     tool_registry: SignedToolRegistry
     installed_manifest: InstalledConnectorManifestV1
-    google_connector: GoogleWorkspaceConnector
+    connectors: Mapping[str, ProductionConnector]
+
+    def get_required(self, connector_id: str) -> ProductionConnector:
+        try:
+            return self.connectors[connector_id]
+        except KeyError as error:
+            raise LookupError(f"connector composition not registered: {connector_id}") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -1429,6 +1467,8 @@ def _build_connectors(
     working_directory: Path,
     environment: str,
     oauth_client_id: str,
+    github_oauth_client_id: str | None,
+    github_oauth_scope: str,
     development_tool_registry: SignedToolRegistry | None,
     mcp_module_name: str = GOOGLE_WORKSPACE_MCP_MODULE,
     configuration_source: Literal[
@@ -1469,23 +1509,35 @@ def _build_connectors(
         release_files = {}
         tool_registry = development_tool_registry
         installed_manifest = load_installed_connector_manifest()
-    installed_connector = installed_manifest.get_required(GOOGLE_WORKSPACE_CONNECTOR_ID)
+    google_installed = installed_manifest.get_required(GOOGLE_WORKSPACE_CONNECTOR_ID)
     if (
-        installed_connector.provider_namespace != "google"
-        or installed_connector.connector_package != "workspace"
-        or not installed_connector.tool_projection_path.endswith(
+        google_installed.provider_namespace != "google"
+        or google_installed.connector_package != "workspace"
+        or not google_installed.tool_projection_path.endswith(
             "/google_workspace/tool-descriptor-projection-v1.json"
         )
     ):
         raise ValueError("installed Google Workspace connector binding is invalid")
+    github_installed = installed_manifest.get_required(GITHUB_CONNECTOR_ID)
+    if (
+        github_installed.provider_namespace != "github"
+        or github_installed.connector_package != "github"
+        or not github_installed.tool_projection_path.endswith(
+            "/github/tool-descriptor-projection-v1.json"
+        )
+    ):
+        raise ValueError("installed GitHub connector binding is invalid")
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
-        if installed_connector.mcp_schema_version != mcp_manifest_version:
+        if (
+            google_installed.mcp_schema_version != mcp_manifest_version
+            or github_installed.mcp_schema_version != mcp_manifest_version
+        ):
             raise CoreInitializationError("MCP_SCHEMA_MISMATCH")
         executable_binding = _required_release_file(
-            release_files, installed_connector.executable_path
+            release_files, google_installed.executable_path
         )
         projection_binding = _required_release_file(
-            release_files, installed_connector.tool_projection_path
+            release_files, google_installed.tool_projection_path
         )
         executable_path = executable_binding.resolve_verified(working_directory)
         mcp_manifest_path = projection_binding.resolve_verified(working_directory)
@@ -1493,12 +1545,35 @@ def _build_connectors(
         expected_manifest_sha256 = projection_binding.sha256
         module_name = None
         connector_working_directory = executable_path.parent
+        github_executable_binding = _required_release_file(
+            release_files, github_installed.executable_path
+        )
+        github_projection_binding = _required_release_file(
+            release_files, github_installed.tool_projection_path
+        )
+        github_executable_path = github_executable_binding.resolve_verified(working_directory)
+        github_manifest_path = github_projection_binding.resolve_verified(working_directory)
+        github_expected_binary_sha256 = github_executable_binding.sha256
+        github_expected_manifest_sha256 = github_projection_binding.sha256
+        github_module_name = None
+        github_working_directory = github_executable_path.parent
     else:
         executable_path = python_executable
         expected_binary_sha256 = calculate_file_sha256(python_executable)
         expected_manifest_sha256 = calculate_file_sha256(mcp_manifest_path)
         module_name = mcp_module_name
         connector_working_directory = working_directory
+        github_manifest_path = _write_mcp_manifest(
+            mcp_manifest_path.parent,
+            tool_registry,
+            connector_id=GITHUB_CONNECTOR_ID,
+            filename="github-mcp-manifest.json",
+        )
+        github_executable_path = python_executable
+        github_expected_binary_sha256 = expected_binary_sha256
+        github_expected_manifest_sha256 = calculate_file_sha256(github_manifest_path)
+        github_module_name = GITHUB_MCP_MODULE
+        github_working_directory = working_directory
     runtime_registry = ConnectorRuntimeRegistry()
     connector_environment = {
         ATTACHMENT_STAGING_DIR_ENV: str(attachment_staging_dir),
@@ -1506,7 +1581,7 @@ def _build_connectors(
     }
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
         connector_environment["GOOGLE_OAUTH_CLIENT_ID"] = oauth_client_id
-    descriptor = build_google_workspace_connector_descriptor(
+    google_descriptor = build_google_workspace_connector_descriptor(
         MCPArtifactConfig(
             executable_path=str(executable_path),
             manifest_path=str(mcp_manifest_path),
@@ -1529,16 +1604,55 @@ def _build_connectors(
         ),
     )
     google_connector = GoogleWorkspaceConnector(
-        descriptor=descriptor,
+        descriptor=google_descriptor,
         runtime_registry=runtime_registry,
         signature_verifier=signature_verifier,
     )
     google_connector.start()
+    github_environment = {
+        "GITHUB_APP_CLIENT_ID": github_oauth_client_id or "",
+        "GITHUB_APP_SCOPE": github_oauth_scope,
+    }
+    github_descriptor = build_github_connector_descriptor(
+        MCPArtifactConfig(
+            executable_path=str(github_executable_path),
+            manifest_path=str(github_manifest_path),
+            expected_binary_sha256=github_expected_binary_sha256,
+            expected_manifest_sha256=github_expected_manifest_sha256,
+            expected_manifest_version=mcp_manifest_version,
+            expected_protocol_version=mcp_manifest_version,
+            expected_registry_manifest_hash=tool_registry.entries_hash,
+            startup_timeout_ms=5_000,
+            request_timeout_ms=30_000,
+            max_restart_count=1,
+            environment=environment,
+            service_instance_id=service_instance_id,
+            module_name=github_module_name,
+            working_directory=str(github_working_directory),
+            extra_environment=github_environment,
+        ),
+        expected_tool_descriptors=tuple(
+            tool_registry.descriptor_expectations(GITHUB_CONNECTOR_ID)
+        ),
+    )
+    github_connector = GitHubConnector(
+        descriptor=github_descriptor,
+        runtime_registry=runtime_registry,
+        signature_verifier=signature_verifier,
+    )
+    try:
+        github_connector.start()
+    except Exception:
+        google_connector.close()
+        raise
     return DevelopmentConnectorBundle(
         runtime_registry=runtime_registry,
         tool_registry=tool_registry,
         installed_manifest=installed_manifest,
-        google_connector=google_connector,
+        connectors={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: google_connector,
+            GITHUB_CONNECTOR_ID: github_connector,
+        },
     )
 
 
@@ -2018,6 +2132,8 @@ def build_production_runtime(
     deployment_profile: Literal["API_ONLY", "LOCAL_CAPABLE"],
     oauth_environment: OAuthEnvironment,
     oauth_client_id: str,
+    github_oauth_client_id: str | None,
+    github_oauth_scope: str,
     api_contract_version: str,
     policy_version: str,
     database_migration_version: str,
@@ -2159,6 +2275,8 @@ def build_production_runtime(
             working_directory=working_directory.resolve(),
             environment=oauth_environment.value,
             oauth_client_id=oauth_client_id,
+            github_oauth_client_id=github_oauth_client_id,
+            github_oauth_scope=github_oauth_scope,
             development_tool_registry=development_tool_registry,
             configuration_source=configuration_source,
             verified_release_files=verified_release_files,
@@ -2172,17 +2290,25 @@ def build_production_runtime(
     except (LookupError, OSError, ValueError) as error:
         raise CoreInitializationError("MCP_MANIFEST_INVALID") from error
     connector_registry = connector_bundle.runtime_registry
+    google_connector = cast(
+        GoogleWorkspaceConnector,
+        connector_bundle.get_required(GOOGLE_WORKSPACE_CONNECTOR_ID),
+    )
+    github_connector = cast(
+        GitHubConnector,
+        connector_bundle.get_required(GITHUB_CONNECTOR_ID),
+    )
     mcp_manifest_path = Path(
-        connector_bundle.google_connector.descriptor.artifact_config.manifest_path
+        google_connector.descriptor.artifact_config.manifest_path
     )
     mcp_executable_path = Path(
-        connector_bundle.google_connector.descriptor.artifact_config.executable_path
+        google_connector.descriptor.artifact_config.executable_path
     )
     if connector_bundle.tool_registry.contract_version != policy_version:
         connector_registry.close_all()
         raise CoreInitializationError("POLICY_VERSION_MISMATCH")
-    google_connector = connector_bundle.google_connector
     google_provider = google_connector.oauth_port
+    github_provider = github_connector.oauth_port
     unit_of_work_factory = sqlite_unit_of_work_factory(database_path)
     read_unit_of_work_factory = sqlite_read_unit_of_work_factory(database_path)
     connected_account_store_factory = sqlite_connected_account_store_factory(database_path)
@@ -2191,11 +2317,15 @@ def build_production_runtime(
         connected_account_store_factory=connected_account_store_factory,
         now_ms=clock.now_ms,
     )
+    get_github_connection_status = GetConnectionStatusHandler(github_provider)
 
     def current_account_id() -> str | None:
         return get_connection_status(
             GetConnectionStatusQuery(connector_id="google_workspace")
         ).connection.account_id
+
+    def current_github_account_id() -> str | None:
+        return get_github_connection_status(GetConnectionStatusQuery(connector_id=GITHUB_CONNECTOR_ID)).connection.account_id
 
     try:
         (
@@ -2242,15 +2372,22 @@ def build_production_runtime(
     prompt_active = prompt_registry.product_release_ready
     workflow_runtime: Any
     connector_reader = CircuitProtectedConnectorReadPort(
-        delegate=google_connector.read_port,
-        connector_id="google-workspace",
+        delegate=McpConnectorReadAdapter(
+            runtime_registry=connector_bundle.runtime_registry,
+            mcp_client=google_connector.client,
+            internal_bindings=(
+                google_workspace_internal_read_binding(
+                    "search_by_recovery_fingerprint"
+                ),
+                github_internal_read_binding("search_by_recovery_fingerprint"),
+            ),
+        ),
         check=check_component_circuit,
         record=record_component_call_result,
         now_ms=clock.now_ms,
     )
     connector_writer = CircuitProtectedConnectorWritePort(
         delegate=google_connector.write_port,
-        connector_id="google-workspace",
         check=check_component_circuit,
         record=record_component_call_result,
         now_ms=clock.now_ms,
@@ -2354,7 +2491,7 @@ def build_production_runtime(
         checkpoint=checkpoint,
         resume_target_registry=resume_target_registry,
         runtime_hooks=runtime_hooks,
-        claim_context_signer=google_connector.client.sign_claim_context,
+        claim_context_signer=connector_bundle.runtime_registry.sign_claim_context,
         work_hours_provider=work_hours_provider,
         sse_event_buffer=event_publisher,
         environment=oauth_environment.value,
@@ -2373,9 +2510,9 @@ def build_production_runtime(
             service_instance_id=service_instance_id,
             application_services=workflow_application_services,
             runtime_hooks=runtime_hooks,
-            claim_context_signer=google_connector.client.sign_claim_context,
-            mcp_process_instance_id=lambda: (
-                google_connector.client.process_instance_id
+            claim_context_signer=connector_bundle.runtime_registry.sign_claim_context,
+            mcp_process_instance_id=lambda connector_id: (
+                connector_bundle.runtime_registry.process_instance_id(connector_id)
                 or (_ for _ in ()).throw(RuntimeError("MCP process identity is unavailable"))
             ),
             checkpoint_port=checkpoint,
@@ -2629,6 +2766,11 @@ def build_production_runtime(
             recovery_search_binding=google_workspace_internal_read_binding(
                 "search_by_recovery_fingerprint"
             ),
+            recovery_search_bindings={
+                GITHUB_CONNECTOR_ID: github_internal_read_binding(
+                    "search_by_recovery_fingerprint"
+                )
+            },
             unit_of_work_factory=unit_of_work_factory,
             now_ms=clock.now_ms,
         ),
@@ -2861,6 +3003,46 @@ def build_production_runtime(
             connected_account_store_factory=connected_account_store_factory,
             now_ms=clock.now_ms,
         ),
+        connection_connector_ids={
+            "google": GOOGLE_WORKSPACE_CONNECTOR_ID,
+            "github": GITHUB_CONNECTOR_ID,
+        },
+        oauth_requested_scopes_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: _google_oauth_scopes(connector_bundle.tool_registry),
+            GITHUB_CONNECTOR_ID: tuple(dict.fromkeys(scope for scope in github_oauth_scope.replace(",", " ").split() if scope)),
+        },
+        start_authorization_handlers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: StartAuthorizationHandler(
+                credentials=google_provider,
+                replay=operational_replay,
+            ),
+            GITHUB_CONNECTOR_ID: StartAuthorizationHandler(
+                credentials=github_provider,
+                replay=operational_replay,
+            ),
+        },
+        get_connection_status_handlers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: get_connection_status,
+            GITHUB_CONNECTOR_ID: get_github_connection_status,
+        },
+        revoke_connection_handlers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: RevokeConnectionHandler(
+                credentials=google_provider,
+                replay=operational_replay,
+                connected_account_store_factory=connected_account_store_factory,
+                now_ms=clock.now_ms,
+            ),
+            GITHUB_CONNECTOR_ID: RevokeConnectionHandler(
+                credentials=github_provider,
+                replay=operational_replay,
+                connected_account_store_factory=None,
+                now_ms=clock.now_ms,
+            ),
+        },
+        current_account_id_providers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: current_account_id,
+            GITHUB_CONNECTOR_ID: current_github_account_id,
+        },
         list_resources_handler=ListResourcesHandler(resource_access),
         get_resource_count_handler=GetResourceCountHandler(resource_access),
         get_resource_detail_handler=GetResourceDetailHandler(resource_access),
@@ -3186,14 +3368,20 @@ def _build_llm_runtime(
     )
 
 
-def _write_mcp_manifest(runtime_root: Path, registry: SignedToolRegistry) -> Path:
-    manifest_path = runtime_root / "mcp-manifest.json"
+def _write_mcp_manifest(
+    runtime_root: Path,
+    registry: SignedToolRegistry,
+    *,
+    connector_id: str = GOOGLE_WORKSPACE_CONNECTOR_ID,
+    filename: str = "mcp-manifest.json",
+) -> Path:
+    manifest_path = runtime_root / filename
     manifest_path.write_text(
         json.dumps(
             build_manifest_payload_for_descriptors(
-                connector_id="google_workspace",
+                connector_id=connector_id,
                 registry_manifest_hash=registry.entries_hash,
-                descriptors=tuple(registry.descriptor_expectations("google_workspace")),
+                descriptors=tuple(registry.descriptor_expectations(connector_id)),
             ),
             sort_keys=True,
         ),

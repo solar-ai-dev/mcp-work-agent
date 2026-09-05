@@ -12,6 +12,10 @@ from google_work_agent.ports.connector.connector_read_port import (
     ConnectorReadResultV1,
     JsonValue,
 )
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
@@ -30,7 +34,9 @@ class McpConnectorReadAdapter(ConnectorReadPort):
         self._runtime_registry = runtime_registry
         self._mcp_client = mcp_client
         self._timeout_ms = timeout_ms
-        self._internal_bindings = {binding.tool_id: binding for binding in internal_bindings}
+        self._internal_bindings = {
+            (binding.connector_id, binding.tool_id): binding for binding in internal_bindings
+        }
 
     def execute_read(
         self,
@@ -45,7 +51,7 @@ class McpConnectorReadAdapter(ConnectorReadPort):
             for descriptor in self._mcp_client.list_tools(binding.connector_id)
         }
         descriptor = descriptors.get(binding.tool_id)
-        internal = self._internal_bindings.get(binding.tool_id)
+        internal = self._internal_bindings.get((binding.connector_id, binding.tool_id))
         if descriptor is None and binding != internal:
             raise ValueError("validated Connector Tool binding does not match MCP descriptor")
         if descriptor is not None and (
@@ -67,7 +73,30 @@ class McpConnectorReadAdapter(ConnectorReadPort):
             self._timeout_ms,
         )
         if response.transport_status != "OK" or not isinstance(response.payload, dict):
-            raise RuntimeError(response.error_code or "CONNECTOR_READ_FAILED")
+            code = {
+                "AUTH_REQUIRED": ConnectorFailureCode.AUTH_REQUIRED,
+                "PERMISSION_DENIED": ConnectorFailureCode.PERMISSION_DENIED,
+                "NOT_FOUND": ConnectorFailureCode.NOT_FOUND,
+                "TIMEOUT": ConnectorFailureCode.TIMEOUT,
+                "PROCESS_UNAVAILABLE": ConnectorFailureCode.CONNECTION_UNAVAILABLE,
+                "CONNECTION_CLOSED": ConnectorFailureCode.CONNECTION_UNAVAILABLE,
+                "MALFORMED_RESPONSE": ConnectorFailureCode.MALFORMED_RESPONSE,
+                "CONFIGURATION_ERROR": ConnectorFailureCode.CONFIGURATION_ERROR,
+                "TOOL_REJECTED": ConnectorFailureCode.INVALID_ARGUMENT,
+            }.get(
+                response.error_code or "",
+                ConnectorFailureCode.UPSTREAM_UNAVAILABLE,
+            )
+            raise ConnectorOperationFailure(
+                code=code,
+                detail_code=response.error_code or "CONNECTOR_READ_FAILED",
+                retryable=code
+                in {
+                    ConnectorFailureCode.TIMEOUT,
+                    ConnectorFailureCode.CONNECTION_UNAVAILABLE,
+                    ConnectorFailureCode.UPSTREAM_UNAVAILABLE,
+                },
+            )
         output = cast(dict[str, JsonValue], response.payload)
         return ConnectorReadResultV1(
             schema_version=1,

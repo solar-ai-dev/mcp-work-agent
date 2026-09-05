@@ -136,6 +136,16 @@ class ConnectorWriteProjection:
                 calendar_id=str(arguments["calendar_id"]),
                 event_id=resource_id,
             )
+        if tool_name.startswith("github_"):
+            repository = _required(arguments, "repository")
+            try:
+                issue_number = int(resource_id.rsplit("#", 1)[1])
+            except (IndexError, ValueError) as error:
+                raise ValueError("GitHub recovery resource identity is invalid") from error
+            return self._reader.get_github_issue(
+                repository=repository,
+                issue_number=issue_number,
+            )
         return ResourceSnapshot(
             fixture_snapshot_id=str(metadata.get("fixture_snapshot_id") or resource_id),
             resource_type=ResourceType(
@@ -156,6 +166,16 @@ def _final_arguments(
     *,
     recovery_fingerprint: str | None,
 ) -> dict[str, object]:
+    if tool_name == "github_create_issue":
+        if not isinstance(recovery_fingerprint, str) or not recovery_fingerprint:
+            raise ValueError("GitHub create recovery fingerprint is required")
+        return {**arguments, "recovery_fingerprint": recovery_fingerprint}
+    if tool_name in {
+        "github_update_issue",
+        "github_close_issue",
+        "github_reopen_issue",
+    }:
+        return dict(arguments)
     if tool_name == "gmail_send":
         return {
             "draft_id": _required(arguments, "draft_id"),
@@ -211,6 +231,8 @@ def _resource_id(
 
 
 def _resource_type(tool_name: str) -> str:
+    if tool_name.startswith("github_"):
+        return "github_issue"
     if tool_name.startswith("tasks_"):
         return "task"
     if tool_name.startswith("calendar_"):
@@ -219,6 +241,9 @@ def _resource_type(tool_name: str) -> str:
 
 
 def _parent_id(arguments: dict[str, object]) -> str | None:
+    repository = arguments.get("repository")
+    if isinstance(repository, str) and repository:
+        return repository
     for key in ("task_list_id", "calendar_id"):
         value = arguments.get(key)
         if isinstance(value, str) and value:

@@ -1,0 +1,1 @@
+"""Canonical GitHub connector namespace."""

@@ -109,7 +109,7 @@ def test_preflight_credential__loss_requires__reauth_before_claim(
         mark_write_failed=cast(Any, unused),
         mark_write_unknown=cast(Any, unused),
         service_instance_id="service-1",
-        mcp_process_instance_id=lambda: "mcp-1",
+        mcp_process_instance_id=lambda _connector_id: "mcp-1",
         require_write_reauth=cast(Any, reauth),
         lookup_unknown_result=cast(Any, unused),
         recover_existing_result=cast(Any, unused),

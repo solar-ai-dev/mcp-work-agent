@@ -1,7 +1,7 @@
 # 05. Context · Retrieval 설계서
 
 > **Authority:** Context·Retrieval semantics. Tool Route/Workflow/Domain의 전문 의미는 해당 owner를 직접 소비한다.  
-> **상태:** Draft v2.17 · **기준일:** 2026-08-24 · **대상:** P0 MVP
+> **상태:** Draft v2.18 · **기준일:** 2026-09-05 · **대상:** P0 MVP
 
 ## 1. 목적
 
@@ -309,6 +309,18 @@ prior SourceFetchPlanV1.effective_constraints
 - `ResourceRefConstraintV1.resource_refs`와 `ContainerRefConstraintV1.container_refs`는 현재 Run/Route에서 이미 검증된 내부 ref만 허용하며 raw Provider resource ID를 LLM이 새로 발명하는 권위가 아니다.
 - `QueryAttemptV1.added_constraints/removed_constraints` 같은 이름 목록은 관측·follow-up summary다. **다음 실행계획의 값 권위가 아니며** `SourceFetchPlanV1.effective_constraints`를 재구성하는 두 번째 source로 사용하지 않는다.
 
+#### GitHub repository container authority
+
+`connector_id="github"`, `resource_type="github_issue"`인 frozen `InputToolRouteV1`은 다음 existing current-run authority만 route-scoped `ContainerRefConstraintV1(container_refs=["owner/repository"])`로 materialize할 수 있다.
+
+1. 검증된 current-run `SelectedResourceRefV1`/`ResourceRef`의 `parent_resource_id`
+2. `06`의 deterministic provenance 검증을 통과한 current `RequestIntentV2`의 explicit `owner/repository` constraint
+
+- 두 source가 모두 존재하고 exact match하면 하나의 container constraint로 정규화한다. 불일치하면 어느 쪽에도 precedence를 주지 않고 기존 Confirmation 또는 fail-closed 경로로 보내며 `ConnectorReadPort` 호출은 0이다.
+- repository가 필요한 GitHub `SEARCH` Route에 검증된 source가 하나도 없으면 Source Fetch Plan을 실행하지 않고 기존 Confirmation/selection lifecycle을 사용한다. LLM, 연결 계정, organization, 최근 repository 또는 첫 Provider 검색 결과로 owner/repository를 채우지 않으며 `ConnectorReadPort` 호출은 0이다.
+- 결정적 `SourceFetchPlanBuilder`는 검증된 container constraint와 frozen Route의 `connector_id="github"`, `resource_type="github_issue"`, `allowed_read_tool_ids`를 그대로 보존하고, 등록된 `github_list_issues` argument의 `repository`로만 lower한다. Retrieval LLM은 repository나 Tool을 다시 선택하지 않는다.
+- selected GitHub Issue의 `DETAIL_FETCH`는 검증된 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`의 결합을 보존한다. 새 GitHub Retrieval DTO, Graph 또는 별도 repository authority를 만들지 않는다.
+
 #### Operation별 권위
 
 | Operation | LLM/Planner가 결정 | deterministic code가 결정 |
@@ -559,7 +571,7 @@ Keyword                   최대 +15
 class SourceSegmentIdentityV1:
     schema_version: Literal[1]
     connector_id: str
-    source_kind: Literal["gmail", "tasks", "calendar"]
+    source_kind: Literal["gmail", "tasks", "calendar", "github"]
     resource_type: str
     resource_id: str
     source_version_ref: str | None
@@ -569,6 +581,10 @@ class SourceSegmentIdentityV1:
 ```
 
 `segment_id = "seg_" + SHA256(canonical_json(SourceSegmentIdentityV1))`로 생성한다. `source_version_ref`는 Provider가 stable revision/version/etag를 제공하면 사용하고, 없으면 `normalized_content_sha256 + deterministic chunk_ordinal`이 version evidence를 대신한다. Normalize/Chunk algorithm과 `chunk_schema_version`은 같은 입력에 deterministic해야 한다. Random UUID, retrieval revision 번호, query/page ordinal, process-memory handle을 `segment_id` authority로 사용하지 않는다.
+
+`connector_id + resource_type + resource_id`가 Provider Resource의 canonical identity authority다. `source_kind`는 deterministic normalization/source-family discriminator이며 Connector identity나 `resource_type`을 재선택·재추론하거나 Tool Route를 변경하는 authority가 아니다. 관측된 Connector/Resource에서 결정적 코드가 생성하며 LLM이 만들지 않는다.
+
+GitHub Issue는 `connector_id="github"`, `resource_type="github_issue"`, `resource_id="owner/repository#issue_number"`를 계속 사용한다. `source_kind="github"`는 이 identity를 대체하지 않는다. `github_list_issues`의 각 Issue는 이 composite `resource_id`를 가진 독립 Resource observation이며 list 전체를 synthetic 단일 Resource로 만들지 않는다.
 
 - 같은 Provider resource version + 같은 normalized content + 같은 chunk schema/boundary면 fresh Retrieval에서도 같은 `segment_id`를 생성한다.
 - Provider source version/content 또는 chunk schema가 바뀌어 Evidence 의미가 달라지면 새 `segment_id`를 발급한다. 과거 exclusion을 변경된 content에 임의 승계하지 않는다.
@@ -722,17 +738,23 @@ class SufficiencyIssueV2:
     slot: str
     issue_type: Literal["MISSING", "CONFLICT"]
     required: bool
-    resolution_source: Literal["USER", "GOOGLE", "POLICY", "ROUTE"]
+    resolution_source: Literal["USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"]
     safety_critical: bool
     reason_codes: list[str]
 ```
 
+`CONNECTOR`는 current frozen Route가 가리키는 non-Google Connector에서 추가 deterministic Retrieval을 수행하면 해결 가능한 정보 부족을 뜻한다. Connector·Tool·Route 재선택, Provider autodiscovery 또는 새 routing authority를 허용하지 않는다. GitHub와 이후 non-Google Connector의 부족 정보는 `CONNECTOR`를 사용하며 `GOOGLE`로 표현하지 않는다.
+
+`GOOGLE`은 기존 Google Workspace producer·checkpoint·schema compatibility value로 유지한다. 이번 확장에서 기존 Google producer를 `CONNECTOR`로 migration하거나 `GOOGLE`을 rename·deprecate·remove하지 않는다. 두 값은 producer 범위는 분리되지만 deterministic termination guard에서는 current frozen Route의 추가 external Connector Retrieval로 해결 가능한 같은 class로 처리한다.
+
+Sufficiency/LLM-local projection에서 coarse resource category가 필요하면 GitHub Issue에는 `ISSUE`를 사용할 수 있다. `ISSUE`는 canonical Connector `resource_type`이 아니며 `github_issue`를 대체하거나 `TASK`로 변환하지 않는다. 최종 `RetrievalResultV1.source_statuses[].resource_type`은 frozen Route의 exact `github_issue`를 보존한다.
+
 ### 18.2 결정적 종료 Guard
 
 1. `required=true`이면서 safety-critical 또는 `resolution_source=POLICY`면 `BLOCKED`.
-2. `resolution_source=USER`면 추가 Google 조회보다 `NEEDS_CONFIRMATION` 우선.
+2. `resolution_source=USER`면 추가 external Connector 조회보다 `NEEDS_CONFIRMATION` 우선.
 3. `resolution_source=ROUTE`면 `ROUTE_RECONSIDERATION_REQUIRED`.
-4. `resolution_source=GOOGLE`이고 같은 Route의 Budget이 남으면 `NEEDS_MORE_DATA`.
+4. `resolution_source`가 `GOOGLE` 또는 `CONNECTOR`이고 current frozen Route의 추가 fetch가 가능하며 Budget·lifecycle guard가 허용하면 `NEEDS_MORE_DATA`.
 5. Budget 소진 + Read-only + 근거 있는 부분 답변 가능이면 `PARTIAL`.
 6. Write 필수 Target/Argument/Evidence 부족은 사용자 해결 가능하면 `NEEDS_CONFIRMATION`, 아니면 `BLOCKED`.
 

@@ -38,7 +38,8 @@ class RevokeConnectionHandler:
         replay: OperationalCommandReplayPort,
         connected_account_store_factory: Callable[
             [], AbstractContextManager[ConnectedAccountStore]
-        ],
+        ]
+        | None,
         now_ms: Callable[[], int],
     ) -> None:
         self._credentials = credentials
@@ -66,12 +67,15 @@ class RevokeConnectionHandler:
             ),
             execute=execute,
         )
-        with self._connected_account_store_factory() as store:
-            if not store.disconnect(
-                account_id=command.account_id,
-                disconnected_at_ms=self._now_ms(),
-            ):
-                raise LookupError(f"connected account not found: {command.account_id}")
+        if self._connected_account_store_factory is not None:
+            with self._connected_account_store_factory() as store:
+                if not store.disconnect(
+                    account_id=command.account_id,
+                    disconnected_at_ms=self._now_ms(),
+                ):
+                    raise LookupError(
+                        f"connected account not found: {command.account_id}"
+                    )
         return RevokeConnectionResult(
             revocation=OAuthRevokeResult(**cast(Any, outcome.bounded_result)),
             operation_ref=outcome.operation_ref,

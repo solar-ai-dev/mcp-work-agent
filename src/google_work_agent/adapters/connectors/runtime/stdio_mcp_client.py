@@ -38,6 +38,7 @@ JsonObject = dict[str, object]
 PROTOCOL_VERSION = "2026-08-07.p0"
 MANIFEST_MESSAGE_LIMIT_BYTES = 64 * 1024
 SESSION_KEY_BYTES = 32
+_CONTROL_OPERATION_SEGMENTS = frozenset({"oauth", "connection", "device_flow"})
 
 
 class MCPProcessStatus(StrEnum):
@@ -285,11 +286,7 @@ class StdioMCPClientAdapter:
             raise ValueError("timeout_ms must be positive")
         if not isinstance(arguments, dict):
             raise TypeError("MCP tool arguments must be an object")
-        message_type = (
-            "control_call"
-            if tool_id.startswith(("google.oauth.", "google.connection."))
-            else "tool_call"
-        )
+        message_type = "control_call" if is_control_operation_id(tool_id) else "tool_call"
         body_key = "method" if message_type == "control_call" else "tool_name"
         try:
             _, payload = self._request(
@@ -343,11 +340,13 @@ class StdioMCPClientAdapter:
     def service_instance_id(self) -> str:
         return self._config.service_instance_id
 
-    @property
-    def process_instance_id(self) -> str | None:
-        return self._process_instance_id
+    def process_instance_id(self, connector_id: str) -> str | None:
+        return self._runtime_registry.process_instance_id(connector_id)
 
-    def sign_claim_context(self, payload: dict[str, object]) -> str:
+    def sign_claim_context(self, connector_id: str, payload: dict[str, object]) -> str:
+        return self._runtime_registry.sign_claim_context(connector_id, payload)
+
+    def _sign_claim_context(self, payload: dict[str, object]) -> str:
         normalized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hmac.new(bytes.fromhex(self._session_key), normalized, hashlib.sha256).hexdigest()
 
@@ -727,5 +726,17 @@ class _BoundStdioRuntime:
     def restart_once(self) -> MCPRestartResultV1:
         return self.client._restart_once()
 
+    def sign_claim_context(self, payload: dict[str, object]) -> str:
+        return self.client._sign_claim_context(payload)
+
     def close(self) -> None:
         self.client.close()
+
+
+def is_control_operation_id(operation_id: str) -> bool:
+    """Classify connector control operations without interpreting provider names."""
+
+    segments = operation_id.split(".")
+    return len(segments) >= 3 and any(
+        segment in _CONTROL_OPERATION_SEGMENTS for segment in segments[1:-1]
+    )

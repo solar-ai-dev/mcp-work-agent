@@ -122,6 +122,44 @@ def _task_create_plan() -> dict[str, Any]:
     }
 
 
+def _github_plan(tool_name: str, *, repository: str = "acme/repo") -> dict[str, Any]:
+    arguments: dict[str, object] = {"repository": repository, "issue_number": 7}
+    if tool_name == "github_update_issue":
+        arguments["title"] = "updated"
+    elif tool_name == "github_create_issue":
+        arguments = {"repository": repository, "title": "new issue"}
+    return {
+        "schema_version": 2,
+        "meta": _plan_meta(),
+        "actions": [
+            {
+                "action_id": "a1",
+                "route_id": "r1",
+                "tool_id": tool_name,
+                "effect": "CREATE" if tool_name == "github_create_issue" else "UPDATE",
+                "arguments": arguments,
+                "evidence_refs": ["ev-1"],
+                "depends_on_action_ids": [],
+            }
+        ],
+    }
+
+
+def _github_evidence() -> list[dict[str, Any]]:
+    return _evidence("github_issue:acme/repo#7")
+
+
+def _github_reader(**changes: object) -> _ResourceReader:
+    identity: dict[str, object] = {
+        "resource_handle": "github_issue:acme/repo#7",
+        "resource_type": "github_issue",
+        "resource_id": "acme/repo#7",
+        "parent_id": "acme/repo",
+    }
+    identity.update(changes)
+    return _ResourceReader({"github_issue:acme/repo#7": identity})
+
+
 def _analysis(
     *,
     action_necessity: str = "REQUIRED",
@@ -202,6 +240,56 @@ def test_update_blocks_when_evidence__is_not_tied_to__exact_current_run_target()
 
 def test_create_requires__evidence_but__not_existing_target() -> None:
     result = _call(_task_create_plan(), reader=_ResourceReader({}))
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ("github_update_issue", "github_close_issue", "github_reopen_issue"),
+)
+def test_github_existing_target__requires_exact__current_run_composite_identity(
+    tool_name: str,
+) -> None:
+    result = _call(
+        _github_plan(tool_name),
+        evidence=_github_evidence(),
+        reader=_github_reader(),
+    )
+
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+@pytest.mark.parametrize(
+    ("plan", "reader"),
+    (
+        (_github_plan("github_update_issue", repository="other/repo"), _github_reader()),
+        (
+            _github_plan("github_close_issue"),
+            _github_reader(parent_id="other/repo"),
+        ),
+        (
+            _github_plan("github_reopen_issue"),
+            _github_reader(resource_id="acme/repo#abc"),
+        ),
+    ),
+)
+def test_github_existing_target__mismatch__blocks_domain_validation(
+    plan: dict[str, Any],
+    reader: _ResourceReader,
+) -> None:
+    result = _call(plan, evidence=_github_evidence(), reader=reader)
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_github_create__target_consistency__does_not_block() -> None:
+    result = _call(
+        _github_plan("github_create_issue"),
+        evidence=_github_evidence(),
+        reader=_ResourceReader({}),
+    )
+
     assert result["result"] == "REQUIRE_APPROVAL"
 
 

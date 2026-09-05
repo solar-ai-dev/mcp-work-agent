@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from json import loads
+import re
 from typing import Literal, cast
 
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
@@ -110,7 +111,11 @@ class VerifyEffectHandler:
             if resource_ref_id is None
             else self._resolve_resource_ref(ResolveResourceRefQuery(resource_ref_id)).resource_ref
         )
-        expected = cast(dict[str, object], loads(action.expected_json))
+        expected = _persisted_expected_effect(
+            action.tool_name,
+            cast(dict[str, object], loads(action.arguments_json)),
+            cast(dict[str, object], loads(action.expected_json)),
+        )
         if action.effect_type == "SEND" and approval is not None:
             expected = {**expected, "recovery_fingerprint": approval.recovery_fingerprint}
         target = (
@@ -149,8 +154,13 @@ class VerifyEffectHandler:
         strategy = self._strategy(query.effect)
         tool_id, arguments = self._read_request(query, strategy)
         try:
+            connector_id = (
+                self._connector_id
+                if query.target_resource_ref is None
+                else query.target_resource_ref.connector_id
+            )
             result = self._connector_read.execute_read(
-                self._tool_registry.bind_required(self._connector_id, tool_id, "READ"),
+                self._tool_registry.bind_required(connector_id, tool_id, "READ"),
                 arguments,
             )
         except ConnectorOperationFailure as error:
@@ -235,7 +245,11 @@ class VerifyEffectHandler:
             action = binding.action
             attempt = binding.attempt
             _require_verification_source_state(action.status, attempt.status)
-            expected = cast(dict[str, object], loads(action.expected_json))
+            expected = _persisted_expected_effect(
+                action.tool_name,
+                cast(dict[str, object], loads(action.arguments_json)),
+                cast(dict[str, object], loads(action.expected_json)),
+            )
             if action.effect_type == "SEND":
                 expected = {
                     **expected,
@@ -293,6 +307,17 @@ class VerifyEffectHandler:
             }
         if resource_type == "GMAIL_DRAFT":
             return "gmail_get_draft", {"draft_id": target.resource_id}
+        if resource_type == "GITHUB_ISSUE":
+            if target.parent_resource_id is None:
+                raise ValueError("GitHub verification requires repository identity")
+            try:
+                issue_number = int(target.resource_id.rsplit("#", 1)[1])
+            except (IndexError, ValueError) as error:
+                raise ValueError("GitHub issue identity is invalid") from error
+            return "github_get_issue", {
+                "repository": target.parent_resource_id,
+                "issue_number": issue_number,
+            }
         raise ValueError(f"unsupported verification resource type: {target.resource_type}")
 
 
@@ -306,6 +331,8 @@ def _business_expected(
     filtered = {key: value for key, value in business.items() if key != "recovery_fingerprint"}
     if normalizer_tool_name is None:
         return filtered
+    if normalizer_tool_name == "github_update_issue":
+        return filtered
     return _business_actual(filtered, normalizer_tool_name=normalizer_tool_name)
 
 
@@ -316,6 +343,23 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
         if not isinstance(payload, dict)
         else {**{key: value for key, value in actual.items() if key != "payload"}, **payload}
     )
+    if normalizer_tool_name == "github_update_issue":
+        description = business.get("description")
+        if isinstance(description, str):
+            description = re.sub(
+                r"\n\n<!-- gwa-recovery-fingerprint:[^>\n]+ -->$",
+                "",
+                description,
+            )
+        return {
+            key: value
+            for key, value in {
+                "title": business.get("title"),
+                "body": description,
+                "state": business.get("state"),
+            }.items()
+            if value is not None
+        }
     normalized = normalize_actual_verification_projection(
         tool_name=normalizer_tool_name,
         actual={"payload": business},
@@ -336,7 +380,27 @@ def _normalizer_tool_name(target: SelectedResourceRefV1 | None) -> str:
         return "tasks_update_task"
     if resource_type in {"CALENDAR", "CALENDAR_EVENT"}:
         return "calendar_update_event"
+    if resource_type == "GITHUB_ISSUE":
+        return "github_update_issue"
     raise ValueError(f"unsupported verification resource type: {target.resource_type}")
+
+
+def _persisted_expected_effect(
+    tool_name: str,
+    arguments: dict[str, object],
+    fallback: dict[str, object],
+) -> dict[str, object]:
+    if tool_name in {"github_create_issue", "github_update_issue"}:
+        return {
+            key: arguments[key]
+            for key in ("title", "body")
+            if key in arguments
+        }
+    if tool_name == "github_close_issue":
+        return {"state": "CLOSED"}
+    if tool_name == "github_reopen_issue":
+        return {"state": "OPEN"}
+    return fallback
 
 
 __all__ = [

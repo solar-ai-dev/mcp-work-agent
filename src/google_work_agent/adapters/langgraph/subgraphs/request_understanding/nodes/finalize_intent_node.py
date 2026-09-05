@@ -24,5 +24,14 @@ def finalize_intent_node(
         projection["goal_candidate"],
         projection["ambiguity_candidate"],
         artifact_id=id_factory(),
+        user_request=projection["request"].request_text,
+        confirmation_response_text=(
+            None
+            if "confirmation_response" not in projection
+            else (
+                projection["confirmation_response"]["selected_option"]
+                or projection["confirmation_response"]["free_text"]
+            )
+        ),
     )
     return {"final_intent": intent, "request_intent": intent}

@@ -66,6 +66,8 @@ def _build_config() -> SignedBuildConfigV1:
         deployment_profile="LOCAL_CAPABLE",
         oauth_env="PRODUCTION",
         oauth_client_id="desktop-client-id",
+        github_oauth_client_id="github-client-id",
+        github_oauth_scope="repo",
         api_contract_version="1",
         mcp_schema_version="2026-08-07.p0",
         policy_version="2026-08-06.p0",
@@ -75,7 +77,11 @@ def _build_config() -> SignedBuildConfigV1:
 
 def test_service_start_uses__verified_executable_and__stdin_only_for_secret(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("GITHUB_APP_CLIENT_ID", "ambient-client-must-not-pass")
+    monkeypatch.setenv("GITHUB_APP_SCOPE", "ambient-scope-must-not-pass")
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-token-must-not-pass")
     executable = tmp_path / "install" / "service" / "GoogleWorkAgentService.exe"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"service")
@@ -134,6 +140,10 @@ def test_service_start_uses__verified_executable_and__stdin_only_for_secret(
     assert "one-time-secret" not in json.dumps(captured["env"])
     assert payload["bootstrap_secret"] == "one-time-secret"
     assert payload["signed_build_config"]["oauth_client_id"] == "desktop-client-id"
+    assert payload["signed_build_config"]["github_oauth_client_id"] == "github-client-id"
+    assert payload["signed_build_config"]["github_oauth_scope"] == "repo"
+    assert "GITHUB_APP_CLIENT_ID" not in captured["env"]
+    assert "GITHUB_APP_SCOPE" not in captured["env"]
     assert payload["verified_release_files"] == installation.manifest["files"]
     assert payload["code_signature_verified_paths"] == ["service/GoogleWorkAgentService.exe"]
     assert "client_secret" not in payload["signed_build_config"]

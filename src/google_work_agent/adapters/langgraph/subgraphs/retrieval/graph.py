@@ -84,6 +84,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
     StateArtifactRefV1,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    validated_repository_authority,
+)
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     build_query_attempt,
@@ -271,6 +274,7 @@ def _runtime_route_constraint_policies(
             }
         ),
         "TASK": frozenset({"CONTAINER_REF"}),
+        "ISSUE": frozenset({"CONTAINER_REF", "STATUS_SCOPE"}),
         "CALENDAR": frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
     }
     return {
@@ -283,7 +287,13 @@ def _runtime_route_constraint_policies(
                 frozenset({"KEYWORD"})
                 if coarse_resource_category(route["resource_type"]) == "EMAIL"
                 and "gmail_search_threads" in route["allowed_read_tool_ids"]
-                else frozenset()
+                else (
+                    frozenset({"CONTAINER_REF"})
+                    if route["connector_id"] == "github"
+                    and route["resource_type"].upper() == "GITHUB_ISSUE"
+                    and "github_list_issues" in route["allowed_read_tool_ids"]
+                    else frozenset()
+                )
             ),
         )
         for route in routes
@@ -801,16 +811,14 @@ class RetrievalSubgraph:
         return next_state
 
     def _validated_container_refs(
-        self, frozen_routes: list[InputToolRouteV1]
+        self,
+        state: ContextRetrievalLocalState,
+        frozen_routes: list[InputToolRouteV1],
     ) -> dict[str, list[str]]:
-        """TASK routes' only supported semantic constraint kind, resolved.
+        """Resolve existing validated container authorities per frozen route.
 
-        Reuses the account's already-configured ``default_tasklist_id``
-        Setting (the same authoritative resource access layer's
-        own ``_resolve_task_list_id`` falls back to) instead of adding a new
-        discovery capability to the Retrieval read boundary. Empty when the
-        provider is unset or returns ``None`` -- a TASK route then simply
-        stays unable to satisfy CONTAINER_REF, exactly as before this fix.
+        Google defaults retain their existing behavior. GitHub routes consume
+        only current-Run RequestIntent/SelectedResourceRef authority.
         """
         tasklist_id = (
             None
@@ -829,6 +837,24 @@ class RetrievalSubgraph:
                 result[route["route_id"]] = [tasklist_id]
             elif category == "CALENDAR" and calendar_id:
                 result[route["route_id"]] = [calendar_id]
+        github_routes = [
+            route
+            for route in frozen_routes
+            if route["connector_id"] == "github"
+            and route["resource_type"].upper() == "GITHUB_ISSUE"
+        ]
+        if github_routes:
+            request_intent = cast(
+                RequestIntentV2,
+                _require_state_value(state.get("request_intent"), "request intent"),
+            )
+            repository = validated_repository_authority(
+                request_intent,
+                selected_resources=request_from_state(state).selected_resources,
+            )
+            if repository is not None:
+                for route in github_routes:
+                    result[route["route_id"]] = [repository]
         return result
 
     @staticmethod
@@ -845,6 +871,7 @@ class RetrievalSubgraph:
             "gmail_get_attachment",
             "tasks_get_task",
             "calendar_get_event",
+            "github_get_issue",
         }
         result: dict[str, list[str]] = {}
         for route in frozen_routes:
@@ -853,14 +880,9 @@ class RetrievalSubgraph:
             route_type = route["resource_type"].upper()
             refs: list[str] = []
             for item in selected_refs:
-                selected_type = f"{item.source}_{item.resource_type}".upper()
-                selected_type = {
-                    "TASKS_TASK": "TASK",
-                    "TASKS_TASK_LIST": "TASK_LIST",
-                    "CALENDAR_CALENDAR": "CALENDAR",
-                    "CALENDAR_EVENT": "CALENDAR_EVENT",
-                    "CALENDAR_FREEBUSY": "CALENDAR_FREEBUSY",
-                }.get(selected_type, selected_type)
+                if item.connector_id != route["connector_id"]:
+                    continue
+                selected_type = item.resource_type.upper()
                 if selected_type == route_type:
                     refs.append(f"{route_type.lower()}:{item.resource_id}")
             if refs:
@@ -891,7 +913,7 @@ class RetrievalSubgraph:
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
         validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
-        validated_container_refs = self._validated_container_refs(frozen_routes)
+        validated_container_refs = self._validated_container_refs(state, frozen_routes)
         followup = state.get(CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY)
         prompt_input = (
             initial_retrieval_planner_input(
@@ -1160,7 +1182,7 @@ class RetrievalSubgraph:
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
         validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
-        validated_container_refs = self._validated_container_refs(frozen_routes)
+        validated_container_refs = self._validated_container_refs(state, frozen_routes)
         query_plan = _require_state_value(state.get("query_plan"), "query plan")
         detail_candidate_refs = state.get(CONTEXT_SEGMENT_HANDLES_KEY, [])
         prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})

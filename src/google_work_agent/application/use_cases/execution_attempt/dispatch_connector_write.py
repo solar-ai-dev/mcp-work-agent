@@ -120,6 +120,7 @@ class DispatchConnectorWriteHandler:
             or approval.status is not ApprovalStatusV1.CONSUMED
             or action.status != ActionStatusV1.EXECUTING.value
             or action.tool_name != command.tool_id
+            or action.connector_id != claim.connector_id
             or plan.status is not PlanStatusV1.WAITING_APPROVAL
             or current_plan is None
             or current_plan.id != plan.id

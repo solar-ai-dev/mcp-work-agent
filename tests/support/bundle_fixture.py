@@ -44,6 +44,9 @@ def create_bundle_inputs(
     connector_dir = directories["mcp-dist"] / "google_workspace"
     connector_dir.mkdir()
     (connector_dir / "GoogleWorkspaceMcpServer.exe").write_bytes(b"mcp")
+    github_connector_dir = directories["mcp-dist"] / "github"
+    github_connector_dir.mkdir()
+    (github_connector_dir / "GitHubMcpServer.exe").write_bytes(b"github-mcp")
     (directories["runtime-dist"] / "python312.dll").write_bytes(b"python-runtime")
     (directories["schemas"] / "openapi-v1.json").write_text("{}", encoding="utf-8")
     (directories["migrations"] / "0001_current_schema.sql").write_text(

@@ -84,6 +84,8 @@ def create_app(
                 deployment_profile=production_config.deployment_profile,
                 oauth_environment=production_config.oauth_environment,
                 oauth_client_id=production_config.oauth_client_id,
+                github_oauth_client_id=production_config.github_oauth_client_id,
+                github_oauth_scope=production_config.github_oauth_scope,
                 api_contract_version=production_config.api_contract_version,
                 mcp_manifest_version=production_config.mcp_manifest_version,
                 policy_version=production_config.policy_version,

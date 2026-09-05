@@ -26,6 +26,7 @@ class _UnitOfWork:
             SimpleNamespace(
                 id="action-1",
                 status=ActionStatusV1.EXECUTING.value,
+                connector_id="google_workspace",
                 tool_name="tasks_create_task",
                 arguments_hash="a" * 64,
             )
@@ -56,7 +57,8 @@ class _UnitOfWork:
 def test_application_build_is__the_single_final__claim_signing_authority() -> None:
     signed_payloads: list[dict[str, object]] = []
 
-    def sign(payload: dict[str, object]) -> str:
+    def sign(connector_id: str, payload: dict[str, object]) -> str:
+        assert connector_id == "google_workspace"
         signed_payloads.append(dict(payload))
         return "application-signature"
 
@@ -70,6 +72,7 @@ def test_application_build_is__the_single_final__claim_signing_authority() -> No
     context = handler(
         BuildClaimContextQueryV1(
             1,
+            "google_workspace",
             "action-1",
             "approval-1",
             "attempt-1",
@@ -83,6 +86,7 @@ def test_application_build_is__the_single_final__claim_signing_authority() -> No
 
     assert len(signed_payloads) == 1
     assert signed_payloads[0]["mcp_process_instance_id"] == "process-1"
+    assert signed_payloads[0]["connector_id"] == "google_workspace"
     assert signed_payloads[0]["execution_attempt_id"] == "attempt-1"
     assert "signature" not in signed_payloads[0]
     assert context.signature == "application-signature"

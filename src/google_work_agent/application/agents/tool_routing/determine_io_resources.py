@@ -62,12 +62,12 @@ ROUTE_RESOURCE_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "schema_version": {"const": 1},
             "input_resource_types": {
                 "type": "array",
-                "items": {"enum": ["EMAIL", "TASK", "CALENDAR"]},
+                "items": {"enum": ["EMAIL", "TASK", "CALENDAR", "ISSUE"]},
                 "uniqueItems": True,
             },
             "output_resource_types": {
                 "type": "array",
-                "items": {"enum": ["EMAIL", "TASK", "CALENDAR"]},
+                "items": {"enum": ["EMAIL", "TASK", "CALENDAR", "ISSUE"]},
                 "uniqueItems": True,
             },
             "output_effects": {
@@ -215,20 +215,21 @@ def _selected_input_resource_types(request: WorkflowStartRequest) -> tuple[str, 
     if request.entry_mode != "RESOURCE_SELECTED":
         return ()
     mapping = {
-        ("GMAIL", "THREAD"): "GMAIL_THREAD",
-        ("GMAIL", "MESSAGE"): "GMAIL_MESSAGE",
-        ("GMAIL", "DRAFT"): "GMAIL_DRAFT",
-        ("GMAIL", "ATTACHMENT"): "GMAIL_ATTACHMENT",
-        ("TASKS", "TASK_LIST"): "TASK_LIST",
-        ("TASKS", "TASK"): "TASK",
-        ("CALENDAR", "CALENDAR"): "CALENDAR",
-        ("CALENDAR", "EVENT"): "CALENDAR_EVENT",
-        ("CALENDAR", "FREEBUSY"): "CALENDAR_FREEBUSY",
+        ("google_workspace", "gmail_thread"): "GMAIL_THREAD",
+        ("google_workspace", "gmail_message"): "GMAIL_MESSAGE",
+        ("google_workspace", "gmail_draft"): "GMAIL_DRAFT",
+        ("google_workspace", "gmail_attachment"): "GMAIL_ATTACHMENT",
+        ("google_workspace", "task_list"): "TASK_LIST",
+        ("google_workspace", "task"): "TASK",
+        ("google_workspace", "calendar"): "CALENDAR",
+        ("google_workspace", "calendar_event"): "CALENDAR_EVENT",
+        ("google_workspace", "calendar_freebusy"): "CALENDAR_FREEBUSY",
+        ("github", "github_issue"): "GITHUB_ISSUE",
     }
     try:
         return tuple(
             dict.fromkeys(
-                mapping[(resource.source, resource.resource_type)]
+                mapping[(resource.connector_id, resource.resource_type)]
                 for resource in request.selected_resources
             )
         )
@@ -247,7 +248,7 @@ def _validate_candidate(value: object) -> Mapping[str, object]:
     for field in ("input_resource_types", "output_resource_types"):
         items = root.get(field)
         if not isinstance(items, list) or any(
-            item not in {"EMAIL", "TASK", "CALENDAR"} for item in items
+            item not in {"EMAIL", "TASK", "CALENDAR", "ISSUE"} for item in items
         ):
             raise ToolRouteValidationError(f"RouteResourceCandidateV1.{field} is invalid")
     effects = root.get("output_effects")
@@ -294,4 +295,6 @@ def _normalize_output_resource_type(coarse_resource: str, effect: EffectType) ->
             return "GMAIL_MESSAGE"
         if effect in {EffectType.CREATE, EffectType.UPDATE}:
             return "GMAIL_DRAFT"
+    if coarse_resource == "ISSUE":
+        return "GITHUB_ISSUE"
     return normalize_resource_type(coarse_resource)

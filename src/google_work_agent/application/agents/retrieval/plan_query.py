@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
-from google_work_agent.application.agents.retrieval.build_query import RouteConstraintPolicy
+from google_work_agent.application.agents.retrieval.build_query import (
+    RouteConstraintPolicy,
+    bind_required_container_constraints,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalConstraintKindV1,
     RetrievalQueryPlanV2,
@@ -64,9 +67,14 @@ def plan_query(
         output_schema,
     )
     try:
+        bound_output = bind_required_container_constraints(
+            result.structured_output,
+            route_policies=route_policies,
+            validated_container_refs=validated_container_refs,
+        )
         return (
             validate_retrieval_query_plan_v2(
-                result.structured_output,
+                bound_output,
                 frozen_routes=frozen_routes,
                 supported_constraint_kinds=supported_kinds,
                 validated_resource_refs=validated_resource_refs,
@@ -83,6 +91,7 @@ def plan_query(
             prompt_input=prompt_input,
             requested_mode=requested_mode,
             frozen_routes=frozen_routes,
+            route_policies=route_policies,
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
@@ -101,6 +110,7 @@ def _revise_plan_once(
     prompt_input: dict[str, object],
     requested_mode: RequestedModeV1,
     frozen_routes: Sequence[InputToolRouteV1],
+    route_policies: Mapping[str, RouteConstraintPolicy],
     supported_kinds: Mapping[str, frozenset[RetrievalConstraintKindV1]],
     validated_resource_refs: Mapping[str, Collection[str]] | None,
     validated_container_refs: Mapping[str, Collection[str]] | None,
@@ -141,9 +151,14 @@ def _revise_plan_once(
         },
         output_schema,
     )
+    bound_output = bind_required_container_constraints(
+        revision.structured_output,
+        route_policies=route_policies,
+        validated_container_refs=validated_container_refs,
+    )
     return (
         validate_retrieval_query_plan_v2(
-            revision.structured_output,
+            bound_output,
             frozen_routes=frozen_routes,
             supported_constraint_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
