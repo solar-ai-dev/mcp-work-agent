@@ -256,3 +256,19 @@ def test_gmail_read__with_required_information__uses_evidence_without_llm() -> N
         "sections": ["Gmail 자료에 명시된 결정 사항"],
         "evidence_refs": ["e-decision"],
     }
+
+
+def test_gmail_lookup__does_not_require_unrequested_timeline_analysis() -> None:
+    result = outline_answer(
+        user_request="김대리 일정 관련 메일 찾아줘.",
+        request_intent={
+            "requested_effect_hints": ["READ"],
+            "requested_resource_hints": ["GMAIL_THREAD"],
+            "analysis_requirement": "NONE",
+            "constraints": [],
+        },
+        work_analysis=None,
+        evidence=[{"evidence_id": "e-mail", "excerpt": "김철수 대리의 박람회 참석 안내"}],
+        invoke=lambda *_args: pytest.fail("Grounded Gmail outline does not need an LLM"),
+    )
+    assert result == {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]}

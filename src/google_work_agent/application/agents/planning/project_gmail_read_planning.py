@@ -44,22 +44,22 @@ def project_gmail_read_planning(
         return None
 
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
+    decision_requested = _decision_requested(user_request, requested_information)
+    analysis_required = request_intent.get("analysis_requirement") == "REQUIRED"
     if korean:
-        sections = ["요청한 Gmail 자료에 근거한 직접 답변"]
+        sections = ["찾은 메일"]
         sections.extend(f"확인할 내용: {item}" for item in requested_information)
-        sections.append(
-            "명시적으로 결정 또는 확정된 내용과 남은 불확실성"
-            if _decision_requested(user_request, requested_information)
-            else "관련 메일 간 시간 순서, 결정 사항과 남은 불확실성"
-        )
+        if decision_requested:
+            sections.append("명시적으로 결정 또는 확정된 내용과 남은 불확실성")
+        elif analysis_required:
+            sections.append("요청한 분석과 확인되지 않은 내용")
     else:
-        sections = ["Direct answer grounded in the retrieved Gmail messages"]
+        sections = ["Matching messages"]
         sections.extend(f"Requested information: {item}" for item in requested_information)
-        sections.append(
-            "Explicit decisions and remaining uncertainty"
-            if _decision_requested(user_request, requested_information)
-            else "Timeline, decisions, and remaining uncertainty across related messages"
-        )
+        if decision_requested:
+            sections.append("Explicit decisions and remaining uncertainty")
+        elif analysis_required:
+            sections.append("Requested analysis and unresolved information")
 
     return GmailReadPlanningProjection(
         outline={
