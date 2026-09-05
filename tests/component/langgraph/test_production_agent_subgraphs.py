@@ -505,6 +505,7 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
         timezone_provider=lambda: "Asia/Seoul",
         llm_runtime=llm,
         prompt_manifest_path=None,
@@ -526,8 +527,77 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     assert result["retrieval_result"]["coverage"] == "SUFFICIENT"
     assert result["retrieval_result"]["evidence_refs"]
     assert connector.call_count == 1
+    assert set(graph.get_graph().nodes) == {
+        "__start__", "__end__", "plan_query", "build_query", "execute_read",
+        "normalize_segments", "rag_retrieve", "select_evidence", "assess_sufficiency", "finalize",
+    }
+    assert all((node, "__end__") in _edge_set(graph) for node in (
+        "plan_query", "build_query", "execute_read", "normalize_segments", "rag_retrieve",
+        "select_evidence", "assess_sufficiency", "finalize",
+    ))
     assert ("assess_sufficiency", "plan_query") in _edge_set(graph)
     assert ("finalize", "finalize") in _edge_set(graph)
+
+
+@pytest.mark.parametrize("cancel_after, expected_reads, expected_prompts", [
+    ("retrieval.plan_query", 0, ["retrieval.plan_query"]),
+    ("connector", 1, ["retrieval.plan_query"]),
+    ("retrieval.select_evidence", 1, ["retrieval.plan_query", "retrieval.select_evidence"]),
+    ("retrieval.assess_sufficiency", 1, ["retrieval.plan_query", "retrieval.select_evidence",
+                                        "retrieval.assess_sufficiency"]),
+])
+def test_retrieval_cancellation_returns_to_main_without_another_external_call(
+    cancel_after: str, expected_reads: int, expected_prompts: list[str],
+) -> None:
+    from google_work_agent.adapters.langgraph.main.routing.route_after_context_retriever import (
+        route_after_context_retriever,
+    )
+
+    cancelled = False
+
+    class CancelAfterInference(_ComponentInferencePort):
+        def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
+            nonlocal cancelled
+            result = super()._response(prompt_id, projection)
+            if prompt_id == cancel_after:
+                cancelled = True
+            return result
+
+    class CancelAfterRead(_ComponentConnectorReadPort):
+        def execute_read(
+            self, binding: Any, arguments: Mapping[str, object],
+        ) -> ConnectorReadResultV1:
+            nonlocal cancelled
+            result = super().execute_read(binding, arguments)
+            if cancel_after == "connector":
+                cancelled = True
+            return result
+
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    llm = CancelAfterInference()
+    connector = CancelAfterRead()
+    graph = RetrievalSubgraph(
+        should_stop_for_cancel=lambda _run_id: cancelled,
+        now_ms=lambda: 1_000, timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm, prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision), evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector, tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(), confirm_inline=cast(Any, _confirm_early),
+    ).build()
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.call_count == expected_reads
+    assert llm.calls == expected_prompts
+    assert result.get("retrieval_result") is None  # No fabricated successful handoff.
+    assert route_after_context_retriever(
+        result, available_targets=frozenset({"end"}),
+        should_stop_for_cancel=lambda _run_id: cancelled,
+    ) == "end"  # Release the invocation for the existing cancellation command owner.
 
 
 def test_retrieval__three_details__preserve_one_search_round() -> None:
@@ -600,6 +670,7 @@ def test_retrieval__three_details__preserve_one_search_round() -> None:
     connector = DetailConnector()
     graph = RetrievalSubgraph(
         now_ms=lambda: run_start + 10_000,
+        should_stop_for_cancel=lambda _run_id: False,
         timezone_provider=lambda: "Asia/Seoul",
         llm_runtime=TemporalInference(),
         prompt_manifest_path=None,
@@ -651,6 +722,7 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     cache = InMemoryRunRetrievalCache()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
         timezone_provider=lambda: "Asia/Seoul",
         llm_runtime=llm,
         prompt_manifest_path=None,
@@ -705,6 +777,7 @@ def test_retrieval__unchanged_main_back_edge__closes_partial_without_a_second_re
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
         timezone_provider=lambda: "Asia/Seoul",
         llm_runtime=llm,
         prompt_manifest_path=None,
@@ -754,6 +827,7 @@ def test_retrieval__unchanged_local_followup__closes_partial_without_looping() -
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
         timezone_provider=lambda: "Asia/Seoul",
         llm_runtime=llm,
         prompt_manifest_path=None,

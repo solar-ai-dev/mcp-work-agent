@@ -530,6 +530,7 @@ class _WorkflowRuntimeComposition:
         self._finalize_cancel = services.finalize_cancel
         self._continue_cancel_resolution = services.continue_cancel_resolution
         entry_subgraphs = build_pre_analysis_subgraphs(
+            should_stop_for_cancel=self._should_stop_for_cancel,
             llm_runtime=self._llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,

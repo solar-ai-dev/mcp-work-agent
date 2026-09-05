@@ -47,6 +47,7 @@ def build_pre_analysis_subgraphs(
     id_factory: Callable[[], str],
     graph_profile: GraphProfile,
     transition_run: Callable[[str, str], None],
+    should_stop_for_cancel: Callable[[str], bool],
     merge_decision: Callable[..., Any],
     confirm_request_understanding_inline: Callable[
         [Any], tuple[ConfirmationResponseProjectionV1 | None, dict[str, object] | None]
@@ -88,6 +89,7 @@ def build_pre_analysis_subgraphs(
             confirm_inline=confirm_tool_route_inline,
         ),
         context_retrieval=RetrievalSubgraph(
+            should_stop_for_cancel=should_stop_for_cancel,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,

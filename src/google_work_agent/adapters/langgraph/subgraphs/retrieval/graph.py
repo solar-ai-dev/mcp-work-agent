@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -201,6 +202,7 @@ from .routing.route_after_plan_query import (
 from .routing.route_after_rag_retrieve_rerank import (
     route_after_rag_retrieve_rerank,
 )
+from .routing.route_after_retrieval_boundary import route_after_retrieval_boundary
 from .routing.route_after_select_evidence import (
     route_after_select_evidence,
 )
@@ -358,6 +360,7 @@ class RetrievalSubgraph:
         id_factory: Callable[[], str],
         graph_profile: GraphProfile,
         transition_run: Callable[[str, str], None],
+        should_stop_for_cancel: Callable[[str], bool],
         merge_decision: MergeDecision,
         evidence_store: RunScopedEvidenceStore,
         connector_reader: ConnectorReadPort,
@@ -385,6 +388,7 @@ class RetrievalSubgraph:
         self._id_factory = id_factory
         self._graph_profile = graph_profile
         self._transition_run = transition_run
+        self._should_stop_for_cancel = should_stop_for_cancel
         self._merge_decision = merge_decision
         self._evidence_store = evidence_store
         self._connector_reader = connector_reader
@@ -420,46 +424,26 @@ class RetrievalSubgraph:
         graph.add_node("assess_sufficiency", self._assess_sufficiency_node)
         graph.add_node("finalize", self._finalize_node)
         graph.add_edge(START, "plan_query")
-        graph.add_conditional_edges(
-            "plan_query",
-            route_after_plan_query,
-            {"build_query": "build_query"},
+        boundaries = (
+            ("plan_query", route_after_plan_query, ("build_query",)),
+            ("build_query", route_after_build_query, ("execute_read", "finalize")),
+            ("execute_read", route_after_execute_read, ("normalize_segments",)),
+            ("normalize_segments", route_after_normalize_segments, ("rag_retrieve",)),
+            ("rag_retrieve", route_after_rag_retrieve_rerank, ("select_evidence",)),
+            ("select_evidence", route_after_select_evidence, ("assess_sufficiency",)),
+            ("assess_sufficiency", route_after_assess_sufficiency, ("plan_query", "finalize")),
+            ("finalize", route_after_finalize_retrieval, ("finalize",)),
         )
-        graph.add_conditional_edges(
-            "build_query",
-            route_after_build_query,
-            {"execute_read": "execute_read", "finalize": "finalize"},
-        )
-        graph.add_conditional_edges(
-            "execute_read",
-            route_after_execute_read,
-            {"normalize_segments": "normalize_segments"},
-        )
-        graph.add_conditional_edges(
-            "normalize_segments",
-            route_after_normalize_segments,
-            {"rag_retrieve": "rag_retrieve"},
-        )
-        graph.add_conditional_edges(
-            "rag_retrieve",
-            route_after_rag_retrieve_rerank,
-            {"select_evidence": "select_evidence"},
-        )
-        graph.add_conditional_edges(
-            "select_evidence",
-            route_after_select_evidence,
-            {"assess_sufficiency": "assess_sufficiency"},
-        )
-        graph.add_conditional_edges(
-            "assess_sufficiency",
-            route_after_assess_sufficiency,
-            {"plan_query": "plan_query", "finalize": "finalize"},
-        )
-        graph.add_conditional_edges(
-            "finalize",
-            route_after_finalize_retrieval,
-            {"finalize": "finalize", "end": END},
-        )
+        for name, router, successors in boundaries:
+            graph.add_conditional_edges(
+                name,
+                partial(
+                    route_after_retrieval_boundary,
+                    normal_route=router,
+                    should_stop_for_cancel=self._should_stop_for_cancel,
+                ),
+                {**{target: target for target in successors}, "end": END},
+            )
         return graph.compile(name="retrieval_subgraph")
 
     def _initialize_state(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
@@ -1101,6 +1085,8 @@ class RetrievalSubgraph:
         page_calls = 0
         attempts = list(cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])))
         for plan in plans:
+            if self._should_stop_for_cancel(state["run_id"]):
+                break
             route = routes.get(plan["route_id"])
             if route is None:
                 raise RetrievalReadBindingError("retrieval plan route is not frozen")
