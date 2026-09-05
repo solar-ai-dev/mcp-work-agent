@@ -24,7 +24,9 @@ def test_rag_ranking__is_deterministic__and_prompt_free() -> None:
     ]
 
     assert [
-        item["segment_id"] for item in rag_retrieve_rerank(segments, request_intent=intent, top_k=2)
+        item["segment_id"] for item in rag_retrieve_rerank(
+            segments, request_intent=intent, source_plans=[], top_k=2
+        )
     ] == ["seg_a", "seg_b"]
 
 
@@ -51,7 +53,7 @@ def test_rag_ranking__does_not_score_the_whole_preserved_user_request() -> None:
         SourceSegment("seg_meeting", "h2", "GMAIL", "gmail_message", "m2", None, None, {}, "회의"),
     ]
 
-    result = rag_retrieve_rerank(segments, request_intent=intent, top_k=2)
+    result = rag_retrieve_rerank(segments, request_intent=intent, source_plans=[], top_k=2)
 
     assert result[0]["segment_id"] == "seg_meeting"
     assert result[1]["retrieval_score"] == 0.0

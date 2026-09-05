@@ -6,12 +6,17 @@ from collections.abc import Collection, Mapping
 from copy import deepcopy
 from typing import cast
 
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    CONCEPT_LITERAL_PATTERN,
+    CONCEPT_MANIFESTATION_LIMIT,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 _CONSTRAINT_KINDS = [
     "TEMPORAL_RANGE",
     "PARTICIPANT",
     "KEYWORD",
+    "CONCEPT",
     "RESOURCE_REF",
     "CONTAINER_REF",
     "STATUS_SCOPE",
@@ -23,6 +28,25 @@ _LOCAL_ISO_PATTERN = (
 
 _CONSTRAINT_SCHEMA = {
     "oneOf": [
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "concept", "manifestations"],
+            "properties": {
+                "kind": {"const": "CONCEPT"},
+                "concept": _NON_EMPTY_STRING,
+                "manifestations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": CONCEPT_MANIFESTATION_LIMIT,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string", "minLength": 1,
+                        "pattern": CONCEPT_LITERAL_PATTERN,
+                    },
+                },
+            },
+        },
         {
             "type": "object",
             "additionalProperties": False,

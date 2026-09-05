@@ -124,6 +124,13 @@ def preserve_vague_read_semantics(
             values=_search_topics(request_text),
             replace_existing=True,
         )
+        if "일정" in request_text:
+            _merge_constraint(
+                constraints,
+                kind="USER_REQUIREMENT",
+                field="business_concepts",
+                values=["일정"],
+            )
     _merge_constraint(
         constraints,
         kind="PERSON",

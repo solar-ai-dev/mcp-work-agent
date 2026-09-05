@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypedDict
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
+)
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    SourceFetchPlanV1,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 
@@ -35,12 +39,20 @@ def rag_retrieve_rerank(
     segments: list[SourceSegment],
     *,
     request_intent: RequestIntentV2,
+    source_plans: Sequence[SourceFetchPlanV1],
     top_k: int,
     config: RagScoringConfig = DEFAULT_RAG_SCORING_CONFIG,
 ) -> list[RagCandidateV1]:
     """Deterministically score, deduplicate, rank, and bound normalized segments."""
     selected = _selected_resource_ids(request_intent)
     terms = _query_terms(request_intent)
+    concept_terms = {
+        term.casefold()
+        for plan in source_plans
+        for constraint in plan["effective_constraints"]
+        if constraint["kind"] == "CONCEPT"
+        for term in constraint["manifestations"]
+    }
     scored: list[tuple[SourceSegment, float, list[str]]] = []
     seen: set[str] = set()
     for segment in segments:
@@ -59,6 +71,9 @@ def rag_retrieve_rerank(
         if matched:
             score += min(config.keyword_max_score, matched * config.keyword_score_per_term)
             reasons.append("KEYWORD_MATCH")
+        if any(term in segment.text.casefold() for term in concept_terms):
+            score += config.keyword_score_per_term
+            reasons.append("CONCEPT_MANIFESTATION_MATCH")
         scored.append((segment, score, reasons))
 
     ordered = sorted(scored, key=lambda item: (-item[1], item[0].segment_id))
@@ -79,8 +94,6 @@ def rag_retrieve_rerank(
         for segment, score, reasons in ordered
         if segment.segment_id in top_ids or segment.segment_id in forced
     ]
-
-
 def _selected_resource_ids(intent: RequestIntentV2) -> frozenset[str]:
     ids: set[str] = set()
     for constraint in intent["constraints"]:

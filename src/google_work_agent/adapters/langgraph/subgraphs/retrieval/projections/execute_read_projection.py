@@ -356,7 +356,9 @@ def _includes_status(plan: SourceFetchPlanV1, status: str) -> bool:
 def _gmail_query(plan: SourceFetchPlanV1) -> str:
     terms: list[str] = []
     for constraint in plan["effective_constraints"]:
-        if constraint["kind"] == "KEYWORD":
+        if constraint["kind"] == "CONCEPT":
+            terms.append("{" + " ".join(f'"{term}"' for term in constraint["manifestations"]) + "}")
+        elif constraint["kind"] == "KEYWORD":
             value = " ".join(constraint["terms"])
             if constraint["match_mode"] == "PHRASE":
                 terms.append(f'"{value}"')

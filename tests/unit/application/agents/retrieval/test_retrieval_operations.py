@@ -209,6 +209,7 @@ def test_rag_retrieve__rerank_forces__explicit_selected_resource() -> None:
     ranked = rag_retrieve_rerank(
         segments,
         request_intent=intent,
+        source_plans=[],
         top_k=1,
         config=RagScoringConfig(exact_resource_score=0.0),
     )

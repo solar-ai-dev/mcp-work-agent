@@ -7,6 +7,7 @@ Retrieval planner.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import Literal, Required, TypedDict, cast
@@ -20,6 +21,7 @@ RetrievalConstraintKindV1 = Literal[
     "TEMPORAL_RANGE",
     "PARTICIPANT",
     "KEYWORD",
+    "CONCEPT",
     "RESOURCE_REF",
     "CONTAINER_REF",
     "STATUS_SCOPE",
@@ -62,6 +64,14 @@ class KeywordConstraintV1(TypedDict):
     match_mode: Required[Literal["ANY", "ALL", "PHRASE"]]
 
 
+class ConceptConstraintV1(TypedDict):
+    """Bounded discovery alternatives, never claims about acquired resources."""
+
+    kind: Required[Literal["CONCEPT"]]
+    concept: Required[str]
+    manifestations: Required[list[str]]
+
+
 class ResourceRefConstraintV1(TypedDict):
     kind: Required[Literal["RESOURCE_REF"]]
     resource_refs: Required[list[str]]
@@ -81,6 +91,7 @@ SemanticRetrievalConstraintV1 = (
     TemporalRangeConstraintV1
     | ParticipantConstraintV1
     | KeywordConstraintV1
+    | ConceptConstraintV1
     | ResourceRefConstraintV1
     | ContainerRefConstraintV1
     | StatusScopeConstraintV1
@@ -148,8 +159,13 @@ class RetrievalV2ValidationError(ValueError):
 
 
 _KINDS = frozenset(
-    {"TEMPORAL_RANGE", "PARTICIPANT", "KEYWORD", "RESOURCE_REF", "CONTAINER_REF", "STATUS_SCOPE"}
+    {
+        "TEMPORAL_RANGE", "PARTICIPANT", "KEYWORD", "CONCEPT",
+        "RESOURCE_REF", "CONTAINER_REF", "STATUS_SCOPE",
+    }
 )
+CONCEPT_MANIFESTATION_LIMIT = 12
+CONCEPT_LITERAL_PATTERN = r'^[^\r\n:"{}()\\]+$'
 _FORBIDDEN_AUTHORITY_FIELDS = frozenset(
     {
         "provider_query",
@@ -430,6 +446,25 @@ def _validate_constraint(
             "kind": "KEYWORD",
             "terms": cast(list[str], constraint["terms"]),
             "match_mode": cast(Literal["ANY", "ALL", "PHRASE"], constraint["match_mode"]),
+        }
+    if kind == "CONCEPT":
+        _exact_keys(constraint, {"kind", "concept", "manifestations"}, "constraint")
+        manifestations = constraint["manifestations"]
+        if (
+            not _string(constraint["concept"])
+            or not _non_empty_strings(manifestations)
+            or not isinstance(manifestations, list)
+            or len(manifestations) > CONCEPT_MANIFESTATION_LIMIT
+            or len(set(manifestations)) != len(manifestations)
+            or any(not re.fullmatch(CONCEPT_LITERAL_PATTERN, term) for term in manifestations)
+        ):
+            raise RetrievalV2ValidationError(
+                "concept requires bounded unique literal manifestations"
+            )
+        return {
+            "kind": "CONCEPT",
+            "concept": cast(str, constraint["concept"]),
+            "manifestations": cast(list[str], manifestations),
         }
     if kind == "RESOURCE_REF":
         _exact_keys(constraint, {"kind", "resource_refs"}, "constraint")

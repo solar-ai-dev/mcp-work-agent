@@ -286,6 +286,7 @@ def _runtime_route_constraint_policies(
                 "TEMPORAL_RANGE",
                 "PARTICIPANT",
                 "KEYWORD",
+                "CONCEPT",
                 "RESOURCE_REF",
                 "CONTAINER_REF",
                 "STATUS_SCOPE",
@@ -301,10 +302,7 @@ def _runtime_route_constraint_policies(
                 supported_by_resource[coarse_resource_category(route["resource_type"])],
             ),
             required_kinds=(
-                frozenset({"KEYWORD"})
-                if coarse_resource_category(route["resource_type"]) == "EMAIL"
-                and "gmail_search_threads" in route["allowed_read_tool_ids"]
-                else frozenset({"CONTAINER_REF"})
+                frozenset({"CONTAINER_REF"})
                 if route["resource_type"] in {"TASK", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
                 else frozenset()
             ),
@@ -725,6 +723,7 @@ class RetrievalSubgraph:
                         "rag_retrieve_rerank": {
                             "segments": cast(list[Any], segments),
                             "request_intent": request_intent,
+                            "source_plans": list(state[CONTEXT_CANONICAL_PLANS_KEY].values()),
                             "top_k": 24,
                         }
                     }
