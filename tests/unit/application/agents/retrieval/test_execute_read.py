@@ -3,11 +3,15 @@ from typing import cast
 
 import pytest
 
+from google_work_agent.adapters.langgraph.subgraphs.retrieval.projections import (
+    execute_read_projection,
+)
 from google_work_agent.adapters.system.memory.run_retrieval_cache import InMemoryRunRetrievalCache
 from google_work_agent.application.agents.retrieval.build_query import (
     QueryUnchangedAfterFailureError,
     build_query_attempt,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.execute_read import (
     RetrievalReadBindingError,
@@ -25,6 +29,41 @@ from google_work_agent.ports.connector.contracts.validated_connector_tool_bindin
     ValidatedConnectorToolBindingV1,
 )
 from google_work_agent.ports.system.run_retrieval_cache_port import RunRetrievalCacheEntryV1
+
+
+@pytest.mark.parametrize(("output", "total", "count"), [
+    ({"items": [{"resource_id": "a"}, {"resource_id": "b"}]}, None, 2),
+    ({"items": [{"resource_id": "a"}]}, 1000, 1),
+    ({"items": []}, 1000, 0),
+    ({"item": {"resource_id": "a"}}, None, 1),
+    ({}, 1000, None),
+])
+def test_query_attempt_count_is_bounded_acquired_resources_not_provider_estimate(
+    output: dict[str, JsonValue], total: int | None, count: int | None,
+) -> None:
+    class Reader:
+        def execute_read(
+            self, binding: ValidatedConnectorToolBindingV1,
+            tool_arguments: dict[str, JsonValue],
+        ) -> ConnectorReadResultV1:
+            return ConnectorReadResultV1(1, binding.tool_id, "req", output, None, total)
+
+    plan: SourceFetchPlanV1 = {**_plan(), "operation_kind": "SEARCH"}
+    execution = execute_read(
+        plan=plan, run_id="run", binding=_binding(), tool_arguments={"query": "bounded"},
+        connector_reader=Reader(), read_result_cache=InMemoryRunRetrievalCache(),
+        read_result_handle="new", run_budget=build_default_run_budget(), now_ms=0,
+        prior_query_attempts=[],
+    )
+    assert execution.candidate_count == count
+    attempt = build_query_attempt(
+        query_attempt_id="attempt", run_id="run", plan=plan, round_no=0, attempt_no=0,
+        tool_id=_binding().tool_id, canonical_arguments={"query": "bounded"},
+        previous_query_hash=None, page_state_hash=None, candidate_count=execution.candidate_count,
+        stop_reason=execution.status,
+        prior_query_attempts=[], change_reason_code="USER_REQUEST",
+    )
+    assert attempt["candidate_count"] == count
 
 
 class _Reader:
@@ -113,11 +152,13 @@ def test_invalid_continuation__binding_prevents__provider_call(
 def test_detail_dispatch__charges_only_detail_dimension_and_honors_limit(
     detail_used: int, expected_calls: int
 ) -> None:
-    plan = {**_plan(), "operation_kind": "DETAIL_FETCH", "detail_candidate_ref": "gmail_thread:t"}
+    plan: SourceFetchPlanV1 = {
+        **_plan(), "operation_kind": "DETAIL_FETCH", "detail_candidate_ref": "gmail_thread:t",
+    }
     reader = _Reader()
     budget = build_default_run_budget()
     budget["detail_fetches_used"] = detail_used
-    arguments = dict(
+    arguments = execute_read_projection.ExecuteReadInput(
         plan=plan,
         run_id="run",
         binding=_binding(),
@@ -177,7 +218,9 @@ def test_exhausted_continuation__does_not__restart_provider_read() -> None:
 @pytest.mark.parametrize("operation", ["SEARCH", "DETAIL_FETCH", "NEXT_PAGE"])
 def test_repeated_read__blocked_before_provider_and_budget_charge(operation: str) -> None:
     plan = cast(SourceFetchPlanV1, {**_plan(), "operation_kind": operation})
-    args = {"query": "bounded"} if operation != "DETAIL_FETCH" else {"thread_id": "t1"}
+    args: dict[str, JsonValue] = (
+        {"query": "bounded"} if operation != "DETAIL_FETCH" else {"thread_id": "t1"}
+    )
     attempt = build_query_attempt(
         query_attempt_id="a1", run_id="run", plan=plan, round_no=0, attempt_no=0,
         tool_id="gmail_search_threads", canonical_arguments=args,
@@ -186,7 +229,7 @@ def test_repeated_read__blocked_before_provider_and_budget_charge(operation: str
         prior_query_attempts=[], change_reason_code="USER_REQUEST",
     )
     # A -> B -> A is not merely an immediate-repeat check.
-    different = {**attempt, "query_spec": {**attempt["query_spec"],
+    different: QueryAttemptV1 = {**attempt, "query_spec": {**attempt["query_spec"],
                  "canonical_arguments": {"query": "different"}}, "page_state_hash": "other"}
     prior = [attempt, different]
     if operation == "NEXT_PAGE":

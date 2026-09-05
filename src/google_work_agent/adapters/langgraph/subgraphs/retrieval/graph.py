@@ -1207,7 +1207,7 @@ class RetrievalSubgraph:
                         ]
                     ),
                     page_state_hash=(None if token is None else sha256(token.encode()).hexdigest()),
-                    candidate_count=execution.total_count,
+                    candidate_count=execution.candidate_count,
                     stop_reason=execution.status,
                     prior_query_attempts=attempts,
                     change_reason_code=next(

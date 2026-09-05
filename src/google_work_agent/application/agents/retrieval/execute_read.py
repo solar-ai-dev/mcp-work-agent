@@ -18,7 +18,11 @@ from google_work_agent.application.use_cases.run.consume_retrieval_read_budget i
     consume_retrieval_read_budget,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort, JsonValue
+from google_work_agent.ports.connector.connector_read_port import (
+    ConnectorReadPort,
+    ConnectorReadResultV1,
+    JsonValue,
+)
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
@@ -38,7 +42,7 @@ class RetrievalReadExecutionV1:
     status: Literal["COMPLETE", "EXHAUSTED"]
     read_result_handle: str
     tool_id: str
-    total_count: int | None
+    candidate_count: int | None
     provider_called: bool
 
 
@@ -81,7 +85,7 @@ def execute_read(
                 status="EXHAUSTED",
                 read_result_handle=entry.read_result_handle,
                 tool_id=entry.read_result.tool_id,
-                total_count=entry.read_result.total_count,
+                candidate_count=_candidate_count(entry.read_result),
                 provider_called=False,
             )
         if resolution.status != "FOUND" or resolution.entry is None:
@@ -124,9 +128,19 @@ def execute_read(
         status="COMPLETE",
         read_result_handle=read_result_handle,
         tool_id=result.tool_id,
-        total_count=result.total_count,
+        candidate_count=_candidate_count(result),
         provider_called=True,
     )
+
+
+def _candidate_count(result: ConnectorReadResultV1) -> int | None:
+    """Count this bounded read's resources, never the provider's total estimate."""
+    items = result.output.get("items")
+    if isinstance(items, list) and all(isinstance(item, dict) for item in items):
+        return len(items)
+    if isinstance(result.output.get("item"), dict):
+        return 1
+    return None
 
 
 def _validate_binding(
