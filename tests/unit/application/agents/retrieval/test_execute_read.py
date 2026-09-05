@@ -8,6 +8,10 @@ from google_work_agent.application.agents.retrieval.execute_read import (
     RetrievalReadBindingError,
     execute_read,
 )
+from google_work_agent.application.use_cases.run.consume_retrieval_read_budget import (
+    RetrievalReadBudgetExceeded,
+)
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.connector.connector_read_port import (
     ConnectorReadResultV1,
     JsonValue,
@@ -92,9 +96,42 @@ def test_invalid_continuation__binding_prevents__provider_call(
             connector_reader=reader,
             read_result_cache=cache,
             read_result_handle="new",
+            run_budget=build_default_run_budget(),
+            now_ms=0,
         )
 
     assert reader.calls == []
+
+
+@pytest.mark.parametrize("detail_used,expected_calls", [(0, 1), (12, 0)])
+def test_detail_dispatch__charges_only_detail_dimension_and_honors_limit(
+    detail_used: int, expected_calls: int
+) -> None:
+    plan = {**_plan(), "operation_kind": "DETAIL_FETCH", "detail_candidate_ref": "gmail_thread:t"}
+    reader = _Reader()
+    budget = build_default_run_budget()
+    budget["detail_fetches_used"] = detail_used
+    arguments = dict(
+        plan=plan,
+        run_id="run",
+        binding=_binding(),
+        tool_arguments={"thread_id": "t"},
+        connector_reader=reader,
+        read_result_cache=InMemoryRunRetrievalCache(),
+        read_result_handle="detail",
+        run_budget=budget,
+        now_ms=0,
+    )
+    if expected_calls:
+        execute_read(**arguments)
+    else:
+        with pytest.raises(RetrievalReadBudgetExceeded, match="DETAIL_FETCH_LIMIT"):
+            execute_read(**arguments)
+    assert len(reader.calls) == expected_calls
+    assert budget["detail_fetches_used"] == detail_used + expected_calls
+    assert budget["connector_calls_used"] == expected_calls
+    assert budget["source_page_calls_used"] == 0
+    assert budget["additional_retrieval_rounds_used"] == 0
 
 
 def test_exhausted_continuation__does_not__restart_provider_read() -> None:
@@ -120,6 +157,8 @@ def test_exhausted_continuation__does_not__restart_provider_read() -> None:
         connector_reader=reader,
         read_result_cache=cache,
         read_result_handle="new",
+        run_budget=build_default_run_budget(),
+        now_ms=0,
     )
 
     assert result.status == "EXHAUSTED"

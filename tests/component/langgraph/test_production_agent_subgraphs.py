@@ -533,6 +533,86 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     assert ("finalize", "finalize") in _edge_set(graph)
 
 
+def test_retrieval__three_details__preserve_one_search_round() -> None:
+    class DetailConnector:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def execute_read(self, binding: Any, arguments: dict[str, Any]) -> ConnectorReadResultV1:
+            self.calls.append((binding.tool_id, dict(arguments)))
+            ids = (
+                [arguments["thread_id"]]
+                if binding.tool_id == "gmail_get_thread"
+                else ["one", "two", "three"]
+            )
+            items = [
+                {
+                    "resource_type": "gmail_thread",
+                    "resource_id": resource_id,
+                    "parent_id": None,
+                    "version": "v1",
+                    "related_resource_ids": [],
+                    "payload": {
+                        "subject": f"Status {resource_id}",
+                        "body": f"Meeting September 3 {resource_id}",
+                    },
+                }
+                for resource_id in ids
+            ]
+            output = (
+                {"item": items[0]} if binding.tool_id == "gmail_get_thread" else {"items": items}
+            )
+            return ConnectorReadResultV1(
+                1, binding.tool_id, "detail-test", output, None, len(items)
+            )
+
+    state = _state(initial_target="context_retriever")
+    intent = _intent()
+    intent["requested_resource_hints"] = ["GMAIL_THREAD"]
+    intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": "EVENT_TIME"}]
+    state["request_intent"] = cast(Any, intent)
+    routes = _answer_route_plan(with_input_route=True)
+    cast(Any, routes)["input_plan"]["input_routes"][0]["allowed_read_tool_ids"].append(
+        "gmail_get_thread"
+    )
+    cast(Any, routes)["input_plan"]["input_routes"][0]["resource_type"] = "GMAIL_THREAD"
+    state["tool_route_plan"] = cast(Any, routes)
+    connector = DetailConnector()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state, config={"recursion_limit": 100})
+    assert result["retrieval_result"]["coverage"] == "SUFFICIENT"
+    assert result["retrieval_result"]["retrieval_rounds"] == 1
+    assert [tool for tool, _ in connector.calls] == [
+        "gmail_search_threads",
+        *["gmail_get_thread"] * 3,
+    ]
+    assert {args["thread_id"] for tool, args in connector.calls if tool == "gmail_get_thread"} == {
+        "one",
+        "two",
+        "three",
+    }
+    assert result["retry_budget"]["detail_fetches_used"] == 3
+    assert result["retry_budget"]["source_page_calls_used"] == 1
+    assert result["retry_budget"]["additional_retrieval_rounds_used"] == 0
+    assert {attempt["round_no"] for attempt in result["__context_query_attempts__"]} == {0}
+
+
 def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     state = _state(initial_target="context_retriever")
     state["request_intent"] = cast(Any, _intent())
@@ -711,12 +791,21 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     retrieval["evidence_refs"] = ["task-evidence"]
     state["retrieval_result"] = cast(Any, retrieval)
     evidence_store = RunScopedEvidenceStore()
-    evidence_store.put(run_id=state["run_id"], evidence_drafts=[{
-        "schema_version": 1, "evidence_id": "task-evidence",
-        "resource_handle": "task:existing", "segment_id": "task-segment",
-        "kind": "excerpt", "excerpt": "task-0 and task-1 are existing tasks",
-        "locator": {}, "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
-    }])
+    evidence_store.put(
+        run_id=state["run_id"],
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "task-evidence",
+                "resource_handle": "task:existing",
+                "segment_id": "task-segment",
+                "kind": "excerpt",
+                "excerpt": "task-0 and task-1 are existing tasks",
+                "locator": {},
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            }
+        ],
+    )
     llm = _ComponentInferencePort(work_fact_count=2)
     graph = WorkAnalysisSubgraph(
         llm_runtime=llm,

@@ -9,6 +9,10 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
 )
+from google_work_agent.application.use_cases.run.consume_retrieval_read_budget import (
+    consume_retrieval_read_budget,
+)
+from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort, JsonValue
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
@@ -42,6 +46,8 @@ def execute_read(
     connector_reader: ConnectorReadPort,
     read_result_cache: RunRetrievalCachePort,
     read_result_handle: str,
+    run_budget: RunBudgetV2,
+    now_ms: int,
 ) -> RetrievalReadExecutionV1:
     """Execute one registry-validated READ and keep its opaque continuation cache-local."""
     _validate_binding(plan, binding)
@@ -80,6 +86,12 @@ def execute_read(
             raise RetrievalReadBindingError("FOUND continuation entry has no page token")
         arguments["page_token"] = continuation
 
+    consume_retrieval_read_budget(
+        run_budget,
+        run_id=run_id,
+        is_detail=plan["operation_kind"] == "DETAIL_FETCH",
+        now_ms=now_ms,
+    )
     result = connector_reader.execute_read(binding, arguments)
     read_result_cache.put_read_result(
         RunRetrievalCacheEntryV1(

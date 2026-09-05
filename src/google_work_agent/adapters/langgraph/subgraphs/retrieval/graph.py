@@ -115,6 +115,9 @@ from google_work_agent.application.agents.retrieval.finalize_retrieval import (
     advance_current_round_no,
     initialize_current_round_no,
 )
+from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
+    deterministic_candidate_detail_plan,
+)
 from google_work_agent.application.agents.retrieval.plan_query import (
     DEFAULT_RETRIEVAL_BUDGET,
     deterministic_query_plan,
@@ -810,11 +813,21 @@ class RetrievalSubgraph:
             state, confirmation_response=None
         )
         tool_route_plan = _require_state_value(state["tool_route_plan"], "tool_route_plan")
+        detail_followup = deterministic_candidate_detail_plan(
+            prompt_input={
+                "current_round_no": state[CONTEXT_CURRENT_ROUND_NO_KEY],
+                "unresolved_sufficiency_issues": sufficiency_result["issues"],
+            },
+            frozen_routes=tool_route_plan["input_plan"]["input_routes"],
+            detail_candidate_refs=self._detail_candidate_refs(state),
+            attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
+        )
         sufficiency_result, retry_budget, should_plan_followup = authorize_retrieval_followup(
             sufficiency_result,
             request_intent=_require_state_value(state["request_intent"], "request_intent"),
             retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(state["evidence_drafts"]),
+            detail_fetch_count=len(detail_followup["route_queries"]) if detail_followup else 0,
             can_acquire_new_information=has_retrieval_followup_path(
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
                 tool_route_plan=tool_route_plan,
@@ -1067,18 +1080,24 @@ class RetrievalSubgraph:
             if state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True
             else advance_current_round_no(
                 current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
-                is_followup=bool(state.get(CONTEXT_FOLLOWUP_OPERATION_KEY)),
+                is_followup=state.get(CONTEXT_FOLLOWUP_OPERATION_KEY) in {"SEARCH", "NEXT_PAGE"},
             )
         )
         plans = cast(
             list[SourceFetchPlanV1],
-            list(state.get(CONTEXT_CANONICAL_PLANS_KEY, {}).values()),
+            [
+                state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
+                for route_id in _require_state_value(state.get("query_plan"), "query_plan")[
+                    "retrieval_order"
+                ]
+            ],
         )
         route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         routes = {route["route_id"]: route for route in route_plan["input_plan"]["input_routes"]}
         bindings = dict(cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {})))
         prior_results = self._resolve_cached_results(state, bindings=bindings)
         new_handles: list[str] = []
+        page_calls = 0
         attempts = list(cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])))
         for plan in plans:
             route = routes.get(plan["route_id"])
@@ -1137,12 +1156,16 @@ class RetrievalSubgraph:
                                 "connector_reader": self._connector_reader,
                                 "read_result_cache": self._read_result_cache,
                                 "read_result_handle": read_handle,
+                                "run_budget": state["retry_budget"],
+                                "now_ms": self._now_ms(),
                             }
                         }
                     },
                 )
             )
             execution = cast(Any, patch["read_execution"])
+            if execution.provider_called and plan["operation_kind"] != "DETAIL_FETCH":
+                page_calls += 1
             effective_handle = execution.read_result_handle
             if execution.status == "COMPLETE":
                 bindings[effective_handle] = {
@@ -1192,7 +1215,7 @@ class RetrievalSubgraph:
         )
         acquisition = project_acquisition_result(
             list(zip(plan_by_binding, raw_results, strict=True)),
-            remaining_budget=self._remaining_retrieval_budget(state, len(new_handles)),
+            remaining_budget=self._remaining_retrieval_budget(state, page_calls),
         )
         safe_acquisition = self._bounded_acquisition(acquisition)
         return cast(
@@ -1394,9 +1417,7 @@ class RetrievalSubgraph:
         working_state = self._ephemeral_raw_state(state)
         sufficiency, retry_budget, _ = authorize_retrieval_followup(
             cast(SufficiencyResultV2, working_state[CONTEXT_SUFFICIENCY_OUTPUT_KEY]),
-            request_intent=_require_state_value(
-                working_state["request_intent"], "request_intent"
-            ),
+            request_intent=_require_state_value(working_state["request_intent"], "request_intent"),
             retry_budget=cast(RunBudgetV2, working_state["retry_budget"]),
             evidence_supported_partial_possible=bool(working_state["evidence_drafts"]),
             can_acquire_new_information=False,

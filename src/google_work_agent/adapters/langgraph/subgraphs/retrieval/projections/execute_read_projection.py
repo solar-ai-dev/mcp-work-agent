@@ -14,6 +14,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
 from google_work_agent.ports.connector.connector_read_port import (
     ConnectorReadPort,
     ConnectorReadResultV1,
@@ -34,6 +35,8 @@ class ExecuteReadInput(TypedDict):
     connector_reader: ConnectorReadPort
     read_result_cache: RunRetrievalCachePort
     read_result_handle: str
+    run_budget: RunBudgetV2
+    now_ms: int
 
 
 def project_execute_read_input(state: Mapping[str, object]) -> ExecuteReadInput:

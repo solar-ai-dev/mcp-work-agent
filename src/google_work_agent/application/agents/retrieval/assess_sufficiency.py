@@ -137,9 +137,7 @@ def _remove_unowned_read_confirmations(
         or request_intent["ambiguity"]["requires_confirmation"]
     ):
         return result
-    issues = [
-        issue for issue in result["issues"] if issue["resolution_source"] != "USER"
-    ]
+    issues = [issue for issue in result["issues"] if issue["resolution_source"] != "USER"]
     return {"schema_version": 2, "status": result["status"], "issues": issues}
 
 
@@ -154,17 +152,17 @@ def _fail_closed_on_empty_required_acquisition(
     if (
         tool_route_plan is None
         or acquisition_result["status"] != "COMPLETE"
-        or not any(
-            route["required"] for route in tool_route_plan["input_plan"]["input_routes"]
-        )
+        or not any(route["required"] for route in tool_route_plan["input_plan"]["input_routes"])
     ):
         return result
     if evidence_drafts:
         required_sources = {
             _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
             for route in tool_route_plan["input_plan"]["input_routes"]
-            if route["required"] and not (
-                route["reason_codes"] and all(
+            if route["required"]
+            and not (
+                route["reason_codes"]
+                and all(
                     code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
                     for code in route["reason_codes"]
                 )
@@ -173,10 +171,13 @@ def _fail_closed_on_empty_required_acquisition(
         if not any(
             summaries and all(summary.get("resource_count") == 0 for summary in summaries)
             for source in required_sources
-            for summaries in [[
-                summary for summary in acquisition_result["source_summaries"]
-                if summary.get("source") == source
-            ]]
+            for summaries in [
+                [
+                    summary
+                    for summary in acquisition_result["source_summaries"]
+                    if summary.get("source") == source
+                ]
+            ]
         ):
             return result
     issue: SufficiencyIssueV2 = {
@@ -225,8 +226,6 @@ def _is_complete_selected_gmail_read(
     )
 
 
-
-
 # Preserved insufficient-data policy is owned by this sufficiency operation.
 
 
@@ -272,9 +271,7 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
         return InsufficientDataDisposition.BLOCKED
     if any(
         issue.safety_critical
-        and not (
-            context.read_only and issue.resolution_source is ResolutionSource.GOOGLE
-        )
+        and not (context.read_only and issue.resolution_source is ResolutionSource.GOOGLE)
         for issue in required
     ):
         return InsufficientDataDisposition.BLOCKED
@@ -542,6 +539,10 @@ def enforce_sufficiency_guard(
     read_only = all(effect == "READ" for effect in request_intent["requested_effect_hints"])
     budget_state = budget_state_prompt_projection(retry_budget)
     budget_remaining = cast(int, budget_state["additional_rounds_remaining"])
+    if any(issue["slot"] == "gmail_candidate_detail" for issue in sufficiency_result["issues"]):
+        budget_remaining = max(
+            0, retry_budget["max_detail_fetches"] - retry_budget["detail_fetches_used"]
+        )
     issues = tuple(
         InsufficientDataIssue(
             issue_type=issue["issue_type"],
@@ -590,7 +591,15 @@ def _require_gmail_candidate_details(
 
     if (
         tool_route_plan is None
-        or request_intent["analysis_requirement"] != "REQUIRED"
+        or not (
+            request_intent["analysis_requirement"] == "REQUIRED"
+            or any(
+                item["field"] == "temporal_axis"
+                and "EVENT_TIME"
+                in (item["value"] if isinstance(item["value"], list) else [item["value"]])
+                for item in request_intent["constraints"]
+            )
+        )
         or set(request_intent["requested_effect_hints"]) != {"READ"}
         or "GMAIL_THREAD" not in request_intent["requested_resource_hints"]
     ):
@@ -641,6 +650,7 @@ def authorize_retrieval_followup(
     retry_budget: RunBudgetV2,
     evidence_supported_partial_possible: bool,
     can_acquire_new_information: bool,
+    detail_fetch_count: int = 0,
 ) -> tuple[SufficiencyResultV2, RunBudgetV2, bool]:
     """Charge one owner-local follow-up or normalize an exhausted result.
 
@@ -654,16 +664,29 @@ def authorize_retrieval_followup(
     if sufficiency_result["status"] != "NEEDS_MORE_DATA":
         return sufficiency_result, retry_budget, False
     if not can_acquire_new_information:
-        read_only = all(
-            effect == "READ" for effect in request_intent["requested_effect_hints"]
-        )
+        read_only = all(effect == "READ" for effect in request_intent["requested_effect_hints"])
         return (
             {
                 "schema_version": 2,
-                "status": (
-                    "PARTIAL" if read_only else "BLOCKED"
-                ),
+                "status": ("PARTIAL" if read_only else "BLOCKED"),
                 "issues": sufficiency_result["issues"],
+            },
+            retry_budget,
+            False,
+        )
+    if detail_fetch_count > 0:
+        # Dispatch consumes DETAIL_FETCH. Hydration is not a semantic search round.
+        if (
+            detail_fetch_count
+            <= retry_budget["max_detail_fetches"] - retry_budget["detail_fetches_used"]
+        ):
+            return sufficiency_result, retry_budget, True
+        return (
+            {
+                **sufficiency_result,
+                "status": "PARTIAL"
+                if set(request_intent["requested_effect_hints"]) == {"READ"}
+                else "BLOCKED",
             },
             retry_budget,
             False,

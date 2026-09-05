@@ -157,7 +157,8 @@ def test_assess_sufficiency__complete_selected_gmail_read__skips_llm() -> None:
 @pytest.mark.parametrize("resource", ["TASK", "CALENDAR_EVENT"])
 @pytest.mark.parametrize("incomplete", [None, "failed_route", "missing_route", "source_request"])
 def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
-    resource: str, incomplete: str | None,
+    resource: str,
+    incomplete: str | None,
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
@@ -193,16 +194,20 @@ def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
     if resource == "TASK":
         routes = [
             {
-                "route_id": "task-route", "resource_type": "TASK",
+                "route_id": "task-route",
+                "resource_type": "TASK",
                 "connector_id": "google_workspace",
                 "allowed_read_tool_ids": ["tasks_list_tasks"],
-                "required": True, "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
             },
             {
-                "route_id": "list-route", "resource_type": "TASK_LIST",
+                "route_id": "list-route",
+                "resource_type": "TASK_LIST",
                 "connector_id": "google_workspace",
                 "allowed_read_tool_ids": ["tasks_list_tasklists"],
-                "required": True, "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
             },
         ]
     route_plan = _tool_route_plan(routes)
@@ -280,9 +285,7 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
     )
 
     assert result["status"] == "NEEDS_MORE_DATA"
-    assert result["issues"][-1]["reason_codes"] == [
-        "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
-    ]
+    assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"]
 
 
 def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence() -> None:
@@ -294,24 +297,41 @@ def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence() -
     intent = _intent()
     intent["requested_effect_hints"] = ["READ", "CREATE"]
     result = assess_sufficiency(
-        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
-        request_intent=intent, tool_route_plan=_tool_route_plan(),
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
         acquisition_result=acquisition,
-        evidence_drafts=[{
-            "schema_version": 1, "evidence_id": "e-task", "resource_handle": "task:existing",
-            "segment_id": "s-task", "kind": "excerpt", "excerpt": "기존 태스크",
-            "locator": {}, "reason_codes": ["SUPPORTS"],
-        }],
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e-task",
+                "resource_handle": "task:existing",
+                "segment_id": "s-task",
+                "kind": "excerpt",
+                "excerpt": "기존 태스크",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
         retry_budget=_run_budget(used=0),
     )
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"]
 
 
-def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_analysis() -> None:
+@pytest.mark.parametrize(
+    "analysis,axis,used",
+    [("REQUIRED", "MESSAGE_TIME", 0), ("NONE", "EVENT_TIME", 0), ("NONE", "EVENT_TIME", 2)],
+)
+def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_analysis(
+    analysis: str, axis: str, used: int
+) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
-    intent["analysis_requirement"] = "REQUIRED"
+    intent["analysis_requirement"] = analysis
+    intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": axis}]
     intent["requested_effect_hints"] = ["READ"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
     route_plan = _tool_route_plan(
@@ -348,12 +368,29 @@ def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_anal
         tool_route_plan=route_plan,
         acquisition_result=_acquisition_result(),
         evidence_drafts=evidence,
-        retry_budget=_run_budget(used=0),
+        retry_budget=_run_budget(used=used),
         attempted_detail_candidate_refs=["gmail_thread:first"],
     )
 
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][-1]["reason_codes"] == ["CANDIDATE_DETAIL_REQUIRED"]
+
+
+@pytest.mark.parametrize("detail_used,allowed", [(0, True), (12, False)])
+def test_detail_followup__does_not_charge_search_rounds(detail_used: int, allowed: bool) -> None:
+    budget = _run_budget(used=2)
+    budget["detail_fetches_used"] = detail_used
+    result, updated, followup = authorize_retrieval_followup(
+        _sufficiency_output("NEEDS_MORE_DATA"),
+        request_intent=_intent(),
+        retry_budget=budget,
+        evidence_supported_partial_possible=True,
+        can_acquire_new_information=True,
+        detail_fetch_count=1,
+    )
+    assert followup is allowed
+    assert updated == budget
+    assert result["status"] == ("NEEDS_MORE_DATA" if allowed else "PARTIAL")
 
 
 def test_assess_sufficiency__read_only_google_gap__cannot_block_candidate_detail() -> None:
