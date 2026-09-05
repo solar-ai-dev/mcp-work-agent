@@ -855,15 +855,9 @@ class RetrievalSubgraph:
             route_type = route["resource_type"].upper()
             refs: list[str] = []
             for item in selected_refs:
-                selected_type = f"{item.source}_{item.resource_type}".upper()
-                selected_type = {
-                    "TASKS_TASK": "TASK",
-                    "TASKS_TASK_LIST": "TASK_LIST",
-                    "CALENDAR_CALENDAR": "CALENDAR",
-                    "CALENDAR_EVENT": "CALENDAR_EVENT",
-                    "CALENDAR_FREEBUSY": "CALENDAR_FREEBUSY",
-                    "GITHUB_ISSUE": "GITHUB_ISSUE",
-                }.get(selected_type, selected_type)
+                if item.connector_id != route["connector_id"]:
+                    continue
+                selected_type = item.resource_type.upper()
                 if selected_type == route_type:
                     refs.append(f"{route_type.lower()}:{item.resource_id}")
             if refs:

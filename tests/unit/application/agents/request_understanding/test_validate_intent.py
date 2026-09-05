@@ -30,3 +30,54 @@ def test_validate_intent__unknown_schema__fails_closed() -> None:
     invalid["schema_version"] = 99
     with pytest.raises(RequestUnderstandingValidationError, match="schema_version"):
         validate_intent(invalid)
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {"source": "USER_REQUEST", "start_offset": 1, "end_offset": 10},
+        {"source": "USER_REQUEST", "start_offset": 0, "end_offset": 99},
+        {"source": "UNTRUSTED", "start_offset": 0, "end_offset": 10},
+    ],
+)
+def test_validate_intent__rejects_forged__repository_provenance(
+    provenance: dict[str, object],
+) -> None:
+    repository = "acme/repo"
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "RESOURCE",
+            "field": "repository",
+            "value": repository,
+            "provenance": provenance,
+        }
+    ]
+
+    with pytest.raises(RequestUnderstandingValidationError, match="provenance"):
+        validate_intent(
+            candidate,
+            provenance_sources={"USER_REQUEST": repository},
+        )
+
+
+def test_validate_intent__rejects_forged_repository_value__against_exact_span() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "RESOURCE",
+            "field": "repository",
+            "value": "evil/repo",
+            "provenance": {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": len("acme/repo"),
+            },
+        }
+    ]
+
+    with pytest.raises(RequestUnderstandingValidationError, match="does not match source"):
+        validate_intent(
+            candidate,
+            provenance_sources={"USER_REQUEST": "acme/repo"},
+        )

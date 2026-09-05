@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
 from google_work_agent.application.agents.request_understanding.identify_goal import identify_goal
@@ -39,6 +40,39 @@ def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> Non
     }
     prompt = cast(PromptReference, runtime.calls[0]["prompt_ref"])
     assert prompt.prompt_id == "request_understanding.identify_goal"
+
+
+def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "List issues",
+                "completion_conditions": ["Issues are listed"],
+                "constraints": [
+                    {
+                        "kind": "RESOURCE",
+                        "field": "repository",
+                        "value": "openai/codex",
+                        "provenance": {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 12,
+                        },
+                    }
+                ],
+                "requested_effect_hints": ["READ"],
+                "requested_resource_hints": ["GITHUB_ISSUE"],
+                "analysis_requirement": "REQUIRED",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("List issues in openai/codex"),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
 
 
 def _request(text: str) -> WorkflowStartRequest:

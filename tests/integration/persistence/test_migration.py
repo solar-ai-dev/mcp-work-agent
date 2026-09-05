@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from shutil import copyfile
 
@@ -30,6 +31,13 @@ LEGACY_ADOPTION_MIGRATION = (
 )
 DOCUMENTATION_LEGACY_ADOPTION_MIGRATION = (
     ROOT / "docs/database/migrations/0019_legacy_v18_adoption.sql"
+)
+GITHUB_RESOURCE_MIGRATION = (
+    ROOT
+    / "src/google_work_agent/adapters/persistence/migrations/0020_github_resource_registration.sql"
+)
+DOCUMENTATION_GITHUB_RESOURCE_MIGRATION = (
+    ROOT / "docs/database/migrations/0020_github_resource_registration.sql"
 )
 
 LEGACY_V18_RECEIPTS = {
@@ -130,10 +138,14 @@ def test_runtime_and__documentation_expose__identical_forward_migrations() -> No
     assert DOCUMENTATION_LEGACY_ADOPTION_MIGRATION.read_bytes().replace(
         b"\r\n", b"\n"
     ) == LEGACY_ADOPTION_MIGRATION.read_bytes().replace(b"\r\n", b"\n")
+    assert DOCUMENTATION_GITHUB_RESOURCE_MIGRATION.read_bytes().replace(
+        b"\r\n", b"\n"
+    ) == GITHUB_RESOURCE_MIGRATION.read_bytes().replace(b"\r\n", b"\n")
     migrations = discover_migrations()
     assert [(item.version, item.name) for item in migrations] == [
         (1, "current_schema"),
         (19, "legacy_v18_adoption"),
+        (20, "github_resource_registration"),
     ]
     assert migrations[0].checksum == calculate_migration_checksum(runtime)
 
@@ -145,6 +157,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
         assert [(result.version, result.name, result.applied) for result in results] == [
             (1, "current_schema", True),
             (19, "legacy_v18_adoption", True),
+            (20, "github_resource_registration", True),
         ]
         tables = {
             str(row[0])
@@ -169,7 +182,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
         assert connection.execute("PRAGMA foreign_key_check;").fetchall() == []
 
         replay = apply_migrations(connection, now_ms=lambda: 999)
-        assert len(replay) == 2
+        assert len(replay) == 3
         assert all(result.applied is False for result in replay)
         receipt = connection.execute(
             "SELECT version, name, applied_at_ms FROM schema_migrations;"
@@ -262,6 +275,72 @@ def test_failed_followup__migration_rolls_back__without_partial_schema(tmp_path:
         connection.close()
 
 
+def test_github_resource_registration__extends_existing_fk__and_replays_idempotently(
+    tmp_path: Path,
+) -> None:
+    migration_dir = tmp_path / "migrations"
+    migration_dir.mkdir()
+    copyfile(RUNTIME_MIGRATION, migration_dir / RUNTIME_MIGRATION.name)
+    copyfile(LEGACY_ADOPTION_MIGRATION, migration_dir / LEGACY_ADOPTION_MIGRATION.name)
+    connection = connect_sqlite(tmp_path / "github-registration.db")
+    try:
+        apply_migrations(connection, migrations_dir=migration_dir, now_ms=lambda: 1)
+        connection.execute(
+            "INSERT INTO google_accounts VALUES ('account-1', 'u@example.com', NULL, 1, NULL);"
+        )
+        connection.execute(
+            "INSERT INTO conversations VALUES ('conversation-1', 'account-1', 'Test', 1, 1);"
+        )
+        connection.execute(
+            """INSERT INTO runs (
+                   id, conversation_id, entry_mode, status, langgraph_thread_id,
+                   requested_mode, budget_json, version, started_at_ms
+               ) VALUES ('run-1', 'conversation-1', 'RESOURCE_SELECTED', 'CREATED',
+                         'thread-1', 'AUTO', '{}', 0, 1);"""
+        )
+        connection.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """INSERT INTO resource_refs (
+                       id, run_id, connector_id, resource_type, resource_id,
+                       parent_resource_id, metadata_json, captured_at_ms
+                   ) VALUES ('before-20', 'run-1', 'github', 'github_issue',
+                             'acme/repo#7', 'acme/repo', '{}', 1);"""
+            )
+
+        copyfile(GITHUB_RESOURCE_MIGRATION, migration_dir / GITHUB_RESOURCE_MIGRATION.name)
+        applied = apply_migrations(connection, migrations_dir=migration_dir, now_ms=lambda: 2)
+        assert [(item.version, item.applied) for item in applied] == [
+            (1, False),
+            (19, False),
+            (20, True),
+        ]
+        connection.execute(
+            """INSERT INTO resource_refs (
+                   id, run_id, connector_id, resource_type, resource_id,
+                   parent_resource_id, metadata_json, captured_at_ms
+               ) VALUES ('after-20', 'run-1', 'github', 'github_issue',
+                         'acme/repo#7', 'acme/repo', '{}', 2);"""
+        )
+        connection.commit()
+        assert tuple(
+            connection.execute(
+                "SELECT connector_id, resource_type, resource_id, parent_resource_id "
+                "FROM resource_refs WHERE id='after-20';"
+            ).fetchone()
+        ) == ("github", "github_issue", "acme/repo#7", "acme/repo")
+        assert all(
+            not item.applied
+            for item in apply_migrations(
+                connection,
+                migrations_dir=migration_dir,
+                now_ms=lambda: 3,
+            )
+        )
+    finally:
+        connection.close()
+
+
 def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
     tmp_path: Path,
 ) -> None:
@@ -287,6 +366,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
         assert [(result.version, result.applied) for result in results] == [
             (1, False),
             (19, True),
+            (20, True),
         ]
         assert (
             connection.execute(
@@ -297,7 +377,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
         receipts = connection.execute(
             "SELECT version, name, checksum FROM schema_migrations ORDER BY version;"
         ).fetchall()
-        assert [int(row[0]) for row in receipts] == [*range(1, 19), 19]
+        assert [int(row[0]) for row in receipts] == [*range(1, 21)]
     finally:
         connection.close()
 

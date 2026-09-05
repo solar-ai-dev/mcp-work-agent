@@ -242,7 +242,8 @@ def initial_graph_state(
             "user_request": request.request_text,
             "selected_resource_refs": [
                 {
-                    "source": item.source,
+                    "resource_ref_id": item.resource_ref_id,
+                    "connector_id": item.connector_id,
                     "resource_type": item.resource_type,
                     "resource_id": item.resource_id,
                     "parent_resource_id": item.parent_resource_id,
@@ -302,6 +303,7 @@ def _resource_handle_for_ref(resource_ref: ResourceRefRecord) -> str:
         "calendar",
         "calendar_event",
         "calendar_freebusy",
+        "github_issue",
     }:
         raise LookupError(f"unsupported persisted resource reference: {resource_ref.id}")
     return f"{resource_ref.resource_type}:{resource_ref.resource_id}"
@@ -361,11 +363,14 @@ def request_from_run_input_state(state: Mapping[str, object]) -> WorkflowStartRe
     for index, raw_ref in enumerate(raw_refs):
         if not isinstance(raw_ref, Mapping):
             raise TypeError(f"run_input.selected_resource_refs[{index}] must be an object")
-        source = raw_ref.get("source")
+        resource_ref_id = raw_ref.get("resource_ref_id")
+        connector_id = raw_ref.get("connector_id")
         resource_type = raw_ref.get("resource_type")
         resource_id = raw_ref.get("resource_id")
         parent_resource_id = raw_ref.get("parent_resource_id")
-        if not isinstance(source, str) or not source:
+        if not isinstance(resource_ref_id, str) or not resource_ref_id:
+            raise ValueError(f"run_input.selected_resource_refs[{index}] is incomplete")
+        if not isinstance(connector_id, str) or not connector_id:
             raise ValueError(f"run_input.selected_resource_refs[{index}] is incomplete")
         if not isinstance(resource_type, str) or not resource_type:
             raise ValueError(f"run_input.selected_resource_refs[{index}] is incomplete")
@@ -377,7 +382,8 @@ def request_from_run_input_state(state: Mapping[str, object]) -> WorkflowStartRe
             )
         selected_resources.append(
             SelectedResourceRef(
-                source=source,
+                resource_ref_id=resource_ref_id,
+                connector_id=connector_id,
                 resource_type=resource_type,
                 resource_id=resource_id,
                 parent_resource_id=parent_resource_id,

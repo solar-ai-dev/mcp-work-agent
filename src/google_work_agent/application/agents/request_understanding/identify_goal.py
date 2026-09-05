@@ -95,7 +95,8 @@ def identify_goal(
         "user_request": request.request_text,
         "selected_resource_refs": [
             {
-                "source": ref.source,
+                "resource_ref_id": ref.resource_ref_id,
+                "connector_id": ref.connector_id,
                 "resource_type": ref.resource_type,
                 "resource_id": ref.resource_id,
                 "parent_resource_id": ref.parent_resource_id,

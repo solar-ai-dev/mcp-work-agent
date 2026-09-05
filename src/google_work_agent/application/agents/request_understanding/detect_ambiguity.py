@@ -6,6 +6,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     AmbiguityV1,
     RequestGoalCandidateV1,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    repository_authority_requires_confirmation,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
     load_prompt_reference,
@@ -61,7 +64,34 @@ def detect_ambiguity(
         prompt_input,
         DETECT_AMBIGUITY_OUTPUT_SCHEMA,
     )
-    return _validate_ambiguity(result.structured_output)
+    ambiguity = _validate_ambiguity(result.structured_output)
+    confirmation_text = _confirmation_response_text(confirmation_response)
+    if not repository_authority_requires_confirmation(
+        goal_candidate["constraints"],
+        user_request=request.request_text,
+        confirmation_response_text=confirmation_text,
+        selected_resources=request.selected_resources,
+    ):
+        return ambiguity
+    reason_codes = list(ambiguity["reason_codes"])
+    missing_fields = list(ambiguity["missing_fields"])
+    if "MISSING_TARGET" not in reason_codes:
+        reason_codes.append("MISSING_TARGET")
+    if "repository" not in missing_fields:
+        missing_fields.append("repository")
+    return {
+        "requires_confirmation": True,
+        "reason_codes": reason_codes,
+        "missing_fields": missing_fields,
+    }
+
+
+def _confirmation_response_text(
+    value: ConfirmationResponseProjectionV1 | None,
+) -> str | None:
+    if value is None:
+        return None
+    return value["selected_option"] or value["free_text"]
 
 
 def _validate_ambiguity(value: object) -> AmbiguityV1:
