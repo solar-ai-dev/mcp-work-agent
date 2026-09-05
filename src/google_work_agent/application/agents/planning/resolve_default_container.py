@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from typing import Literal, Required, TypedDict, cast
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+)
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    RequestUnderstandingValidationError,
+    validated_repository_authority,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     OutputToolRouteV1,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 JsonObject = dict[str, object]
 
@@ -45,6 +53,10 @@ _CONTAINER_ARGUMENT_BY_TOOL = {
     "calendar_create_event": "calendar_id",
     "calendar_update_event": "calendar_id",
     "calendar_delete_event": "calendar_id",
+    "github_create_issue": "repository",
+    "github_update_issue": "repository",
+    "github_close_issue": "repository",
+    "github_reopen_issue": "repository",
 }
 
 
@@ -53,6 +65,8 @@ def resolve_default_container(
     route: OutputToolRouteV1,
     selected_tool_schema: Mapping[str, object],
     explicit_container_id: str | None = None,
+    request_intent: RequestIntentV2 | None = None,
+    selected_resources: Sequence[SelectedResourceRef] = (),
     default_tasklist_id_provider: Callable[[], str | None] | None = None,
     default_calendar_id_provider: Callable[[], str | None] | None = None,
 ) -> BoundSelectedToolSchemaV1:
@@ -63,13 +77,19 @@ def resolve_default_container(
     argument_name = _CONTAINER_ARGUMENT_BY_TOOL.get(tool_id)
     immutable_arguments: dict[str, object] = {}
     if argument_name is not None:
-        container_id = _normalized(explicit_container_id)
-        if container_id is None:
-            provider = (
-                default_tasklist_id_provider
-                if argument_name == "task_list_id"
-                else default_calendar_id_provider
+        container_id = (
+            _validated_repository(
+                request_intent,
+                selected_resources=selected_resources,
             )
+            if argument_name == "repository"
+            else _normalized(explicit_container_id)
+        )
+        if container_id is None:
+            provider = {
+                "task_list_id": default_tasklist_id_provider,
+                "calendar_id": default_calendar_id_provider,
+            }.get(argument_name)
             container_id = None if provider is None else _normalized(provider())
         if container_id is None:
             raise RequiredContainerUnresolvedError(
@@ -89,6 +109,22 @@ def resolve_default_container(
         "argument_schema": schema,
         "immutable_arguments": immutable_arguments,
     }
+
+
+def _validated_repository(
+    request_intent: RequestIntentV2 | None,
+    *,
+    selected_resources: Sequence[SelectedResourceRef],
+) -> str | None:
+    if request_intent is None:
+        return None
+    try:
+        return validated_repository_authority(
+            request_intent,
+            selected_resources=selected_resources,
+        )
+    except RequestUnderstandingValidationError as error:
+        raise PlanningArgumentBindingError(str(error)) from error
 
 
 def _bind_const(schema: JsonObject, name: str, value: str) -> JsonObject:

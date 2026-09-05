@@ -1,6 +1,6 @@
 """Look up an uncertain external result without issuing a Write."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from json import dumps, loads
 from typing import Literal, cast
@@ -21,7 +21,11 @@ from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
 )
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort, JsonValue
+from google_work_agent.ports.connector.connector_read_port import (
+    ConnectorReadPort,
+    ConnectorReadResultV1,
+    JsonValue,
+)
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
@@ -36,6 +40,8 @@ class LookupUnknownResultQueryV1:
     effect: Literal["CREATE", "UPDATE", "DELETE", "SEND"]
     recovery_fingerprint: str
     target_resource_ref: SelectedResourceRefV1 | None
+    tool_name: str | None = None
+    approved_arguments: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +81,9 @@ class LookupUnknownResultHandler:
         connector_read: ConnectorReadPort,
         tool_registry: SignedToolRegistry,
         recovery_search_binding: ValidatedConnectorToolBindingV1,
+        recovery_search_bindings: Mapping[
+            str, ValidatedConnectorToolBindingV1
+        ] | None = None,
         connector_id: str = "google_workspace",
         unit_of_work_factory: Callable[[], UnitOfWork] | None = None,
         now_ms: Callable[[], int] = lambda: 0,
@@ -84,6 +93,10 @@ class LookupUnknownResultHandler:
         if recovery_search_binding.tool_id != "search_by_recovery_fingerprint":
             raise ValueError("recovery search binding must own fingerprint lookup")
         self._recovery_search_binding = recovery_search_binding
+        self._recovery_search_bindings = {
+            recovery_search_binding.connector_id: recovery_search_binding,
+            **dict(recovery_search_bindings or {}),
+        }
         self._connector_id = connector_id
         self._unit_of_work_factory = unit_of_work_factory
         self._now_ms = now_ms
@@ -135,6 +148,8 @@ class LookupUnknownResultHandler:
                 effect=effect,
                 recovery_fingerprint=approval.recovery_fingerprint,
                 target_resource_ref=target,
+                tool_name=action.tool_name,
+                approved_arguments=arguments,
             ),
             tool_name=action.tool_name,
             arguments=arguments,
@@ -160,14 +175,27 @@ class LookupUnknownResultHandler:
 
     def _lookup(self, query: LookupUnknownResultQueryV1) -> UnknownResultLookupResultV1:
         strategy, tool_id, arguments = self._request(query)
+        connector_id = (
+            self._connector_id
+            if query.target_resource_ref is None
+            else query.target_resource_ref.connector_id
+        )
         try:
             binding = (
-                self._recovery_search_binding
+                self._recovery_search_bindings[connector_id]
                 if tool_id == "search_by_recovery_fingerprint"
-                else self._tool_registry.bind_required(self._connector_id, tool_id, "READ")
+                else self._tool_registry.bind_required(connector_id, tool_id, "READ")
             )
             result = self._connector_read.execute_read(binding, arguments)
         except ConnectorOperationFailure as error:
+            if connector_id == "github":
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED",
+                    strategy,
+                    [],
+                    [],
+                    [f"RECOVERY_READ_{error.code.value}"],
+                )
             if error.code is ConnectorFailureCode.NOT_FOUND and strategy == "GET_TARGET":
                 if query.effect == "DELETE" and query.target_resource_ref is not None:
                     return UnknownResultLookupResultV1(
@@ -185,6 +213,12 @@ class LookupUnknownResultHandler:
                     ["TARGET_NOT_FOUND"],
                 )
             raise
+        if connector_id == "github":
+            return self._github_lookup_result(
+                query=query,
+                strategy=strategy,
+                result=result,
+            )
         if strategy == "GET_TARGET" and query.effect == "DELETE":
             return UnknownResultLookupResultV1(
                 "MUTATION_NOT_FOUND",
@@ -229,6 +263,120 @@ class LookupUnknownResultHandler:
             [result.request_id],
             reason_codes,
         )
+
+    def _github_lookup_result(
+        self,
+        *,
+        query: LookupUnknownResultQueryV1,
+        strategy: Literal["RESOURCE_SEARCH", "GET_TARGET", "MESSAGE_SEARCH"],
+        result: ConnectorReadResultV1,
+    ) -> UnknownResultLookupResultV1:
+        output = result.output
+        evidence = [result.request_id]
+        if strategy == "RESOURCE_SEARCH":
+            candidates = self._candidate_ids(
+                output,
+                recovery_fingerprint=query.recovery_fingerprint,
+            )
+            if output.get("coverage_complete") is not True:
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED", strategy, candidates, evidence, ["SEARCH_COVERAGE_INCOMPLETE"]
+                )
+            if len(candidates) != 1:
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED",
+                    strategy,
+                    candidates,
+                    evidence,
+                    ["NO_MATCH" if not candidates else "AMBIGUOUS_MATCHES"],
+                )
+            repository, issue_number = _github_resource_identity(candidates[0])
+            try:
+                get_result = self._connector_read.execute_read(
+                    self._tool_registry.bind_required(
+                        "github", "github_get_issue", "READ"
+                    ),
+                    {"repository": repository, "issue_number": issue_number},
+                )
+            except ConnectorOperationFailure as error:
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED",
+                    strategy,
+                    candidates,
+                    evidence,
+                    [f"RECOVERY_GET_{error.code.value}"],
+                )
+            if not self._github_expected_matches(query, get_result.output):
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED",
+                    strategy,
+                    candidates,
+                    evidence + [get_result.request_id],
+                    ["TARGET_EXISTS_WITHOUT_MUTATION_PROOF"],
+                )
+            return UnknownResultLookupResultV1(
+                "MUTATION_FOUND",
+                strategy,
+                candidates,
+                evidence + [get_result.request_id],
+                ["SINGLE_MATCH_GET_COMPARE"],
+            )
+        candidates = self._candidate_ids(output)
+        if self._github_expected_matches(query, output):
+            return UnknownResultLookupResultV1(
+                "MUTATION_FOUND", strategy, candidates, evidence, ["GET_COMPARE_MATCH"]
+            )
+        return UnknownResultLookupResultV1(
+            "UNRESOLVED",
+            strategy,
+            candidates,
+            evidence,
+            ["TARGET_STATE_AMBIGUOUS"],
+        )
+
+    def _github_expected_matches(
+        self,
+        query: LookupUnknownResultQueryV1,
+        output: dict[str, JsonValue],
+    ) -> bool:
+        tool_name = query.tool_name
+        arguments = query.approved_arguments
+        if tool_name is None or arguments is None:
+            if self._unit_of_work_factory is None:
+                return False
+            with self._unit_of_work_factory() as unit_of_work:
+                action = unit_of_work.actions.get(query.action_id)
+            if action is None:
+                return False
+            tool_name = action.tool_name
+            arguments = cast(dict[str, object], loads(action.arguments_json))
+        item = output.get("item", output)
+        if not isinstance(item, dict):
+            return False
+        payload = item.get("payload", item)
+        if not isinstance(payload, dict):
+            return False
+        if tool_name in {"github_create_issue", "github_update_issue"}:
+            if "title" in arguments and payload.get("title") != arguments["title"]:
+                return False
+            if "body" in arguments:
+                actual_body = payload.get("description")
+                if tool_name == "github_create_issue" and isinstance(
+                    actual_body, str
+                ):
+                    marker = (
+                        "<!-- gwa-recovery-fingerprint:"
+                        f"{query.recovery_fingerprint} -->"
+                    )
+                    actual_body = actual_body.removesuffix(f"\n\n{marker}")
+                if actual_body != arguments["body"]:
+                    return False
+            return True
+        if tool_name == "github_close_issue":
+            return payload.get("state") == "CLOSED"
+        if tool_name == "github_reopen_issue":
+            return payload.get("state") == "OPEN"
+        return False
 
     def _load_proof(
         self,
@@ -317,6 +465,12 @@ class LookupUnknownResultHandler:
             query.effect != action.effect_type
             or query.recovery_fingerprint != binding.approval.recovery_fingerprint
             or (expected_target_id is not None and supplied_target_id != expected_target_id)
+            or (query.tool_name is not None and query.tool_name != action.tool_name)
+            or (
+                query.approved_arguments is not None
+                and query.approved_arguments
+                != cast(dict[str, object], loads(action.arguments_json))
+            )
         ):
             raise ValueError("unknown-result query does not match persisted execution binding")
 
@@ -336,6 +490,17 @@ class LookupUnknownResultHandler:
         if query.effect == "CREATE":
             if target is None:
                 raise ValueError("create recovery requires a resource type")
+            if target.connector_id == "github":
+                if target.parent_resource_id is None:
+                    raise ValueError("GitHub create recovery requires repository identity")
+                return (
+                    "RESOURCE_SEARCH",
+                    "search_by_recovery_fingerprint",
+                    {
+                        "repository": target.parent_resource_id,
+                        "recovery_fingerprint": query.recovery_fingerprint,
+                    },
+                )
             return (
                 "RESOURCE_SEARCH",
                 "search_by_recovery_fingerprint",
@@ -348,6 +513,16 @@ class LookupUnknownResultHandler:
             if target is None:
                 raise ValueError("targeted recovery requires a resource reference")
             resource_type = target.resource_type.upper()
+            if resource_type == "GITHUB_ISSUE" and target.parent_resource_id is not None:
+                _, issue_number = _github_resource_identity(target.resource_id)
+                return (
+                    "GET_TARGET",
+                    "github_get_issue",
+                    {
+                        "repository": target.parent_resource_id,
+                        "issue_number": issue_number,
+                    },
+                )
             if resource_type == "TASK" and target.parent_resource_id is not None:
                 return (
                     "GET_TARGET",
@@ -448,6 +623,9 @@ def _create_recovery_search_scope(
     elif tool_name == "gmail_create_draft":
         parent_id = "gmail"
         resource_type = "gmail_draft"
+    elif tool_name == "github_create_issue":
+        parent_id = arguments.get("repository")
+        resource_type = "github_issue"
     else:
         return None
     if not isinstance(parent_id, str) or not parent_id:
@@ -455,11 +633,22 @@ def _create_recovery_search_scope(
     return SelectedResourceRefV1(
         schema_version=1,
         resource_ref_id="recovery-search-scope",
-        connector_id="google_workspace",
+        connector_id=("github" if tool_name == "github_create_issue" else "google_workspace"),
         resource_type=resource_type,
         resource_id="recovery-search-scope",
         parent_resource_id=parent_id,
     )
+
+
+def _github_resource_identity(resource_id: str) -> tuple[str, int]:
+    try:
+        repository, raw_number = resource_id.rsplit("#", 1)
+        issue_number = int(raw_number)
+    except (ValueError, TypeError) as error:
+        raise ValueError("GitHub issue resource identity is invalid") from error
+    if len(repository.split("/")) != 2 or issue_number < 1:
+        raise ValueError("GitHub issue resource identity is invalid")
+    return repository, issue_number
 
 
 __all__ = [

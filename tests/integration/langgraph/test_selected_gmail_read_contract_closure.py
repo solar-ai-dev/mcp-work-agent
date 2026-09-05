@@ -81,7 +81,9 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 읽고 요약해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
         run_budget=build_default_run_budget(),
     )
@@ -106,7 +108,9 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         goal_candidate=goal,
         prompt_ref=_prompt("request_understanding.detect_ambiguity"),
     )
-    intent = finalize_intent(goal, ambiguity, artifact_id="intent-1")
+    intent = finalize_intent(
+        goal, ambiguity, artifact_id="intent-1", user_request=request.request_text,
+    )
     catalog = load_signed_tool_registry()
     candidate, retry_budget = determine_io_resources(
         llm_runtime=runtime,

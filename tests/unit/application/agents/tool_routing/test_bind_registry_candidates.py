@@ -70,3 +70,27 @@ def test_general_gmail_thread__avoids_redundant__message_detail_route() -> None:
     )
 
     assert [route["resource_type"] for route in binding.input_routes] == ["GMAIL_THREAD"]
+
+
+def test_github_issue__binds_to_github__without_task_collision() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("GITHUB_ISSUE",),
+            output_pairs=(("GITHUB_ISSUE", EffectType.CREATE),),
+            output_mode="ACTION",
+            analysis_requirement="REQUIRED",
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    output = binding.output_candidates[0]
+    assert output.connector_id == "github"
+    assert output.resource_type == "GITHUB_ISSUE"
+    assert output.eligible_tool_ids == ("github_create_issue",)
+    assert binding.input_routes[0]["connector_id"] == "github"
+    assert set(binding.input_routes[0]["allowed_read_tool_ids"]) == {
+        "github_get_issue",
+        "github_list_issues",
+    }

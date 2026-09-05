@@ -86,7 +86,11 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
         }
     if message_type == "list_tools":
         return {
-            "tool_names": sorted(entry.tool_name for entry in load_signed_tool_registry().entries)
+            "tool_names": sorted(
+                entry.tool_name
+                for entry in load_signed_tool_registry().entries
+                if entry.connector_id == "google_workspace"
+            )
         }
     if message_type == "control_call":
         return _control_payload(str(request.get("method", "")))
@@ -126,9 +130,11 @@ def _control_payload(method: str) -> dict[str, object]:
             capability.tool_name: capability.category.value
             for capability in project_registry.build_google_workspace_internal_capabilities()
         }
-        names = {entry.tool_name for entry in load_signed_tool_registry().entries} | set(
-            internal_categories
-        )
+        names = {
+            entry.tool_name
+            for entry in load_signed_tool_registry().entries
+            if entry.connector_id == "google_workspace"
+        } | set(internal_categories)
         return {
             "contracts": [
                 {
@@ -428,7 +434,9 @@ def _failure_mode(arguments: dict[str, object]) -> str | None:
 
 def _write_tools() -> frozenset[str]:
     return frozenset(
-        entry.tool_name for entry in load_signed_tool_registry().entries if entry.effect != "READ"
+        entry.tool_name
+        for entry in load_signed_tool_registry().entries
+        if entry.connector_id == "google_workspace" and entry.effect != "READ"
     )
 
 

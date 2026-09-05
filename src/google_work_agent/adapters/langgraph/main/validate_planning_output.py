@@ -29,6 +29,9 @@ from google_work_agent.application.agents.planning.contracts.domain_validation i
 from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
     planning_tool_argument_schema,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    is_fully_qualified_repository,
+)
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
     PlanReviewResultV2,
 )
@@ -37,10 +40,7 @@ from google_work_agent.application.agents.state_artifact import (
     StateArtifactMetaV1,
     StateArtifactRefV1,
 )
-from google_work_agent.application.tool_registry.signed_tool_registry import (
-    P0_GOOGLE_WORKSPACE_CONNECTOR_ID,
-    SignedToolRegistry,
-)
+from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.validate_action_arguments import (
     ValidateActionArgumentsHandler,
     ValidateActionArgumentsQueryV1,
@@ -58,7 +58,14 @@ _TARGET_BINDINGS: dict[str, tuple[str, str, str | None]] = {
     "tasks_delete_task": ("task", "task_id", "task_list_id"),
     "calendar_update_event": ("calendar_event", "event_id", "calendar_id"),
     "calendar_delete_event": ("calendar_event", "event_id", "calendar_id"),
+    "github_update_issue": ("github_issue", "issue_number", "repository"),
+    "github_close_issue": ("github_issue", "issue_number", "repository"),
+    "github_reopen_issue": ("github_issue", "issue_number", "repository"),
 }
+
+_GITHUB_EXISTING_ISSUE_TOOLS = frozenset(
+    {"github_update_issue", "github_close_issue", "github_reopen_issue"}
+)
 
 
 class CurrentRunResourceIdentityV1(TypedDict):
@@ -356,10 +363,12 @@ def _validate_action(
     if effect not in _WRITE_EFFECTS:
         raise CanonicalDomainValidationError(f"{path}.effect is not a write effect")
 
-    try:
-        entry = tool_registry.get_required(P0_GOOGLE_WORKSPACE_CONNECTOR_ID, tool_id)
-    except LookupError as exc:
-        raise CanonicalDomainValidationError(f"{path}.tool_id is not registered") from exc
+    entries = tuple(entry for entry in tool_registry.entries if entry.tool_id == tool_id)
+    if len(entries) != 1:
+        raise CanonicalDomainValidationError(
+            f"{path}.tool_id must resolve to exactly one registered Tool"
+        )
+    entry = entries[0]
     if entry.effect_type.value != effect:
         raise CanonicalDomainValidationError(f"{path}.effect does not match Tool Registry")
 
@@ -470,6 +479,18 @@ def required_target_identity(
             f"{path} has no deterministic target binding for existing-resource write"
         )
     resource_type, target_field, parent_field = binding
+    if tool_id in _GITHUB_EXISTING_ISSUE_TOOLS:
+        repository = _text(arguments.get("repository"), f"{path}.arguments.repository")
+        if not is_fully_qualified_repository(repository):
+            raise CanonicalDomainValidationError(
+                f"{path}.arguments.repository is not a fully-qualified repository"
+            )
+        issue_number = arguments.get("issue_number")
+        if type(issue_number) is not int or issue_number < 1:
+            raise CanonicalDomainValidationError(
+                f"{path}.arguments.issue_number must be a positive integer"
+            )
+        return resource_type, f"{repository}#{issue_number}", repository
     target_id = _text(arguments.get(target_field), f"{path}.arguments.{target_field}")
     parent_id = (
         None

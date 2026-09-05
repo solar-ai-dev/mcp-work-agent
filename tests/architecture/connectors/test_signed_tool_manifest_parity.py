@@ -3,7 +3,7 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 )
 
 
-def test_signed_manifest__matches_current_canonical__google_workspace_rows() -> None:
+def test_signed_manifest__matches_current_canonical__connector_rows() -> None:
     registry = load_signed_tool_registry()
     expected = {
         "gmail_search_threads",
@@ -29,4 +29,18 @@ def test_signed_manifest__matches_current_canonical__google_workspace_rows() -> 
         "calendar_delete_event",
     }
 
-    assert {entry.tool_id for entry in registry.entries} == expected
+    assert {
+        entry.tool_id
+        for entry in registry.entries
+        if entry.connector_id == "google_workspace"
+    } == expected
+    assert {
+        entry.tool_id for entry in registry.entries if entry.connector_id == "github"
+    } == {
+        "github_list_issues",
+        "github_get_issue",
+        "github_create_issue",
+        "github_update_issue",
+        "github_close_issue",
+        "github_reopen_issue",
+    }

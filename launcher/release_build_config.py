@@ -17,6 +17,8 @@ class SignedBuildConfigV1:
     deployment_profile: Literal["API_ONLY", "LOCAL_CAPABLE"]
     oauth_env: Literal["DEVELOPMENT", "STAGING", "PRODUCTION"]
     oauth_client_id: str
+    github_oauth_client_id: str
+    github_oauth_scope: str
     api_contract_version: str
     mcp_schema_version: str
     policy_version: str
@@ -36,6 +38,8 @@ def load_signed_build_config(installation: VerifiedInstallation) -> SignedBuildC
         ),
         oauth_env=cast(Literal["DEVELOPMENT", "STAGING", "PRODUCTION"], manifest["oauth_env"]),
         oauth_client_id=_string(manifest, "oauth_client_id"),
+        github_oauth_client_id=_string(manifest, "github_oauth_client_id"),
+        github_oauth_scope=_optional_string(manifest, "github_oauth_scope"),
         api_contract_version=_string(manifest, "api_contract_version"),
         mcp_schema_version=_string(manifest, "mcp_schema_version"),
         policy_version=_string(manifest, "policy_version"),
@@ -46,5 +50,12 @@ def load_signed_build_config(installation: VerifiedInstallation) -> SignedBuildC
 def _string(manifest: Mapping[str, object], field: str) -> str:
     value = manifest.get(field)
     if not isinstance(value, str) or not value:
+        raise ValueError(f"verified manifest field is invalid: {field}")
+    return value
+
+
+def _optional_string(manifest: Mapping[str, object], field: str) -> str:
+    value = manifest.get(field)
+    if not isinstance(value, str):
         raise ValueError(f"verified manifest field is invalid: {field}")
     return value

@@ -50,12 +50,14 @@ class ErrorUiActionResponseV1(ApiModel):
     kind: Literal[
         "PREPARE_RETRY",
         "REAUTHENTICATE_GOOGLE",
+        "REAUTHENTICATE_CONNECTOR",
         "RESUME_SAFE_CHECKPOINT",
         "OPEN_SETTINGS",
         "OPEN_DIAGNOSTICS",
     ]
     action_id: str | None = None
     resume_kind: Literal["SAFE_CHECKPOINT_RESUME"] | None = None
+    connector_id: str | None = None
 
 
 class ErrorUiProjectionResponseV1(ApiModel):

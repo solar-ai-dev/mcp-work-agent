@@ -3,7 +3,7 @@ import { ApiClientError } from "../../api/client";
 import { DiagnosticsPanel, type RuntimeSummary } from "../diagnostics";
 import { listCalendars, listTaskLists } from "../resource_browser/api/list_resources";
 import type { CalendarContainer, TaskListContainer } from "../../api/contract";
-import { disconnectGoogle, getGoogleConnection, startGoogleConnection, type GoogleConnection } from "./api/google_connection_operations";
+import { disconnectGitHub, disconnectGoogle, getGitHubConnection, getGoogleConnection, startGitHubConnection, startGoogleConnection, type AuthorizationStart, type GitHubConnection, type GoogleConnection } from "./api/google_connection_operations";
 import { getSettings, type SettingsView } from "./api/get_settings";
 import { deleteLlmCredential, getLlmCredentialStatus, storeLlmCredential, type LlmCredentialStatus } from "./api/llm_credential_operations";
 import { updateRuntimeMode, type RuntimeMode } from "./api/update_runtime_mode";
@@ -39,6 +39,8 @@ type Props = {
 export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOperationalStateChanged }: Props): JSX.Element {
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [google, setGoogle] = useState<GoogleConnection | null>(null);
+  const [github, setGitHub] = useState<GitHubConnection | null>(null);
+  const [githubAuthorization, setGitHubAuthorization] = useState<AuthorizationStart | null>(null);
   const [credential, setCredential] = useState<LlmCredentialStatus | null>(null);
   const [taskLists, setTaskLists] = useState<TaskListContainer[]>([]);
   const [calendars, setCalendars] = useState<CalendarContainer[]>([]);
@@ -49,15 +51,16 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   const commandIds = useRef(new Map<string, string>());
 
   const load = useCallback(async (): Promise<void> => {
-    const [nextSettings, nextGoogle, nextCredential, nextTaskLists, nextCalendars] = await Promise.allSettled([
-      getSettings(), getGoogleConnection(), getLlmCredentialStatus(), listTaskLists(), listCalendars(),
+    const [nextSettings, nextGoogle, nextGitHub, nextCredential, nextTaskLists, nextCalendars] = await Promise.allSettled([
+      getSettings(), getGoogleConnection(), getGitHubConnection(), getLlmCredentialStatus(), listTaskLists(), listCalendars(),
     ]);
     if (nextSettings.status === "fulfilled") setSettings(nextSettings.value);
     if (nextGoogle.status === "fulfilled") setGoogle(nextGoogle.value);
+    if (nextGitHub.status === "fulfilled") setGitHub(nextGitHub.value);
     if (nextCredential.status === "fulfilled") setCredential(nextCredential.value);
     if (nextTaskLists.status === "fulfilled") setTaskLists(nextTaskLists.value.items);
     if (nextCalendars.status === "fulfilled") setCalendars(nextCalendars.value.items);
-    if ([nextSettings, nextGoogle, nextCredential, nextTaskLists, nextCalendars].every((result) => result.status === "rejected")) {
+    if ([nextSettings, nextGoogle, nextGitHub, nextCredential, nextTaskLists, nextCalendars].every((result) => result.status === "rejected")) {
       throw nextSettings.status === "rejected" ? nextSettings.reason : new Error("Settings unavailable");
     }
   }, []);
@@ -65,6 +68,26 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   useEffect(() => {
     void load().catch((error: unknown) => setMessage(errorMessage(error, "설정 정보를 불러오지 못했습니다.")));
   }, [load]);
+
+  useEffect(() => {
+    if (!githubAuthorization || github?.connection_status === "CONNECTED") return;
+    const intervalMs = Math.max(1, githubAuthorization.poll_interval_seconds ?? 5) * 1000;
+    const timer = window.setInterval(() => {
+      if (githubAuthorization.expires_at_ms && Date.now() >= githubAuthorization.expires_at_ms) {
+        window.clearInterval(timer);
+        setGitHubAuthorization(null);
+        return;
+      }
+      void getGitHubConnection().then((connection) => {
+        setGitHub(connection);
+        if (connection.connection_status === "CONNECTED") {
+          setGitHubAuthorization(null);
+          void onOperationalStateChanged();
+        }
+      }).catch(() => undefined);
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [github?.connection_status, githubAuthorization, onOperationalStateChanged]);
 
   function commandIdFor(operation: string): string {
     let commandId = commandIds.current.get(operation);
@@ -139,6 +162,21 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
             {google?.connection_status === "CONNECTED" ? <button type="button" className="button-danger" disabled={busy} onClick={() => void run("google:disconnect", async (id) => { await disconnectGoogle(id); }, "Google 연결을 해제했습니다.")}>연결 해제</button> : null}
           </div>
         </section>
+        <section className="info-card" aria-label="GitHub 연결">
+          <strong>GitHub</strong>
+          <p>{github?.connection_status === "CONNECTED" ? github.display_email : github?.connection_status ?? "확인 중"}</p>
+          {github?.granted_scopes.length ? <p>Scopes: {github.granted_scopes.join(", ")}</p> : null}
+          {github?.missing_required_scopes.length ? <p className="status-warn">누락 scope: {github.missing_required_scopes.join(", ")}</p> : null}
+          {githubAuthorization?.flow_kind === "DEVICE_CODE" ? <div>
+            <p>GitHub에 입력할 코드: <strong>{githubAuthorization.user_code}</strong></p>
+            {githubAuthorization.expires_at_ms ? <p>만료: {new Date(githubAuthorization.expires_at_ms).toLocaleString("ko-KR")}</p> : null}
+            {githubAuthorization.verification_uri ? <button type="button" className="button-secondary" onClick={() => window.open(requireGitHubVerificationUrl(githubAuthorization.verification_uri!), "_blank", "noopener,noreferrer")}>GitHub 인증 페이지 열기</button> : null}
+          </div> : null}
+          <div className="button-row">
+            {github?.connection_status !== "CONNECTED" ? <button type="button" className="button-primary" disabled={busy || github?.connection_status === "UNAVAILABLE"} onClick={() => void run("github:connect", async (id) => { const result = await startGitHubConnection(id); setGitHubAuthorization(result); window.open(requireGitHubVerificationUrl(result.verification_uri ?? result.authorization_url), "_blank", "noopener,noreferrer"); }, github?.connection_status === "REAUTH_REQUIRED" ? "GitHub 재인증을 시작했습니다." : "GitHub 연결을 시작했습니다.")}>{github?.connection_status === "REAUTH_REQUIRED" ? "재연결" : "연결"}</button> : null}
+            {github?.connection_status === "CONNECTED" ? <button type="button" className="button-danger" disabled={busy} onClick={() => void run("github:disconnect", async (id) => { await disconnectGitHub(id); setGitHubAuthorization(null); }, "GitHub 연결을 해제했습니다.")}>연결 해제</button> : null}
+          </div>
+        </section>
         {settings ? <section className="info-card" aria-label="작업 설정">
           <strong>작업 설정</strong>
           <label>시간대<input value={settings.timezone} onChange={(e) => patch("timezone", e.target.value)} /></label>
@@ -190,5 +228,11 @@ function requireOAuthUrl(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || url.pathname !== "/oauth/authorize") throw new Error("Unexpected OAuth authorization URL");
   url.searchParams.set("return_to", new URL("/", window.location.origin).toString());
+  return url.toString();
+}
+
+function requireGitHubVerificationUrl(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.hostname !== "github.com") throw new Error("Unexpected GitHub verification URL");
   return url.toString();
 }

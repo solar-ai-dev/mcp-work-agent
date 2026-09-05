@@ -217,7 +217,9 @@ def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
         requested_mode="LOCAL_GPU",
         request_text="read this mail",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         run_budget=dict(build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -275,7 +277,9 @@ def test_selected_simple_read__materializes_exact_route__without_llm() -> None:
         requested_mode="LOCAL_GPU",
         request_text="read this mail",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         run_budget=dict(build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )

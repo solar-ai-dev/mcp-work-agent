@@ -177,6 +177,40 @@ _PLANNING_TOOL_SCHEMAS: dict[str, JsonObject] = {
             "event_id": _NON_EMPTY_STRING,
         },
     ),
+    "github_create_issue": _object_schema(
+        required=["repository", "title"],
+        properties={
+            "repository": _NON_EMPTY_STRING,
+            "title": _NON_EMPTY_STRING,
+            "body": _NON_EMPTY_STRING,
+        },
+    ),
+    "github_update_issue": {
+        **_object_schema(
+            required=["repository", "issue_number"],
+            properties={
+                "repository": _NON_EMPTY_STRING,
+                "issue_number": {"type": "integer", "minimum": 1},
+                "title": _NON_EMPTY_STRING,
+                "body": _NON_EMPTY_STRING,
+            },
+        ),
+        "minProperties": 3,
+    },
+    "github_close_issue": _object_schema(
+        required=["repository", "issue_number"],
+        properties={
+            "repository": _NON_EMPTY_STRING,
+            "issue_number": {"type": "integer", "minimum": 1},
+        },
+    ),
+    "github_reopen_issue": _object_schema(
+        required=["repository", "issue_number"],
+        properties={
+            "repository": _NON_EMPTY_STRING,
+            "issue_number": {"type": "integer", "minimum": 1},
+        },
+    ),
 }
 
 

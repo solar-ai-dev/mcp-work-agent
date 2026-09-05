@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Required, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
 from google_work_agent.application.agents.state_artifact import StateArtifactMetaV1
 from google_work_agent.application.agents.state_artifact import (
@@ -11,12 +11,20 @@ ConstraintKindValue = Literal[
     "PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"
 ]
 ActionEffectValue = Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]
+ConstraintProvenanceSource = Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
+
+
+class ConstraintProvenanceV1(TypedDict):
+    source: ConstraintProvenanceSource
+    start_offset: int
+    end_offset: int
 
 
 class ConstraintV1(TypedDict):
     kind: ConstraintKindValue
     field: str
     value: str | list[str]
+    provenance: NotRequired[ConstraintProvenanceV1]
 
 
 class AmbiguityV1(TypedDict):

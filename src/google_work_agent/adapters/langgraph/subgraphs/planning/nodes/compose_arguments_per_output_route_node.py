@@ -56,6 +56,8 @@ def compose_arguments_per_output_route_node(
             explicit_container_id=(
                 explicit_container_id if route.get("route_id") == missing_route_id else None
             ),
+            request_intent=projected["request_intent"],
+            selected_resources=projected["selected_resources"],
             default_tasklist_id_provider=default_tasklist_id_provider,
             default_calendar_id_provider=default_calendar_id_provider,
         )

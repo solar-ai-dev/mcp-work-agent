@@ -26,11 +26,28 @@ class ConnectorReadProjection:
     connector_id: str = "google_workspace"
 
     def call(self, tool_id: str, arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        binding = self.tool_registry.bind_required(self.connector_id, tool_id, "READ")
+        return self.call_for_connector(self.connector_id, tool_id, arguments)
+
+    def call_for_connector(
+        self,
+        connector_id: str,
+        tool_id: str,
+        arguments: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        binding = self.tool_registry.bind_required(connector_id, tool_id, "READ")
         return self.connector_reader.execute_read(binding, arguments).output
 
     def snapshot(self, tool_id: str, arguments: dict[str, JsonValue]) -> ResourceSnapshot:
         return _snapshot(cast(dict[str, object], self.call(tool_id, arguments)["item"]))
+
+    def snapshot_for_connector(
+        self,
+        connector_id: str,
+        tool_id: str,
+        arguments: dict[str, JsonValue],
+    ) -> ResourceSnapshot:
+        output = self.call_for_connector(connector_id, tool_id, arguments)
+        return _snapshot(cast(dict[str, object], output["item"]))
 
     def page(self, tool_id: str, arguments: dict[str, JsonValue]) -> ResourcePage:
         output = self.call(tool_id, arguments)
@@ -168,6 +185,13 @@ class ConnectorReadProjection:
         return self.snapshot(
             "calendar_get_event",
             {"calendar_id": calendar_id, "event_id": event_id},
+        )
+
+    def get_github_issue(self, *, repository: str, issue_number: int) -> ResourceSnapshot:
+        return self.snapshot_for_connector(
+            "github",
+            "github_get_issue",
+            {"repository": repository, "issue_number": issue_number},
         )
 
 

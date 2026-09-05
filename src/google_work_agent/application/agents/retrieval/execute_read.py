@@ -12,7 +12,7 @@ from google_work_agent.application.agents.retrieval.guard_retrieval_read_repeat 
     guard_retrieval_read_repeat,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
-    coarse_resource_category,
+    normalize_resource_type,
 )
 from google_work_agent.application.use_cases.run.consume_retrieval_read_budget import (
     consume_retrieval_read_budget,
@@ -151,7 +151,7 @@ def _validate_binding(
         raise RetrievalReadBindingError("retrieval can execute READ bindings only")
     if binding.connector_id != plan["connector_id"]:
         raise RetrievalReadBindingError("connector binding differs from frozen route")
-    if coarse_resource_category(binding.resource_type) != coarse_resource_category(
+    if normalize_resource_type(binding.resource_type) != normalize_resource_type(
         plan["resource_type"]
     ):
         raise RetrievalReadBindingError("resource binding differs from frozen route")

@@ -101,13 +101,13 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "type": "array",
                 "items": {"enum": ["READ", "CREATE", "UPDATE", "SEND", "DELETE"]},
                 "description": (
-                    "Effects on Google Workspace resources only. Retrieving, summarizing, "
+                    "Effects on the requested external resources only. Retrieving, summarizing, "
                     "or analyzing an existing resource is READ; producing an assistant "
                     "answer or summary is never CREATE. CREATE, UPDATE, SEND, and DELETE "
                     "apply only when the user requests that external effect, and an "
                     "explicitly forbidden effect must not appear. Identifying or analyzing "
                     "follow-up actions from existing material is READ unless the user also "
-                    "explicitly asks to apply a write in Google Workspace."
+                    "explicitly asks to apply a write to that resource."
                 ),
             },
             "requested_resource_hints": {
@@ -123,6 +123,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                         "CALENDAR",
                         "CALENDAR_EVENT",
                         "CALENDAR_FREEBUSY",
+                        "GITHUB_ISSUE",
                     ]
                 },
                 "uniqueItems": True,
@@ -164,7 +165,8 @@ def identify_goal(
         "user_request": request.request_text,
         "selected_resource_refs": [
             {
-                "source": ref.source,
+                "resource_ref_id": ref.resource_ref_id,
+                "connector_id": ref.connector_id,
                 "resource_type": ref.resource_type,
                 "resource_id": ref.resource_id,
                 "parent_resource_id": ref.parent_resource_id,
@@ -540,16 +542,12 @@ def _apply_selected_resource_authority(
 
 
 _SELECTED_RESOURCE_HINTS = {
-    ("GMAIL", "THREAD"): "GMAIL_THREAD",
-    ("GMAIL", "MESSAGE"): "GMAIL_MESSAGE",
-    ("GMAIL", "DRAFT"): "GMAIL_DRAFT",
-    ("GMAIL", "ATTACHMENT"): "GMAIL_ATTACHMENT",
-    ("TASKS", "TASK_LIST"): "TASK_LIST",
-    ("TASKS", "TASK"): "TASK",
-    ("CALENDAR", "CALENDAR"): "CALENDAR",
-    ("CALENDAR", "EVENT"): "CALENDAR_EVENT",
-    ("CALENDAR", "FREEBUSY"): "CALENDAR_FREEBUSY",
-}
+    ("google_workspace", resource_type): resource_type
+    for resource_type in (
+        "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT", "GMAIL_ATTACHMENT",
+        "TASK_LIST", "TASK", "CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY",
+    )
+} | {("github", "GITHUB_ISSUE"): "GITHUB_ISSUE"}
 
 
 def _selected_resource_hints(request: WorkflowStartRequest) -> list[str]:
@@ -559,7 +557,7 @@ def _selected_resource_hints(request: WorkflowStartRequest) -> list[str]:
             for ref in request.selected_resources
             for hint in (
                 _SELECTED_RESOURCE_HINTS.get(
-                    (ref.source.upper(), ref.resource_type.upper())
+                    (ref.connector_id, ref.resource_type.upper())
                 ),
             )
             if hint is not None

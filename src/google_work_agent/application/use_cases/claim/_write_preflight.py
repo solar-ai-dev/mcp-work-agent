@@ -8,6 +8,9 @@ from json import loads
 from typing import Literal, Protocol, cast
 
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.action.approval_source_snapshot import (
+    build_approval_source_snapshot,
+)
 from google_work_agent.application.use_cases.action.calendar_conflict_policy import (
     CalendarWorkHours,
 )
@@ -120,6 +123,8 @@ class PreflightWriteGateway(
 
     def get_task(self, *, task_list_id: str, task_id: str) -> ResourceSnapshot: ...
 
+    def get_github_issue(self, *, repository: str, issue_number: int) -> ResourceSnapshot: ...
+
 
 class _WritePreflight:
     """Read the approved target immediately before the claim transaction."""
@@ -207,6 +212,54 @@ class _WritePreflight:
         )
         if policy.decision != "ALLOW":
             raise PolicyViolationError(",".join(policy.reason_codes))
+
+        if action.tool_name == "github_create_issue":
+            repository = _required_argument_string(arguments, "repository")
+            if len(repository.split("/")) != 2 or any(
+                not part.strip() for part in repository.split("/")
+            ):
+                raise PolicyViolationError("GitHub repository identity is invalid")
+            if not approval.recovery_fingerprint.strip():
+                raise PolicyViolationError("GitHub create recovery fingerprint is missing")
+            return approval_snapshot
+
+        if action.tool_name in {
+            "github_update_issue",
+            "github_close_issue",
+            "github_reopen_issue",
+        }:
+            if approval.action_version != action_version:
+                raise PolicyViolationError("GitHub preflight approval action version is stale")
+            if approval.canonical_arguments_hash != arguments_hash:
+                raise PolicyViolationError("GitHub preflight approval arguments binding is stale")
+            approved_target_snapshot = build_approval_source_snapshot(
+                action=action,
+                plan_run_id=plan.run_id,
+                resource_ref=target_ref,
+            )
+            if (
+                approved_target_snapshot != approval_snapshot
+                or calculate_canonical_json_hash(approval_snapshot)
+                != approval.source_snapshot_hash
+            ):
+                raise PolicyViolationError("GitHub preflight approval target binding is stale")
+            repository = _required_argument_string(arguments, "repository")
+            issue_number = arguments.get("issue_number")
+            if not isinstance(issue_number, int) or isinstance(issue_number, bool):
+                raise PolicyViolationError("GitHub issue number is invalid")
+            issue = self._gateway.get_github_issue(
+                repository=repository,
+                issue_number=issue_number,
+            )
+            validate_preflight_target(
+                snapshot=issue,
+                target_ref=target_ref,
+                expected_resource_type=ResourceType.GITHUB_ISSUE,
+                expected_parent_id=repository,
+                require_target_ref=True,
+                require_version_token=False,
+            )
+            return _update_source_snapshot(issue)
 
         if action.tool_name == "gmail_update_draft":
             draft_id = _required_argument_string(arguments, "draft_id")

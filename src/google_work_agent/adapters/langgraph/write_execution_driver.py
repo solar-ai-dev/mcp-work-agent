@@ -97,6 +97,10 @@ from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.recovery.model import RecoveryResolution
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.run.model import RunStatusV1
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
 from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
 from google_work_agent.ports.connector.contracts.google_workspace import (
     DeliveryCertainty,
@@ -177,7 +181,7 @@ class WriteExecutionStructuralDriver:
         mark_write_failed: MarkFailedHandler,
         mark_write_unknown: MarkUnknownResultHandler,
         service_instance_id: str,
-        mcp_process_instance_id: Callable[[], str],
+        mcp_process_instance_id: Callable[[str], str],
         require_write_reauth: RequireReauthHandler,
         lookup_unknown_result: LookupUnknownResultHandler,
         recover_existing_result: RecoverExistingResultHandler,
@@ -253,8 +257,11 @@ class WriteExecutionStructuralDriver:
                 action_version=executed.current_version,
                 attempt_id=executed.attempt_id,
             )
-        except GoogleWorkspaceGatewayError as error:
-            return self._handle_verification_error(request=request, error=error)
+        except (GoogleWorkspaceGatewayError, ConnectorOperationFailure) as error:
+            return self._handle_verification_error(
+                request=request,
+                error=self._as_gateway_error(error),
+            )
         return WriteExecutionPhaseResult(
             disposition=(
                 WriteExecutionDisposition.VERIFIED
@@ -274,14 +281,26 @@ class WriteExecutionStructuralDriver:
 
         try:
             source_snapshot = self._preflight_write(action_id=request.action_id) or {}
-        except (GoogleWorkspaceGatewayError, LookupError, PolicyViolationError) as error:
-            if isinstance(error, GoogleWorkspaceGatewayError) and self._is_auth_error(error):
-                reauth = self._require_reauth(request=request, error=error, kind="preflight_reauth")
+        except (
+            GoogleWorkspaceGatewayError,
+            ConnectorOperationFailure,
+            LookupError,
+            PolicyViolationError,
+        ) as error:
+            gateway_error = (
+                self._as_gateway_error(error)
+                if isinstance(error, (GoogleWorkspaceGatewayError, ConnectorOperationFailure))
+                else None
+            )
+            if gateway_error is not None and self._is_auth_error(gateway_error):
+                reauth = self._require_reauth(
+                    request=request, error=gateway_error, kind="preflight_reauth"
+                )
                 if not reauth.applied:
                     return self._reconcile_run_response(reauth)
                 return WriteExecutionPhaseResult(
                     disposition=WriteExecutionDisposition.REAUTH_REQUIRED,
-                    safe_error_code=error.code.value,
+                    safe_error_code=gateway_error.code.value,
                     current_status=reauth.run_status,
                     current_version=reauth.run_version,
                 )
@@ -369,6 +388,7 @@ class WriteExecutionStructuralDriver:
             claim_context = self._build_claim_context(
                 BuildClaimContextQueryV1(
                     schema_version=1,
+                    connector_id=claimed_input.connector_id,
                     action_id=request.action_id,
                     approval_id=claim.approval_id,
                     execution_attempt_id=attempt_id,
@@ -376,7 +396,9 @@ class WriteExecutionStructuralDriver:
                     approval_arguments_hash=calculate_canonical_json_hash(claimed_input.arguments),
                     final_tool_arguments=prepared.arguments,
                     service_instance_id=self._service_instance_id,
-                    mcp_process_instance_id=self._mcp_process_instance_id(),
+                    mcp_process_instance_id=self._mcp_process_instance_id(
+                        claimed_input.connector_id
+                    ),
                 )
             )
             claim_payload = claim_context_payload(claim_context)
@@ -599,12 +621,17 @@ class WriteExecutionStructuralDriver:
         )
         try:
             lookup = self._lookup_unknown_result(persisted.query)
-        except GoogleWorkspaceGatewayError as error:
-            if not self._is_auth_error(error):
+        except (GoogleWorkspaceGatewayError, ConnectorOperationFailure) as error:
+            gateway_error = self._as_gateway_error(error)
+            if not self._is_auth_error(gateway_error):
                 raise
             self._ensure_unknown_recovery(request, persisted.query.recovery_fingerprint)
             if allow_reauth:
-                self._require_reauth(request=request, error=error, kind="recover_unknown_reauth")
+                self._require_reauth(
+                    request=request,
+                    error=gateway_error,
+                    kind="recover_unknown_reauth",
+                )
             return WriteActionResponse(
                 applied=False,
                 result_code=ResultCode.RECOVERY_REQUIRED.value,
@@ -613,7 +640,7 @@ class WriteExecutionStructuralDriver:
                 action_version=request.action_version,
                 next_allowed_commands=(),
                 attempt_id=request.attempt_id,
-                safe_error_code=error.code.value,
+                safe_error_code=gateway_error.code.value,
             )
         if lookup.disposition == "MUTATION_FOUND":
             if len(lookup.candidate_resource_refs) != 1:
@@ -1110,6 +1137,37 @@ class WriteExecutionStructuralDriver:
             delivered=certainty is not DeliveryCertainty.NOT_SENT,
             mutated=certainty is DeliveryCertainty.SENT_RESPONSE_LOST,
             mcp_request_id=result.provider_request_id,
+        )
+
+    @staticmethod
+    def _as_gateway_error(
+        error: GoogleWorkspaceGatewayError | ConnectorOperationFailure,
+    ) -> GoogleWorkspaceGatewayError:
+        if isinstance(error, GoogleWorkspaceGatewayError):
+            return error
+        code = {
+            ConnectorFailureCode.AUTH_REQUIRED: GoogleWorkspaceErrorCode.AUTH_EXPIRED,
+            ConnectorFailureCode.PERMISSION_DENIED: GoogleWorkspaceErrorCode.PERMISSION_DENIED,
+            ConnectorFailureCode.INVALID_ARGUMENT: GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
+            ConnectorFailureCode.NOT_FOUND: GoogleWorkspaceErrorCode.NOT_FOUND,
+            ConnectorFailureCode.RATE_LIMITED: GoogleWorkspaceErrorCode.RATE_LIMITED,
+            ConnectorFailureCode.UPSTREAM_UNAVAILABLE: GoogleWorkspaceErrorCode.UPSTREAM_5XX,
+            ConnectorFailureCode.TIMEOUT: GoogleWorkspaceErrorCode.TIMEOUT,
+            ConnectorFailureCode.CONNECTION_UNAVAILABLE: (
+                GoogleWorkspaceErrorCode.CONNECTION_CLOSED
+            ),
+            ConnectorFailureCode.MALFORMED_RESPONSE: (
+                GoogleWorkspaceErrorCode.RESPONSE_MALFORMED
+            ),
+            ConnectorFailureCode.CONFIGURATION_ERROR: (
+                GoogleWorkspaceErrorCode.CONNECTION_CLOSED
+            ),
+        }.get(error.code, GoogleWorkspaceErrorCode.CONNECTION_CLOSED)
+        return GoogleWorkspaceGatewayError(
+            code=code,
+            message=error.detail_code,
+            delivered=False,
+            mutated=False,
         )
 
     @staticmethod

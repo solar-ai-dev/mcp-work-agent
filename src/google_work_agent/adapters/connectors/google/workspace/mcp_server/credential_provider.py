@@ -129,6 +129,7 @@ GMAIL_METADATA_HYDRATION_MAX_WORKERS = 3
 CLAIM_CONTEXT_VERSION = 2
 CLAIM_CONTEXT_REQUIRED_FIELDS = (
     "claim_version",
+    "connector_id",
     "service_instance_id",
     "mcp_process_instance_id",
     "action_id",

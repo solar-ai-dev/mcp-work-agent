@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from typing import cast
 
+from google_work_agent.application.agents.retrieval.assess_sufficiency import (
+    select_followup_routes,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalQueryPlanV2,
 )
@@ -20,6 +23,7 @@ _DETAIL_TOOL_BY_RESOURCE_TYPE = {
     "GMAIL_ATTACHMENT": "gmail_get_attachment",
     "TASK": "tasks_get_task",
     "CALENDAR_EVENT": "calendar_get_event",
+    "GITHUB_ISSUE": "github_get_issue",
 }
 
 
@@ -37,13 +41,13 @@ def deterministic_candidate_detail_plan(
     deterministic continuation, not a new semantic query-planning decision.
     """
 
-    if "current_round_no" not in prompt_input or not _needs_google_evidence(prompt_input):
+    if "current_round_no" not in prompt_input:
         return None
     attempted = set(attempted_detail_candidate_refs)
     candidates = tuple(dict.fromkeys(detail_candidate_refs))
     route_queries: list[dict[str, object]] = []
     retrieval_order: list[str] = []
-    for route in frozen_routes:
+    for route in select_followup_routes(prompt_input, frozen_routes):
         detail_tool = _DETAIL_TOOL_BY_RESOURCE_TYPE.get(route["resource_type"])
         if detail_tool is None or detail_tool not in route["allowed_read_tool_ids"]:
             continue
@@ -74,16 +78,6 @@ def deterministic_candidate_detail_plan(
             "required_information": ["candidate resource detail required by sufficiency"],
             "retrieval_order": retrieval_order,
         },
-    )
-
-
-def _needs_google_evidence(prompt_input: Mapping[str, object]) -> bool:
-    issues = prompt_input.get("unresolved_sufficiency_issues")
-    return isinstance(issues, list) and any(
-        isinstance(issue, Mapping)
-        and issue.get("required") is True
-        and issue.get("resolution_source") == "GOOGLE"
-        for issue in issues
     )
 
 

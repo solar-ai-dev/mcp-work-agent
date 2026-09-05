@@ -3,6 +3,8 @@ from __future__ import annotations
 from json import dumps
 from pathlib import Path
 
+import pytest
+
 from google_work_agent.adapters.persistence.connection import connect_sqlite
 from google_work_agent.adapters.persistence.migration import apply_migrations
 from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
@@ -20,8 +22,11 @@ class _Checkpoint:
         return RetrievalHeadV1(1, run_id, "thread-1", 7, "retrieval-current", "cp-1", 1)
 
 
+@pytest.mark.parametrize("connector,resource_type,source", [
+    ("google_workspace", "task", "tasks"), ("github", "github_issue", "github"),
+])
 def test_context_preview__contains_only_current__selected_retrieval_evidence(
-    tmp_path: Path,
+    tmp_path: Path, connector: str, resource_type: str, source: str,
 ) -> None:
     database_path = tmp_path / "context-preview.db"
     with connect_sqlite(database_path) as connection:
@@ -65,8 +70,8 @@ def test_context_preview__contains_only_current__selected_retrieval_evidence(
                 """INSERT INTO resource_refs (
                     id, run_id, connector_id, resource_type, resource_id,
                     title, metadata_json, captured_at_ms
-                ) VALUES (?, 'run-1', 'google_workspace', 'task', ?, ?, '{}', 3)""",
-                (ref_id, resource_id, title),
+                ) VALUES (?, 'run-1', ?, ?, ?, ?, '{}', 3)""",
+                (ref_id, connector, resource_type, resource_id, title),
             )
         for evidence_id, ref_id, artifact, segment, role in (
             ("e-current", "ref-current", "retrieval-current", "segment-1", "SUPPORTS"),
@@ -101,6 +106,7 @@ def test_context_preview__contains_only_current__selected_retrieval_evidence(
     assert [(item.segment_id, item.resource_id) for item in result.items] == [
         ("segment-1", "task-1")
     ]
-    assert (result.gmail_count, result.tasks_count, result.calendar_count) == (0, 1, 0)
+    assert result.items[0].source == source
+    assert (result.tasks_count, result.github_count) == ((1, 0) if source == "tasks" else (0, 1))
     assert result.adjustment_allowed is True
     assert result.allowed_adjustments == ("EXCLUDE_EVIDENCE", "RETRIEVE_MORE")

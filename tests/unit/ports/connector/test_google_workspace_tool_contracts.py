@@ -25,7 +25,11 @@ build_google_workspace_internal_capabilities = (
 
 
 def test_contract_catalog__matches_public_and__internal_callable_surface() -> None:
-    public_names = {entry.tool_name for entry in load_signed_tool_registry().entries}
+    public_names = {
+        entry.tool_name
+        for entry in load_signed_tool_registry().entries
+        if entry.connector_id == "google_workspace"
+    }
     internal_names = {
         capability.tool_name for capability in build_google_workspace_internal_capabilities()
     }

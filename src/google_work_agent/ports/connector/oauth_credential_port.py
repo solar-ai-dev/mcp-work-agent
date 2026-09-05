@@ -22,6 +22,11 @@ class OAuthAuthorizationStart:
     schema_version: Literal[1]
     authorization_url: str
     callback_id: str
+    flow_kind: Literal["AUTHORIZATION_CODE", "DEVICE_CODE"] = "AUTHORIZATION_CODE"
+    verification_uri: str | None = None
+    user_code: str | None = None
+    expires_at_ms: int | None = None
+    poll_interval_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

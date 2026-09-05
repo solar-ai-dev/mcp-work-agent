@@ -9,19 +9,25 @@ from typing import Literal
 from google_work_agent.application.use_cases.execution_attempt.project_delivery_certainty import (
     project_latest_delivery_certainty,
 )
-from google_work_agent.application.use_cases.plan.persistence_projection import current_plan_tuple
-from google_work_agent.application.use_cases.run.resume_confirmation import ResumeTargetValidator
+from google_work_agent.application.use_cases.plan.persistence_projection import (
+    current_plan_tuple,
+)
+from google_work_agent.application.use_cases.run.resume_confirmation import (
+    ResumeTargetValidator,
+)
 from google_work_agent.application.use_cases.run.resume_safe_checkpoint import (
     safe_checkpoint_resume_is_allowed,
 )
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.run.model import RunStatusV1
+from google_work_agent.ports.persistence.trace_event_repository import TraceEventCursor
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 
 type ErrorUiActionKindV1 = Literal[
     "PREPARE_RETRY",
     "REAUTHENTICATE_GOOGLE",
+    "REAUTHENTICATE_CONNECTOR",
     "RESUME_SAFE_CHECKPOINT",
     "OPEN_SETTINGS",
     "OPEN_DIAGNOSTICS",
@@ -38,6 +44,7 @@ class ErrorUiActionV1:
     kind: ErrorUiActionKindV1
     action_id: str | None = None
     resume_kind: str | None = None
+    connector_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,18 +84,40 @@ class ProjectErrorActionsHandler:
                 and project_latest_delivery_certainty(unit_of_work, action.id) == "NOT_SENT"
             )
             if run.status is RunStatusV1.REAUTH_REQUIRED:
+                latest_action_id = _latest_reauth_action_id(unit_of_work, run.id)
+                affected_action = next(
+                    (
+                        action
+                        for action in actions
+                        if latest_action_id is not None and action.id == latest_action_id
+                    ),
+                    None,
+                )
+                connector_id = None if affected_action is None else affected_action.connector_id
+                if connector_id == "google_workspace":
+                    error_code = "GOOGLE_REAUTH_REQUIRED"
+                    message = (
+                        "이 요청을 계속하려면 Google 인증을 다시 연결해야 합니다."
+                        if korean else
+                        "Google authentication must be restored before this run can continue."
+                    )
+                    reauth_action = ErrorUiActionV1("REAUTHENTICATE_GOOGLE")
+                else:
+                    error_code = "CONNECTOR_REAUTH_REQUIRED"
+                    message = (
+                        "이 요청을 계속하려면 해당 Connector 인증을 다시 연결해야 합니다."
+                        if korean else
+                        "Connector authentication must be restored before this run can continue."
+                    )
+                    reauth_action = ErrorUiActionV1(
+                        "REAUTHENTICATE_CONNECTOR", connector_id=connector_id
+                    )
                 return ProjectErrorActionsResultV1(
                     1,
-                    "GOOGLE_REAUTH_REQUIRED",
+                    error_code,
+                    message,
                     (
-                        "Google 연결이 만료되어 작업을 계속하려면 재인증이 필요합니다. "
-                        "같은 작업을 다시 보내지 않고 재연결 후 현재 결과부터 확인합니다."
-                        if korean
-                        else "Your Google connection expired. Reconnect to continue; the same "
-                        "action will not be resent before the current result is checked."
-                    ),
-                    (
-                        ErrorUiActionV1("REAUTHENTICATE_GOOGLE"),
+                        reauth_action,
                         ErrorUiActionV1("OPEN_SETTINGS"),
                         ErrorUiActionV1("OPEN_DIAGNOSTICS"),
                     ),
@@ -98,10 +127,11 @@ class ProjectErrorActionsHandler:
                     1,
                     "ACTION_NOT_SENT",
                     (
-                        "일부 작업이 Google에 전달되기 전에 실패했습니다. "
+                        "일부 작업이 외부 서비스에 전달되기 전에 실패했습니다. "
                         "아직 적용되지 않은 항목만 다시 준비할 수 있습니다."
                         if korean
-                        else "Some actions failed before reaching Google. Only the items that "
+                        else "Some actions failed before reaching the external service. "
+                        "Only the items that "
                         "were not applied can be prepared again."
                     ),
                     (*retry_actions, ErrorUiActionV1("OPEN_DIAGNOSTICS")),
@@ -161,6 +191,21 @@ def _request_text(unit_of_work: UnitOfWork, run_id: str, conversation_id: str) -
 
 def _uses_korean(value: str | None) -> bool:
     return value is None or any("\uac00" <= character <= "\ud7a3" for character in value)
+
+
+def _latest_reauth_action_id(unit_of_work: UnitOfWork, run_id: str) -> str | None:
+    after_id: int | None = None
+    latest_action_id: str | None = None
+    while True:
+        page = unit_of_work.traces.list_page(
+            TraceEventCursor(run_id=run_id, after_id=after_id), 500
+        )
+        for event in page:
+            if event.event_type == "RUN_REAUTH_REQUIRED" and event.action_id is not None:
+                latest_action_id = event.action_id
+        if len(page) < 500:
+            return latest_action_id
+        after_id = page[-1].id
 
 
 __all__ = [

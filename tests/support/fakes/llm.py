@@ -7,8 +7,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
-from google_work_agent.ports.llm.llm_runtime_status_port import LlmProviderRuntimeStatus
+from google_work_agent.ports.llm.llm_runtime_status_port import (
+    LlmProviderRuntimeStatus,
+    LocalModelRuntimeOptionV1,
+)
 from google_work_agent.ports.llm.local_model_catalog_port import InstalledLocalModelV1
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ApprovedModelInfo,
     AvailabilityState,
@@ -28,6 +32,9 @@ class DisabledLlmRuntimeStatusPort:
     def get_status(self, provider: str) -> LlmProviderRuntimeStatus:
         return LlmProviderRuntimeStatus(1, provider, False, "DISABLED", None, None)
 
+    def list_local_models(self) -> tuple[LocalModelRuntimeOptionV1, ...]:
+        return ()
+
 
 @dataclass
 class FakeStructuredInferencePort:
@@ -35,6 +42,7 @@ class FakeStructuredInferencePort:
 
     outputs: list[object]
     calls: list[dict[str, object]] = field(default_factory=list)
+    validate_schema: bool = False
 
     def infer(
         self,
@@ -54,6 +62,8 @@ class FakeStructuredInferencePort:
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
             raise output
+        if self.validate_schema:
+            assert not validate_output_schema(output, output_schema_ref.json_schema)
         return StructuredInferenceResultV1(
             schema_version=1,
             structured_output=cast(dict[str, object], output),

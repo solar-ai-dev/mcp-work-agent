@@ -9,6 +9,8 @@ from tests.support.context_retrieval import (
 )
 
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    AcquisitionResultV1,
+    EvidenceDraftV1,
     RetrievalResultV1,
 )
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
@@ -92,3 +94,132 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
         "retrieval_rounds",
         "temporal_constraints",
     }
+
+
+def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() -> None:
+    route_plan = _tool_route_plan(
+        [
+            {
+                "route_id": "route-github",
+                "resource_type": "GITHUB_ISSUE",
+                "connector_id": "github",
+                "allowed_read_tool_ids": ["github_list_issues"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            }
+        ]
+    )
+    acquisition = cast(
+        AcquisitionResultV1,
+        {
+            "schema_version": 1,
+            "status": "COMPLETE",
+            "resource_handles": [
+                "github_issue:acme/repo#7",
+                "github_issue:acme/repo#8",
+            ],
+            "source_summaries": [
+                {
+                    "route_id": "route-github",
+                    "source": "GITHUB",
+                    "status": "COMPLETE",
+                    "resource_handles": [
+                        "github_issue:acme/repo#7",
+                        "github_issue:acme/repo#8",
+                    ],
+                    "resources": [
+                        {
+                            "resource_type": "github_issue",
+                            "resource_id": "acme/repo#7",
+                        },
+                        {
+                            "resource_type": "github_issue",
+                            "resource_id": "acme/repo#8",
+                        },
+                    ],
+                }
+            ],
+            "missing_slots": [],
+            "remaining_budget": {},
+        },
+    )
+    selection = _selection_output(["segment-7"])
+    evidence = cast(
+        EvidenceDraftV1,
+        {
+            "schema_version": 1,
+            "evidence_id": "evidence-segment-7",
+            "resource_handle": "github_issue:acme/repo#7",
+            "segment_id": "segment-7",
+            "kind": "excerpt",
+            "excerpt": "Issue seven",
+            "locator": {},
+            "reason_codes": ["SUPPORTS"],
+        },
+    )
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-github",
+        request_intent=_intent(),
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition,
+        selection_result=selection,
+        evidence_drafts=[evidence],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=0,
+    )
+
+    assert result["source_statuses"] == [
+        {
+            "route_id": "route-github",
+            "resource_type": "github_issue",
+            "status": "COMPLETE",
+            "evidence_refs": ["evidence-segment-7"],
+            "failure_kind": None,
+        }
+    ]
+    assert result["source_resource_refs"] == ["github_issue:acme/repo#7"]
+    assert all(status["resource_type"] != "ISSUE" for status in result["source_statuses"])
+
+
+def test_finalize_retrieval__with_google_resources__retains_exact_resource_types() -> None:
+    for route_type, source, exact_type in (
+        ("GMAIL_THREAD", "GMAIL", "gmail_thread"),
+        ("TASK", "TASKS", "task"),
+        ("CALENDAR_EVENT", "CALENDAR", "calendar_event"),
+    ):
+        route_plan = _tool_route_plan(
+            [
+                {
+                    "route_id": "route-google",
+                    "resource_type": route_type,
+                    "connector_id": "google_workspace",
+                    "allowed_read_tool_ids": ["read"],
+                    "required": True,
+                    "reason_codes": [],
+                }
+            ]
+        )
+        acquisition = _acquisition_result()
+        summary = acquisition["source_summaries"][0]
+        summary["route_id"] = "route-google"
+        summary["source"] = source
+        summary["resources"] = [{"resource_type": exact_type}]
+
+        result = finalize_retrieval(
+            artifact_id="retrieval-google",
+            request_intent=_intent(),
+            tool_route_plan=route_plan,
+            acquisition_result=acquisition,
+            selection_result={
+                "schema_version": 2,
+                "selected_segment_ids": [],
+                "evidence_drafts": [],
+                "excluded_segment_ids": [],
+            },
+            evidence_drafts=[],
+            sufficiency_result=_sufficiency_output("SUFFICIENT"),
+            current_round_no=0,
+        )
+
+        assert result["source_statuses"][0]["resource_type"] == exact_type

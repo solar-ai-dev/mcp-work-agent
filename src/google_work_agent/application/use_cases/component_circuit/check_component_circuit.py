@@ -75,13 +75,13 @@ class CircuitProtectedConnectorReadPort(ConnectorReadPort):
         self,
         *,
         delegate: ConnectorReadPort,
-        connector_id: str,
+        connector_id: str | None = None,
         check: CheckComponentCircuitHandler,
         record: RecordComponentCallResultHandler,
         now_ms: Callable[[], int],
     ) -> None:
         self._delegate = delegate
-        self._key = ComponentCircuitKey(1, "CONNECTOR", connector_id, None)
+        self._connector_id = connector_id
         self._check = check
         self._record = record
         self._now_ms = now_ms
@@ -92,7 +92,10 @@ class CircuitProtectedConnectorReadPort(ConnectorReadPort):
         tool_arguments: dict[str, JsonValue],
     ) -> ConnectorReadResultV1:
         now_ms = self._now_ms()
-        if not self._check(CheckComponentCircuitQueryV1(1, self._key, now_ms)).allowed:
+        key = ComponentCircuitKey(
+            1, "CONNECTOR", self._connector_id or binding.connector_id, None
+        )
+        if not self._check(CheckComponentCircuitQueryV1(1, key, now_ms)).allowed:
             raise ConnectorOperationFailure(
                 code=ConnectorFailureCode.CONNECTION_UNAVAILABLE,
                 detail_code="COMPONENT_CIRCUIT_OPEN",
@@ -103,11 +106,11 @@ class CircuitProtectedConnectorReadPort(ConnectorReadPort):
             if error.code in _TECHNICAL_CONNECTOR_FAILURES:
                 self._record(
                     RecordComponentCallResultCommandV1(
-                        1, self._key, "TECHNICAL_FAILURE", error.code.value, now_ms
+                        1, key, "TECHNICAL_FAILURE", error.code.value, now_ms
                     )
                 )
             raise
-        self._record(RecordComponentCallResultCommandV1(1, self._key, "SUCCESS", None, now_ms))
+        self._record(RecordComponentCallResultCommandV1(1, key, "SUCCESS", None, now_ms))
         return result
 
 
@@ -118,13 +121,13 @@ class CircuitProtectedConnectorWritePort(ConnectorWritePort):
         self,
         *,
         delegate: ConnectorWritePort,
-        connector_id: str,
+        connector_id: str | None = None,
         check: CheckComponentCircuitHandler,
         record: RecordComponentCallResultHandler,
         now_ms: Callable[[], int],
     ) -> None:
         self._delegate = delegate
-        self._key = ComponentCircuitKey(1, "CONNECTOR", connector_id, None)
+        self._connector_id = connector_id
         self._check = check
         self._record = record
         self._now_ms = now_ms
@@ -136,17 +139,20 @@ class CircuitProtectedConnectorWritePort(ConnectorWritePort):
         claim_token: dict[str, JsonValue],
     ) -> ConnectorWriteResultV1:
         now_ms = self._now_ms()
-        if not self._check(CheckComponentCircuitQueryV1(1, self._key, now_ms)).allowed:
+        key = ComponentCircuitKey(
+            1, "CONNECTOR", self._connector_id or binding.connector_id, None
+        )
+        if not self._check(CheckComponentCircuitQueryV1(1, key, now_ms)).allowed:
             return ConnectorWriteResultV1(
                 1, False, "NOT_SENT", None, None, "COMPONENT_CIRCUIT_OPEN"
             )
         result = self._delegate.execute_write(binding, tool_arguments, claim_token)
         if result.success:
-            outcome = RecordComponentCallResultCommandV1(1, self._key, "SUCCESS", None, now_ms)
+            outcome = RecordComponentCallResultCommandV1(1, key, "SUCCESS", None, now_ms)
         else:
             outcome = RecordComponentCallResultCommandV1(
                 1,
-                self._key,
+                key,
                 "TECHNICAL_FAILURE",
                 result.error_code or "CONNECTOR_WRITE_FAILED",
                 now_ms,

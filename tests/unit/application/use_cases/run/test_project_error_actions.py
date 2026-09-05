@@ -6,7 +6,9 @@ from tests.support.checkpoint import sqlite_checkpoint
 
 from google_work_agent.adapters.persistence.connection import connect_sqlite
 from google_work_agent.adapters.persistence.migration import apply_migrations
-from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import (
+    sqlite_unit_of_work_factory,
+)
 from google_work_agent.application.use_cases.run.get_run_snapshot import (
     GetRunSnapshotHandler,
     GetRunSnapshotQuery,
@@ -118,3 +120,43 @@ def test_run_snapshot__projects_latest__delivery_certainty(tmp_path: Path) -> No
 
     assert result is not None
     assert result.actions[0].delivery_certainty == "NOT_SENT"
+
+
+def test_reauth_action__uses_affected_connector__while_google_stays_compatible(
+    tmp_path: Path,
+) -> None:
+    github_root = tmp_path / "github"
+    github_root.mkdir()
+    github_path = _database(github_root, delivery_certainty="NOT_SENT")
+    with connect_sqlite(github_path) as connection:
+        connection.execute("UPDATE actions SET connector_id = 'github' WHERE id = 'action-1'")
+        connection.execute("UPDATE runs SET status = 'REAUTH_REQUIRED' WHERE id = 'run-1'")
+        connection.execute(
+            """INSERT INTO trace_events (
+                run_id, action_id, event_type, status, duration_ms, payload_json, created_at_ms
+            ) VALUES ('run-1', 'action-1', 'RUN_REAUTH_REQUIRED', 'REAUTH_REQUIRED',
+                      NULL, '{}', 10)"""
+        )
+    github = _project(github_path)
+
+    google_root = tmp_path / "google"
+    google_root.mkdir()
+    google_path = _database(google_root, delivery_certainty="NOT_SENT")
+    with connect_sqlite(google_path) as connection:
+        connection.execute("UPDATE runs SET status = 'REAUTH_REQUIRED' WHERE id = 'run-1'")
+        connection.execute(
+            """INSERT INTO trace_events (
+                run_id, action_id, event_type, status, duration_ms, payload_json, created_at_ms
+            ) VALUES ('run-1', 'action-1', 'RUN_REAUTH_REQUIRED', 'REAUTH_REQUIRED',
+                      NULL, '{}', 10)"""
+        )
+    google = _project(google_path)
+
+    assert github is not None
+    assert github.error_code == "CONNECTOR_REAUTH_REQUIRED"
+    assert github.actions[0].kind == "REAUTHENTICATE_CONNECTOR"
+    assert github.actions[0].connector_id == "github"
+    assert google is not None
+    assert google.error_code == "GOOGLE_REAUTH_REQUIRED"
+    assert google.actions[0].kind == "REAUTHENTICATE_GOOGLE"
+    assert google.actions[0].connector_id is None

@@ -42,7 +42,9 @@ def main() -> None:
         elif message_type == "list_tools":
             payload = {
                 "tool_names": sorted(
-                    entry.tool_name for entry in load_signed_tool_registry().entries
+                    entry.tool_name
+                    for entry in load_signed_tool_registry().entries
+                    if entry.connector_id == "google_workspace"
                 )
             }
         elif message_type == "control_call":
@@ -92,9 +94,11 @@ def _control_payload(method: str) -> dict[str, object]:
             capability.tool_name: capability.category.value
             for capability in build_google_workspace_internal_capabilities()
         }
-        names = {entry.tool_name for entry in load_signed_tool_registry().entries} | set(
-            internal_categories
-        )
+        names = {
+            entry.tool_name
+            for entry in load_signed_tool_registry().entries
+            if entry.connector_id == "google_workspace"
+        } | set(internal_categories)
         return {
             "contracts": [
                 {

@@ -2,7 +2,7 @@ import type { RunSnapshot } from "../../api/contract";
 
 type RecoveryProjection = NonNullable<RunSnapshot["recovery"]>;
 
-export function RecoveryCard({ snapshot, busy, onResolve, onErrorAction = () => undefined }: { snapshot: RunSnapshot; busy: string | null; onResolve: (kind: RecoveryProjection["allowed_resolution_kinds"][number]) => void; onErrorAction?: (kind: "REAUTHENTICATE_GOOGLE" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS") => void }): JSX.Element | null {
+export function RecoveryCard({ snapshot, busy, onResolve, onErrorAction = () => undefined }: { snapshot: RunSnapshot; busy: string | null; onResolve: (kind: RecoveryProjection["allowed_resolution_kinds"][number]) => void; onErrorAction?: (kind: "REAUTHENTICATE_GOOGLE" | "REAUTHENTICATE_CONNECTOR" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS") => void }): JSX.Element | null {
   const recovery = snapshot.recovery;
   const transientResumeOnlyError = snapshot.error
     && snapshot.error.actions.some((action) => action.kind === "RESUME_SAFE_CHECKPOINT")
@@ -12,12 +12,13 @@ export function RecoveryCard({ snapshot, busy, onResolve, onErrorAction = () => 
     <article className="info-card">
       <strong>복구가 필요합니다</strong>
       {recovery ? <><p>{recovery.message}</p><div className="button-row">{recovery.allowed_resolution_kinds.map((kind) => <button className="button-secondary" type="button" key={kind} disabled={busy === `recovery-${kind}`} onClick={() => onResolve(kind)}>{resolutionLabel(kind)}</button>)}</div></> : null}
-      {snapshot.error ? <><p className="status-warn">{snapshot.error.message}</p><div className="button-row">{snapshot.error.actions.filter((action) => action.kind === "REAUTHENTICATE_GOOGLE" || action.kind === "OPEN_SETTINGS" || action.kind === "OPEN_DIAGNOSTICS").map((action) => <button className="button-secondary" type="button" key={action.kind} onClick={() => onErrorAction(action.kind as "REAUTHENTICATE_GOOGLE" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS")}>{errorActionLabel(action.kind)}</button>)}</div></> : null}
+      {snapshot.error ? <><p className="status-warn">{snapshot.error.message}</p><div className="button-row">{snapshot.error.actions.filter((action) => action.kind === "REAUTHENTICATE_GOOGLE" || action.kind === "REAUTHENTICATE_CONNECTOR" || action.kind === "OPEN_SETTINGS" || action.kind === "OPEN_DIAGNOSTICS").map((action) => <button className="button-secondary" type="button" key={`${action.kind}:${action.connector_id ?? ""}`} onClick={() => onErrorAction(action.kind as "REAUTHENTICATE_GOOGLE" | "REAUTHENTICATE_CONNECTOR" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS")}>{errorActionLabel(action.kind, action.connector_id)}</button>)}</div></> : null}
     </article>
   );
 }
 
-function errorActionLabel(kind: string): string {
+function errorActionLabel(kind: string, connectorId?: string | null): string {
+  if (kind === "REAUTHENTICATE_CONNECTOR") return `${connectorId === "github" ? "GitHub" : "Connector"} 재인증`;
   return ({ REAUTHENTICATE_GOOGLE: "Google 재인증", OPEN_SETTINGS: "설정 열기", OPEN_DIAGNOSTICS: "진단 보기" } as Record<string, string>)[kind] ?? kind;
 }
 

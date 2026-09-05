@@ -43,7 +43,7 @@ def project_empty_read_answer(
         if failed:
             answer = (
                 f"{scope}{resource} 자료를 확인했지만 일부 읽기에 실패해 요청을 완료할 "
-                "근거가 부족합니다. Google 연결 상태를 확인한 뒤 다시 시도해 주세요."
+                f"근거가 부족합니다. {resource} 연결 상태를 확인한 뒤 다시 시도해 주세요."
             )
             section = "일부 자료 읽기 실패"
         elif no_resources:
@@ -63,7 +63,7 @@ def project_empty_read_answer(
         if failed:
             answer = (
                 f"{prefix}I could not gather enough evidence from {resource} because some "
-                "reads failed. Check the Google connection and try again."
+                f"reads failed. Check the {resource} connection and try again."
             )
             section = "Some sources could not be read"
         elif no_resources:
@@ -93,6 +93,10 @@ def _resource_label(request_intent: Mapping[str, object]) -> str:
         return "Google Tasks"
     if hints and all(item.startswith("CALENDAR") for item in hints):
         return "Google Calendar"
+    if hints == {"GITHUB_ISSUE"}:
+        return "GitHub"
+    if "GITHUB_ISSUE" in hints:
+        return "Google Workspace / GitHub"
     return "Google Workspace"
 
 
@@ -121,6 +125,8 @@ def _object_resource(resource: str) -> str:
         "Google Tasks": "Google Tasks를",
         "Google Calendar": "Google Calendar를",
         "Google Workspace": "Google Workspace를",
+        "GitHub": "GitHub를",
+        "Google Workspace / GitHub": "Google Workspace / GitHub를",
     }[resource]
 
 

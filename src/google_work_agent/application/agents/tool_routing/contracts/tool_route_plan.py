@@ -102,4 +102,6 @@ def _resource_source(resource_type: str) -> str:
         return "TASKS"
     if resource_type.startswith("CALENDAR"):
         return "CALENDAR"
+    if resource_type == "GITHUB_ISSUE":
+        return "GITHUB"
     raise ValueError(f"resource type has no source projection: {resource_type}")

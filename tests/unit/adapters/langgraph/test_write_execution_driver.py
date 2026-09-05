@@ -39,10 +39,14 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
     VerificationResultV1,
     VerifyEffectQueryV1,
 )
-from google_work_agent.domain.action.model import ActionStatusV1
+from google_work_agent.domain.action.model import ActionStatusV1, PolicyViolationError
 from google_work_agent.domain.execution_attempt.model import ExecutionAttemptStatusV1
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.run.model import RunStatusV1
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
 from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
@@ -82,6 +86,7 @@ class _RecordedCall:
 
     def load_claimed_execution_input(self, **_kwargs: object) -> object:
         return SimpleNamespace(
+            connector_id="google_workspace",
             tool_name="tasks_create_task",
             arguments={"task_list_id": "list-1", "title": "Task"},
             recovery_fingerprint="recovery-fingerprint",
@@ -291,6 +296,35 @@ def test_fresh_preflight__source_snapshot_is__forwarded_to_claim() -> None:
     claim_command = claim_call.invocations[0][0][0]
     assert isinstance(claim_command, ClaimExecutionCommand)
     assert claim_command.source_snapshot == source_snapshot
+
+
+def test_github_pull_request__is_blocked_in_application_preflight__before_claim() -> None:
+    calls: list[str] = []
+    result = _coordinator(
+        calls=calls,
+        preflight_error=ConnectorOperationFailure(
+            ConnectorFailureCode.NOT_FOUND,
+            "GITHUB_PULL_REQUEST_NOT_ISSUE",
+        ),
+    ).execute(_request())
+
+    assert result.disposition is WriteExecutionDisposition.PREFLIGHT_BLOCKED
+    assert calls == ["preflight"]
+    assert "dispatch" not in calls
+
+
+def test_github_target_mismatch__stops_before_claim__begin_and_connector_write() -> None:
+    calls: list[str] = []
+    result = _coordinator(
+        calls=calls,
+        preflight_error=PolicyViolationError("GitHub preflight target binding is stale"),
+    ).execute(_request())
+
+    assert result.disposition is WriteExecutionDisposition.PREFLIGHT_BLOCKED
+    assert calls == ["preflight"]
+    assert "claim" not in calls
+    assert "begin" not in calls
+    assert "dispatch" not in calls
 
 
 def test_uncertain_delivery__marks_unknown__without_blind_resend() -> None:
@@ -516,6 +550,7 @@ def _coordinator(
     claim_call: _RecordedCall | None = None,
     classify_dispatch_result: object | None = None,
     begin_error: Exception | None = None,
+    preflight_error: Exception | None = None,
 ) -> WriteExecutionStructuralDriver:
     snapshot = ResourceSnapshot(
         fixture_snapshot_id="snapshot-1",
@@ -553,7 +588,13 @@ def _coordinator(
         request_hash=lambda _payload: "request-hash",
         should_stop_for_cancel=lambda _run_id: False,
         preflight_write=cast(
-            Any, _RecordedCall(name="preflight", calls=calls, result=preflight_result)
+            Any,
+            _RecordedCall(
+                name="preflight",
+                calls=calls,
+                result=preflight_result,
+                error=preflight_error,
+            ),
         ),
         claim_execution=cast(
             Any,
@@ -632,7 +673,7 @@ def _coordinator(
             ),
         ),
         service_instance_id="service-1",
-        mcp_process_instance_id=lambda: "mcp-1",
+        mcp_process_instance_id=lambda _connector_id: "mcp-1",
         require_write_reauth=cast(
             Any, _RecordedCall(name="require_reauth", calls=calls, result=reauth)
         ),
@@ -673,6 +714,7 @@ def _claim_result(
 def _claim_context() -> ClaimContextV2:
     return ClaimContextV2(
         claim_version=2,
+        connector_id="google_workspace",
         service_instance_id="service-1",
         mcp_process_instance_id="mcp-1",
         action_id="action-1",

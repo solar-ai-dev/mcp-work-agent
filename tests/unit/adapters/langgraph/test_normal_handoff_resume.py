@@ -2,12 +2,16 @@ from threading import Lock
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from google_work_agent.adapters.langgraph.invocation import WorkflowInvocationCoordinator
-from google_work_agent.adapters.langgraph.main.state import GraphState
+from google_work_agent.adapters.langgraph.main.state import GraphState, initial_graph_state
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowCorrelationContext,
     WorkflowResumeRequest,
+    WorkflowStartRequest,
 )
 from google_work_agent.ports.system.contracts.workflow_handoff import (
     RetrievalCacheRestartControlV1,
@@ -19,7 +23,17 @@ class _Graph:
         self.calls: list[object] = []
         self.updates: list[tuple[object, str]] = []
         self.snapshot = SimpleNamespace(
-            values={"graph_profile": "SIX_ROLE_BASELINE", "graph_version": "v1"},
+            values=initial_graph_state(
+                WorkflowStartRequest(
+                    run_id="run-1", conversation_id="conversation-1", workflow_key="thread-1",
+                    entry_mode="AGENT_SEARCH", requested_mode="LOCAL_GPU",
+                    request_text="요청", selected_resource_ids=(),
+                    correlation=WorkflowCorrelationContext("request-1", "command-1", "v2"),
+                    run_budget=build_default_run_budget(),
+                ),
+                graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+                graph_version="v1", initial_target="initialize",
+            ),
             next=(),
             config={"configurable": {"checkpoint_id": "before"}},
             tasks=(),
@@ -33,6 +47,7 @@ class _Graph:
         self.calls.append(value)
         self.snapshot = SimpleNamespace(
             values={
+                **self.snapshot.values,
                 "graph_profile": "SIX_ROLE_BASELINE",
                 "graph_version": "v1",
                 "workflow_phase": "PLAN_REVIEW",
@@ -147,3 +162,44 @@ def _coordinator(graph: _Graph) -> WorkflowInvocationCoordinator:
         cancel_signal_lock=Lock(),
         cancel_signals=set(),
     )
+
+
+@pytest.mark.parametrize("connector,resource_type,resource_id,parent", [
+    ("google_workspace", "gmail_thread", "thread-1", None),
+    ("github", "github_issue", "acme/repo#7", "acme/repo"),
+])
+def test_resume__immutable_input__preserves_identity_and_message(
+    connector: str, resource_type: str, resource_id: str, parent: str | None,
+) -> None:
+    from google_work_agent.adapters.langgraph.main.state import request_from_run_input_state
+
+    graph = _Graph()
+    values = graph.snapshot.values
+    values["run_input"].update({
+        "user_message_id": "message-original", "user_request": "원래 요청",
+        "entry_mode": "RESOURCE_SELECTED", "selected_resource_refs": [{
+            "resource_ref_id": "persisted-ref-1", "connector_id": connector,
+            "resource_type": resource_type, "resource_id": resource_id,
+            "parent_resource_id": parent,
+        }],
+    })
+    restored = request_from_run_input_state(values)
+    assert restored.request_text == "원래 요청"
+    assert restored.user_message_id == "message-original"
+    assert restored.selected_resources[0].resource_ref_id == "persisted-ref-1"
+    assert restored.selected_resources[0].connector_id == connector
+    assert restored.selected_resources[0].parent_resource_id == parent
+    assert _coordinator(graph).is_profile_compatible(values)
+
+
+def test_legacy_selected_checkpoint__resume__fails_before_io() -> None:
+    graph = _Graph()
+    graph.snapshot.values["run_input"]["selected_resource_refs"] = [{
+        "source": "GMAIL", "resource_type": "THREAD", "resource_id": "thread-1",
+    }]
+    result = _coordinator(graph).resume(WorkflowResumeRequest(
+        run_id="run-1", workflow_key="thread-1", resume_kind="REAUTH_COMPLETED",
+        resume_payload={}, correlation=WorkflowCorrelationContext("r", "c", "v2"),
+    ))
+    assert result.outcome == "DOMAIN_CHECKPOINT_CONFLICT"
+    assert graph.calls == graph.updates == []

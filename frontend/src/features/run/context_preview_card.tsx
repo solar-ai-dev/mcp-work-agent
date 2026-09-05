@@ -31,7 +31,8 @@ export function ContextPreviewCard({ preview, busy, onAdjust }: Props): JSX.Elem
     && preview.allowed_adjustments.includes("EXCLUDE_EVIDENCE");
   const canRetrieveMore = preview.adjustment_allowed
     && preview.allowed_adjustments.includes("RETRIEVE_MORE");
-  const contextCount = preview.gmail_count + preview.tasks_count + preview.calendar_count;
+  const githubCount = preview.github_count ?? 0;
+  const contextCount = preview.gmail_count + preview.tasks_count + preview.calendar_count + githubCount;
 
   return (
     <div className="context-preview-anchor">
@@ -42,7 +43,7 @@ export function ContextPreviewCard({ preview, busy, onAdjust }: Props): JSX.Elem
         <div className="context-modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setOpen(false); }}>
           <section className="context-modal" role="dialog" aria-modal="true" aria-labelledby="context-modal-title">
             <header>
-              <div><strong id="context-modal-title">사용 컨텍스트 {contextCount}개</strong><p className="muted">메일 {preview.gmail_count} · 태스크 {preview.tasks_count} · 일정 {preview.calendar_count}</p></div>
+              <div><strong id="context-modal-title">사용 컨텍스트 {contextCount}개</strong><p className="muted">메일 {preview.gmail_count} · 태스크 {preview.tasks_count} · 일정 {preview.calendar_count} · GitHub {githubCount}</p></div>
               <button className="icon-button icon-button--plain" type="button" aria-label="사용 컨텍스트 닫기" onClick={() => setOpen(false)}>×</button>
             </header>
             {preview.items.length ? (
@@ -98,5 +99,5 @@ export function ContextPreviewCard({ preview, busy, onAdjust }: Props): JSX.Elem
 }
 
 function sourceLabel(source: ContextPreview["items"][number]["source"]): string {
-  return ({ gmail: "메일", tasks: "태스크", calendar: "일정" } as const)[source];
+  return ({ gmail: "메일", tasks: "태스크", calendar: "일정", github: "GitHub" } as const)[source];
 }

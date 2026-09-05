@@ -109,13 +109,19 @@ class _RuntimeHandle:
 
 
 class _DeterministicMcpClient:
-    process_instance_id = "mcp-1"
 
     def __init__(self, descriptors: list[MCPToolDescriptorV1]) -> None:
         self._descriptors = descriptors
         self.calls: list[tuple[str, dict[str, object]]] = []
 
-    def sign_claim_context(self, payload: dict[str, object]) -> str:
+    def process_instance_id(self, connector_id: str) -> str:
+        assert connector_id == GOOGLE_WORKSPACE_CONNECTOR_ID
+        return "mcp-1"
+
+    def sign_claim_context(
+        self, connector_id: str, payload: dict[str, object]
+    ) -> str:
+        assert connector_id == GOOGLE_WORKSPACE_CONNECTOR_ID
         del payload
         return "signature-1"
 
@@ -469,6 +475,7 @@ def test_write_success__crosses_connector_port__then_verifies_with_read_port(
     registry, client, read_port, write_port = _connector_ports()
     claim = ClaimContextV2(
         2,
+        "google_workspace",
         "service-1",
         "mcp-1",
         "action-1",

@@ -63,7 +63,9 @@ class _Receipt:
 
 
 class _UnitOfWork:
-    def __init__(self, *, run_status: RunStatusV1) -> None:
+    def __init__(
+        self, *, run_status: RunStatusV1, begin_receipt_applied: bool = True
+    ) -> None:
         action = SimpleNamespace(
             id="action-1",
             plan_id="plan-1",
@@ -99,11 +101,15 @@ class _UnitOfWork:
             },
             sort_keys=True,
         )
-        receipts = {
-            "begin-execution-attempt:attempt-1": _Receipt(
-                status=CommandReceiptStatus.APPLIED, response_json=receipt_response
-            )
-        }
+        receipts = (
+            {
+                "begin-execution-attempt:attempt-1": _Receipt(
+                    status=CommandReceiptStatus.APPLIED, response_json=receipt_response
+                )
+            }
+            if begin_receipt_applied
+            else {}
+        )
         self.execution_attempts = _Repository({"attempt-1": attempt})
         self.actions = _Repository({"action-1": action})
         self.approvals = _Repository({"approval-1": approval})
@@ -135,6 +141,7 @@ class _ConnectorWritePort:
 def _command() -> DispatchConnectorWriteCommandV1:
     claim_context = ClaimContextV2(
         claim_version=2,
+        connector_id="google_workspace",
         service_instance_id="service-1",
         mcp_process_instance_id="mcp-1",
         action_id="action-1",
@@ -234,5 +241,47 @@ def test_claim_attempt__mismatch_is_rejected__before_connector_io() -> None:
 
     with pytest.raises(PermissionError, match="identity binding mismatch"):
         handler(cross_wired)
+
+    assert port.calls == 0
+
+
+def test_claim_connector_mismatch__is_rejected__before_connector_io() -> None:
+    port = _ConnectorWritePort()
+    handler = DispatchConnectorWriteHandler(
+        unit_of_work_factory=cast(
+            Any, lambda: _UnitOfWork(run_status=RunStatusV1.WAITING_APPROVAL)
+        ),
+        tool_registry=cast(Any, _ToolRegistry()),
+        connector_write_port=cast(Any, port),
+    )
+    command = _command()
+
+    with pytest.raises(PermissionError, match="no longer current"):
+        handler(
+            replace(
+                command,
+                claim_context=replace(command.claim_context, connector_id="github"),
+            )
+        )
+
+    assert port.calls == 0
+
+
+def test_missing_begin_execution_receipt__prevents_connector__io() -> None:
+    port = _ConnectorWritePort()
+    handler = DispatchConnectorWriteHandler(
+        unit_of_work_factory=cast(
+            Any,
+            lambda: _UnitOfWork(
+                run_status=RunStatusV1.WAITING_APPROVAL,
+                begin_receipt_applied=False,
+            ),
+        ),
+        tool_registry=cast(Any, _ToolRegistry()),
+        connector_write_port=cast(Any, port),
+    )
+
+    with pytest.raises(PermissionError, match="BeginExecutionAttempt receipt is required"):
+        handler(_command())
 
     assert port.calls == 0

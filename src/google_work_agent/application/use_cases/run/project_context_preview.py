@@ -18,7 +18,7 @@ from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 
 type ContextRoleV1 = Literal["SUPPORTS", "CONTRADICTS", "CONTEXT"]
-type ContextSourceV1 = Literal["gmail", "tasks", "calendar"]
+type ContextSourceV1 = Literal["gmail", "tasks", "calendar", "github"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +48,7 @@ class ProjectContextPreviewResultV1:
     calendar_count: int
     adjustment_allowed: bool
     allowed_adjustments: tuple[str, ...]
+    github_count: int = 0
 
 
 class ProjectContextPreviewHandler:
@@ -100,7 +101,7 @@ class ProjectContextPreviewHandler:
                 actions=actions,
             )
 
-        counts = {"gmail": 0, "tasks": 0, "calendar": 0}
+        counts = {"gmail": 0, "tasks": 0, "calendar": 0, "github": 0}
         for item in items:
             counts[item.source] += 1
         return ProjectContextPreviewResultV1(
@@ -111,6 +112,7 @@ class ProjectContextPreviewHandler:
             gmail_count=counts["gmail"],
             tasks_count=counts["tasks"],
             calendar_count=counts["calendar"],
+            github_count=counts["github"],
             adjustment_allowed=allowed,
             allowed_adjustments=("EXCLUDE_EVIDENCE", "RETRIEVE_MORE") if allowed else (),
         )
@@ -170,6 +172,8 @@ def _source_for_resource_type(resource_type: str) -> ContextSourceV1:
         return "tasks"
     if resource_type in {"calendar", "calendar_event", "calendar_freebusy"}:
         return "calendar"
+    if resource_type == "github_issue":
+        return "github"
     raise ValueError(f"unsupported context resource type: {resource_type}")
 
 

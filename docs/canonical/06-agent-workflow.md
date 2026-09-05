@@ -1,7 +1,7 @@
 # 06. Agent · Workflow 설계서
 
 > **Authority:** Agent·Workflow runtime topology, State projection, Node/Edge/Interrupt와 registered continuation semantics. Domain lifecycle은 State Contract, Retrieval은 `05`, typed interface는 `07`을 따른다.  
-> **상태:** Draft v7.29 · **기준일:** 2026-09-03 · **DB Schema:** v1.9 · **대상:** P0 MVP
+> **상태:** Draft v7.29 · **기준일:** 2026-09-06 · **DB Schema:** v1.9 · **대상:** P0 MVP
 
 ## 0. 먼저 이해할 것
 
@@ -695,10 +695,16 @@ class StateArtifactMetaV1:
 Request Understanding은 사용자 요청의 의미만 구조화한다. 실제 Tool을 선택하지 않는다.
 
 ```python
+class ConstraintProvenanceV1:
+    source: Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
+    start_offset: int
+    end_offset: int
+
 class ConstraintV1:
     kind: Literal["PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"]
     field: str
     value: str | list[str]
+    provenance: ConstraintProvenanceV1 | None = None
 
 class AmbiguityV1:
     requires_confirmation: bool
@@ -723,6 +729,15 @@ class RequestIntentV2:
 - `RESOURCE_SELECTED`의 검증된 `selected_resource_refs`는 `identify_goal`과 `detect_ambiguity`에 동일한 current-Run 입력으로 전달한다. 선택 Resource의 본문·제목·발신자처럼 Connector READ로 얻을 수 있는 사실은 user-owned missing choice가 아니므로 Confirmation 사유가 될 수 없다.
 - 사용자만 결정할 수 있는 recipient·시간·범위 같은 값은 선택 Resource가 존재해도 자동 보완하지 않는다. 특히 Write intent의 실제 사용자 선택 누락은 기존 Confirmation 경계를 유지한다.
 - `analysis_requirement`은 사용자 의미상 Evidence 또는 사용자 입력을 별도 업무 사실/관계로 해석해야 하는지를 나타낸다. 단순 조회·요약뿐 아니라 사용자가 Action Arguments를 직접 충분히 제공한 단순 ACTION도 `NONE`일 수 있다. 다만 Supervisor의 실제 Analysis 호출 여부는 이 값만 보지 않고 현재 Output Route에 적용되는 Policy Precondition도 결정적으로 평가한다. `TASK + CREATE`의 중복 검사와 `CALENDAR + CREATE`의 충돌 검사는 P0 필수이므로 사용자 의미상 `analysis_requirement=NONE`이어도 Retrieval 후 Work Analysis를 건너뛰지 않는다. `output_mode=ACTION` 자체만으로 Analysis를 강제하지는 않는다.
+
+#### Identity-bearing constraint provenance
+
+- Provider identity로 사용되는 constraint는 finalized `RequestIntentV2`에 들어가기 전에 `request.finalize`의 기존 `finalize_intent → validate_intent` 단계에서 deterministic provenance 검증을 통과해야 한다. LLM은 constraint와 source span 후보를 제안할 수 있을 뿐 `provenance`를 확정하는 authority가 아니다.
+- `start_offset:end_offset`은 `source`가 가리키는 현재 Run의 정확한 사용자 요청 또는 동일 Run Confirmation 응답 문자열에 대한 half-open span이다. 결정적 validator가 범위와 exact source slice를 constraint 값에 대조한 뒤에만 `ConstraintProvenanceV1`을 부여한다. 대조되지 않은 LLM 선언은 authority가 아니며 identity-bearing constraint로 사용할 수 없다.
+- GitHub repository identity는 `kind="RESOURCE", field="repository"`인 단일 문자열 `owner/repository`로 표현한다. owner와 repository가 모두 비어 있지 않고 정확히 하나의 `/`로 구분되어야 하며, source에 없는 owner를 연결 계정·organization·최근 사용값·Provider 검색 결과·hard-coded 값 또는 LLM 추측으로 보완하지 않는다.
+- `repository`처럼 owner가 없는 bare 값은 기존 deterministic default authority가 없는 한 `AmbiguityV1.requires_confirmation=true`로 처리한다. 기존 Request Understanding nested Confirmation과 동일 Run checkpoint resume를 사용하며 GitHub 전용 node, state, edge 또는 resume target을 추가하지 않는다.
+- current-run `SelectedResourceRefV1`이 GitHub Issue를 나타내면 `(connector_id="github", resource_type="github_issue", resource_id="owner/repository#issue_number", parent_resource_id="owner/repository")`를 보존하며, 검증된 `parent_resource_id`가 repository container authority가 될 수 있다. 동일 Run의 explicit provenance-validated repository도 존재하면 두 identity는 exact match해야 한다. 불일치에는 silent precedence를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로를 사용한다.
+- 이 provenance는 `ConstraintV1`의 선택적 source binding이며 새 Main State field나 장기 repository authority Artifact가 아니다. 권위는 기존 finalized `RequestIntentV2`, `SelectedResourceRefV1`/`ResourceRef`, frozen Route와 immutable Planning arguments 안에만 존재한다.
 
 ### 3.2 ToolRoutePlanV2
 
@@ -1066,7 +1081,7 @@ START
 → identify_goal
 → detect_ambiguity
 → finalize_intent
-→ validate
+→ validate_intent
 → END
 ```
 
@@ -1091,6 +1106,8 @@ class RequestUnderstandingStateV2:
 ```
 
 각 LLM Node는 목표 파악 또는 모호성 판단 중 자기 책임만 수행한다. 구현에서 한 호출로 합치는 Profile이 존재해도 Output Contract의 의미 책임은 분리해 평가한다.
+
+Identity-bearing constraint도 이 기존 흐름 안에서만 처리한다. `identify_goal`과 `detect_ambiguity`는 후보를 만들고, `request.finalize`가 actual current-run source text와 대조하여 provenance를 부여한 뒤 `validate_intent`를 통과시킨다. 새 Request Understanding operation이나 Main Graph topology를 만들지 않는다.
 
 ### 5.3 Tool Route Subgraph
 

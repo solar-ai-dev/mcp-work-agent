@@ -120,7 +120,9 @@ def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 읽고 요약해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -210,7 +212,9 @@ def test_selected_gmail_analysis__does_not_invent_user_owned__ambiguity() -> Non
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 분석해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -320,7 +324,9 @@ def test_selected_gmail_send__with_missing_recipient__preserves_confirmation() -
         requested_mode="LOCAL_GPU",
         request_text="이 메일에 답장해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -367,4 +373,166 @@ def _answer_only_request(text: str) -> WorkflowStartRequest:
         selected_resource_ids=(),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
+    )
+
+
+@pytest.mark.parametrize("repository", ["google-work-agent", "other-owner/repo"])
+def test_detect_ambiguity__forces_existing_confirmation_for__unbound_repository(
+    repository: str,
+) -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+    )
+    request = _request("저 저장소의 열린 이슈를 찾아줘")
+    candidate = _github_candidate(repository)
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=request,
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["MISSING_TARGET"],
+        "missing_fields": ["repository"],
+    }
+
+
+def test_detect_ambiguity__accepts_confirmation_source__without_owner_guessing() -> None:
+    repository = "solar-ai-dev/google-work-agent"
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("저 저장소의 열린 이슈를 찾아줘"),
+        goal_candidate=_github_candidate(repository),
+        prompt_ref=_prompt_ref(),
+        confirmation_response={
+            "schema_version": 1,
+            "response_kind": "FREE_TEXT",
+            "selected_option": None,
+            "free_text": repository,
+        },
+    )
+
+    assert result["requires_confirmation"] is False
+
+
+def test_detect_ambiguity__selected_and_explicit_conflict__has_no_precedence() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+    )
+    request = _request(
+        "owner-b/repo의 열린 이슈를 찾아줘",
+        selected_resources=(
+            SelectedResourceRef(
+                resource_ref_id="ref-1",
+                connector_id="github",
+                resource_type="github_issue",
+                resource_id="owner-a/repo#7",
+                parent_resource_id="owner-a/repo",
+            ),
+        ),
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=request,
+        goal_candidate=_github_candidate("owner-b/repo"),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result["requires_confirmation"] is True
+    assert result["missing_fields"] == ["repository"]
+
+
+def test_detect_ambiguity__matching_selected_and_explicit_repository__is_unambiguous() -> None:
+    repository = "owner-a/repo"
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request(
+            f"List issues in {repository}",
+            selected_resources=(
+                SelectedResourceRef(
+                    resource_ref_id="ref-1",
+                    connector_id="github",
+                    resource_type="github_issue",
+                    resource_id=f"{repository}#7",
+                    parent_resource_id=repository,
+                ),
+            ),
+        ),
+        goal_candidate=_github_candidate(repository),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result["requires_confirmation"] is False
+
+
+def _github_candidate(repository: str) -> RequestGoalCandidateV1:
+    return {
+        "goal": "열린 이슈 조회",
+        "completion_conditions": ["이슈를 나열한다"],
+        "constraints": [{"kind": "RESOURCE", "field": "repository", "value": repository}],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GITHUB_ISSUE"],
+        "analysis_requirement": "NONE",
+    }
+
+
+def test_github_read__without_repository_constraint__requires_confirmation_before_llm() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    candidate = _github_candidate("unused")
+    candidate["constraints"] = []
+    result = detect_ambiguity(
+        llm_runtime=runtime, request=_request("GitHub 열린 이슈를 보여줘"),
+        goal_candidate=candidate, prompt_ref=_prompt_ref(),
+    )
+    assert result["requires_confirmation"] is True
+    assert result["missing_fields"] == ["repository"]
+    assert runtime.calls == []
+
+
+def _request(
+    request_text: str,
+    *,
+    selected_resources: tuple[SelectedResourceRef, ...] = (),
+) -> WorkflowStartRequest:
+    return WorkflowStartRequest(
+        run_id="run-1",
+        conversation_id="conversation-1",
+        workflow_key="thread-1",
+        entry_mode="RESOURCE_SELECTED" if selected_resources else "AGENT_SEARCH",
+        requested_mode="AUTO",
+        request_text=request_text,
+        selected_resource_ids=tuple(item.resource_id for item in selected_resources),
+        run_budget=cast(dict[str, Any], build_default_run_budget()),
+        correlation=WorkflowCorrelationContext(
+            request_id="request-1", command_id="command-1", api_contract_version="v1"
+        ),
+        selected_resources=selected_resources,
+    )
+
+
+def _prompt_ref() -> PromptReference:
+    return PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="request_understanding.detect_ambiguity",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="request_understanding",
+        subgraph_name="request_understanding",
+        node_name="detect_ambiguity",
+        node_state="INITIAL",
+        purpose="detect_ambiguity",
+        input_schema_version="v1",
+        output_schema_version="v1",
     )

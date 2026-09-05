@@ -107,7 +107,7 @@ export type ApprovalSnapshot = {
 export type ContextPreviewItem = {
   segment_id: string;
   role: "SUPPORTS" | "CONTRADICTS" | "CONTEXT";
-  source: "gmail" | "tasks" | "calendar";
+  source: "gmail" | "tasks" | "calendar" | "github";
   resource_type: string;
   resource_id: string;
   display_label: string;
@@ -120,6 +120,7 @@ export type ContextPreview = {
   retrieval_revision: number;
   items: ContextPreviewItem[];
   gmail_count: number;
+  github_count?: number;
   tasks_count: number;
   calendar_count: number;
   adjustment_allowed: boolean;
@@ -197,7 +198,8 @@ export type RunSnapshot = {
     error_code: string;
     message: string;
     actions: {
-      kind: "PREPARE_RETRY" | "REAUTHENTICATE_GOOGLE" | "RESUME_SAFE_CHECKPOINT" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS";
+      kind: "PREPARE_RETRY" | "REAUTHENTICATE_GOOGLE" | "REAUTHENTICATE_CONNECTOR" | "RESUME_SAFE_CHECKPOINT" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS";
+      connector_id?: string | null;
       action_id?: string | null;
       resume_kind?: "SAFE_CHECKPOINT_RESUME" | null;
     }[];

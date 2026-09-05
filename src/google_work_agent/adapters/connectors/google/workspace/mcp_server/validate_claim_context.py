@@ -55,6 +55,8 @@ def validate_claim_context(
             raise credential_provider._WorkspaceToolError("CLAIM_MALFORMED")
     if str(claim.get("tool_name")) != tool_name:
         raise credential_provider._WorkspaceToolError("CLAIM_TOOL_MISMATCH")
+    if claim.get("connector_id") != "google_workspace":
+        raise credential_provider._WorkspaceToolError("CLAIM_CONNECTOR_MISMATCH")
     if str(claim.get("service_instance_id")) != runtime_state.service_instance_id:
         raise credential_provider._WorkspaceToolError("CLAIM_SERVICE_INSTANCE_MISMATCH")
     if str(claim.get("mcp_process_instance_id")) != runtime_state.process_instance_id:
