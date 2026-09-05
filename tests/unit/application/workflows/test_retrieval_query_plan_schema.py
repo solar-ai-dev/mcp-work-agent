@@ -1,10 +1,49 @@
 import pytest
 
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    TemporalRangeConstraintV1,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
     bind_retrieval_query_plan_output_schema,
 )
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
+
+
+def test_run_relative_period_is_fixed_only_on_its_own_route() -> None:
+    temporal: TemporalRangeConstraintV1 = {
+        "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
+        "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
+        "timezone": "Asia/Seoul",
+    }
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail", "calendar"],
+        supported_constraint_kinds={
+            "gmail": ["TEMPORAL_RANGE", "KEYWORD"],
+            "calendar": ["TEMPORAL_RANGE", "CONTAINER_REF"],
+        },
+        validated_container_refs={"calendar": ["primary"]},
+        resolved_temporal_constraints={"gmail": temporal},
+    )
+    query = {
+        "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
+        "search_spec": {"mode": "INITIAL", "constraints": [dict(temporal)]},
+        "detail_candidate_ref": None,
+    }
+    candidate = {
+        "schema_version": 2, "route_queries": [query],
+        "required_information": ["일정 근거"], "retrieval_order": ["gmail"],
+    }
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    query["search_spec"]["constraints"][0]["start_local"] = "2025-09-01"
+    assert validate_output_schema(candidate, schema.json_schema)
+    query["route_id"] = "calendar"
+    candidate["retrieval_order"] = ["calendar"]
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    query["search_spec"]["constraints"] = [
+        {"kind": "KEYWORD", "terms": ["일정"], "match_mode": "ANY"},
+    ]
+    assert validate_output_schema(candidate, schema.json_schema)
 
 
 @pytest.mark.parametrize("identity, valid", [

@@ -33,6 +33,7 @@ from google_work_agent.application.agents.retrieval.plan_query_expansion import 
 )
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     preserve_gmail_search_semantics,
+    resolve_gmail_query_periods,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -424,6 +425,10 @@ def plan_query(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
         is_followup=is_followup,
+        resolved_temporal_constraints=resolve_gmail_query_periods(
+            prompt_input=prompt_input, frozen_routes=frozen_routes,
+            now_ms=now_ms, timezone=timezone,
+        ),
     )
     deterministic_plan = deterministic_query_plan(
         prompt_input=prompt_input,

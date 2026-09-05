@@ -9,6 +9,7 @@ from typing import cast
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     CONCEPT_LITERAL_PATTERN,
     CONCEPT_MANIFESTATION_LIMIT,
+    TemporalRangeConstraintV1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
@@ -284,6 +285,7 @@ def bind_retrieval_query_plan_output_schema(
     validated_container_refs: Mapping[str, Collection[str]] | None = None,
     detail_candidate_refs: Collection[str] = (),
     is_followup: bool = False,
+    resolved_temporal_constraints: Mapping[str, TemporalRangeConstraintV1] | None = None,
 ) -> OutputSchemaDefinition:
     """Bind planner-generated identities to values validated in the current state."""
 
@@ -294,43 +296,61 @@ def bind_retrieval_query_plan_output_schema(
     allowed_route_ids = sorted(set(route_ids))
     retrieval_order["items"] = {"type": "string", "enum": allowed_route_ids}
 
-    allowed_resource_refs = _flatten_refs(validated_resource_refs)
-    allowed_container_refs = _flatten_refs(validated_container_refs)
-    allowed_constraint_kinds = {
-        kind for kinds in (supported_constraint_kinds or {}).values() for kind in kinds
-    }
-    for operation_schema in cast(
+    operation_templates = cast(
         list[dict[str, object]], cast(dict[str, object], route_queries["items"])["oneOf"]
-    ):
-        operation_properties = cast(dict[str, object], operation_schema["properties"])
-        operation_properties["route_id"] = {
-            "type": "string",
-            "enum": allowed_route_ids,
-        }
-        operation = cast(dict[str, object], operation_properties["operation"])["const"]
-        if is_followup and operation in {"SEARCH", "FREEBUSY"}:
-            operation_properties["search_spec"] = deepcopy(_CHANGED_SEARCH_SPEC)
-        if operation == "DETAIL_FETCH":
-            candidates = sorted(set(detail_candidate_refs))
-            if candidates:
-                operation_properties["detail_candidate_ref"] = {
-                    "type": "string",
-                    "enum": candidates,
-                }
-        _bind_constraint_ref_values(
-            operation_properties["search_spec"],
-            allowed_constraint_kinds=allowed_constraint_kinds,
-            allowed_resource_refs=allowed_resource_refs,
-            allowed_container_refs=allowed_container_refs,
-        )
+    )
+    bound_operations: list[dict[str, object]] = []
+    for route_id in allowed_route_ids:
+        for template in operation_templates:
+            operation_schema = deepcopy(template)
+            _bind_route_operation(
+                operation_schema,
+                route_id=route_id,
+                is_followup=is_followup,
+                detail_candidate_refs=detail_candidate_refs,
+                allowed_constraint_kinds=set(
+                    (supported_constraint_kinds or {}).get(route_id, _CONSTRAINT_KINDS)
+                ),
+                allowed_resource_refs=sorted((validated_resource_refs or {}).get(route_id, ())),
+                allowed_container_refs=sorted((validated_container_refs or {}).get(route_id, ())),
+                temporal_constraint=(resolved_temporal_constraints or {}).get(route_id),
+            )
+            bound_operations.append(operation_schema)
+    route_queries["items"] = {"oneOf": bound_operations}
     return OutputSchemaDefinition(
         schema_version=base_schema.schema_version,
         json_schema=json_schema,
     )
 
 
-def _flatten_refs(values: Mapping[str, Collection[str]] | None) -> list[str]:
-    return sorted({item for refs in (values or {}).values() for item in refs})
+def _bind_route_operation(
+    operation_schema: dict[str, object], *, route_id: str, is_followup: bool,
+    detail_candidate_refs: Collection[str], allowed_constraint_kinds: set[str],
+    allowed_resource_refs: list[str], allowed_container_refs: list[str],
+    temporal_constraint: TemporalRangeConstraintV1 | None,
+) -> None:
+    operation_properties = cast(dict[str, object], operation_schema["properties"])
+    operation_properties["route_id"] = {
+        "type": "string",
+        "const": route_id,
+    }
+    operation = cast(dict[str, object], operation_properties["operation"])["const"]
+    if is_followup and operation in {"SEARCH", "FREEBUSY"}:
+        operation_properties["search_spec"] = deepcopy(_CHANGED_SEARCH_SPEC)
+    if operation == "DETAIL_FETCH":
+        candidates = sorted(set(detail_candidate_refs))
+        if candidates:
+            operation_properties["detail_candidate_ref"] = {
+                "type": "string",
+                "enum": candidates,
+            }
+    _bind_constraint_ref_values(
+        operation_properties["search_spec"],
+        allowed_constraint_kinds=allowed_constraint_kinds,
+        allowed_resource_refs=allowed_resource_refs,
+        allowed_container_refs=allowed_container_refs,
+        temporal_constraint=temporal_constraint,
+    )
 
 
 def _bind_constraint_ref_values(
@@ -339,6 +359,7 @@ def _bind_constraint_ref_values(
     allowed_constraint_kinds: set[str],
     allowed_resource_refs: list[str],
     allowed_container_refs: list[str],
+    temporal_constraint: TemporalRangeConstraintV1 | None,
 ) -> None:
     if isinstance(value, list):
         for item in value:
@@ -347,6 +368,7 @@ def _bind_constraint_ref_values(
                 allowed_constraint_kinds=allowed_constraint_kinds,
                 allowed_resource_refs=allowed_resource_refs,
                 allowed_container_refs=allowed_container_refs,
+                temporal_constraint=temporal_constraint,
             )
         return
     if not isinstance(value, dict):
@@ -364,6 +386,9 @@ def _bind_constraint_ref_values(
     if isinstance(properties, dict):
         kind_schema = properties.get("kind")
         kind = kind_schema.get("const") if isinstance(kind_schema, dict) else None
+        if kind == "TEMPORAL_RANGE" and temporal_constraint is not None:
+            for field, resolved_value in temporal_constraint.items():
+                properties[field] = {"const": resolved_value}
         if kind == "PARTICIPANT":
             participants = cast(dict[str, object], properties["participants"])
             item = cast(dict[str, object], participants["items"])
@@ -390,6 +415,7 @@ def _bind_constraint_ref_values(
             allowed_constraint_kinds=allowed_constraint_kinds,
             allowed_resource_refs=allowed_resource_refs,
             allowed_container_refs=allowed_container_refs,
+            temporal_constraint=temporal_constraint,
         )
 
 

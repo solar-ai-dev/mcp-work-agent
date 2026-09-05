@@ -26,7 +26,11 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ToolRoutePlanV2,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
-from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
+from google_work_agent.ports.llm.structured_inference_contracts import (
+    OutputSchemaDefinition,
+    PromptReference,
+)
 
 
 def _tool_route_plan(*, allowed_read_tool_ids: list[str]) -> ToolRoutePlanV2:
@@ -1265,6 +1269,10 @@ def test_general_gmail_search__resolves_last_week_from_injected_clock() -> None:
             "timezone": "Asia/Seoul",
         },
     ]
+    dispatched_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    assert validate_output_schema(result, dispatched_schema.json_schema) == []
+    search_spec["constraints"][-1]["start_local"] = "2025-08-24T00:00:00"
+    assert validate_output_schema(result, dispatched_schema.json_schema)
 
 
 def test_selected_exact_resource__invalid_route_binding__fails_without_llm_fallback() -> None:
