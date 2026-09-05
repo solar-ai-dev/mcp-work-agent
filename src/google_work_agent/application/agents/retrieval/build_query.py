@@ -196,7 +196,7 @@ def _query_identity(
 # Preserved attempt construction is owned by this query-building operation.
 
 RETRIEVAL_CONFIG_VERSION = "deterministic-retrieval-v2"
-SCORE_CONFIG_VERSION = "lexical-score-v1"
+SCORE_CONFIG_VERSION = "semantic-signal-score-v2"
 THRESHOLD_CONFIG_VERSION = "selection-threshold-v1"
 
 
