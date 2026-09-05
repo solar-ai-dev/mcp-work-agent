@@ -5,7 +5,8 @@ Prompt Output Schemas actually declare (``type`` incl. type unions,
 ``enum``, ``const``, ``oneOf``, ``allOf``, ``if``/``then``/``else``,
 object ``properties``/``required``/``additionalProperties``/
 ``minProperties``, array ``items``/``minItems``/``maxItems``/
-``uniqueItems``/``contains``, string ``minLength``/``pattern``/``format: date``, and
+``uniqueItems``/``contains``/``minContains``/``maxContains``,
+string ``minLength``/``pattern``/``format: date``, and
 numeric ``minimum``) -- not the full JSON Schema standard. Extending this
 should be usage-driven: add a keyword only once an active schema in this
 repository actually declares it.
@@ -255,11 +256,17 @@ def _validate_array_constraints(
             _validate(value=item, schema=item_schema, path=f"{path}[{index}]", errors=errors)
     min_items = schema.get("minItems")
     contains = schema.get("contains")
-    if isinstance(contains, Mapping) and not any(
-        not _errors_for(value=item, schema=contains, path=f"{path}[{index}]")
-        for index, item in enumerate(value)
-    ):
-        errors.append(f"{path} must contain an item matching contains")
+    if isinstance(contains, Mapping):
+        matches = sum(
+            not _errors_for(value=item, schema=contains, path=f"{path}[{index}]")
+            for index, item in enumerate(value)
+        )
+        min_contains = schema.get("minContains", 1)
+        max_contains = schema.get("maxContains")
+        if isinstance(min_contains, int) and matches < min_contains:
+            errors.append(f"{path} must contain at least {min_contains} matching items")
+        if isinstance(max_contains, int) and matches > max_contains:
+            errors.append(f"{path} must contain at most {max_contains} matching items")
     if isinstance(min_items, int) and len(value) < min_items:
         errors.append(f"{path} must contain at least {min_items} items")
     max_items = schema.get("maxItems")

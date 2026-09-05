@@ -2,6 +2,7 @@ from collections import deque
 from dataclasses import replace
 from typing import cast
 
+import pytest
 from tests.support.context_retrieval import (
     SELECT_PROMPT_REF,
     FakeLLMRuntime,
@@ -12,7 +13,48 @@ from tests.support.context_retrieval import (
 
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
-from google_work_agent.application.agents.retrieval.select_evidence import select_evidence
+from google_work_agent.application.agents.retrieval.select_evidence import (
+    materialize_evidence_drafts,
+    select_evidence,
+)
+
+
+@pytest.mark.parametrize("draft_count", [0, 2])
+def test_selected_candidate_without_exactly_one_draft__uses_bounded_repair(
+    draft_count: int,
+) -> None:
+    draft = {"segment_id": "mail", "role": "CONTEXT", "relevance_reason": "인물 후보"}
+    repaired = {"schema_version": 2, "evidence_drafts": [draft],
+                "selected_segment_ids": ["mail"], "excluded_segment_ids": []}
+    runtime = FakeLLMRuntime(deque([
+        _llm_result({**repaired, "evidence_drafts": [dict(draft) for _ in range(draft_count)]}),
+        _llm_result(repaired),
+    ]))
+    segment = SourceSegment(
+        "mail", "gmail_thread:1", "GMAIL", "gmail_thread", "1", None, None,
+        {}, "김철수 대리의 박람회 참석 안내",
+    )
+    result, _ = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=_intent(),
+        rag_candidates=[{"segment_id": "mail", "resource_ref": "gmail_thread:1",
+                         "retrieval_score": 20.0, "reason_codes": ["ENTITY_CANDIDATE_MATCH"]}],
+        segments=[segment], retry_budget=_run_budget(used=0),
+    )
+    assert len(runtime.calls) == 2
+    assert result == repaired
+    evidence = materialize_evidence_drafts(result, segments=[segment])
+    assert len(evidence) == 1
+    assert evidence[0]["excerpt"] == segment.text
+
+
+def test_materialization__rejects_inconsistent_legacy_selection_without_guessing() -> None:
+    with pytest.raises(ValueError, match="inconsistent selected segment/evidence binding"):
+        materialize_evidence_drafts(
+            {"schema_version": 2, "selected_segment_ids": ["mail"],
+             "excluded_segment_ids": [], "evidence_drafts": []},
+            segments=[],
+        )
 
 
 def test_select_evidence__preserves_stable__exclusion_obligations() -> None:

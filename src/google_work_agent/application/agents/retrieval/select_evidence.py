@@ -331,9 +331,14 @@ def _validate_selection(
                 "relevance_reason": reason,
             }
         )
+    draft_ids = [draft["segment_id"] for draft in drafts]
+    if len(draft_ids) != len(set(draft_ids)) or set(draft_ids) != set(selected):
+        raise ValueError("each selected segment requires exactly one evidence draft")
+    if len(drafts) > context_budget.max_evidence:
+        raise ValueError("evidence selection exceeds the evidence budget")
     return {
         "schema_version": 2,
-        "evidence_drafts": drafts[: context_budget.max_evidence],
+        "evidence_drafts": drafts,
         "selected_segment_ids": selected,
         "excluded_segment_ids": excluded,
     }
@@ -411,6 +416,11 @@ def materialize_evidence_drafts(
     context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
 ) -> list[EvidenceDraftV1]:
     """Join thin model-selected segment roles to deterministic source-owned fields."""
+    draft_ids = [draft["segment_id"] for draft in selection["evidence_drafts"]]
+    if len(draft_ids) != len(set(draft_ids)) or set(draft_ids) != set(
+        selection["selected_segment_ids"]
+    ):
+        raise ValueError("cannot materialize inconsistent selected segment/evidence binding")
     by_id = {segment.segment_id: segment for segment in segments}
     result: list[EvidenceDraftV1] = []
     seen: set[tuple[str, str, str]] = set()

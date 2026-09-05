@@ -11,6 +11,20 @@ from __future__ import annotations
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
+def test_contains_cardinality__supports_zero_and_exactly_one_in_untyped_fragments() -> None:
+    matching = {"properties": {"segment_id": {"const": "mail"}}}
+    one = {"contains": matching, "minContains": 1, "maxContains": 1}
+    zero = {"contains": matching, "minContains": 0, "maxContains": 0}
+    mail = {"segment_id": "mail", "role": "SUPPORTS"}
+    other = {"segment_id": "other", "role": "CONTEXT"}
+    assert validate_output_schema([other, mail], one) == []
+    assert validate_output_schema([other], one)
+    assert validate_output_schema([mail, {**mail, "role": "CONTEXT"}], one)
+    assert validate_output_schema([], zero) == []
+    assert validate_output_schema([other], zero) == []
+    assert validate_output_schema([mail], zero)
+
+
 def test_discriminated_union__reports_selected_variant_field_without_other_variants() -> None:
     schema = {"oneOf": [
         {"type": "object", "required": ["kind", "start"],

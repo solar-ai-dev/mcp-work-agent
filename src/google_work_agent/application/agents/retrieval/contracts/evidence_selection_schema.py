@@ -79,6 +79,7 @@ def bind_evidence_selection_schema(
     id_schema = {"type": "string", "enum": ids}
     for name in ("selected_segment_ids", "excluded_segment_ids"):
         properties[name].update(items=id_schema, uniqueItems=True, maxItems=len(ids))
+    properties["selected_segment_ids"]["maxItems"] = min(len(ids), max_evidence)
     drafts = properties["evidence_drafts"]
     drafts["maxItems"] = max_evidence
     item_properties = cast(
@@ -86,10 +87,34 @@ def bind_evidence_selection_schema(
     )
     item_properties["segment_id"] = id_schema
     groups = required_resource_segments(candidate_resource_refs, requested_resource_hints)
+    consistency_rules: list[dict[str, object]] = [
+        {
+            "if": {"properties": {
+                "selected_segment_ids": {"contains": {"const": segment_id}},
+            }},
+            "then": {"properties": {
+                "evidence_drafts": {
+                    "contains": {"properties": {"segment_id": {"const": segment_id}}},
+                    "minContains": 1,
+                    "maxContains": 1,
+                },
+                "excluded_segment_ids": {
+                    "contains": {"const": segment_id}, "minContains": 0, "maxContains": 0,
+                },
+            }},
+            "else": {"properties": {
+                "evidence_drafts": {
+                    "contains": {"properties": {"segment_id": {"const": segment_id}}},
+                    "minContains": 0, "maxContains": 0,
+                },
+            }},
+        }
+        for segment_id in ids
+    ]
     if groups:
         # Candidates are not facts: explicitly excluding every candidate of a
         # source is valid. Silently ignoring that source is not.
-        schema["allOf"] = [
+        consistency_rules.extend([
             {
                 "if": {"properties": {
                     "selected_segment_ids": {"contains": {"enum": segment_ids}},
@@ -101,7 +126,9 @@ def bind_evidence_selection_schema(
                 }},
             }
             for segment_ids in groups.values()
-        ]
+        ])
+    if consistency_rules:
+        schema["allOf"] = consistency_rules
     return OutputSchemaDefinition(
         schema_version=EVIDENCE_SELECTION_OUTPUT_SCHEMA.schema_version, json_schema=schema,
     )
