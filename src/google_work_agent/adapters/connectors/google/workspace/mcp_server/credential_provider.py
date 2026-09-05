@@ -371,13 +371,20 @@ def _gmail_thread_list_metadata(
     messages = _object_list(payload.get("messages"))
     headers = _headers(messages[0]) if messages else {}
     sender_name, sender_email = _email_identity(headers.get("from"))
+    snippet = list_snippet or _optional_text(payload.get("snippet"))
+    if snippet is not None:
+        # Gmail search snippets contain provider highlight markup, not plain body text.
+        parser = _ReadableHtmlParser()
+        parser.feed(snippet)
+        parser.close()
+        snippet = parser.readable_text()
     return {
         "sender_name": sender_name,
         "sender_email": sender_email,
         "subject": _optional_text(headers.get("subject")),
         "received_at": _optional_text(headers.get("date"))
         or _first_message_internal_date(messages),
-        "snippet": list_snippet or _optional_text(payload.get("snippet")),
+        "snippet": snippet,
     }
 
 

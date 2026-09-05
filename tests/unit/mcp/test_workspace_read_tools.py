@@ -28,8 +28,20 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server.credentia
 )
 
 
+@pytest.mark.parametrize(
+    "snippet,expected",
+    [
+        ("Preview", "Preview"),
+        ("김철수 <b>대리</b> &amp; <b>박람회</b> 참석", "김철수 대리 & 박람회 참석"),
+        ("동문 안내 데스크<br>오후 1시 50분", "동문 안내 데스크\n오후 1시 50분"),
+        ("<script>hidden()</script>확정 일정", "확정 일정"),
+        (None, "Detail preview"),
+    ],
+)
 def test_gmail_list__enriches_current__page_thread_metadata(
     monkeypatch: pytest.MonkeyPatch,
+    snippet: str | None,
+    expected: str,
 ) -> None:
     calls: list[tuple[str, dict[str, str | list[str]] | None]] = []
 
@@ -58,7 +70,7 @@ def test_gmail_list__enriches_current__page_thread_metadata(
                 ],
             }
         return {
-            "threads": [{"id": "thread-1", "historyId": "7", "snippet": "Preview"}],
+            "threads": [{"id": "thread-1", "historyId": "7", "snippet": snippet}],
             "nextPageToken": "next-1",
         }
 
@@ -85,7 +97,7 @@ def test_gmail_list__enriches_current__page_thread_metadata(
                 "sender_email": "kim.daeri@example.com",
                 "subject": "Q2 campaign follow-up",
                 "received_at": "Sat, 24 May 2025 09:15:00 +0900",
-                "snippet": "Preview",
+                "snippet": expected,
             },
         }
     ]
