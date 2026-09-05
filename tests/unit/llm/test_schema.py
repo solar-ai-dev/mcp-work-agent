@@ -23,6 +23,7 @@ def test_contains_cardinality__supports_zero_and_exactly_one_in_untyped_fragment
     assert validate_output_schema([], zero) == []
     assert validate_output_schema([other], zero) == []
     assert validate_output_schema([mail], zero)
+    assert "'segment_id': {'const': 'mail'}" in validate_output_schema([other], one)[0]
 
 
 def test_discriminated_union__reports_selected_variant_field_without_other_variants() -> None:

@@ -264,9 +264,13 @@ def _validate_array_constraints(
         min_contains = schema.get("minContains", 1)
         max_contains = schema.get("maxContains")
         if isinstance(min_contains, int) and matches < min_contains:
-            errors.append(f"{path} must contain at least {min_contains} matching items")
+            errors.append(
+                f"{path} must contain at least {min_contains} items matching {dict(contains)!r}"
+            )
         if isinstance(max_contains, int) and matches > max_contains:
-            errors.append(f"{path} must contain at most {max_contains} matching items")
+            errors.append(
+                f"{path} must contain at most {max_contains} items matching {dict(contains)!r}"
+            )
     if isinstance(min_items, int) and len(value) < min_items:
         errors.append(f"{path} must contain at least {min_items} items")
     max_items = schema.get("maxItems")
