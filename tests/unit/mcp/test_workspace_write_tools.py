@@ -63,6 +63,7 @@ def _build_claim(
     issued_at_ms = server._now_ms() + issued_offset_ms
     claim: dict[str, object] = {
         "claim_version": 2,
+        "connector_id": "google_workspace",
         "action_id": action_id,
         "approval_id": approval_id,
         "execution_attempt_id": execution_attempt_id,
@@ -385,6 +386,28 @@ def test_wrong_mcp__process_instance__is_rejected(monkeypatch: pytest.MonkeyPatc
 
     assert exc_info.value.safe_code == "CLAIM_PROCESS_INSTANCE_MISMATCH"
     assert exc_info.value.delivery_certainty is DeliveryCertainty.NOT_SENT
+
+
+def test_github_claim__is_rejected__by_google_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "_google_api_call", _reject_google_calls)
+    state = _state()
+    payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
+    claim = _build_claim(
+        state=state,
+        tool_name="gmail_create_draft",
+        execution_arguments={"payload": payload},
+    )
+    claim["connector_id"] = "github"
+    claim["signature"] = sign_claim_context(SESSION_KEY, claim)
+
+    with pytest.raises(server._WorkspaceToolError) as exc_info:
+        verified_server._tool_call(
+            state,
+            tool_name="gmail_create_draft",
+            arguments={"payload": payload, "claim_context": claim},
+        )
+
+    assert exc_info.value.safe_code == "CLAIM_CONNECTOR_MISMATCH"
 
 
 def test_wrong_tool__binding_is__rejected(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -246,9 +246,14 @@ def _round_robin_segments(
     """Bound context without allowing one long resource to hide its peers."""
 
     by_id = {segment.segment_id: segment for group in resource_segments for segment in group}
-    result = [by_id[key] for key in dict.fromkeys(preferred_segment_ids) if key in by_id][
-        :max_segments
-    ]
+    preferred = [by_id[key] for key in dict.fromkeys(preferred_segment_ids) if key in by_id]
+    preferred_sources = {segment.source for segment in preferred}
+    new_sources: dict[str, SourceSegment] = {}
+    for group in resource_segments:
+        if group and group[0].source not in preferred_sources:
+            new_sources.setdefault(group[0].source, group[0])
+    reserved = list(new_sources.values())[:max_segments] if preferred else []
+    result = preferred[:max(0, max_segments - len(reserved))] + reserved
     selected = {segment.segment_id for segment in result}
     if result and len(result) < max_segments:
         # Retaining earlier evidence must not hide a newly acquired source category.
@@ -371,9 +376,18 @@ def _truncate(value: str, max_chars: int) -> str:
 
 
 def _connector_id(resource: dict[str, object], summary: dict[str, object]) -> str:
-    value = resource.get("connector_id", summary.get("connector_id", "google_workspace"))
+    source = str(summary.get("source", "")).upper()
+    expected = {
+        "GMAIL": "google_workspace", "TASKS": "google_workspace",
+        "CALENDAR": "google_workspace", "GITHUB": "github",
+    }.get(source)
+    value = resource.get("connector_id", summary.get("connector_id"))
+    if value is None and source in {"GMAIL", "TASKS", "CALENDAR"}:
+        value = expected  # Explicit legacy Google acquisition contract.
     if not isinstance(value, str) or not value.strip():
         raise ValueError("connector_id must be a non-empty string")
+    if value != expected:
+        raise ValueError("acquisition connector_id does not match its source")
     return value
 
 
@@ -381,7 +395,12 @@ def _source_kind(source: str) -> LiteralSourceKind:
     try:
         return cast(
             LiteralSourceKind,
-            {"GMAIL": "gmail", "TASKS": "tasks", "CALENDAR": "calendar"}[source.upper()],
+            {
+                "GMAIL": "gmail",
+                "TASKS": "tasks",
+                "CALENDAR": "calendar",
+                "GITHUB": "github",
+            }[source.upper()],
         )
     except KeyError as error:
         raise ValueError(f"unsupported retrieval source kind: {source}") from error
@@ -392,7 +411,7 @@ def _segment_id(identity: SourceSegmentIdentityV1) -> str:
     return "seg_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-LiteralSourceKind = Literal["gmail", "tasks", "calendar"]
+LiteralSourceKind = Literal["gmail", "tasks", "calendar", "github"]
 
 
 class RetrievalValidationError(ValueError):

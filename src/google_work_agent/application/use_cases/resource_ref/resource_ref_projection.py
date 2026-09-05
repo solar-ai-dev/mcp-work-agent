@@ -19,6 +19,7 @@ _DURABLE_RESOURCE_TYPES = frozenset(
         ResourceType.TASK,
         ResourceType.CALENDAR,
         ResourceType.CALENDAR_EVENT,
+        ResourceType.GITHUB_ISSUE,
     }
 )
 

@@ -6,6 +6,9 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+from google_work_agent.application.agents.retrieval.assess_sufficiency import (
+    select_followup_routes,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
     QueryAttemptV1,
 )
@@ -53,13 +56,13 @@ def deterministic_followup_query_plan(
 ) -> RetrievalQueryPlanV2 | None:
     """Return a distinct continuation only when current facts prove it useful."""
 
-    if "current_round_no" not in prompt_input or not _needs_google_evidence(prompt_input):
+    if "current_round_no" not in prompt_input:
         return None
     attempts = _query_attempts(prompt_input)
     summaries = _read_summaries(prompt_input)
     route_queries: list[dict[str, object]] = []
     retrieval_order: list[str] = []
-    for route in frozen_routes:
+    for route in select_followup_routes(prompt_input, frozen_routes):
         route_id = route["route_id"]
         summary = summaries.get(route_id)
         if summary is None:
@@ -167,16 +170,6 @@ def _read_summaries(prompt_input: Mapping[str, object]) -> dict[str, Mapping[str
         for item in value
         if isinstance(item, Mapping) and isinstance(item.get("route_id"), str)
     }
-
-
-def _needs_google_evidence(prompt_input: Mapping[str, object]) -> bool:
-    issues = prompt_input.get("unresolved_sufficiency_issues")
-    return isinstance(issues, list) and any(
-        isinstance(issue, Mapping)
-        and issue.get("required") is True
-        and issue.get("resolution_source") == "GOOGLE"
-        for issue in issues
-    )
 
 
 def _has_exact_subject_constraint(prompt_input: Mapping[str, object]) -> bool:

@@ -33,7 +33,7 @@ ContextStatusValue = Literal[
 SufficiencyIssueTypeValue = Literal["MISSING", "CONFLICT"]
 
 
-SufficiencyResolutionSourceValue = Literal["USER", "GOOGLE", "POLICY", "ROUTE"]
+SufficiencyResolutionSourceValue = Literal["USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"]
 
 
 MissingInformationRequiredForValue = Literal[
@@ -113,6 +113,8 @@ class SufficiencyIssueV2(TypedDict):
     weakening Canonical to match the mistaken Candidate."""
 
     slot: str
+    # Absent on older checkpoints and global USER/POLICY issues; never guesses a route.
+    route_id: NotRequired[str]
     issue_type: SufficiencyIssueTypeValue
     required: bool
     resolution_source: SufficiencyResolutionSourceValue

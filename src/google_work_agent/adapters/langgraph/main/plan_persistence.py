@@ -158,20 +158,12 @@ def _connector_id_for_evidence_handle(
     state: GraphState,
     resource_handle: str,
 ) -> str:
-    handle_kind = resource_handle.partition(":")[0]
-    if handle_kind.startswith("gmail_"):
-        category = "GMAIL"
-    elif handle_kind in {"task", "task_list"}:
-        category = "TASK"
-    elif handle_kind in {"calendar", "calendar_event", "calendar_freebusy"}:
-        category = "CALENDAR"
-    else:
-        raise ValueError(f"unsupported evidence resource handle: {resource_handle}")
+    resource_type = ResourceType(resource_handle.partition(":")[0])
     route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
     connector_ids = {
         str(route["connector_id"])
         for route in route_plan["input_plan"]["input_routes"]
-        if category in str(route["resource_type"]).upper()
+        if str(route["resource_type"]).lower() == resource_type.value
     }
     if len(connector_ids) != 1:
         raise ValueError(

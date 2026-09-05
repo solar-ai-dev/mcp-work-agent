@@ -26,6 +26,7 @@ class ResourceType(StrEnum):
     CALENDAR = "calendar"
     CALENDAR_EVENT = "calendar_event"
     CALENDAR_FREEBUSY = "calendar_freebusy"
+    GITHUB_ISSUE = "github_issue"
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,16 +26,12 @@ from google_work_agent.application.use_cases.execution_attempt.resolve_as_failed
 from google_work_agent.application.use_cases.plan.persistence_projection import current_plan_tuple
 from google_work_agent.application.use_cases.recovery.lookup_unknown_result import (
     LookupUnknownResultHandler,
-    LookupUnknownResultQueryV1,
 )
 from google_work_agent.application.use_cases.recovery.require_recovery import (
     RequireRecoveryCommand,
     RequireRecoveryHandler,
 )
 from google_work_agent.application.use_cases.run.resume_confirmation import ResumeTargetIssuer
-from google_work_agent.application.use_cases.verification.verify_effect import (
-    SelectedResourceRefV1,
-)
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.run.model import RunStatusV1
@@ -200,35 +196,15 @@ class ReconcileInflightExecutionsHandler:
             action = unit_of_work.actions.get(candidate.action_id)
             attempt = unit_of_work.execution_attempts.get(candidate.execution_attempt_id)
             approval = None if attempt is None else unit_of_work.approvals.get(attempt.approval_id)
-            resource_ref = (
-                None
-                if action is None or action.target_resource_ref_id is None
-                else unit_of_work.resource_refs.get(action.target_resource_ref_id)
-            )
         if action is None or attempt is None or approval is None:
             return False
-        target = (
-            None
-            if resource_ref is None
-            else SelectedResourceRefV1(
-                schema_version=1,
-                resource_ref_id=resource_ref.id,
-                connector_id=resource_ref.connector_id,
-                resource_type=resource_ref.resource_type,
-                resource_id=resource_ref.resource_id,
-                parent_resource_id=resource_ref.parent_resource_id,
-            )
+        persisted_lookup = self._lookup_unknown_result.project_persisted_query(
+            run_id=candidate.run_id,
+            action_id=action.id,
+            execution_attempt_id=attempt.id,
+            effect=cast(Literal["CREATE", "UPDATE", "DELETE", "SEND"], action.effect_type),
         )
-        lookup = self._lookup_unknown_result(
-            LookupUnknownResultQueryV1(
-                run_id=candidate.run_id,
-                action_id=action.id,
-                execution_attempt_id=attempt.id,
-                effect=cast(Literal["CREATE", "UPDATE", "DELETE", "SEND"], action.effect_type),
-                recovery_fingerprint=approval.recovery_fingerprint,
-                target_resource_ref=target,
-            )
-        )
+        lookup = self._lookup_unknown_result(persisted_lookup.query)
         command_base = f"system:execution-attempt-reconcile:{attempt.id}"
         if lookup.disposition == "MUTATION_FOUND" and len(lookup.candidate_resource_refs) == 1:
             resource_id = lookup.candidate_resource_refs[0]

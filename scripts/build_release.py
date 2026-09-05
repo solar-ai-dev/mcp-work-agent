@@ -89,6 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--oauth-env", choices=("DEVELOPMENT", "STAGING", "PRODUCTION"), required=True
     )
     parser.add_argument("--oauth-client-id", required=True)
+    parser.add_argument("--github-oauth-client-id", required=True)
+    parser.add_argument("--github-oauth-scope", default="")
     parser.add_argument("--api-contract-version", required=True)
     parser.add_argument("--mcp-schema-version", required=True)
     parser.add_argument("--policy-version", required=True)
@@ -175,6 +177,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         deployment_profile=DeploymentProfile(arguments.profile),
         oauth_env=arguments.oauth_env,
         oauth_client_id=arguments.oauth_client_id,
+        github_oauth_client_id=arguments.github_oauth_client_id,
+        github_oauth_scope=arguments.github_oauth_scope,
         api_contract_version=arguments.api_contract_version,
         mcp_schema_version=arguments.mcp_schema_version,
         policy_version=arguments.policy_version,

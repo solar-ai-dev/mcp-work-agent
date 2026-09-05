@@ -9,6 +9,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     is_general_answer_only_request,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    repository_authority_requires_confirmation,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
     load_prompt_reference,
@@ -95,6 +98,18 @@ def detect_ambiguity(
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
 ) -> AmbiguityV1:
     """Decide only current-Run, user-owned ambiguity."""
+    if repository_authority_requires_confirmation(
+        goal_candidate["constraints"],
+        user_request=request.request_text,
+        confirmation_response_text=_confirmation_response_text(confirmation_response),
+        selected_resources=request.selected_resources,
+        repository_required="GITHUB_ISSUE" in goal_candidate["requested_resource_hints"],
+    ):
+        return {
+            "requires_confirmation": True,
+            "reason_codes": ["MISSING_TARGET"],
+            "missing_fields": ["repository"],
+        }
     if _is_retrieval_first_read(goal_candidate=goal_candidate) or _is_general_answer_only(
         request=request,
         goal_candidate=goal_candidate,
@@ -109,7 +124,8 @@ def detect_ambiguity(
         "goal_candidate": dict(goal_candidate),
         "selected_resource_refs": [
             {
-                "source": item.source,
+                "resource_ref_id": item.resource_ref_id,
+                "connector_id": item.connector_id,
                 "resource_type": item.resource_type,
                 "resource_id": item.resource_id,
                 "parent_resource_id": item.parent_resource_id,
@@ -126,6 +142,14 @@ def detect_ambiguity(
         DETECT_AMBIGUITY_OUTPUT_SCHEMA,
     )
     return _validate_ambiguity(result.structured_output)
+
+
+def _confirmation_response_text(
+    value: ConfirmationResponseProjectionV1 | None,
+) -> str | None:
+    if value is None:
+        return None
+    return value["selected_option"] or value["free_text"]
 
 
 def _validate_ambiguity(value: object) -> AmbiguityV1:

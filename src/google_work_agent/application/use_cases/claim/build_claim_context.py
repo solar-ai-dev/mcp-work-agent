@@ -21,6 +21,7 @@ from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 @dataclass(frozen=True, slots=True)
 class ClaimContextV2:
     claim_version: Literal[2]
+    connector_id: str
     service_instance_id: str
     mcp_process_instance_id: str
     action_id: str
@@ -38,6 +39,7 @@ class ClaimContextV2:
 @dataclass(frozen=True, slots=True)
 class BuildClaimContextQueryV1:
     schema_version: Literal[1]
+    connector_id: str
     action_id: str
     approval_id: str
     execution_attempt_id: str
@@ -50,6 +52,7 @@ class BuildClaimContextQueryV1:
 
 @dataclass(frozen=True, slots=True)
 class ClaimedExecutionInput:
+    connector_id: str
     tool_name: str
     arguments: dict[str, object]
     recovery_fingerprint: str
@@ -62,7 +65,7 @@ class BuildClaimContextHandler:
         unit_of_work_factory: Callable[[], UnitOfWork],
         now_ms: Callable[[], int],
         id_factory: Callable[[], str],
-        sign_claim_context: Callable[[dict[str, object]], str],
+        sign_claim_context: Callable[[str, dict[str, object]], str],
         ttl_ms: int = CLAIM_CONTEXT_DEFAULT_TTL_MS,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
@@ -85,6 +88,7 @@ class BuildClaimContextHandler:
             or attempt.status is not ExecutionAttemptStatusV1.CLAIMED
             or approval.status is not ApprovalStatusV1.CONSUMED
             or action.status != ActionStatusV1.EXECUTING.value
+            or action.connector_id != query.connector_id
             or action.tool_name != query.tool_name
             or action.arguments_hash != query.approval_arguments_hash
             or approval.canonical_arguments_hash != query.approval_arguments_hash
@@ -95,6 +99,7 @@ class BuildClaimContextHandler:
         nonce = self._id_factory()
         unsigned = {
             "claim_version": 2,
+            "connector_id": query.connector_id,
             "service_instance_id": query.service_instance_id,
             "mcp_process_instance_id": query.mcp_process_instance_id,
             "action_id": action.id,
@@ -107,9 +112,10 @@ class BuildClaimContextHandler:
             "expires_at_ms": issued_at_ms + self._ttl_ms,
             "nonce": nonce,
         }
-        signature = self._sign_claim_context(unsigned)
+        signature = self._sign_claim_context(query.connector_id, unsigned)
         return ClaimContextV2(
             claim_version=2,
+            connector_id=query.connector_id,
             service_instance_id=query.service_instance_id,
             mcp_process_instance_id=query.mcp_process_instance_id,
             action_id=action.id,
@@ -135,6 +141,7 @@ class BuildClaimContextHandler:
         if action is None or approval is None or approval.action_id != action.id:
             raise LookupError("committed Claim input is missing")
         return ClaimedExecutionInput(
+            connector_id=action.connector_id,
             tool_name=action.tool_name,
             arguments=cast(dict[str, object], loads(action.arguments_json)),
             recovery_fingerprint=approval.recovery_fingerprint,

@@ -31,7 +31,11 @@ build_google_workspace_internal_capabilities = (
 def test_verified_server__declared_surface__maps_to_handlers() -> None:
     verified_server._validate_declared_surface()
 
-    public_names = frozenset(entry.tool_name for entry in load_signed_tool_registry().entries)
+    public_names = frozenset(
+        entry.tool_name
+        for entry in load_signed_tool_registry().entries
+        if entry.connector_id == "google_workspace"
+    )
     internal_names = frozenset(
         capability.tool_name for capability in build_google_workspace_internal_capabilities()
     )

@@ -66,7 +66,24 @@ def tool_argument_candidate_output_schema(
     output = deepcopy(TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA.json_schema)
     properties = cast(dict[str, object], output["properties"])
     properties["route_id"] = {"const": route["route_id"]}
-    properties["arguments"] = deepcopy(dict(schema))
+    argument_variants = [deepcopy(dict(schema))]
+    for name, field in cast(Mapping[str, object], schema.get("properties", {})).items():
+        if not isinstance(field, Mapping) or "const" not in field:
+            continue
+        # The assembler supplies immutable bindings omitted by the model.
+        for variant in tuple(argument_variants):
+            omitted = deepcopy(variant)
+            cast(dict[str, object], omitted["properties"]).pop(name)
+            omitted["required"] = [
+                item for item in cast(list[str], omitted.get("required", [])) if item != name
+            ]
+            minimum = omitted.get("minProperties")
+            if isinstance(minimum, int):
+                omitted["minProperties"] = max(0, minimum - 1)
+            argument_variants.append(omitted)
+    properties["arguments"] = (
+        argument_variants[0] if len(argument_variants) == 1 else {"oneOf": argument_variants}
+    )
     properties["evidence_refs"] = {
         "type": "array", "uniqueItems": True,
         "items": {"type": "string", "enum": refs} if refs else {"type": "string"},
@@ -118,6 +135,7 @@ def compose_arguments_per_output_route(
         if (
             bound_schema["selected_tool_id"] != route.get("selected_tool_id")
             or bound_schema["connector_id"] != route.get("connector_id")
+            or bound_schema["resource_type"] != route.get("resource_type")
             or bound_schema["effect"] != route.get("effect")
         ):
             raise ValueError("bound Tool schema escaped frozen route identity")

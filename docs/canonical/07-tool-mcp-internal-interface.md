@@ -5,7 +5,7 @@
 ## 0. 문서 정보
 
 - **상태:** Draft v2.34
-- **기준일:** 2026-09-03
+- **기준일:** 2026-09-06
 - **대상:** P0 MVP
 - **배포 형태:** Windows 설치 파일 기반 로컬 애플리케이션
 
@@ -491,6 +491,9 @@ class SelectedResourceRefV1:
 ```
 
 Browser는 위 내부 field를 직접 제출하지 않는다. Handle 검증 뒤 Domain `StartRun` UoW가 새 `run_id`를 확정하면서 선택된 identity를 `(run_id, connector_id, resource_type, resource_id)` `ResourceRef`로 materialize하고 server-owned `resource_ref_id`를 발급한다. 이 selected ResourceRef들은 USER Message/Run과 같은 StartRun transaction에서 commit되어 `RunInputV1` 생성 전에 durable identity가 된다. connector/resource/account/session binding이 불일치하면 StartRun은 fail closed한다.
+
+GitHub Issue selection은 기존 shape를 그대로 사용해 `connector_id="github"`, `resource_type="github_issue"`, `resource_id="owner/repository#issue_number"`, `parent_resource_id="owner/repository"`로 projection한다. 검증된 `parent_resource_id`는 current-run repository container authority가 될 수 있다. 같은 Run에 `06`에서 provenance-validated된 explicit repository가 함께 있으면 exact match만 허용하며, 불일치는 silent precedence 없이 기존 Confirmation 또는 fail-closed 경계로 보낸다.
+
 - `POST /api/v1/runs/{run_id}/confirm` / `POST /api/v1/runs/{run_id}/resume`는 위 새 Run 생성과 다른 계약이다. 비Terminal **동일 Run**의 등록된 `langgraph_thread_id`/Checkpoint를 안전하게 resume한다.
 
 #### Gmail UI Detail Projection
@@ -723,7 +726,7 @@ class ErrorUiProjectionV1:
 class ContextPreviewItemV1:
     segment_id: str  # 05 deterministic stable SourceSegment identity; random/retrieval-scoped ID 금지
     role: Literal["SUPPORTS", "CONTRADICTS", "CONTEXT"]
-    source: Literal["gmail", "tasks", "calendar"]
+    source: Literal["gmail", "tasks", "calendar", "github"]
     resource_type: str
     resource_id: str
     display_label: str
@@ -737,6 +740,7 @@ class ContextPreviewResponseV1:
     gmail_count: int
     tasks_count: int
     calendar_count: int
+    github_count: int = 0
     adjustment_allowed: bool
     allowed_adjustments: list[ContextAdjustmentKindV1]
     retrieval_revision: int
@@ -756,7 +760,7 @@ class ContextAdjustmentResponseV1:
     current_version: int
     next_phase: Literal["RETRIEVAL"] | None
 
-`ContextPreviewItemV1.resource_type`은 current `ResourceRef.resource_type`/`SignedToolRegistryEntryV1.resource_type` exact vocabulary를 재사용하고 source-family(`gmail|tasks|calendar`)와 혼용하지 않는다. `excerpt`는 bounded/sanitized display projection이며 raw Provider payload authority가 아니다.
+`ContextPreviewItemV1.resource_type`은 current `ResourceRef.resource_type`/`SignedToolRegistryEntryV1.resource_type` exact vocabulary를 재사용하고 source-family(`gmail|tasks|calendar|github`)와 혼용하지 않는다. `excerpt`는 bounded/sanitized display projection이며 raw Provider payload authority가 아니다. GitHub count는 additive field이며 구 snapshot의 누락은 0으로 표시한다. `GET /runs/{run_id}/context`의 selected_resources도 위 5-field SelectedResourceRefV1을 그대로 반환하며 구 source-only representation으로 변환하지 않는다.
 
 `ContextPreviewResponseV1.adjustment_allowed`는 `run.project_context_preview`가 durable Run/Plan/Action/Approval/execution fact에서 계산한다. `allowed_adjustments`는 허용되는 `ContextAdjustmentKindV1`의 exact subset이며 Browser가 별도 policy를 재구성하지 않는다. P0에서 조정 가능 조건은 `Run=WAITING_APPROVAL`, current Plan 존재, 모든 current Action=`PROPOSED|MODIFIED`, ACTIVE Approval=0, in-flight/unknown/unverified execution fact=0이다.
 
@@ -2572,6 +2576,16 @@ OutputToolRouteV1 + selected resource/context
 - 필수 container를 결정적으로 해석할 수 없으면 Argument Writer를 호출하지 않고 사용자 소유 container 선택/확인 요구로 전환한다.
 - 최종 Action Arguments는 deterministic Assembler가 bound field와 LLM semantic arguments를 병합한 뒤 Tool Schema로 다시 검증한다.
 - Product Prompt에는 Gold가 아니라 실제 Runtime에서 해석된 binding metadata만 전달할 수 있다.
+
+### 31.1 GitHub repository binding
+
+`github_create_issue | github_update_issue | github_close_issue | github_reopen_issue`의 system/container argument `repository`도 새 resolver 없이 기존 deterministic `DefaultContainerResolver`가 바인딩한다.
+
+- 허용 source는 current-run selected GitHub Issue의 검증된 `parent_resource_id`와 `06`의 provenance-validated explicit `owner/repository` constraint뿐이다. GitHub hidden/default repository는 두지 않는다.
+- source가 하나이면 그것을 사용하고, 둘 다 있으며 같으면 하나로 정규화한다. 둘이 다르면 silent precedence/overwrite 없이 Argument Writer 전에 기존 Confirmation 또는 fail-closed 경로로 전환한다. source가 없을 때도 Argument Writer가 repository를 추측하지 않고 기존 사용자 Confirmation/selection lifecycle을 사용한다.
+- 확정된 `repository`는 bound Tool Schema Projection의 `const/immutable` field다. Argument Writer가 생략하면 deterministic Assembler가 binding을 주입하고, 같은 값을 내면 허용하며, 다른 값을 내면 reject한다. 조용히 overwrite하거나 LLM repair로 repository authority를 변경하지 않는다. Tool identity는 frozen `OutputToolRouteV1.selected_tool_id`를 그대로 사용한다.
+- `github_update_issue | github_close_issue | github_reopen_issue`의 existing target은 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`가 bound `repository`와 exact match해야 한다. mismatch는 Planning validation/Approval admission/Preflight에서 fail closed하고 모든 Connector I/O는 0이다. Provider GET은 이미 검증된 target의 freshness/preflight observation일 뿐 repository identity를 발견하거나 consistency를 성립시키는 authority가 아니다.
+- 이 binding은 기존 `Planning validation → Approval → Preflight → Claim → BeginExecutionAttempt persisted → ConnectorWritePort` 순서를 변경하지 않으며, 새 GitHub Planning service/Port/State/Artifact를 만들지 않는다.
 
 ### 32.1 Default container selection validation
 

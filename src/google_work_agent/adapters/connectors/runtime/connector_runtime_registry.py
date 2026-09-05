@@ -25,6 +25,8 @@ class ConnectorRuntimeHandle(Protocol):
 
     def restart_once(self) -> MCPRestartResultV1: ...
 
+    def sign_claim_context(self, payload: dict[str, object]) -> str: ...
+
     def close(self) -> None: ...
 
 
@@ -53,6 +55,12 @@ class ConnectorRuntimeRegistry:
     def connector_ids(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(sorted(self._handles))
+
+    def process_instance_id(self, connector_id: str) -> str | None:
+        return self.resolve(connector_id).runtime_metadata().process_instance_id
+
+    def sign_claim_context(self, connector_id: str, payload: dict[str, object]) -> str:
+        return self.resolve(connector_id).sign_claim_context(payload)
 
     def close_all(self) -> None:
         with self._lock:

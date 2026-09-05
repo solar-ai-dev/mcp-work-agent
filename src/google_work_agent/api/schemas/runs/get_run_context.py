@@ -31,7 +31,8 @@ class RunContextBudgetV2(ApiModel):
 
 
 class SelectedResourceResponse(ApiModel):
-    source: str
+    resource_ref_id: str
+    connector_id: str
     resource_type: str
     resource_id: str
     parent_resource_id: str | None

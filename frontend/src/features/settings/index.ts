@@ -5,7 +5,10 @@ export { updateSettings } from "./api/update_settings";
 export {
   getCurrentGoogleAccount,
   getGoogleConnection,
+  getGitHubConnection,
   startGoogleConnection,
+  startGitHubConnection,
 } from "./api/google_connection_operations";
 export type { SettingsView } from "./api/get_settings";
 export type { CurrentGoogleAccount, GoogleConnection } from "./api/google_connection_operations";
+export type { AuthorizationStart, GitHubConnection } from "./api/google_connection_operations";

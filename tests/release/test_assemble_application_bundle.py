@@ -39,18 +39,34 @@ def test_api_only__bundle_materializes_exact__connector_tool_artifacts(tmp_path:
     registry = json.loads(
         (output / "manifests/signed-tool-registry-v1.json").read_text(encoding="utf-8")
     )
-    projection = json.loads(
+    google_projection = json.loads(
         (
             output / "manifests/connectors/google_workspace/tool-descriptor-projection-v1.json"
         ).read_text(encoding="utf-8")
     )
-    assert installed["connectors"][0]["connector_id"] == "google_workspace"
-    assert {entry["tool_id"] for entry in projection["tools"]} == {
-        entry["tool_id"] for entry in registry["entries"]
+    github_projection = json.loads(
+        (
+            output / "manifests/connectors/github/tool-descriptor-projection-v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert {entry["connector_id"] for entry in installed["connectors"]} == {
+        "google_workspace",
+        "github",
     }
-    assert projection["registry_manifest_hash"] == registry["entries_hash"]
-    assert projection["manifest_version"] == "2026-08-07.p0"
-    assert projection["protocol_version"] == "2026-08-07.p0"
+    assert {entry["tool_id"] for entry in google_projection["tools"]} == {
+        entry["tool_id"]
+        for entry in registry["entries"]
+        if entry["connector_id"] == "google_workspace"
+    }
+    assert {entry["tool_id"] for entry in github_projection["tools"]} == {
+        entry["tool_id"]
+        for entry in registry["entries"]
+        if entry["connector_id"] == "github"
+    }
+    for projection in (google_projection, github_projection):
+        assert projection["registry_manifest_hash"] == registry["entries_hash"]
+        assert projection["manifest_version"] == "2026-08-07.p0"
+        assert projection["protocol_version"] == "2026-08-07.p0"
     assert not any(path.endswith((".py", ".pyc", ".map")) for path in paths)
 
 

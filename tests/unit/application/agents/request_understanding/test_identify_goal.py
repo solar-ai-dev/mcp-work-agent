@@ -120,7 +120,9 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 읽고 요약해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef("GMAIL", "THREAD", "thread-42"),),
+        selected_resources=(SelectedResourceRef(
+            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+        ),),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -430,7 +432,7 @@ def test_identify_goal__mail_derived_task_registration__cannot_be_read_only(
     request = _request("회의 관련 메일을 찾아서 후속 업무를 내 기본 Google Tasks 목록에 등록해줘.")
     prompt_ref = _prompt_ref("request_understanding.identify_goal", "identify_goal")
     if not valid:
-        with pytest.raises(ValueError, match="contains"):
+        with pytest.raises(ValueError, match=r"\$.requested_effect_hints.*CREATE"):
             identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
     else:
         result = identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
@@ -505,6 +507,39 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
         for constraint in candidate["constraints"]
         if constraint["kind"] == "DATE"
     ] == expected_dates
+
+
+def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "List issues",
+                "completion_conditions": ["Issues are listed"],
+                "constraints": [
+                    {
+                        "kind": "RESOURCE",
+                        "field": "repository",
+                        "value": "openai/codex",
+                        "provenance": {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 12,
+                        },
+                    }
+                ],
+                "requested_effect_hints": ["READ"],
+                "requested_resource_hints": ["GITHUB_ISSUE"],
+                "analysis_requirement": "REQUIRED",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("List issues in openai/codex"),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
 
 
 def _request(text: str) -> WorkflowStartRequest:

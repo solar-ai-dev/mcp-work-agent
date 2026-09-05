@@ -26,6 +26,8 @@ _MANIFEST_FIELDS = {
     "deployment_profile",
     "oauth_env",
     "oauth_client_id",
+    "github_oauth_client_id",
+    "github_oauth_scope",
     "api_contract_version",
     "mcp_schema_version",
     "policy_version",
@@ -150,13 +152,22 @@ def _load_closed_manifest(content: bytes) -> dict[str, object]:
         raise InstallationVerificationError("MANIFEST_INVALID")
     if payload["oauth_env"] not in {"DEVELOPMENT", "STAGING", "PRODUCTION"}:
         raise InstallationVerificationError("MANIFEST_INVALID")
-    for field in _MANIFEST_FIELDS - {"schema_version", "deployment_profile", "oauth_env", "files"}:
+    for field in _MANIFEST_FIELDS - {
+        "schema_version",
+        "deployment_profile",
+        "oauth_env",
+        "github_oauth_scope",
+        "files",
+    }:
         if (
             not isinstance(payload[field], str)
             or not str(payload[field]).strip()
             or len(str(payload[field])) > 512
         ):
             raise InstallationVerificationError("MANIFEST_INVALID")
+    github_scope = payload["github_oauth_scope"]
+    if not isinstance(github_scope, str) or len(github_scope) > 512:
+        raise InstallationVerificationError("MANIFEST_INVALID")
     files = payload["files"]
     if not isinstance(files, list) or not files or len(files) > 10_000:
         raise InstallationVerificationError("MANIFEST_INVALID")

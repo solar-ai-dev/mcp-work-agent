@@ -66,6 +66,10 @@ def _context(
             InsufficientDataDisposition.RETRIEVE_MORE,
         ),
         (
+            _context(source=ResolutionSource.CONNECTOR),
+            InsufficientDataDisposition.RETRIEVE_MORE,
+        ),
+        (
             _context(
                 source=ResolutionSource.GOOGLE,
                 budget_remaining=0,

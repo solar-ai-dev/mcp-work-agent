@@ -36,6 +36,8 @@ def build_test_production_container(
         deployment_profile="LOCAL_CAPABLE",
         oauth_environment=OAuthEnvironment.DEVELOPMENT,
         oauth_client_id="test-client-id",
+        github_oauth_client_id="github-test-client-id",
+        github_oauth_scope="repo",
         api_contract_version="1",
         mcp_manifest_version=MCP_MANIFEST_VERSION,
         policy_version="2026-08-06.p0",

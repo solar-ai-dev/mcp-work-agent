@@ -67,6 +67,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
@@ -76,6 +77,7 @@ from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import (
+    SelectedResourceRef,
     WorkflowCorrelationContext,
     WorkflowStartRequest,
 )
@@ -97,8 +99,10 @@ class _ComponentInferencePort:
         work_fact_count: int = 0,
         retrieval_needs_more: bool = False,
         retrieval_followup_changes_query: bool = True,
+        github_retrieval: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
+        self.github_retrieval = github_retrieval
         self.work_fact_count = work_fact_count
         self.retrieval_needs_more = retrieval_needs_more
         self.retrieval_followup_changes_query = retrieval_followup_changes_query
@@ -111,12 +115,14 @@ class _ComponentInferencePort:
         input_projection: Mapping[str, object],
         output_schema_ref: OutputSchemaDefinition,
     ) -> StructuredInferenceResultV1:
-        del requested_mode, output_schema_ref
+        del requested_mode
         prompt_id = prompt_ref.prompt_id
         self.calls.append(prompt_id)
         base = input_projection.get("base_projection", input_projection)
         projection = cast(Mapping[str, object], base)
         output = self._response(prompt_id, projection)
+        if self.github_retrieval:
+            assert not validate_output_schema(output, output_schema_ref.json_schema)
         return StructuredInferenceResultV1(
             schema_version=1,
             structured_output=output,
@@ -188,6 +194,13 @@ class _ComponentInferencePort:
                     ],
                 }
             )
+            if self.github_retrieval:
+                input_routes = cast(list[Mapping[str, object]], projection["input_routes"])
+                assert input_routes[0].get("container_refs") == ["acme/repo"]
+                search_spec = {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "CONTAINER_REF", "container_refs": ["acme/repo"]}],
+                }
             return {
                 "schema_version": 2,
                 "route_queries": [
@@ -299,7 +312,11 @@ class _ComponentConnectorReadPort:
         )
 
 
-def _state(*, initial_target: str = "request_understanding") -> GraphState:
+def _state(
+    *,
+    initial_target: str = "request_understanding",
+    selected_resources: tuple[SelectedResourceRef, ...] = (),
+) -> GraphState:
     request = WorkflowStartRequest(
         run_id="component-run-1",
         conversation_id="component-conversation-1",
@@ -310,6 +327,7 @@ def _state(*, initial_target: str = "request_understanding") -> GraphState:
         selected_resource_ids=(),
         run_budget=build_default_run_budget(),
         correlation=WorkflowCorrelationContext("component-request-1", None, "1"),
+        selected_resources=selected_resources,
     )
     return initial_graph_state(
         request,
@@ -1190,3 +1208,219 @@ def test_supervisor__unknown_retrieval_disposition__blocks_instead_of_normal_rou
     assert finalize_intent is not None
     assert finalize_intent["intent"] == "BLOCKED"
     assert finalize_intent["reason_code"] == "CONTEXT_BLOCKED"
+
+
+class _ReadBoundaryReached(RuntimeError):
+    pass
+
+
+class _StoppingGitHubReadPort:
+    def __init__(self) -> None:
+        self.arguments: dict[str, Any] | None = None
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        self.call_count += 1
+        assert binding.tool_id == "github_list_issues"
+        self.arguments = tool_arguments
+        raise _ReadBoundaryReached
+
+
+class _ComponentGitHubConnectorReadPort:
+    def __init__(self) -> None:
+        self.arguments: dict[str, Any] | None = None
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        self.call_count += 1
+        assert binding.tool_id == "github_list_issues"
+        self.arguments = dict(tool_arguments)
+        return ConnectorReadResultV1(
+            schema_version=1,
+            tool_id=binding.tool_id,
+            request_id="component-github-read-1",
+            output={
+                "items": [
+                    {
+                        "resource_type": "github_issue",
+                        "resource_id": "acme/repo#7",
+                        "parent_id": "acme/repo",
+                        "version": "2026-09-01T00:00:00Z",
+                        "related_resource_ids": ["acme/repo"],
+                        "payload": {
+                            "repository": "acme/repo",
+                            "issue_number": 7,
+                            "title": "Status issue seven",
+                            "description": "First status update",
+                            "state": "OPEN",
+                        },
+                    },
+                    {
+                        "resource_type": "github_issue",
+                        "resource_id": "acme/repo#8",
+                        "parent_id": "acme/repo",
+                        "version": "2026-09-02T00:00:00Z",
+                        "related_resource_ids": ["acme/repo"],
+                        "payload": {
+                            "repository": "acme/repo",
+                            "issue_number": 8,
+                            "title": "Status issue eight",
+                            "description": "Second status update",
+                            "state": "OPEN",
+                        },
+                    },
+                ]
+            },
+            next_page_token=None,
+            total_count=2,
+        )
+
+
+def _github_intent(*, explicit_repository: bool) -> dict[str, object]:
+    intent = _intent()
+    if explicit_repository:
+        intent["constraints"] = [
+            {
+                "kind": "RESOURCE",
+                "field": "repository",
+                "value": "acme/repo",
+                "provenance": {
+                    "source": "USER_REQUEST",
+                    "start_offset": 0,
+                    "end_offset": 9,
+                },
+            }
+        ]
+    return intent
+
+
+def _github_route_plan() -> dict[str, object]:
+    plan = _answer_route_plan()
+    input_plan = cast(dict[str, object], plan["input_plan"])
+    input_plan["input_routes"] = [
+        {
+            "route_id": "route-1",
+            "resource_type": "GITHUB_ISSUE",
+            "connector_id": "github",
+            "allowed_read_tool_ids": ["github_list_issues"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        }
+    ]
+    return plan
+
+
+@pytest.mark.parametrize("authority_source", ["explicit", "selected"])
+def test_retrieval__github_repository_authority__reaches_connector_read(
+    authority_source: str,
+) -> None:
+    selected_resources = (
+        (
+            SelectedResourceRef(
+                resource_ref_id="github_issue:acme/repo#7",
+                connector_id="github",
+                resource_type="github_issue",
+                resource_id="acme/repo#7",
+                parent_resource_id="acme/repo",
+            ),
+        )
+        if authority_source == "selected"
+        else ()
+    )
+    state = _state(
+        initial_target="context_retriever",
+        selected_resources=selected_resources,
+    )
+    state["request_intent"] = cast(
+        Any, _github_intent(explicit_repository=authority_source == "explicit")
+    )
+    state["tool_route_plan"] = cast(Any, _github_route_plan())
+    connector = _ComponentGitHubConnectorReadPort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(github_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.arguments == {"repository": "acme/repo", "state": "ALL"}
+    assert connector.call_count == 1
+    assert result["retrieval_result"]["coverage"] == "SUFFICIENT"
+    assert set(result["retrieval_result"]["source_resource_refs"]) == {
+        "github_issue:acme/repo#7",
+        "github_issue:acme/repo#8",
+    }
+    assert result["retrieval_result"]["source_statuses"] == [
+        {
+            "route_id": "route-1",
+            "resource_type": "github_issue",
+            "status": "COMPLETE",
+            "evidence_refs": result["retrieval_result"]["evidence_refs"],
+            "failure_kind": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize("authority_case", ["missing", "conflict", "unvalidated"])
+def test_retrieval__invalid_repository_authority__stops_before_connector_read(
+    authority_case: str,
+) -> None:
+    explicit_repository = authority_case != "missing"
+    intent = _github_intent(explicit_repository=explicit_repository)
+    selected_resources: tuple[SelectedResourceRef, ...] = ()
+    if authority_case == "conflict":
+        selected_resources = (
+            SelectedResourceRef(
+                resource_ref_id="github_issue:other/repo#7",
+                connector_id="github",
+                resource_type="github_issue",
+                resource_id="other/repo#7",
+                parent_resource_id="other/repo",
+            ),
+        )
+    elif authority_case == "unvalidated":
+        constraints = cast(list[dict[str, object]], intent["constraints"])
+        constraints[0].pop("provenance")
+    state = _state(
+        initial_target="context_retriever",
+        selected_resources=selected_resources,
+    )
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, _github_route_plan())
+    connector = _StoppingGitHubReadPort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(github_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope(), pytest.raises(ValueError):
+        graph.invoke(state)
+
+    assert connector.call_count == 0

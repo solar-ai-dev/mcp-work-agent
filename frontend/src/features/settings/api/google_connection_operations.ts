@@ -1,6 +1,6 @@
 import { requestJson } from "../../../api/client";
 
-export type GoogleConnection = {
+export type ConnectorConnection = {
   schema_version: 1;
   connector_id: string;
   account_id: string | null;
@@ -8,6 +8,20 @@ export type GoogleConnection = {
   connection_status: "CONNECTING" | "CONNECTED" | "DISCONNECTED" | "REAUTH_REQUIRED" | "UNAVAILABLE";
   granted_scopes: string[];
   missing_required_scopes: string[];
+};
+
+export type GoogleConnection = ConnectorConnection;
+export type GitHubConnection = ConnectorConnection;
+
+export type AuthorizationStart = {
+  schema_version: 1;
+  authorization_url: string;
+  callback_id: string;
+  flow_kind: "AUTHORIZATION_CODE" | "DEVICE_CODE";
+  verification_uri?: string;
+  user_code?: string;
+  expires_at_ms?: number;
+  poll_interval_seconds?: number;
 };
 
 export type CurrentGoogleAccount = {
@@ -23,8 +37,20 @@ export function getCurrentGoogleAccount(): Promise<CurrentGoogleAccount> {
   return requestJson("/api/v1/identity/google-account");
 }
 
-export function startGoogleConnection(commandId: string): Promise<{ schema_version: 1; authorization_url: string; callback_id: string }> {
+export function startGoogleConnection(commandId: string): Promise<AuthorizationStart> {
   return requestJson("/api/v1/connections/google/start", { method: "POST", body: { schema_version: 1, command_id: commandId } });
+}
+
+export function getGitHubConnection(): Promise<GitHubConnection> {
+  return requestJson("/api/v1/connections/github/status");
+}
+
+export function startGitHubConnection(commandId: string): Promise<AuthorizationStart> {
+  return requestJson("/api/v1/connections/github/start", { method: "POST", body: { schema_version: 1, command_id: commandId } });
+}
+
+export function disconnectGitHub(commandId: string): Promise<{ schema_version: 1; revocation_attempted: boolean; local_credential_deleted: boolean; connection_status: "DISCONNECTED" | "UNAVAILABLE" }> {
+  return requestJson("/api/v1/connections/github/disconnect", { method: "POST", body: { schema_version: 1, command_id: commandId } });
 }
 
 export function disconnectGoogle(commandId: string): Promise<{ schema_version: 1; revocation_attempted: boolean; local_credential_deleted: boolean; connection_status: "DISCONNECTED" | "UNAVAILABLE" }> {

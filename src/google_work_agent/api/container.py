@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import Request
@@ -125,5 +125,13 @@ class ApiContainer:
     resource_connector_id: str = "google_workspace"
     oauth_environment: OAuthEnvironment = OAuthEnvironment.DEVELOPMENT
     oauth_requested_scopes: tuple[str, ...] = ()
+    connection_connector_ids: dict[str, str] = field(default_factory=dict)
+    oauth_requested_scopes_by_connector: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    start_authorization_handlers_by_connector: dict[str, Any] = field(default_factory=dict)
+    get_connection_status_handlers_by_connector: dict[str, Any] = field(default_factory=dict)
+    revoke_connection_handlers_by_connector: dict[str, Any] = field(default_factory=dict)
+    current_account_id_providers_by_connector: dict[str, Callable[[], str | None]] = field(
+        default_factory=dict
+    )
     startup_callbacks: tuple[Callable[[], Awaitable[None]], ...] = ()
     shutdown_callbacks: tuple[Callable[[], None], ...] = ()

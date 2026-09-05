@@ -108,7 +108,9 @@ def test_partial_write__distinguishes_completed__and_unfinished_actions() -> Non
     )
 
     assert result.content.startswith("요청하신 작업 중 일부만 완료했습니다.")
-    assert "Send report" in result.content and "생성했고 Google에서 결과를 다시 확인" in result.content
+    assert (
+        "Send report" in result.content and "생성했고 Google에서 결과를 다시 확인" in result.content
+    )
     assert "Book room" in result.content and "완료 전에 취소" in result.content
     assert "WRITE_CLOSED" not in result.content
 

@@ -27,6 +27,8 @@ def normalize_resource_type(value: str) -> str:
         "GMAIL": "GMAIL_THREAD",
         "EMAIL": "GMAIL_THREAD",
         "TASKS": "TASK",
+        "ISSUE": "GITHUB_ISSUE",
+        "GITHUB": "GITHUB_ISSUE",
         "CALENDAR": "CALENDAR_EVENT",
         "EVENT": "CALENDAR_EVENT",
     }.get(normalized, normalized)
@@ -38,6 +40,8 @@ def coarse_resource_category(resource_type: str) -> str:
         return "EMAIL"
     if resource_type in {"TASK", "TASK_LIST"}:
         return "TASK"
+    if resource_type == "GITHUB_ISSUE":
+        return "ISSUE"
     if resource_type.startswith("CALENDAR"):
         return "CALENDAR"
     raise ToolRouteValidationError(f"resource type has no coarse category: {resource_type}")

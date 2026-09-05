@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from langgraph.types import Command
 
-from google_work_agent.adapters.langgraph.main.state import GraphState
+from google_work_agent.adapters.langgraph.main.state import GraphState, request_from_run_input_state
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     provider_dispatch_execution_scope,
@@ -68,7 +68,9 @@ class WorkflowInvocationCoordinator:
         config = self.config_for_thread(request.workflow_key)
         snapshot = self._graph.get_state(config)
         if snapshot.values or snapshot.next:
-            if tuple(snapshot.next) != (self._start_node,):
+            if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(
+                cast(GraphState, snapshot.values)
+            ):
                 raise ValueError("workflow thread is not at the prepared START boundary")
             return
         self._graph.invoke(
@@ -82,7 +84,9 @@ class WorkflowInvocationCoordinator:
             config = self.config_for_thread(request.workflow_key)
             snapshot = self._graph.get_state(config)
             if snapshot.values or snapshot.next:
-                if tuple(snapshot.next) != (self._start_node,):
+                if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(
+                    cast(GraphState, snapshot.values)
+                ):
                     return WorkflowInvocationResult(
                         run_id=request.run_id,
                         workflow_key=request.workflow_key,
@@ -433,10 +437,16 @@ class WorkflowInvocationCoordinator:
         )
 
     def is_profile_compatible(self, state: GraphState) -> bool:
-        return (
+        if not (
             state.get("graph_profile") == self._graph_profile.value
             and state.get("graph_version") == self._graph_version
-        )
+        ):
+            return False
+        try:
+            request_from_run_input_state(state)
+        except (TypeError, ValueError):
+            return False
+        return True
 
 
 def _first_pending_confirmation_interrupt(tasks: Sequence[Any]) -> dict[str, object] | None:

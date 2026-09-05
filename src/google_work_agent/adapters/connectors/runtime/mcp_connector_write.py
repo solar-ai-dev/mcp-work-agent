@@ -63,7 +63,10 @@ class McpConnectorWriteAdapter(ConnectorWritePort):
         ):
             raise ValueError("validated Connector Tool binding does not match MCP descriptor")
         arguments = dict(tool_arguments)
-        arguments["claim_context"] = self._validated_claim_context(claim_token)
+        arguments["claim_context"] = self._validated_claim_context(
+            binding.connector_id,
+            claim_token,
+        )
         try:
             response = self._mcp_client.call_tool(
                 binding.connector_id,
@@ -94,12 +97,18 @@ class McpConnectorWriteAdapter(ConnectorWritePort):
             error_code=response.error_code or "CONNECTOR_WRITE_FAILED",
         )
 
-    def _validated_claim_context(self, claim_token: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        process_instance_id = self._mcp_client.process_instance_id
+    def _validated_claim_context(
+        self,
+        connector_id: str,
+        claim_token: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        process_instance_id = self._mcp_client.process_instance_id(connector_id)
         if not isinstance(process_instance_id, str) or not process_instance_id:
             raise RuntimeError("MCP process identity is unavailable")
         if claim_token.get("mcp_process_instance_id") != process_instance_id:
             raise PermissionError("ClaimContext MCP process binding is stale")
+        if claim_token.get("connector_id") != connector_id:
+            raise PermissionError("ClaimContext connector binding is stale")
         signature = claim_token.get("signature")
         if not isinstance(signature, str) or not signature:
             raise PermissionError("ClaimContext signature is missing")

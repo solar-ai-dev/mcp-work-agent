@@ -44,7 +44,9 @@ from google_work_agent.adapters.system.filesystem_operational_command_replay imp
 from google_work_agent.adapters.system.process_component_circuit_state import (
     ProcessComponentCircuitStateAdapter,
 )
-from google_work_agent.adapters.system.process_runtime_mode import ProcessRuntimeModeAdapter
+from google_work_agent.adapters.system.process_runtime_mode import (
+    ProcessRuntimeModeAdapter,
+)
 from google_work_agent.api.app import create_app
 from google_work_agent.api.container import ApiContainer
 from google_work_agent.api.security.access_guard import LocalApiAccessGuard
@@ -65,7 +67,15 @@ from google_work_agent.application.use_cases.connection.start_authorization impo
 from google_work_agent.application.use_cases.runtime_status.get_runtime_status import (
     GetRuntimeStatusHandler,
 )
-from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
+from google_work_agent.ports.connector.oauth_credential_port import (
+    OAuthAuthorizationStart,
+    OAuthConnectionMetadata,
+    OAuthEnvironment,
+    OAuthRevokeResult,
+)
+from google_work_agent.ports.system.contracts.operational_command_replay import (
+    OperationalReconcileResultV1,
+)
 from google_work_agent.ports.system.launcher_probe_port import LauncherProbeDecision
 from google_work_agent.ports.system.readiness_port import (
     ReadinessReport,
@@ -120,6 +130,7 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
         runtime_registry=runtime_registry,
         mcp_client=transport,
     )
+    github_provider = _GitHubCredentials()
     operational_replay = FilesystemOperationalCommandReplayAdapter(tmp_path / "operational-replay")
     clock = FakeClockPort(100)
     bootstrap_store = InMemoryBootstrapGrantStore()
@@ -201,6 +212,41 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
         current_account_id_provider=lambda: "current",
         oauth_environment=OAuthEnvironment.DEVELOPMENT,
         oauth_requested_scopes=("openid",),
+        connection_connector_ids={"google": "google_workspace", "github": "github"},
+        oauth_requested_scopes_by_connector={
+            "google_workspace": ("openid",),
+            "github": ("repo",),
+        },
+        start_authorization_handlers_by_connector={
+            "google_workspace": StartAuthorizationHandler(
+                credentials=provider, replay=operational_replay
+            ),
+            "github": StartAuthorizationHandler(
+                credentials=github_provider, replay=operational_replay
+            ),
+        },
+        get_connection_status_handlers_by_connector={
+            "google_workspace": GetConnectionStatusHandler(provider),
+            "github": GetConnectionStatusHandler(github_provider),
+        },
+        revoke_connection_handlers_by_connector={
+            "google_workspace": RevokeConnectionHandler(
+                credentials=provider,
+                replay=operational_replay,
+                connected_account_store_factory=connected_account_store_factory,
+                now_ms=clock.now_ms,
+            ),
+            "github": RevokeConnectionHandler(
+                credentials=github_provider,
+                replay=operational_replay,
+                connected_account_store_factory=None,
+                now_ms=clock.now_ms,
+            ),
+        },
+        current_account_id_providers_by_connector={
+            "google_workspace": lambda: "current",
+            "github": lambda: "github:42",
+        },
         get_runtime_status_handler=GetRuntimeStatusHandler(
             runtime_mode=ProcessRuntimeModeAdapter("AUTO"),
             oauth=provider,
@@ -230,6 +276,38 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
             before = client.get("/api/v1/connections/google/status", headers=headers)
             assert before.status_code == 200
             assert before.json()["connection_status"] == "DISCONNECTED"
+
+            github_before = client.get("/api/v1/connections/github/status", headers=headers)
+            assert github_before.status_code == 200
+            assert github_before.json()["connection_status"] == "DISCONNECTED"
+
+            github_started = client.post(
+                "/api/v1/connections/github/start",
+                headers=headers,
+                json={"schema_version": 1, "command_id": "github-oauth-start-1"},
+            )
+            assert github_started.status_code == 200
+            assert github_started.json() == {
+                "schema_version": 1,
+                "authorization_url": "https://github.com/login/device",
+                "callback_id": "github-flow-1",
+                "flow_kind": "DEVICE_CODE",
+                "verification_uri": "https://github.com/login/device",
+                "user_code": "ABCD-EFGH",
+                "expires_at_ms": 900_000,
+                "poll_interval_seconds": 5,
+            }
+            assert "token" not in github_started.text.lower()
+            github_provider.approve()
+            github_connected = client.get("/api/v1/connections/github/status", headers=headers)
+            assert github_connected.json()["account_id"] == "github:42"
+            assert github_connected.json()["display_email"] == "octocat"
+            assert github_connected.json()["granted_scopes"] == ["repo"]
+
+            unknown_connector = client.get(
+                "/api/v1/connections/not-installed/status", headers=headers
+            )
+            assert unknown_connector.status_code == 404
 
             started = client.post(
                 "/api/v1/connections/google/start",
@@ -261,6 +339,7 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
                 "service_instance_id",
                 "connectors",
                 "llm_providers",
+                "local_models",
                 "component_circuits",
                 "active_run_budget",
                 "recovery_required",
@@ -288,6 +367,14 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
             )
             assert disconnected.status_code == 200
             assert disconnected.json()["connection_status"] == "DISCONNECTED"
+
+            github_disconnected = client.post(
+                "/api/v1/connections/github/disconnect",
+                headers=headers,
+                json={"schema_version": 1, "command_id": "github-oauth-disconnect-1"},
+            )
+            assert github_disconnected.status_code == 200
+            assert github_disconnected.json()["connection_status"] == "DISCONNECTED"
     finally:
         transport.close()
 
@@ -303,3 +390,62 @@ class _NoRedirect(HTTPRedirectHandler):
     ) -> object:
         del request, fp, message
         return type("Response", (), {"code": code, "headers": headers})()
+
+
+class _GitHubCredentials:
+    def __init__(self) -> None:
+        self.connected = False
+
+    def start_authorization(
+        self,
+        connector_id: str,
+        environment: OAuthEnvironment,
+        requested_scopes: tuple[str, ...],
+        operation_ref: str,
+    ) -> OAuthAuthorizationStart:
+        assert connector_id == "github"
+        assert environment is OAuthEnvironment.DEVELOPMENT
+        assert requested_scopes == ("repo",)
+        return OAuthAuthorizationStart(
+            1,
+            "https://github.com/login/device",
+            "github-flow-1",
+            "DEVICE_CODE",
+            "https://github.com/login/device",
+            "ABCD-EFGH",
+            900_000,
+            5,
+        )
+
+    def reconcile_authorization_start(
+        self, connector_id: str, operation_ref: str
+    ) -> OperationalReconcileResultV1:
+        return OperationalReconcileResultV1("SAFE_TO_RETRY", None, None)
+
+    def approve(self) -> None:
+        self.connected = True
+
+    def get_connection_status(self, connector_id: str) -> OAuthConnectionMetadata:
+        return OAuthConnectionMetadata(
+            1,
+            connector_id,
+            "github:42" if self.connected else None,
+            "octocat" if self.connected else None,
+            "CONNECTED" if self.connected else "DISCONNECTED",
+            ("repo",) if self.connected else (),
+            (),
+        )
+
+    def revoke_connection(
+        self, connector_id: str, account_id: str, operation_ref: str
+    ) -> OAuthRevokeResult:
+        self.connected = False
+        return OAuthRevokeResult(1, False, True, "DISCONNECTED")
+
+    def reconcile_revoke_connection(
+        self, connector_id: str, account_id: str, operation_ref: str
+    ) -> OperationalReconcileResultV1:
+        return OperationalReconcileResultV1("SAFE_TO_RETRY", None, None)
+
+    def refresh_access(self, connector_id: str, account_id: str) -> str:
+        return "github-context"

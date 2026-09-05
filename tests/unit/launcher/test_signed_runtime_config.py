@@ -43,6 +43,8 @@ def _signed_payload() -> dict[str, object]:
         "deployment_profile": "API_ONLY",
         "oauth_env": "PRODUCTION",
         "oauth_client_id": "desktop-client-id",
+        "github_oauth_client_id": "github-client-id",
+        "github_oauth_scope": "repo",
         "api_contract_version": "1",
         "mcp_schema_version": "2026-08-07.p0",
         "policy_version": "2026-08-06.p0",
@@ -73,6 +75,8 @@ def test_service_composition__projects_closed__signed_launcher_handoff(tmp_path:
     assert config.deployment_profile == "API_ONLY"
     assert config.oauth_environment is OAuthEnvironment.PRODUCTION
     assert config.oauth_client_id == "desktop-client-id"
+    assert config.github_oauth_client_id == "github-client-id"
+    assert config.github_oauth_scope == "repo"
     assert config.configuration_source == "SIGNED_RELEASE_MANIFEST"
 
 

@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
@@ -31,6 +32,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
 )
+from google_work_agent.ports.llm.structured_inference_port import StructuredInferenceResultV1
 
 
 def _tool_route_plan(*, allowed_read_tool_ids: list[str]) -> ToolRoutePlanV2:
@@ -1311,3 +1313,87 @@ def test_selected_exact_resource__invalid_route_binding__fails_without_llm_fallb
         )
 
     assert runtime.calls == []
+
+
+class _OmittingRepositoryInference:
+    def infer(
+        self,
+        requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"],
+        prompt_ref: PromptReference,
+        input_projection: Mapping[str, object],
+        output_schema_ref: OutputSchemaDefinition,
+    ) -> StructuredInferenceResultV1:
+        del requested_mode, prompt_ref, input_projection, output_schema_ref
+        return StructuredInferenceResultV1(
+            schema_version=1,
+            structured_output={
+                "schema_version": 2,
+                "route_queries": [
+                    {
+                        "route_id": "route-1",
+                        "operation": "SEARCH",
+                        "reason_codes": ["USER_REQUEST"],
+                        "search_spec": {"mode": "INITIAL", "constraints": []},
+                        "detail_candidate_ref": None,
+                    }
+                ],
+                "required_information": ["issues"],
+                "retrieval_order": ["route-1"],
+            },
+            provider="fake",
+            model="fake",
+            actual_runtime="API_LLM",
+            input_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+            fallback_reason=None,
+        )
+
+
+def test_plan_query__validated_required_repository__binds_before_semantic_validation() -> None:
+    prompt = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="ACTIVE",
+        purpose="test",
+        input_schema_version="1",
+        output_schema_version="2",
+    )
+    schema = RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA
+    route: InputToolRouteV1 = {
+        "route_id": "route-1",
+        "connector_id": "github",
+        "resource_type": "GITHUB_ISSUE",
+        "allowed_read_tool_ids": ["github_list_issues"],
+        "required": True,
+        "reason_codes": ["USER_REQUEST"],
+    }
+
+    result, _, used_llm = plan_query(
+        llm_runtime=_OmittingRepositoryInference(),
+        prompt_ref=prompt,
+        revision_prompt_ref=prompt,
+        output_schema=schema,
+        prompt_input={},
+        requested_mode="AUTO",
+        frozen_routes=[route],
+        route_policies={
+            "route-1": RouteConstraintPolicy(
+                supported_kinds=frozenset({"CONTAINER_REF", "STATUS_SCOPE"}),
+                required_kinds=frozenset({"CONTAINER_REF"}),
+            )
+        },
+        retry_budget=build_default_run_budget(),
+        validated_container_refs={"route-1": ["acme/repo"]},
+    )
+
+    assert used_llm is True
+    assert result["route_queries"][0]["search_spec"] == {
+        "mode": "INITIAL",
+        "constraints": [{"kind": "CONTAINER_REF", "container_refs": ["acme/repo"]}],
+    }

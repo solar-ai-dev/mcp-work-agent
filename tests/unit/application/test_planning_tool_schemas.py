@@ -33,6 +33,10 @@ def test_container_bound__tools_expose__required_container_fields() -> None:
         "calendar_create_event": "calendar_id",
         "calendar_update_event": "calendar_id",
         "calendar_delete_event": "calendar_id",
+        "github_create_issue": "repository",
+        "github_update_issue": "repository",
+        "github_close_issue": "repository",
+        "github_reopen_issue": "repository",
     }.items():
         schema = planning_tool_argument_schema(tool_id)
         properties = schema["properties"]

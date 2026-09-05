@@ -88,6 +88,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
     StateArtifactRefV1,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    validated_repository_authority,
+)
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     authorize_retrieval_followup,
 )
@@ -146,6 +149,7 @@ from google_work_agent.application.agents.tool_routing.bind_registry_candidates 
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
+    ToolRoutePlanV2,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
@@ -299,6 +303,7 @@ def _runtime_route_constraint_policies(
             }
         ),
         "TASK": frozenset({"CONTAINER_REF"}),
+        "ISSUE": frozenset({"CONTAINER_REF", "STATUS_SCOPE"}),
         "CALENDAR": frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
     }
     return {
@@ -310,6 +315,11 @@ def _runtime_route_constraint_policies(
             required_kinds=(
                 frozenset({"CONTAINER_REF"})
                 if route["resource_type"] in {"TASK", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+                or (
+                    route["connector_id"] == "github"
+                    and route["resource_type"] == "GITHUB_ISSUE"
+                    and "github_list_issues" in route["allowed_read_tool_ids"]
+                )
                 else frozenset()
             ),
         )
@@ -542,7 +552,7 @@ class RetrievalSubgraph:
                 sufficiency: SufficiencyResultV2 = {
                     "schema_version": 2,
                     "status": "NEEDS_MORE_DATA",
-                    "issues": _needs_as_sufficiency_issues(needs),
+                    "issues": _needs_as_sufficiency_issues(needs, state["tool_route_plan"]),
                 }
                 prior_result = cast(RetrievalResultV1, state.get("retrieval_result"))
                 if prior_result is None:
@@ -568,7 +578,7 @@ class RetrievalSubgraph:
                 next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
                     current_round_no=current_round_no,
                     prior_query_attempts=list(continuation["query_attempts"]),
-                    unresolved_sufficiency_issues=_needs_as_sufficiency_issues(needs),
+                    unresolved_sufficiency_issues=sufficiency["issues"],
                     read_result_summaries=self._bounded_read_result_summaries(next_state),
                 )
         return next_state
@@ -915,16 +925,14 @@ class RetrievalSubgraph:
         return next_state
 
     def _validated_container_refs(
-        self, frozen_routes: list[InputToolRouteV1]
+        self,
+        state: ContextRetrievalLocalState,
+        frozen_routes: list[InputToolRouteV1],
     ) -> dict[str, list[str]]:
-        """TASK routes' only supported semantic constraint kind, resolved.
+        """Resolve existing validated container authorities per frozen route.
 
-        Reuses the account's already-configured ``default_tasklist_id``
-        Setting (the same authoritative resource access layer's
-        own ``_resolve_task_list_id`` falls back to) instead of adding a new
-        discovery capability to the Retrieval read boundary. Empty when the
-        provider is unset or returns ``None`` -- a TASK route then simply
-        stays unable to satisfy CONTAINER_REF, exactly as before this fix.
+        Google defaults retain their existing behavior. GitHub routes consume
+        only current-Run RequestIntent/SelectedResourceRef authority.
         """
         tasklist_id = (
             None
@@ -943,6 +951,24 @@ class RetrievalSubgraph:
                 result[route["route_id"]] = [tasklist_id]
             elif category == "CALENDAR" and calendar_id:
                 result[route["route_id"]] = [calendar_id]
+        github_routes = [
+            route
+            for route in frozen_routes
+            if route["connector_id"] == "github"
+            and route["resource_type"].upper() == "GITHUB_ISSUE"
+        ]
+        if github_routes:
+            request_intent = cast(
+                RequestIntentV2,
+                _require_state_value(state.get("request_intent"), "request intent"),
+            )
+            repository = validated_repository_authority(
+                request_intent,
+                selected_resources=request_from_state(state).selected_resources,
+            )
+            if repository is not None:
+                for route in github_routes:
+                    result[route["route_id"]] = [repository]
         return result
 
     @staticmethod
@@ -959,6 +985,7 @@ class RetrievalSubgraph:
             "gmail_get_attachment",
             "tasks_get_task",
             "calendar_get_event",
+            "github_get_issue",
         }
         result: dict[str, list[str]] = {}
         for route in frozen_routes:
@@ -967,14 +994,9 @@ class RetrievalSubgraph:
             route_type = route["resource_type"].upper()
             refs: list[str] = []
             for item in selected_refs:
-                selected_type = f"{item.source}_{item.resource_type}".upper()
-                selected_type = {
-                    "TASKS_TASK": "TASK",
-                    "TASKS_TASK_LIST": "TASK_LIST",
-                    "CALENDAR_CALENDAR": "CALENDAR",
-                    "CALENDAR_EVENT": "CALENDAR_EVENT",
-                    "CALENDAR_FREEBUSY": "CALENDAR_FREEBUSY",
-                }.get(selected_type, selected_type)
+                if item.connector_id != route["connector_id"]:
+                    continue
+                selected_type = item.resource_type.upper()
                 if selected_type == route_type:
                     refs.append(f"{route_type.lower()}:{item.resource_id}")
             if refs:
@@ -1005,7 +1027,7 @@ class RetrievalSubgraph:
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
         validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
-        validated_container_refs = self._validated_container_refs(frozen_routes)
+        validated_container_refs = self._validated_container_refs(state, frozen_routes)
         followup = state.get(CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY)
         detail_candidate_refs = self._detail_candidate_refs(state)
         attempted_detail_candidate_refs = self._attempted_detail_candidate_refs(state)
@@ -1115,7 +1137,6 @@ class RetrievalSubgraph:
         route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         routes = {route["route_id"]: route for route in route_plan["input_plan"]["input_routes"]}
         bindings = dict(cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {})))
-        prior_results = self._resolve_cached_results(state, bindings=bindings)
         new_handles: list[str] = []
         page_calls = 0
         attempts = list(cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])))
@@ -1128,6 +1149,15 @@ class RetrievalSubgraph:
             detail_resource = None
             candidate_ref = plan["detail_candidate_ref"]
             if candidate_ref is not None:
+                route_handles = [
+                    handle for handle in state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])
+                    if isinstance(bindings.get(handle), Mapping)
+                    and cast(Mapping[str, object], bindings[handle]).get("route_id")
+                    == plan["route_id"]
+                ]
+                prior_results = self._resolve_cached_results(
+                    state, bindings=bindings, handles=route_handles,
+                )
                 detail_resource = find_detail_resource(candidate_ref, prior_results)
                 if detail_resource is None:
                     detail_resource = self._selected_detail_resource(
@@ -1276,7 +1306,10 @@ class RetrievalSubgraph:
         handles: list[str] | None = None,
     ) -> list[Any]:
         resolved = []
-        for handle in handles or cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])):
+        for handle in (
+            cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, []))
+            if handles is None else handles
+        ):
             raw = bindings.get(handle)
             if not isinstance(raw, Mapping):
                 raise RetrievalReadBindingError("read-result handle has no local binding")
@@ -1347,7 +1380,7 @@ class RetrievalSubgraph:
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
         validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
-        validated_container_refs = self._validated_container_refs(frozen_routes)
+        validated_container_refs = self._validated_container_refs(state, frozen_routes)
         query_plan = _require_state_value(state.get("query_plan"), "query plan")
         detail_candidate_refs = state.get(CONTEXT_SEGMENT_HANDLES_KEY, [])
         prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})
@@ -1793,20 +1826,28 @@ def _pending_retrieval_need(value: object) -> RetrievalNeedV1 | None:
     }
 
 
-def _needs_as_sufficiency_issues(needs: list[RetrievalNeedV1]) -> list[SufficiencyIssueV2]:
+def _needs_as_sufficiency_issues(
+    needs: list[RetrievalNeedV1], tool_route_plan: ToolRoutePlanV2 | None,
+) -> list[SufficiencyIssueV2]:
     """Project an incoming WorkAnalysis/Review need into the same bounded,
     Retrieval-local ``unresolved_sufficiency_issues`` shape the internal
     local loop already feeds ``retrieval.plan_query`` with (SufficiencyIssue,
     docs/05-context-retrieval.md SS19.1) -- reusing the existing follow-up
     channel rather than adding a second, differently-shaped planner input."""
-    return [
+    routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    issues: list[SufficiencyIssueV2] = [
         {
             "slot": need["required_information"],
             "issue_type": "MISSING",
             "required": True,
-            "resolution_source": "GOOGLE",
+            "resolution_source": "ROUTE" if len(routes) != 1 else
+            "GOOGLE" if routes[0]["connector_id"] == "google_workspace" else "CONNECTOR",
             "safety_critical": False,
             "reason_codes": list(need["reason_codes"]),
         }
         for need in needs
     ]
+    if len(routes) == 1:
+        for issue in issues:
+            issue["route_id"] = routes[0]["route_id"]
+    return issues

@@ -1468,8 +1468,8 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
 
   await waitFor(() => expect(document.querySelector(".topbar-actions")).not.toBeNull());
   await user.click(screen.getByRole("button", { name: "설정" }));
-  await screen.findByText("Requested mode");
-  await user.selectOptions(screen.getByDisplayValue("API_LLM"), "AUTO");
+  await screen.findByRole("region", { name: "런타임 모드" });
+  await user.selectOptions(screen.getByLabelText("사용할 모델 실행 방식"), "AUTO");
   await user.click(screen.getByRole("checkbox", { name: "외부 LLM 사용 동의" }));
   await user.click(screen.getByRole("button", { name: "LLM 설정 저장" }));
   await waitFor(() =>
@@ -1479,7 +1479,7 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
     ),
   );
 
-  await user.selectOptions(screen.getByDisplayValue("KEYRING"), "SESSION_ONLY");
+  await user.selectOptions(screen.getByLabelText("저장 방식"), "SESSION_ONLY");
   await user.type(screen.getByPlaceholderText("sk-..."), "sk-phase-m");
   await user.click(screen.getByRole("button", { name: "API 키 저장" }));
   await waitFor(() =>
@@ -1539,9 +1539,9 @@ test("TST-UI-203 resource row supports focus, selection, and keyboard-accessible
   await user.click(row);
   expect(row).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("checkbox", { name: "첫 번째 자료 선택" })).not.toBeChecked();
-  expect(screen.getByText("GMAIL")).toBeInTheDocument();
-  expect(screen.getByText("TASKS")).toBeInTheDocument();
-  expect(screen.getByText("CALENDAR")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /^메일/ })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /^태스크/ })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "캘린더" })).toBeInTheDocument();
 });
 
 test("TST-UI-204 requests a 100-item batch and keeps the provider token separate from UI pages", async () => {
@@ -3236,6 +3236,28 @@ test("does not resume a REAUTH_REQUIRED run from a stale connected projection", 
   expect(requests.some((request) => request.path === "/api/v1/runs/run-1/resume")).toBe(false);
 });
 
+test("resumes a REAUTH_REQUIRED run after the affected GitHub connection is restored", async () => {
+  const requests = installUiContractFetch({
+    status: "REAUTH_REQUIRED",
+    githubConnectionStates: ["CONNECTED"],
+    snapshotError: {
+      schema_version: 1,
+      error_code: "CONNECTOR_REAUTH_REQUIRED",
+      message: "Connector authentication must be restored before this run can continue.",
+      actions: [
+        { kind: "REAUTHENTICATE_CONNECTOR", connector_id: "github" },
+        { kind: "OPEN_SETTINGS" },
+      ],
+    },
+  });
+  render(<App />);
+
+  await waitFor(() => expect(requests.some((request) => request.path === "/api/v1/runs/run-1/resume")).toBe(true));
+  expect(requests.some((request) => request.path === "/api/v1/connections/github/status")).toBe(true);
+  const request = requests.find((item) => item.path === "/api/v1/runs/run-1/resume");
+  expect(JSON.parse(String(request?.init?.body))).toMatchObject({ resume_kind: "REAUTH_COMPLETED" });
+});
+
 function installUiContractFetch(options: {
   action?: boolean;
   actionToolName?: string;
@@ -3259,6 +3281,7 @@ function installUiContractFetch(options: {
   gmailCountError?: boolean;
   gmailCountResponse?: Promise<Response>;
   googleConnectionStates?: Array<GoogleConnection["connection_status"]>;
+  githubConnectionStates?: Array<GoogleConnection["connection_status"]>;
   historyMessages?: Array<{ id: string; run_id: string | null; role: string; content: string; created_at_ms: number }>;
   historyRuns?: Array<{ run_id: string; status: string; started_at_ms: number; finished_at_ms: number | null }>;
   run?: boolean;
@@ -3286,6 +3309,7 @@ function installUiContractFetch(options: {
   contextPreview?: Record<string, unknown>;
   externalLlmScope?: Record<string, unknown>;
   terminalMessage?: string;
+  snapshotError?: Record<string, unknown>;
 } = {}): Array<{ path: string; init?: RequestInit }> {
   conversationOpenRunEnabled = options.run !== false;
   const requests: Array<{ path: string; init?: RequestInit }> = [];
@@ -3296,6 +3320,7 @@ function installUiContractFetch(options: {
   let completedTaskResponseIndex = 0;
   let accountResponseIndex = 0;
   let googleConnectionStateIndex = 0;
+  let githubConnectionStateIndex = 0;
   globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const path = String(input);
     requests.push({ path, init });
@@ -3331,6 +3356,19 @@ function installUiContractFetch(options: {
         account_id: state === "CONNECTED" ? "account-1" : null,
         connection_status: state,
         display_email: state === "CONNECTED" ? "user@example.com" : null,
+      }));
+    }
+    if (path === "/api/v1/connections/github/status") {
+      const states = options.githubConnectionStates;
+      const state = states?.[
+        Math.min(githubConnectionStateIndex++, Math.max((states?.length ?? 1) - 1, 0))
+      ] ?? "DISCONNECTED";
+      return jsonFetchResponse(googleConnection({
+        connector_id: "github",
+        account_id: state === "CONNECTED" ? "github:42" : null,
+        connection_status: state,
+        display_email: state === "CONNECTED" ? "octocat" : null,
+        granted_scopes: state === "CONNECTED" ? ["repo"] : [],
       }));
     }
     if (path === "/api/v1/identity/google-account") {
@@ -3585,7 +3623,7 @@ function installUiContractFetch(options: {
       return jsonFetchResponse({ applied: true, result_code: "ACCEPTED", run_id: "run-1", conversation_id: "conversation-1", run_status: "WAITING_APPROVAL", run_version: 1, user_message_id: "message-1", workflow_key: "workflow-1", enqueued: true, request_replayed: false });
     }
     if (path === "/api/v1/runs/run-1") return jsonFetchResponse({
-      ...snapshotPayload({ status: options.status ?? "WAITING_APPROVAL", result_kind: options.resultKind, messages: options.terminalMessage ? [{ id: "message-final-1", run_id: "run-1", role: "ASSISTANT", content: options.terminalMessage, created_at_ms: 2 }] : [], actions: options.action ? [{ action_id: "action-1", tool_name: options.actionToolName ?? "gmail_draft", status: actionStatus, version: 7, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: options.actionRisk ?? {}, next_allowed_commands: actionStatus === "APPROVED" ? ["MODIFY", "REJECT"] : actionStatus === "PROPOSED" || actionStatus === "MODIFIED" ? ["APPROVE", "MODIFY", "REJECT"] : [] }] : [] }),
+      ...snapshotPayload({ status: options.status ?? "WAITING_APPROVAL", result_kind: options.resultKind, error: options.snapshotError, messages: options.terminalMessage ? [{ id: "message-final-1", run_id: "run-1", role: "ASSISTANT", content: options.terminalMessage, created_at_ms: 2 }] : [], actions: options.action ? [{ action_id: "action-1", tool_name: options.actionToolName ?? "gmail_draft", status: actionStatus, version: 7, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: options.actionRisk ?? {}, next_allowed_commands: actionStatus === "APPROVED" ? ["MODIFY", "REJECT"] : actionStatus === "PROPOSED" || actionStatus === "MODIFIED" ? ["APPROVE", "MODIFY", "REJECT"] : [] }] : [] }),
       context_preview: options.contextPreview ?? null,
       external_llm_transfer_scope: options.externalLlmScope ?? null,
     });

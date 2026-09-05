@@ -50,6 +50,8 @@ def _write_signed_installation(root: Path) -> bytes:
         "deployment_profile": "LOCAL_CAPABLE",
         "oauth_env": "PRODUCTION",
         "oauth_client_id": "desktop-client-id",
+        "github_oauth_client_id": "github-client-id",
+        "github_oauth_scope": "repo",
         "api_contract_version": "1",
         "mcp_schema_version": "2026-08-07.p0",
         "policy_version": "2026-08-06.p0",
@@ -90,6 +92,8 @@ def test_signed_manifest__chain_projects_only__authenticated_build_fields(tmp_pa
     assert config.app_version == "1.2.3"
     assert config.deployment_profile == "LOCAL_CAPABLE"
     assert config.oauth_client_id == "desktop-client-id"
+    assert config.github_oauth_client_id == "github-client-id"
+    assert config.github_oauth_scope == "repo"
     assert {path.relative_to(tmp_path).as_posix() for path in installation.verified_files} == {
         "service/GoogleWorkAgentService.exe",
         "frontend/index.html",

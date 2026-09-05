@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -39,6 +39,7 @@ from google_work_agent.application.agents.tool_routing.bind_registry_candidates 
     normalize_resource_type,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    InputToolRouteV1,
     ToolRoutePlanV2,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
@@ -124,6 +125,7 @@ def assess_sufficiency(
         evidence_drafts=evidence_drafts,
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
     )
+    validated = _bind_issue_routes(validated, tool_route_plan=tool_route_plan)
     return enforce_sufficiency_guard(
         validated,
         request_intent=request_intent,
@@ -144,6 +146,12 @@ def _remove_unowned_read_confirmations(
         or request_intent["ambiguity"]["requires_confirmation"]
     ):
         return result
+    is_google_discovery = bool(request_intent["requested_resource_hints"]) and all(
+        hint.startswith(("GMAIL", "TASK", "CALENDAR"))
+        for hint in request_intent["requested_resource_hints"]
+    )
+    if not is_google_discovery:
+        return result
     issues = [issue for issue in result["issues"] if issue["resolution_source"] != "USER"]
     return {"schema_version": 2, "status": result["status"], "issues": issues}
 
@@ -155,59 +163,135 @@ def _fail_closed_on_empty_required_acquisition(
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
 ) -> SufficiencyResultV2:
-    """Do not treat a completed-but-empty required lookup as evidence."""
-    if (
-        tool_route_plan is None
-        or acquisition_result["status"] != "COMPLETE"
-        or not any(route["required"] for route in tool_route_plan["input_plan"]["input_routes"])
-    ):
+    """Preserve route-specific failure, policy and empty-result facts independently of the LLM."""
+    if tool_route_plan is None:
         return result
-    required_routes = [
-        route for route in tool_route_plan["input_plan"]["input_routes"]
-        if route["required"] and not (
-            route["reason_codes"] and all(
-                code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
-                for code in route["reason_codes"]
-            )
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    issues = list(result["issues"])
+    evidence_handles = {draft["resource_handle"] for draft in evidence_drafts}
+    for route in routes:
+        if not route["required"]:
+            continue
+        summaries = _route_summaries(route, routes, acquisition_result)
+        status = _worst_source_status(summaries)[0] if summaries else "NOT_ATTEMPTED"
+        is_policy = bool(route["reason_codes"]) and all(
+            code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
+            for code in route["reason_codes"]
         )
-    ]
-    missing_routes = [
-        route for route in required_routes if not any(
-            draft["resource_handle"].startswith(
-                (normalize_resource_type(route["resource_type"])
-                 if route["resource_type"] == "EMAIL" else route["resource_type"]).lower() + ":"
+        if is_policy and status == "COMPLETE":
+            continue
+        route_handles = {
+            handle for summary in summaries
+            for handle in cast(list[str], summary.get("resource_handles", []))
+        }
+        has_evidence = bool(evidence_handles & route_handles)
+        if not route_handles and sum(
+            other["resource_type"] == route["resource_type"] for other in routes
+        ) == 1:
+            resource_type = (
+                normalize_resource_type(route["resource_type"])
+                if route["resource_type"] == "EMAIL" else route["resource_type"]
             )
-            for draft in evidence_drafts
+            has_evidence = any(
+                handle.startswith(resource_type.lower() + ":") for handle in evidence_handles
+            )
+        if status == "COMPLETE" and has_evidence:
+            continue
+        no_resources = bool(summaries) and all(
+            summary.get("resource_count") == 0 for summary in summaries
         )
-    ]
-    if not missing_routes and evidence_drafts:
-        return result
-    missing_sources = {
-        _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
-        for route in missing_routes
-    }
-    no_resources = any(
-        summaries and all(summary.get("resource_count") == 0 for summary in summaries)
-        for source in missing_sources
-        for summaries in [[summary for summary in acquisition_result["source_summaries"]
-                           if summary.get("source") == source]]
-    )
-    issue: SufficiencyIssueV2 = {
-        "slot": "required_source_evidence",
-        "issue_type": "MISSING",
-        "required": True,
-        "resolution_source": "GOOGLE",
-        "safety_critical": False,
-        "reason_codes": [
-            "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if no_resources
+        reason = (
+            "REQUIRED_SOURCE_" + status if status != "COMPLETE"
+            else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if no_resources
             else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
-        ],
-    }
+        )
+        issues.append({
+            "slot": "required_source_evidence",
+            "route_id": route["route_id"],
+            "issue_type": "MISSING",
+            "required": True,
+            "resolution_source": "POLICY" if is_policy else
+            "GOOGLE" if route["connector_id"] == "google_workspace" else "CONNECTOR",
+            "safety_critical": is_policy,
+            "reason_codes": [reason],
+        })
     return {
         "schema_version": 2,
         "status": result["status"],
-        "issues": [*result["issues"], issue],
+        "issues": issues,
     }
+
+
+def _bind_issue_routes(
+    result: SufficiencyResultV2, *, tool_route_plan: ToolRoutePlanV2 | None,
+) -> SufficiencyResultV2:
+    routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    issues: list[SufficiencyIssueV2] = []
+    for original in result["issues"]:
+        issue = original.copy()
+        source = issue["resolution_source"]
+        route_id = issue.get("route_id")
+        if route_id is not None and not any(route["route_id"] == route_id for route in routes):
+            raise RetrievalValidationError("sufficiency issue references an unknown frozen route")
+        if source in {"GOOGLE", "CONNECTOR"}:
+            eligible = [route for route in routes if
+                        (route["connector_id"] == "google_workspace") == (source == "GOOGLE")]
+            if route_id is not None:
+                if not any(route["route_id"] == route_id for route in eligible):
+                    raise RetrievalValidationError("sufficiency issue Connector binding conflicts")
+            elif len(eligible) == 1:
+                issue["route_id"] = eligible[0]["route_id"]
+            elif len(eligible) > 1:
+                issue["resolution_source"] = "ROUTE"
+        issues.append(issue)
+    return {**result, "issues": issues}
+
+
+def select_followup_routes(
+    prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
+) -> list[InputToolRouteV1]:
+    issues = prompt_input.get("unresolved_sufficiency_issues")
+    if not isinstance(issues, list):
+        return []
+    selected: set[str] = set()
+    for issue in issues:
+        if not isinstance(issue, Mapping) or issue.get("required") is not True:
+            continue
+        source = issue.get("resolution_source")
+        if source not in {"GOOGLE", "CONNECTOR"}:
+            continue
+        eligible = [
+            route for route in frozen_routes
+            if (route["connector_id"] == "google_workspace") == (source == "GOOGLE")
+        ]
+        route_id = issue.get("route_id")
+        if route_id is not None:
+            selected.update(
+                route["route_id"] for route in eligible if route["route_id"] == route_id
+            )
+        elif len(eligible) == 1:
+            # Older checkpoints have unqualified issues; only an unambiguous binding is safe.
+            selected.add(eligible[0]["route_id"])
+    return [route for route in frozen_routes if route["route_id"] in selected]
+
+
+def _route_summaries(
+    route: InputToolRouteV1, routes: Sequence[InputToolRouteV1],
+    acquisition_result: AcquisitionResultV1,
+) -> list[dict[str, object]]:
+    source = _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
+    source_route_count = sum(
+        _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(item["resource_type"])] == source
+        for item in routes
+    )
+    return [
+        summary for summary in acquisition_result["source_summaries"]
+        if summary.get("source") == source
+        and summary.get("connector_id", route["connector_id"]) == route["connector_id"]
+        and (summary.get("route_id") == route["route_id"] or (
+            summary.get("route_id") is None and source_route_count == 1
+        ))
+    ]
 
 
 def _is_complete_selected_gmail_read(
@@ -247,6 +331,7 @@ def _is_complete_selected_gmail_read(
 class ResolutionSource(StrEnum):
     USER = "USER"
     GOOGLE = "GOOGLE"
+    CONNECTOR = "CONNECTOR"
     POLICY = "POLICY"
     ROUTE = "ROUTE"
 
@@ -286,7 +371,6 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
         return InsufficientDataDisposition.BLOCKED
     if any(
         issue.safety_critical
-        and not (context.read_only and issue.resolution_source is ResolutionSource.GOOGLE)
         for issue in required
     ):
         return InsufficientDataDisposition.BLOCKED
@@ -295,7 +379,10 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
     if any(issue.resolution_source is ResolutionSource.ROUTE for issue in required):
         return InsufficientDataDisposition.ROUTE_RECONSIDERATION_REQUIRED
     if (
-        any(issue.resolution_source is ResolutionSource.GOOGLE for issue in required)
+        any(
+            issue.resolution_source in {ResolutionSource.GOOGLE, ResolutionSource.CONNECTOR}
+            for issue in required
+        )
         and context.budget_remaining > 0
     ):
         return InsufficientDataDisposition.RETRIEVE_MORE
@@ -346,11 +433,12 @@ SUFFICIENCY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     ],
                     "properties": {
                         "slot": {"type": "string"},
+                        "route_id": {"type": "string", "minLength": 1},
                         "issue_type": {"type": "string", "enum": ["MISSING", "CONFLICT"]},
                         "required": {"type": "boolean"},
                         "resolution_source": {
                             "type": "string",
-                            "enum": ["USER", "GOOGLE", "POLICY", "ROUTE"],
+                            "enum": ["USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"],
                         },
                         "safety_critical": {"type": "boolean"},
                         "reason_codes": {"type": "array", "items": {"type": "string"}},
@@ -363,11 +451,12 @@ SUFFICIENCY_OUTPUT_SCHEMA = OutputSchemaDefinition(
 
 _CONTEXT_RESULT_VALUES = {item.value for item in ContextResult}
 _ISSUE_TYPE_VALUES = {"MISSING", "CONFLICT"}
-_RESOLUTION_SOURCE_VALUES = {"USER", "GOOGLE", "POLICY", "ROUTE"}
+_RESOLUTION_SOURCE_VALUES = {"USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"}
 _RESOURCE_TYPE_TO_SOURCE_NAME: dict[str, str] = {
     "EMAIL": "GMAIL",
     "TASK": "TASKS",
     "CALENDAR": "CALENDAR",
+    "ISSUE": "GITHUB",
 }
 _SOURCE_STATUS_MAP: dict[str, tuple[str, str | None]] = {
     "COMPLETE": ("COMPLETE", None),
@@ -395,6 +484,7 @@ _DISPOSITION_TO_STATUS: dict[InsufficientDataDisposition, ContextStatusValue] = 
 _RESOLUTION_SOURCE_TO_REQUIRED_FOR: dict[str, MissingInformationRequiredForValue] = {
     "USER": "USER_CONFIRMATION",
     "GOOGLE": "RETRIEVAL",
+    "CONNECTOR": "RETRIEVAL",
     "ROUTE": "RETRIEVAL",
     "POLICY": "PLANNING",
 }
@@ -434,14 +524,10 @@ def source_statuses_prompt_projection(
     response. tool_route_plan may be absent the same way
     The canonical plan_query prompt projection treats it defensively."""
     routes = () if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
-    summaries_by_source: dict[str, list[dict[str, object]]] = {}
-    for summary in acquisition_result["source_summaries"]:
-        summaries_by_source.setdefault(str(summary.get("source")), []).append(summary)
     projections: list[dict[str, object]] = []
     for route in routes:
         resource_type = coarse_resource_category(route["resource_type"])
-        source_name = _RESOURCE_TYPE_TO_SOURCE_NAME[resource_type]
-        summaries = summaries_by_source.get(source_name, [])
+        summaries = _route_summaries(route, routes, acquisition_result)
         if not summaries:
             status, failure_kind = "NOT_ATTEMPTED", None
         else:
@@ -514,7 +600,8 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
     _require_exact_keys(
         issue,
         path,
-        {"slot", "issue_type", "required", "resolution_source", "safety_critical", "reason_codes"},
+        {"slot", "issue_type", "required", "resolution_source", "safety_critical", "reason_codes"}
+        | ({"route_id"} if "route_id" in issue else set()),
     )
     issue_type = _require_string(issue, "issue_type", path)
     if issue_type not in _ISSUE_TYPE_VALUES:
@@ -528,7 +615,7 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
     safety_critical = issue.get("safety_critical")
     if not isinstance(safety_critical, bool):
         raise RetrievalValidationError(f"{path}.safety_critical must be boolean")
-    return {
+    validated: SufficiencyIssueV2 = {
         "slot": _require_string(issue, "slot", path),
         "issue_type": cast(SufficiencyIssueTypeValue, issue_type),
         "required": required,
@@ -536,6 +623,9 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
         "safety_critical": safety_critical,
         "reason_codes": _require_string_list(issue["reason_codes"], f"{path}.reason_codes"),
     }
+    if "route_id" in issue:
+        validated["route_id"] = _require_string(issue, "route_id", path)
+    return validated
 
 
 def enforce_sufficiency_guard(

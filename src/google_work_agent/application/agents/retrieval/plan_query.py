@@ -12,7 +12,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
-from google_work_agent.application.agents.retrieval.build_query import RouteConstraintPolicy
+from google_work_agent.application.agents.retrieval.build_query import (
+    RouteConstraintPolicy,
+    bind_required_container_constraints,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
     QueryAttemptV1,
 )
@@ -20,6 +23,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     RetrievalConstraintKindV1,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
+    status_scope_values,
     validate_retrieval_query_plan_v2,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
@@ -67,6 +71,7 @@ _DIRECT_DETAIL_TOOL_BY_RESOURCE_TYPE = {
     "GMAIL_ATTACHMENT": "gmail_get_attachment",
     "TASK": "tasks_get_task",
     "CALENDAR_EVENT": "calendar_get_event",
+    "GITHUB_ISSUE": "github_get_issue",
 }
 
 
@@ -409,6 +414,11 @@ def plan_query(
     timezone: str | None = None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2, bool]:
     """Plan provider-neutral retrieval intent against already-frozen input routes."""
+    for route_id, policy in route_policies.items():
+        if "CONTAINER_REF" in policy.required_kinds and len(
+            set((validated_container_refs or {}).get(route_id, ()))
+        ) != 1:
+            raise RetrievalV2ValidationError(f"route {route_id} requires one validated container")
     supported_kinds = _applicable_constraint_kinds(
         route_policies,
         validated_resource_refs=validated_resource_refs,
@@ -421,6 +431,9 @@ def plan_query(
     bounded_output_schema = bind_retrieval_query_plan_output_schema(
         base_schema=output_schema,
         route_ids=supported_kinds,
+        route_status_values={
+            route["route_id"]: status_scope_values(route) for route in frozen_routes
+        },
         supported_constraint_kinds=supported_kinds,
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
@@ -428,8 +441,10 @@ def plan_query(
         is_followup=is_followup,
         allowed_participant_identities=requested_participant_identities(prompt_input),
         resolved_temporal_constraints=resolve_gmail_query_periods(
-            prompt_input=prompt_input, frozen_routes=frozen_routes,
-            now_ms=now_ms, timezone=timezone,
+            prompt_input=prompt_input,
+            frozen_routes=frozen_routes,
+            now_ms=now_ms,
+            timezone=timezone,
         ),
     )
     deterministic_plan = deterministic_query_plan(
@@ -461,7 +476,11 @@ def plan_query(
         bounded_output_schema,
     )
     candidate = preserve_gmail_search_semantics(
-        result.structured_output,
+        bind_required_container_constraints(
+            result.structured_output,
+            route_policies=route_policies,
+            validated_container_refs=validated_container_refs,
+        ),
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
         now_ms=now_ms,
@@ -492,6 +511,7 @@ def plan_query(
             prompt_input=planner_input,
             requested_mode=requested_mode,
             frozen_routes=frozen_routes,
+            route_policies=route_policies,
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
@@ -589,6 +609,7 @@ def _revise_plan_once(
     prompt_input: dict[str, object],
     requested_mode: RequestedModeV1,
     frozen_routes: Sequence[InputToolRouteV1],
+    route_policies: Mapping[str, RouteConstraintPolicy],
     supported_kinds: Mapping[str, frozenset[RetrievalConstraintKindV1]],
     validated_resource_refs: Mapping[str, Collection[str]] | None,
     validated_container_refs: Mapping[str, Collection[str]] | None,
@@ -635,7 +656,11 @@ def _revise_plan_once(
         output_schema,
     )
     candidate = preserve_gmail_search_semantics(
-        revision.structured_output,
+        bind_required_container_constraints(
+            revision.structured_output,
+            route_policies=route_policies,
+            validated_container_refs=validated_container_refs,
+        ),
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
         now_ms=now_ms,

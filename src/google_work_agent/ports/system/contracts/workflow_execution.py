@@ -37,9 +37,10 @@ class WorkflowCorrelationContext:
 
 @dataclass(frozen=True, slots=True)
 class SelectedResourceRef:
-    """Runtime identity for one user-selected Google resource."""
+    """Canonical current-Run identity for one user-selected connector resource."""
 
-    source: str
+    resource_ref_id: str
+    connector_id: str
     resource_type: str
     resource_id: str
     parent_resource_id: str | None = None

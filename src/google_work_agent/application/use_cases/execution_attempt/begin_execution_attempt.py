@@ -159,7 +159,11 @@ class BeginExecutionAttemptHandler:
             or current_plan.id != plan.id
         ):
             raise PermissionError("claim parent authority is no longer current")
-        if action.id != str(payload["action_id"]) or action.tool_name != str(payload["tool_name"]):
+        if (
+            action.id != str(payload["action_id"])
+            or action.tool_name != str(payload["tool_name"])
+            or action.connector_id != str(payload["connector_id"])
+        ):
             raise PermissionError("claim token action/tool binding mismatch")
         if action.arguments_hash != str(payload["approval_arguments_hash"]):
             raise PermissionError("claim token arguments binding mismatch")

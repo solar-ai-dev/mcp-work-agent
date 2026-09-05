@@ -489,21 +489,10 @@ def _messages_for_run(
 
 
 def _selected_resource_ref(value: ResourceRef) -> SelectedResourceRef:
-    durable_type = value.resource_type
-    source, projected_type = {
-        "gmail_thread": ("GMAIL", "THREAD"),
-        "gmail_message": ("GMAIL", "MESSAGE"),
-        "gmail_attachment": ("GMAIL", "ATTACHMENT"),
-        "gmail_draft": ("GMAIL", "DRAFT"),
-        "task_list": ("TASKS", "TASK_LIST"),
-        "task": ("TASKS", "TASK"),
-        "calendar": ("CALENDAR", "CALENDAR"),
-        "calendar_event": ("CALENDAR", "EVENT"),
-        "calendar_freebusy": ("CALENDAR", "FREEBUSY"),
-    }[durable_type]
     return SelectedResourceRef(
-        source=source,
-        resource_type=projected_type,
+        resource_ref_id=value.id,
+        connector_id=value.connector_id,
+        resource_type=value.resource_type,
         resource_id=value.resource_id,
         parent_resource_id=value.parent_resource_id,
     )

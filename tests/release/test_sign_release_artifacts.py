@@ -42,6 +42,8 @@ def _parameters() -> ReleaseManifestParameters:
         deployment_profile=DeploymentProfile.API_ONLY,
         oauth_env="PRODUCTION",
         oauth_client_id="desktop-client.apps.googleusercontent.com",
+        github_oauth_client_id="github-client-id",
+        github_oauth_scope="repo",
         api_contract_version="1",
         mcp_schema_version="2026-08-07.p0",
         policy_version="2026-08-06.p0",

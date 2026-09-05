@@ -133,6 +133,10 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
         install_root
         / "manifests/connectors/google_workspace/tool-descriptor-projection-v1.json"
     )
+    github_executable_path = install_root / "mcp/github/GitHubMcpServer.exe"
+    github_projection_path = (
+        install_root / "manifests/connectors/github/tool-descriptor-projection-v1.json"
+    )
     embedded_path = load_signed_tool_registry.__globals__["_IMPLEMENTATION_MANIFEST"]
     embedded_payload = json.loads(embedded_path.read_text(encoding="utf-8"))
     installed_payload = {
@@ -149,7 +153,18 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
                     "tool-descriptor-projection-v1.json"
                 ),
                 "mcp_schema_version": "2026-08-07.p0",
-            }
+            },
+            {
+                "schema_version": 1,
+                "connector_id": "github",
+                "provider_namespace": "github",
+                "connector_package": "github",
+                "executable_path": "mcp/github/GitHubMcpServer.exe",
+                "tool_projection_path": (
+                    "manifests/connectors/github/tool-descriptor-projection-v1.json"
+                ),
+                "mcp_schema_version": "2026-08-07.p0",
+            },
         ],
     }
     installed_registry_payload = json.loads(json.dumps(embedded_payload))
@@ -160,12 +175,21 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
             installed_registry_payload["entries"], separators=(",", ":"), sort_keys=True
         ).encode()
     ).hexdigest()
-    for path in (registry_path, installed_path, executable_path, projection_path):
+    for path in (
+        registry_path,
+        installed_path,
+        executable_path,
+        projection_path,
+        github_executable_path,
+        github_projection_path,
+    ):
         path.parent.mkdir(parents=True, exist_ok=True)
     registry_path.write_text(json.dumps(installed_registry_payload), encoding="utf-8")
     installed_path.write_text(json.dumps(installed_payload), encoding="utf-8")
     executable_path.write_bytes(b"signed executable")
+    github_executable_path.write_bytes(b"signed github executable")
     projection_path.write_text("{}", encoding="utf-8")
+    github_projection_path.write_text("{}", encoding="utf-8")
 
     captured_descriptors: list[MCPConnectorDescriptor] = []
 
@@ -179,7 +203,15 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
             return None
 
     monkeypatch.setattr(composition, "GoogleWorkspaceConnector", _ConnectorWithoutProcess)
-    paths = (installed_path, registry_path, executable_path, projection_path)
+    monkeypatch.setattr(composition, "GitHubConnector", _ConnectorWithoutProcess)
+    paths = (
+        installed_path,
+        registry_path,
+        executable_path,
+        projection_path,
+        github_executable_path,
+        github_projection_path,
+    )
     release_files = tuple(_verified_file(install_root, path) for path in paths)
     bundle = composition._build_connectors(
         mcp_manifest_path=tmp_path / "ignored-development-manifest.json",
@@ -190,6 +222,8 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
         working_directory=install_root.resolve(),
         environment="DEVELOPMENT",
         oauth_client_id="test-client",
+        github_oauth_client_id="github-test-client",
+        github_oauth_scope="repo",
         development_tool_registry=None,
         configuration_source="SIGNED_RELEASE_MANIFEST",
         verified_release_files=release_files,
@@ -199,14 +233,20 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
     assert bundle.tool_registry.contract_version == "2026-08-06.drift-proof"
     assert bundle.tool_registry.entries_hash == installed_registry_payload["entries_hash"]
     assert bundle.tool_registry.entries_hash != embedded_payload["entries_hash"]
-    assert len(captured_descriptors) == 1
-    descriptor = captured_descriptors[0]
-    assert descriptor.artifact_config.expected_registry_manifest_hash == (
-        bundle.tool_registry.entries_hash
-    )
-    assert {entry.registry_entry_hash for entry in descriptor.expected_tool_descriptors} == {
-        entry.registry_entry_hash for entry in bundle.tool_registry.entries
-    }
+    assert len(captured_descriptors) == 2
+    descriptors = {descriptor.connector_id: descriptor for descriptor in captured_descriptors}
+    assert set(descriptors) == {"google_workspace", "github"}
+    for connector_id, descriptor in descriptors.items():
+        assert descriptor.artifact_config.expected_registry_manifest_hash == (
+            bundle.tool_registry.entries_hash
+        )
+        assert {
+            entry.registry_entry_hash for entry in descriptor.expected_tool_descriptors
+        } == {
+            entry.registry_entry_hash
+            for entry in bundle.tool_registry.entries
+            if entry.connector_id == connector_id
+        }
 
 
 def _verified_file(install_root: Path, path: Path) -> _VerifiedReleaseFile:

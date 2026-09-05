@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     ParticipantConstraintV1,
+    RetrievalV2ValidationError,
     SourceFetchPlanV1,
     validate_participant_identity,
 )
@@ -61,6 +62,10 @@ def project_connector_call(
     detail_resource: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, JsonValue]]:
     """Lower one canonical plan without granting this projection route authority."""
+    if any(
+        plan.get(key) != route.get(key) for key in ("route_id", "connector_id", "resource_type")
+    ):
+        raise RetrievalV2ValidationError("read plan identity differs from frozen route")
     resource = plan["resource_type"]
     operation = plan["operation_kind"]
     has_resource_ref = any(
@@ -70,6 +75,10 @@ def project_connector_call(
         if detail_resource is None:
             raise ValueError("detail read requires a validated resource")
         tool_id, arguments = _detail_call(resource, detail_resource)
+        if resource == "GITHUB_ISSUE" and any(
+            constraint["kind"] == "CONTAINER_REF" for constraint in plan["effective_constraints"]
+        ) and arguments["repository"] != _single_container(plan):
+            raise ValueError("GitHub Issue detail differs from validated repository")
     elif resource.startswith("GMAIL_") or resource == "EMAIL":
         tool_id = "gmail_search_threads"
         arguments = {
@@ -89,6 +98,12 @@ def project_connector_call(
             "show_hidden": False,
             "show_deleted": False,
         }
+    elif resource == "GITHUB_ISSUE":
+        arguments = {
+            "repository": _single_container(plan),
+            "state": _github_issue_state(plan),
+        }
+        tool_id = "github_list_issues"
     elif resource == "CALENDAR":
         tool_id = "calendar_list_calendars"
         arguments = {"page_size": page_size}
@@ -212,6 +227,14 @@ def _bounded_payload(resource_type: str, payload: Mapping[str, object]) -> dict[
             "transparency",
             "self_response_status",
         ),
+        "github_issue": (
+            "repository",
+            "issue_number",
+            "title",
+            "description",
+            "state",
+            "url",
+        ),
     }
     if resource_type == ResourceType.CALENDAR_FREEBUSY.value:
         result: dict[str, object] = {
@@ -262,7 +285,11 @@ def _resources(plan: SourceFetchPlanV1, result: ConnectorReadResultV1) -> list[d
     item = result.output.get("item")
     if isinstance(item, Mapping):
         items = [*items, item]
-    resources = [_resource(raw) for raw in items if isinstance(raw, Mapping)]
+    resources = [
+        _resource(raw, connector_id=plan["connector_id"])
+        for raw in items
+        if isinstance(raw, Mapping)
+    ]
     calendars = result.output.get("calendars")
     if isinstance(calendars, list):
         start, end = _temporal_bounds(plan)
@@ -291,7 +318,7 @@ def _resources(plan: SourceFetchPlanV1, result: ConnectorReadResultV1) -> list[d
     return resources
 
 
-def _resource(raw: Mapping[str, object]) -> dict[str, object]:
+def _resource(raw: Mapping[str, object], *, connector_id: str) -> dict[str, object]:
     return {
         "resource_handle": _resource_handle(raw),
         "resource_type": str(raw.get("resource_type", "")),
@@ -299,7 +326,7 @@ def _resource(raw: Mapping[str, object]) -> dict[str, object]:
         "parent_id": raw.get("parent_id"),
         "version": raw.get("version"),
         "related_resource_ids": list(cast(list[object], raw.get("related_resource_ids", []))),
-        "connector_id": "google_workspace",
+        "connector_id": connector_id,
         "payload": dict(cast(Mapping[str, object], raw.get("payload", {}))),
     }
 
@@ -330,6 +357,26 @@ def _detail_call(
         if not isinstance(parent_id, str) or not parent_id:
             raise ValueError("TASK detail requires parent task-list id")
         return "tasks_get_task", {"task_list_id": parent_id, "task_id": resource_id}
+    if resource_type == "GITHUB_ISSUE":
+        payload = resource.get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("GitHub Issue detail requires a normalized payload")
+        repository = payload.get("repository")
+        issue_number = payload.get("issue_number")
+        if (
+            not isinstance(repository, str)
+            or not repository
+            or not isinstance(issue_number, int)
+            or isinstance(issue_number, bool)
+            or issue_number < 1
+            or parent_id != repository
+            or resource_id != f"{repository}#{issue_number}"
+        ):
+            raise ValueError("GitHub Issue detail identity is invalid")
+        return "github_get_issue", {
+            "repository": repository,
+            "issue_number": issue_number,
+        }
     if resource_type in {"CALENDAR", "CALENDAR_EVENT"}:
         if not isinstance(parent_id, str) or not parent_id:
             raise ValueError("Calendar detail requires parent calendar id")
@@ -355,6 +402,14 @@ def _includes_status(plan: SourceFetchPlanV1, status: str) -> bool:
         for constraint in plan["effective_constraints"]
         if constraint["kind"] == "STATUS_SCOPE"
     )
+
+
+def _github_issue_state(plan: SourceFetchPlanV1) -> str:
+    if _includes_status(plan, "CLOSED"):
+        return "CLOSED"
+    if _includes_status(plan, "OPEN"):
+        return "OPEN"
+    return "ALL"
 
 
 def _gmail_query(plan: SourceFetchPlanV1) -> str:
@@ -445,6 +500,8 @@ def _source(resource_type: str) -> str:
         return "GMAIL"
     if resource_type in {"TASK", "TASK_LIST"}:
         return "TASKS"
+    if resource_type == "GITHUB_ISSUE":
+        return "GITHUB"
     return "CALENDAR"
 
 

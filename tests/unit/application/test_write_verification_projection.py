@@ -179,7 +179,9 @@ def test_calendar_verification__missing_approved_attendee__is_mismatch() -> None
     assert result.expected_normalized["description"] == "Deep work"
 
 
-def test_calendar_verification__preserves_description_and_attendees__with_provider_metadata() -> None:
+def test_calendar_verification__preserves_description_and_attendees__with_provider_metadata() -> (
+    None
+):
     result = VerifyEffectHandler(
         connector_read=_CalendarRead({
             "description": "Deep work\n\n\u200bgwa-recovery-fingerprint:abc123",

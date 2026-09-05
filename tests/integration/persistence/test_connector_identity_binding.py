@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -143,3 +144,62 @@ def test_unregistered_resource__connector_is__rejected_before_persistence(tmp_pa
             resource_ref,
             catalog=_TOOL_REGISTRY,
         )
+
+
+def test_github_issue__resource_ref_preserves__registered_composite_identity(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "github-resource-ref.db"
+    _seed_plan(database_path)
+    resource_ref = ResourceRefRecord(
+        id="github-ref-1",
+        run_id="run-1",
+        connector_id="github",
+        resource_type="github_issue",
+        resource_id="solar-ai-dev/google-work-agent#123",
+        parent_resource_id="solar-ai-dev/google-work-agent",
+        canonical_url=None,
+        title="Issue",
+        event_time_ms=None,
+        version_token="v1",
+        metadata_json="{}",
+        captured_at_ms=3,
+    )
+
+    with SqliteUnitOfWork(database_path) as unit_of_work:
+        persisted = persist_registered_resource_ref(
+            cast(UnitOfWork, unit_of_work),
+            resource_ref,
+            catalog=_TOOL_REGISTRY,
+        )
+        rebound = persist_registered_resource_ref(
+            cast(UnitOfWork, unit_of_work),
+            replace(resource_ref, id="github-ref-replacement", title="Updated"),
+            catalog=_TOOL_REGISTRY,
+        )
+        unit_of_work.commit()
+
+    assert persisted == resource_ref
+    assert rebound.id == resource_ref.id
+    assert rebound.title == "Updated"
+    connection = connect_sqlite(database_path)
+    try:
+        registration = connection.execute(
+            "SELECT connector_id, resource_type "
+            "FROM registered_connector_resource_types "
+            "WHERE connector_id='github' AND resource_type='github_issue';"
+        ).fetchone()
+        stored = connection.execute(
+            "SELECT connector_id, resource_type, resource_id, parent_resource_id "
+            "FROM resource_refs WHERE id='github-ref-1';"
+        ).fetchone()
+        assert tuple(registration) == ("github", "github_issue")
+        assert tuple(stored) == (
+            "github",
+            "github_issue",
+            "solar-ai-dev/google-work-agent#123",
+            "solar-ai-dev/google-work-agent",
+        )
+        assert connection.execute("PRAGMA foreign_key_check;").fetchall() == []
+    finally:
+        connection.close()

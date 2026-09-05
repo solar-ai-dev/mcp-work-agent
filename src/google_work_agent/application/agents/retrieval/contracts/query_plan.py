@@ -45,7 +45,16 @@ def validate_participant_identity(value: object) -> str:
 
 
 StatusScopeValueV1 = Literal[
-    "ANY", "INCOMPLETE", "COMPLETED", "DRAFT", "SENT", "CANCELLED", "CONFIRMED", "TENTATIVE"
+    "ANY",
+    "INCOMPLETE",
+    "COMPLETED",
+    "OPEN",
+    "CLOSED",
+    "DRAFT",
+    "SENT",
+    "CANCELLED",
+    "CONFIRMED",
+    "TENTATIVE",
 ]
 
 
@@ -175,6 +184,25 @@ _KINDS = frozenset(
     }
 )
 CONCEPT_MANIFESTATION_LIMIT = 12
+_STATUS_SCOPE_BY_RESOURCE = {
+    "GMAIL_THREAD": ("ANY", "DRAFT", "SENT"),
+    "GMAIL_MESSAGE": ("ANY", "DRAFT", "SENT"),
+    "GMAIL_DRAFT": ("ANY", "DRAFT"),
+    "EMAIL": ("ANY", "DRAFT", "SENT"),
+    "TASK": ("ANY", "INCOMPLETE", "COMPLETED"),
+    "CALENDAR_EVENT": ("ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"),
+    "CALENDAR": ("ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"),
+    "GITHUB_ISSUE": ("ANY", "OPEN", "CLOSED"),
+}
+
+
+def status_scope_values(route: InputToolRouteV1) -> tuple[str, ...]:
+    resource_type = route["resource_type"].upper()
+    connector = "github" if resource_type == "GITHUB_ISSUE" else "google_workspace"
+    if route["connector_id"] != connector:
+        return ()
+    return _STATUS_SCOPE_BY_RESOURCE.get(resource_type, ())
+
 CONCEPT_LITERAL_PATTERN = r'^[^\r\n:"{}()\\]+$'
 _FORBIDDEN_AUTHORITY_FIELDS = frozenset(
     {
@@ -287,6 +315,15 @@ def validate_route_query_intent_v2(
             validated_resource_refs=(validated_resource_refs or {}).get(route_id),
             validated_container_refs=(validated_container_refs or {}).get(route_id),
         )
+        constraints = (
+            validated_spec["constraints"] if validated_spec["mode"] == "INITIAL"
+            else validated_spec["constraint_delta"]["upsert_constraints"]
+        )
+        for constraint in constraints:
+            if constraint["kind"] == "STATUS_SCOPE" and not set(constraint["values"]).issubset(
+                status_scope_values(frozen_routes[route_id])
+            ):
+                raise RetrievalV2ValidationError("status scope is not allowed for the frozen route")
     elif operation == "DETAIL_FETCH":
         if search_spec is not None:
             raise RetrievalV2ValidationError(
@@ -515,6 +552,8 @@ def _validate_constraint(
         "ANY",
         "INCOMPLETE",
         "COMPLETED",
+        "OPEN",
+        "CLOSED",
         "DRAFT",
         "SENT",
         "CANCELLED",

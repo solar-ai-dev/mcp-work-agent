@@ -10,12 +10,21 @@ from google_work_agent.adapters.connectors.runtime.load_installed_connector_mani
 )
 
 
-def test_installed_manifest__has_one_canonical__google_workspace_binding() -> None:
-    entry = load_installed_connector_manifest().get_required("google_workspace")
+def test_installed_manifest__has_two_canonical__connector_bindings() -> None:
+    manifest = load_installed_connector_manifest()
+    entry = manifest.get_required("google_workspace")
+    github = manifest.get_required("github")
 
+    assert {item.connector_id for item in manifest.connectors} == {
+        "google_workspace",
+        "github",
+    }
     assert entry.provider_namespace == "google"
     assert entry.connector_package == "workspace"
     assert entry.tool_projection_path.endswith("tool-descriptor-projection-v1.json")
+    assert github.provider_namespace == "github"
+    assert github.connector_package == "github"
+    assert github.executable_path == "mcp/github/GitHubMcpServer.exe"
 
 
 def test_installed_manifest__rejects_duplicate__and_unsafe_paths(tmp_path: Path) -> None:

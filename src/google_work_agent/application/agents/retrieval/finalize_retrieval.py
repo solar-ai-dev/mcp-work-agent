@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -121,24 +121,19 @@ def _source_statuses(
     *,
     evidence_drafts: list[EvidenceDraftV1],
 ) -> list[RetrievalSourceStatusV1]:
-    handles_by_source = {
-        source: {
-            str(handle)
-            for summary in acquisition_result["source_summaries"]
-            if str(summary.get("source")) == source
-            for handle in cast(list[object], summary.get("resource_handles", []))
-        }
-        for source in ("GMAIL", "TASKS", "CALENDAR")
-    }
-    source_by_resource_type = {
-        "EMAIL": "GMAIL",
-        "TASK": "TASKS",
-        "CALENDAR": "CALENDAR",
-    }
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    routes_by_id = {route["route_id"]: route for route in routes}
+    handles_by_route = _resource_handles_by_route(
+        acquisition_result,
+        single_route_id=routes[0]["route_id"] if len(routes) == 1 else None,
+    )
     return [
         {
             "route_id": str(item["route_id"]),
-            "resource_type": str(item["resource_type"]),
+            "resource_type": _exact_resource_type(
+                routes_by_id[str(item["route_id"])],
+                acquisition_result,
+            ),
             "status": cast(
                 Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_ATTEMPTED"],
                 item["status"],
@@ -146,8 +141,7 @@ def _source_statuses(
             "evidence_refs": [
                 draft["evidence_id"]
                 for draft in evidence_drafts
-                if draft["resource_handle"]
-                in handles_by_source[source_by_resource_type[str(item["resource_type"])]]
+                if draft["resource_handle"] in handles_by_route.get(str(item["route_id"]), set())
             ],
             "failure_kind": _failure_kind(item["failure_kind"]),
         }
@@ -156,6 +150,40 @@ def _source_statuses(
             acquisition_result=acquisition_result,
         )
     ]
+
+
+def _resource_handles_by_route(
+    acquisition_result: AcquisitionResultV1,
+    *,
+    single_route_id: str | None,
+) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for summary in acquisition_result["source_summaries"]:
+        route_id = summary.get("route_id", single_route_id)
+        if not isinstance(route_id, str) or not route_id:
+            continue
+        result.setdefault(route_id, set()).update(
+            str(handle) for handle in cast(list[object], summary.get("resource_handles", []))
+        )
+    return result
+
+
+def _exact_resource_type(
+    route: Mapping[str, object],
+    acquisition_result: AcquisitionResultV1,
+) -> str:
+    observed = {
+        str(resource.get("resource_type"))
+        for summary in acquisition_result["source_summaries"]
+        if summary.get("route_id") == route["route_id"]
+        for resource in cast(list[object], summary.get("resources", []))
+        if isinstance(resource, dict) and resource.get("resource_type")
+    }
+    if len(observed) > 1:
+        raise ValueError("one frozen route produced multiple resource types")
+    if observed:
+        return observed.pop()
+    return str(route["resource_type"]).lower()
 
 
 def _failure_kind(

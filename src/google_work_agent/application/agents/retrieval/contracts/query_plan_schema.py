@@ -140,6 +140,8 @@ _CONSTRAINT_SCHEMA = {
                             "ANY",
                             "INCOMPLETE",
                             "COMPLETED",
+                            "OPEN",
+                            "CLOSED",
                             "DRAFT",
                             "SENT",
                             "CANCELLED",
@@ -281,6 +283,7 @@ def bind_retrieval_query_plan_output_schema(
     *,
     base_schema: OutputSchemaDefinition = RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
     route_ids: Collection[str],
+    route_status_values: Mapping[str, Collection[str]] | None = None,
     supported_constraint_kinds: Mapping[str, Collection[str]] | None = None,
     validated_resource_refs: Mapping[str, Collection[str]] | None = None,
     validated_container_refs: Mapping[str, Collection[str]] | None = None,
@@ -318,12 +321,30 @@ def bind_retrieval_query_plan_output_schema(
                 temporal_constraint=(resolved_temporal_constraints or {}).get(route_id),
                 allowed_participant_identities=allowed_participant_identities,
             )
+            if route_status_values is not None:
+                _bind_status_scope_values(
+                    operation_schema, route_status_values.get(route_id, ())
+                )
             bound_operations.append(operation_schema)
     route_queries["items"] = {"oneOf": bound_operations}
     return OutputSchemaDefinition(
         schema_version=base_schema.schema_version,
         json_schema=json_schema,
     )
+
+
+def _bind_status_scope_values(value: object, allowed_values: Collection[str]) -> None:
+    if isinstance(value, list):
+        for child in value:
+            _bind_status_scope_values(child, allowed_values)
+    elif isinstance(value, dict):
+        properties = value.get("properties")
+        if isinstance(properties, dict) and properties.get("kind") == {"const": "STATUS_SCOPE"}:
+            cast(dict[str, object], properties["values"])["items"] = {
+                "type": "string", "enum": sorted(allowed_values),
+            }
+        for child in value.values():
+            _bind_status_scope_values(child, allowed_values)
 
 
 def _bind_route_operation(
