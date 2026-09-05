@@ -206,17 +206,14 @@ class _ComponentInferencePort:
             ranked = cast(list[Mapping[str, object]], projection.get("ranked_segments", []))
             segment_ids = [str(item["segment_id"]) for item in ranked]
             return {
-                "schema_version": 2,
-                "evidence_drafts": [
-                    {
-                        "segment_id": segment_id,
+                "schema_version": 3,
+                "segment_assessments": {
+                    segment_id: {
                         "role": "SUPPORTS",
                         "relevance_reason": "status evidence",
                     }
                     for segment_id in segment_ids
-                ],
-                "selected_segment_ids": segment_ids,
-                "excluded_segment_ids": [],
+                },
             }
         if prompt_id == "retrieval.assess_sufficiency":
             if self.retrieval_needs_more:
@@ -589,6 +586,9 @@ def test_retrieval__three_details__preserve_one_search_round() -> None:
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
     intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": "EVENT_TIME"}]
     intent["constraints"].append({"kind": "DATE", "field": "period", "value": "이번주"})
+    intent["constraints"].append(
+        {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]}
+    )
     state["retry_budget"]["started_at_ms"] = run_start
     state["request_intent"] = cast(Any, intent)
     routes = _answer_route_plan(with_input_route=True)

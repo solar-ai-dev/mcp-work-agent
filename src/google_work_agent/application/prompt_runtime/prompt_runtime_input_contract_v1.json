@@ -80,7 +80,7 @@
       "input_schema_version": 2,
       "required_root_fields": ["request_intent", "ranked_segments", "temporal_constraints"],
       "optional_root_fields": ["confirmation_response"],
-      "output_schema_version": 1
+      "output_schema_version": 3
     },
     {
       "prompt_slot_id": "retrieval.assess_sufficiency",

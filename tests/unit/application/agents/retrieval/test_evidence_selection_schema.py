@@ -5,6 +5,12 @@ import pytest
 from google_work_agent.application.agents.retrieval.contracts.evidence_selection_schema import (
     bind_evidence_selection_schema,
 )
+from google_work_agent.application.prompt_runtime.load_prompt_input_contract import (
+    load_prompt_input_contract,
+)
+from google_work_agent.application.prompt_runtime.prompt_registry import (
+    default_prompt_manifest_path,
+)
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
@@ -63,3 +69,16 @@ def test_visible_candidates_cannot_exceed_evidence_budget():
         bind_evidence_selection_schema(
             candidate_resource_refs={"mail": "gmail_thread:1", "task": "task:2"}, max_evidence=1,
         )
+
+
+def test_inference_schema_version_matches_prompt_contract_and_manifest():
+    import json
+
+    contract = next(entry for entry in load_prompt_input_contract().entries
+                    if entry.prompt_slot_id == "retrieval.select_evidence")
+    manifest = json.loads(default_prompt_manifest_path().read_text(encoding="utf-8"))
+    slot = next(item for item in manifest["slots"]
+                if item["prompt_slot_id"] == "retrieval.select_evidence")
+    schema = bind_evidence_selection_schema(candidate_resource_refs={}, max_evidence=12)
+    version = schema.json_schema["properties"]["schema_version"]["enum"][0]
+    assert version == contract.output_schema_version == slot["output_schema_version"] == 3
