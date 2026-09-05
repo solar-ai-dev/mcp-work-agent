@@ -304,6 +304,7 @@ def _validate_selection(
         raise ValueError("segment cannot be selected and excluded")
     _validate_requested_resource_coverage(
         selected_segment_ids=selected,
+        excluded_segment_ids=excluded,
         candidate_resource_refs=candidate_resource_refs,
         requested_resource_hints=requested_resource_hints,
     )
@@ -341,14 +342,18 @@ def _validate_selection(
 def _validate_requested_resource_coverage(
     *,
     selected_segment_ids: Collection[str],
+    excluded_segment_ids: Collection[str],
     candidate_resource_refs: dict[str, str],
     requested_resource_hints: Collection[str],
 ) -> None:
     groups = required_resource_segments(candidate_resource_refs, requested_resource_hints)
     for resource_hint, segment_ids in groups.items():
-        if not set(selected_segment_ids).intersection(segment_ids):
+        if not set(selected_segment_ids).intersection(segment_ids) and not set(
+            segment_ids
+        ).issubset(excluded_segment_ids):
             raise ValueError(
-                f"selection omits available requested resource evidence: {resource_hint}"
+                "selection neither assesses nor excludes requested resource candidates: "
+                f"{resource_hint}"
             )
 
 

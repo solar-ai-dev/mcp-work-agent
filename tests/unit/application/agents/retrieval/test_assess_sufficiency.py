@@ -286,13 +286,16 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
     )
 
     assert result["status"] == "NEEDS_MORE_DATA"
-    assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"]
+    assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"]
 
 
-def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence() -> None:
+@pytest.mark.parametrize("mail_count", [0, 1])
+def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence(
+    mail_count: int,
+) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     acquisition = _acquisition_result()
-    acquisition["source_summaries"][0]["resource_count"] = 0
+    acquisition["source_summaries"][0]["resource_count"] = mail_count
     acquisition["source_summaries"][0]["resource_handles"] = []
     acquisition["resource_handles"] = ["task:existing"]
     intent = _intent()
@@ -319,7 +322,10 @@ def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence() -
         retry_budget=_run_budget(used=0),
     )
     assert result["status"] == "NEEDS_MORE_DATA"
-    assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"]
+    assert result["issues"][-1]["reason_codes"] == [
+        "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if mail_count == 0
+        else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
+    ]
 
 
 @pytest.mark.parametrize(

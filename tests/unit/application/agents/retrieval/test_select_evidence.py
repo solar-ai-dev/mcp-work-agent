@@ -113,6 +113,25 @@ def test_select_evidence__sole_exact_selected_read__skips_llm() -> None:
     assert result["evidence_drafts"][0]["role"] == "SUPPORTS"
 
 
+def test_irrelevant_search_candidates__can_all_be_excluded_without_repair_or_fabricated_evidence():
+    output = {"schema_version": 2, "evidence_drafts": [], "selected_segment_ids": [],
+              "excluded_segment_ids": ["outside-period"]}
+    runtime = FakeLLMRuntime(deque([_llm_result(output)]))
+    segment = SourceSegment(
+        "outside-period", "gmail_thread:old", "GMAIL", "gmail_thread", "old", None, None,
+        {}, "2026년 7월 3일 종료된 행사 안내",
+    )
+    result, _ = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=_intent(),
+        rag_candidates=[{"segment_id": segment.segment_id, "resource_ref": segment.resource_handle,
+                         "retrieval_score": 1.0, "reason_codes": []}],
+        segments=[segment], retry_budget=_run_budget(used=0),
+    )
+    assert result == output
+    assert len(runtime.calls) == 1
+
+
 def test_exact_selected_read__with_multiple_segments__selects_top_rank_without_llm() -> None:
     runtime = FakeLLMRuntime()
     intent = _intent()
@@ -172,7 +191,7 @@ def test_select_evidence__repairs_container_only_selection__for_task_read() -> N
             }
         ],
         "selected_segment_ids": ["task-list-segment"],
-        "excluded_segment_ids": ["task-segment"],
+        "excluded_segment_ids": [],
     }
     concrete_task = {
         "schema_version": 2,

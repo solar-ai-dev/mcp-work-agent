@@ -73,7 +73,7 @@ def bind_evidence_selection_schema(
     *, candidate_resource_refs: Mapping[str, str],
     requested_resource_hints: Collection[str], max_evidence: int,
 ) -> OutputSchemaDefinition:
-    schema = deepcopy(EVIDENCE_SELECTION_OUTPUT_SCHEMA.json_schema)
+    schema = deepcopy(dict(EVIDENCE_SELECTION_OUTPUT_SCHEMA.json_schema))
     properties = cast(dict[str, dict[str, object]], schema["properties"])
     ids = sorted(candidate_resource_refs)
     id_schema = {"type": "string", "enum": ids}
@@ -87,8 +87,20 @@ def bind_evidence_selection_schema(
     item_properties["segment_id"] = id_schema
     groups = required_resource_segments(candidate_resource_refs, requested_resource_hints)
     if groups:
-        properties["selected_segment_ids"]["allOf"] = [
-            {"contains": {"enum": segment_ids}} for segment_ids in groups.values()
+        # Candidates are not facts: explicitly excluding every candidate of a
+        # source is valid. Silently ignoring that source is not.
+        schema["allOf"] = [
+            {
+                "if": {"properties": {
+                    "selected_segment_ids": {"contains": {"enum": segment_ids}},
+                }},
+                "else": {"properties": {
+                    "excluded_segment_ids": {"allOf": [
+                        {"contains": {"const": segment_id}} for segment_id in segment_ids
+                    ]},
+                }},
+            }
+            for segment_ids in groups.values()
         ]
     return OutputSchemaDefinition(
         schema_version=EVIDENCE_SELECTION_OUTPUT_SCHEMA.schema_version, json_schema=schema,

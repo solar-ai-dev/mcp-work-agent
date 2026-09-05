@@ -36,6 +36,7 @@ from google_work_agent.application.agents.retrieval.project_query_temporal_const
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
+    normalize_resource_type,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ToolRoutePlanV2,
@@ -161,38 +162,46 @@ def _fail_closed_on_empty_required_acquisition(
         or not any(route["required"] for route in tool_route_plan["input_plan"]["input_routes"])
     ):
         return result
-    if evidence_drafts:
-        required_sources = {
-            _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
-            for route in tool_route_plan["input_plan"]["input_routes"]
-            if route["required"]
-            and not (
-                route["reason_codes"]
-                and all(
-                    code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
-                    for code in route["reason_codes"]
-                )
+    required_routes = [
+        route for route in tool_route_plan["input_plan"]["input_routes"]
+        if route["required"] and not (
+            route["reason_codes"] and all(
+                code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
+                for code in route["reason_codes"]
             )
-        }
-        if not any(
-            summaries and all(summary.get("resource_count") == 0 for summary in summaries)
-            for source in required_sources
-            for summaries in [
-                [
-                    summary
-                    for summary in acquisition_result["source_summaries"]
-                    if summary.get("source") == source
-                ]
-            ]
-        ):
-            return result
+        )
+    ]
+    missing_routes = [
+        route for route in required_routes if not any(
+            draft["resource_handle"].startswith(
+                (normalize_resource_type(route["resource_type"])
+                 if route["resource_type"] == "EMAIL" else route["resource_type"]).lower() + ":"
+            )
+            for draft in evidence_drafts
+        )
+    ]
+    if not missing_routes and evidence_drafts:
+        return result
+    missing_sources = {
+        _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
+        for route in missing_routes
+    }
+    no_resources = any(
+        summaries and all(summary.get("resource_count") == 0 for summary in summaries)
+        for source in missing_sources
+        for summaries in [[summary for summary in acquisition_result["source_summaries"]
+                           if summary.get("source") == source]]
+    )
     issue: SufficiencyIssueV2 = {
         "slot": "required_source_evidence",
         "issue_type": "MISSING",
         "required": True,
         "resolution_source": "GOOGLE",
         "safety_critical": False,
-        "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
+        "reason_codes": [
+            "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if no_resources
+            else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
+        ],
     }
     return {
         "schema_version": 2,

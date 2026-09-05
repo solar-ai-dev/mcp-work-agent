@@ -37,3 +37,17 @@ def test_current_evidence_schema__does_not_require__absent_resource_evidence() -
         "schema_version": 2, "selected_segment_ids": [], "excluded_segment_ids": [],
         "evidence_drafts": [],
     }, schema.json_schema) == []
+
+
+def test_search_candidates_may_all_be_excluded_but_not_silently_ignored() -> None:
+    schema = bind_evidence_selection_schema(
+        candidate_resource_refs={"old": "gmail_thread:1", "unrelated": "gmail_thread:2"},
+        requested_resource_hints=["GMAIL_THREAD"], max_evidence=12,
+    )
+    output = {"schema_version": 2, "selected_segment_ids": [], "evidence_drafts": [],
+              "excluded_segment_ids": ["old", "unrelated"]}
+    assert validate_output_schema(output, schema.json_schema) == []
+    output["excluded_segment_ids"] = ["old"]
+    assert validate_output_schema(output, schema.json_schema)
+    output["excluded_segment_ids"] = ["old", "old", "unrelated"]
+    assert validate_output_schema(output, schema.json_schema)
