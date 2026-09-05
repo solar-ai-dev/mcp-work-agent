@@ -1008,6 +1008,8 @@ class ProductionRuntimeConfig:
     deployment_profile: Literal["API_ONLY", "LOCAL_CAPABLE"]
     oauth_environment: OAuthEnvironment
     oauth_client_id: str
+    github_oauth_client_id: str | None
+    github_oauth_scope: str
     api_contract_version: str
     mcp_manifest_version: str
     policy_version: str
@@ -1031,6 +1033,8 @@ class ProductionRuntimeConfig:
         if any(not value.strip() for value in values):
             raise ValueError("runtime configuration fields must be non-empty")
         if self.configuration_source == "SIGNED_RELEASE_MANIFEST":
+            if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
+                raise ValueError("signed GitHub OAuth client ID must be non-empty")
             paths = [entry.file_path for entry in self.verified_release_files]
             if not paths or len(paths) != len(set(paths)):
                 raise ValueError("signed runtime release file set is invalid")
@@ -1072,6 +1076,8 @@ class ProductionRuntimeConfig:
             deployment_profile="LOCAL_CAPABLE",
             oauth_environment=OAuthEnvironment.DEVELOPMENT,
             oauth_client_id="development-client-id",
+            github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID", "").strip() or None,
+            github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", "").strip(),
             api_contract_version=API_CONTRACT_VERSION,
             mcp_manifest_version=mcp_manifest_version,
             policy_version="2026-08-06.p0",
@@ -1102,6 +1108,8 @@ class ProductionRuntimeConfig:
             "deployment_profile",
             "oauth_env",
             "oauth_client_id",
+            "github_oauth_client_id",
+            "github_oauth_scope",
             "api_contract_version",
             "mcp_schema_version",
             "policy_version",
@@ -1123,6 +1131,12 @@ class ProductionRuntimeConfig:
                 raise ValueError(f"signed build configuration field is invalid: {field}")
             return value
 
+        def optional_string(field: str) -> str:
+            value = payload.get(field)
+            if not isinstance(value, str):
+                raise ValueError(f"signed build configuration field is invalid: {field}")
+            return value
+
         if not isinstance(verified_release_files, list):
             raise ValueError("verified release file set is invalid")
         release_files = tuple(
@@ -1141,6 +1155,8 @@ class ProductionRuntimeConfig:
             deployment_profile=cast(Literal["API_ONLY", "LOCAL_CAPABLE"], deployment_profile),
             oauth_environment=oauth_environment,
             oauth_client_id=required_string("oauth_client_id"),
+            github_oauth_client_id=required_string("github_oauth_client_id"),
+            github_oauth_scope=optional_string("github_oauth_scope"),
             api_contract_version=required_string("api_contract_version"),
             mcp_manifest_version=required_string("mcp_schema_version"),
             policy_version=required_string("policy_version"),
@@ -1451,6 +1467,8 @@ def _build_connectors(
     working_directory: Path,
     environment: str,
     oauth_client_id: str,
+    github_oauth_client_id: str | None,
+    github_oauth_scope: str,
     development_tool_registry: SignedToolRegistry | None,
     mcp_module_name: str = GOOGLE_WORKSPACE_MCP_MODULE,
     configuration_source: Literal[
@@ -1592,9 +1610,8 @@ def _build_connectors(
     )
     google_connector.start()
     github_environment = {
-        key: value
-        for key in ("GITHUB_APP_CLIENT_ID", "GITHUB_APP_SCOPE")
-        if (value := os.environ.get(key)) is not None
+        "GITHUB_APP_CLIENT_ID": github_oauth_client_id or "",
+        "GITHUB_APP_SCOPE": github_oauth_scope,
     }
     github_descriptor = build_github_connector_descriptor(
         MCPArtifactConfig(
@@ -2115,6 +2132,8 @@ def build_production_runtime(
     deployment_profile: Literal["API_ONLY", "LOCAL_CAPABLE"],
     oauth_environment: OAuthEnvironment,
     oauth_client_id: str,
+    github_oauth_client_id: str | None,
+    github_oauth_scope: str,
     api_contract_version: str,
     policy_version: str,
     database_migration_version: str,
@@ -2256,6 +2275,8 @@ def build_production_runtime(
             working_directory=working_directory.resolve(),
             environment=oauth_environment.value,
             oauth_client_id=oauth_client_id,
+            github_oauth_client_id=github_oauth_client_id,
+            github_oauth_scope=github_oauth_scope,
             development_tool_registry=development_tool_registry,
             configuration_source=configuration_source,
             verified_release_files=verified_release_files,
@@ -2273,6 +2294,10 @@ def build_production_runtime(
         GoogleWorkspaceConnector,
         connector_bundle.get_required(GOOGLE_WORKSPACE_CONNECTOR_ID),
     )
+    github_connector = cast(
+        GitHubConnector,
+        connector_bundle.get_required(GITHUB_CONNECTOR_ID),
+    )
     mcp_manifest_path = Path(
         google_connector.descriptor.artifact_config.manifest_path
     )
@@ -2283,6 +2308,7 @@ def build_production_runtime(
         connector_registry.close_all()
         raise CoreInitializationError("POLICY_VERSION_MISMATCH")
     google_provider = google_connector.oauth_port
+    github_provider = github_connector.oauth_port
     unit_of_work_factory = sqlite_unit_of_work_factory(database_path)
     read_unit_of_work_factory = sqlite_read_unit_of_work_factory(database_path)
     connected_account_store_factory = sqlite_connected_account_store_factory(database_path)
@@ -2291,11 +2317,15 @@ def build_production_runtime(
         connected_account_store_factory=connected_account_store_factory,
         now_ms=clock.now_ms,
     )
+    get_github_connection_status = GetConnectionStatusHandler(github_provider)
 
     def current_account_id() -> str | None:
         return get_connection_status(
             GetConnectionStatusQuery(connector_id="google_workspace")
         ).connection.account_id
+
+    def current_github_account_id() -> str | None:
+        return get_github_connection_status(GetConnectionStatusQuery(connector_id=GITHUB_CONNECTOR_ID)).connection.account_id
 
     try:
         (
@@ -2973,6 +3003,46 @@ def build_production_runtime(
             connected_account_store_factory=connected_account_store_factory,
             now_ms=clock.now_ms,
         ),
+        connection_connector_ids={
+            "google": GOOGLE_WORKSPACE_CONNECTOR_ID,
+            "github": GITHUB_CONNECTOR_ID,
+        },
+        oauth_requested_scopes_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: _google_oauth_scopes(connector_bundle.tool_registry),
+            GITHUB_CONNECTOR_ID: tuple(dict.fromkeys(scope for scope in github_oauth_scope.replace(",", " ").split() if scope)),
+        },
+        start_authorization_handlers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: StartAuthorizationHandler(
+                credentials=google_provider,
+                replay=operational_replay,
+            ),
+            GITHUB_CONNECTOR_ID: StartAuthorizationHandler(
+                credentials=github_provider,
+                replay=operational_replay,
+            ),
+        },
+        get_connection_status_handlers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: get_connection_status,
+            GITHUB_CONNECTOR_ID: get_github_connection_status,
+        },
+        revoke_connection_handlers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: RevokeConnectionHandler(
+                credentials=google_provider,
+                replay=operational_replay,
+                connected_account_store_factory=connected_account_store_factory,
+                now_ms=clock.now_ms,
+            ),
+            GITHUB_CONNECTOR_ID: RevokeConnectionHandler(
+                credentials=github_provider,
+                replay=operational_replay,
+                connected_account_store_factory=None,
+                now_ms=clock.now_ms,
+            ),
+        },
+        current_account_id_providers_by_connector={
+            GOOGLE_WORKSPACE_CONNECTOR_ID: current_account_id,
+            GITHUB_CONNECTOR_ID: current_github_account_id,
+        },
         list_resources_handler=ListResourcesHandler(resource_access),
         get_resource_count_handler=GetResourceCountHandler(resource_access),
         get_resource_detail_handler=GetResourceDetailHandler(resource_access),

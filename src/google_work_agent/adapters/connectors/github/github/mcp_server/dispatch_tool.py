@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .composition import GitHubMcpServerState
+from .oauth_device_flow import GitHubOAuthConfigurationError
 from .project_registry import WRITE_TOOL_IDS
 from .validate_claim_context import validate_github_claim_context
 
@@ -58,18 +59,44 @@ def dispatch_control(
 ) -> dict[str, object]:
     arguments = arguments or {}
     if method == "github.connection.get":
-        _poll_active_device_flow(state)
-        status = state.credential_provider().get_connection_status()
+        try:
+            _poll_active_device_flow(state)
+            status = state.credential_provider().get_connection_status()
+        except GitHubOAuthConfigurationError as error:
+            return {
+                "connected": False,
+                "credential_state": "ERROR",
+                "reauth_required": False,
+                "last_checked_at_ms": state.now_ms(),
+                "account_id": None,
+                "account_email": None,
+                "granted_scopes": [],
+                "missing_scopes": [],
+                "detail_code": error.safe_code,
+            }
         connecting = state.active_device_authorization is not None
+        account_id = None
+        account_email = None
+        if status.connected:
+            profile = state.api_client().get("https://api.github.com/user")
+            if not isinstance(profile, dict):
+                raise ControlCallError("MALFORMED_RESPONSE", "GITHUB_ACCOUNT_INVALID")
+            raw_id = profile.get("id")
+            login = profile.get("login")
+            email = profile.get("email")
+            if not isinstance(raw_id, int) or not isinstance(login, str) or not login:
+                raise ControlCallError("MALFORMED_RESPONSE", "GITHUB_ACCOUNT_INVALID")
+            account_id = f"github:{raw_id}"
+            account_email = email if isinstance(email, str) and email else login
         return {
             "connected": status.connected,
-            "credential_state": "CONNECTING" if connecting else status.credential_state.value,
+            "credential_state": ("CONNECTING" if connecting else status.credential_state.value),
             "reauth_required": status.reauth_required,
             "last_checked_at_ms": status.last_checked_at_ms,
-            "account_id": None,
-            "account_email": None,
-            "granted_scopes": [],
-            "missing_scopes": [],
+            "account_id": account_id,
+            "account_email": account_email,
+            "granted_scopes": list(status.granted_scopes),
+            "missing_scopes": list(status.missing_required_scopes),
         }
     if method == "github.device_flow.start":
         operation_ref = str(arguments.get("operation_ref", "")).strip()
@@ -94,10 +121,10 @@ def dispatch_control(
         state.operational_results[operation_ref] = payload
         return payload
     if method == "github.device_flow.poll":
-        authorization = state.active_device_authorization
-        if authorization is None:
+        active_authorization = state.active_device_authorization
+        if active_authorization is None:
             raise ControlCallError("NOT_FOUND", "NO_ACTIVE_DEVICE_FLOW")
-        result = state.credential_provider().complete_device_flow(authorization)
+        result = state.credential_provider().complete_device_flow(active_authorization)
         _update_poll_state(state, result.status.value, result.interval_seconds)
         return {
             "status": result.status.value,

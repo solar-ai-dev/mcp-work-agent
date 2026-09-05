@@ -31,9 +31,10 @@ from google_work_agent.adapters.connectors.github.issues.issues.update_issue imp
 )
 from google_work_agent.adapters.keyring.os_keyring_secret_store import (
     OsKeyringSecretStoreAdapter,
+    keyring_service_name,
 )
 
-from .credential_provider import GITHUB_KEYRING_SERVICE, GitHubCredentialProvider
+from .credential_provider import GitHubCredentialProvider
 from .github_api import GitHubApiClient
 from .oauth_device_flow import (
     GitHubDeviceAuthorization,
@@ -78,18 +79,26 @@ class GitHubMcpServerState:
         if not client_id:
             raise GitHubOAuthConfigurationError("GITHUB_APP_CLIENT_ID_MISSING")
         try:
-            keyring = OsKeyringSecretStoreAdapter(service_name=GITHUB_KEYRING_SERVICE)
-        except RuntimeError as error:
+            environment = os.environ.get("GWA_MCP_ENVIRONMENT", "").strip()
+            keyring = OsKeyringSecretStoreAdapter(
+                service_name=keyring_service_name(
+                    environment=environment,
+                    credential_type="github-oauth",
+                )
+            )
+        except (RuntimeError, ValueError) as error:
             raise GitHubOAuthConfigurationError("KEYRING_UNAVAILABLE") from error
+        scope = os.environ.get("GITHUB_APP_SCOPE", "").strip()
         device_flow = GitHubDeviceFlowClient(
             client_id=client_id,
-            scope=os.environ.get("GITHUB_APP_SCOPE", "").strip(),
+            scope=scope,
             now_ms=self.now_ms,
         )
         self._credential_provider = GitHubCredentialProvider(
             keyring=keyring,
             device_flow=device_flow,
             now_ms=self.now_ms,
+            requested_scopes=tuple(dict.fromkeys(item for item in scope.replace(",", " ").split() if item)),
         )
         return self._credential_provider
 

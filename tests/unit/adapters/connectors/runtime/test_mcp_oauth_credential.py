@@ -102,7 +102,7 @@ def test_github_authorization__uses_device_flow_control__without_token_projectio
     result = adapter.start_authorization(
         "github",
         OAuthEnvironment.DEVELOPMENT,
-        ("issues.read",),
+        (),
         "operation-1",
     )
 
@@ -111,6 +111,11 @@ def test_github_authorization__uses_device_flow_control__without_token_projectio
     assert result.verification_uri == "https://github.com/login/device"
     assert result.poll_interval_seconds == 5
     assert client.calls[0][0:2] == ("github", "github.device_flow.start")
+    assert client.calls[0][2] == {
+        "environment": "DEVELOPMENT",
+        "requested_scopes": [],
+        "operation_ref": "operation-1",
+    }
     assert "access_token" not in result.__dataclass_fields__
 
 

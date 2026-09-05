@@ -65,16 +65,18 @@ def test_github_write__rejects_invalid_claim__before_provider_access(tmp_path: P
         registry.close_all()
 
 
-def test_github_control__is_reachable_and_fails_closed__without_client_id(
+def test_github_control__reports_unavailable__without_client_id(
     tmp_path: Path,
 ) -> None:
     client, registry = _start_client(tmp_path)
     try:
         result = client.call_tool("github", "github.connection.get", {}, 5_000)
 
-        assert result.transport_status == "ERROR"
-        assert result.error_code == "CONFIGURATION_ERROR"
-        assert result.payload["delivery_certainty"] == "NOT_SENT"
+        assert result.transport_status == "OK"
+        assert result.payload["connected"] is False
+        assert result.payload["credential_state"] == "ERROR"
+        assert result.payload["detail_code"] == "GITHUB_APP_CLIENT_ID_MISSING"
+        assert "token" not in json.dumps(result.payload).lower()
     finally:
         registry.close_all()
 

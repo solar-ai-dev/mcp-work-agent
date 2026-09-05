@@ -244,6 +244,8 @@ class _DeviceCredentialProvider:
             ),
             reauth_required=False,
             last_checked_at_ms=0,
+            granted_scopes=("repo",),
+            missing_required_scopes=(),
         )
 
 
@@ -252,6 +254,11 @@ def test_device_flow_status_polling__preserves_interval__and_slow_down_backoff()
     provider = _DeviceCredentialProvider(lambda: now[0])
     state = GitHubMcpServerState(
         credential_provider=provider,  # type: ignore[arg-type]
+        api_client=type(
+            "AccountApi",
+            (),
+            {"get": lambda _self, _url: {"id": 42, "login": "octocat", "email": None}},
+        )(),  # type: ignore[arg-type]
         operations={},
         now_ms=lambda: now[0],
     )
@@ -279,4 +286,7 @@ def test_device_flow_status_polling__preserves_interval__and_slow_down_backoff()
 
     assert provider.poll_count == 3
     assert status["connected"] is True
+    assert status["account_id"] == "github:42"
+    assert status["account_email"] == "octocat"
+    assert status["granted_scopes"] == ["repo"]
     assert state.active_device_authorization is None

@@ -61,6 +61,7 @@ class GitHubDeviceFlowPollResult:
     access_token_expires_at_ms: int | None = None
     refresh_token: str | None = None
     refresh_token_expires_at_ms: int | None = None
+    granted_scopes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ class GitHubTokenRefreshResult:
     access_token_expires_at_ms: int | None
     refresh_token: str | None
     refresh_token_expires_at_ms: int | None
+    granted_scopes: tuple[str, ...]
 
 
 class GitHubOAuthTransport(Protocol):
@@ -171,6 +173,7 @@ class GitHubDeviceFlowClient:
             access_token_expires_at_ms=result.access_token_expires_at_ms,
             refresh_token=result.refresh_token,
             refresh_token_expires_at_ms=result.refresh_token_expires_at_ms,
+            granted_scopes=result.granted_scopes,
         )
 
     def _interpret_token_response(self, payload: dict[str, object]) -> GitHubDeviceFlowPollResult:
@@ -188,6 +191,7 @@ class GitHubDeviceFlowClient:
         expires_in = payload.get("expires_in")
         refresh_token = payload.get("refresh_token")
         refresh_token_expires_in = payload.get("refresh_token_expires_in")
+        granted_scopes = _parse_scopes(payload.get("scope"))
         return GitHubDeviceFlowPollResult(
             status=GitHubDeviceFlowStatus.APPROVED,
             access_token=access_token,
@@ -200,7 +204,14 @@ class GitHubDeviceFlowClient:
                 if isinstance(refresh_token_expires_in, int)
                 else None
             ),
+            granted_scopes=granted_scopes,
         )
+
+
+def _parse_scopes(value: object) -> tuple[str, ...]:
+    if not isinstance(value, str):
+        return ()
+    return tuple(dict.fromkeys(scope for scope in value.replace(",", " ").split() if scope))
 
 
 def _require_str(payload: dict[str, object], key: str) -> str:

@@ -51,6 +51,7 @@ def test_device_flow__start_and_poll__preserve_github_protocol() -> None:
             "expires_in": 28_800,
             "refresh_token": "refresh",
             "refresh_token_expires_in": 15_552_000,
+            "scope": "repo, read:user",
         },
     )
     client = GitHubDeviceFlowClient(
@@ -64,6 +65,7 @@ def test_device_flow__start_and_poll__preserve_github_protocol() -> None:
     assert result.status is GitHubDeviceFlowStatus.APPROVED
     assert result.access_token == "access"
     assert result.refresh_token == "refresh"
+    assert result.granted_scopes == ("repo", "read:user")
     assert transport.calls[1][1]["grant_type"].endswith(":device_code")
 
 
@@ -74,16 +76,23 @@ def test_credential_provider__persists_only__refresh_token() -> None:
             "access_token": "new-access",
             "expires_in": 100,
             "refresh_token": "new-refresh",
+            "scope": "repo",
         }
     )
     flow = GitHubDeviceFlowClient(
         client_id="client", scope="repo", now_ms=lambda: 1_000, transport=transport
     )
-    provider = GitHubCredentialProvider(keyring=store, device_flow=flow, now_ms=lambda: 1_000)
+    provider = GitHubCredentialProvider(
+        keyring=store,
+        device_flow=flow,
+        now_ms=lambda: 1_000,
+        requested_scopes=("repo",),
+    )
 
     assert provider.get_access_token() == "new-access"
     assert store.put_values == [b"new-refresh"]
     assert b"new-access" not in store.put_values
+    assert provider.get_connection_status().granted_scopes == ("repo",)
     assert (
         provider.get_connection_status().credential_state
         is GitHubCredentialState.CONNECTED

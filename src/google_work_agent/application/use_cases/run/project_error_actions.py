@@ -9,19 +9,25 @@ from typing import Literal
 from google_work_agent.application.use_cases.execution_attempt.project_delivery_certainty import (
     project_latest_delivery_certainty,
 )
-from google_work_agent.application.use_cases.plan.persistence_projection import current_plan_tuple
-from google_work_agent.application.use_cases.run.resume_confirmation import ResumeTargetValidator
+from google_work_agent.application.use_cases.plan.persistence_projection import (
+    current_plan_tuple,
+)
+from google_work_agent.application.use_cases.run.resume_confirmation import (
+    ResumeTargetValidator,
+)
 from google_work_agent.application.use_cases.run.resume_safe_checkpoint import (
     safe_checkpoint_resume_is_allowed,
 )
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.run.model import RunStatusV1
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
+from google_work_agent.ports.persistence.trace_event_repository import TraceEventCursor
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 
 type ErrorUiActionKindV1 = Literal[
     "PREPARE_RETRY",
     "REAUTHENTICATE_GOOGLE",
+    "REAUTHENTICATE_CONNECTOR",
     "RESUME_SAFE_CHECKPOINT",
     "OPEN_SETTINGS",
     "OPEN_DIAGNOSTICS",
@@ -38,6 +44,7 @@ class ErrorUiActionV1:
     kind: ErrorUiActionKindV1
     action_id: str | None = None
     resume_kind: str | None = None
+    connector_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +83,26 @@ class ProjectErrorActionsHandler:
                 and project_latest_delivery_certainty(unit_of_work, action.id) == "NOT_SENT"
             )
             if run.status is RunStatusV1.REAUTH_REQUIRED:
+                latest_action_id = _latest_reauth_action_id(unit_of_work, run.id)
+                affected_action = next(
+                    (action for action in actions if latest_action_id is not None and action.id == latest_action_id),
+                    None,
+                )
+                connector_id = "google_workspace" if affected_action is None else affected_action.connector_id
+                if connector_id == "google_workspace":
+                    error_code = "GOOGLE_REAUTH_REQUIRED"
+                    message = "Google authentication must be restored before this run can continue."
+                    reauth_action = ErrorUiActionV1("REAUTHENTICATE_GOOGLE")
+                else:
+                    error_code = "CONNECTOR_REAUTH_REQUIRED"
+                    message = "Connector authentication must be restored before this run can continue."
+                    reauth_action = ErrorUiActionV1("REAUTHENTICATE_CONNECTOR", connector_id=connector_id)
                 return ProjectErrorActionsResultV1(
                     1,
-                    "GOOGLE_REAUTH_REQUIRED",
-                    "Google authentication must be restored before this run can continue.",
+                    error_code,
+                    message,
                     (
-                        ErrorUiActionV1("REAUTHENTICATE_GOOGLE"),
+                        reauth_action,
                         ErrorUiActionV1("OPEN_SETTINGS"),
                         ErrorUiActionV1("OPEN_DIAGNOSTICS"),
                     ),
@@ -119,6 +140,19 @@ class ProjectErrorActionsHandler:
                     (ErrorUiActionV1("OPEN_DIAGNOSTICS"),),
                 )
         return None
+
+
+def _latest_reauth_action_id(unit_of_work: UnitOfWork, run_id: str) -> str | None:
+    after_id: int | None = None
+    latest_action_id: str | None = None
+    while True:
+        page = unit_of_work.traces.list_page(TraceEventCursor(run_id=run_id, after_id=after_id), 500)
+        for event in page:
+            if event.event_type == "RUN_REAUTH_REQUIRED" and event.action_id is not None:
+                latest_action_id = event.action_id
+        if len(page) < 500:
+            return latest_action_id
+        after_id = page[-1].id
 
 
 __all__ = [

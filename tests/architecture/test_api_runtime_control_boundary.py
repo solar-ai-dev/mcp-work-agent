@@ -29,9 +29,9 @@ RUNTIME_CONTROL_BINDINGS = (
 RUNTIME_CONTROL_ROUTES = {
     ("GET", "/api/v1/runtime"),
     ("POST", "/api/v1/runtime/mode"),
-    ("POST", "/api/v1/connections/google/start"),
-    ("GET", "/api/v1/connections/google/status"),
-    ("POST", "/api/v1/connections/google/disconnect"),
+    ("POST", "/api/v1/connections/{connector_name}/start"),
+    ("GET", "/api/v1/connections/{connector_name}/status"),
+    ("POST", "/api/v1/connections/{connector_name}/disconnect"),
     ("PUT", "/api/v1/credentials/llm/{provider}"),
     ("GET", "/api/v1/credentials/llm/{provider}"),
     ("DELETE", "/api/v1/credentials/llm/{provider}"),

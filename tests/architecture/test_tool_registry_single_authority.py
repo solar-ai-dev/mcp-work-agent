@@ -222,6 +222,8 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
         working_directory=install_root.resolve(),
         environment="DEVELOPMENT",
         oauth_client_id="test-client",
+        github_oauth_client_id="github-test-client",
+        github_oauth_scope="repo",
         development_tool_registry=None,
         configuration_source="SIGNED_RELEASE_MANIFEST",
         verified_release_files=release_files,

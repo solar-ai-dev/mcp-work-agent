@@ -172,6 +172,8 @@ def _build_signed_container(
         deployment_profile="LOCAL_CAPABLE",
         oauth_environment=OAuthEnvironment.DEVELOPMENT,
         oauth_client_id="fixture-client-id",
+        github_oauth_client_id="github-fixture-client-id",
+        github_oauth_scope="repo",
         api_contract_version="1",
         policy_version="2026-08-06.p0",
         database_migration_version="0019",

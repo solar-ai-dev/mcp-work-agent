@@ -38,7 +38,9 @@ class McpOAuthCredentialAdapter:
         operation_ref: str,
     ) -> OAuthAuthorizationStart:
         _require_connector_id(connector_id)
-        if not requested_scopes or any(not scope.strip() for scope in requested_scopes):
+        if any(not scope.strip() for scope in requested_scopes) or (
+            connector_id == "google_workspace" and not requested_scopes
+        ):
             raise ValueError("requested_scopes must contain nonblank values")
         _require_operation_ref(operation_ref)
         controls = _controls(connector_id)

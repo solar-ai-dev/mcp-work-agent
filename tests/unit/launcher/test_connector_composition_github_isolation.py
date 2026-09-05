@@ -66,8 +66,16 @@ def test_build_connectors__registers_google_workspace__and_github(
         working_directory=Path(__file__).resolve().parents[3],
         environment="DEVELOPMENT",
         oauth_client_id="unused",
+        github_oauth_client_id="github-client-id",
+        github_oauth_scope="repo",
         development_tool_registry=signed,
     )
 
     assert bundle.runtime_registry.connector_ids() == ("github", "google_workspace")
     assert set(bundle.connectors) == {"google_workspace", "github"}
+    github_environment = bundle.connectors["github"].descriptor.artifact_config.extra_environment
+    assert github_environment == {
+        "GITHUB_APP_CLIENT_ID": "github-client-id",
+        "GITHUB_APP_SCOPE": "repo",
+    }
+    assert "GITHUB_TOKEN" not in github_environment

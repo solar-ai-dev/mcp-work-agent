@@ -58,6 +58,8 @@ class ReleaseManifestV1:
     deployment_profile: Literal["API_ONLY", "LOCAL_CAPABLE"]
     oauth_env: Literal["DEVELOPMENT", "STAGING", "PRODUCTION"]
     oauth_client_id: str
+    github_oauth_client_id: str
+    github_oauth_scope: str
     api_contract_version: str
     mcp_schema_version: str
     policy_version: str
@@ -75,6 +77,7 @@ class ReleaseManifestV1:
             "app_version",
             "build_channel",
             "oauth_client_id",
+            "github_oauth_client_id",
             "api_contract_version",
             "mcp_schema_version",
             "policy_version",
@@ -82,6 +85,8 @@ class ReleaseManifestV1:
         ):
             if not str(getattr(self, field_name)).strip():
                 raise ValueError(f"{field_name} is required")
+        if not isinstance(self.github_oauth_scope, str):
+            raise ValueError("github_oauth_scope must be a string")
         file_paths = [entry.file_path for entry in self.files]
         if not file_paths or file_paths != sorted(file_paths):
             raise ValueError("release manifest files must be nonempty and sorted")
@@ -109,6 +114,8 @@ class ReleaseManifestParameters:
     deployment_profile: DeploymentProfile
     oauth_env: Literal["DEVELOPMENT", "STAGING", "PRODUCTION"]
     oauth_client_id: str
+    github_oauth_client_id: str
+    github_oauth_scope: str
     api_contract_version: str
     mcp_schema_version: str
     policy_version: str
@@ -143,6 +150,8 @@ def generate_release_manifest(
         deployment_profile=parameters.deployment_profile.value,
         oauth_env=parameters.oauth_env,
         oauth_client_id=parameters.oauth_client_id,
+        github_oauth_client_id=parameters.github_oauth_client_id,
+        github_oauth_scope=parameters.github_oauth_scope,
         api_contract_version=parameters.api_contract_version,
         mcp_schema_version=parameters.mcp_schema_version,
         policy_version=parameters.policy_version,

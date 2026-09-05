@@ -3199,6 +3199,28 @@ test("does not resume a REAUTH_REQUIRED run from a stale connected projection", 
   expect(requests.some((request) => request.path === "/api/v1/runs/run-1/resume")).toBe(false);
 });
 
+test("resumes a REAUTH_REQUIRED run after the affected GitHub connection is restored", async () => {
+  const requests = installUiContractFetch({
+    status: "REAUTH_REQUIRED",
+    githubConnectionStates: ["CONNECTED"],
+    snapshotError: {
+      schema_version: 1,
+      error_code: "CONNECTOR_REAUTH_REQUIRED",
+      message: "Connector authentication must be restored before this run can continue.",
+      actions: [
+        { kind: "REAUTHENTICATE_CONNECTOR", connector_id: "github" },
+        { kind: "OPEN_SETTINGS" },
+      ],
+    },
+  });
+  render(<App />);
+
+  await waitFor(() => expect(requests.some((request) => request.path === "/api/v1/runs/run-1/resume")).toBe(true));
+  expect(requests.some((request) => request.path === "/api/v1/connections/github/status")).toBe(true);
+  const request = requests.find((item) => item.path === "/api/v1/runs/run-1/resume");
+  expect(JSON.parse(String(request?.init?.body))).toMatchObject({ resume_kind: "REAUTH_COMPLETED" });
+});
+
 function installUiContractFetch(options: {
   action?: boolean;
   actionToolName?: string;
@@ -3222,6 +3244,7 @@ function installUiContractFetch(options: {
   gmailCountError?: boolean;
   gmailCountResponse?: Promise<Response>;
   googleConnectionStates?: Array<GoogleConnection["connection_status"]>;
+  githubConnectionStates?: Array<GoogleConnection["connection_status"]>;
   historyMessages?: Array<{ id: string; run_id: string | null; role: string; content: string; created_at_ms: number }>;
   historyRuns?: Array<{ run_id: string; status: string; started_at_ms: number; finished_at_ms: number | null }>;
   run?: boolean;
@@ -3248,6 +3271,7 @@ function installUiContractFetch(options: {
   twoItems?: boolean;
   contextPreview?: Record<string, unknown>;
   externalLlmScope?: Record<string, unknown>;
+  snapshotError?: Record<string, unknown>;
 } = {}): Array<{ path: string; init?: RequestInit }> {
   conversationOpenRunEnabled = options.run !== false;
   const requests: Array<{ path: string; init?: RequestInit }> = [];
@@ -3258,6 +3282,7 @@ function installUiContractFetch(options: {
   let completedTaskResponseIndex = 0;
   let accountResponseIndex = 0;
   let googleConnectionStateIndex = 0;
+  let githubConnectionStateIndex = 0;
   globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const path = String(input);
     requests.push({ path, init });
@@ -3273,6 +3298,19 @@ function installUiContractFetch(options: {
         account_id: state === "CONNECTED" ? "account-1" : null,
         connection_status: state,
         display_email: state === "CONNECTED" ? "user@example.com" : null,
+      }));
+    }
+    if (path === "/api/v1/connections/github/status") {
+      const states = options.githubConnectionStates;
+      const state = states?.[
+        Math.min(githubConnectionStateIndex++, Math.max((states?.length ?? 1) - 1, 0))
+      ] ?? "DISCONNECTED";
+      return jsonFetchResponse(googleConnection({
+        connector_id: "github",
+        account_id: state === "CONNECTED" ? "github:42" : null,
+        connection_status: state,
+        display_email: state === "CONNECTED" ? "octocat" : null,
+        granted_scopes: state === "CONNECTED" ? ["repo"] : [],
       }));
     }
     if (path === "/api/v1/identity/google-account") {
@@ -3527,7 +3565,7 @@ function installUiContractFetch(options: {
       return jsonFetchResponse({ applied: true, result_code: "ACCEPTED", run_id: "run-1", conversation_id: "conversation-1", run_status: "WAITING_APPROVAL", run_version: 1, user_message_id: "message-1", workflow_key: "workflow-1", enqueued: true, request_replayed: false });
     }
     if (path === "/api/v1/runs/run-1") return jsonFetchResponse({
-      ...snapshotPayload({ status: options.status ?? "WAITING_APPROVAL", result_kind: options.resultKind, actions: options.action ? [{ action_id: "action-1", tool_name: options.actionToolName ?? "gmail_draft", status: actionStatus, version: 7, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: options.actionRisk ?? {}, next_allowed_commands: actionStatus === "APPROVED" ? ["MODIFY", "REJECT"] : actionStatus === "PROPOSED" || actionStatus === "MODIFIED" ? ["APPROVE", "MODIFY", "REJECT"] : [] }] : [] }),
+      ...snapshotPayload({ status: options.status ?? "WAITING_APPROVAL", result_kind: options.resultKind, error: options.snapshotError, actions: options.action ? [{ action_id: "action-1", tool_name: options.actionToolName ?? "gmail_draft", status: actionStatus, version: 7, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: options.actionRisk ?? {}, next_allowed_commands: actionStatus === "APPROVED" ? ["MODIFY", "REJECT"] : actionStatus === "PROPOSED" || actionStatus === "MODIFIED" ? ["APPROVE", "MODIFY", "REJECT"] : [] }] : [] }),
       context_preview: options.contextPreview ?? null,
       external_llm_transfer_scope: options.externalLlmScope ?? null,
     });

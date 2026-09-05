@@ -1,4 +1,4 @@
-"""Google connector connection routes over canonical Application use cases."""
+"""Installed connector connection routes over canonical Application use cases."""
 
 from fastapi import APIRouter, Header, Request
 
@@ -6,7 +6,10 @@ from google_work_agent.api.dependencies.access_control import enforce_access
 from google_work_agent.api.dependencies.contract_version import (
     enforce_supported_api_contract_version,
 )
-from google_work_agent.api.dependencies.google_connections import GoogleRouteDependency
+from google_work_agent.api.dependencies.google_connections import (
+    ConnectorConnectionDependencies,
+    GoogleRouteDependency,
+)
 from google_work_agent.api.errors.api_request_error import ApiRequestError
 from google_work_agent.api.schemas.google_connections.disconnect_google import (
     RevokeConnectionRequestV1,
@@ -41,11 +44,17 @@ from google_work_agent.ports.connector.connector_failure import (
 )
 from google_work_agent.ports.system.api_access_port import EndpointPolicy
 
-router = APIRouter(prefix="/api/v1/connections/google")
+router = APIRouter(prefix="/api/v1/connections")
 
 
-@router.post("/start", response_model=AuthorizationStartV1)
+@router.post(
+    "/{connector_name}/start",
+    response_model=AuthorizationStartV1,
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
 def start_google_oauth(
+    connector_name: str,
     payload: StartAuthorizationRequestV1,
     request: Request,
     dependencies: GoogleRouteDependency,
@@ -57,37 +66,44 @@ def start_google_oauth(
         request_id=request.state.request_id,
         request_version=x_api_contract_version,
     )
-    handler = dependencies.start_authorization_handler
+    connection = _resolve_connector(dependencies, connector_name, request.state.request_id)
+    handler = connection.start_authorization_handler
     if not isinstance(handler, StartAuthorizationHandler):
         raise ApiRequestError(
             error_code="SERVICE_BUSY",
-            user_message="Google OAuth provider is not configured.",
+            user_message="The connector OAuth provider is not configured.",
             status_code=503,
             request_id=request.state.request_id,
-            detail_code="GOOGLE_OAUTH_UNAVAILABLE",
+            detail_code="CONNECTOR_OAUTH_UNAVAILABLE",
         )
     try:
         started = handler(
             StartAuthorizationCommand(
                 command_id=payload.command_id,
-                connector_id=dependencies.connector_id,
+                connector_id=connection.connector_id,
                 environment=dependencies.oauth_environment,
-                requested_scopes=dependencies.requested_scopes,
+                requested_scopes=connection.requested_scopes,
             )
         ).authorization
     except (OperationalCommandConflict, OperationalCommandUncertain) as error:
         _raise_operational_failure(error, request_id=request.state.request_id)
     except ConnectorOperationFailure as error:
-        _raise_google_failure(error, request_id=request.state.request_id)
+        _raise_connector_failure(error, request_id=request.state.request_id)
     return AuthorizationStartV1(
         schema_version=started.schema_version,
         authorization_url=started.authorization_url,
         callback_id=started.callback_id,
+        flow_kind=started.flow_kind,
+        verification_uri=started.verification_uri,
+        user_code=started.user_code,
+        expires_at_ms=started.expires_at_ms,
+        poll_interval_seconds=started.poll_interval_seconds,
     )
 
 
-@router.get("/status", response_model=ConnectionMetadataV1)
+@router.get("/{connector_name}/status", response_model=ConnectionMetadataV1)
 def get_google_connection(
+    connector_name: str,
     request: Request,
     dependencies: GoogleRouteDependency,
     x_api_contract_version: str | None = Header(default=None),
@@ -98,21 +114,20 @@ def get_google_connection(
         request_id=request.state.request_id,
         request_version=x_api_contract_version,
     )
-    handler = dependencies.get_connection_status_handler
+    connection = _resolve_connector(dependencies, connector_name, request.state.request_id)
+    handler = connection.get_connection_status_handler
     if not isinstance(handler, GetConnectionStatusHandler):
         raise ApiRequestError(
             error_code="SERVICE_BUSY",
-            user_message="Google connection provider is not configured.",
+            user_message="The connector connection provider is not configured.",
             status_code=503,
             request_id=request.state.request_id,
-            detail_code="GOOGLE_CONNECTION_UNAVAILABLE",
+            detail_code="CONNECTOR_CONNECTION_UNAVAILABLE",
         )
     try:
-        result = handler(
-            GetConnectionStatusQuery(connector_id=dependencies.connector_id)
-        ).connection
+        result = handler(GetConnectionStatusQuery(connector_id=connection.connector_id)).connection
     except ConnectorOperationFailure as error:
-        _raise_google_failure(error, request_id=request.state.request_id)
+        _raise_connector_failure(error, request_id=request.state.request_id)
     return ConnectionMetadataV1(
         schema_version=result.schema_version,
         connector_id=result.connector_id,
@@ -124,8 +139,9 @@ def get_google_connection(
     )
 
 
-@router.post("/disconnect", response_model=RevokeResultV1)
+@router.post("/{connector_name}/disconnect", response_model=RevokeResultV1)
 def disconnect_google(
+    connector_name: str,
     payload: RevokeConnectionRequestV1,
     request: Request,
     dependencies: GoogleRouteDependency,
@@ -137,36 +153,37 @@ def disconnect_google(
         request_id=request.state.request_id,
         request_version=x_api_contract_version,
     )
-    handler = dependencies.revoke_connection_handler
+    connection = _resolve_connector(dependencies, connector_name, request.state.request_id)
+    handler = connection.revoke_connection_handler
     if not isinstance(handler, RevokeConnectionHandler):
         raise ApiRequestError(
             error_code="SERVICE_BUSY",
-            user_message="Google disconnect provider is not configured.",
+            user_message="The connector disconnect provider is not configured.",
             status_code=503,
             request_id=request.state.request_id,
-            detail_code="GOOGLE_DISCONNECT_UNAVAILABLE",
+            detail_code="CONNECTOR_DISCONNECT_UNAVAILABLE",
         )
     try:
-        account_id = dependencies.current_account_id()
+        account_id = connection.current_account_id()
         if account_id is None:
             raise ApiRequestError(
                 error_code="CONFLICT",
-                user_message="No connected Google account is available to disconnect.",
+                user_message="No connected account is available to disconnect.",
                 status_code=409,
                 request_id=request.state.request_id,
-                detail_code="GOOGLE_ACCOUNT_NOT_CONNECTED",
+                detail_code="CONNECTOR_ACCOUNT_NOT_CONNECTED",
             )
         result = handler(
             RevokeConnectionCommand(
                 command_id=payload.command_id,
-                connector_id=dependencies.connector_id,
+                connector_id=connection.connector_id,
                 account_id=account_id,
             )
         ).revocation
     except (OperationalCommandConflict, OperationalCommandUncertain) as error:
         _raise_operational_failure(error, request_id=request.state.request_id)
     except ConnectorOperationFailure as error:
-        _raise_google_failure(error, request_id=request.state.request_id)
+        _raise_connector_failure(error, request_id=request.state.request_id)
     return RevokeResultV1(
         schema_version=result.schema_version,
         revocation_attempted=result.revocation_attempted,
@@ -191,16 +208,16 @@ def _raise_operational_failure(
         status_code=409 if conflict else 503,
         request_id=request_id,
         retryable=not conflict,
-        detail_code="OPERATION_COMMAND_CONFLICT" if conflict else "OPERATION_RESULT_UNCERTAIN",
+        detail_code=("OPERATION_COMMAND_CONFLICT" if conflict else "OPERATION_RESULT_UNCERTAIN"),
     ) from error
 
 
-def _raise_google_failure(error: ConnectorOperationFailure, *, request_id: str) -> None:
+def _raise_connector_failure(error: ConnectorOperationFailure, *, request_id: str) -> None:
     if error.code is ConnectorFailureCode.CONFIGURATION_ERROR:
         if error.detail_code == "GOOGLE_OAUTH_CLIENT_ID_MISSING":
-            user_message = "Google OAuth client ID is not configured."
+            user_message = "The connector OAuth client ID is not configured."
         else:
-            user_message = "Google connector configuration is invalid."
+            user_message = "The connector configuration is invalid."
         raise ApiRequestError(
             error_code="CONFIGURATION_ERROR",
             user_message=user_message,
@@ -224,9 +241,26 @@ def _raise_google_failure(error: ConnectorOperationFailure, *, request_id: str) 
     error_code, status_code = mapping.get(error.code, ("UPSTREAM_UNAVAILABLE", 502))
     raise ApiRequestError(
         error_code=error_code,
-        user_message="Google connector request could not be completed.",
+        user_message="The connector request could not be completed.",
         status_code=status_code,
         request_id=request_id,
         retryable=error.retryable,
         detail_code=error.detail_code,
     ) from error
+
+
+def _resolve_connector(
+    dependencies: GoogleRouteDependency,
+    connector_name: str,
+    request_id: str,
+) -> ConnectorConnectionDependencies:
+    try:
+        return dependencies.resolve(connector_name)
+    except LookupError as error:
+        raise ApiRequestError(
+            error_code="NOT_FOUND",
+            user_message="The requested connector is not installed.",
+            status_code=404,
+            request_id=request_id,
+            detail_code="CONNECTOR_NOT_INSTALLED",
+        ) from error

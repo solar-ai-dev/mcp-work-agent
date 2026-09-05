@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { SettingsDrawer } from "../../../src/features/settings/settings_drawer";
@@ -9,7 +9,7 @@ import * as backupApi from "../../../src/features/settings/api/backup_operations
 import * as resourceApi from "../../../src/features/resource_browser/api/list_resources";
 
 vi.mock("../../../src/features/settings/api/get_settings", () => ({ getSettings: vi.fn() }));
-vi.mock("../../../src/features/settings/api/google_connection_operations", () => ({ getGoogleConnection: vi.fn(), startGoogleConnection: vi.fn(), disconnectGoogle: vi.fn() }));
+vi.mock("../../../src/features/settings/api/google_connection_operations", () => ({ getGoogleConnection: vi.fn(), startGoogleConnection: vi.fn(), disconnectGoogle: vi.fn(), getGitHubConnection: vi.fn(), startGitHubConnection: vi.fn(), disconnectGitHub: vi.fn() }));
 vi.mock("../../../src/features/settings/api/llm_credential_operations", () => ({ getLlmCredentialStatus: vi.fn(), storeLlmCredential: vi.fn(), deleteLlmCredential: vi.fn() }));
 vi.mock("../../../src/features/settings/api/backup_operations", () => ({ listBackups: vi.fn(), createBackup: vi.fn(), restoreBackup: vi.fn(), requestShutdown: vi.fn() }));
 vi.mock("../../../src/features/resource_browser/api/list_resources", () => ({ listTaskLists: vi.fn(), listCalendars: vi.fn() }));
@@ -19,6 +19,7 @@ vi.mock("../../../src/features/settings/api/update_runtime_mode", () => ({ updat
 test("SettingsDrawer loads typed non-secret settings, connection, credentials, and backup inventory", async () => {
   vi.mocked(settingsApi.getSettings).mockResolvedValue({ schema_version: 1, timezone: "Asia/Seoul", default_tasklist_id: null, default_calendar_id: null, preferred_llm_mode: "AUTO", external_llm_consent: false, retention_days: 30, theme: "LIGHT", panel_preferences: { schema_version: 1, right_panel_default_open: false, right_panel_default_tab: "CONVERSATIONS" }, working_day_start_local: "09:00", working_day_end_local: "18:00", include_weekends: false, calendar_buffer_minutes: 10, max_run_execution_ms: 1, max_connector_calls_per_run: 1, max_source_page_calls_per_run: 1, max_detail_fetches_per_run: 1, max_context_tokens_per_run: 1, max_retry_attempts_per_run: 1, circuit_failure_threshold: 1, circuit_open_duration_ms: 1 });
   vi.mocked(googleApi.getGoogleConnection).mockResolvedValue({ schema_version: 1, connector_id: "google", account_id: null, display_email: null, connection_status: "DISCONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: null, display_email: null, connection_status: "DISCONNECTED", granted_scopes: [], missing_required_scopes: [] });
   vi.mocked(credentialApi.getLlmCredentialStatus).mockResolvedValue({ schema_version: 1, provider: "gemini", configured: false, storage_mode: null, validation_status: "NOT_CONFIGURED" });
   vi.mocked(backupApi.listBackups).mockResolvedValue({ schema_version: 1, items: [] });
   vi.mocked(resourceApi.listTaskLists).mockResolvedValue({ schema_version: 1, items: [{ schema_version: 1, tasklist_id: "tasks-1", title: "내 할 일" }], next_page_token: null });
@@ -32,6 +33,7 @@ test("SettingsDrawer loads typed non-secret settings, connection, credentials, a
 test("constrains API_ONLY mode choices and invokes graceful shutdown", async () => {
   vi.mocked(settingsApi.getSettings).mockResolvedValue({ schema_version: 1, timezone: "Asia/Seoul", default_tasklist_id: "tasks-1", default_calendar_id: "calendar-1", preferred_llm_mode: "API_LLM", external_llm_consent: true, retention_days: 30, theme: "LIGHT", panel_preferences: { schema_version: 1, right_panel_default_open: false, right_panel_default_tab: "CONVERSATIONS" }, working_day_start_local: "09:00", working_day_end_local: "18:00", include_weekends: false, calendar_buffer_minutes: 10, max_run_execution_ms: 1, max_connector_calls_per_run: 1, max_source_page_calls_per_run: 1, max_detail_fetches_per_run: 1, max_context_tokens_per_run: 1, max_retry_attempts_per_run: 1, circuit_failure_threshold: 1, circuit_open_duration_ms: 1 });
   vi.mocked(googleApi.getGoogleConnection).mockResolvedValue({ schema_version: 1, connector_id: "google", account_id: null, display_email: null, connection_status: "DISCONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: null, display_email: null, connection_status: "DISCONNECTED", granted_scopes: [], missing_required_scopes: [] });
   vi.mocked(credentialApi.getLlmCredentialStatus).mockResolvedValue({ schema_version: 1, provider: "gemini", configured: false, storage_mode: null, validation_status: "NOT_CONFIGURED" });
   vi.mocked(backupApi.listBackups).mockResolvedValue({ schema_version: 1, items: [] });
   vi.mocked(backupApi.requestShutdown).mockResolvedValue({ schema_version: 1, accepted: true });
@@ -42,4 +44,24 @@ test("constrains API_ONLY mode choices and invokes graceful shutdown", async () 
   expect([...mode.querySelectorAll("option")].map((option) => option.value)).toEqual(["API_LLM"]);
   await userEvent.click(screen.getByRole("button", { name: "안전하게 종료" }));
   expect(backupApi.requestShutdown).toHaveBeenCalledOnce();
+});
+
+test("GitHub Device Flow 코드를 표시하고 검증 URL만 연다", async () => {
+  vi.mocked(settingsApi.getSettings).mockRejectedValue(new Error("not relevant"));
+  vi.mocked(googleApi.getGoogleConnection).mockResolvedValue({ schema_version: 1, connector_id: "google_workspace", account_id: null, display_email: null, connection_status: "DISCONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: null, display_email: null, connection_status: "DISCONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(googleApi.startGitHubConnection).mockResolvedValue({ schema_version: 1, authorization_url: "https://github.com/login/device", callback_id: "flow-1", flow_kind: "DEVICE_CODE", verification_uri: "https://github.com/login/device", user_code: "ABCD-EFGH", expires_at_ms: Date.now() + 60_000, poll_interval_seconds: 5 });
+  vi.mocked(credentialApi.getLlmCredentialStatus).mockRejectedValue(new Error("not relevant"));
+  vi.mocked(backupApi.listBackups).mockRejectedValue(new Error("not relevant"));
+  vi.mocked(resourceApi.listTaskLists).mockRejectedValue(new Error("not relevant"));
+  vi.mocked(resourceApi.listCalendars).mockRejectedValue(new Error("not relevant"));
+  const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+
+  render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn().mockResolvedValue(undefined)} />);
+  const github = await screen.findByLabelText("GitHub 연결");
+  await userEvent.click(within(github).getByRole("button", { name: "연결" }));
+
+  expect(await within(github).findByText("ABCD-EFGH")).toBeInTheDocument();
+  expect(opened).toHaveBeenCalledWith("https://github.com/login/device", "_blank", "noopener,noreferrer");
+  opened.mockRestore();
 });

@@ -16,7 +16,6 @@ from .oauth_device_flow import (
     GitHubReauthenticationRequired,
 )
 
-GITHUB_KEYRING_SERVICE = "GoogleWorkAgent/GitHub/DEVELOPMENT"
 GITHUB_REFRESH_TOKEN_ACCOUNT = "github-app-user-refresh-token"
 
 
@@ -32,6 +31,8 @@ class GitHubConnectionStatus:
     credential_state: GitHubCredentialState
     reauth_required: bool
     last_checked_at_ms: int
+    granted_scopes: tuple[str, ...] = ()
+    missing_required_scopes: tuple[str, ...] = ()
 
 
 class GitHubCredentialProvider:
@@ -42,11 +43,14 @@ class GitHubCredentialProvider:
         device_flow: GitHubDeviceFlowClient,
         now_ms: Callable[[], int],
         keyring_account: str = GITHUB_REFRESH_TOKEN_ACCOUNT,
+        requested_scopes: tuple[str, ...] = (),
     ) -> None:
         self._keyring = keyring
         self._device_flow = device_flow
         self._now_ms = now_ms
         self._keyring_account = keyring_account
+        self._requested_scopes = requested_scopes
+        self._granted_scopes: tuple[str, ...] = ()
         self._access_token: str | None = None
         self._access_token_expires_at_ms: int | None = None
         self._credential_state = (
@@ -69,6 +73,7 @@ class GitHubCredentialProvider:
                 access_token=result.access_token,
                 access_token_expires_at_ms=result.access_token_expires_at_ms,
                 refresh_token=result.refresh_token,
+                granted_scopes=result.granted_scopes,
             )
         return result
 
@@ -88,6 +93,8 @@ class GitHubCredentialProvider:
             credential_state=self._credential_state,
             reauth_required=self._credential_state is GitHubCredentialState.REAUTH_REQUIRED,
             last_checked_at_ms=self._last_checked_at_ms,
+            granted_scopes=self._granted_scopes,
+            missing_required_scopes=tuple(scope for scope in self._requested_scopes if scope not in self._granted_scopes),
         )
 
     def invalidate_access_token(self) -> None:
@@ -100,6 +107,7 @@ class GitHubCredentialProvider:
         self._access_token = None
         self._access_token_expires_at_ms = None
         self._credential_state = GitHubCredentialState.NOT_CONNECTED
+        self._granted_scopes = ()
         return deleted
 
     def _ensure_access_token(self) -> None:
@@ -123,6 +131,7 @@ class GitHubCredentialProvider:
             access_token=result.access_token,
             access_token_expires_at_ms=result.access_token_expires_at_ms,
             refresh_token=result.refresh_token,
+            granted_scopes=result.granted_scopes,
         )
 
     def _adopt_tokens(
@@ -131,9 +140,11 @@ class GitHubCredentialProvider:
         access_token: str,
         access_token_expires_at_ms: int | None,
         refresh_token: str | None,
+        granted_scopes: tuple[str, ...],
     ) -> None:
         self._access_token = access_token
         self._access_token_expires_at_ms = access_token_expires_at_ms
+        self._granted_scopes = granted_scopes
         if refresh_token is not None:
             self._keyring.put(self._keyring_account, refresh_token.encode("utf-8"))
         self._credential_state = GitHubCredentialState.CONNECTED
