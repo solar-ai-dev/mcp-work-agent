@@ -643,8 +643,16 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     run_start = int(datetime.fromisoformat("2026-09-06T23:59:55+09:00").timestamp() * 1000)
 
     class TemporalInference(_ComponentInferencePort):
+        def __init__(self) -> None:
+            super().__init__()
+            self.assessed_resources: list[list[str]] = []
+
         def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
             if prompt_id == "retrieval.select_evidence":
+                self.assessed_resources.append([
+                    str(segment["resource_ref"])
+                    for segment in cast(list[dict[str, Any]], projection["ranked_segments"])
+                ])
                 for segment in cast(list[dict[str, Any]], projection["ranked_segments"]):
                     annotation = segment["temporal_date_candidates"][0]
                     assert annotation["target_index"] == 0
@@ -718,11 +726,12 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     cast(Any, routes)["input_plan"]["input_routes"][0]["resource_type"] = "GMAIL_THREAD"
     state["tool_route_plan"] = cast(Any, routes)
     connector = DetailConnector()
+    inference = TemporalInference()
     graph = RetrievalSubgraph(
         now_ms=lambda: run_start + 10_000,
         should_stop_for_cancel=lambda _run_id: False,
         timezone_provider=lambda: "Asia/Seoul",
-        llm_runtime=TemporalInference(),
+        llm_runtime=inference,
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -737,6 +746,11 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     ).build()
     with provider_dispatch_execution_scope():
         result = graph.invoke(state, config={"recursion_limit": 100})
+    assert len(inference.assessed_resources[0]) == 3
+    assert [len(resources) for resources in inference.assessed_resources[1:]] == [1, 1, 1]
+    assert set(inference.assessed_resources[0]) == {
+        resources[0] for resources in inference.assessed_resources[1:]
+    }
     assert result["retrieval_result"]["coverage"] == "SUFFICIENT"
     assert result["retrieval_result"]["retrieval_rounds"] == 1
     assert [tool for tool, _ in connector.calls] == [

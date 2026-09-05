@@ -7,6 +7,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    EvidenceSelectionResultV2,
+)
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
 
 
@@ -15,6 +18,7 @@ class SelectEvidenceInput(TypedDict):
     rag_candidates: list[RagCandidateV1]
     exclusion_obligation_segment_ids: list[str]
     query_attempts: list[QueryAttemptV1]
+    prior_selection: EvidenceSelectionResultV2 | None
 
 
 def project_select_evidence_input(state: Mapping[str, object]) -> SelectEvidenceInput:
@@ -32,6 +36,7 @@ def project_select_evidence_input(state: Mapping[str, object]) -> SelectEvidence
         "rag_candidates": cast(list[RagCandidateV1], rag_candidates),
         "exclusion_obligation_segment_ids": list(exclusions),
         "query_attempts": cast(list[QueryAttemptV1], state.get("query_attempts", [])),
+        "prior_selection": cast(EvidenceSelectionResultV2 | None, state.get("evidence_selection")),
     }
 
 

@@ -588,6 +588,7 @@ class RetrievalSubgraph:
                     "request_intent": request_intent,
                     "rag_candidates": rag_candidates,
                     "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+                    "evidence_selection": state.get("evidence_selection"),
                     "exclusion_obligation_segment_ids": state.get(
                         "exclusion_obligation_segment_ids", []
                     ),
@@ -596,6 +597,12 @@ class RetrievalSubgraph:
             llm_runtime=self._llm_runtime,
             prompt_ref=self._select_prompt_ref,
             revision_prompt_ref=self._select_prompt_ref,
+            source_fetch_plans=[
+                state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
+                for route_id in _require_state_value(state["query_plan"], "query_plan")[
+                    "retrieval_order"
+                ]
+            ],
             requested_mode=request.requested_mode,
             segments=cast(list[Any], segments),
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),

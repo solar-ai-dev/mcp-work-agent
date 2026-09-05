@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
+from dataclasses import replace
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -14,6 +15,7 @@ from google_work_agent.application.agents.retrieval.contracts.evidence_selection
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    SourceFetchPlanV1,
     TemporalRangeConstraintV1,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
@@ -38,6 +40,9 @@ from google_work_agent.application.agents.retrieval.project_query_temporal_const
     project_query_temporal_constraints,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
+from google_work_agent.application.agents.retrieval.retain_unchanged_evidence import (
+    retain_unchanged_evidence,
+)
 from google_work_agent.application.prompt_runtime.contracts.failure_record import (
     build_failure_record_v1,
 )
@@ -67,6 +72,59 @@ def select_evidence(
     context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
     exclusion_obligation_segment_ids: Collection[str] = (),
     query_attempts: Sequence[QueryAttemptV1] = (),
+    prior_selection: EvidenceSelectionResultV2 | None = None,
+    source_fetch_plans: Sequence[SourceFetchPlanV1] = (),
+) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
+    """Reassess hydrated sources without discarding unchanged acquired evidence."""
+    retained = retain_unchanged_evidence(
+        prior_selection, source_fetch_plans=source_fetch_plans, segments=segments,
+    )
+    if retained is not None:
+        retained = _apply_exclusions(retained, exclusion_obligation_segment_ids)
+    retained_ids = set() if retained is None else set(
+        retained["selected_segment_ids"] + retained["excluded_segment_ids"]
+    )
+    reassessment = [item for item in rag_candidates if item["segment_id"] not in retained_ids]
+    remaining = context_budget.max_evidence - (
+        len(retained["selected_segment_ids"]) if retained is not None else 0
+    )
+    if retained is None or remaining <= 0 or not reassessment:
+        retained = None
+        reassessment = rag_candidates
+        remaining = context_budget.max_evidence
+    selected, revised_budget = _select_ranked_evidence(
+        llm_runtime=llm_runtime, prompt_ref=prompt_ref, revision_prompt_ref=revision_prompt_ref,
+        requested_mode=requested_mode, request_intent=request_intent,
+        rag_candidates=reassessment, segments=segments, retry_budget=retry_budget,
+        context_budget=replace(context_budget, max_evidence=remaining),
+        exclusion_obligation_segment_ids=exclusion_obligation_segment_ids,
+        query_attempts=query_attempts,
+    )
+    if retained is None:
+        return selected, revised_budget
+    return {
+        "schema_version": 2,
+        "evidence_drafts": retained["evidence_drafts"] + selected["evidence_drafts"],
+        "selected_segment_ids": retained["selected_segment_ids"] + selected["selected_segment_ids"],
+        "excluded_segment_ids": _stable_unique(
+            retained["excluded_segment_ids"] + selected["excluded_segment_ids"]
+        ),
+    }, revised_budget
+
+
+def _select_ranked_evidence(
+    *,
+    llm_runtime: StructuredInferencePort,
+    prompt_ref: PromptReference,
+    revision_prompt_ref: PromptReference,
+    requested_mode: RequestedModeV1,
+    request_intent: RequestIntentV2,
+    rag_candidates: list[RagCandidateV1],
+    segments: list[SourceSegment],
+    retry_budget: RunBudgetV2,
+    context_budget: ContextBudget,
+    exclusion_obligation_segment_ids: Collection[str],
+    query_attempts: Sequence[QueryAttemptV1],
 ) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
     """Select evidence only from the bounded ranked segments supplied by RAG."""
     obligations = _stable_unique(exclusion_obligation_segment_ids)

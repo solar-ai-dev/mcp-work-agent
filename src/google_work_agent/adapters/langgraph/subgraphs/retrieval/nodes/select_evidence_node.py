@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     DEFAULT_CONTEXT_BUDGET,
     ContextBudget,
@@ -29,6 +32,7 @@ def select_evidence_node(
     segments: list[SourceSegment],
     retry_budget: RunBudgetV2,
     context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
+    source_fetch_plans: Sequence[SourceFetchPlanV1] = (),
 ) -> dict[str, object]:
     projection = project_select_evidence_input(state)
     selection, revised_budget = select_evidence(
@@ -39,6 +43,7 @@ def select_evidence_node(
         segments=segments,
         retry_budget=retry_budget,
         context_budget=context_budget,
+        source_fetch_plans=source_fetch_plans,
         **projection,
     )
     return {
