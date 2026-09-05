@@ -1,7 +1,7 @@
 # 01-B. 정책 정의서
 
 > **Authority:** 안전·금지·승인 정책. 시스템·Domain·Interface 구현 세부는 `00 Project Source Guide`의 전문 owner를 따른다.  
-> **상태:** Draft v2.15 · **기준일:** 2026-08-26
+> **상태:** Draft v2.16 · **기준일:** 2026-09-05
 
 ## 0. 사람이 먼저 볼 핵심 정책
 
@@ -113,6 +113,7 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 - 실행 전 Preflight/Claim에서 현재 Action과 Approval Snapshot의 Hash·Version·정책·Source 조건을 재검증한다.
 - Domain Claim Commit 이후 서버가 발급한 1회용 `claim_token`은 Action·Approval·Attempt·Tool·실제 Execution Arguments Hash·Service Instance를 바인딩하며 MCP가 실제 수신 인자와 함께 재검증한다. **Claim Commit과 Token 발급은 필요조건일 뿐 외부 Write 권한이 아니다.**
 - Application은 current ClaimContext binding과 `cancel_intent_active=false`를 검증해 `BeginExecutionAttempt`를 적용하고, 해당 Command/Receipt/Audit가 `applied=true`로 Commit되어 current Attempt가 `EXECUTING`인 경우에만 MCP Write를 호출한다. 불일치·conflict·cancel intent이면 외부 Write는 0이고 필요한 경우 Action 수정·새 Approval 또는 cancel resolution으로 돌아간다.
+- 기존 Resource를 대상으로 하고 immutable container/resource binding을 포함하는 Action은 현재 persisted target의 `parent_resource_id` 또는 Connector contract가 정한 동등한 container component와 bound container identity가 결정적으로 일치해야 한다. 불일치는 Approval admission과 Preflight 실행 가능성을 차단하며 Connector I/O는 0이다. Provider 조회는 이미 검증된 target의 freshness observation일 뿐 identity 일관성을 새로 성립시키는 authority가 아니다. 이 규칙은 connector-neutral하며 GitHub 전용 Approval·Preflight·Claim 정책을 만들지 않는다.
 
 ### POL-APP-005 승인 만료
 

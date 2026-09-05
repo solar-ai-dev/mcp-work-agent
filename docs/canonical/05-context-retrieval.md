@@ -1,7 +1,7 @@
 # 05. Context · Retrieval 설계서
 
 > **Authority:** Context·Retrieval semantics. Tool Route/Workflow/Domain의 전문 의미는 해당 owner를 직접 소비한다.  
-> **상태:** Draft v2.17 · **기준일:** 2026-08-24 · **대상:** P0 MVP
+> **상태:** Draft v2.18 · **기준일:** 2026-09-05 · **대상:** P0 MVP
 
 ## 1. 목적
 
@@ -308,6 +308,18 @@ prior SourceFetchPlanV1.effective_constraints
 - `ParticipantConstraintV1.participants`는 역할별 identity를 함께 보존하므로 `from A + to B`처럼 서로 다른 participant role을 한 constraint 안에서 표현할 수 있다.
 - `ResourceRefConstraintV1.resource_refs`와 `ContainerRefConstraintV1.container_refs`는 현재 Run/Route에서 이미 검증된 내부 ref만 허용하며 raw Provider resource ID를 LLM이 새로 발명하는 권위가 아니다.
 - `QueryAttemptV1.added_constraints/removed_constraints` 같은 이름 목록은 관측·follow-up summary다. **다음 실행계획의 값 권위가 아니며** `SourceFetchPlanV1.effective_constraints`를 재구성하는 두 번째 source로 사용하지 않는다.
+
+#### GitHub repository container authority
+
+`connector_id="github"`, `resource_type="github_issue"`인 frozen `InputToolRouteV1`은 다음 existing current-run authority만 route-scoped `ContainerRefConstraintV1(container_refs=["owner/repository"])`로 materialize할 수 있다.
+
+1. 검증된 current-run `SelectedResourceRefV1`/`ResourceRef`의 `parent_resource_id`
+2. `06`의 deterministic provenance 검증을 통과한 current `RequestIntentV2`의 explicit `owner/repository` constraint
+
+- 두 source가 모두 존재하고 exact match하면 하나의 container constraint로 정규화한다. 불일치하면 어느 쪽에도 precedence를 주지 않고 기존 Confirmation 또는 fail-closed 경로로 보내며 `ConnectorReadPort` 호출은 0이다.
+- repository가 필요한 GitHub `SEARCH` Route에 검증된 source가 하나도 없으면 Source Fetch Plan을 실행하지 않고 기존 Confirmation/selection lifecycle을 사용한다. LLM, 연결 계정, organization, 최근 repository 또는 첫 Provider 검색 결과로 owner/repository를 채우지 않으며 `ConnectorReadPort` 호출은 0이다.
+- 결정적 `SourceFetchPlanBuilder`는 검증된 container constraint와 frozen Route의 `connector_id="github"`, `resource_type="github_issue"`, `allowed_read_tool_ids`를 그대로 보존하고, 등록된 `github_list_issues` argument의 `repository`로만 lower한다. Retrieval LLM은 repository나 Tool을 다시 선택하지 않는다.
+- selected GitHub Issue의 `DETAIL_FETCH`는 검증된 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`의 결합을 보존한다. 새 GitHub Retrieval DTO, Graph 또는 별도 repository authority를 만들지 않는다.
 
 #### Operation별 권위
 
