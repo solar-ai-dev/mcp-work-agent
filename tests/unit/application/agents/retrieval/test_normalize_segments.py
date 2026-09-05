@@ -50,10 +50,39 @@ def test_segment_id__is_stable__and_content_sensitive() -> None:
     assert changed != first
 
 
+@pytest.mark.parametrize("overlap", [0, 20])
+def test_long_source_chunks_preserve_header_and_item_line_boundaries(overlap: int) -> None:
+    text = (
+        "Received: 2026-08-31T12:37:03+00:00\n"
+        "Upcoming openings 09/01 ~ 09/07\n\n"
+        "Ecology research recruitment\nSchedule 09/01 ~ 09/09\n\n"
+        "Design recruitment\nSchedule 09/01 ~ 09/14\n\n"
+    ) * 4
+    segments = normalize_segments(
+        _result(text), context_budget=ContextBudget(
+            chunk_target_tokens=130, chunk_max_tokens=160, chunk_overlap_tokens=overlap,
+        ),
+    )
+    assert len(segments) > 1
+    assert all(segment.text in text for segment in segments)
+    assert any("\n\n" in segment.text for segment in segments)
+    assert any("recruitment\nSchedule" in segment.text for segment in segments)
+    assert all(len(segment.text.encode("utf-8")) <= 160 for segment in segments)
+    flat = normalize_segments(
+        _result(" ".join(text.split())), context_budget=ContextBudget(
+            chunk_target_tokens=130, chunk_max_tokens=160, chunk_overlap_tokens=overlap,
+        ),
+    )
+    assert {segment.segment_id for segment in segments}.isdisjoint(
+        segment.segment_id for segment in flat
+    )
+
+
 def test_search_candidate_keeps_provider_sender_without_promoting_body_mentions() -> None:
     acquisition = _result("김정우 대리에게 문의하세요")
-    resource = acquisition["source_summaries"][0]["resources"][0]
-    resource["payload"].update({
+    resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
+    payload = cast(dict[str, object], resources[0]["payload"])
+    payload.update({
         "sender_name": "김철수 대리", "sender_email": "kim_0728@example.com",
         "received_at": "Thu, 20 Aug 2026 10:00:00 +0900",
     })
@@ -64,7 +93,7 @@ def test_search_candidate_keeps_provider_sender_without_promoting_body_mentions(
     assert segment.locator["sender_email"] == "kim_0728@example.com"
     assert "김정우 대리" not in str(segment.locator)
     assert "message_id" not in segment.locator
-    resource["payload"]["sender_email"] = {"guessed": "identity"}
+    payload["sender_email"] = {"guessed": "identity"}
     with pytest.raises(ValueError, match="invalid Gmail candidate metadata"):
         normalize_segments(acquisition)
 

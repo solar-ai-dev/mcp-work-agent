@@ -36,8 +36,8 @@ class ContextBudget:
 
 
 DEFAULT_CONTEXT_BUDGET = ContextBudget()
-CHUNK_SCHEMA_VERSION = 1
-MESSAGE_CHUNK_SCHEMA_VERSION = 2
+CHUNK_SCHEMA_VERSION = 3
+MESSAGE_CHUNK_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,7 +308,7 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _chunk_text(text: str, context_budget: ContextBudget) -> list[str]:
-    words = text.split()
+    words = list(re.finditer(r"\S+", text))
     if not words:
         return []
     if _estimate_tokens(text) <= context_budget.chunk_max_tokens:
@@ -319,21 +319,26 @@ def _chunk_text(text: str, context_budget: ContextBudget) -> list[str]:
         count = 0
         end = start
         while end < len(words):
-            word_tokens = _estimate_tokens(words[end]) + (1 if end > start else 0)
+            word_tokens = _estimate_tokens(words[end].group()) + (
+                len(text[words[end - 1].end():words[end].start()].encode("utf-8"))
+                if end > start else 0
+            )
             if count + word_tokens > context_budget.chunk_max_tokens and end > start:
                 break
             count += word_tokens
             end += 1
             if count >= context_budget.chunk_target_tokens:
                 break
-        chunks.append(" ".join(words[start:end]))
+        # Preserve source layout: a receipt header, a newsletter heading and
+        # the following item's date must not become one synthetic sentence.
+        chunks.append(text[words[start].start():words[end - 1].end()])
         if end >= len(words):
             break
         overlap_start = end
         overlap = 0
         while overlap_start > start and overlap < context_budget.chunk_overlap_tokens:
             overlap_start -= 1
-            overlap += _estimate_tokens(words[overlap_start])
+            overlap += _estimate_tokens(words[overlap_start].group())
         start = max(overlap_start, start + 1)
     return chunks
 
