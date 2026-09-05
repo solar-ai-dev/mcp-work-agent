@@ -71,7 +71,7 @@ def select_evidence(
     eligible_candidates = _bounded_prompt_candidates(
         eligible_candidates,
         requested_resource_hints=request_intent["requested_resource_hints"],
-        limit=context_budget.max_normalized_context_items,
+        limit=min(context_budget.max_normalized_context_items, context_budget.max_evidence),
     )
     deterministic_selection = _exact_selected_read_selection(
         request_intent=request_intent,
@@ -91,13 +91,12 @@ def select_evidence(
         if bounded_selection["selected_segment_ids"]:
             return bounded_selection, retry_budget
     projection = _ranked_segments_projection(eligible_candidates, segments)
-    candidate_ids = {candidate["segment_id"] for candidate in eligible_candidates}
+    candidate_ids = [candidate["segment_id"] for candidate in eligible_candidates]
     candidate_resource_refs = {
         candidate["segment_id"]: candidate["resource_ref"] for candidate in eligible_candidates
     }
     output_schema = bind_evidence_selection_schema(
         candidate_resource_refs=candidate_resource_refs,
-        requested_resource_hints=request_intent["requested_resource_hints"],
         max_evidence=context_budget.max_evidence,
     )
     result = llm_runtime.infer(
@@ -117,8 +116,6 @@ def select_evidence(
                     _validate_selection(
                         result.structured_output,
                         candidate_segment_ids=candidate_ids,
-                        candidate_resource_refs=candidate_resource_refs,
-                        requested_resource_hints=request_intent["requested_resource_hints"],
                         context_budget=context_budget,
                     ),
                     request_intent=request_intent,
@@ -164,9 +161,7 @@ def select_evidence(
                     runtime_disposition="RETRYABLE",
                     experiment_disposition="RUN_REVISION",
                     affected_field_paths=[
-                        "$.selected_segment_ids",
-                        "$.evidence_drafts",
-                        "$.excluded_segment_ids",
+                        "$.segment_assessments",
                     ],
                     failure_context_ids=[str(error)],
                 ),
@@ -180,8 +175,6 @@ def select_evidence(
                         _validate_selection(
                             revision.structured_output,
                             candidate_segment_ids=candidate_ids,
-                            candidate_resource_refs=candidate_resource_refs,
-                            requested_resource_hints=request_intent["requested_resource_hints"],
                             context_budget=context_budget,
                         ),
                         request_intent=request_intent,
@@ -306,50 +299,36 @@ def _ranked_segments_projection(
 def _validate_selection(
     value: object,
     *,
-    candidate_segment_ids: set[str],
-    candidate_resource_refs: dict[str, str],
-    requested_resource_hints: Collection[str],
+    candidate_segment_ids: Sequence[str],
     context_budget: ContextBudget,
 ) -> EvidenceSelectionResultV2:
     if not isinstance(value, dict) or set(value) != {
         "schema_version",
-        "evidence_drafts",
-        "selected_segment_ids",
-        "excluded_segment_ids",
+        "segment_assessments",
     }:
         raise ValueError("invalid evidence selection envelope")
-    if value["schema_version"] != 2:
-        raise ValueError("schema_version must be 2")
-    selected = _string_list(value["selected_segment_ids"], "selected_segment_ids")
-    excluded = _string_list(value["excluded_segment_ids"], "excluded_segment_ids")
-    if len(selected) != len(set(selected)) or len(excluded) != len(set(excluded)):
-        raise ValueError("segment ids must be unique")
-    if (set(selected) | set(excluded)) - candidate_segment_ids:
-        raise ValueError("selection references a segment outside ranked candidates")
-    if set(selected) & set(excluded):
-        raise ValueError("segment cannot be selected and excluded")
-    _validate_requested_resource_coverage(
-        selected_segment_ids=selected,
-        excluded_segment_ids=excluded,
-        candidate_resource_refs=candidate_resource_refs,
-        requested_resource_hints=requested_resource_hints,
-    )
-    raw_drafts = value["evidence_drafts"]
-    if not isinstance(raw_drafts, list):
-        raise ValueError("evidence_drafts must be list")
+    if value["schema_version"] != 3:
+        raise ValueError("inference schema_version must be 3")
+    assessments = value["segment_assessments"]
+    if not isinstance(assessments, dict) or set(assessments) != set(candidate_segment_ids):
+        raise ValueError("each visible candidate requires exactly one assessment")
     drafts: list[EvidenceRoleDraftV2] = []
-    for raw in raw_drafts:
-        if not isinstance(raw, dict) or set(raw) != {"segment_id", "role", "relevance_reason"}:
-            raise ValueError("invalid evidence draft")
-        segment_id = raw.get("segment_id")
+    excluded: list[str] = []
+    # JSON object key order is not retrieval priority. Preserve the RAG order
+    # used by bounded detail acquisition, regardless of the model's key order.
+    for segment_id in candidate_segment_ids:
+        raw = assessments[segment_id]
+        if not isinstance(raw, dict) or set(raw) != {"role", "relevance_reason"}:
+            raise ValueError("invalid evidence assessment")
         role = raw.get("role")
         reason = raw.get("relevance_reason")
-        if segment_id not in set(selected):
-            raise ValueError("evidence references unselected segment")
-        if role not in {"SUPPORTS", "CONTRADICTS", "CONTEXT"}:
+        if role not in {"SUPPORTS", "CONTRADICTS", "CONTEXT", "EXCLUDED"}:
             raise ValueError("invalid evidence role")
-        if not isinstance(reason, str):
-            raise ValueError("relevance_reason must be string")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("every assessment requires a nonempty relevance reason")
+        if role == "EXCLUDED":
+            excluded.append(segment_id)
+            continue
         drafts.append(
             {
                 "segment_id": str(segment_id),
@@ -357,41 +336,14 @@ def _validate_selection(
                 "relevance_reason": reason,
             }
         )
-    draft_ids = [draft["segment_id"] for draft in drafts]
-    if len(draft_ids) != len(set(draft_ids)) or set(draft_ids) != set(selected):
-        raise ValueError("each selected segment requires exactly one evidence draft")
     if len(drafts) > context_budget.max_evidence:
         raise ValueError("evidence selection exceeds the evidence budget")
     return {
         "schema_version": 2,
         "evidence_drafts": drafts,
-        "selected_segment_ids": selected,
+        "selected_segment_ids": [draft["segment_id"] for draft in drafts],
         "excluded_segment_ids": excluded,
     }
-
-
-def _validate_requested_resource_coverage(
-    *,
-    selected_segment_ids: Collection[str],
-    excluded_segment_ids: Collection[str],
-    candidate_resource_refs: dict[str, str],
-    requested_resource_hints: Collection[str],
-) -> None:
-    groups = required_resource_segments(candidate_resource_refs, requested_resource_hints)
-    for resource_hint, segment_ids in groups.items():
-        if not set(selected_segment_ids).intersection(segment_ids) and not set(
-            segment_ids
-        ).issubset(excluded_segment_ids):
-            raise ValueError(
-                "selection neither assesses nor excludes requested resource candidates: "
-                f"{resource_hint}"
-            )
-
-
-def _string_list(value: object, field: str) -> list[str]:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{field} must be list[str]")
-    return list(value)
 
 
 def _empty_selection(excluded_segment_ids: Collection[str] = ()) -> EvidenceSelectionResultV2:

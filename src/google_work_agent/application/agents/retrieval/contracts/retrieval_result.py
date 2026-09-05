@@ -88,7 +88,11 @@ class EvidenceRoleDraftV2(TypedDict):
 
 class EvidenceSelectionResultV2(TypedDict):
     """docs/05-context-retrieval.md SS5.6 -- retrieval.select_evidence output,
-    Retrieval Local State only (RetrievalStateV1.evidence_selection)."""
+    Retrieval Local State only (RetrievalStateV1.evidence_selection).
+
+    The inference-only V3 candidate assessments are projected here by
+    select_evidence. Persisted V2 producers and consumers remain unchanged.
+    """
 
     schema_version: Required[Literal[2]]
     evidence_drafts: list[EvidenceRoleDraftV2]

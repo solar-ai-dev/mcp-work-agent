@@ -157,17 +157,14 @@ def _respond(
         ranked = cast(list[Mapping[str, object]], base.get("ranked_segments", []))
         selected_segment_ids = [str(item["segment_id"]) for item in ranked]
         return {
-            "schema_version": 2,
-            "evidence_drafts": [
-                {
-                    "segment_id": segment_id,
+            "schema_version": 3,
+            "segment_assessments": {
+                segment_id: {
                     "role": "SUPPORTS",
                     "relevance_reason": "E2E source evidence",
                 }
                 for segment_id in selected_segment_ids
-            ],
-            "selected_segment_ids": selected_segment_ids,
-            "excluded_segment_ids": [],
+            },
         }
     if prompt_id == "retrieval.assess_sufficiency":
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
