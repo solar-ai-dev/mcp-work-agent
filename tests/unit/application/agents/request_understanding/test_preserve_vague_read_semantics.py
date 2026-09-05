@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from google_work_agent.application.agents.request_understanding import (
@@ -5,6 +8,9 @@ from google_work_agent.application.agents.request_understanding import (
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
+)
+from google_work_agent.application.agents.retrieval.resolve_relative_period import (
+    resolve_relative_period,
 )
 
 
@@ -65,6 +71,32 @@ def test_explicit_day_is_not_expanded_to_whole_month() -> None:
         _candidate(), request_text="9월 3일 체육대회 관련 메일 찾아줘", entry_mode="AGENT_SEARCH"
     )
     assert not any(item["field"] == "period" for item in result["constraints"])
+
+
+def test_duplicate_model_periods_cannot_override_user_event_time_or_run_year() -> None:
+    candidate = _candidate()
+    candidate["constraints"] += [
+        {"kind": "DATE", "field": "period", "value": "2025-09-01T00:00:00Z"},
+        {"kind": "DATE", "field": "period", "value": "2025-09-07T23:59:59Z"},
+        {"kind": "TIME", "field": "temporal_axis", "value": "MESSAGE_TIME"},
+        {"kind": "TIME", "field": "temporal_axis", "value": "MESSAGE_TIME"},
+    ]
+    result = operation.preserve_vague_read_semantics(
+        candidate, request_text="9월 첫째주 일정 관련 메일 찾아줘.", entry_mode="AGENT_SEARCH"
+    )
+    constraints = result["constraints"]
+    assert len([item for item in constraints if item["field"] == "period"]) == 1
+    assert len([item for item in constraints if item["field"] == "temporal_axis"]) == 1
+    resolved = resolve_relative_period(
+        constraints, timezone="Asia/Seoul",
+        now_ms=int(datetime(2026, 9, 6, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000),
+    )
+    assert resolved == {
+        "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
+        "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
+        "timezone": "Asia/Seoul",
+    }
+    assert candidate["constraints"][-1]["value"] == "MESSAGE_TIME"
 
 
 def test_vague_read_semantics__restores_search_meaning_and_removes_placeholder() -> None:

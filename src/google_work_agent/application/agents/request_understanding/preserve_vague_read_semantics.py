@@ -264,6 +264,10 @@ def _merge_constraint(
         constraints.append({"kind": kind, "field": field, "value": values})
         return
     if replace_existing:
+        constraints[:] = [
+            item for item in constraints
+            if item is existing or item["kind"] != kind or item["field"] != field
+        ]
         existing["value"] = (
             values if isinstance(existing["value"], list) or len(values) > 1 else values[0]
         )
