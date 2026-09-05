@@ -59,6 +59,10 @@ def test_receipt_candidate_uses_provider_timestamp_not_body(
     ("김대리", "김철수 대리", True), ("김 대리", "김정우 대리", True),
     ("김대리", "이철수 대리", False), ("김대리", "김철수 과장", False),
     ("김철수 대리", "김정우 대리", False), ("김철수 대리", "김철수 대리", True),
+    ("이과장", "이서연 과장", True), ("이과장", "김서연 과장", False),
+    ("박 팀장", "박지훈 팀장", True), ("박 팀장", "박지훈 대리", False),
+    ("정수진 부장", "정수민 부장", False),
+    ("Alex Morgan", "Alex Morgan", True), ("Alex Morgan", "Alex Taylor", False),
 ])
 def test_abbreviated_name_is_only_a_candidate(
     mention: str, display_name: str, matches: bool,

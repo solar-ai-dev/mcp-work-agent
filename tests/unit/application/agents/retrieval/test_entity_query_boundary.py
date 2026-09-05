@@ -67,9 +67,18 @@ def test_unresolved_or_unsafe_identity_fails_schema_builder_and_old_checkpoint_l
         execute_read_projection.project_connector_call(legacy, route=ROUTE, page_size=20)
 
 
-def test_abbreviated_person_is_discovered_without_inventing_an_email() -> None:
+@pytest.mark.parametrize(("mention", "discovery_query"), [
+    ("김대리", "대리 박람회"),
+    ("이과장", "과장 박람회"),
+    ("박 팀장", "박람회 팀장"),
+    ("정수진 부장", "박람회 정수진"),
+    ("Alex Morgan", "Alex Morgan 박람회"),
+])
+def test_person_is_discovered_without_inventing_an_email(
+    mention: str, discovery_query: str,
+) -> None:
     prompt_input = {"request_intent": {"constraints": [
-        {"kind": "PERSON", "field": "person", "value": "김대리"},
+        {"kind": "PERSON", "field": "person", "value": mention},
         {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["박람회"]},
     ]}}
     repaired = preserve_gmail_search_semantics(
@@ -78,7 +87,7 @@ def test_abbreviated_person_is_discovered_without_inventing_an_email() -> None:
     )
     fetch = build_query(repaired, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)
-    assert arguments["query"] == "대리 박람회"
+    assert arguments["query"] == discovery_query
     assert not any(item["kind"] == "PARTICIPANT" for item in fetch["effective_constraints"])
     assert requested_participant_identities(prompt_input) == []
 
