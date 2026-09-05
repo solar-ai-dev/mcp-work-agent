@@ -47,6 +47,7 @@ def parser() -> argparse.ArgumentParser:
     mail.add_argument("--to", choices=TEST_ACCOUNTS, required=True)
     mail.add_argument("--subject", required=True)
     mail.add_argument("--body", required=True)
+    mail.add_argument("--sender-name", help="연결된 테스트 계정의 이 메일에만 사용할 표시 이름")
     imported = commands.add_parser("mail-import", help="과거 수신일의 테스트 메일 추가 (발송 없음)")
     imported.add_argument("--to", choices=TEST_ACCOUNTS, required=True)
     imported.add_argument("--sender", choices=TEST_ACCOUNTS, required=True)
@@ -93,9 +94,14 @@ def build_fixture(arguments: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "subject": prefix + arguments.subject,
             "body": "제품 검색 검증을 위해 가져온 테스트 자료입니다.\n\n" + arguments.body,
         }
-    return "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    payload = {
         "to": arguments.to, "subject": prefix + arguments.subject, "body": arguments.body,
     }
+    if arguments.sender_name is not None:
+        if not arguments.sender_name.strip() or any(c in arguments.sender_name for c in "\r\n"):
+            raise ValueError("발신자 표시 이름은 줄바꿈 없는 문자열이어야 합니다.")
+        payload["sender_name"] = arguments.sender_name
+    return "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", payload
 
 
 def encode_mail_payload(
@@ -103,8 +109,8 @@ def encode_mail_payload(
 ) -> dict[str, str]:
     message = EmailMessage()
     message["From"] = (
-        formataddr((payload["sender_name"], payload["sender"]))
-        if "sender" in payload else account
+        formataddr((payload["sender_name"], payload.get("sender", account)))
+        if "sender_name" in payload else account
     )
     message["To"] = payload["to"]
     message["Subject"] = payload["subject"]

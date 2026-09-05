@@ -8,6 +8,33 @@ import pytest
 from scripts import seed_google_e2e as seed
 
 
+def test_send_fixture_display_name_never_changes_authenticated_sender_address() -> None:
+    args = seed.parser().parse_args([
+        "--tag", "closure31-person", "mail-send", "--to", seed.TEST_ACCOUNTS[0],
+        "--sender-name", "김철수 대리 (GWA 테스트)",
+        "--subject", "박람회 참석", "--body", "9월 3일",
+    ])
+    url, payload = seed.build_fixture(args)
+    assert url.endswith("/messages/send")
+    assert "sender" not in payload
+    encoded = seed.encode_mail_payload(payload, account=seed.TEST_ACCOUNTS[0], fingerprint="test")
+    message = BytesParser(policy=policy.default).parsebytes(
+        base64.urlsafe_b64decode(encoded["raw"]),
+    )
+    assert parseaddr(str(message["From"])) == ("김철수 대리 (GWA 테스트)", seed.TEST_ACCOUNTS[0])
+    assert message["Date"] is None
+    assert "[GWA E2E closure31-person]" in str(message["Subject"])
+
+
+def test_send_fixture_rejects_display_name_header_injection() -> None:
+    args = seed.parser().parse_args([
+        "--tag", "closure31-person", "mail-send", "--to", seed.TEST_ACCOUNTS[0],
+        "--sender-name", "이름\nBcc: other@example.com", "--subject", "test", "--body", "test",
+    ])
+    with pytest.raises(ValueError, match="줄바꿈"):
+        seed.build_fixture(args)
+
+
 @pytest.mark.parametrize("received_at", ["2026-08-20T10:00:00+09:00", "2026-08-20T10:00:00"])
 def test_import_fixture_preserves_sender_and_date_without_sending(received_at: str) -> None:
     args = seed.parser().parse_args([
