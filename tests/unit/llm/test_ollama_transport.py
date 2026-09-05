@@ -176,7 +176,7 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
             input_schema_version="v1",
             output_schema_version="v1",
         ),
-        prompt_input={},
+        prompt_input={"request": "김대리 일정", "evidence": "9월 3일 오후 2시 서울 코엑스"},
         output_schema=OutputSchemaDefinition(schema_version="1", json_schema={}),
         timeout_seconds=5,
         instruction_text="You are a test assistant.",
@@ -188,6 +188,11 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
     sent_body = _request_body(captured[0])
     assert sent_body["system"] == "You are a test assistant."
     assert sent_body["think"] is False
+    prompt_text = str(sent_body["prompt"])
+    assert "김대리 일정" in prompt_text
+    assert "9월 3일 오후 2시 서울 코엑스" in prompt_text
+    assert "\\u" not in prompt_text
+    assert json.loads(prompt_text)["input"]["request"] == "김대리 일정"
     assert result.latency_ms == 3_565
 
 
@@ -205,6 +210,36 @@ def _prompt_ref_for_sampling_tests() -> PromptReference:
         input_schema_version="v1",
         output_schema_version="v1",
     )
+
+
+def test_tool_call__preserves_literal_korean_in_model_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
+        del timeout
+        captured.append(request)
+        return _HTTPResponse(b'{"message":{"tool_calls":[]},"model":"qwen3.5:9b"}')
+
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
+    inputs = {"request": "김대리 일정", "evidence": "동문 안내 데스크"}
+    OllamaHTTPClient().invoke_tool_call(
+        endpoint="http://127.0.0.1:11434",
+        model_id="qwen3.5:9b",
+        prompt_ref=_prompt_ref_for_sampling_tests(),
+        prompt_input=inputs,
+        tools=[],
+        timeout_seconds=5,
+        instruction_text="업무 요청을 해석하세요.",
+    )
+    body = _request_body(captured[0])
+    messages = cast(list[dict[str, str]], body["messages"])
+    content = messages[1]["content"]
+    assert "김대리 일정" in content
+    assert "동문 안내 데스크" in content
+    assert "\\u" not in content
+    assert json.loads(content)["input"] == inputs
 
 
 def test_invoke_structured__sets_product_context_when__sampling_is_unset(
