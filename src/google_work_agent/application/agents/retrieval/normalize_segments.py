@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import ceil
 from typing import Literal, cast
@@ -67,6 +68,7 @@ def normalize_segments(
     acquisition_result: AcquisitionResultV1,
     *,
     context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
+    preferred_segment_ids: Sequence[str] = (),
 ) -> list[SourceSegment]:
     """Normalize, deduplicate, sanitize, chunk, and bound acquired resources."""
     segments_by_handle: dict[str, list[SourceSegment]] = {}
@@ -137,6 +139,7 @@ def normalize_segments(
     return _round_robin_segments(
         list(segments_by_handle.values()),
         max_segments=context_budget.max_segments,
+        preferred_segment_ids=preferred_segment_ids,
     )
 
 
@@ -237,19 +240,35 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
 
 
 def _round_robin_segments(
-    resource_segments: list[list[SourceSegment]], *, max_segments: int
+    resource_segments: list[list[SourceSegment]], *, max_segments: int,
+    preferred_segment_ids: Sequence[str] = (),
 ) -> list[SourceSegment]:
     """Bound context without allowing one long resource to hide its peers."""
 
-    result: list[SourceSegment] = []
+    by_id = {segment.segment_id: segment for group in resource_segments for segment in group}
+    result = [by_id[key] for key in dict.fromkeys(preferred_segment_ids) if key in by_id][
+        :max_segments
+    ]
+    selected = {segment.segment_id for segment in result}
+    if result and len(result) < max_segments:
+        # Retaining earlier evidence must not hide a newly acquired source category.
+        sources = {segment.source for segment in result}
+        for group in resource_segments:
+            if group and group[0].source not in sources and len(result) < max_segments:
+                result.append(group[0])
+                selected.add(group[0].segment_id)
+                sources.add(group[0].source)
     chunk_index = 0
     while len(result) < max_segments:
         added = False
         for segments in resource_segments:
             if chunk_index >= len(segments):
                 continue
-            result.append(segments[chunk_index])
             added = True
+            if segments[chunk_index].segment_id in selected:
+                continue
+            result.append(segments[chunk_index])
+            selected.add(segments[chunk_index].segment_id)
             if len(result) >= max_segments:
                 return result
         if not added:

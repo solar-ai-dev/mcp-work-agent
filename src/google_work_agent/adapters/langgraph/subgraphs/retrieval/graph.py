@@ -135,6 +135,9 @@ from google_work_agent.application.agents.retrieval.resolve_availability import 
     BusyIntervalV1,
     resolve_availability,
 )
+from google_work_agent.application.agents.retrieval.retain_unchanged_evidence import (
+    preferred_detail_evidence_ids,
+)
 from google_work_agent.application.agents.retrieval.select_evidence import (
     materialize_evidence_drafts,
 )
@@ -652,7 +655,16 @@ class RetrievalSubgraph:
                 Any,
                 {
                     "operation_inputs": {
-                        "normalize_segments": {"acquisition_result": acquisition_result}
+                        "normalize_segments": {
+                            "acquisition_result": acquisition_result,
+                            "preferred_segment_ids": preferred_detail_evidence_ids(
+                                state.get("evidence_selection"),
+                                [state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
+                                 for route_id in _require_state_value(
+                                     state["query_plan"], "query_plan"
+                                 )["retrieval_order"]],
+                            ),
+                        }
                     }
                 },
             )
@@ -682,7 +694,10 @@ class RetrievalSubgraph:
                 Any,
                 {
                     "operation_inputs": {
-                        "normalize_segments": {"acquisition_result": acquisition_result}
+                        "normalize_segments": {
+                            "acquisition_result": acquisition_result,
+                            "preferred_segment_ids": list(state.get("segments", [])),
+                        }
                     }
                 },
             )

@@ -98,6 +98,44 @@ def test_search_candidate_keeps_provider_sender_without_promoting_body_mentions(
         normalize_segments(acquisition)
 
 
+def test_detail_growth_keeps_acquired_evidence_and_round_rebuild_is_stable() -> None:
+    acquisition = _result("\n".join(f"항목 {n}의 날짜와 업무 내용입니다." for n in range(20)))
+    budget = ContextBudget(max_segments=4, chunk_target_tokens=70, chunk_max_tokens=100)
+    prior = normalize_segments(acquisition, context_budget=budget)
+    protected = prior[-1].segment_id
+    resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
+    resources.extend({
+        "resource_handle": f"gmail_thread:new-{n}", "resource_type": "gmail_thread",
+        "resource_id": f"new-{n}", "version": "1", "payload": {"body": f"새로운 메일 {n}"},
+    } for n in range(6))
+    resources.append({
+        "resource_handle": "task:new", "resource_type": "task", "resource_id": "new",
+        "version": "1", "payload": {"title": "확인할 업무"},
+    })
+    task = resources.pop()
+    acquisition["source_summaries"].append({
+        "connector_id": "google_workspace", "source": "TASKS", "resources": [task],
+    })
+    ordinary = normalize_segments(acquisition, context_budget=budget)
+    assert protected not in {segment.segment_id for segment in ordinary}
+    kept = normalize_segments(
+        acquisition, context_budget=budget, preferred_segment_ids=[protected],
+    )
+    assert len(kept) == budget.max_segments
+    assert kept[0].segment_id == protected
+    assert {segment.source for segment in kept} == {"GMAIL", "TASKS"}
+    rebuilt = normalize_segments(
+        acquisition, context_budget=budget,
+        preferred_segment_ids=[segment.segment_id for segment in kept],
+    )
+    assert rebuilt == kept
+    resources[0]["version"] = "2"
+    changed = normalize_segments(
+        acquisition, context_budget=budget, preferred_segment_ids=[protected],
+    )
+    assert protected not in {segment.segment_id for segment in changed}
+
+
 def test_thread_messages_keep_later_decisions_after_an_earlier_signature() -> None:
     acquisition = _result("unused")
     source = acquisition["source_summaries"][0]

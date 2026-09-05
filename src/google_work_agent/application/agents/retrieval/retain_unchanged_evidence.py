@@ -9,6 +9,18 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 
 
+def preferred_detail_evidence_ids(
+    selection: EvidenceSelectionResultV2 | None,
+    source_fetch_plans: Sequence[SourceFetchPlanV1],
+) -> list[str]:
+    """Protect existing source excerpts only while extending the same search by detail."""
+    if selection is None or not source_fetch_plans or any(
+        plan["operation_kind"] != "DETAIL_FETCH" for plan in source_fetch_plans
+    ):
+        return []
+    return list(selection["selected_segment_ids"])
+
+
 def retain_unchanged_evidence(
     selection: EvidenceSelectionResultV2 | None,
     *,
