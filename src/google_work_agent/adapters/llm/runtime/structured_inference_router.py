@@ -558,7 +558,7 @@ class StructuredInferenceRuntimeRouter:
             raise LLMInvocationError(
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
                 "schema repair did not produce a valid payload: "
-                + "; ".join(repair_errors[:3]),
+                + "; ".join(repair_errors[-8:]),
             )
         return repaired, 2
 

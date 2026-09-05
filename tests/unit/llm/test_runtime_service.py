@@ -436,7 +436,8 @@ def test_local_gpu__blocked_when__hardware_not_validated() -> None:
     assert len([call for call in ollama_transport.invocations if call["kind"] == "invoke"]) == 0
 
 
-def test_schema_repair__is_limited__to_one_attempt() -> None:
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_schema_repair__is_limited__to_one_attempt(repair_succeeds: bool) -> None:
     api_transport = FakeAPIProviderTransport()
     api_transport.queued_payloads.append(
         ProviderResponsePayload(
@@ -455,7 +456,7 @@ def test_schema_repair__is_limited__to_one_attempt() -> None:
         session_store=SessionMemorySecretStore(),
     )
     credential_service.store_credential("generic", b"key-1", "KEYRING", "credential-op")
-    repairer = FakeSchemaRepairer(repaired_output={"answer": "fixed"})
+    repairer = FakeSchemaRepairer(repaired_output={"answer": "fixed"} if repair_succeeds else {})
     settings = settings_view(preferred_llm_mode="API_LLM")
     service = build_runtime(
         settings_service=lambda: settings,
@@ -482,9 +483,19 @@ def test_schema_repair__is_limited__to_one_attempt() -> None:
         schema_repairer=repairer,
     )
 
-    result = service.infer("API_LLM", PROMPT_REF, {"topic": "hello"}, OUTPUT_SCHEMA)
-
-    assert result.structured_output == {"answer": "fixed"}
+    if repair_succeeds:
+        result = service.infer("API_LLM", PROMPT_REF, {"topic": "hello"}, OUTPUT_SCHEMA)
+        assert result.structured_output == {"answer": "fixed"}
+    else:
+        schema = OutputSchemaDefinition(
+            schema_version="1",
+            json_schema={
+                "type": "object",
+                "required": ["first", "second", "third", "actual_leaf"],
+            },
+        )
+        with pytest.raises(LLMInvocationError, match=r"\$\.actual_leaf is required"):
+            service.infer("API_LLM", PROMPT_REF, {"topic": "hello"}, schema)
     # StructuredInferenceResultV1 deliberately exposes only the exact
     # canonical result surface; the repair attempt is proved by the repairer.
     assert len(repairer.calls) == 1
