@@ -68,6 +68,11 @@ def select_evidence(
     eligible_candidates = [
         candidate for candidate in rag_candidates if candidate["segment_id"] not in excluded
     ]
+    eligible_candidates = _bounded_prompt_candidates(
+        eligible_candidates,
+        requested_resource_hints=request_intent["requested_resource_hints"],
+        limit=context_budget.max_normalized_context_items,
+    )
     deterministic_selection = _exact_selected_read_selection(
         request_intent=request_intent,
         candidates=eligible_candidates,
@@ -252,6 +257,27 @@ def _exact_selected_read_selection(
         "selected_segment_ids": selected_segment_ids,
         "excluded_segment_ids": _stable_unique(exclusion_obligations),
     }
+
+
+def _bounded_prompt_candidates(
+    candidates: list[RagCandidateV1], *, requested_resource_hints: Collection[str], limit: int,
+) -> list[RagCandidateV1]:
+    """Apply the declared context cap without starving another requested source."""
+    groups = required_resource_segments(
+        {item["segment_id"]: item["resource_ref"] for item in candidates},
+        requested_resource_hints,
+    )
+    represented = {
+        next(item["segment_id"] for item in candidates if item["segment_id"] in segment_ids)
+        for segment_ids in groups.values()
+    }
+    if limit < len(represented) or limit < 1:
+        raise ValueError("evidence context budget cannot represent requested sources")
+    for item in candidates:
+        if len(represented) >= limit:
+            break
+        represented.add(item["segment_id"])
+    return [item for item in candidates if item["segment_id"] in represented]
 
 
 def _ranked_segments_projection(

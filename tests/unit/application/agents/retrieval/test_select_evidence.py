@@ -11,12 +11,17 @@ from tests.support.context_retrieval import (
     _run_budget,
 )
 
-from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
+from google_work_agent.application.agents.retrieval.normalize_segments import (
+    ContextBudget,
+    SourceSegment,
+)
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
 from google_work_agent.application.agents.retrieval.select_evidence import (
     materialize_evidence_drafts,
     select_evidence,
 )
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
+from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 
 @pytest.mark.parametrize("draft_count", [0, 2])
@@ -55,6 +60,40 @@ def test_materialization__rejects_inconsistent_legacy_selection_without_guessing
              "excluded_segment_ids": [], "evidence_drafts": []},
             segments=[],
         )
+
+
+def test_selection_input_budget__keeps_each_requested_source_and_binds_schema_to_visible_ids():
+    segments = [
+        SourceSegment(f"mail-{n}", f"gmail_thread:{n}", "GMAIL", "gmail_thread", str(n),
+                      None, None, {}, "회의 안내")
+        for n in range(20)
+    ] + [SourceSegment("task", "task:1", "TASK", "task", "1", None, None, {}, "후속 업무")]
+    output = {"schema_version": 2, "selected_segment_ids": ["mail-0", "task"],
+              "excluded_segment_ids": [], "evidence_drafts": [
+                  {"segment_id": item, "role": "CONTEXT", "relevance_reason": "관련 자료"}
+                  for item in ("mail-0", "task")
+              ]}
+    runtime = FakeLLMRuntime(deque([_llm_result(output)]))
+    intent = _intent()
+    intent["requested_resource_hints"] = ["GMAIL_THREAD", "TASK"]
+    result, _ = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=intent,
+        rag_candidates=[{"segment_id": item.segment_id, "resource_ref": item.resource_handle,
+                         "retrieval_score": 1.0, "reason_codes": []} for item in segments],
+        segments=segments, retry_budget=_run_budget(used=0),
+        context_budget=ContextBudget(max_normalized_context_items=2),
+    )
+    assert result == output
+    inputs = cast(dict[str, object], runtime.calls[0]["prompt_input"])
+    projected = cast(list[dict[str, object]], inputs["ranked_segments"])
+    assert [item["segment_id"] for item in projected] == ["mail-0", "task"]
+    assert result["excluded_segment_ids"] == []  # Unseen candidates are not rejected evidence.
+    schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    assert validate_output_schema(output, schema.json_schema) == []
+    assert validate_output_schema(
+        {**output, "excluded_segment_ids": ["mail-1"]}, schema.json_schema,
+    )
 
 
 def test_select_evidence__preserves_stable__exclusion_obligations() -> None:
