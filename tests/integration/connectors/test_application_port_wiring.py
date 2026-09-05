@@ -60,6 +60,7 @@ from google_work_agent.application.use_cases.run.begin_verification import (
     BeginVerificationCommand,
     BeginVerificationHandler,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.application.use_cases.verification.store_verification import (
     StoreVerificationCommand,
     StoreVerificationHandler,
@@ -434,7 +435,7 @@ def test_retrieval_application__uses_connector_read_adapter__through_mcp_port() 
             "route_id": "route-1",
             "connector_id": GOOGLE_WORKSPACE_CONNECTOR_ID,
             "resource_type": binding.resource_type,
-            "operation_kind": "INITIAL",
+            "operation_kind": "SEARCH",
             "effective_constraints": [],
             "query_identity_hash": "a" * 64,
             "prior_read_result_handle": None,
@@ -450,6 +451,9 @@ def test_retrieval_application__uses_connector_read_adapter__through_mcp_port() 
         connector_reader=read_port,
         read_result_cache=InMemoryRunRetrievalCache(),
         read_result_handle="read-result-1",
+        run_budget=build_default_run_budget(),
+        now_ms=0,
+        prior_query_attempts=[],
     )
 
     assert result.status == "COMPLETE"

@@ -1,8 +1,13 @@
+from hashlib import sha256
 from typing import cast
 
 import pytest
 
 from google_work_agent.adapters.system.memory.run_retrieval_cache import InMemoryRunRetrievalCache
+from google_work_agent.application.agents.retrieval.build_query import (
+    QueryUnchangedAfterFailureError,
+    build_query_attempt,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.execute_read import (
     RetrievalReadBindingError,
@@ -98,6 +103,7 @@ def test_invalid_continuation__binding_prevents__provider_call(
             read_result_handle="new",
             run_budget=build_default_run_budget(),
             now_ms=0,
+            prior_query_attempts=[],
         )
 
     assert reader.calls == []
@@ -121,6 +127,7 @@ def test_detail_dispatch__charges_only_detail_dimension_and_honors_limit(
         read_result_handle="detail",
         run_budget=budget,
         now_ms=0,
+        prior_query_attempts=[],
     )
     if expected_calls:
         execute_read(**arguments)
@@ -159,8 +166,67 @@ def test_exhausted_continuation__does_not__restart_provider_read() -> None:
         read_result_handle="new",
         run_budget=build_default_run_budget(),
         now_ms=0,
+        prior_query_attempts=[],
     )
 
     assert result.status == "EXHAUSTED"
     assert not result.provider_called
     assert reader.calls == []
+
+
+@pytest.mark.parametrize("operation", ["SEARCH", "DETAIL_FETCH", "NEXT_PAGE"])
+def test_repeated_read__blocked_before_provider_and_budget_charge(operation: str) -> None:
+    plan = cast(SourceFetchPlanV1, {**_plan(), "operation_kind": operation})
+    args = {"query": "bounded"} if operation != "DETAIL_FETCH" else {"thread_id": "t1"}
+    attempt = build_query_attempt(
+        query_attempt_id="a1", run_id="run", plan=plan, round_no=0, attempt_no=0,
+        tool_id="gmail_search_threads", canonical_arguments=args,
+        previous_query_hash=None, page_state_hash=sha256(b"opaque").hexdigest(),
+        candidate_count=1, stop_reason="COMPLETE",
+    )
+    # A -> B -> A is not merely an immediate-repeat check.
+    different = {**attempt, "query_spec": {**attempt["query_spec"],
+                 "canonical_arguments": {"query": "different"}}, "page_state_hash": "other"}
+    prior = [attempt, different]
+    if operation == "NEXT_PAGE":
+        prior.append({**attempt, "attempt_no": 2})
+    cache = InMemoryRunRetrievalCache()
+    cache.put_read_result(RunRetrievalCacheEntryV1(
+        1, "prior", "run", "r1", "q" * 64,
+        ConnectorReadResultV1(1, "gmail_search_threads", "old", {}, "opaque", 1), False,
+    ))
+    reader = _Reader()
+    budget = build_default_run_budget()
+    with pytest.raises(QueryUnchangedAfterFailureError):
+        execute_read(
+            plan=plan, run_id="run", binding=_binding(), tool_arguments=args,
+            connector_reader=reader, read_result_cache=cache, read_result_handle="new",
+            run_budget=budget, now_ms=0, prior_query_attempts=prior,
+        )
+    assert reader.calls == []
+    assert budget["connector_calls_used"] == 0
+    assert budget["detail_fetches_used"] == 0
+    assert budget["source_page_calls_used"] == 0
+
+
+def test_first_unread_page__is_not_mistaken_for_repeat() -> None:
+    plan = _plan()
+    cache = InMemoryRunRetrievalCache()
+    cache.put_read_result(RunRetrievalCacheEntryV1(
+        1, "prior", "run", "r1", "q" * 64,
+        ConnectorReadResultV1(1, "gmail_search_threads", "old", {}, "opaque", 1), False,
+    ))
+    attempt = build_query_attempt(
+        query_attempt_id="a1", run_id="run", plan={**plan, "operation_kind": "SEARCH"},
+        round_no=0, attempt_no=0, tool_id="gmail_search_threads",
+        canonical_arguments={"query": "bounded"}, previous_query_hash=None,
+        page_state_hash=sha256(b"opaque").hexdigest(), candidate_count=1, stop_reason="COMPLETE",
+    )
+    reader = _Reader()
+    result = execute_read(
+        plan=plan, run_id="run", binding=_binding(), tool_arguments={"query": "bounded"},
+        connector_reader=reader, read_result_cache=cache, read_result_handle="new",
+        run_budget=build_default_run_budget(), now_ms=0, prior_query_attempts=[attempt],
+    )
+    assert result.provider_called
+    assert reader.calls == [{"query": "bounded", "page_token": "opaque"}]

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TypedDict, cast
 from zoneinfo import ZoneInfo
 
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
@@ -37,6 +38,7 @@ class ExecuteReadInput(TypedDict):
     read_result_handle: str
     run_budget: RunBudgetV2
     now_ms: int
+    prior_query_attempts: list[QueryAttemptV1]
 
 
 def project_execute_read_input(state: Mapping[str, object]) -> ExecuteReadInput:

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
+from google_work_agent.application.agents.retrieval.guard_retrieval_read_repeat import (
+    guard_retrieval_read_repeat,
+)
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
 )
@@ -48,10 +53,12 @@ def execute_read(
     read_result_handle: str,
     run_budget: RunBudgetV2,
     now_ms: int,
+    prior_query_attempts: Sequence[QueryAttemptV1],
 ) -> RetrievalReadExecutionV1:
     """Execute one registry-validated READ and keep its opaque continuation cache-local."""
     _validate_binding(plan, binding)
     arguments = dict(tool_arguments)
+    continuation = None
     if "page_token" in arguments or "next_page_token" in arguments:
         raise RetrievalReadBindingError("raw continuation must come only from Run Retrieval Cache")
 
@@ -86,6 +93,14 @@ def execute_read(
             raise RetrievalReadBindingError("FOUND continuation entry has no page token")
         arguments["page_token"] = continuation
 
+    guard_retrieval_read_repeat(
+        plan=plan,
+        run_id=run_id,
+        tool_id=binding.tool_id,
+        canonical_arguments=tool_arguments,
+        continuation=continuation,
+        prior_query_attempts=prior_query_attempts,
+    )
     consume_retrieval_read_budget(
         run_budget,
         run_id=run_id,

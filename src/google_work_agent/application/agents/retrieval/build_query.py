@@ -153,7 +153,16 @@ def _validate_policies(
 
 
 def _canonical_constraints(constraints: Sequence[SemanticRetrievalConstraintV1]) -> str:
-    return json.dumps(list(constraints), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    normalized = []
+    for constraint in sorted(constraints, key=lambda item: item["kind"]):
+        item = dict(constraint)
+        for key, value in item.items():
+            if isinstance(value, list):
+                item[key] = sorted(
+                    value, key=lambda member: json.dumps(member, sort_keys=True, ensure_ascii=True)
+                )
+        normalized.append(item)
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def _normalize_constraints(

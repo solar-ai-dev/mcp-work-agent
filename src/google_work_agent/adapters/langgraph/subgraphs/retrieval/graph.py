@@ -1160,6 +1160,7 @@ class RetrievalSubgraph:
                                 "read_result_handle": read_handle,
                                 "run_budget": state["retry_budget"],
                                 "now_ms": self._now_ms(),
+                                "prior_query_attempts": attempts,
                             }
                         }
                     },
