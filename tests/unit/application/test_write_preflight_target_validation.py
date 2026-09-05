@@ -6,14 +6,18 @@ from typing import Any, cast
 
 import pytest
 
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
 from google_work_agent.application.use_cases.claim._write_preflight import (
     _WritePreflight,
     validate_preflight_target,
 )
-from google_work_agent.application.tool_registry.load_signed_tool_registry import (
-    load_signed_tool_registry,
+from google_work_agent.application.use_cases.resource.connector_read_projection import (
+    ConnectorReadProjection,
 )
 from google_work_agent.domain.action.model import PolicyViolationError
+from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceRefRecord
 from google_work_agent.ports.connector.contracts.google_workspace import (
     ResourceSnapshot,
@@ -151,6 +155,15 @@ class _GitHubGateway:
         )
 
 
+class _ConnectorReadPortRecorder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, object]] = []
+
+    def execute_read(self, binding: object, arguments: object) -> None:
+        self.calls.append((binding, arguments))
+        raise AssertionError("ConnectorReadPort must not run for an invalid target")
+
+
 class _PreflightRepository:
     def __init__(self, value: object | None) -> None:
         self._value = value
@@ -184,8 +197,16 @@ class _PreflightUnitOfWork:
         tool_name: str,
         arguments: dict[str, object],
         recovery_fingerprint: str = "fingerprint-1",
+        target_connector_id: str = "github",
+        target_resource_type: str = "github_issue",
+        target_resource_id: str = "acme/repo#7",
+        target_parent_id: str | None = "acme/repo",
+        target_version: str | None = "v2",
+        approved_arguments: dict[str, object] | None = None,
+        approval_source_snapshot: dict[str, object] | None = None,
     ) -> None:
         targeted = tool_name != "github_create_issue"
+        arguments_hash = calculate_canonical_json_hash(arguments)
         action = SimpleNamespace(
             id="action-1",
             plan_id="plan-1",
@@ -193,30 +214,44 @@ class _PreflightUnitOfWork:
             connector_id="github",
             tool_name=tool_name,
             arguments_json=dumps(arguments),
-            arguments_hash="arguments-hash",
+            arguments_hash=arguments_hash,
             version=1,
             effect_type="CREATE" if not targeted else "UPDATE",
             target_resource_ref_id="ref-1" if targeted else None,
         )
-        approval = SimpleNamespace(
-            id="approval-1",
-            source_snapshot_json="{}",
-            source_snapshot_hash="snapshot-hash",
-            recovery_fingerprint=recovery_fingerprint,
-        )
         target = ResourceRefRecord(
             id="ref-1",
             run_id="run-1",
-            connector_id="github",
-            resource_type="github_issue",
-            resource_id="acme/repo#7",
-            parent_resource_id="acme/repo",
+            connector_id=target_connector_id,
+            resource_type=target_resource_type,
+            resource_id=target_resource_id,
+            parent_resource_id=target_parent_id,
             canonical_url=None,
             title=None,
             event_time_ms=None,
-            version_token="v2",
+            version_token=target_version,
             metadata_json="{}",
             captured_at_ms=1,
+        )
+        source_snapshot = approval_source_snapshot or (
+            {
+                "resource_type": "github_issue",
+                "resource_id": target_resource_id,
+                "parent_id": target_parent_id,
+                "version": target_version,
+            }
+            if targeted
+            else {}
+        )
+        approval = SimpleNamespace(
+            id="approval-1",
+            action_version=1,
+            canonical_arguments_hash=calculate_canonical_json_hash(
+                arguments if approved_arguments is None else approved_arguments
+            ),
+            source_snapshot_json=dumps(source_snapshot),
+            source_snapshot_hash=calculate_canonical_json_hash(source_snapshot),
+            recovery_fingerprint=recovery_fingerprint,
         )
         self.actions = _PreflightRepository(action)
         self.plans = _PreflightPlans(SimpleNamespace(id="plan-1", run_id="run-1"))
@@ -260,6 +295,156 @@ def test_github_targeted_write__performs_fresh_get__before_claim(
         "parent_id": "acme/repo",
         "version": "v2",
     }
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "overrides"),
+    [
+        (tool_name, {"arguments": {"repository": "other/repo", "issue_number": 7}})
+        for tool_name in (
+            "github_update_issue",
+            "github_close_issue",
+            "github_reopen_issue",
+        )
+    ]
+    + [
+        ("github_update_issue", {"target_parent_id": "other/repo"}),
+        ("github_update_issue", {"target_connector_id": "google_workspace"}),
+        ("github_update_issue", {"target_resource_type": "task"}),
+    ]
+    + [
+        ("github_update_issue", {"target_resource_id": resource_id})
+        for resource_id in (
+            "acme/repo",
+            "acme/repo#",
+            "#7",
+            "acme//repo#7",
+            "acme/repo#abc",
+        )
+    ],
+)
+def test_github_targeted_write__identity_mismatch__blocks_before_provider_get(
+    tool_name: str,
+    overrides: dict[str, object],
+) -> None:
+    target_overrides = {key: value for key, value in overrides.items() if key != "arguments"}
+    arguments = cast(
+        dict[str, object],
+        overrides.get("arguments", {"repository": "acme/repo", "issue_number": 7}),
+    )
+    if tool_name == "github_update_issue":
+        arguments["title"] = "updated"
+    gateway = _GitHubGateway()
+    preflight = _WritePreflight(
+        unit_of_work_factory=cast(
+            Any,
+            lambda: _PreflightUnitOfWork(
+                tool_name=tool_name,
+                arguments=arguments,
+                **target_overrides,
+            ),
+        ),
+        gateway=cast(Any, gateway),
+        tool_registry=load_signed_tool_registry(),
+    )
+
+    with pytest.raises(PolicyViolationError):
+        preflight(action_id="action-1")
+
+    assert gateway.calls == []
+
+
+def test_github_targeted_write__approval_argument_tampering__blocks_before_provider_get() -> None:
+    gateway = _GitHubGateway()
+    preflight = _WritePreflight(
+        unit_of_work_factory=cast(
+            Any,
+            lambda: _PreflightUnitOfWork(
+                tool_name="github_close_issue",
+                arguments={"repository": "other/repo", "issue_number": 9},
+                target_resource_id="other/repo#9",
+                target_parent_id="other/repo",
+                approved_arguments={"repository": "acme/repo", "issue_number": 7},
+                approval_source_snapshot={
+                    "resource_type": "github_issue",
+                    "resource_id": "acme/repo#7",
+                    "parent_id": "acme/repo",
+                    "version": "v2",
+                },
+            ),
+        ),
+        gateway=cast(Any, gateway),
+        tool_registry=load_signed_tool_registry(),
+    )
+
+    with pytest.raises(PolicyViolationError, match="arguments binding is stale"):
+        preflight(action_id="action-1")
+
+    assert gateway.calls == []
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ("github_update_issue", "github_close_issue", "github_reopen_issue"),
+)
+def test_github_targeted_write__identity_mismatch__skips_connector_read_port(
+    tool_name: str,
+) -> None:
+    arguments: dict[str, object] = {"repository": "acme/repo", "issue_number": 7}
+    if tool_name == "github_update_issue":
+        arguments["title"] = "updated"
+    connector_reader = _ConnectorReadPortRecorder()
+    registry = load_signed_tool_registry()
+    preflight = _WritePreflight(
+        unit_of_work_factory=cast(
+            Any,
+            lambda: _PreflightUnitOfWork(
+                tool_name=tool_name,
+                arguments=arguments,
+                target_resource_id="other/repo#7",
+            ),
+        ),
+        gateway=cast(
+            Any,
+            ConnectorReadProjection(
+                connector_reader=cast(Any, connector_reader),
+                tool_registry=registry,
+            ),
+        ),
+        tool_registry=registry,
+    )
+
+    with pytest.raises(PolicyViolationError):
+        preflight(action_id="action-1")
+
+    assert connector_reader.calls == []
+
+
+def test_github_targeted_write__approval_target_tampering__blocks_before_provider_get() -> None:
+    gateway = _GitHubGateway()
+    preflight = _WritePreflight(
+        unit_of_work_factory=cast(
+            Any,
+            lambda: _PreflightUnitOfWork(
+                tool_name="github_reopen_issue",
+                arguments={"repository": "acme/repo", "issue_number": 7},
+                target_version="v3",
+                approval_source_snapshot={
+                    "resource_type": "github_issue",
+                    "resource_id": "acme/repo#7",
+                    "parent_id": "acme/repo",
+                    "version": "v2",
+                },
+            ),
+        ),
+        gateway=cast(Any, gateway),
+        tool_registry=load_signed_tool_registry(),
+    )
+
+    with pytest.raises(PolicyViolationError, match="target binding is stale"):
+        preflight(action_id="action-1")
+
+    assert gateway.calls == []
 
 
 def test_github_create__validates_repository_and_fingerprint__without_mutation() -> None:

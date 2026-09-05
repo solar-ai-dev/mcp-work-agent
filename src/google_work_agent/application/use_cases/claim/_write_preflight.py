@@ -8,6 +8,9 @@ from json import loads
 from typing import Literal, Protocol, cast
 
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.action.approval_source_snapshot import (
+    build_approval_source_snapshot,
+)
 from google_work_agent.application.use_cases.action.calendar_conflict_policy import (
     CalendarWorkHours,
 )
@@ -225,16 +228,25 @@ class _WritePreflight:
             "github_close_issue",
             "github_reopen_issue",
         }:
+            if approval.action_version != action_version:
+                raise PolicyViolationError("GitHub preflight approval action version is stale")
+            if approval.canonical_arguments_hash != arguments_hash:
+                raise PolicyViolationError("GitHub preflight approval arguments binding is stale")
+            approved_target_snapshot = build_approval_source_snapshot(
+                action=action,
+                plan_run_id=plan.run_id,
+                resource_ref=target_ref,
+            )
+            if (
+                approved_target_snapshot != approval_snapshot
+                or calculate_canonical_json_hash(approval_snapshot)
+                != approval.source_snapshot_hash
+            ):
+                raise PolicyViolationError("GitHub preflight approval target binding is stale")
             repository = _required_argument_string(arguments, "repository")
             issue_number = arguments.get("issue_number")
             if not isinstance(issue_number, int) or isinstance(issue_number, bool):
                 raise PolicyViolationError("GitHub issue number is invalid")
-            if (
-                target_ref is None
-                or target_ref.connector_id != action.connector_id
-                or target_ref.resource_type.lower() != "github_issue"
-            ):
-                raise PolicyViolationError("GitHub preflight target binding is invalid")
             issue = self._gateway.get_github_issue(
                 repository=repository,
                 issue_number=issue_number,

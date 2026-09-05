@@ -39,15 +39,15 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
     VerificationResultV1,
     VerifyEffectQueryV1,
 )
-from google_work_agent.domain.action.model import ActionStatusV1
+from google_work_agent.domain.action.model import ActionStatusV1, PolicyViolationError
 from google_work_agent.domain.execution_attempt.model import ExecutionAttemptStatusV1
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
 )
+from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
@@ -310,6 +310,20 @@ def test_github_pull_request__is_blocked_in_application_preflight__before_claim(
 
     assert result.disposition is WriteExecutionDisposition.PREFLIGHT_BLOCKED
     assert calls == ["preflight"]
+    assert "dispatch" not in calls
+
+
+def test_github_target_mismatch__stops_before_claim__begin_and_connector_write() -> None:
+    calls: list[str] = []
+    result = _coordinator(
+        calls=calls,
+        preflight_error=PolicyViolationError("GitHub preflight target binding is stale"),
+    ).execute(_request())
+
+    assert result.disposition is WriteExecutionDisposition.PREFLIGHT_BLOCKED
+    assert calls == ["preflight"]
+    assert "claim" not in calls
+    assert "begin" not in calls
     assert "dispatch" not in calls
 
 
