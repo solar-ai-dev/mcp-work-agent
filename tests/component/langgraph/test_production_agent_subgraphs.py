@@ -600,13 +600,24 @@ def test_retrieval_cancellation_returns_to_main_without_another_external_call(
     ) == "end"  # Release the invocation for the existing cancellation command owner.
 
 
-def test_retrieval__three_details__preserve_one_search_round() -> None:
+@pytest.mark.parametrize("date_rich", [False, True])
+def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) -> None:
     from datetime import datetime
 
     run_start = int(datetime.fromisoformat("2026-09-06T23:59:55+09:00").timestamp() * 1000)
 
     class TemporalInference(_ComponentInferencePort):
         def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
+            if prompt_id == "retrieval.select_evidence":
+                for segment in cast(list[dict[str, Any]], projection["ranked_segments"]):
+                    annotation = segment["temporal_date_candidates"][0]
+                    assert annotation["target_index"] == 0
+                    assert annotation["date_mentions_truncated"] is date_rich
+                    assert len(annotation["date_mentions"]) == (12 if date_rich else 1)
+                    assert annotation["date_mentions"][0] == {
+                        "source_text": "2026년 9월 3일", "candidate_date": "2026-09-03",
+                        "year_explicit": True, "date_intersects_window": True,
+                    }
             if prompt_id in {"retrieval.select_evidence", "retrieval.assess_sufficiency"}:
                 assert projection["temporal_constraints"] == [
                     {
@@ -639,7 +650,10 @@ def test_retrieval__three_details__preserve_one_search_round() -> None:
                     "related_resource_ids": [],
                     "payload": {
                         "subject": f"Status {resource_id}",
-                        "body": f"Meeting September 3 {resource_id}",
+                        "body": f"회의 일정은 2026년 9월 3일 {resource_id}" + (
+                            " ".join(f"2026년 9월 {day}일" for day in range(1, 22))
+                            if date_rich else ""
+                        ),
                     },
                 }
                 for resource_id in ids

@@ -13,10 +13,16 @@ from google_work_agent.application.agents.retrieval.contracts.evidence_selection
     required_resource_segments,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    TemporalRangeConstraintV1,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
     EvidenceRoleDraftV2,
     EvidenceSelectionResultV2,
+)
+from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
+    project_event_date_candidates,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     DEFAULT_CONTEXT_BUDGET,
@@ -90,7 +96,8 @@ def select_evidence(
         bounded_selection = _apply_exclusions(lineage_selection, obligations)
         if bounded_selection["selected_segment_ids"]:
             return bounded_selection, retry_budget
-    projection = _ranked_segments_projection(eligible_candidates, segments)
+    temporal_constraints = project_query_temporal_constraints(query_attempts)
+    projection = _ranked_segments_projection(eligible_candidates, segments, temporal_constraints)
     candidate_ids = [candidate["segment_id"] for candidate in eligible_candidates]
     candidate_resource_refs = {
         candidate["segment_id"]: candidate["resource_ref"] for candidate in eligible_candidates
@@ -105,7 +112,7 @@ def select_evidence(
         {
             "request_intent": request_intent,
             "ranked_segments": projection,
-            "temporal_constraints": project_query_temporal_constraints(query_attempts),
+            "temporal_constraints": temporal_constraints,
         },
         output_schema,
     )
@@ -151,7 +158,7 @@ def select_evidence(
                 "base_projection": {
                     "request_intent": request_intent,
                     "ranked_segments": projection,
-                    "temporal_constraints": project_query_temporal_constraints(query_attempts),
+                    "temporal_constraints": temporal_constraints,
                 },
                 "candidate_output": result.structured_output,
                 "failure_record": build_failure_record_v1(
@@ -274,7 +281,8 @@ def _bounded_prompt_candidates(
 
 
 def _ranked_segments_projection(
-    candidates: list[RagCandidateV1], segments: list[SourceSegment]
+    candidates: list[RagCandidateV1], segments: list[SourceSegment],
+    temporal_constraints: Sequence[TemporalRangeConstraintV1],
 ) -> list[dict[str, object]]:
     by_id = {segment.segment_id: segment for segment in segments}
     result: list[dict[str, object]] = []
@@ -282,6 +290,15 @@ def _ranked_segments_projection(
         segment = by_id.get(candidate["segment_id"])
         if segment is None:
             raise ValueError(f"RAG_SEGMENT_REFERENCE_INVALID: {candidate['segment_id']}")
+        temporal_dates: list[dict[str, object]] = []
+        for index, constraint in enumerate(temporal_constraints):
+            if constraint["axis"] != "EVENT_TIME":
+                continue
+            mentions = project_event_date_candidates(segment.text, constraint)
+            temporal_dates.append({
+                "target_index": index, "date_mentions": mentions[:12],
+                "date_mentions_truncated": len(mentions) > 12,
+            })
         result.append(
             {
                 "segment_id": candidate["segment_id"],
@@ -291,6 +308,7 @@ def _ranked_segments_projection(
                 "reason_codes": list(candidate["reason_codes"]),
                 "trust_class": "UNTRUSTED_SOURCE_CONTENT",
                 "content_role": "DATA_ONLY",
+                "temporal_date_candidates": temporal_dates,
             }
         )
     return result

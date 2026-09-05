@@ -57,7 +57,11 @@ class PromptRuntimeInputContractEntryV1:
         if not self.prompt_slot_id or not self.runtime_node_id:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
         output_version = 3 if self.prompt_slot_id == "retrieval.select_evidence" else 1
-        if self.input_schema_version not in {1, 2} or self.output_schema_version != output_version:
+        input_versions = {3} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}
+        if (
+            self.input_schema_version not in input_versions
+            or self.output_schema_version != output_version
+        ):
             raise PromptRuntimeInputContractError("unsupported prompt input/output schema version")
         required = set(self.required_root_fields)
         optional = set(self.optional_root_fields)

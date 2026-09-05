@@ -77,7 +77,7 @@
     {
       "prompt_slot_id": "retrieval.select_evidence",
       "runtime_node_id": "retrieval.select_evidence",
-      "input_schema_version": 2,
+      "input_schema_version": 3,
       "required_root_fields": ["request_intent", "ranked_segments", "temporal_constraints"],
       "optional_root_fields": ["confirmation_response"],
       "output_schema_version": 3

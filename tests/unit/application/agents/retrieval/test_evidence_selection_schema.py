@@ -82,3 +82,4 @@ def test_inference_schema_version_matches_prompt_contract_and_manifest():
     schema = bind_evidence_selection_schema(candidate_resource_refs={}, max_evidence=12)
     version = schema.json_schema["properties"]["schema_version"]["enum"][0]
     assert version == contract.output_schema_version == slot["output_schema_version"] == 3
+    assert contract.input_schema_version == slot["input_schema_version"] == 3
