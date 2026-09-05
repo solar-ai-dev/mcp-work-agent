@@ -153,7 +153,19 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
             or "messages" not in payload
         ):
             # Existing generic snapshots without the additive detail field remain readable.
-            units.append(raw)
+            if raw.get("resource_type") in _GMAIL_RESOURCE_TYPES and isinstance(payload, dict):
+                metadata = {
+                    key: payload[key]
+                    for key in ("sender_name", "sender_email", "received_at")
+                    if key in payload
+                }
+                if any(
+                    value is not None and not isinstance(value, str) for value in metadata.values()
+                ):
+                    raise ValueError("invalid Gmail candidate metadata")
+                units.append({**raw, "_message_locator": metadata})
+            else:
+                units.append(raw)
             continue
         messages = payload["messages"]
         if not isinstance(messages, list) or len(messages) > MAX_THREAD_EVIDENCE_MESSAGES:
@@ -253,6 +265,16 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
     if resource_type == "calendar_freebusy":
         return format_calendar_freebusy_evidence(payload)
     parts: list[str] = []
+    if resource_type in _GMAIL_RESOURCE_TYPES:
+        # Metadata was acquired by the provider, not inferred from the snippet.
+        for key, label in (
+            ("sender_name", "Sender name"),
+            ("sender_email", "Sender email"),
+            ("received_at", "Received"),
+        ):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{label}: {value.strip()}")
     for key in _TEXT_KEYS:
         value = payload.get(key)
         if isinstance(value, str) and value.strip():

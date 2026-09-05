@@ -50,6 +50,25 @@ def test_segment_id__is_stable__and_content_sensitive() -> None:
     assert changed != first
 
 
+def test_search_candidate_keeps_provider_sender_without_promoting_body_mentions() -> None:
+    acquisition = _result("김정우 대리에게 문의하세요")
+    resource = acquisition["source_summaries"][0]["resources"][0]
+    resource["payload"].update({
+        "sender_name": "김철수 대리", "sender_email": "kim_0728@example.com",
+        "received_at": "Thu, 20 Aug 2026 10:00:00 +0900",
+    })
+    segment = normalize_segments(acquisition)[0]
+    assert "Sender name: 김철수 대리" in segment.text
+    assert "Sender email: kim_0728@example.com" in segment.text
+    assert segment.locator["sender_name"] == "김철수 대리"
+    assert segment.locator["sender_email"] == "kim_0728@example.com"
+    assert "김정우 대리" not in str(segment.locator)
+    assert "message_id" not in segment.locator
+    resource["payload"]["sender_email"] = {"guessed": "identity"}
+    with pytest.raises(ValueError, match="invalid Gmail candidate metadata"):
+        normalize_segments(acquisition)
+
+
 def test_thread_messages_keep_later_decisions_after_an_earlier_signature() -> None:
     acquisition = _result("unused")
     source = acquisition["source_summaries"][0]
