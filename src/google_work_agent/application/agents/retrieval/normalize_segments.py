@@ -206,7 +206,12 @@ def _source_kind(source: str) -> LiteralSourceKind:
     try:
         return cast(
             LiteralSourceKind,
-            {"GMAIL": "gmail", "TASKS": "tasks", "CALENDAR": "calendar"}[source.upper()],
+            {
+                "GMAIL": "gmail",
+                "TASKS": "tasks",
+                "CALENDAR": "calendar",
+                "GITHUB": "github",
+            }[source.upper()],
         )
     except KeyError as error:
         raise ValueError(f"unsupported retrieval source kind: {source}") from error
@@ -217,7 +222,7 @@ def _segment_id(identity: SourceSegmentIdentityV1) -> str:
     return "seg_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-LiteralSourceKind = Literal["gmail", "tasks", "calendar"]
+LiteralSourceKind = Literal["gmail", "tasks", "calendar", "github"]
 
 
 class RetrievalValidationError(ValueError):

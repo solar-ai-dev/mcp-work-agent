@@ -6,7 +6,7 @@ from typing import Literal, Required, TypedDict
 class SourceSegmentIdentityV1(TypedDict):
     schema_version: Required[Literal[1]]
     connector_id: Required[str]
-    source_kind: Required[Literal["gmail", "tasks", "calendar"]]
+    source_kind: Required[Literal["gmail", "tasks", "calendar", "github"]]
     resource_type: Required[str]
     resource_id: Required[str]
     source_version_ref: Required[str | None]

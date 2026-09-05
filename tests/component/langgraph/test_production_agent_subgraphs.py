@@ -266,6 +266,56 @@ class _StoppingGitHubReadPort:
         raise _ReadBoundaryReached
 
 
+class _ComponentGitHubConnectorReadPort:
+    def __init__(self) -> None:
+        self.arguments: dict[str, Any] | None = None
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        self.call_count += 1
+        assert binding.tool_id == "github_list_issues"
+        self.arguments = dict(tool_arguments)
+        return ConnectorReadResultV1(
+            schema_version=1,
+            tool_id=binding.tool_id,
+            request_id="component-github-read-1",
+            output={
+                "items": [
+                    {
+                        "resource_type": "github_issue",
+                        "resource_id": "acme/repo#7",
+                        "parent_id": "acme/repo",
+                        "version": "2026-09-01T00:00:00Z",
+                        "related_resource_ids": ["acme/repo"],
+                        "payload": {
+                            "repository": "acme/repo",
+                            "issue_number": 7,
+                            "title": "Status issue seven",
+                            "description": "First status update",
+                            "state": "OPEN",
+                        },
+                    },
+                    {
+                        "resource_type": "github_issue",
+                        "resource_id": "acme/repo#8",
+                        "parent_id": "acme/repo",
+                        "version": "2026-09-02T00:00:00Z",
+                        "related_resource_ids": ["acme/repo"],
+                        "payload": {
+                            "repository": "acme/repo",
+                            "issue_number": 8,
+                            "title": "Status issue eight",
+                            "description": "Second status update",
+                            "state": "OPEN",
+                        },
+                    },
+                ]
+            },
+            next_page_token=None,
+            total_count=2,
+        )
+
+
 def _state(
     *,
     initial_target: str = "request_understanding",
@@ -517,7 +567,7 @@ def test_retrieval__github_repository_authority__reaches_connector_read(
         Any, _github_intent(explicit_repository=authority_source == "explicit")
     )
     state["tool_route_plan"] = cast(Any, _github_route_plan())
-    connector = _StoppingGitHubReadPort()
+    connector = _ComponentGitHubConnectorReadPort()
     graph = RetrievalSubgraph(
         llm_runtime=_ComponentInferencePort(github_retrieval=True),
         prompt_manifest_path=None,
@@ -533,10 +583,25 @@ def test_retrieval__github_repository_authority__reaches_connector_read(
         confirm_inline=cast(Any, _confirm_early),
     ).build()
 
-    with provider_dispatch_execution_scope(), pytest.raises(_ReadBoundaryReached):
-        graph.invoke(state)
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
 
     assert connector.arguments == {"repository": "acme/repo", "state": "ALL"}
+    assert connector.call_count == 1
+    assert result["retrieval_result"]["coverage"] == "SUFFICIENT"
+    assert set(result["retrieval_result"]["source_resource_refs"]) == {
+        "github_issue:acme/repo#7",
+        "github_issue:acme/repo#8",
+    }
+    assert result["retrieval_result"]["source_statuses"] == [
+        {
+            "route_id": "route-1",
+            "resource_type": "github_issue",
+            "status": "COMPLETE",
+            "evidence_refs": result["retrieval_result"]["evidence_refs"],
+            "failure_kind": None,
+        }
+    ]
 
 
 @pytest.mark.parametrize("authority_case", ["missing", "conflict", "unvalidated"])

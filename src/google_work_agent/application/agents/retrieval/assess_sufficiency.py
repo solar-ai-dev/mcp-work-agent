@@ -92,6 +92,7 @@ def assess_sufficiency(
 class ResolutionSource(StrEnum):
     USER = "USER"
     GOOGLE = "GOOGLE"
+    CONNECTOR = "CONNECTOR"
     POLICY = "POLICY"
     ROUTE = "ROUTE"
 
@@ -137,7 +138,10 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
     if any(issue.resolution_source is ResolutionSource.ROUTE for issue in required):
         return InsufficientDataDisposition.ROUTE_RECONSIDERATION_REQUIRED
     if (
-        any(issue.resolution_source is ResolutionSource.GOOGLE for issue in required)
+        any(
+            issue.resolution_source in {ResolutionSource.GOOGLE, ResolutionSource.CONNECTOR}
+            for issue in required
+        )
         and context.budget_remaining > 0
     ):
         return InsufficientDataDisposition.RETRIEVE_MORE
@@ -196,7 +200,7 @@ SUFFICIENCY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                         "required": {"type": "boolean"},
                         "resolution_source": {
                             "type": "string",
-                            "enum": ["USER", "GOOGLE", "POLICY", "ROUTE"],
+                            "enum": ["USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"],
                         },
                         "safety_critical": {"type": "boolean"},
                         "reason_codes": {"type": "array", "items": {"type": "string"}},
@@ -209,11 +213,12 @@ SUFFICIENCY_OUTPUT_SCHEMA = OutputSchemaDefinition(
 
 _CONTEXT_RESULT_VALUES = {item.value for item in ContextResult}
 _ISSUE_TYPE_VALUES = {"MISSING", "CONFLICT"}
-_RESOLUTION_SOURCE_VALUES = {"USER", "GOOGLE", "POLICY", "ROUTE"}
+_RESOLUTION_SOURCE_VALUES = {"USER", "GOOGLE", "CONNECTOR", "POLICY", "ROUTE"}
 _RESOURCE_TYPE_TO_SOURCE_NAME: dict[str, str] = {
     "EMAIL": "GMAIL",
     "TASK": "TASKS",
     "CALENDAR": "CALENDAR",
+    "ISSUE": "GITHUB",
 }
 _SOURCE_STATUS_MAP: dict[str, tuple[str, str | None]] = {
     "COMPLETE": ("COMPLETE", None),
@@ -241,6 +246,7 @@ _DISPOSITION_TO_STATUS: dict[InsufficientDataDisposition, ContextStatusValue] = 
 _RESOLUTION_SOURCE_TO_REQUIRED_FOR: dict[str, MissingInformationRequiredForValue] = {
     "USER": "USER_CONFIRMATION",
     "GOOGLE": "RETRIEVAL",
+    "CONNECTOR": "RETRIEVAL",
     "ROUTE": "RETRIEVAL",
     "POLICY": "PLANNING",
 }
