@@ -1235,6 +1235,7 @@ def test_general_gmail_search__resolves_last_week_from_injected_clock() -> None:
             "request_intent": {
                 "constraints": [
                     {"kind": "DATE", "field": "period", "value": ["지난주"]},
+                    {"kind": "TIME", "field": "temporal_axis", "value": "MESSAGE_TIME"},
                     {
                         "kind": "USER_REQUIREMENT",
                         "field": "search_terms",

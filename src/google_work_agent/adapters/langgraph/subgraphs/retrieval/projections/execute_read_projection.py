@@ -366,11 +366,15 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
             ]
             joined = " ".join(values)
             terms.append("{" + joined + "}" if constraint["match_mode"] == "ANY" else joined)
-        elif constraint["kind"] == "TEMPORAL_RANGE":
-            if constraint["start_local"] is not None:
-                terms.append("after:" + constraint["start_local"][:10].replace("-", "/"))
-            if constraint["end_local"] is not None:
-                terms.append("before:" + constraint["end_local"][:10].replace("-", "/"))
+        elif constraint["kind"] == "TEMPORAL_RANGE" and constraint["axis"] == "MESSAGE_TIME":
+            zone = ZoneInfo(constraint["timezone"])
+            for boundary, prefix in (
+                (constraint["start_local"], "after:"),
+                (constraint["end_local"], "before:"),
+            ):
+                if boundary is not None:
+                    seconds = int(datetime.fromisoformat(boundary).replace(tzinfo=zone).timestamp())
+                    terms.append(prefix + str(seconds))
         elif constraint["kind"] == "RESOURCE_REF":
             terms.extend("rfc822msgid:" + item for item in constraint["resource_refs"])
         elif constraint["kind"] == "CONTAINER_REF":

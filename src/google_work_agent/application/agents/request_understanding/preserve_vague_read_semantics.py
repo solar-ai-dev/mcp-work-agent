@@ -26,13 +26,12 @@ _PLACEHOLDER_VALUES = frozenset(
 )
 _PERSON_PATTERN = re.compile(r"[가-힣]{1,4}(?:대리|과장|차장|부장|팀장|실장|이사|님)")
 _PERIOD_PATTERN = re.compile(
-    r"지난\s*주|이번\s*주|다음\s*주|지난\s*달|이번\s*달|최근|오늘|어제|그제"
+    r"(?:\d{4}년\s*)?(?:1[0-2]|[1-9])월(?:\s*첫째\s*주)?"
+    r"|지난\s*주|이번\s*주|다음\s*주|지난\s*달|이번\s*달|최근|오늘|어제|그제"
 )
 _EXPLICIT_SUBJECT_PATTERNS = (
     re.compile(r"(?:제목)(?:이|가|은|는)?\s*(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"),
-    re.compile(
-        r"(?i)(?:subject)\s*(?:is\s*)?(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"
-    ),
+    re.compile(r"(?i)(?:subject)\s*(?:is\s*)?(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"),
 )
 _DIRECT_TOPIC_PATTERNS = (
     re.compile(r"(?P<topic>[0-9A-Za-z가-힣_+\-]{2,})\s*(?:관련|에\s*관한)\s*(?:메일|이메일)"),
@@ -108,8 +107,7 @@ def preserve_vague_read_semantics(
         constraints = [
             constraint
             for constraint in constraints
-            if constraint["field"]
-            not in {"subject", "search_criteria_subject", "search_terms"}
+            if constraint["field"] not in {"subject", "search_criteria_subject", "search_terms"}
         ]
         _merge_constraint(
             constraints,
@@ -142,6 +140,25 @@ def preserve_vague_read_semantics(
         ],
         replace_existing=True,
     )
+    periods = list(_PERIOD_PATTERN.finditer(request_text))
+    if periods:
+        axes = []
+        for period in periods:
+            tail = request_text[period.end() :]
+            message_time = re.match(r"\s*(?:에\s*)?(?:온|받은|수신|도착|보낸|발송)", tail)
+            event_time = re.match(
+                r"\s*(?:의\s*|에\s*(?:있는|열리는|개최되는)?\s*)?"
+                r"(?:일정|회의|행사|박람회|체육대회|교육|출장|방문)",
+                tail,
+            )
+            axes.append("EVENT_TIME" if event_time and not message_time else "MESSAGE_TIME")
+        _merge_constraint(
+            constraints,
+            kind="TIME",
+            field="temporal_axis",
+            values=axes,
+            replace_existing=True,
+        )
     _merge_constraint(
         constraints,
         kind="USER_REQUIREMENT",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Literal, TypedDict
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 class ResolvedTemporalRange(TypedDict):
     kind: Literal["TEMPORAL_RANGE"]
-    axis: Literal["MESSAGE_TIME"]
+    axis: Literal["MESSAGE_TIME", "EVENT_TIME"]
     start_local: str
     end_local: str
     timezone: str
@@ -26,6 +27,27 @@ def resolve_relative_period(
 
     periods = _relative_periods(constraints)
     if len(periods) != 1:
+        return None
+    axes = (
+        {
+            value
+            for item in constraints
+            if isinstance(item, Mapping)
+            if item.get("kind") == "TIME" and item.get("field") == "temporal_axis"
+            for value in (
+                item["value"] if isinstance(item.get("value"), list) else [item.get("value")]
+            )
+            if isinstance(value, str)
+        }
+        if isinstance(constraints, list)
+        else set()
+    )
+    if axes == {"MESSAGE_TIME"}:
+        axis: Literal["MESSAGE_TIME", "EVENT_TIME"] = "MESSAGE_TIME"
+    elif axes == {"EVENT_TIME"}:
+        axis = "EVENT_TIME"
+    else:
+        # An older intent without an axis is not evidence of message-time meaning.
         return None
     try:
         local_now = datetime.fromtimestamp(now_ms / 1_000, tz=ZoneInfo(timezone))
@@ -56,11 +78,23 @@ def resolve_relative_period(
     elif period == "최근":
         start, end = today - timedelta(days=30), today + timedelta(days=1)
     else:
-        return None
+        month = re.fullmatch(r"(?:(\d{4})년)?(1[0-2]|[1-9])월(첫째주)?", period)
+        if month is None:
+            return None
+        year = int(month[1]) if month[1] else today.year
+        try:
+            start = today.replace(year=year, month=int(month[2]), day=1)
+            end = (
+                start + timedelta(days=7)
+                if month[3]
+                else (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+            )
+        except ValueError:
+            return None
 
     return {
         "kind": "TEMPORAL_RANGE",
-        "axis": "MESSAGE_TIME",
+        "axis": axis,
         "start_local": start.replace(tzinfo=None).isoformat(),
         "end_local": end.replace(tzinfo=None).isoformat(),
         "timezone": timezone,

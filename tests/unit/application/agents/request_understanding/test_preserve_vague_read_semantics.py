@@ -1,3 +1,5 @@
+import pytest
+
 from google_work_agent.application.agents.request_understanding import (
     preserve_vague_read_semantics as operation,
 )
@@ -18,6 +20,29 @@ def _candidate() -> RequestGoalCandidateV1:
         "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "REQUIRED",
     }
+
+
+@pytest.mark.parametrize(
+    ("request_text", "axis"),
+    [
+        ("9월 첫째주에 온 메일 찾아줘", "MESSAGE_TIME"),
+        ("9월 첫째주 일정 메일 찾아줘", "EVENT_TIME"),
+        ("2026년 9월 첫째주 체육대회 메일 찾아줘", "EVENT_TIME"),
+        ("이번주에 받은 회의 메일", "MESSAGE_TIME"),
+        ("다음주에 열리는 박람회 관련 메일", "EVENT_TIME"),
+    ],
+)
+def test_temporal_meaning_is_preserved_separately_from_message_receipt(
+    request_text: str, axis: str
+) -> None:
+    result = operation.preserve_vague_read_semantics(
+        _candidate(),
+        request_text=request_text,
+        entry_mode="AGENT_SEARCH",
+    )
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["temporal_axis"] == [axis]
+    assert fields["period"]
 
 
 def test_vague_read_semantics__restores_search_meaning_and_removes_placeholder() -> None:
@@ -64,8 +89,7 @@ def test_vague_read_semantics__does_not_use_discussion_verbs_as_search_terms() -
 
 def test_explicit_gmail_subject__replaces_broad_search_terms_with_exact_literal() -> None:
     request_text = (
-        "Gmail에서 제목이 '절대로 존재하지 않는 3/8 검증 메일 20260905'인 "
-        "메일을 찾아 분석해줘."
+        "Gmail에서 제목이 '절대로 존재하지 않는 3/8 검증 메일 20260905'인 메일을 찾아 분석해줘."
     )
     candidate = _candidate()
     candidate["constraints"] = [
@@ -131,7 +155,9 @@ def test_mail_to_task__preserves_source_search_without_changing_write_intent() -
     ]
     request = "런타임 검증 회의 관련 메일을 찾아서 후속 업무를 Google Tasks에 등록해줘."
     result = operation.preserve_vague_read_semantics(
-        candidate, request_text=request, entry_mode="AGENT_SEARCH",
+        candidate,
+        request_text=request,
+        entry_mode="AGENT_SEARCH",
     )
     by_field = {item["field"]: item["value"] for item in result["constraints"]}
     assert by_field["original_search_request"] == [request]

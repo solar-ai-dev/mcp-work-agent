@@ -1,4 +1,6 @@
+from datetime import datetime
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -48,4 +50,37 @@ def test_gmail_keyword_match_mode__lowers_to_distinct_provider_query(
     )
 
     assert tool_id == "gmail_search_threads"
+    assert arguments["query"] == expected
+
+
+@pytest.mark.parametrize("axis", ["MESSAGE_TIME", "EVENT_TIME"])
+def test_gmail_temporal_lowering_does_not_confuse_event_and_receipt_dates(axis: str) -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "resource_type": "GMAIL_THREAD",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": ["체육대회"], "match_mode": "PHRASE"},
+                {
+                    "kind": "TEMPORAL_RANGE",
+                    "axis": axis,
+                    "start_local": "2026-09-01T00:00:00",
+                    "end_local": "2026-09-08T00:00:00",
+                    "timezone": "Asia/Seoul",
+                },
+            ],
+        },
+    )
+    _, arguments = execute_read_projection.project_connector_call(
+        plan,
+        route=cast(InputToolRouteV1, {"allowed_read_tool_ids": ["gmail_search_threads"]}),
+        page_size=20,
+    )
+    expected = '"체육대회"'
+    if axis == "MESSAGE_TIME":
+        zone = ZoneInfo("Asia/Seoul")
+        start = int(datetime(2026, 9, 1, tzinfo=zone).timestamp())
+        end = int(datetime(2026, 9, 8, tzinfo=zone).timestamp())
+        expected += f" after:{start} before:{end}"
     assert arguments["query"] == expected
