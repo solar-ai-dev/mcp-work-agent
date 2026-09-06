@@ -38,9 +38,23 @@ def project_empty_read_answer(
     scope = f"'{criteria}' 조건으로 " if criteria else ""
     failed = _has_source_failure(retrieval_result)
     no_resources = _returned_no_resources(retrieval_result)
+    statuses = retrieval_result.get("source_statuses", [])
+    github_access_failure = isinstance(statuses, list) and any(
+        isinstance(item, Mapping)
+        and item.get("resource_type") == "GITHUB_ISSUE"
+        and item.get("status") == "FAILED"
+        and item.get("failure_kind") in {"NOT_FOUND", "SCOPE"}
+        for item in statuses
+    )
 
     if korean:
-        if failed:
+        if github_access_failure:
+            answer = (
+                "GitHub 저장소 또는 이슈에 접근할 수 없습니다. 저장소 주소와 GitHub App 설치·"
+                "저장소 접근 권한을 확인한 뒤 다시 요청해 주세요. 이슈가 없다는 뜻은 아닙니다."
+            )
+            section = "GitHub 저장소 접근 확인 필요"
+        elif failed:
             answer = (
                 f"{scope}{resource} 자료를 확인했지만 일부 읽기에 실패해 요청을 완료할 "
                 f"근거가 부족합니다. {resource} 연결 상태를 확인한 뒤 다시 시도해 주세요."
@@ -60,7 +74,14 @@ def project_empty_read_answer(
             section = "근거 부족"
     else:
         prefix = f"Using the {criteria} criteria, " if criteria else ""
-        if failed:
+        if github_access_failure:
+            answer = (
+                "I could not access the GitHub repository or issue. Check the repository address, "
+                "GitHub App installation and repository permissions, then send a new request. "
+                "This does not mean the repository has no issues."
+            )
+            section = "GitHub repository access needs attention"
+        elif failed:
             answer = (
                 f"{prefix}I could not gather enough evidence from {resource} because some "
                 f"reads failed. Check the {resource} connection and try again."

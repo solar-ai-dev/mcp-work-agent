@@ -3,6 +3,25 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.projec
 )
 
 
+def test_repository_missing__korean_confirmation__names_required_repository() -> None:
+    question = request_confirmation_projection.build_request_clarification_question(
+        request_text="열린 이슈 보여줘",
+        ambiguity={
+            "requires_confirmation": True,
+            "reason_codes": ["MISSING_TARGET"],
+            "missing_fields": ["repository"],
+        },
+        goal_candidate={
+            "goal": "열린 이슈 조회", "completion_conditions": ["이슈 목록 반환"],
+            "constraints": [], "requested_effect_hints": ["READ"],
+            "requested_resource_hints": ["GITHUB_ISSUE"], "analysis_requirement": "NONE",
+        },
+    )
+    assert "대상 GitHub 저장소(owner/repository 형식)" in question["question"]
+    assert "MISSING_TARGET" not in question["question"]
+    assert question["affected_field_paths"] == ["repository"]
+
+
 def test_korean_request_confirmation__uses_user_language_and_hides_reason_code() -> None:
     question = request_confirmation_projection.build_request_clarification_question(
         request_text="회의 일정을 만들어줘",

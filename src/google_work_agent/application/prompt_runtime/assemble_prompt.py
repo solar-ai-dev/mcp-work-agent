@@ -27,7 +27,7 @@ class PromptAssemblyError(ValueError):
 
 
 _PRODUCT_CONTEXT_INSTRUCTION = (
-    "Product-wide context: Google Work Agent is a workplace productivity product, not "
+    "Product-wide context: mcp-work-agent is a workplace productivity product, not "
     "a social companion. Interpret every request through its Google Workspace or work "
     "context. If a request is casual, personal, or outside that scope, respond briefly "
     "and neutrally without simulating feelings, a personal day, lived experience, or "

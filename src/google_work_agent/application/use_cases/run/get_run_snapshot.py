@@ -55,6 +55,7 @@ from google_work_agent.domain.verification.model import VerificationStatus
 from google_work_agent.ports.persistence.approval_repository import active_approval_tuple
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +136,7 @@ class GetExecutionContextResult:
     selected_resource_ids: tuple[str, ...]
     run_budget: RunBudgetV2
     selected_resources: tuple[SelectedResourceRef, ...] = ()
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,6 +334,13 @@ class GetRunSnapshotHandler:
             selected_resource_ids=tuple(record.resource_id for record in resources),
             run_budget=validate_run_budget_v2(loads(run.budget_json)),
             selected_resources=tuple(_selected_resource_ref(record) for record in resources),
+            default_github_repository=(
+                None
+                if run.default_github_repository_json is None
+                else GitHubRepositoryDefaultV1.from_payload(
+                    loads(run.default_github_repository_json)
+                )
+            ),
         )
 
     def _optional_context_preview(self, run_id: str) -> ProjectContextPreviewResultV1 | None:

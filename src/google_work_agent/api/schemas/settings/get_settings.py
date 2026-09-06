@@ -3,6 +3,7 @@
 from typing import Literal
 
 from google_work_agent.api.schemas.model import ApiModel
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 
 class PanelPreferencesResponseV1(ApiModel):
@@ -16,6 +17,7 @@ class SettingsResponse(ApiModel):
     timezone: str
     default_tasklist_id: str | None
     default_calendar_id: str | None
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
     preferred_local_model_id: str | None
     external_llm_consent: bool

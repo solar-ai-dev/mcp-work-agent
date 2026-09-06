@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Literal, cast, overload
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -11,13 +12,13 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     ConstraintV1,
     RequestIntentCandidateV1,
     RequestIntentV2,
+    RequestUnderstandingValidationError,
+    is_fully_qualified_repository,
+    is_repository_constraint,
+    repository_from_constraints,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
-
-
-class RequestUnderstandingValidationError(ValueError):
-    """Raised when a Request Understanding artifact violates its owner contract."""
-
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 _CONSTRAINT_KINDS = {"PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"}
 _EFFECTS = {"READ", "CREATE", "UPDATE", "SEND", "DELETE"}
@@ -61,6 +62,8 @@ def validate_intent(
     }
     if require_meta:
         expected.add("meta")
+        if "repository_default" in root:
+            expected.add("repository_default")
     if set(root) != expected:
         raise RequestUnderstandingValidationError("RequestIntentV2 fields are invalid")
     if root.get("schema_version") != 2:
@@ -119,6 +122,15 @@ def validate_intent(
         {
             **candidate,
             "meta": {"artifact_id": artifact_id, "revision": revision, "based_on": list(based_on)},
+            **(
+                {
+                    "repository_default": asdict(
+                        GitHubRepositoryDefaultV1.from_payload(root["repository_default"])
+                    )
+                }
+                if "repository_default" in root
+                else {}
+            ),
         },
     )
 
@@ -141,12 +153,16 @@ def _ambiguity(value: object) -> AmbiguityV1:
 
 def _constraint(value: object, path: str) -> ConstraintV1:
     root = _mapping(value, path)
-    if not {"kind", "field", "value"} <= set(root) <= {
-        "kind",
-        "field",
-        "value",
-        "provenance",
-    }:
+    if (
+        not {"kind", "field", "value"}
+        <= set(root)
+        <= {
+            "kind",
+            "field",
+            "value",
+            "provenance",
+        }
+    ):
         raise RequestUnderstandingValidationError(f"{path} fields are invalid")
     kind = root.get("kind")
     if kind not in _CONSTRAINT_KINDS:
@@ -173,16 +189,14 @@ def materialize_validated_constraint_provenance(
     confirmation_response_text: str | None,
 ) -> list[ConstraintV1]:
     """Bind identity constraints to exact current-Run source text."""
-    sources: list[tuple[ConstraintProvenanceSource, str]] = [
-        ("USER_REQUEST", user_request)
-    ]
+    sources: list[tuple[ConstraintProvenanceSource, str]] = [("USER_REQUEST", user_request)]
     if confirmation_response_text is not None:
         sources.insert(0, ("CONFIRMATION_RESPONSE", confirmation_response_text))
     materialized: list[ConstraintV1] = []
     for index, constraint in enumerate(constraints):
         copied = cast(ConstraintV1, dict(constraint))
         copied.pop("provenance", None)
-        if not _is_repository_constraint(copied):
+        if not is_repository_constraint(copied):
             materialized.append(copied)
             continue
         value = copied["value"]
@@ -215,96 +229,23 @@ def repository_authority_requires_confirmation(
     confirmation_response_text: str | None,
     selected_resources: Sequence[SelectedResourceRef],
     repository_required: bool = False,
+    repository_default: GitHubRepositoryDefaultV1 | None = None,
 ) -> bool:
-    repository_constraints = [item for item in constraints if _is_repository_constraint(item)]
+    repository_constraints = [item for item in constraints if is_repository_constraint(item)]
     try:
         materialized = materialize_validated_constraint_provenance(
             repository_constraints,
             user_request=user_request,
             confirmation_response_text=confirmation_response_text,
         )
-        repository = _repository_authority(materialized, selected_resources=selected_resources)
+        repository = repository_from_constraints(
+            materialized, selected_resources=selected_resources,
+        )
     except RequestUnderstandingValidationError:
         return True
-    return repository_required and repository is None
+    return repository_required and repository is None and repository_default is None
 
 
-def validated_repository_authority(
-    request_intent: RequestIntentV2,
-    *,
-    selected_resources: Sequence[SelectedResourceRef],
-) -> str | None:
-    """Resolve the sole repository value already authorized for this Run."""
-    if request_intent["ambiguity"]["requires_confirmation"]:
-        raise RequestUnderstandingValidationError(
-            "repository authority cannot be consumed from an ambiguous intent"
-        )
-    return _repository_authority(
-        request_intent["constraints"],
-        selected_resources=selected_resources,
-    )
-
-
-def _repository_authority(
-    constraints: Sequence[ConstraintV1],
-    *,
-    selected_resources: Sequence[SelectedResourceRef],
-) -> str | None:
-    repository_constraints = [item for item in constraints if _is_repository_constraint(item)]
-    explicit_repositories: set[str] = set()
-    for constraint in repository_constraints:
-        value = constraint["value"]
-        if (
-            not isinstance(value, str)
-            or not is_fully_qualified_repository(value)
-            or constraint.get("provenance") is None
-        ):
-            raise RequestUnderstandingValidationError(
-                "repository authority requires validated provenance"
-            )
-        explicit_repositories.add(value)
-    if len(explicit_repositories) != len(repository_constraints) or len(explicit_repositories) > 1:
-        raise RequestUnderstandingValidationError("repository authority is ambiguous")
-
-    selected_repositories: set[str] = set()
-    for resource in selected_resources:
-        if resource.connector_id != "github" or resource.resource_type != "github_issue":
-            continue
-        parent = resource.parent_resource_id
-        if parent is None or not is_fully_qualified_repository(parent):
-            raise RequestUnderstandingValidationError(
-                "selected GitHub Issue repository authority is invalid"
-            )
-        prefix, separator, issue_number = resource.resource_id.rpartition("#")
-        if (
-            prefix != parent
-            or separator != "#"
-            or not issue_number.isdigit()
-            or int(issue_number) < 1
-        ):
-            raise RequestUnderstandingValidationError("selected GitHub Issue identity is invalid")
-        selected_repositories.add(parent)
-    if len(selected_repositories) > 1:
-        raise RequestUnderstandingValidationError("selected repository authority is ambiguous")
-
-    repositories = explicit_repositories | selected_repositories
-    if len(repositories) > 1:
-        raise RequestUnderstandingValidationError("repository authorities conflict")
-    return next(iter(repositories), None)
-
-
-def is_fully_qualified_repository(value: str) -> bool:
-    parts = value.split("/")
-    return (
-        value == value.strip()
-        and len(parts) == 2
-        and bool(parts[0])
-        and bool(parts[1])
-    )
-
-
-def _is_repository_constraint(constraint: ConstraintV1) -> bool:
-    return constraint["kind"] == "RESOURCE" and constraint["field"] == "repository"
 
 
 def _provenance(value: object, path: str) -> ConstraintProvenanceV1:
@@ -334,7 +275,7 @@ def _validate_provenance_binding(
     provenance_sources: Mapping[ConstraintProvenanceSource, str],
 ) -> None:
     provenance = constraint.get("provenance")
-    if _is_repository_constraint(constraint) and provenance is None:
+    if is_repository_constraint(constraint) and provenance is None:
         raise RequestUnderstandingValidationError(f"{path}.provenance is required")
     if provenance is None:
         return
@@ -350,7 +291,7 @@ def _validate_provenance_binding(
         raise RequestUnderstandingValidationError(f"{path}.provenance source is unavailable")
     if source_text[start_offset:end_offset] != value:
         raise RequestUnderstandingValidationError(f"{path}.provenance does not match source")
-    if _is_repository_constraint(constraint) and not is_fully_qualified_repository(value):
+    if is_repository_constraint(constraint) and not is_fully_qualified_repository(value):
         raise RequestUnderstandingValidationError(
             f"{path}.value must be a fully-qualified repository"
         )

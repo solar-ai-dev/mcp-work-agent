@@ -41,28 +41,20 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
         "allOf": [
             {
                 "if": {
-                    "properties": {
-                        "requested_effect_hints": {"type": "array", "minItems": 1}
-                    },
+                    "properties": {"requested_effect_hints": {"type": "array", "minItems": 1}},
                     "required": ["requested_effect_hints"],
                 },
                 "then": {
-                    "properties": {
-                        "requested_resource_hints": {"type": "array", "minItems": 1}
-                    }
+                    "properties": {"requested_resource_hints": {"type": "array", "minItems": 1}}
                 },
             },
             {
                 "if": {
-                    "properties": {
-                        "requested_resource_hints": {"type": "array", "minItems": 1}
-                    },
+                    "properties": {"requested_resource_hints": {"type": "array", "minItems": 1}},
                     "required": ["requested_resource_hints"],
                 },
                 "then": {
-                    "properties": {
-                        "requested_effect_hints": {"type": "array", "minItems": 1}
-                    }
+                    "properties": {"requested_effect_hints": {"type": "array", "minItems": 1}}
                 },
             },
         ],
@@ -367,9 +359,7 @@ def _date_value_appears_in_text(value: object, text: str) -> bool:
         if match is None:
             continue
         month, day = (int(match.group(1)), int(match.group(2)))
-        token = re.compile(
-            rf"(?<!\d)0?{month}\s*(?:[-./]|월\s*)0?{day}(?:\s*일)?(?!\d)"
-        )
+        token = re.compile(rf"(?<!\d)0?{month}\s*(?:[-./]|월\s*)0?{day}(?:\s*일)?(?!\d)")
         if token.search(text):
             return True
     return False
@@ -382,11 +372,14 @@ def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDef
     outside_literals = request.request_text
     for pattern in _QUOTED_LITERAL_PATTERNS:
         outside_literals = pattern.sub(" ", outside_literals)
-    has_explicit_create = re.search(
-        r"(?is)(?:Google\s+Tasks|태스크|Google\s+Calendar|캘린더)"
-        r"[^.!?]{0,300}(?:등록|생성|추가|만들어)\s*해?\s*(?:줘|주세요)[.!?\s]*$",
-        outside_literals,
-    ) is not None
+    has_explicit_create = (
+        re.search(
+            r"(?is)(?:Google\s+Tasks|태스크|Google\s+Calendar|캘린더)"
+            r"[^.!?]{0,300}(?:등록|생성|추가|만들어)\s*해?\s*(?:줘|주세요)[.!?\s]*$",
+            outside_literals,
+        )
+        is not None
+    )
     if not (has_explicit_read or has_explicit_create or _selected_resource_hints(request)):
         return IDENTIFY_GOAL_OUTPUT_SCHEMA
     schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
@@ -509,9 +502,7 @@ def _apply_selected_resource_authority(
         for constraint in constraints
         if constraint["kind"] == "RESOURCE"
         for item in (
-            constraint["value"]
-            if isinstance(constraint["value"], list)
-            else [constraint["value"]]
+            constraint["value"] if isinstance(constraint["value"], list) else [constraint["value"]]
         )
     }
     missing_resource_ids = [
@@ -544,8 +535,15 @@ def _apply_selected_resource_authority(
 _SELECTED_RESOURCE_HINTS = {
     ("google_workspace", resource_type): resource_type
     for resource_type in (
-        "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT", "GMAIL_ATTACHMENT",
-        "TASK_LIST", "TASK", "CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY",
+        "GMAIL_THREAD",
+        "GMAIL_MESSAGE",
+        "GMAIL_DRAFT",
+        "GMAIL_ATTACHMENT",
+        "TASK_LIST",
+        "TASK",
+        "CALENDAR",
+        "CALENDAR_EVENT",
+        "CALENDAR_FREEBUSY",
     )
 } | {("github", "GITHUB_ISSUE"): "GITHUB_ISSUE"}
 
@@ -556,9 +554,7 @@ def _selected_resource_hints(request: WorkflowStartRequest) -> list[str]:
             hint
             for ref in request.selected_resources
             for hint in (
-                _SELECTED_RESOURCE_HINTS.get(
-                    (ref.connector_id, ref.resource_type.upper())
-                ),
+                _SELECTED_RESOURCE_HINTS.get((ref.connector_id, ref.resource_type.upper())),
             )
             if hint is not None
         )

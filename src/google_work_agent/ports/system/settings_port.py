@@ -1,5 +1,7 @@
 """Versioned non-secret settings storage boundary."""
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -16,11 +18,54 @@ class PanelPreferencesV1:
 
 
 @dataclass(frozen=True, slots=True)
+class GitHubRepositoryDefaultV1:
+    repository: str
+    repository_id: int
+    account_id: str
+
+    @classmethod
+    def from_payload(cls, value: object) -> "GitHubRepositoryDefaultV1":
+        if not isinstance(value, Mapping) or set(value) != {
+            "repository",
+            "repository_id",
+            "account_id",
+        }:
+            raise ValueError("invalid GitHub repository default payload")
+        repository, repository_id, account_id = (
+            value["repository"],
+            value["repository_id"],
+            value["account_id"],
+        )
+        if (
+            not isinstance(repository, str)
+            or type(repository_id) is not int
+            or not isinstance(account_id, str)
+        ):
+            raise ValueError("invalid GitHub repository default fields")
+        return cls(repository, repository_id, account_id)
+
+    def __post_init__(self) -> None:
+        if (
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", self.repository)
+            or self.repository.split("/")[-1] in {".", ".."}
+            or len(self.repository) > 200
+            or type(self.repository_id) is not int
+            or self.repository_id <= 0
+            or not re.fullmatch(r"github:[1-9][0-9]*", self.account_id)
+        ):
+            raise ValueError("invalid GitHub repository default")
+
+
+@dataclass(frozen=True, slots=True)
 class SettingsPatchV1:
     schema_version: Literal[1]
     timezone: str | None = None
     default_tasklist_id: str | None = None
     default_calendar_id: str | None = None
+    clear_default_calendar: bool = False
+    clear_default_tasklist: bool = False
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
+    github_repository_supplied: bool = False
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"] | None = None
     external_llm_consent: bool | None = None
     retention_days: int | None = None
@@ -64,6 +109,7 @@ class SettingsViewV1:
     circuit_failure_threshold: int
     circuit_open_duration_ms: int
     preferred_local_model_id: str | None = None
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
 
 
 class SettingsPort(Protocol):
@@ -78,4 +124,10 @@ class SettingsPort(Protocol):
     ) -> OperationalReconcileResultV1: ...
 
 
-__all__ = ["PanelPreferencesV1", "SettingsPatchV1", "SettingsPort", "SettingsViewV1"]
+__all__ = [
+    "GitHubRepositoryDefaultV1",
+    "PanelPreferencesV1",
+    "SettingsPatchV1",
+    "SettingsPort",
+    "SettingsViewV1",
+]

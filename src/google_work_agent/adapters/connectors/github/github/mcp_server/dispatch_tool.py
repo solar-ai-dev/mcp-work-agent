@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .composition import GitHubMcpServerState
 from .oauth_device_flow import GitHubOAuthConfigurationError
 from .project_registry import WRITE_TOOL_IDS
@@ -33,9 +35,7 @@ def dispatch_github_tool(
     if tool_name not in WRITE_TOOL_IDS:
         return operation.execute(arguments)
     claim_context = arguments.get("claim_context")
-    execution_arguments = {
-        key: value for key, value in arguments.items() if key != "claim_context"
-    }
+    execution_arguments = {key: value for key, value in arguments.items() if key != "claim_context"}
     if tool_name == "github_create_issue" and not isinstance(
         execution_arguments.get("recovery_fingerprint"), str
     ):
@@ -58,9 +58,25 @@ def dispatch_control(
     arguments: dict[str, object] | None = None,
 ) -> dict[str, object]:
     arguments = arguments or {}
+    if method == "github.repositories.list":
+        return state.repository_listing().execute(arguments)
     if method == "github.connection.get":
         try:
             _poll_active_device_flow(state)
+            if state.active_device_authorization is not None:
+                # Reauthorization must not refresh an old account/client credential
+                # while waiting for the new authorization to complete.
+                return {
+                    "connected": False,
+                    "credential_state": "CONNECTING",
+                    "reauth_required": False,
+                    "last_checked_at_ms": state.now_ms(),
+                    "account_id": None,
+                    "account_email": None,
+                    "granted_scopes": [],
+                    "missing_scopes": [],
+                    "authorization_status": state.device_authorization_status,
+                }
             status = state.credential_provider().get_connection_status()
         except GitHubOAuthConfigurationError as error:
             return {
@@ -83,11 +99,10 @@ def dispatch_control(
                 raise ControlCallError("MALFORMED_RESPONSE", "GITHUB_ACCOUNT_INVALID")
             raw_id = profile.get("id")
             login = profile.get("login")
-            email = profile.get("email")
             if not isinstance(raw_id, int) or not isinstance(login, str) or not login:
                 raise ControlCallError("MALFORMED_RESPONSE", "GITHUB_ACCOUNT_INVALID")
             account_id = f"github:{raw_id}"
-            account_email = email if isinstance(email, str) and email else login
+            account_email = login
         return {
             "connected": status.connected,
             "credential_state": ("CONNECTING" if connecting else status.credential_state.value),
@@ -97,6 +112,7 @@ def dispatch_control(
             "account_email": account_email,
             "granted_scopes": list(status.granted_scopes),
             "missing_scopes": list(status.missing_required_scopes),
+            "authorization_status": state.device_authorization_status,
         }
     if method == "github.device_flow.start":
         operation_ref = str(arguments.get("operation_ref", "")).strip()
@@ -104,10 +120,9 @@ def dispatch_control(
             raise ControlCallError("INVALID_ARGUMENT", "OPERATION_REF_REQUIRED")
         authorization = state.credential_provider().start_device_flow()
         state.active_device_authorization = authorization
+        state.device_authorization_status = "PENDING"
         state.active_device_operation_ref = operation_ref
-        state.next_device_poll_at_ms = (
-            state.now_ms() + authorization.interval_seconds * 1000
-        )
+        state.next_device_poll_at_ms = state.now_ms() + authorization.interval_seconds * 1000
         payload = {
             "schema_version": 1,
             "flow_kind": "DEVICE_CODE",
@@ -124,11 +139,14 @@ def dispatch_control(
         active_authorization = state.active_device_authorization
         if active_authorization is None:
             raise ControlCallError("NOT_FOUND", "NO_ACTIVE_DEVICE_FLOW")
-        result = state.credential_provider().complete_device_flow(active_authorization)
-        _update_poll_state(state, result.status.value, result.interval_seconds)
+        _poll_active_device_flow(state)
         return {
-            "status": result.status.value,
-            "interval_seconds": result.interval_seconds,
+            "status": state.device_authorization_status or "PENDING",
+            "interval_seconds": (
+                None
+                if state.active_device_authorization is None
+                else state.active_device_authorization.interval_seconds
+            ),
         }
     if method == "github.device_flow.reconcile_start":
         operation_ref = str(arguments.get("operation_ref", ""))
@@ -146,6 +164,7 @@ def dispatch_control(
         state.active_device_authorization = None
         state.active_device_operation_ref = None
         state.next_device_poll_at_ms = None
+        state.device_authorization_status = None
         operation_ref = str(arguments.get("operation_ref", ""))
         payload = {
             "revoke_attempted": False,
@@ -170,10 +189,10 @@ def _poll_active_device_flow(state: GitHubMcpServerState) -> None:
     authorization = state.active_device_authorization
     if authorization is None:
         return
-    if (
-        state.next_device_poll_at_ms is not None
-        and state.now_ms() < state.next_device_poll_at_ms
-    ):
+    if state.now_ms() >= authorization.expires_at_ms:
+        _update_poll_state(state, "EXPIRED", None)
+        return
+    if state.next_device_poll_at_ms is not None and state.now_ms() < state.next_device_poll_at_ms:
         return
     result = state.credential_provider().complete_device_flow(authorization)
     _update_poll_state(state, result.status.value, result.interval_seconds)
@@ -187,6 +206,7 @@ def _update_poll_state(
     authorization = state.active_device_authorization
     if authorization is None:
         return
+    state.device_authorization_status = "PENDING" if status == "AUTHORIZATION_PENDING" else status
     if status in {"APPROVED", "EXPIRED", "DENIED"}:
         state.active_device_authorization = None
         state.active_device_operation_ref = None
@@ -195,4 +215,6 @@ def _update_poll_state(
     next_interval = interval_seconds or authorization.interval_seconds
     if status == "SLOW_DOWN" and interval_seconds is None:
         next_interval += 5
+    next_interval = max(authorization.interval_seconds, next_interval)
+    state.active_device_authorization = replace(authorization, interval_seconds=next_interval)
     state.next_device_poll_at_ms = state.now_ms() + next_interval * 1000

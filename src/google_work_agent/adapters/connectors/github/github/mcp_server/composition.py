@@ -8,6 +8,9 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
+from google_work_agent.adapters.connectors.github.github.repositories.list_repositories import (
+    ListRepositoriesOperation,
+)
 from google_work_agent.adapters.connectors.github.issues.issues.close_issue import (
     CloseIssueOperation,
 )
@@ -64,6 +67,7 @@ class GitHubMcpServerState:
         self.active_device_authorization: GitHubDeviceAuthorization | None = None
         self.active_device_operation_ref: str | None = None
         self.next_device_poll_at_ms: int | None = None
+        self.device_authorization_status: str | None = None
         self.operational_results: dict[str, dict[str, object]] = {}
         self.used_nonces: set[str] = set()
         self.now_ms = now_ms
@@ -106,9 +110,7 @@ class GitHubMcpServerState:
 
     def api_client(self) -> GitHubApiClient:
         if self._api_client is None:
-            self._api_client = GitHubApiClient(
-                credential_provider=self.credential_provider()
-            )
+            self._api_client = GitHubApiClient(credential_provider=self.credential_provider())
         return self._api_client
 
     def operations(self) -> dict[str, GitHubToolOperation]:
@@ -131,6 +133,9 @@ class GitHubMcpServerState:
                 cast(GitHubApiClient, _LazyGitHubApiClient(self))
             )
         return self._recovery_search
+
+    def repository_listing(self) -> ListRepositoriesOperation:
+        return ListRepositoriesOperation(self.api_client())
 
 
 class _LazyGitHubApiClient:

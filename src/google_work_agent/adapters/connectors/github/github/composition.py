@@ -32,12 +32,20 @@ GITHUB_CONNECTOR_ID = "github"
 
 
 def github_internal_read_binding(tool_name: str) -> ValidatedConnectorToolBindingV1:
-    if tool_name != "search_by_recovery_fingerprint":
+    if tool_name not in {"search_by_recovery_fingerprint", "github.repositories.list"}:
         raise ValueError(f"unknown GitHub internal capability: {tool_name}")
     contract = {
         "tool_id": tool_name,
-        "input": ["repository", "recovery_fingerprint"],
-        "output": ["items", "coverage_complete", "examined_count"],
+        "input": (
+            ["cursor"]
+            if tool_name == "github.repositories.list"
+            else ["repository", "recovery_fingerprint"]
+        ),
+        "output": (
+            ["account_id", "items", "next_cursor"]
+            if tool_name == "github.repositories.list"
+            else ["items", "coverage_complete", "examined_count"]
+        ),
         "version": "v1",
     }
     return ValidatedConnectorToolBindingV1(
@@ -102,6 +110,7 @@ class GitHubConnector:
             mcp_client=self.client,
             internal_bindings=(
                 github_internal_read_binding("search_by_recovery_fingerprint"),
+                github_internal_read_binding("github.repositories.list"),
             ),
         )
 

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { SettingsDrawer } from "../../../src/features/settings/settings_drawer";
@@ -6,12 +6,15 @@ import * as settingsApi from "../../../src/features/settings/api/get_settings";
 import * as googleApi from "../../../src/features/settings/api/google_connection_operations";
 import * as credentialApi from "../../../src/features/settings/api/llm_credential_operations";
 import * as resourceApi from "../../../src/features/resource_browser/api/list_resources";
+import * as repositoryApi from "../../../src/features/settings/api/list_repositories";
+import * as updateApi from "../../../src/features/settings/api/update_settings";
 
 vi.mock("../../../src/features/settings/api/get_settings", () => ({ getSettings: vi.fn() }));
 vi.mock("../../../src/features/settings/api/google_connection_operations", () => ({ getGoogleConnection: vi.fn(), startGoogleConnection: vi.fn(), disconnectGoogle: vi.fn(), getGitHubConnection: vi.fn(), startGitHubConnection: vi.fn(), disconnectGitHub: vi.fn() }));
 vi.mock("../../../src/features/settings/api/llm_credential_operations", () => ({ getLlmCredentialStatus: vi.fn(), storeLlmCredential: vi.fn(), deleteLlmCredential: vi.fn() }));
 vi.mock("../../../src/features/resource_browser/api/list_resources", () => ({ listTaskLists: vi.fn(), listCalendars: vi.fn() }));
 vi.mock("../../../src/features/settings/api/update_settings", () => ({ updateSettings: vi.fn() }));
+vi.mock("../../../src/features/settings/api/list_repositories", () => ({ listRepositories: vi.fn() }));
 vi.mock("../../../src/features/settings/api/update_runtime_mode", () => ({ updateRuntimeMode: vi.fn() }));
 
 test("SettingsDrawer loads typed non-secret settings, connection, credentials, and backup inventory", async () => {
@@ -23,12 +26,13 @@ test("SettingsDrawer loads typed non-secret settings, connection, credentials, a
   vi.mocked(resourceApi.listCalendars).mockResolvedValue({ schema_version: 1, items: [{ schema_version: 1, calendar_id: "calendar-1", title: "내 일정", primary: true }], next_page_token: null });
   render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn()} />);
   expect(await screen.findByLabelText("작업 설정")).toBeInTheDocument();
-  expect(screen.getByLabelText("LLM 자격증명").querySelector('input[type="password"]')).toHaveValue("");
+  expect(screen.getByLabelText("Gemini API").querySelector('input[type="password"]')).toHaveValue("");
   expect(document.body.textContent).not.toContain("sk-");
   expect(screen.getByRole("button", { name: "밝게" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "어둡게" })).toBeInTheDocument();
   expect(screen.getByLabelText("시간대")).toHaveValue("Asia/Seoul");
-  expect(screen.getByText("연결되지 않음")).toBeInTheDocument();
+  expect(within(screen.getByLabelText("Google 연결")).getByText("연결되지 않음")).toBeInTheDocument();
+  expect(within(screen.getByLabelText("GitHub 연결")).getByText("연결되지 않음")).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "PC에 안전하게 저장" })).toHaveValue("KEYRING");
   expect(screen.getByRole("option", { name: "이번 실행에서만 사용" })).toHaveValue("SESSION_ONLY");
 });
@@ -81,4 +85,83 @@ test("GitHub Device Flow 코드를 표시하고 검증 URL만 연다", async () 
   expect(await within(github).findByText("ABCD-EFGH")).toBeInTheDocument();
   expect(opened).toHaveBeenCalledWith("https://github.com/login/device", "_blank", "noopener,noreferrer");
   opened.mockRestore();
+});
+
+function connectionSettings(): settingsApi.SettingsView {
+  return { schema_version: 1, timezone: "Asia/Seoul", default_tasklist_id: "tasks-1", default_calendar_id: "calendar-1", default_github_repository: null, preferred_llm_mode: "LOCAL_GPU", preferred_local_model_id: null, external_llm_consent: false, retention_days: 30, theme: "LIGHT", panel_preferences: { schema_version: 1, right_panel_default_open: false, right_panel_default_tab: "CONVERSATIONS" }, working_day_start_local: "09:00", working_day_end_local: "18:00", include_weekends: false, calendar_buffer_minutes: 0, max_run_execution_ms: 900000, max_connector_calls_per_run: 50, max_source_page_calls_per_run: 8, max_detail_fetches_per_run: 12, max_context_tokens_per_run: 16000, max_retry_attempts_per_run: 2, circuit_failure_threshold: 3, circuit_open_duration_ms: 30000 };
+}
+
+test("인증 중 설정을 다시 열어도 기존 Device Flow 확인을 이어간다", async () => {
+  vi.mocked(googleApi.startGitHubConnection).mockClear();
+  vi.mocked(settingsApi.getSettings).mockResolvedValue(connectionSettings());
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: null, display_email: null, connection_status: "CONNECTING", granted_scopes: [], missing_required_scopes: [], authorization_status: "PENDING" });
+  const changed = vi.fn().mockResolvedValue(undefined);
+  const view = render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={changed} />);
+  await waitFor(() => expect(screen.getByLabelText("GitHub 연결")).toHaveTextContent("연결 중"));
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: "github:1", display_email: "sample", connection_status: "CONNECTED", granted_scopes: [], missing_required_scopes: [], authorization_status: "APPROVED" });
+  vi.mocked(repositoryApi.listRepositories).mockResolvedValue({ schema_version: 1, account_id: "github:1", items: [], next_cursor: null });
+  await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5100)); });
+  expect(screen.getByLabelText("GitHub 연결")).toHaveTextContent("연결됨");
+  expect(changed).toHaveBeenCalledOnce();
+  expect(googleApi.startGitHubConnection).not.toHaveBeenCalled();
+  view.unmount();
+}, 10000);
+
+test("Gemini 연결 테스트 실패를 숨기거나 이전 성공 상태로 표시하지 않는다", async () => {
+  vi.mocked(settingsApi.getSettings).mockResolvedValue(connectionSettings());
+  vi.mocked(credentialApi.getLlmCredentialStatus).mockResolvedValue({ schema_version: 1, provider: "gemini", configured: true, storage_mode: "KEYRING", validation_status: "VALID" });
+  render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn()} />);
+  const region = await screen.findByLabelText("Gemini API");
+  await waitFor(() => expect(region).toHaveTextContent("확인됨"));
+  vi.mocked(credentialApi.getLlmCredentialStatus).mockRejectedValueOnce(new Error("unavailable"));
+  await userEvent.click(within(region).getByRole("button", { name: "연결 테스트" }));
+  expect(await screen.findByText("Gemini API 연결 상태를 확인하지 못했습니다.")).toBeInTheDocument();
+  expect(region).not.toHaveTextContent("확인됨");
+  expect(region).toHaveTextContent("연결 상태를 확인할 수 없습니다");
+  expect(region).not.toHaveTextContent("설정되지 않음");
+});
+
+test("Repository 기본값을 저장하고 해제해도 Google과 Gemini 설정은 독립적이다", async () => {
+  let saved = connectionSettings();
+  vi.mocked(settingsApi.getSettings).mockImplementation(async () => saved);
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: "github:1", display_email: "sample", connection_status: "CONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(googleApi.getGoogleConnection).mockResolvedValue({ schema_version: 1, connector_id: "google_workspace", account_id: "google:1", display_email: "test@example.invalid", connection_status: "CONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(credentialApi.getLlmCredentialStatus).mockResolvedValue({ schema_version: 1, provider: "gemini", configured: true, storage_mode: "KEYRING", validation_status: "VALID" });
+  vi.mocked(repositoryApi.listRepositories).mockResolvedValue({ schema_version: 1, account_id: "github:1", items: [{ repository: "sample/project", repository_id: 2, private: true }], next_cursor: null });
+  vi.mocked(updateApi.updateSettings).mockImplementation(async (_id, patch) => {
+    saved = { ...saved, default_github_repository: patch.default_github_repository ? { repository: patch.default_github_repository, repository_id: 2, account_id: "github:1" } : null };
+    return saved;
+  });
+  const view = render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn().mockResolvedValue(undefined)} />);
+  await screen.findByRole("option", { name: "sample/project (비공개)" });
+  await userEvent.selectOptions(screen.getByLabelText("기본 Repository"), "sample/project");
+  const repositoryCallsBeforeReturn = vi.mocked(repositoryApi.listRepositories).mock.calls.length;
+  fireEvent(window, new Event("focus"));
+  await waitFor(() => expect(vi.mocked(repositoryApi.listRepositories).mock.calls.length).toBeGreaterThan(repositoryCallsBeforeReturn));
+  expect(screen.getByLabelText("기본 Repository")).toHaveValue("sample/project");
+  await userEvent.click(screen.getByRole("button", { name: "Repository 저장" }));
+  await waitFor(() => expect(saved.default_github_repository?.repository).toBe("sample/project"));
+  expect(updateApi.updateSettings).toHaveBeenLastCalledWith(expect.any(String), { default_github_repository: "sample/project" });
+  expect(saved.default_calendar_id).toBe("calendar-1");
+  expect(saved.default_tasklist_id).toBe("tasks-1");
+  expect(screen.getByLabelText("Gemini API")).toHaveTextContent("확인됨");
+  view.unmount();
+  render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn().mockResolvedValue(undefined)} />);
+  await waitFor(() => expect(screen.getByLabelText("기본 Repository")).toHaveValue("sample/project"));
+  await userEvent.click(screen.getByRole("button", { name: "기본값 해제" }));
+  await waitFor(() => expect(saved.default_github_repository).toBeNull());
+  expect(updateApi.updateSettings).toHaveBeenLastCalledWith(expect.any(String), { default_github_repository: null });
+});
+
+test("Repository 권한 실패와 정상 빈 목록을 구분하고 새로고침한다", async () => {
+  vi.mocked(settingsApi.getSettings).mockResolvedValue(connectionSettings());
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: "github:1", display_email: "sample", connection_status: "CONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  vi.mocked(repositoryApi.listRepositories).mockRejectedValueOnce(new Error("permission denied"));
+  render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn().mockResolvedValue(undefined)} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("접근 권한");
+  expect(screen.queryByText(/현재 페이지에 접근 가능한 Repository가 없습니다/)).not.toBeInTheDocument();
+  vi.mocked(repositoryApi.listRepositories).mockResolvedValue({ schema_version: 1, account_id: "github:1", items: [], next_cursor: null });
+  await userEvent.click(screen.getByRole("button", { name: "Repository 새로고침" }));
+  expect(await screen.findByText(/현재 페이지에 접근 가능한 Repository가 없습니다/)).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

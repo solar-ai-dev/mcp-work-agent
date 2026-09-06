@@ -57,6 +57,10 @@ from google_work_agent.application.use_cases.shutdown.request_shutdown import (
     RequestShutdownCommand,
     RequestShutdownHandler,
 )
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
 from google_work_agent.ports.system.api_access_port import EndpointPolicy
 from google_work_agent.ports.system.settings_port import (
     PanelPreferencesV1,
@@ -107,9 +111,14 @@ def patch_settings(
     if not isinstance(handler, UpdateSettingsHandler):
         _raise_service_unavailable(request, "SETTINGS_UPDATE_UNAVAILABLE")
     values = payload.settings_patch.model_dump()
+    github_repository = values.pop("default_github_repository")
     panel = values.pop("panel_preferences")
     settings_patch = SettingsPatchV1(
         **values,
+        clear_default_calendar="default_calendar_id" in payload.settings_patch.model_fields_set
+        and values["default_calendar_id"] is None,
+        clear_default_tasklist="default_tasklist_id" in payload.settings_patch.model_fields_set
+        and values["default_tasklist_id"] is None,
         panel_preferences=None if panel is None else PanelPreferencesV1(**panel),
     )
     try:
@@ -117,12 +126,38 @@ def patch_settings(
             UpdateSettingsCommand(
                 command_id=payload.command_id,
                 settings_patch=settings_patch,
+                github_repository=github_repository,
+                github_repository_supplied="default_github_repository"
+                in payload.settings_patch.model_fields_set,
             )
         )
     except (OperationalCommandConflict, OperationalCommandUncertain) as error:
         _raise_operational_failure(error, request_id=request.state.request_id)
     except ValueError as error:
         _raise_invalid_argument(request, str(error), "SETTINGS_VALIDATION_FAILED")
+    except ConnectorOperationFailure as error:
+        error_code, status_code = {
+            ConnectorFailureCode.AUTH_REQUIRED: ("AUTH_REQUIRED", 401),
+            ConnectorFailureCode.PERMISSION_DENIED: ("PERMISSION_DENIED", 403),
+            ConnectorFailureCode.NOT_FOUND: ("NOT_FOUND", 404),
+            ConnectorFailureCode.INVALID_ARGUMENT: ("INVALID_ARGUMENT", 422),
+            ConnectorFailureCode.RATE_LIMITED: ("UPSTREAM_UNAVAILABLE", 429),
+            ConnectorFailureCode.TIMEOUT: ("UPSTREAM_UNAVAILABLE", 504),
+            ConnectorFailureCode.CONNECTION_UNAVAILABLE: ("SERVICE_BUSY", 503),
+            ConnectorFailureCode.CONFIGURATION_ERROR: ("CONFIGURATION_ERROR", 503),
+        }.get(error.code, ("UPSTREAM_UNAVAILABLE", 502))
+        raise ApiRequestError(
+            error_code=error_code,
+            status_code=status_code,
+            user_message=(
+                "GitHub 계정과 Repository 접근 권한을 확인한 뒤 다시 선택해 주세요."
+                if status_code in {401, 403, 404}
+                else "Repository 접근 상태를 확인하지 못해 설정을 저장하지 않았습니다."
+            ),
+            request_id=request.state.request_id,
+            retryable=error.retryable,
+            detail_code=error.detail_code,
+        ) from error
     return SettingsResponse.model_validate(asdict(result.settings))
 
 

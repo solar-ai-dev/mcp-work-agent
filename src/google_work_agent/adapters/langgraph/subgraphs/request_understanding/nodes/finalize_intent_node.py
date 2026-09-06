@@ -25,6 +25,7 @@ def finalize_intent_node(
         projection["ambiguity_candidate"],
         artifact_id=id_factory(),
         user_request=projection["request"].request_text,
+        repository_default=projection["request"].default_github_repository,
         confirmation_response_text=(
             None
             if "confirmation_response" not in projection

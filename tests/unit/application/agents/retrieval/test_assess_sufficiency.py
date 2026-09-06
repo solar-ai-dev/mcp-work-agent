@@ -15,6 +15,9 @@ from tests.support.context_retrieval import (
     _tool_route_plan,
 )
 
+from google_work_agent.adapters.langgraph.subgraphs.retrieval.nodes.assess_sufficiency_node import (
+    assess_sufficiency_node,
+)
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     SUFFICIENCY_OUTPUT_SCHEMA,
     assess_sufficiency,
@@ -24,6 +27,37 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
 )
+
+
+@pytest.mark.parametrize("code", ["NOT_FOUND", "PERMISSION_DENIED"])
+@pytest.mark.parametrize(("effect", "expected"), [("READ", "PARTIAL"), ("CREATE", "BLOCKED")])
+def test_sufficiency_node__target_access_failure__stops_without_search_or_write(
+    code, effect, expected,
+):
+    runtime = FakeLLMRuntime(deque())
+    budget = _run_budget(used=0)
+    original_budget = deepcopy(budget)
+    acquisition = _acquisition_result()
+    acquisition.update(status="FAILED", resource_handles=[])
+    acquisition["source_summaries"] = [{
+        "route_id": "route-github", "connector_id": "github", "source": "GITHUB",
+        "status": "FAILED", "error_code": code, "resource_count": 0, "resource_handles": [],
+    }]
+    result = assess_sufficiency_node(
+        {"request_intent": {**_intent(), "requested_effect_hints": [effect]},
+         "evidence_selection": {"schema_version": 2, "evidence_drafts": [],
+                                "selected_segment_ids": [], "excluded_segment_ids": []}},
+        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="AUTO",
+        tool_route_plan=_tool_route_plan([{
+            "route_id": "route-github", "connector_id": "github", "resource_type": "GITHUB_ISSUE",
+            "allowed_read_tool_ids": ["github_list_issues"], "required": True, "reason_codes": [],
+        }]), acquisition_result=acquisition, evidence_drafts=[], retry_budget=budget,
+    )["sufficiency"]
+    assert result["status"] == expected
+    assert result["issues"][0]["route_id"] == "route-github"
+    assert "SOURCE_" + code in result["issues"][0]["reason_codes"]
+    assert runtime.calls == []
+    assert budget == original_budget
 
 
 def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:

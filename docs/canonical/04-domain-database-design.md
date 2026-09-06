@@ -6,7 +6,7 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 문서명 | 04. Google Work Agent 도메인 · 데이터베이스 설계서 |
+| 문서명 | 04. mcp-work-agent 도메인 · 데이터베이스 설계서 |
 | 상태 | Draft v1.27 |
 | 기준일 | 2026-08-24 |
 | 대상 | P0 MVP |
@@ -15,7 +15,7 @@
 
 ## 1. 목적과 범위
 
-이 문서는 Google Work Agent의 Domain Aggregate, Entity, Value Object, Table, 관계, **lifecycle 결과의 persistence realization**, Transaction, 동시성, 멱등성, Pagination, N+1 방지, Index, Migration, Backup, Restore와 보존 정책을 정의한다. lifecycle command·허용 source state·guard·transition 자체는 Domain State Transition Contract를 참조하며 이 문서가 재정의하지 않는다.
+이 문서는 mcp-work-agent의 Domain Aggregate, Entity, Value Object, Table, 관계, **lifecycle 결과의 persistence realization**, Transaction, 동시성, 멱등성, Pagination, N+1 방지, Index, Migration, Backup, Restore와 보존 정책을 정의한다. lifecycle command·허용 source state·guard·transition 자체는 Domain State Transition Contract를 참조하며 이 문서가 재정의하지 않는다.
 
 ### 1.1 범위
 
@@ -232,6 +232,7 @@ erDiagram
 - `status`: Workflow의 현재 단계
 - `langgraph_thread_id`: Checkpoint 재개 Key
 - `budget_json`: 호출 수·Token·Retry·시간 상한 Snapshot
+- `default_github_repository_json`: nullable, non-secret `GitHubRepositoryDefaultV1`의 Run 생성 시 immutable Settings snapshot. Source는 `SETTINGS_DEFAULT`이며 승인/접근 권한이 아니다. forward Migration 0021로 추가하고 이전 Run은 null을 유지한다. Run CAS에서 변경할 수 없다.
 - `version`: 낙관적 상태 전이
 - `finished_at_ms IS NULL`: Open Run
 

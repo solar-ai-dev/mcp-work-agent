@@ -96,7 +96,9 @@ def compose_answer(
     approved_evidence = [dict(item) for item in evidence if _evidence_ref(item) in approved_refs]
     prompt_input: dict[str, object] = {
         "user_request": user_request,
-        "request_intent": dict(request_intent),
+        "request_intent": {
+            key: value for key, value in request_intent.items() if key != "repository_default"
+        },
         "answer_outline": dict(answer_outline),
         "evidence": approved_evidence,
         "temporal_constraints": [

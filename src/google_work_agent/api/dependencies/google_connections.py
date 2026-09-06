@@ -18,6 +18,9 @@ from google_work_agent.application.use_cases.connection.revoke_connection import
 from google_work_agent.application.use_cases.connection.start_authorization import (
     StartAuthorizationHandler,
 )
+from google_work_agent.application.use_cases.resource.list_repositories import (
+    ListRepositoriesHandler,
+)
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 
 
@@ -37,6 +40,8 @@ class GoogleRouteDependencies:
     revoke_handlers: dict[str, RevokeConnectionHandler]
     requested_scopes_by_connector: dict[str, tuple[str, ...]]
     current_account_ids: dict[str, Callable[[], str | None]]
+    list_repositories_handler: ListRepositoriesHandler | None = None
+    service_instance_id: str = ""
 
     def resolve(self, connector_name: str) -> ConnectorConnectionDependencies:
         connector_id = self.connector_ids.get(connector_name)
@@ -87,6 +92,8 @@ def get_google_route_dependencies(request: Request) -> GoogleRouteDependencies:
         or {container.resource_connector_id: container.oauth_requested_scopes},
         current_account_ids=container.current_account_id_providers_by_connector
         or {container.resource_connector_id: container.current_account_id_provider},
+        list_repositories_handler=container.list_repositories_handler,
+        service_instance_id=container.service_instance_id,
     )
 
 

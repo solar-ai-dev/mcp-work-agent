@@ -19,7 +19,7 @@ class SqliteRunRepository:
         row = self._connection.execute(
             "SELECT id, conversation_id, entry_mode, status, langgraph_thread_id, "
             "requested_mode, actual_runtime, version, started_at_ms, finished_at_ms, "
-            "terminal_result_kind, budget_json "
+            "terminal_result_kind, budget_json, default_github_repository_json "
             "FROM runs WHERE id=?;",
             (run_id,),
         ).fetchone()
@@ -42,6 +42,7 @@ class SqliteRunRepository:
                 else TerminalResultKindV1(str(row["terminal_result_kind"]))
             ),
             budget_json=str(row["budget_json"]),
+            default_github_repository_json=row["default_github_repository_json"],
         )
 
     def get_snapshot(self, run_id: str) -> Run | None:
@@ -72,8 +73,9 @@ class SqliteRunRepository:
             self._connection.execute(
                 "INSERT INTO runs (id, conversation_id, entry_mode, status, "
                 "langgraph_thread_id, requested_mode, actual_runtime, budget_json, "
-                "version, started_at_ms, finished_at_ms, terminal_result_kind) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+                "version, started_at_ms, finished_at_ms, terminal_result_kind, "
+                "default_github_repository_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
                 (
                     run.id,
                     run.conversation_id,
@@ -87,6 +89,7 @@ class SqliteRunRepository:
                     run.started_at_ms,
                     run.finished_at_ms,
                     None if run.terminal_result_kind is None else run.terminal_result_kind.value,
+                    run.default_github_repository_json,
                 ),
             )
         except sqlite3.IntegrityError as error:

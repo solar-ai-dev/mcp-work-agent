@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
+from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
+    detect_ambiguity,
+)
+from google_work_agent.application.agents.request_understanding.finalize_intent import (
+    finalize_intent,
+)
 from google_work_agent.application.agents.request_understanding.identify_goal import identify_goal
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -16,6 +23,36 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowCorrelationContext,
     WorkflowStartRequest,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
+
+
+def test_default_repository__stays_system_owned__without_user_constraint_or_confirmation() -> None:
+    request = replace(
+        _request("열린 이슈 보여줘"),
+        default_github_repository=GitHubRepositoryDefaultV1("sample/project", 42, "github:1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[{
+        "goal": "열린 이슈 조회", "completion_conditions": ["조회 결과를 보여준다"],
+        "constraints": [{"kind": "SCOPE", "field": "status", "value": "OPEN"}],
+        "requested_effect_hints": ["READ"], "requested_resource_hints": ["GITHUB_ISSUE"],
+        "analysis_requirement": "NONE",
+    }])
+    candidate = identify_goal(
+        llm_runtime=runtime, request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+    assert runtime.calls[0]["prompt_input"] == {
+        "user_request": request.request_text, "selected_resource_refs": [],
+    }
+    ambiguity = detect_ambiguity(llm_runtime=runtime, request=request, goal_candidate=candidate)
+    assert ambiguity["requires_confirmation"] is False
+    assert all(item["field"] != "repository" for item in candidate["constraints"])
+    intent = finalize_intent(
+        candidate, ambiguity, artifact_id="intent-1", user_request=request.request_text,
+        repository_default=request.default_github_repository,
+    )
+    assert intent["repository_default"]["repository"] == "sample/project"
+    assert all(item["field"] != "repository" for item in intent["constraints"])
 
 
 @pytest.mark.parametrize("request_text, expected_resources", [

@@ -263,7 +263,7 @@ def application_canonical_contracts() -> dict[str, set[str]]:
         )
         symbols = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", spans[path_index + 1]))
         contracts[spans[path_index]] = symbols
-    assert len(contracts) == 91
+    assert len(contracts) == 93
     return contracts
 
 

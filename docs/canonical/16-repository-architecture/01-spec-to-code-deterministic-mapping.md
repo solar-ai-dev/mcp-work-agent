@@ -306,6 +306,8 @@ Automatic provisioning is direction-approved but is not part of the current exac
 
 ### Runtime Node ID → Application operation closed mapping
 
+Repository authority의 순수 계약 검증(`validated_repository_authority`, `repository_from_constraints`, `is_fully_qualified_repository`)과 `RequestUnderstandingValidationError`는 기존 `application/agents/request_understanding/contracts/request_intent.py`가 소유한다. Request Understanding은 원문 provenance를 materialize/validate한 뒤 이 계약을 사용하며, Retrieval·Planning은 같은 계약 validator를 소비한다. 다른 Agent의 `validate_intent.py` 실행 operation을 호출하거나 Repository authority를 다시 구현하지 않는다. 이 검증은 외부 접근·Run 상태 전이·검색 선택을 수행하지 않으며 현재 typed identity의 충돌을 거부한다.
+
 06 owns Runtime Node IDs; this page owns their repository operation realization. **Every current Runtime Node ID is listed here**. A row may call multiple deterministic operations only when 06 explicitly says they execute inside one runtime node.
 
 | Runtime Node ID / stage | Canonical Application operation(s) | Repository file(s) |
@@ -497,6 +499,8 @@ POST /api/v1/runs/{run_id}/resume + SAFE_CHECKPOINT_RESUME
 | `POST /api/v1/attachments/stage` | `attachment` | `create_staged_attachment` | `application/use_cases/attachment/create_staged_attachment.py` | `CreateStagedAttachmentCommand / CreateStagedAttachmentResult / CreateStagedAttachmentHandler` | `tests/unit/application/use_cases/attachment/test_create_staged_attachment.py` |
 | `GET /api/v1/resources/task-lists` | `resource` | `list_task_lists` | `application/use_cases/resource/list_task_lists.py` | `ListTaskListsQuery / ListTaskListsResult / ListTaskListsHandler` | `tests/unit/application/use_cases/resource/test_list_task_lists.py` |
 | `GET /api/v1/resources/calendars` | `resource` | `list_calendars` | `application/use_cases/resource/list_calendars.py` | `ListCalendarsQuery / ListCalendarsResult / ListCalendarsHandler` | `tests/unit/application/use_cases/resource/test_list_calendars.py` |
+| `GET /api/v1/connections/github/repositories` | `resource` | `list_repositories` | `application/use_cases/resource/list_repositories.py` | `ListRepositoriesQuery / ListRepositoriesResult / ListRepositoriesHandler` | `tests/unit/application/use_cases/resource/test_list_repositories.py` |
+| GitHub settings / Run repository access validation | `resource` | `get_repository_access` | `application/use_cases/resource/get_repository_access.py` | `GetRepositoryAccessQuery / GetRepositoryAccessHandler` | `tests/unit/application/use_cases/resource/test_get_repository_access.py` |
 | `GET /api/v1/resources/{source}` (`gmail|tasks|calendar`) | `resource` | `list_resources` | `application/use_cases/resource/list_resources.py` | `ListResourcesQuery / ListResourcesResult / ListResourcesHandler` | `tests/unit/application/use_cases/resource/test_list_resources.py` |
 | `GET /api/v1/resources/gmail/count` | `resource` | `get_resource_count` | `application/use_cases/resource/get_resource_count.py` | `GetResourceCountQuery / GetResourceCountResult / GetResourceCountHandler` | `tests/unit/application/use_cases/resource/test_get_resource_count.py` |
 | `GET /api/v1/resources/gmail/{resource_id}` UI detail | `resource` | `get_resource_detail` | `application/use_cases/resource/get_resource_detail.py` | `GetResourceDetailQuery / GetResourceDetailResult / GetResourceDetailHandler` | `tests/unit/application/use_cases/resource/test_get_resource_detail.py` |

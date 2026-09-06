@@ -2,6 +2,8 @@
 
 from typing import Literal
 
+from pydantic import Field
+
 from google_work_agent.api.schemas.model import ApiModel
 
 
@@ -16,6 +18,9 @@ class SettingsPatchPayloadV1(ApiModel):
     timezone: str | None = None
     default_tasklist_id: str | None = None
     default_calendar_id: str | None = None
+    default_github_repository: str | None = Field(
+        default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$"
+    )
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"] | None = None
     external_llm_consent: bool | None = None
     retention_days: int | None = None

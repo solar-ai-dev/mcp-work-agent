@@ -738,6 +738,8 @@ class RequestIntentV2:
 - `repository`처럼 owner가 없는 bare 값은 기존 deterministic default authority가 없는 한 `AmbiguityV1.requires_confirmation=true`로 처리한다. 기존 Request Understanding nested Confirmation과 동일 Run checkpoint resume를 사용하며 GitHub 전용 node, state, edge 또는 resume target을 추가하지 않는다.
 - current-run `SelectedResourceRefV1`이 GitHub Issue를 나타내면 `(connector_id="github", resource_type="github_issue", resource_id="owner/repository#issue_number", parent_resource_id="owner/repository")`를 보존하며, 검증된 `parent_resource_id`가 repository container authority가 될 수 있다. 동일 Run의 explicit provenance-validated repository도 존재하면 두 identity는 exact match해야 한다. 불일치에는 silent precedence를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로를 사용한다.
 - 이 provenance는 `ConstraintV1`의 선택적 source binding이며 새 Main State field나 장기 repository authority Artifact가 아니다. 권위는 기존 finalized `RequestIntentV2`, `SelectedResourceRefV1`/`ResourceRef`, frozen Route와 immutable Planning arguments 안에만 존재한다.
+- Settings 기본 Repository는 사용자 문장이 아닌 `SETTINGS_DEFAULT` provenance다. `StartRun`은 `GitHubRepositoryDefaultV1`을 Run의 immutable `default_github_repository_json`에 snapshot하며 `WorkflowStartRequest`와 기존 `RunInputV1.default_github_repository`로 전달한다. 이전 Run/checkpoint는 null로 해석하고 현재 Settings로 보충하지 않는다. 기존 `finalize_intent`가 finalized `RequestIntentV2.repository_default`에 같은 fact를 JSON projection한다. LLM은 이 필드를 생산하지 않는다. selected/explicit이 없을 때만 사용하며 bare explicit 값이나 identity conflict를 default로 보정하지 않는다.
+- `retrieval.execute_read`는 GitHub default 사용 전 `resource.get_repository_access`로 현재 계정/저장소 ID와 접근을 검증한다. 권한 실패는 no-result가 아니며 반복/대체 Repository fallback을 금지한다. 승인, mandatory Write 정보, Claim/Attempt 정책은 변경하지 않는다.
 
 ### 3.2 ToolRoutePlanV2
 

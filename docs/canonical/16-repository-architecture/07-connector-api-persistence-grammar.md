@@ -10,6 +10,8 @@ adapters/connectors/<provider>/<product>/<resource>/<verb>_<resource>.py
 
 MCP wire tool IDs remain existing contract IDs and are not renamed for structural convenience.
 
+GitHub settings repository discovery is owned by `adapters/connectors/github/github/repositories/list_repositories.py → ListRepositoriesOperation`. It is exposed only as internal READ control `github.repositories.list`, through existing `ConnectorReadPort` with an injected exact internal binding; it is not an LLM-eligible Issue tool. `resource.list_repositories` projects bounded pages and `resource.get_repository_access` validates exact account/repository identity across those pages. No second OAuth provider, Settings store or GitHub-specific workflow is introduced.
+
 API:
 
 ```

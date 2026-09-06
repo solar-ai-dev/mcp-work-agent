@@ -117,7 +117,9 @@ def outline_answer(
             allowed_refs.add(ref)
     prompt_input: dict[str, object] = {
         "user_request": user_request,
-        "request_intent": dict(request_intent),
+        "request_intent": {
+            key: value for key, value in request_intent.items() if key != "repository_default"
+        },
         "evidence": [dict(item) for item in evidence],
     }
     if work_analysis is not None:

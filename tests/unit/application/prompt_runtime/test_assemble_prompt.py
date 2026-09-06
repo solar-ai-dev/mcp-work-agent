@@ -34,6 +34,7 @@ def _projection() -> dict[str, object]:
         "request_intent": {"goal": "summary"},
         "answer_outline": {"sections": ["summary"]},
         "evidence": [],
+        "temporal_constraints": [],
     }
 
 
@@ -46,6 +47,7 @@ def test_assemble_prompt__uses_registered_source__and_allowlisted_projection(
     assembled = assemble_prompt(prompt_ref, _projection(), registry=registry)
 
     assert assembled.startswith("You are the Planning answer-composition node.")
+    assert "Product-wide context: mcp-work-agent is a workplace productivity product" in assembled
     assert "workplace productivity product, not a social companion" in assembled
     assert "Product display language is Korean" in assembled
     assert "Internal codes are metadata, never button labels" in assembled

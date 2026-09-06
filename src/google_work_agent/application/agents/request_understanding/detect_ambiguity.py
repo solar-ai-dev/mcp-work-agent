@@ -88,6 +88,7 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
     },
 )
 
+
 def detect_ambiguity(
     *,
     llm_runtime: StructuredInferencePort,
@@ -104,6 +105,7 @@ def detect_ambiguity(
         confirmation_response_text=_confirmation_response_text(confirmation_response),
         selected_resources=request.selected_resources,
         repository_required="GITHUB_ISSUE" in goal_candidate["requested_resource_hints"],
+        repository_default=request.default_github_repository,
     ):
         return {
             "requires_confirmation": True,
@@ -200,9 +202,8 @@ def _is_retrieval_first_read(*, goal_candidate: RequestGoalCandidateV1) -> bool:
     user-owned value before the frozen Connector route has been queried.
     """
 
-    return (
-        set(goal_candidate["requested_effect_hints"]) == {"READ"}
-        and bool(goal_candidate["requested_resource_hints"])
+    return set(goal_candidate["requested_effect_hints"]) == {"READ"} and bool(
+        goal_candidate["requested_resource_hints"]
     )
 
 

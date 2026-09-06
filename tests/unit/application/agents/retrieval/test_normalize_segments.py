@@ -52,6 +52,30 @@ def test_segment_id__is_stable__and_content_sensitive() -> None:
     assert changed != first
 
 
+def test_github_issue__preserves_observed_metadata__separately_from_description() -> None:
+    result = cast(AcquisitionResultV1, {
+        "schema_version": 1, "resource_handles": ["github_issue:sample/project#17"],
+        "availability_results": [], "source_summaries": [{
+            "connector_id": "github", "source": "GITHUB", "resources": [{
+                "resource_handle": "github_issue:sample/project#17",
+                "resource_type": "github_issue",
+                "resource_id": "sample/project#17", "version": "v1", "payload": {
+                    "repository": "sample/project", "issue_number": 17, "title": "연결 확인",
+                    "state": "OPEN", "url": "https://github.com/sample/project/issues/17",
+                    "description": "개발 작업이 필요하지 않은 참고 자료입니다.",
+                },
+            }],
+        }],
+    })
+    segment = normalize_segments(result)[0]
+    assert "issue_number: 17" in segment.text
+    assert "title: 연결 확인" in segment.text
+    assert "state: OPEN" in segment.text
+    assert "description:\n개발 작업이 필요하지 않은 참고 자료입니다." in segment.text
+    assert segment.resource_handle == "github_issue:sample/project#17"
+    assert normalize_segments(result)[0].segment_id == segment.segment_id
+
+
 @pytest.mark.parametrize("overlap", [0, 20])
 def test_long_source_chunks_preserve_header_and_item_line_boundaries(overlap: int) -> None:
     text = (
@@ -362,9 +386,9 @@ def _expected_github_segment_id(*, number: int, version: str, title: str) -> str
         "resource_type": "github_issue",
         "resource_id": f"acme/repo#{number}",
         "source_version_ref": version,
-        "chunk_schema_version": 3,
+        "chunk_schema_version": 5,
         "chunk_ordinal": 0,
-        "normalized_content_sha256": hashlib.sha256(title.encode()).hexdigest(),
+        "normalized_content_sha256": hashlib.sha256(f"title: {title}".encode()).hexdigest(),
     }
     canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return "seg_" + hashlib.sha256(canonical.encode()).hexdigest()

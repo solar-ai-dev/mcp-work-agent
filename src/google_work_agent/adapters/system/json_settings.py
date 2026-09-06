@@ -16,6 +16,7 @@ from google_work_agent.ports.system.contracts.operational_command_replay import 
     OperationalReconcileResultV1,
 )
 from google_work_agent.ports.system.settings_port import (
+    GitHubRepositoryDefaultV1,
     PanelPreferencesV1,
     SettingsPatchV1,
     SettingsPort,
@@ -24,8 +25,14 @@ from google_work_agent.ports.system.settings_port import (
 
 _MAX_SETTINGS_BYTES = 32 * 1024
 _SETTINGS_FIELDS = frozenset(SettingsViewV1.__dataclass_fields__)
-_SETTINGS_FIELDS_WITHOUT_LOCAL_MODEL = _SETTINGS_FIELDS - {"preferred_local_model_id"}
-_PATCH_FIELDS = frozenset(SettingsPatchV1.__dataclass_fields__) - {"schema_version"}
+_ADDITIVE_FIELDS = {"preferred_local_model_id", "default_github_repository"}
+_PATCH_FIELDS = frozenset(SettingsPatchV1.__dataclass_fields__) - {
+    "schema_version",
+    "github_repository_supplied",
+    "default_github_repository",
+    "clear_default_calendar",
+    "clear_default_tasklist",
+}
 _LEGACY_FLAT_SETTINGS_FIELDS = frozenset(
     {
         "approval_ttl_minutes",
@@ -102,8 +109,11 @@ class FileSettingsStore:
         settings_payload = payload.get("settings")
         if not isinstance(settings_payload, dict):
             raise ValueError("settings field set mismatch")
-        if set(settings_payload) == _SETTINGS_FIELDS_WITHOUT_LOCAL_MODEL:
-            settings_payload = {**settings_payload, "preferred_local_model_id": None}
+        if _SETTINGS_FIELDS - _ADDITIVE_FIELDS <= set(settings_payload) < _SETTINGS_FIELDS:
+            settings_payload = {
+                **dict.fromkeys(_ADDITIVE_FIELDS),
+                **settings_payload,
+            }
             settings = _view_from_payload(cast(dict[str, object], settings_payload))
             marker = _operation_marker(payload.get("last_operation"))
             self.save(settings, marker=marker)
@@ -166,6 +176,16 @@ class JsonSettingsAdapter(SettingsPort):
                 for name in _PATCH_FIELDS
                 if (value := getattr(settings_patch, name)) is not None
             }
+            if settings_patch.github_repository_supplied:
+                changes["default_github_repository"] = settings_patch.default_github_repository
+            if settings_patch.clear_default_calendar:
+                if settings_patch.default_calendar_id is not None:
+                    raise ValueError("cannot set and clear default calendar together")
+                changes["default_calendar_id"] = None
+            if settings_patch.clear_default_tasklist:
+                if settings_patch.default_tasklist_id is not None:
+                    raise ValueError("cannot set and clear default task list together")
+                changes["default_tasklist_id"] = None
             updated = replace(current, **changes)
             _validate_settings(updated)
             self._store.save(
@@ -188,7 +208,7 @@ class JsonSettingsAdapter(SettingsPort):
         return OperationalReconcileResultV1(
             status="COMPLETED" if completed else "SAFE_TO_RETRY",
             result_ref=operation_ref if completed else None,
-            bounded_result={"settings_hash": _settings_hash(settings)} if completed else None,
+            bounded_result=asdict(settings) if completed else None,
         )
 
 
@@ -237,6 +257,11 @@ def _view_from_payload(payload: dict[str, object]) -> SettingsViewV1:
         circuit_failure_threshold=_required_int(payload, "circuit_failure_threshold"),
         circuit_open_duration_ms=_required_int(payload, "circuit_open_duration_ms"),
         preferred_local_model_id=_optional_string(payload["preferred_local_model_id"]),
+        default_github_repository=(
+            None
+            if payload["default_github_repository"] is None
+            else GitHubRepositoryDefaultV1.from_payload(payload["default_github_repository"])
+        ),
     )
 
 
@@ -270,9 +295,7 @@ def _migrate_legacy_flat_settings(payload: dict[str, object]) -> SettingsViewV1:
         timezone=_required_string(payload, "timezone"),
         default_tasklist_id=_optional_string(payload["default_tasklist_id"]),
         default_calendar_id=_optional_string(payload["default_calendar_id"]),
-        preferred_llm_mode=cast(
-            Literal["AUTO", "LOCAL_GPU", "API_LLM"], preferred_llm_mode
-        ),
+        preferred_llm_mode=cast(Literal["AUTO", "LOCAL_GPU", "API_LLM"], preferred_llm_mode),
         external_llm_consent=_required_bool(payload, "external_llm_consent"),
         retention_days=_required_int(payload, "run_retention_days"),
         working_day_start_local=_required_string(work_hours, "start"),
@@ -346,14 +369,15 @@ def _validate_hhmm(value: str) -> None:
 
 
 def _patch_hash(settings_patch: SettingsPatchV1) -> str:
+    payload = asdict(settings_patch)
+    for field in ("clear_default_calendar", "clear_default_tasklist"):
+        if not payload[field]:
+            payload.pop(field)
+    if not settings_patch.github_repository_supplied:
+        payload.pop("default_github_repository")
+        payload.pop("github_repository_supplied")
     return hashlib.sha256(
-        json.dumps(asdict(settings_patch), separators=(",", ":"), sort_keys=True).encode()
-    ).hexdigest()
-
-
-def _settings_hash(settings: SettingsViewV1) -> str:
-    return hashlib.sha256(
-        json.dumps(asdict(settings), separators=(",", ":"), sort_keys=True).encode()
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     ).hexdigest()
 
 

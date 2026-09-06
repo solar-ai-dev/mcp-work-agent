@@ -87,8 +87,6 @@ from google_work_agent.application.agents.request_understanding.contracts import
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
     StateArtifactRefV1,
-)
-from google_work_agent.application.agents.request_understanding.validate_intent import (
     validated_repository_authority,
 )
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
@@ -158,6 +156,9 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     BudgetDecision,
     RunBudgetV2,
@@ -385,6 +386,7 @@ class RetrievalSubgraph:
         timezone_provider: Callable[[], str],
         default_tasklist_id_provider: Callable[[], str | None] | None = None,
         default_calendar_id_provider: Callable[[], str | None] | None = None,
+        repository_access: GetRepositoryAccessHandler | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -406,6 +408,7 @@ class RetrievalSubgraph:
         self._merge_decision = merge_decision
         self._evidence_store = evidence_store
         self._connector_reader = connector_reader
+        self._repository_access = repository_access
         self._tool_catalog = tool_catalog
         self._read_result_cache = read_result_cache
         self._confirm_inline = confirm_inline
@@ -461,7 +464,8 @@ class RetrievalSubgraph:
         return graph.compile(name="retrieval_subgraph")
 
     def _cancellable_node(
-        self, step: Callable[[ContextRetrievalLocalState], ContextRetrievalLocalState],
+        self,
+        step: Callable[[ContextRetrievalLocalState], ContextRetrievalLocalState],
     ) -> RunnableLambda[ContextRetrievalLocalState, ContextRetrievalLocalState]:
         def invoke(state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
             # Cancellation can arrive after edge evaluation, while the next
@@ -669,10 +673,12 @@ class RetrievalSubgraph:
                             "acquisition_result": acquisition_result,
                             "preferred_segment_ids": preferred_detail_evidence_ids(
                                 state.get("evidence_selection"),
-                                [state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
-                                 for route_id in _require_state_value(
-                                     state["query_plan"], "query_plan"
-                                 )["retrieval_order"]],
+                                [
+                                    state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
+                                    for route_id in _require_state_value(
+                                        state["query_plan"], "query_plan"
+                                    )["retrieval_order"]
+                                ],
                             ),
                         }
                     }
@@ -735,6 +741,7 @@ class RetrievalSubgraph:
         hydrated = project_acquisition_result(
             list(zip(plans, results, strict=True)),
             remaining_budget=dict(safe["remaining_budget"]),
+            prior_result=safe,
         )
         return cast(
             ContextRetrievalLocalState,
@@ -1138,6 +1145,7 @@ class RetrievalSubgraph:
         routes = {route["route_id"]: route for route in route_plan["input_plan"]["input_routes"]}
         bindings = dict(cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {})))
         new_handles: list[str] = []
+        failed_reads: list[tuple[SourceFetchPlanV1, str]] = []
         page_calls = 0
         attempts = list(cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])))
         for plan in plans:
@@ -1150,13 +1158,16 @@ class RetrievalSubgraph:
             candidate_ref = plan["detail_candidate_ref"]
             if candidate_ref is not None:
                 route_handles = [
-                    handle for handle in state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])
+                    handle
+                    for handle in state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])
                     if isinstance(bindings.get(handle), Mapping)
                     and cast(Mapping[str, object], bindings[handle]).get("route_id")
                     == plan["route_id"]
                 ]
                 prior_results = self._resolve_cached_results(
-                    state, bindings=bindings, handles=route_handles,
+                    state,
+                    bindings=bindings,
+                    handles=route_handles,
                 )
                 detail_resource = find_detail_resource(candidate_ref, prior_results)
                 if detail_resource is None:
@@ -1211,12 +1222,17 @@ class RetrievalSubgraph:
                                 "run_budget": state["retry_budget"],
                                 "now_ms": self._now_ms(),
                                 "prior_query_attempts": attempts,
+                                "repository_access": self._repository_access,
+                                "request_intent": state["request_intent"],
+                                "selected_resources": request_from_state(state).selected_resources,
                             }
                         }
                     },
                 )
             )
             execution = cast(Any, patch["read_execution"])
+            if execution.status == "FAILED":
+                failed_reads.append((plan, execution.failure_code))
             if execution.provider_called and plan["operation_kind"] != "DETAIL_FETCH":
                 page_calls += 1
             effective_handle = execution.read_result_handle
@@ -1279,6 +1295,8 @@ class RetrievalSubgraph:
         acquisition = project_acquisition_result(
             list(zip(plan_by_binding, raw_results, strict=True)),
             remaining_budget=self._remaining_retrieval_budget(state, page_calls),
+            failed_reads=failed_reads,
+            prior_result=state.get("acquisition_result"),
         )
         safe_acquisition = self._bounded_acquisition(acquisition)
         return cast(
@@ -1308,7 +1326,8 @@ class RetrievalSubgraph:
         resolved = []
         for handle in (
             cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, []))
-            if handles is None else handles
+            if handles is None
+            else handles
         ):
             raw = bindings.get(handle)
             if not isinstance(raw, Mapping):
@@ -1827,7 +1846,8 @@ def _pending_retrieval_need(value: object) -> RetrievalNeedV1 | None:
 
 
 def _needs_as_sufficiency_issues(
-    needs: list[RetrievalNeedV1], tool_route_plan: ToolRoutePlanV2 | None,
+    needs: list[RetrievalNeedV1],
+    tool_route_plan: ToolRoutePlanV2 | None,
 ) -> list[SufficiencyIssueV2]:
     """Project an incoming WorkAnalysis/Review need into the same bounded,
     Retrieval-local ``unresolved_sufficiency_issues`` shape the internal
@@ -1840,8 +1860,11 @@ def _needs_as_sufficiency_issues(
             "slot": need["required_information"],
             "issue_type": "MISSING",
             "required": True,
-            "resolution_source": "ROUTE" if len(routes) != 1 else
-            "GOOGLE" if routes[0]["connector_id"] == "google_workspace" else "CONNECTOR",
+            "resolution_source": "ROUTE"
+            if len(routes) != 1
+            else "GOOGLE"
+            if routes[0]["connector_id"] == "google_workspace"
+            else "CONNECTOR",
             "safety_critical": False,
             "reason_codes": list(need["reason_codes"]),
         }

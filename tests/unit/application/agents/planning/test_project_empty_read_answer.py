@@ -1,6 +1,27 @@
+import pytest
+
 from google_work_agent.application.agents.planning.project_empty_read_answer import (
     project_empty_read_answer,
 )
+
+
+@pytest.mark.parametrize("failure_kind", ["NOT_FOUND", "SCOPE"])
+def test_github_access_failure__requires_access_action__never_claims_empty_issues(
+    failure_kind,
+) -> None:
+    result = project_empty_read_answer(
+        user_request="열린 이슈 보여줘",
+        request_intent={
+            "requested_effect_hints": ["READ"], "requested_resource_hints": ["GITHUB_ISSUE"],
+        },
+        retrieval_result={"source_statuses": [{
+            "resource_type": "GITHUB_ISSUE", "status": "FAILED", "failure_kind": failure_kind,
+        }]}, evidence=[],
+    )
+    assert result is not None
+    assert "GitHub App 설치" in result.draft["answer"]
+    assert "이슈가 없다는 뜻은 아닙니다" in result.draft["answer"]
+    assert failure_kind not in result.draft["answer"]
 
 
 def test_partial_source_failure__is_not_presented_as_no_result() -> None:

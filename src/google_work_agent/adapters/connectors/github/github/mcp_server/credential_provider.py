@@ -70,6 +70,10 @@ class GitHubCredentialProvider:
         result = self._device_flow.poll(authorization)
         if result.status is GitHubDeviceFlowStatus.APPROVED:
             assert result.access_token is not None
+            # A new authorization must not retain a different account's refresh
+            # credential when the provider issues only a session access token.
+            if result.refresh_token is None:
+                self._keyring.delete(self._keyring_account)
             self._adopt_tokens(
                 access_token=result.access_token,
                 access_token_expires_at_ms=result.access_token_expires_at_ms,

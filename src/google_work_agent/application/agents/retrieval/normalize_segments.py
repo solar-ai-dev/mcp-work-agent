@@ -39,6 +39,7 @@ class ContextBudget:
 DEFAULT_CONTEXT_BUDGET = ContextBudget()
 CHUNK_SCHEMA_VERSION = 3
 MESSAGE_CHUNK_SCHEMA_VERSION = 4
+GITHUB_CHUNK_SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +110,11 @@ def normalize_segments(
                     "resource_id": str(raw.get("resource_id", "")),
                     "source_version_ref": _optional_string(raw.get("version")),
                     "chunk_schema_version": (
-                        CHUNK_SCHEMA_VERSION if message_id is None else MESSAGE_CHUNK_SCHEMA_VERSION
+                        GITHUB_CHUNK_SCHEMA_VERSION
+                        if resource_type == "github_issue"
+                        else CHUNK_SCHEMA_VERSION
+                        if message_id is None
+                        else MESSAGE_CHUNK_SCHEMA_VERSION
                     ),
                     "chunk_ordinal": index,
                     "normalized_content_sha256": hashlib.sha256(
@@ -288,6 +293,18 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
         return ""
     if resource_type == "calendar_freebusy":
         return format_calendar_freebusy_evidence(payload)
+    if resource_type == "github_issue":
+        fields = []
+        for key in ("repository", "issue_number", "title", "state", "url"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                fields.append(f"{key}: {value.strip()}")
+            elif key == "issue_number" and type(value) is int and value > 0:
+                fields.append(f"{key}: {value}")
+        description = payload.get("description")
+        if isinstance(description, str) and description.strip():
+            fields.append(f"description:\n{description.strip()}")
+        return "\n".join(fields)
     parts: list[str] = []
     if resource_type in _GMAIL_RESOURCE_TYPES:
         # Metadata was acquired by the provider, not inferred from the snippet.

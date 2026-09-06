@@ -29,7 +29,7 @@ from google_work_agent.application.agents.planning.contracts.domain_validation i
 from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
     planning_tool_argument_schema,
 )
-from google_work_agent.application.agents.request_understanding.validate_intent import (
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     is_fully_qualified_repository,
 )
 from google_work_agent.application.agents.review.contracts.plan_review_result import (

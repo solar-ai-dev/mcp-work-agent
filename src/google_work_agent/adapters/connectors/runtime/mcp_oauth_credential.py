@@ -150,7 +150,9 @@ class McpOAuthCredentialAdapter:
         status: Literal[
             "CONNECTING", "CONNECTED", "DISCONNECTED", "REAUTH_REQUIRED", "UNAVAILABLE"
         ] = (
-            "CONNECTED"
+            "CONNECTING"
+            if raw_state == "CONNECTING"
+            else "CONNECTED"
             if bool(payload["connected"])
             else "REAUTH_REQUIRED"
             if bool(payload["reauth_required"])
@@ -170,9 +172,17 @@ class McpOAuthCredentialAdapter:
                 str(item) for item in cast(list[object], payload.get("granted_scopes", []))
             ),
             missing_required_scopes=tuple(
-                str(item)
-                for item in cast(list[object], payload.get("missing_scopes", []))
+                str(item) for item in cast(list[object], payload.get("missing_scopes", []))
             ),
+            authorization_status=cast(
+                Literal["PENDING", "SLOW_DOWN", "APPROVED", "EXPIRED", "DENIED"] | None,
+                payload.get("authorization_status")
+                if isinstance(payload.get("authorization_status"), str)
+                and payload.get("authorization_status")
+                in {"PENDING", "SLOW_DOWN", "APPROVED", "EXPIRED", "DENIED"}
+                else None,
+            ),
+            detail_code=_optional_string(payload.get("detail_code")),
         )
 
     def _reconcile(

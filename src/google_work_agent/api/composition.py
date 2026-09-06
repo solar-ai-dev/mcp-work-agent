@@ -319,6 +319,9 @@ from google_work_agent.application.use_cases.resource.connector_resource_access 
 from google_work_agent.application.use_cases.resource.get_calendar_resource_detail import (
     GetCalendarResourceDetailHandler,
 )
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.application.use_cases.resource.get_resource_count import (
     GetResourceCountHandler,
 )
@@ -333,6 +336,9 @@ from google_work_agent.application.use_cases.resource.issue_selection_handle imp
     IssueSelectionHandle,
 )
 from google_work_agent.application.use_cases.resource.list_calendars import ListCalendarsHandler
+from google_work_agent.application.use_cases.resource.list_repositories import (
+    ListRepositoriesHandler,
+)
 from google_work_agent.application.use_cases.resource.list_resources import ListResourcesHandler
 from google_work_agent.application.use_cases.resource.list_task_lists import ListTaskListsHandler
 from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
@@ -817,9 +823,7 @@ def _build_workflow_application_services(
                 "search_by_recovery_fingerprint"
             ),
             recovery_search_bindings={
-                GITHUB_CONNECTOR_ID: github_internal_read_binding(
-                    "search_by_recovery_fingerprint"
-                )
+                GITHUB_CONNECTOR_ID: github_internal_read_binding("search_by_recovery_fingerprint")
             },
             unit_of_work_factory=unit_of_work_factory,
         ),
@@ -1453,9 +1457,7 @@ def _load_installed_llm_runtime_selection(
     if not set(local_model_profile.model_ids).issubset(approved_model_ids):
         raise CoreInitializationError("LOCAL_MODEL_PROFILE_MODEL_NOT_APPROVED")
     selected = next(
-        (
-            model for model in approved_models if model.model_id == decision.selected_model_id
-        ),
+        (model for model in approved_models if model.model_id == decision.selected_model_id),
         None,
     )
     if selected is None:
@@ -1586,9 +1588,7 @@ def _build_connectors(
             or github_installed.mcp_schema_version != mcp_manifest_version
         ):
             raise CoreInitializationError("MCP_SCHEMA_MISMATCH")
-        executable_binding = _required_release_file(
-            release_files, google_installed.executable_path
-        )
+        executable_binding = _required_release_file(release_files, google_installed.executable_path)
         projection_binding = _required_release_file(
             release_files, google_installed.tool_projection_path
         )
@@ -1684,9 +1684,7 @@ def _build_connectors(
             working_directory=str(github_working_directory),
             extra_environment=github_environment,
         ),
-        expected_tool_descriptors=tuple(
-            tool_registry.descriptor_expectations(GITHUB_CONNECTOR_ID)
-        ),
+        expected_tool_descriptors=tuple(tool_registry.descriptor_expectations(GITHUB_CONNECTOR_ID)),
     )
     github_connector = GitHubConnector(
         descriptor=github_descriptor,
@@ -2255,8 +2253,7 @@ def build_production_runtime(
     )
     development_local_model_profile = (
         _load_development_local_model_profile(install_root)
-        if configuration_source == "EXPLICIT_DEVELOPMENT"
-        and deployment_profile == "LOCAL_CAPABLE"
+        if configuration_source == "EXPLICIT_DEVELOPMENT" and deployment_profile == "LOCAL_CAPABLE"
         else None
     )
     runtime_selection = LlmRuntimeSelectionV1(
@@ -2386,22 +2383,22 @@ def build_production_runtime(
         GitHubConnector,
         connector_bundle.get_required(GITHUB_CONNECTOR_ID),
     )
-    mcp_manifest_path = Path(
-        google_connector.descriptor.artifact_config.manifest_path
-    )
-    mcp_executable_path = Path(
-        google_connector.descriptor.artifact_config.executable_path
-    )
+    mcp_manifest_path = Path(google_connector.descriptor.artifact_config.manifest_path)
+    mcp_executable_path = Path(google_connector.descriptor.artifact_config.executable_path)
     if connector_bundle.tool_registry.contract_version != policy_version:
         connector_registry.close_all()
         raise CoreInitializationError("POLICY_VERSION_MISMATCH")
     google_provider = google_connector.oauth_port
     github_provider = github_connector.oauth_port
     unit_of_work_factory = sqlite_unit_of_work_factory(
-        database_path, environment=oauth_environment.value, release_version=release_version,
+        database_path,
+        environment=oauth_environment.value,
+        release_version=release_version,
     )
     read_unit_of_work_factory = sqlite_read_unit_of_work_factory(
-        database_path, environment=oauth_environment.value, release_version=release_version,
+        database_path,
+        environment=oauth_environment.value,
+        release_version=release_version,
     )
     connected_account_store_factory = sqlite_connected_account_store_factory(database_path)
     get_connection_status = GetConnectionStatusHandler(
@@ -2470,10 +2467,9 @@ def build_production_runtime(
             runtime_registry=connector_bundle.runtime_registry,
             mcp_client=google_connector.client,
             internal_bindings=(
-                google_workspace_internal_read_binding(
-                    "search_by_recovery_fingerprint"
-                ),
+                google_workspace_internal_read_binding("search_by_recovery_fingerprint"),
                 github_internal_read_binding("search_by_recovery_fingerprint"),
+                github_internal_read_binding("github.repositories.list"),
             ),
         ),
         check=check_component_circuit,
@@ -2485,6 +2481,15 @@ def build_production_runtime(
         check=check_component_circuit,
         record=record_component_call_result,
         now_ms=clock.now_ms,
+    )
+    list_repositories = ListRepositoriesHandler(
+        connector_read=connector_reader,
+        binding=github_internal_read_binding("github.repositories.list"),
+        continuation_store=LocalResourceContinuationStore(),
+    )
+    get_repository_access = GetRepositoryAccessHandler(
+        list_repositories=list_repositories,
+        current_account_id=current_github_account_id,
     )
     read_projection = ConnectorReadProjection(
         connector_reader=connector_reader,
@@ -2563,9 +2568,7 @@ def build_production_runtime(
         ),
         tool_registry=connector_bundle.tool_registry,
     )
-    get_supervisor_observation_handler = GetSupervisorObservationHandler(
-        read_unit_of_work_factory
-    )
+    get_supervisor_observation_handler = GetSupervisorObservationHandler(read_unit_of_work_factory)
 
     def work_hours_provider() -> CalendarWorkHours:
         settings = settings_service.get_settings()
@@ -2597,6 +2600,7 @@ def build_production_runtime(
     )
     try:
         workflow_runtime = LangGraphWorkflowRuntime(
+            repository_access=get_repository_access,
             unit_of_work_factory=unit_of_work_factory,
             llm_runtime=llm_runtime,
             connector_reader=read_projection,
@@ -2705,6 +2709,7 @@ def build_production_runtime(
                 api_contract_version=api_contract_version,
             ),
             selected_resources=context.selected_resources,
+            default_github_repository=context.default_github_repository,
             user_message_id=context.user_message_id,
         )
 
@@ -2869,9 +2874,7 @@ def build_production_runtime(
                 "search_by_recovery_fingerprint"
             ),
             recovery_search_bindings={
-                GITHUB_CONNECTOR_ID: github_internal_read_binding(
-                    "search_by_recovery_fingerprint"
-                )
+                GITHUB_CONNECTOR_ID: github_internal_read_binding("search_by_recovery_fingerprint")
             },
             unit_of_work_factory=unit_of_work_factory,
             now_ms=clock.now_ms,
@@ -2978,14 +2981,10 @@ def build_production_runtime(
         ConnectorResourceAccess(
             gateway=read_projection,
             default_calendar_id_provider=(
-                lambda: (
-                    llm_runtime.settings_service().default_calendar_id or DEFAULT_CALENDAR_ID
-                )
+                lambda: llm_runtime.settings_service().default_calendar_id or DEFAULT_CALENDAR_ID
             ),
             default_tasklist_id_provider=(
-                lambda: (
-                    llm_runtime.settings_service().default_tasklist_id or DEFAULT_TASK_LIST_ID
-                )
+                lambda: llm_runtime.settings_service().default_tasklist_id or DEFAULT_TASK_LIST_ID
             ),
             timezone_provider=lambda: llm_runtime.settings_service().timezone,
         ),
@@ -3154,6 +3153,7 @@ def build_production_runtime(
             GITHUB_CONNECTOR_ID: current_github_account_id,
         },
         list_resources_handler=ListResourcesHandler(resource_access),
+        list_repositories_handler=list_repositories,
         get_resource_count_handler=GetResourceCountHandler(resource_access),
         get_resource_detail_handler=GetResourceDetailHandler(resource_access),
         issue_selection_handle=issue_selection_handle,
@@ -3304,6 +3304,7 @@ def build_production_runtime(
         update_settings_handler=UpdateSettingsHandler(
             settings=settings_service,
             replay=operational_replay,
+            repository_access=get_repository_access,
         ),
         list_backups_handler=ListBackupsHandler(backup_adapter),
         create_backup_handler=CreateBackupHandler(

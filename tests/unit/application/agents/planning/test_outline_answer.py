@@ -59,7 +59,12 @@ def test_outline_uses__distinct_prompt__and_minimum_projection() -> None:
 
     result = outline_answer(
         user_request="Summarize the current facts.",
-        request_intent={"goal": "summary"},
+        request_intent={
+            "goal": "summary",
+            "repository_default": {
+                "repository": "sample/project", "repository_id": 2, "account_id": "github:1",
+            },
+        },
         work_analysis={"action_necessity": "NOT_REQUIRED"},
         evidence=[{"evidence_id": "e1", "excerpt": "fact"}],
         invoke=invoke,
@@ -69,6 +74,7 @@ def test_outline_uses__distinct_prompt__and_minimum_projection() -> None:
     assert captured["prompt_id"] == "planning.outline_answer"
     prompt_input = captured["prompt_input"]
     assert isinstance(prompt_input, dict)
+    assert prompt_input["request_intent"] == {"goal": "summary"}
     assert set(prompt_input) == {
         "user_request",
         "request_intent",

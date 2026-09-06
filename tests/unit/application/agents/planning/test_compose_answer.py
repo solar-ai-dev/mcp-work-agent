@@ -37,7 +37,12 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
 
     result = compose_answer(
         user_request="Summarize.",
-        request_intent={"goal": "summary"},
+        request_intent={
+            "goal": "summary",
+            "repository_default": {
+                "repository": "sample/project", "repository_id": 2, "account_id": "github:1",
+            },
+        },
         answer_outline={"sections": ["Conclusion"], "evidence_refs": ["e1"]},
         work_analysis=None,
         evidence=[{"evidence_id": "e1", "excerpt": "fact"}],
@@ -48,6 +53,7 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
     assert captured["prompt_id"] == "planning.compose_answer"
     prompt_input = captured["prompt_input"]
     assert isinstance(prompt_input, dict)
+    assert prompt_input["request_intent"] == {"goal": "summary"}
     assert set(prompt_input) == {
         "user_request",
         "request_intent",

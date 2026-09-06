@@ -4,7 +4,7 @@
 
 ## 0. 문서 정보
 
-- **문서명:** 10. Google Work Agent · 인프라 · 환경 설정 설계서
+- **문서명:** 10. mcp-work-agent · 인프라 · 환경 설정 설계서
 - **상태:** Draft v2.22
 - **기준일:** 2026-09-03
 - **대상:** P0 MVP
@@ -17,7 +17,7 @@
 
 ## 1. 목적과 범위
 
-이 문서는 Google Work Agent를 사용자의 Windows PC에 설치하고 실행하기 위한 Process, Packaging, Directory, Config, Installer, Upgrade, Backup, Health Check와 Release 계약을 정의한다.
+이 문서는 mcp-work-agent를 사용자의 Windows PC에 설치하고 실행하기 위한 Process, Packaging, Directory, Config, Installer, Upgrade, Backup, Health Check와 Release 계약을 정의한다.
 
 이 문서가 소유하는 내용:
 
@@ -131,7 +131,7 @@ Windows Installer 본체에는 Ollama executable과 model weight를 내장하지
 
 ```mermaid
 flowchart TD
-    U["사용자"] --> L["Google Work Agent Launcher"]
+    U["사용자"] --> L["mcp-work-agent Launcher"]
     L --> API["FastAPI Local Agent Service"]
     L --> B["Chrome 또는 Edge"]
     B -->|"same-origin REST·SSE"| API
@@ -829,6 +829,7 @@ current non-secret User Settings logical schema는 다음 field set 하나다. 0
 timezone                      # IANA timezone
 default_calendar_id
 default_tasklist_id
+default_github_repository      # null or {repository, repository_id, account_id}; explicit user selection
 preferred_llm_mode            # AUTO | LOCAL_GPU | API_LLM; 새 Run/UI 기본값
 preferred_local_model_id      # deprecated read-only migration field; current product normalizes to null
 external_llm_consent          # bool, default false; API_LLM/AUTO→API prior-consent authority
@@ -852,6 +853,8 @@ circuit_open_duration_ms
 ```
 
 `PanelPreferencesV1`의 P0 field는 `right_panel_default_open: bool`과 `right_panel_default_tab: CONVERSATIONS | RESOURCES`다. pixel width·animation·temporary Drawer state 같은 UI-local tuning은 Settings schema가 아니다.
+
+`default_github_repository`는 0 또는 1개의 사용자 선택이다. 저장 시 현재 GitHub 계정 및 GitHub App installation의 접근 가능한 Repository에서 `repository`(canonical owner/repository), immutable Provider `repository_id`, `account_id`를 해소한다. 임의 metadata나 credential은 저장하지 않는다. 기존 JSON envelope에 additive null field로 atomic migration하며 기존 설정·operation marker를 보존한다. 계정 변경, repository rename/삭제 또는 권한 상실 뒤에는 같은 binding을 재검증하기 전 사용할 수 없다. 기본값 선택은 GitHub 권한이나 Write 승인이 아니다.
 
 `working_day_start_local < working_day_end_local`, `calendar_buffer_minutes >= 0`, P0 `retention_days`는 **1..30**을 검증한다. default는 30이고 31 이상 연장은 P1 policy change 전에는 거부한다. 이 setting은 01-B/04의 Conversation·Message·terminal Run 소유 데이터와 owning Checkpoint에만 적용하며 Audit 90일·Secret·Session Cache에는 적용하지 않는다. Calendar availability/conflict policy는 persisted `timezone + working_day_* + include_weekends + calendar_buffer_minutes`를 소비한다. `POL-CAL-004`의 초기 평일 09:00~18:00/주말 제외는 shipped default이지 별도 schema가 아니다.
 

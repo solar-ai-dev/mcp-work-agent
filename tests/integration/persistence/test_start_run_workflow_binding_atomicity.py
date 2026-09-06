@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -14,14 +15,57 @@ from google_work_agent.adapters.persistence.sqlite.unit_of_work import (
     SqliteUnitOfWork,
     sqlite_unit_of_work_factory,
 )
+from google_work_agent.adapters.system.json_settings import FileSettingsStore, JsonSettingsAdapter
 from google_work_agent.adapters.system.sqlite_checkpoint import SqliteCheckpointAdapter
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
+from google_work_agent.application.use_cases.run.get_run_snapshot import (
+    GetExecutionContextQuery,
+    GetRunSnapshotHandler,
+)
 from google_work_agent.application.use_cases.run.start_run import StartRunCommand, StartRunHandler
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1, SettingsPatchV1
 
 _TOOL_REGISTRY = load_signed_tool_registry()
+
+
+def test_start_run__repository_default_snapshot__survives_settings_change_and_restart(
+    tmp_path: Path,
+) -> None:
+    database_path = _database(tmp_path)
+    settings = JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json"))
+    chosen = GitHubRepositoryDefaultV1("sample/project", 123, "github:42")
+    settings.update_settings(
+        SettingsPatchV1(1, default_github_repository=chosen, github_repository_supplied=True),
+        "choose",
+    )
+    factory = sqlite_unit_of_work_factory(database_path)
+    handler = StartRunHandler(
+        unit_of_work_factory=factory,
+        checkpoint_port=SqliteCheckpointAdapter(database_path, now_ms=lambda: 100),
+        now_ms=lambda: 100,
+        id_factory=_id_factory(),
+        graph_profile="SIX_ROLE_BASELINE",
+        graph_version="resume-contract-v1",
+        tool_registry=_TOOL_REGISTRY,
+        settings_provider=settings.get_settings,
+    )
+    result = handler(_command())
+    settings.update_settings(
+        SettingsPatchV1(1, default_github_repository=None, github_repository_supplied=True), "clear"
+    )
+    with connect_sqlite(database_path) as connection:
+        stored = connection.execute(
+            "SELECT default_github_repository_json FROM runs WHERE id=?", (result.run_id,)
+        ).fetchone()[0]
+        assert json.loads(stored)["repository"] == "sample/project"
+    snapshot = GetRunSnapshotHandler(
+        unit_of_work_factory=sqlite_unit_of_work_factory(database_path)
+    )
+    context = snapshot.execution_context(GetExecutionContextQuery(result.run_id))
+    assert context is not None and context.default_github_repository == chosen
 
 
 def test_start_run_commits__one_binding_with__all_atomic_participants(tmp_path: Path) -> None:

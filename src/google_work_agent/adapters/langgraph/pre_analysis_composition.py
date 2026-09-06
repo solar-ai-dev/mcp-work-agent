@@ -22,6 +22,9 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptExecutionScope
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
@@ -64,6 +67,7 @@ def build_pre_analysis_subgraphs(
     timezone_provider: Callable[[], str],
     default_tasklist_id_provider: Callable[[], str | None] | None = None,
     default_calendar_id_provider: Callable[[], str | None] | None = None,
+    repository_access: GetRepositoryAccessHandler | None = None,
 ) -> PreAnalysisSubgraphs:
     """Create nodes only; workflow policy remains in their Application owners."""
 
@@ -89,6 +93,7 @@ def build_pre_analysis_subgraphs(
             confirm_inline=confirm_tool_route_inline,
         ),
         context_retrieval=RetrievalSubgraph(
+            repository_access=repository_access,
             should_stop_for_cancel=should_stop_for_cancel,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,

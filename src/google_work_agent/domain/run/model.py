@@ -46,6 +46,7 @@ class Run:
     actual_runtime: str | None = None
     terminal_result_kind: TerminalResultKindV1 | None = None
     budget_json: str = "{}"
+    default_github_repository_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,7 @@ class RunCreate:
     started_at_ms: int
     finished_at_ms: int | None
     terminal_result_kind: TerminalResultKindV1 | None = None
+    default_github_repository_json: str | None = None
 
 
 class RunCommand(StrEnum):

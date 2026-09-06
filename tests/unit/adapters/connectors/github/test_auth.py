@@ -5,6 +5,7 @@ from google_work_agent.adapters.connectors.github.github.mcp_server.credential_p
     GitHubCredentialState,
 )
 from google_work_agent.adapters.connectors.github.github.mcp_server.oauth_device_flow import (
+    GitHubDeviceAuthorization,
     GitHubDeviceFlowClient,
     GitHubDeviceFlowStatus,
 )
@@ -34,6 +35,25 @@ class _SecretStore:
 
     def delete(self, key: str) -> None:
         self.value = None
+
+
+def test_reconnect__new_authorization_without_refresh__cannot_restore_old_account() -> None:
+    store = _SecretStore(initial=b"previous-account-refresh")
+    flow = GitHubDeviceFlowClient(
+        client_id="client",
+        scope="",
+        now_ms=lambda: 0,
+        transport=_OAuthTransport({"access_token": "new-account-session-access"}),
+    )
+    provider = GitHubCredentialProvider(keyring=store, device_flow=flow, now_ms=lambda: 0)
+    authorization = GitHubDeviceAuthorization(
+        "device", "user", "https://github.com/login/device", 10000, 5
+    )
+    provider.complete_device_flow(authorization)
+    assert store.value is None
+    assert provider.get_access_token() == "new-account-session-access"
+    restarted = GitHubCredentialProvider(keyring=store, device_flow=flow, now_ms=lambda: 0)
+    assert restarted.get_connection_status().connected is False
 
 
 def test_device_flow__start_and_poll__preserve_github_protocol() -> None:
@@ -93,10 +113,7 @@ def test_credential_provider__persists_only__refresh_token() -> None:
     assert store.put_values == [b"new-refresh"]
     assert b"new-access" not in store.put_values
     assert provider.get_connection_status().granted_scopes == ("repo",)
-    assert (
-        provider.get_connection_status().credential_state
-        is GitHubCredentialState.CONNECTED
-    )
+    assert provider.get_connection_status().credential_state is GitHubCredentialState.CONNECTED
 
 
 def test_disconnect__clears_keyring__and_memory_state() -> None:
@@ -108,7 +125,4 @@ def test_disconnect__clears_keyring__and_memory_state() -> None:
 
     assert provider.disconnect() is True
     assert store.value is None
-    assert (
-        provider.get_connection_status().credential_state
-        is GitHubCredentialState.NOT_CONNECTED
-    )
+    assert provider.get_connection_status().credential_state is GitHubCredentialState.NOT_CONNECTED

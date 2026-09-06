@@ -10,6 +10,7 @@ from typing import Any, Literal
 from google_work_agent.ports.system.contracts.workflow_handoff import (
     WorkflowControlEnvelopeV1,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 type JsonValue = Any
 
@@ -61,6 +62,7 @@ class WorkflowStartRequest:
     run_budget: Mapping[str, JsonValue] = field(default_factory=dict)
     selected_resources: tuple[SelectedResourceRef, ...] = ()
     user_message_id: str | None = None
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
 
 
 @dataclass(frozen=True, slots=True)

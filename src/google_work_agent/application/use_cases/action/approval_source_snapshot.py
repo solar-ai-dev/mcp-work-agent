@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from json import JSONDecodeError, loads
 
-from google_work_agent.application.agents.request_understanding.validate_intent import (
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     is_fully_qualified_repository,
 )
 from google_work_agent.domain.action.model import Action as ActionRecord

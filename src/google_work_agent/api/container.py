@@ -77,6 +77,7 @@ class ApiContainer:
     get_resource_count_handler: Any | None = None
     get_resource_detail_handler: Any | None = None
     list_task_lists_handler: Any | None = None
+    list_repositories_handler: Any | None = None
     list_calendars_handler: Any | None = None
     get_task_resource_detail_handler: Any | None = None
     get_calendar_resource_detail_handler: Any | None = None

@@ -2,12 +2,10 @@ import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
+    RequestUnderstandingValidationError,
 )
 from google_work_agent.application.agents.request_understanding.finalize_intent import (
     finalize_intent,
-)
-from google_work_agent.application.agents.request_understanding.validate_intent import (
-    RequestUnderstandingValidationError,
 )
 
 

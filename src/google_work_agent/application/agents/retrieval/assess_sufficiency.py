@@ -74,6 +74,21 @@ def assess_sufficiency(
     query_attempts: Sequence[QueryAttemptV1] = (),
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
+    terminal_read_failure = any(
+        summary.get("status") == "FAILED"
+        and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED"}
+        for summary in acquisition_result["source_summaries"]
+    )
+    if terminal_read_failure:
+        guarded = _fail_closed_on_empty_required_acquisition(
+            {"schema_version": 2, "status": "PARTIAL", "issues": []},
+            tool_route_plan=tool_route_plan, acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+        )
+        return enforce_sufficiency_guard(
+            guarded, request_intent=request_intent, retry_budget=retry_budget,
+            evidence_supported_partial_possible=bool(evidence_drafts),
+        )
     if _is_complete_selected_gmail_read(
         request_intent=request_intent,
         tool_route_plan=tool_route_plan,
@@ -205,6 +220,12 @@ def _fail_closed_on_empty_required_acquisition(
             else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if no_resources
             else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
         )
+        access_reasons = [
+            "SOURCE_" + str(summary["error_code"])
+            for summary in summaries
+            if summary.get("status") == "FAILED"
+            and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED"}
+        ]
         issues.append({
             "slot": "required_source_evidence",
             "route_id": route["route_id"],
@@ -213,7 +234,7 @@ def _fail_closed_on_empty_required_acquisition(
             "resolution_source": "POLICY" if is_policy else
             "GOOGLE" if route["connector_id"] == "google_workspace" else "CONNECTOR",
             "safety_critical": is_policy,
-            "reason_codes": [reason],
+            "reason_codes": list(dict.fromkeys([reason, *access_reasons])),
         })
     return {
         "schema_version": 2,
@@ -550,6 +571,10 @@ def _worst_source_status(summaries: list[dict[str, object]]) -> tuple[str, str |
     for summary in summaries:
         raw_status = str(summary.get("status"))
         status, failure_kind = _SOURCE_STATUS_MAP.get(raw_status, ("FAILED", raw_status))
+        if raw_status == "FAILED":
+            failure_kind = {
+                "NOT_FOUND": "NOT_FOUND", "PERMISSION_DENIED": "SCOPE",
+            }.get(str(summary.get("error_code")), failure_kind)
         priority = _SOURCE_STATUS_PRIORITY.get(status, 3)
         if priority > worst_priority:
             worst_priority = priority
@@ -648,6 +673,13 @@ def enforce_sufficiency_guard(
         budget_remaining = max(
             0, retry_budget["max_detail_fetches"] - retry_budget["detail_fetches_used"]
         )
+    if any(
+        set(issue["reason_codes"]) & {"SOURCE_NOT_FOUND", "SOURCE_PERMISSION_DENIED"}
+        for issue in sufficiency_result["issues"]
+    ):
+        # A different query cannot restore a missing target or repository access.
+        # This is eligibility for another acquisition, not mutation of RunBudget.
+        budget_remaining = 0
     issues = tuple(
         InsufficientDataIssue(
             issue_type=issue["issue_type"],

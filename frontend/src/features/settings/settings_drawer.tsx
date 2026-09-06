@@ -8,6 +8,7 @@ import { getSettings, type SettingsView } from "./api/get_settings";
 import { deleteLlmCredential, getLlmCredentialStatus, storeLlmCredential, type LlmCredentialStatus } from "./api/llm_credential_operations";
 import { updateRuntimeMode, type RuntimeMode } from "./api/update_runtime_mode";
 import { updateSettings } from "./api/update_settings";
+import { listRepositories, type RepositoryItem } from "./api/list_repositories";
 
 const OLLAMA_WINDOWS_INSTALL_GUIDE_URL = "https://ollama.com/download/windows";
 
@@ -41,6 +42,12 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   const [google, setGoogle] = useState<GoogleConnection | null>(null);
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [githubAuthorization, setGitHubAuthorization] = useState<AuthorizationStart | null>(null);
+  const [repositories, setRepositories] = useState<RepositoryItem[]>([]);
+  const [repositoryCursor, setRepositoryCursor] = useState<string | null>(null);
+  const [repositoryError, setRepositoryError] = useState<string | null>(null);
+  const [repositoryLoading, setRepositoryLoading] = useState(false);
+  const [selectedRepository, setSelectedRepository] = useState("");
+  const repositoryRequest = useRef(0);
   const [credential, setCredential] = useState<LlmCredentialStatus | null>(null);
   const [taskLists, setTaskLists] = useState<TaskListContainer[]>([]);
   const [calendars, setCalendars] = useState<CalendarContainer[]>([]);
@@ -54,7 +61,10 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
     const [nextSettings, nextGoogle, nextGitHub, nextCredential, nextTaskLists, nextCalendars] = await Promise.allSettled([
       getSettings(), getGoogleConnection(), getGitHubConnection(), getLlmCredentialStatus(), listTaskLists(), listCalendars(),
     ]);
-    if (nextSettings.status === "fulfilled") setSettings(nextSettings.value);
+    if (nextSettings.status === "fulfilled") {
+      setSettings(nextSettings.value);
+      setSelectedRepository(nextSettings.value.default_github_repository?.repository ?? "");
+    }
     if (nextGoogle.status === "fulfilled") setGoogle(nextGoogle.value);
     if (nextGitHub.status === "fulfilled") setGitHub(nextGitHub.value);
     if (nextCredential.status === "fulfilled") setCredential(nextCredential.value);
@@ -65,28 +75,92 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
     }
   }, []);
 
+  const refreshRepositories = useCallback(async (cursor?: string): Promise<void> => {
+    const requestId = ++repositoryRequest.current;
+    setRepositoryLoading(true);
+    setRepositoryError(null);
+    try {
+      const page = await listRepositories(cursor);
+      if (requestId !== repositoryRequest.current) return;
+      if (page.account_id !== github?.account_id) throw new Error("GitHub account changed");
+      setRepositories((current) => [...new Map([...(cursor ? current : []), ...page.items].map((item) => [item.repository_id, item])).values()]);
+      setRepositoryCursor(page.next_cursor);
+    } catch {
+      if (requestId === repositoryRequest.current) {
+        setRepositories([]);
+        setRepositoryCursor(null);
+        setRepositoryError("Repository 목록을 확인하지 못했습니다. GitHub 연결과 Repository 접근 권한을 확인해 주세요.");
+      }
+    } finally {
+      if (requestId === repositoryRequest.current) setRepositoryLoading(false);
+    }
+  }, [github?.account_id]);
+
+  useEffect(() => {
+    if (github?.connection_status === "CONNECTED") void refreshRepositories();
+    else { setRepositories([]); setRepositoryCursor(null); }
+    return () => { repositoryRequest.current += 1; };
+  }, [github?.connection_status, refreshRepositories]);
+
   useEffect(() => {
     void load().catch((error: unknown) => setMessage(errorMessage(error, "설정 정보를 불러오지 못했습니다.")));
   }, [load]);
 
   useEffect(() => {
-    if (!githubAuthorization || github?.connection_status === "CONNECTED") return;
-    const intervalMs = Math.max(1, githubAuthorization.poll_interval_seconds ?? 5) * 1000;
+    let refreshing = false;
+    let disposed = false;
+    const refreshAfterReturn = (): void => {
+      if (document.visibilityState !== "visible" || busy || githubAuthorization || refreshing) return;
+      refreshing = true;
+      void getGitHubConnection().then(async (connection) => {
+        if (disposed) return;
+        setGitHub(connection);
+        if (connection.connection_status === "CONNECTED" && connection.account_id === github?.account_id) {
+          await refreshRepositories();
+        }
+      }).catch(() => {
+        if (!disposed) setRepositoryError("GitHub 연결 상태를 확인하지 못했습니다. Repository 새로고침으로 다시 확인해 주세요.");
+      }).finally(() => { refreshing = false; });
+    };
+    window.addEventListener("focus", refreshAfterReturn);
+    document.addEventListener("visibilitychange", refreshAfterReturn);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", refreshAfterReturn);
+      document.removeEventListener("visibilitychange", refreshAfterReturn);
+    };
+  }, [busy, github?.account_id, githubAuthorization, refreshRepositories]);
+
+  useEffect(() => {
+    if (github?.connection_status === "CONNECTED" || (!githubAuthorization && github?.connection_status !== "CONNECTING")) return;
+    const intervalMs = Math.max(1, githubAuthorization?.poll_interval_seconds ?? 5) * 1000;
+    let polling = false;
+    let disposed = false;
     const timer = window.setInterval(() => {
-      if (githubAuthorization.expires_at_ms && Date.now() >= githubAuthorization.expires_at_ms) {
+      if (polling) return;
+      if (githubAuthorization?.expires_at_ms && Date.now() >= githubAuthorization.expires_at_ms) {
         window.clearInterval(timer);
         setGitHubAuthorization(null);
+        setMessage("GitHub 인증 코드가 만료되었습니다. 연결을 다시 시작해 주세요.");
         return;
       }
+      polling = true;
       void getGitHubConnection().then((connection) => {
+        if (disposed) return;
         setGitHub(connection);
+        if (connection.authorization_status === "DENIED" || connection.authorization_status === "EXPIRED") {
+          setGitHubAuthorization(null);
+          setMessage(connection.authorization_status === "DENIED" ? "GitHub 인증이 거부되었습니다. 연결을 다시 시작할 수 있습니다." : "GitHub 인증 코드가 만료되었습니다. 연결을 다시 시작해 주세요.");
+          return;
+        }
         if (connection.connection_status === "CONNECTED") {
           setGitHubAuthorization(null);
-          void onOperationalStateChanged();
+          setMessage("GitHub 연결이 완료되었습니다. 접근 가능한 Repository를 확인합니다.");
+          void onOperationalStateChanged().catch(() => setMessage("GitHub는 연결됐지만 화면 상태를 새로 확인하지 못했습니다. 설정을 다시 열어 주세요."));
         }
-      }).catch(() => undefined);
+      }).catch(() => { if (!disposed) setMessage("GitHub 인증 상태를 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요."); }).finally(() => { polling = false; });
     }, intervalMs);
-    return () => window.clearInterval(timer);
+    return () => { disposed = true; window.clearInterval(timer); };
   }, [github?.connection_status, githubAuthorization, onOperationalStateChanged]);
 
   function commandIdFor(operation: string): string {
@@ -96,6 +170,21 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
       commandIds.current.set(operation, commandId);
     }
     return commandId;
+  }
+
+  async function testGeminiConnection(): Promise<void> {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const status = await getLlmCredentialStatus();
+      setCredential(status);
+      setMessage(`Gemini API: ${credentialValidationLabels[status.validation_status]}`);
+    } catch (error) {
+      setCredential(null);
+      setMessage(errorMessage(error, "Gemini API 연결 상태를 확인하지 못했습니다."));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function run(operation: string, action: (commandId: string) => Promise<void>, success: string, clearSecret = false): Promise<void> {
@@ -154,34 +243,69 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
       <div className="panel-body">
         {message ? <p role="status" className="status-warn">{message}</p> : null}
         <section className="info-card"><strong>표시</strong><div className="button-row"><button type="button" className={theme === "light" ? "button-primary" : "button-secondary"} onClick={() => onThemeChange("light")}>밝게</button><button type="button" className={theme === "dark" ? "button-primary" : "button-secondary"} onClick={() => onThemeChange("dark")}>어둡게</button></div></section>
+        <h2>계정 및 연결</h2>
         <section className="info-card" aria-label="Google 연결">
-          <strong>Google</strong><p>{google?.connection_status === "CONNECTED" ? google.display_email : google ? googleConnectionLabels[google.connection_status] : "확인 중"}</p>
-          {google?.missing_required_scopes.length ? <p className="status-warn">추가로 필요한 권한: {google.missing_required_scopes.join(", ")}</p> : null}
+          <strong>Google Workspace</strong><p>{google ? googleConnectionLabels[google.connection_status] : "확인 중"}</p>
+          {google?.display_email ? <p>{google.display_email}</p> : null}
+          {google?.missing_required_scopes.length ? <p className="status-warn">필요한 권한이 부족합니다. 재연결해 권한을 허용해 주세요.</p> : google?.connection_status === "CONNECTED" ? <p>필요 권한 확인됨</p> : null}
+          {settings ? <>
+            <label>기본 캘린더<select value={settings.default_calendar_id ?? ""} onChange={(e) => patch("default_calendar_id", e.target.value || null)}><option value="">선택</option>{calendars.map((item) => <option key={item.calendar_id} value={item.calendar_id}>{item.title}{item.primary ? " (기본)" : ""}</option>)}</select></label>
+            <label>기본 태스크 목록<select value={settings.default_tasklist_id ?? ""} onChange={(e) => patch("default_tasklist_id", e.target.value || null)}><option value="">선택</option>{taskLists.map((item) => <option key={item.tasklist_id} value={item.tasklist_id}>{item.title}</option>)}</select></label>
+            <button type="button" className="button-secondary" disabled={busy} onClick={() => void saveSettings()}>Google 작업 기본값 저장</button>
+          </> : null}
           <div className="button-row">
             {google?.connection_status !== "CONNECTED" ? <button type="button" className="button-primary" disabled={busy} onClick={() => void run("google:connect", async (id) => { const result = await startGoogleConnection(id); window.open(requireOAuthUrl(result.authorization_url), "_blank", "noopener,noreferrer"); }, "Google 연결 완료를 기다리고 있습니다.")}>연결</button> : null}
             {google?.connection_status === "CONNECTED" ? <button type="button" className="button-danger" disabled={busy} onClick={() => void run("google:disconnect", async (id) => { await disconnectGoogle(id); }, "Google 연결을 해제했습니다.")}>연결 해제</button> : null}
+            {google?.connection_status === "CONNECTED" ? <button type="button" className="button-secondary" disabled={busy} onClick={() => void run("google:reconnect", async (id) => { const result = await startGoogleConnection(id); window.open(requireOAuthUrl(result.authorization_url), "_blank", "noopener,noreferrer"); }, "Google 재연결 인증을 기다리고 있습니다.")}>재연결</button> : null}
           </div>
         </section>
         <section className="info-card" aria-label="GitHub 연결">
           <strong>GitHub</strong>
-          <p>{github?.connection_status === "CONNECTED" ? github.display_email : github?.connection_status ?? "확인 중"}</p>
-          {github?.granted_scopes.length ? <p>Scopes: {github.granted_scopes.join(", ")}</p> : null}
-          {github?.missing_required_scopes.length ? <p className="status-warn">누락 scope: {github.missing_required_scopes.join(", ")}</p> : null}
+          <p>{github ? googleConnectionLabels[github.connection_status] : "확인 중"}</p>
+          {github?.display_email ? <p>{github.display_email}</p> : null}
+          {github?.connection_status !== "CONNECTED" ? <p>GitHub를 연결하면 접근 가능한 Repository의 Issue를 조회하고 관리할 수 있습니다.</p> : <p>Repository 접근 범위는 GitHub App 설치 권한에 따릅니다.</p>}
+          {github?.connection_status === "UNAVAILABLE" ? <p className="status-warn">GitHub 연결 준비가 필요합니다. 개발·배포 설정을 확인해 주세요.</p> : null}
+          {github?.missing_required_scopes.length ? <p className="status-warn">필요한 GitHub 권한이 부족합니다. 접근 설정을 확인해 주세요.</p> : null}
           {githubAuthorization?.flow_kind === "DEVICE_CODE" ? <div>
             <p>GitHub에 입력할 코드: <strong>{githubAuthorization.user_code}</strong></p>
+            <p>GitHub 인증을 기다리고 있습니다.</p>
+            <button type="button" className="button-secondary" onClick={() => { void navigator.clipboard.writeText(githubAuthorization.user_code ?? "").then(() => setMessage("인증 코드를 복사했습니다.")).catch(() => setMessage("복사하지 못했습니다. 표시된 코드를 직접 입력해 주세요.")); }}>코드 복사</button>
             {githubAuthorization.expires_at_ms ? <p>만료: {new Date(githubAuthorization.expires_at_ms).toLocaleString("ko-KR")}</p> : null}
             {githubAuthorization.verification_uri ? <button type="button" className="button-secondary" onClick={() => window.open(requireGitHubVerificationUrl(githubAuthorization.verification_uri!), "_blank", "noopener,noreferrer")}>GitHub 인증 페이지 열기</button> : null}
+          </div> : null}
+          {settings ? <div>
+            <p>저장된 기본 Repository: {settings.default_github_repository?.repository ?? "없음"}</p>
+            {settings.default_github_repository && github?.account_id && settings.default_github_repository.account_id !== github.account_id ? <p className="status-warn">다른 GitHub 계정의 기본값입니다. 현재 계정에서 다시 선택하거나 해제해 주세요.</p> : null}
+            <label>기본 Repository<select value={selectedRepository} disabled={github?.connection_status !== "CONNECTED" || repositoryLoading} onChange={(e) => setSelectedRepository(e.target.value)}>
+              <option value="">없음</option>
+              {selectedRepository && !repositories.some((item) => item.repository === selectedRepository) ? <option value={selectedRepository}>{selectedRepository} (접근 확인 필요)</option> : null}
+              {repositories.map((item) => <option key={item.repository_id} value={item.repository}>{item.repository}{item.private ? " (비공개)" : ""}</option>)}
+            </select></label>
+            {repositoryError ? <p role="alert" className="status-warn">{repositoryError}</p> : github?.connection_status === "CONNECTED" && !repositoryLoading && repositories.length === 0 ? <p>현재 페이지에 접근 가능한 Repository가 없습니다. 접근 관리에서 설치 범위를 확인해 주세요.</p> : null}
+            {repositoryLoading ? <p>Repository 접근 권한을 확인하고 있습니다.</p> : null}
+            <div className="button-row">
+              <button type="button" className="button-primary" disabled={busy || repositoryLoading || github?.connection_status !== "CONNECTED" || Boolean(selectedRepository && !repositories.some((item) => item.repository === selectedRepository))} onClick={() => void run(`github:repository:${selectedRepository}`, async (id) => { await updateSettings(id, { default_github_repository: selectedRepository || null }); }, "기본 Repository를 저장했습니다.")}>Repository 저장</button>
+              <button type="button" className="button-secondary" disabled={busy || !settings.default_github_repository} onClick={() => void run("github:repository:clear", async (id) => { await updateSettings(id, { default_github_repository: null }); }, "기본 Repository를 해제했습니다.")}>기본값 해제</button>
+              <button type="button" className="button-secondary" disabled={repositoryLoading || github?.connection_status !== "CONNECTED"} onClick={() => void refreshRepositories()}>Repository 새로고침</button>
+              {repositoryCursor ? <button type="button" className="button-secondary" disabled={repositoryLoading} onClick={() => void refreshRepositories(repositoryCursor)}>Repository 더 보기</button> : null}
+              <a className="button-secondary" href="https://github.com/settings/installations" target="_blank" rel="noreferrer">Repository 접근 관리</a>
+            </div>
           </div> : null}
           <div className="button-row">
             {github?.connection_status !== "CONNECTED" ? <button type="button" className="button-primary" disabled={busy || github?.connection_status === "UNAVAILABLE"} onClick={() => void run("github:connect", async (id) => { const result = await startGitHubConnection(id); setGitHubAuthorization(result); window.open(requireGitHubVerificationUrl(result.verification_uri ?? result.authorization_url), "_blank", "noopener,noreferrer"); }, github?.connection_status === "REAUTH_REQUIRED" ? "GitHub 재인증을 시작했습니다." : "GitHub 연결을 시작했습니다.")}>{github?.connection_status === "REAUTH_REQUIRED" ? "재연결" : "연결"}</button> : null}
             {github?.connection_status === "CONNECTED" ? <button type="button" className="button-danger" disabled={busy} onClick={() => void run("github:disconnect", async (id) => { await disconnectGitHub(id); setGitHubAuthorization(null); }, "GitHub 연결을 해제했습니다.")}>연결 해제</button> : null}
+            {github?.connection_status === "CONNECTED" ? <button type="button" className="button-secondary" disabled={busy} onClick={() => void run("github:reconnect", async (id) => { setGitHubAuthorization(await startGitHubConnection(id)); }, "GitHub 재연결 인증을 기다리고 있습니다.")}>재연결</button> : null}
           </div>
+        </section>
+        <section className="info-card" aria-label="Gemini API">
+          <strong>Gemini API</strong><p>{credential === null ? "연결 상태를 확인할 수 없습니다" : credential.configured ? `${credential.storage_mode === "KEYRING" ? "PC에 안전하게 저장" : "이번 실행에서만 사용"} / ${credentialValidationLabels[credential.validation_status]}` : "설정되지 않음"}</p>
+          <label>저장 방식<select value={storageMode} onChange={(e) => setStorageMode(e.target.value === "SESSION_ONLY" ? "SESSION_ONLY" : "KEYRING")}><option value="KEYRING">PC에 안전하게 저장</option><option value="SESSION_ONLY">이번 실행에서만 사용</option></select></label>
+          <label>API 키<input type="password" autoComplete="off" placeholder="Gemini API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>
+          <div className="button-row"><button type="button" className="button-primary" disabled={busy || !apiKey.trim()} onClick={() => void run("credential:store", async (id) => { await storeLlmCredential(id, apiKey, storageMode); }, "자격증명을 저장했습니다.", true)}>API 키 저장</button><button type="button" className="button-danger" disabled={busy} onClick={() => void run("credential:delete", async (id) => { await deleteLlmCredential(id); }, "자격증명을 삭제했습니다.", true)}>API 키 삭제</button><button type="button" className="button-secondary" disabled={busy} onClick={() => void testGeminiConnection()}>연결 테스트</button></div>
         </section>
         {settings ? <section className="info-card" aria-label="작업 설정">
           <strong>작업 설정</strong>
           <label>시간대<input value={settings.timezone} onChange={(e) => patch("timezone", e.target.value)} /></label>
-          <label>기본 캘린더<select value={settings.default_calendar_id ?? ""} onChange={(e) => patch("default_calendar_id", e.target.value || null)}><option value="">선택</option>{calendars.map((item) => <option key={item.calendar_id} value={item.calendar_id}>{item.title}{item.primary ? " (기본)" : ""}</option>)}</select></label>
-          <label>기본 태스크 목록<select value={settings.default_tasklist_id ?? ""} onChange={(e) => patch("default_tasklist_id", e.target.value || null)}><option value="">선택</option>{taskLists.map((item) => <option key={item.tasklist_id} value={item.tasklist_id}>{item.title}</option>)}</select></label>
           <label>업무 시작<input type="time" value={settings.working_day_start_local} onChange={(e) => patch("working_day_start_local", e.target.value)} /></label>
           <label>업무 종료<input type="time" value={settings.working_day_end_local} onChange={(e) => patch("working_day_end_local", e.target.value)} /></label>
           <label><input type="checkbox" checked={settings.include_weekends} onChange={(e) => patch("include_weekends", e.target.checked)} />주말 포함</label>
@@ -204,12 +328,6 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
             <button type="button" className="button-secondary" disabled={busy} onClick={() => void onOperationalStateChanged()}>다시 검사</button>
           </div>
         </section> : null}
-        <section className="info-card" aria-label="LLM 자격증명">
-          <strong>LLM 자격증명</strong><p>{credential?.configured ? `${credential.storage_mode === "KEYRING" ? "PC에 안전하게 저장" : "이번 실행에서만 사용"} / ${credentialValidationLabels[credential.validation_status]}` : "설정되지 않음"}</p>
-          <label>저장 방식<select value={storageMode} onChange={(e) => setStorageMode(e.target.value === "SESSION_ONLY" ? "SESSION_ONLY" : "KEYRING")}><option value="KEYRING">PC에 안전하게 저장</option><option value="SESSION_ONLY">이번 실행에서만 사용</option></select></label>
-          <label>API 키<input type="password" autoComplete="off" placeholder="sk-..." value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>
-          <div className="button-row"><button type="button" className="button-primary" disabled={busy || !apiKey.trim()} onClick={() => void run("credential:store", async (id) => { await storeLlmCredential(id, apiKey, storageMode); }, "자격증명을 저장했습니다.", true)}>API 키 저장</button><button type="button" className="button-danger" disabled={busy} onClick={() => void run("credential:delete", async (id) => { await deleteLlmCredential(id); }, "자격증명을 삭제했습니다.", true)}>API 키 삭제</button><button type="button" className="button-secondary" disabled={busy} onClick={() => void load()}>연결 테스트</button></div>
-        </section>
         <DiagnosticsPanel runtime={runtime} onRefresh={onOperationalStateChanged} />
       </div>
     </aside>

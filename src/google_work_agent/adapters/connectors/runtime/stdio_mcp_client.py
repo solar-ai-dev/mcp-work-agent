@@ -40,7 +40,7 @@ JsonObject = dict[str, object]
 PROTOCOL_VERSION = "2026-08-07.p0"
 MANIFEST_MESSAGE_LIMIT_BYTES = 64 * 1024
 SESSION_KEY_BYTES = 32
-_CONTROL_OPERATION_SEGMENTS = frozenset({"oauth", "connection", "device_flow"})
+_CONTROL_OPERATION_SEGMENTS = frozenset({"oauth", "connection", "device_flow", "repositories"})
 
 
 class MCPProcessStatus(StrEnum):
@@ -638,7 +638,8 @@ class StdioMCPClientAdapter:
                 if process is None or process.poll() is not None:
                     logging.getLogger(__name__).error(
                         "MCP child exited before response: request_id=%s returncode=%s",
-                        request_id, None if process is None else process.returncode,
+                        request_id,
+                        None if process is None else process.returncode,
                     )
                     raise MCPClientPortError(
                         code=MCPClientPortErrorCode.CONNECTION_CLOSED,
@@ -712,7 +713,8 @@ class StdioMCPClientAdapter:
             error_type = re.match(r"^([A-Za-z_][\w.]*(?:Error|Exception)):", line)
             if error_type is not None:
                 logging.getLogger(__name__).error(
-                    "MCP child exception: type=%s", error_type.group(1),
+                    "MCP child exception: type=%s",
+                    error_type.group(1),
                 )
 
 

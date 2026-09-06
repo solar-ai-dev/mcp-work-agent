@@ -2,6 +2,8 @@
 
 > **Authority:** security/auth trust boundary, credential/secret handling, security policy realization. Product policy와 interface/runtime semantics는 해당 owner를 따른다.
 
+GitHub Device Flow status projection은 optional `authorization_status` (`PENDING`, `SLOW_DOWN`, `APPROVED`, `EXPIRED`, `DENIED`)와 bounded `detail_code`를 포함한다. user code는 Provider 응답 그대로이며 Client ID는 개발/배포 구성이다. 일반 사용자에게 Client ID/secret/PAT를 요구하지 않는다. Repository 목록은 현재 GitHub App 설치와 user access의 교집합이며 선택은 권한을 확장하지 않는다. 기본 Repository는 계정 ID와 immutable Repository ID에 결속하고 사용 전 현재 접근을 재검증한다. Google/GitHub/Gemini credential authority는 독립적이다.
+
 ## 0. 문서 정보
 
 - **상태:** Draft v2.14
@@ -172,7 +174,7 @@ React command/status
 - HTTPS transport 성공만 신뢰하지 않는다. Windows installer signature/expected publisher와 SHA-256, model resolved digest를 모두 exact-match한다.
 - staging과 installer 실행은 current-user ACL 경계에서 수행하고 raw command line/download URL/local path를 Log·Trace·Diagnostic에 노출하지 않는다.
 - `PREEXISTING` Ollama는 호환성을 읽기 전용으로 검사하고 명시적 사용자 동의 없이 update/uninstall하지 않는다. `PRODUCT_PROVISIONED` origin도 제품 종료 시 강제 종료하지 않는다.
-- Uninstall 기본값은 Google Work Agent 전용 model cleanup을 보존/선택 가능하게 하고, shared/pre-existing Ollama를 제거하지 않는다.
+- Uninstall 기본값은 mcp-work-agent 전용 model cleanup을 보존/선택 가능하게 하고, shared/pre-existing Ollama를 제거하지 않는다.
 - Model artifact는 Secret은 아니지만 검증 전 비신뢰 공급망 입력이며 Prompt·Trace·Diagnostic에 raw binary/local path를 넣지 않는다.
 
 ## 6. LLM API Key와 외부 전송

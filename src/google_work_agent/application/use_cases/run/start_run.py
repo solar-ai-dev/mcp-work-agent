@@ -164,6 +164,13 @@ class StartRunHandler:
                 requested_mode=command.requested_mode,
                 actual_runtime=None,
                 budget_json=dumps(run_budget, sort_keys=True),
+                default_github_repository_json=(
+                    None
+                    if self._settings_provider is None
+                    or (repository_default := self._settings_provider().default_github_repository)
+                    is None
+                    else dumps(asdict(repository_default), sort_keys=True)
+                ),
                 version=0,
                 started_at_ms=now_ms,
                 finished_at_ms=None,

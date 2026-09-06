@@ -474,6 +474,8 @@ validated source_statuses
 
 ## 6. Parent 반환
 
+Connector READ의 `NOT_FOUND`와 `PERMISSION_DENIED`는 정상 빈 조회 결과가 아니다. `execute_read`는 해당 실패를 bounded 실행 결과로 전달하고, 기존 Acquisition Source summary에 `FAILED`와 정규화된 오류를 보존한다. 성공한 다른 Source의 Evidence/cache와 실패한 QueryAttempt 이력은 유지한다. 동일 요청 내 검색 반복으로 해결할 수 없는 대상·접근 실패는 추가 검색을 요청하지 않으며, READ는 확인 범위의 `PARTIAL`, 필수 pre-read가 누락된 WRITE는 기존 안전 Guard를 따른다. Credential 만료의 기존 `REAUTH_REQUIRED` 계약은 이 처리에 합치지 않는다.
+
 ```python
 class MissingInformationV1:
     code: str
@@ -598,6 +600,8 @@ class SourceSegmentIdentityV1:
 `connector_id + resource_type + resource_id`가 Provider Resource의 canonical identity authority다. `source_kind`는 deterministic normalization/source-family discriminator이며 Connector identity나 `resource_type`을 재선택·재추론하거나 Tool Route를 변경하는 authority가 아니다. 관측된 Connector/Resource에서 결정적 코드가 생성하며 LLM이 만들지 않는다.
 
 GitHub Issue는 `connector_id="github"`, `resource_type="github_issue"`, `resource_id="owner/repository#issue_number"`를 계속 사용한다. `source_kind="github"`는 이 identity를 대체하지 않는다. `github_list_issues`의 각 Issue는 이 composite `resource_id`를 가진 독립 Resource observation이며 list 전체를 synthetic 단일 Resource로 만들지 않는다.
+
+GitHub Issue의 Evidence 발췌는 Provider가 관측한 repository, issue number, title, state, URL을 본문과 구분해 보존한다. 본문 설명은 이 관측 identity나 존재 사실을 부정하는 authority가 아니다. Normalize는 기존 payload의 값만 표시하며 누락된 metadata를 추측하지 않는다. 이 형식 변경은 GitHub chunk schema를 갱신하고, 이전 Evidence/checkpoint는 기존 발췌와 identity 그대로 유지한다.
 
 - 같은 Provider resource version + 같은 normalized content + 같은 chunk schema/boundary면 fresh Retrieval에서도 같은 `segment_id`를 생성한다.
 - Provider source version/content 또는 chunk schema가 바뀌어 Evidence 의미가 달라지면 새 `segment_id`를 발급한다. 과거 exclusion을 변경된 content에 임의 승계하지 않는다.

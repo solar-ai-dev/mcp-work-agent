@@ -142,10 +142,16 @@ def test_runtime_and__documentation_expose__identical_forward_migrations() -> No
         b"\r\n", b"\n"
     ) == GITHUB_RESOURCE_MIGRATION.read_bytes().replace(b"\r\n", b"\n")
     migrations = discover_migrations()
+    for migration in migrations:
+        documented_path = ROOT / "docs/database/migrations" / migration.path.name
+        assert documented_path.read_bytes().replace(
+            b"\r\n", b"\n"
+        ) == migration.path.read_bytes().replace(b"\r\n", b"\n")
     assert [(item.version, item.name) for item in migrations] == [
         (1, "current_schema"),
         (19, "legacy_v18_adoption"),
         (20, "github_resource_registration"),
+        (21, "run_repository_default"),
     ]
     assert migrations[0].checksum == calculate_migration_checksum(runtime)
 
@@ -158,6 +164,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
             (1, "current_schema", True),
             (19, "legacy_v18_adoption", True),
             (20, "github_resource_registration", True),
+            (21, "run_repository_default", True),
         ]
         tables = {
             str(row[0])
@@ -182,7 +189,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
         assert connection.execute("PRAGMA foreign_key_check;").fetchall() == []
 
         replay = apply_migrations(connection, now_ms=lambda: 999)
-        assert len(replay) == 3
+        assert len(replay) == 4
         assert all(result.applied is False for result in replay)
         receipt = connection.execute(
             "SELECT version, name, applied_at_ms FROM schema_migrations;"
@@ -346,7 +353,10 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
 ) -> None:
     connection = connect_sqlite(tmp_path / "legacy-v18.db")
     try:
-        apply_migrations(connection, now_ms=lambda: 1)
+        legacy_baseline = tmp_path / "legacy-baseline"
+        legacy_baseline.mkdir()
+        copyfile(RUNTIME_MIGRATION, legacy_baseline / RUNTIME_MIGRATION.name)
+        apply_migrations(connection, migrations_dir=legacy_baseline, now_ms=lambda: 1)
         connection.execute("DELETE FROM schema_migrations;")
         connection.executemany(
             "INSERT INTO schema_migrations (version, name, checksum, applied_at_ms) "
@@ -367,6 +377,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
             (1, False),
             (19, True),
             (20, True),
+            (21, True),
         ]
         assert (
             connection.execute(
@@ -377,7 +388,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
         receipts = connection.execute(
             "SELECT version, name, checksum FROM schema_migrations ORDER BY version;"
         ).fetchall()
-        assert [int(row[0]) for row in receipts] == [*range(1, 21)]
+        assert [int(row[0]) for row in receipts] == [*range(1, 22)]
     finally:
         connection.close()
 

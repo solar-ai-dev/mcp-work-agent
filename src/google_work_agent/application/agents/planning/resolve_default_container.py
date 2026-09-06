@@ -8,8 +8,6 @@ from typing import Literal, Required, TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
-)
-from google_work_agent.application.agents.request_understanding.validate_intent import (
     RequestUnderstandingValidationError,
     validated_repository_authority,
 )

@@ -32,6 +32,7 @@ RUNTIME_CONTROL_ROUTES = {
     ("POST", "/api/v1/connections/{connector_name}/start"),
     ("GET", "/api/v1/connections/{connector_name}/status"),
     ("POST", "/api/v1/connections/{connector_name}/disconnect"),
+    ("GET", "/api/v1/connections/github/repositories"),
     ("PUT", "/api/v1/credentials/llm/{provider}"),
     ("GET", "/api/v1/credentials/llm/{provider}"),
     ("DELETE", "/api/v1/credentials/llm/{provider}"),

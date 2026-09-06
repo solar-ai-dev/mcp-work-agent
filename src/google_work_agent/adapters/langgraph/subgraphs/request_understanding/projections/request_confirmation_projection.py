@@ -23,6 +23,7 @@ _KOREAN_FIELD_LABELS = {
     "calendar_id": "대상 캘린더",
     "task_list_id": "대상 할 일 목록",
     "analysis_focus": "분석 관점",
+    "repository": "대상 GitHub 저장소(owner/repository 형식)",
 }
 
 

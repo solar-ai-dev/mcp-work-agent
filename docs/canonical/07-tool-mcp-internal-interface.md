@@ -1205,6 +1205,8 @@ Port method는 concrete Adapter class/path를 소유하지 않는다. 입력 siz
 
 Main Graph와 Agent Subgraph는 Versioned Typed State로 연결한다. Main State는 공식 결과만 누적하고 Subgraph 내부 Query candidate·LLM candidate·RAG score는 Local State/Run Cache에 둔다.
 
+`WorkflowStartRequest.default_github_repository` / `RunInputV1.default_github_repository`는 additive nullable `GitHubRepositoryDefaultV1`이다. 이전 checkpoint는 null이며 현재 Settings를 재조회해 채우지 않는다. Application `finalize_intent`만 같은 값을 `RequestIntentV2.repository_default` JSON object로 투영할 수 있다. `identify_goal` Prompt에는 Settings 기본값을 전달하지 않는다. 해당 Prompt는 명시적 사용자 표현만 추출하며, 결정적 Application owner가 별도 기본값을 해소한다. constraints의 USER_REQUEST provenance로 재작성하지 않는다. Prompt source/version/hash 및 input allowlist는 함께 갱신한다. Local API의 Run context projection은 이 내부 credential-bound default를 노출하지 않는다.
+
 ```
 RunInputV1
 RequestIntentV2
@@ -2035,6 +2037,7 @@ PrepareRetryRequestV2
 | `GET /api/v1/resources/task-lists` | 없음 | `TaskListContainerListResponseV1` | `resource.list_task_lists` → `tasks_list_tasklists` |
 | `GET /api/v1/resources/calendars` | 없음 | `CalendarContainerListResponseV1` | `resource.list_calendars` → `calendar_list_calendars` |
 | `GET /api/v1/settings` | 없음 | `SettingsViewV1` — 10의 non-secret settings allowlist만 | `setting.get_settings` |
+| `GET /api/v1/connections/github/repositories` | optional bounded `cursor` | `{schema_version:1, account_id, items:[{repository, repository_id, private}], next_cursor}` | `resource.list_repositories` |
 | `PUT /api/v1/settings` | `UpdateSettingsRequestV1(command_id, settings_patch: SettingsPatchV1)` | `SettingsViewV1` | `setting.update_settings` |
 | `POST /api/v1/runtime/mode` | `UpdateRuntimeModeRequestV1(command_id, requested_mode)` | `RuntimeModeStatusV1` | `runtime_mode.update_runtime_mode` |
 | `GET /api/v1/backups` | 없음 | `BackupListResponseV1` | `backup.list_backups` |
@@ -2045,6 +2048,8 @@ PrepareRetryRequestV2
 | `POST /api/v1/attachments/stage` | multipart `StageAttachmentRequestV1(command_id, file)` | `StagedAttachmentDescriptorV1(staged_attachment_id, filename, mime_type, size_bytes, sha256)` | `attachment.create_staged_attachment` |
 
 ### 24.5-A Operational wire schema definitions
+
+Repository cursor는 기존 session/account-bound opaque continuation owner를 사용한다. `github.repositories.list`는 registry의 Agent tool이 아닌 내부 READ control이며 현재 GitHub App user/installation 교집합의 100개 이하 page를 반환한다. `resource.get_repository_access`는 최대 50 page 내 exact name/id/account 확인을 수행하고, 불완전한 coverage는 접근 없음으로 단정하지 않는다. Run 중 호출은 page마다 기존 RunBudget에서 차감하며 상한은 늘리지 않는다. `ConnectionMetadataV1`은 nullable `authorization_status`와 `detail_code`를 추가한다(09의 closed values); 기존 Google producer는 null을 유지한다.
 
 §24.5에서 사용하는 Request/Response 이름은 아래 field set을 가진다. 이 절은 09 Security와 10 Infrastructure의 existing behavior를 wire schema로 고정할 뿐 새 secret/persistence authority를 만들지 않는다.
 
@@ -2125,6 +2130,8 @@ class SettingsPatchV1:
     timezone: str | None = None
     default_tasklist_id: str | None = None
     default_calendar_id: str | None = None
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
+    github_repository_supplied: bool = False  # internal patch presence; true + null clears
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"] | None = None
     external_llm_consent: bool | None = None
     retention_days: int | None = None  # P0: 1..30, default 30
@@ -2148,6 +2155,7 @@ class SettingsViewV1:
     timezone: str
     default_tasklist_id: str | None
     default_calendar_id: str | None
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
     preferred_local_model_id: str | None  # deprecated read-only migration projection; current product value is null
     external_llm_consent: bool
@@ -2171,6 +2179,11 @@ class UpdateSettingsRequestV1:
     schema_version: Literal[1]
     command_id: str
     settings_patch: SettingsPatchV1
+
+# Wire settings_patch.default_github_repository is owner/repository | null;
+# omission preserves, null clears. account_id/repository_id are server-derived only.
+# UpdateSettingsCommand preserves wire presence separately from the typed storage patch.
+# GitHubRepositoryDefaultV1 = {repository: str, repository_id: int, account_id: str}
 
 class UpdateRuntimeModeRequestV1:
     schema_version: Literal[1]
@@ -2579,9 +2592,13 @@ OutputToolRouteV1 + selected resource/context
 
 ### 31.1 GitHub repository binding
 
+Settings API의 `default_calendar_id` / `default_tasklist_id`는 생략하면 유지하고 명시적 null이면 해제한다. 내부 `SettingsPatchV1.clear_default_calendar` / `clear_default_tasklist`는 API의 명시적 null을 운반하는 표시이며 저장된 Settings field가 아니다. 이전 command의 hash/replay는 false인 새 표시를 제외해 유지한다.
+
+저장된 Repository의 immutable account/id binding은 결정적 Application 검증용이다. `planning.outline_answer`와 `planning.compose_answer`의 Prompt request_intent projection은 `repository_default`를 제외하고, 실제 조회한 Repository/Issue 표시는 Evidence를 사용한다. 이 표시용 projection은 durable Run의 원본 binding을 변경하지 않는다.
+
 `github_create_issue | github_update_issue | github_close_issue | github_reopen_issue`의 system/container argument `repository`도 새 resolver 없이 기존 deterministic `DefaultContainerResolver`가 바인딩한다.
 
-- 허용 source는 current-run selected GitHub Issue의 검증된 `parent_resource_id`와 `06`의 provenance-validated explicit `owner/repository` constraint뿐이다. GitHub hidden/default repository는 두지 않는다.
+- 허용 source는 current-run selected GitHub Issue의 검증된 `parent_resource_id`, `06`의 provenance-validated explicit `owner/repository`, 그리고 사용자가 Settings에서 저장하고 Run 시작 시 동결한 GitHub 기본 Repository다. 기본값은 앞의 두 source가 모두 없을 때만 사용할 수 있으며 사용자 요청 source-span으로 위조하지 않는다.
 - source가 하나이면 그것을 사용하고, 둘 다 있으며 같으면 하나로 정규화한다. 둘이 다르면 silent precedence/overwrite 없이 Argument Writer 전에 기존 Confirmation 또는 fail-closed 경로로 전환한다. source가 없을 때도 Argument Writer가 repository를 추측하지 않고 기존 사용자 Confirmation/selection lifecycle을 사용한다.
 - 확정된 `repository`는 bound Tool Schema Projection의 `const/immutable` field다. Argument Writer가 생략하면 deterministic Assembler가 binding을 주입하고, 같은 값을 내면 허용하며, 다른 값을 내면 reject한다. 조용히 overwrite하거나 LLM repair로 repository authority를 변경하지 않는다. Tool identity는 frozen `OutputToolRouteV1.selected_tool_id`를 그대로 사용한다.
 - `github_update_issue | github_close_issue | github_reopen_issue`의 existing target은 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`가 bound `repository`와 exact match해야 한다. mismatch는 Planning validation/Approval admission/Preflight에서 fail closed하고 모든 Connector I/O는 0이다. Provider GET은 이미 검증된 target의 freshness/preflight observation일 뿐 repository identity를 발견하거나 consistency를 성립시키는 authority가 아니다.

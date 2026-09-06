@@ -1,11 +1,13 @@
 # 02. UI · UX 설계서
 
+SettingsDrawer의 **계정 및 연결**은 기존 Google Workspace / GitHub / Gemini API 영역을 재사용한다. Google 계정·권한·기본 Calendar/Task List·재연결/해제를 보존한다. GitHub는 실제 Device user code·복사·인증 페이지·대기/만료/거부/재시도, 연결 계정, 접근 가능한 Repository 목록과 새로고침, 기본값 0/1 선택·저장·해제, GitHub App 접근 관리 링크를 제공한다. Repository 목록 실패를 빈 목록으로 표시하지 않는다. Gemini 이름은 기존 provider-neutral credential API의 gemini 설정에 대한 UX label이며 새 credential authority가 아니다. API Key 원문 재표시는 금지한다.
+
 > **Authority:** 사용자 화면·상호작용과 UX 상태 표현. Domain/Workflow/API semantics는 해당 전문 owner를 따른다.  
 > **상태:** Draft v2.17 · **기준일:** 2026-09-03 · **대상:** P0 MVP
 
 ## 1. 문서 목적
 
-이 문서는 Google Work Agent의 화면 구조, 사용자 흐름, 상태 표현, 채팅 내부 Action UI, 오류 복구 UX를 정의한다. 제품은 사용자 PC의 FastAPI Local Agent Service가 제공하는 React UI로 동작한다. 최초 설정을 제외한 핵심 업무 흐름은 메인 화면과 채팅 안에서 끝나야 한다.
+이 문서는 mcp-work-agent의 화면 구조, 사용자 흐름, 상태 표현, 채팅 내부 Action UI, 오류 복구 UX를 정의한다. 제품은 사용자 PC의 FastAPI Local Agent Service가 제공하는 React UI로 동작한다. 최초 설정을 제외한 핵심 업무 흐름은 메인 화면과 채팅 안에서 끝나야 한다.
 
 ## 2. UX 성공 기준
 
@@ -201,12 +203,10 @@ Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 �
 ### 8.1 항상 표시할 항목
 
 - 왼쪽 Google 패널 Toggle
-- 제품명
-- 연결 상태 요약
+- 제품명 `mcp-work-agent`
 - 오른쪽 대화 내역 Toggle
 - 설정
 - 밝은 모드·야간 모드
-- 현재 Google 계정
 
 ### 8.2 연결 상태
 
@@ -221,7 +221,7 @@ Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 �
 - Local 모델
 - 마지막 검사 시간
 
-정상 Google 연결은 Header 정중앙의 비대화형 compact chip으로 표시한다. chip은 green status dot과 `Google 연결됨` 문구, 충분한 padding과 높이를 가지며 button semantics를 사용하지 않는다. 경고나 오류가 있을 때만 Badge와 해결 Action을 보여준다.
+Google 연결 상태와 현재 계정 이메일은 설정의 Google 영역에서 확인한다. Header에는 정상 연결 chip과 계정 이메일을 중복 표시하지 않는다. 미연결 시 연결 Action과 업무 진행을 막는 오류의 기존 복구 안내는 유지한다.
 
 ## 9. UI-005 왼쪽 Google 서비스 패널
 
@@ -856,14 +856,14 @@ Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `cla
 ### 29.1 Desktop 정보 구조
 
 ```
-Header: Google Work Agent | Google 연결 상태 | 현재 계정 | 설정
+Header: mcp-work-agent | 패널·테마·도움말 | 설정
 Left:   Google 업무 자료 (메일·Tasks 목록/페이지 · Calendar Month View · 검색/필터)
 Center: 선택 Resource Detail Viewer → Agent Conversation → Inline Status/Approval → Chat Input
 Right:  Conversation (새 대화·검색·목록) → Recent Execution
 ```
 
 - Center가 주 작업 공간이며 Dashboard나 개발자 Runtime 상태를 우선하지 않는다.
-- Header는 제품명, 사용자 이해가 가능한 Google 연결 상태, 현재 계정, Settings만 기본 노출한다. `WAITING_APPROVAL`, node 이름, profile(`SINGLE/THREE/SIX`), `API_LLM`, `LOCAL_GPU`, `MCP READY`, `SSE CONNECTED` 같은 개발·Runtime 문자열은 Main에서 숨기고 Settings/Diagnostics로 옮긴다.
+- Header는 제품명, 패널·테마·도움말 및 Settings를 기본 노출하며 정상 연결 상태와 계정 이메일은 Settings에서만 표시한다. `WAITING_APPROVAL`, node 이름, profile(`SINGLE/THREE/SIX`), `API_LLM`, `LOCAL_GPU`, `MCP READY`, `SSE CONNECTED` 같은 개발·Runtime 문자열은 Main에서 숨기고 Settings/Diagnostics로 옮긴다.
 - Browser P0에서 창 최소화·최대화·닫기 표식은 시각 장식이나 제품 Window Control 기능으로 정의하지 않는다.
 - App shell(상단 Bar·3 Panel)은 고정되고 페이지 단위로 스크롤되지 않는다. 좌·우 Panel과 Center Conversation Timeline은 각자 영역 안에서 독립적으로 scroll하며, Composer는 Center 하단에서 항상 접근 가능하다.
 

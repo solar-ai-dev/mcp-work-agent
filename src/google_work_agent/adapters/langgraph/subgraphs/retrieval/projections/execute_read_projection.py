@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     ParticipantConstraintV1,
@@ -20,6 +23,9 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
 from google_work_agent.ports.connector.connector_read_port import (
     ConnectorReadPort,
@@ -30,6 +36,7 @@ from google_work_agent.ports.connector.contracts.google_workspace import Resourc
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 from google_work_agent.ports.system.run_retrieval_cache_port import RunRetrievalCachePort
 
 
@@ -44,6 +51,9 @@ class ExecuteReadInput(TypedDict):
     run_budget: RunBudgetV2
     now_ms: int
     prior_query_attempts: list[QueryAttemptV1]
+    repository_access: NotRequired[GetRepositoryAccessHandler | None]
+    request_intent: NotRequired[RequestIntentV2 | None]
+    selected_resources: NotRequired[Sequence[SelectedResourceRef]]
 
 
 def project_execute_read_input(state: Mapping[str, object]) -> ExecuteReadInput:
@@ -138,8 +148,14 @@ def project_acquisition_result(
     results: list[tuple[SourceFetchPlanV1, ConnectorReadResultV1]],
     *,
     remaining_budget: dict[str, int],
+    failed_reads: Sequence[tuple[SourceFetchPlanV1, str]] = (),
+    prior_result: AcquisitionResultV1 | None = None,
 ) -> AcquisitionResultV1:
-    summaries: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = [
+        dict(summary)
+        for summary in ([] if prior_result is None else prior_result["source_summaries"])
+        if summary.get("status") == "FAILED"
+    ]
     handles: list[str] = []
     for plan, result in results:
         resources = _resources(plan, result)
@@ -159,9 +175,25 @@ def project_acquisition_result(
                 "resources": resources,
             }
         )
+    for plan, failure_code in failed_reads:
+        if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED"}:
+            raise ValueError("unsupported terminal READ failure projection")
+        summaries.append({
+            "schema_version": 1,
+            "route_id": plan["route_id"],
+            "source": _source(plan["resource_type"]),
+            "connector_id": plan["connector_id"],
+            "status": "FAILED",
+            "required": True,
+            "error_code": failure_code,
+            "resource_count": 0,
+            "resource_handles": [],
+            "resources": [],
+        })
+    failed = any(summary["status"] == "FAILED" for summary in summaries)
     return {
         "schema_version": 1,
-        "status": "COMPLETE",
+        "status": ("PARTIAL" if results else "FAILED") if failed else "COMPLETE",
         "resource_handles": handles,
         "source_summaries": summaries,
         "missing_slots": [],

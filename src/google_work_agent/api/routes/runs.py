@@ -321,6 +321,7 @@ def get_run_context(
     context_payload = None if context is None else asdict(context)
     if context_payload is not None:
         context_payload.pop("user_message_id", None)
+        context_payload.pop("default_github_repository", None)
     return RunContextResponse(
         context=None if context_payload is None else ExecutionContextResponse(**context_payload),
         api_contract_version=dependencies.api_contract_version,

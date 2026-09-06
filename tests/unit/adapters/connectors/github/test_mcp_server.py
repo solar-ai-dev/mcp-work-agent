@@ -103,13 +103,9 @@ def test_entrypoint_protocol_envelope__lists_only__composed_tools() -> None:
         "github_close_issue",
         "github_reopen_issue",
     )
-    state = GitHubMcpServerState(
-        operations={tool_id: _Operation(tool_id) for tool_id in tool_ids}
-    )
+    state = GitHubMcpServerState(operations={tool_id: _Operation(tool_id) for tool_id in tool_ids})
 
-    assert dispatch_request(state, {"type": "list_tools"}) == {
-        "tool_names": sorted(tool_ids)
-    }
+    assert dispatch_request(state, {"type": "list_tools"}) == {"tool_names": sorted(tool_ids)}
 
 
 def test_handshake__preserves_process__identity() -> None:
@@ -270,7 +266,9 @@ def test_device_flow_status_polling__preserves_interval__and_slow_down_backoff()
     )
     assert started["flow_kind"] == "DEVICE_CODE"
 
-    dispatch_control(state, method="github.connection.get")
+    pending = dispatch_control(state, method="github.connection.get")
+    assert pending["credential_state"] == "CONNECTING"
+    assert pending["connected"] is False
     assert provider.poll_count == 0
     now[0] = 5_000
     dispatch_control(state, method="github.connection.get")
@@ -290,3 +288,29 @@ def test_device_flow_status_polling__preserves_interval__and_slow_down_backoff()
     assert status["account_email"] == "octocat"
     assert status["granted_scopes"] == ["repo"]
     assert state.active_device_authorization is None
+
+
+@pytest.mark.parametrize(
+    "terminal", [GitHubDeviceFlowStatus.DENIED, GitHubDeviceFlowStatus.EXPIRED]
+)
+def test_device_poll__terminal_failure__survives_status_projection(
+    terminal: GitHubDeviceFlowStatus,
+) -> None:
+    now = [0]
+    provider = _DeviceCredentialProvider(lambda: now[0])
+    provider.poll_results = [GitHubDeviceFlowPollResult(status=terminal)]
+    state = GitHubMcpServerState(credential_provider=provider, now_ms=lambda: now[0])  # type: ignore[arg-type]
+    started = dispatch_control(
+        state, method="github.device_flow.start", arguments={"operation_ref": "auth"}
+    )
+    assert started["user_code"] == "ABCD-EFGH"
+    dispatch_control(state, method="github.device_flow.poll")
+    assert provider.poll_count == 0
+    now[0] = 5_000
+    first = dispatch_control(state, method="github.connection.get")
+    assert first["authorization_status"] == terminal.value
+    assert (
+        dispatch_control(state, method="github.connection.get")["authorization_status"]
+        == terminal.value
+    )
+    assert provider.poll_count == 1

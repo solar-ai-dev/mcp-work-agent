@@ -10,6 +10,7 @@ typed parent boundary.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import asdict
 from enum import StrEnum
 from typing import Final, Literal, NotRequired, Required, TypedDict, cast
 
@@ -66,6 +67,7 @@ from google_work_agent.ports.system.contracts.workflow_signal import (
     SubgraphReturnV2,
     WorkflowSignalV1,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 _TYPE_HINT_NAMESPACE = (
     request_understanding_output.RequestUnderstandingOutputV1,
@@ -135,6 +137,7 @@ class RunInputV1(TypedDict):
     user_message_id: str | None
     selected_resource_refs: list[dict[str, str | None]]
     requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    default_github_repository: NotRequired[dict[str, object] | None]
 
 
 class ExecutionSummaryV1(TypedDict):
@@ -261,6 +264,11 @@ def initial_graph_state(
                 for item in request.selected_resources
             ],
             "requested_mode": cast(Literal["AUTO", "LOCAL_GPU", "API_LLM"], request.requested_mode),
+            "default_github_repository": (
+                None
+                if request.default_github_repository is None
+                else asdict(request.default_github_repository)
+            ),
         },
         "workflow_phase": WorkflowPhase.INITIALIZE.value,
         "request_intent": None,
@@ -419,4 +427,9 @@ def request_from_run_input_state(state: Mapping[str, object]) -> WorkflowStartRe
         run_budget=dict(run_budget),
         selected_resources=tuple(selected_resources),
         user_message_id=cast(str | None, user_message_id),
+        default_github_repository=(
+            None
+            if raw_input.get("default_github_repository") is None
+            else GitHubRepositoryDefaultV1.from_payload(raw_input["default_github_repository"])
+        ),
     )
