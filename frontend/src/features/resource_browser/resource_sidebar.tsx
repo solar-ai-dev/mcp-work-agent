@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ResourceItem, TaskListContainer } from "../../api/contract";
-import { listTaskLists } from "./api/list_resources";
+import type { CalendarContainer, ResourceItem, TaskListContainer } from "../../api/contract";
+import { listCalendars, listTaskLists } from "./api/list_resources";
 import { CalendarPanel } from "./calendar_panel";
 import { GmailPanel } from "./gmail_panel";
 import { TasksPanel } from "./tasks_panel";
@@ -40,13 +40,16 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
   const [selectedItems, setSelectedItems] = useState<ResourceItem[]>([]);
   const [parentId, setParentId] = useState<string | null>(null);
   const [taskLists, setTaskLists] = useState<TaskListContainer[]>([]);
+  const [calendars, setCalendars] = useState<CalendarContainer[]>([]);
+  const [calendarsError, setCalendarsError] = useState<string | null>(null);
+  const [calendarsLoading, setCalendarsLoading] = useState(false);
   const [taskListsNext, setTaskListsNext] = useState<string | null>(null);
   const [taskListsLoading, setTaskListsLoading] = useState(false);
   const [taskListsError, setTaskListsError] = useState<string | null>(null);
   const taskListsGeneration = useRef(0);
   const gmail = useGmail({ accountId, active: source === "gmail" });
   const tasks = useTasks({ accountId, parentId, active: source === "tasks", filter });
-  const calendar = useCalendar({ accountId, calendarId: parentId, active: connected && source === "calendar", timezone });
+  const calendar = useCalendar({ accountId, calendarId: parentId, active: connected && source === "calendar" && parentId !== null, timezone });
   const { reset: resetGmail, loadCount: loadGmailCount, loadPage: loadGmailPage } = gmail;
   const { reset: resetTasks, preload: preloadTasks, loadCompleted: loadCompletedTasks, loadPage: loadTasksPage } = tasks;
   const { reset: resetCalendar } = calendar;
@@ -76,6 +79,31 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
     if (connected && source === "tasks") void loadTaskLists();
     return () => { taskListsGeneration.current += 1; };
   }, [accountId, connected, loadTaskLists, scopeKey, source]);
+
+  useEffect(() => {
+    let disposed = false;
+    setCalendars([]); setCalendarsError(null);
+    if (!connected || source !== "calendar") return;
+    setCalendarsLoading(true);
+    void (async () => {
+      const items: CalendarContainer[] = [];
+      const seen = new Set<string>();
+      let cursor: string | null = null;
+      for (let page = 0; page < 100; page += 1) {
+        const result = await listCalendars(cursor);
+        items.push(...result.items);
+        cursor = result.next_page_token;
+        if (!cursor) {
+          if (!disposed) { setCalendars(items); setParentId((current) => current && items.some((item) => item.calendar_id === current) ? current : items[0]?.calendar_id ?? null); }
+          return;
+        }
+        if (seen.has(cursor)) break;
+        seen.add(cursor);
+      }
+      throw new Error("calendar inventory incomplete");
+    })().catch(() => { if (!disposed) setCalendarsError("캘린더 목록을 확인하지 못했습니다. 설정에서 자료 선택과 연결 상태를 확인하세요."); }).finally(() => { if (!disposed) setCalendarsLoading(false); });
+    return () => { disposed = true; };
+  }, [accountId, connected, scopeKey, source]);
 
   const toggleItem = useCallback((item: ResourceItem): void => {
     setSelectedItems((current) => current.some((selected) => selected.selection_handle === item.selection_handle)
@@ -153,9 +181,15 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
           <button className="icon-button" type="button" disabled={!connected} aria-label="현재 목록 새로고침" title="새로고침" onClick={() => { if (source === "gmail") void gmail.refresh(); else if (source === "tasks") void tasks.refresh(); else void calendar.refresh(); }}>↻</button>
         </div>
         {!connected ? <div className="info-card"><p>Gmail·Tasks·Calendar를 사용하려면 Google Workspace를 연결하세요.</p><button className="button-primary" type="button" onClick={onConnect}>설정에서 Google 연결</button></div> : null}
+        {connected && source === "calendar" ? <div className="resource-search-row">
+          <label>캘린더<select aria-label="조회할 캘린더" value={parentId ?? ""} disabled={calendarsLoading} onChange={(event) => { setParentId(event.target.value || null); setFocusedItem(null); }}><option value="">캘린더 선택</option>{calendars.map((item) => <option key={item.calendar_id} value={item.calendar_id}>{item.title}</option>)}</select></label>
+          {calendarsLoading ? <span role="status">캘린더 확인 중…</span> : null}
+          {calendarsError ? <p role="alert">{calendarsError}</p> : null}
+          {!calendarsLoading && !calendarsError && !calendars.length ? <p>설정에서 사용할 캘린더를 선택하세요.</p> : null}
+        </div> : null}
         {connected && source === "tasks" ? <div className="resource-search-row">
           <label>태스크 목록<select aria-label="조회할 태스크 목록" value={parentId ?? ""} onChange={(event) => { setParentId(event.target.value || null); setFocusedItem(null); setFilter(""); }}>
-            <option value="">기본 목록 (설정 또는 첫 목록)</option>
+            <option value="">선택 범위의 첫 목록</option>
             {parentId && !taskLists.some((item) => item.tasklist_id === parentId) ? <option value={parentId}>선택한 목록 (접근 확인 필요)</option> : null}
             {taskLists.map((item) => <option key={item.tasklist_id} value={item.tasklist_id}>{item.title}</option>)}
           </select></label>

@@ -1737,6 +1737,7 @@ Deterministic ownership:
 - Verification normalization은 01-A FN-071의 **representation-preserving category**만 소비한다: 의미가 같은 공백/줄바꿈, 동일 instant의 timezone 표현, 계약된 초 단위 정밀도, Connector가 명시적으로 제공하는 의미-중립 default. Connector별 canonicalization algorithm/data structure는 00의 implementation choice이며 새 Port/owner가 아니다. 사용자 의미·대상·참석자·상태·날짜 의미 같은 business field 차이를 normalization으로 숨기면 contract failure다.
 - `verification.store_verification`만 `VerificationResultV1`을 durable Verification과 Action fact에 반영한다. `MISMATCH`가 Recovery를 요구하면 Run 전이는 별도 `recovery.require_recovery(VERIFICATION_MISMATCH)`가 소유하며 Verification persistence와 같은 operation/UoW에 숨겨 합치지 않는다.
 - `recovery.lookup_unknown_result`는 새 Write 없이 `ConnectorReadPort`로 기존 외부 결과만 찾고 `UnknownResultLookupResultV1`을 반환한다. `MUTATION_FOUND`면 `execution_attempt.recover_existing_result` 뒤 Run이 `WAITING_APPROVAL | CANCEL_REQUESTED`이면 `BeginVerification`, 이미 `RECOVERY_REQUIRED`이면 changed external-state fingerprint 기반 `ResolveRecovery(RECHECK)`를 먼저 적용한 후 `verification.verify_effect`로 간다. `MUTATION_NOT_FOUND`가 외부 미변경을 결정적으로 증명할 때만 `execution_attempt.resolve_as_failed`, `UNRESOLVED`면 `RequireRecovery(UNKNOWN_RESULT)`로 suspend하거나 이미 Recovery면 그 상태를 유지한다.
+- Recovery/Verification도 현재 Settings의 account-bound resource allowlist를 소비한다. 제외된 대상은 추가 I/O 없이 차단하며 승인 대상과 기존 외부 효과를 변경하지 않는다. Google CREATE fingerprint 조회는 승인된 target의 `task_list_id` 또는 `calendar_id`를 내부 READ 요청에 포함하며 다른 container를 탐색하지 않는다. 이전 container 없는 요청은 fail-closed한다. 접근 해제로 결과 확인이 불가능한 경우 `UNRESOLVED / RESOURCE_NOT_SELECTED`를 유지하고 새 WRITE를 허용하지 않는다.
 
 - `response_metadata`는 bounded metadata만 허용하고 Provider raw body/secret/token을 보존하지 않는다.
 - `StructuredInferenceResultV1.structured_output`은 요청된 `output_schema_ref` 검증을 통과한 JSON-compatible object다. Schema 검증 실패는 이 Result의 성공 payload가 아니라 15의 bounded repair/failure path다.
@@ -2145,6 +2146,12 @@ class PanelPreferencesV1:
     right_panel_default_tab: Literal["CONVERSATIONS", "RESOURCES"]
 
 class SettingsPatchV1:
+    # 2026-09-06 additive selection contract (same Settings authority):
+    selected_calendar_ids: tuple[str, ...] | None
+    selected_tasklist_ids: tuple[str, ...] | None
+    selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None
+    google_resource_account_id: str | None  # server-derived, never browser authority
+    preferred_local_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None
     schema_version: Literal[1]
     timezone: str | None = None
     default_tasklist_id: str | None = None
@@ -2170,13 +2177,17 @@ class SettingsPatchV1:
     circuit_open_duration_ms: int | None = None
 
 class SettingsViewV1:
+    selected_calendar_ids: tuple[str, ...] | None
+    selected_tasklist_ids: tuple[str, ...] | None
+    selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None
+    google_resource_account_id: str | None
     schema_version: Literal[1]
     timezone: str
     default_tasklist_id: str | None
     default_calendar_id: str | None
     default_github_repository: GitHubRepositoryDefaultV1 | None = None
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
-    preferred_local_model_id: str | None  # deprecated read-only migration projection; current product value is null
+    preferred_local_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None
     external_llm_consent: bool
     retention_days: int  # P0 current value: 1..30
     theme: Literal["LIGHT", "DARK"]
@@ -2277,7 +2288,7 @@ class StagedAttachmentDescriptorV1:
     expires_at_ms: int
 ```
 
-`SettingsPatchV1`은 **partial patch**다. `None`은 “변경 없음”을 뜻하며 secret field와 concrete Local model 선택 field는 존재하지 않는다. field set/meaning은 10 §10.3과 exact-copy다. `timezone`은 IANA timezone, working-day field는 valid local `HH:MM` + start<end, `calendar_buffer_minutes>=0`, P0 `retention_days`는 **1 <= value <= 30**만 허용한다. 이 값은 01-B/04가 닫은 Conversation·Message·terminal Run 소유 데이터와 owning Checkpoint 보존 창에만 적용하며 Audit 90일·Secret·Session Cache에는 적용하지 않는다. runtime budget/circuit Positive/bounded validation과 Retrieval hard bound는 10 §8.21을 따른다. `preferred_llm_mode`는 persisted default preference이며 `POST /api/v1/runtime/mode`가 이를 암묵 수정하지 않는다. V1 View의 nullable `preferred_local_model_id`는 이전 저장 데이터 호환을 위한 read-only migration projection이며 current product는 null로 정규화하고 Runtime Router authority로 사용하지 않는다. 알 수 없는 Settings key를 Browser/API/Adapter가 임의 확장하지 않는다.
+`SettingsPatchV1`은 **partial patch**다. 생략/null은 변경 없음이며 자료 선택의 빈 배열은 명시적 미선택이다. selected Calendar/Task List ID와 GitHub Repository binding 배열은 기존 Settings authority에 저장한다. wire GitHub 배열은 이름만 받고 server가 account/id를 검증한다. inventory endpoint의 `include_unselected=true`는 설정용 container 목록 조회에만 적용하며 개별 자료 조회나 WRITE 권한 우회가 아니다. 이전 단일 default는 자료 범위가 설정되면 하나만 선택한 경우에만 파생한다. `preferred_local_model_id`는 준비된 `qwen3.5:9b | qwen3.5:4b` 중 하나를 선택하는 persisted preference이며 배포 승인/digest 검증을 우회하지 않는다. 검사 API는 설치 부작용이 없다. `timezone`의 새 입력은 `Asia/Seoul`만 허용하며 valid working-day `HH:MM`, start<end, buffer>=0, retention 1..30과 기존 budget bounds를 유지한다. RuntimeModePort는 current mode authority로 유지하며 Settings preference는 별도 저장한다.
 
 규칙:
 

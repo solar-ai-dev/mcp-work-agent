@@ -2,8 +2,8 @@ import { requestJson } from "../../../api/client";
 import type { SettingsView } from "./get_settings";
 
 export type SettingsPatch = Partial<
-  Omit<SettingsView, "schema_version" | "preferred_local_model_id" | "default_github_repository">
-> & { default_github_repository?: string | null };
+  Omit<SettingsView, "schema_version" | "default_github_repository" | "selected_github_repositories" | "google_resource_account_id">
+> & { default_github_repository?: string | null; selected_github_repositories?: string[] };
 
 export function updateSettings(commandId: string, settingsPatch: SettingsPatch): Promise<SettingsView> {
   return requestJson("/api/v1/settings", {

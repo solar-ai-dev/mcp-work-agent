@@ -1145,6 +1145,15 @@ class WriteExecutionStructuralDriver:
     ) -> GoogleWorkspaceGatewayError:
         if isinstance(error, GoogleWorkspaceGatewayError):
             return error
+        if error.detail_code == "RESOURCE_NOT_SELECTED":
+            # A revoked product scope is not an expired provider credential.
+            return GoogleWorkspaceGatewayError(
+                code=GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
+                message="접근 허용이 해제되어 결과를 확인할 수 없습니다. RESOURCE_NOT_SELECTED",
+                delivered=False,
+                mutated=False,
+                mcp_request_id=None,
+            )
         code = {
             ConnectorFailureCode.AUTH_REQUIRED: GoogleWorkspaceErrorCode.AUTH_EXPIRED,
             ConnectorFailureCode.PERMISSION_DENIED: GoogleWorkspaceErrorCode.PERMISSION_DENIED,
@@ -1156,12 +1165,8 @@ class WriteExecutionStructuralDriver:
             ConnectorFailureCode.CONNECTION_UNAVAILABLE: (
                 GoogleWorkspaceErrorCode.CONNECTION_CLOSED
             ),
-            ConnectorFailureCode.MALFORMED_RESPONSE: (
-                GoogleWorkspaceErrorCode.RESPONSE_MALFORMED
-            ),
-            ConnectorFailureCode.CONFIGURATION_ERROR: (
-                GoogleWorkspaceErrorCode.CONNECTION_CLOSED
-            ),
+            ConnectorFailureCode.MALFORMED_RESPONSE: (GoogleWorkspaceErrorCode.RESPONSE_MALFORMED),
+            ConnectorFailureCode.CONFIGURATION_ERROR: (GoogleWorkspaceErrorCode.CONNECTION_CLOSED),
         }.get(error.code, GoogleWorkspaceErrorCode.CONNECTION_CLOSED)
         return GoogleWorkspaceGatewayError(
             code=code,

@@ -15,7 +15,11 @@ class PanelPreferencesPayloadV1(ApiModel):
 
 class SettingsPatchPayloadV1(ApiModel):
     schema_version: Literal[1]
-    timezone: str | None = None
+    timezone: Literal["Asia/Seoul"] | None = None
+    selected_calendar_ids: tuple[str, ...] | None = Field(default=None, max_length=100)
+    selected_tasklist_ids: tuple[str, ...] | None = Field(default=None, max_length=100)
+    selected_github_repositories: tuple[str, ...] | None = Field(default=None, max_length=100)
+    preferred_local_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None = None
     default_tasklist_id: str | None = None
     default_calendar_id: str | None = None
     default_github_repository: str | None = Field(

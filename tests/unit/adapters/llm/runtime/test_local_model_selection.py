@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from google_work_agent.adapters.llm.runtime.local_model_selection import (
     LocalModelSelectionResolver,
@@ -22,6 +22,43 @@ class _Catalog:
 
     def list_installed_models(self) -> tuple[InstalledLocalModelV1, ...]:
         return self.models
+
+
+def test_user_choice__uses_ready_4b_without_9b__for_both_inference_classes() -> None:
+    selected = replace(
+        _selection(),
+        local_model_profile=LocalModelProfileV1(
+            schema_version=1,
+            profile_id="single-9b",
+            runtime="OLLAMA",
+            worker_model_id="qwen3.5:9b",
+            reasoning_model_id="qwen3.5:9b",
+            default_inference_class=LocalInferenceClass.REASONING,
+            prompt_inference_classes=(),
+        ),
+    )
+    resolver = LocalModelSelectionResolver(
+        selected,
+        _Catalog((InstalledLocalModelV1("qwen3.5:4b", "sha256:" + "d" * 64),)),
+        allow_development_models=True,
+        preferred_model_id=lambda: "qwen3.5:4b",
+    )
+    for prompt in ("request_understanding.identify_goal", "planning.compose_answer"):
+        assert resolver.get_model_for_prompt(prompt).model_id == "qwen3.5:4b"
+    assert [item.model_id for item in resolver.list_options() if item.selected] == ["qwen3.5:4b"]
+
+
+def test_user_choice__missing_or_wrong_digest__does_not_fall_back() -> None:
+    approved = ApprovedModelInfo("qwen3.5:4b", "OLLAMA", "1", "1", digest="a" * 64)
+    resolver = LocalModelSelectionResolver(
+        _selection(approved),
+        _Catalog((InstalledLocalModelV1("qwen3.5:4b", "sha256:" + "b" * 64),)),
+        preferred_model_id=lambda: "qwen3.5:4b",
+    )
+    assert resolver.get_selected_model() is None
+    assert not next(
+        item for item in resolver.list_options() if item.model_id == "qwen3.5:4b"
+    ).approved
 
 
 def _profile() -> LocalModelProfileV1:
@@ -69,14 +106,11 @@ def test_signed_local_models__allow_only__manifest_models() -> None:
     )
 
     assert [(item.model_id, item.approved, item.selected) for item in resolver.list_options()] == [
-        ("qwen2.5:7b", False, False),
-        ("qwen3.5:4b", True, True),
         ("qwen3.5:9b", True, True),
+        ("qwen3.5:4b", True, False),
     ]
     assert resolver.get_selected_model() == reasoning
-    assert (
-        resolver.get_model_for_prompt("request_understanding.identify_goal") == worker
-    )
+    assert resolver.get_model_for_prompt("request_understanding.identify_goal") == reasoning
     assert resolver.get_model_for_prompt("planning.compose_answer") == reasoning
 
 
@@ -95,24 +129,22 @@ def test_development_profile__approves_only__installed_profile_models() -> None:
 
     worker = resolver.get_model_for_prompt("request_understanding.identify_goal")
     reasoning = resolver.get_model_for_prompt("review.inspect_goal_and_evidence")
-    assert worker is not None and worker.model_id == "qwen3.5:4b"
+    assert worker is not None and worker.model_id == "qwen3.5:9b"
     assert reasoning is not None and reasoning.model_id == "qwen3.5:9b"
     assert resolver.get_approved_model("qwen2.5:7b") is None
 
 
-def test_profile_readiness__requires_both__profile_models() -> None:
+def test_profile_readiness__requires_selected_model__not_both_models() -> None:
     worker = ApprovedModelInfo("qwen3.5:4b", "OLLAMA", "1", "1")
     reasoning = ApprovedModelInfo("qwen3.5:9b", "OLLAMA", "1", "1")
     resolver = LocalModelSelectionResolver(
         runtime_selection=_selection(worker, reasoning),
-        catalog=_Catalog(
-            (InstalledLocalModelV1("qwen3.5:9b", None),)
-        ),
+        catalog=_Catalog((InstalledLocalModelV1("qwen3.5:9b", None),)),
     )
 
-    assert resolver.get_selected_model() is None
-    assert resolver.get_model_for_prompt("planning.compose_answer") is None
+    assert resolver.get_selected_model() == reasoning
+    assert resolver.get_model_for_prompt("planning.compose_answer") == reasoning
     assert [(item.model_id, item.installed, item.selected) for item in resolver.list_options()] == [
         ("qwen3.5:9b", True, True),
-        ("qwen3.5:4b", False, True),
+        ("qwen3.5:4b", False, False),
     ]

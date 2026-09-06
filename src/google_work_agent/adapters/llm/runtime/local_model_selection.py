@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from google_work_agent.ports.llm.llm_runtime_status_port import LocalModelRuntimeOptionV1
 from google_work_agent.ports.llm.local_model_catalog_port import LocalModelCatalogPort
+from google_work_agent.ports.llm.local_model_profile import SELECTABLE_LOCAL_MODEL_IDS
 from google_work_agent.ports.llm.runtime_selection import LlmRuntimeSelectionV1
 from google_work_agent.ports.llm.structured_inference_contracts import ApprovedModelInfo
 
@@ -15,6 +17,7 @@ class LocalModelSelectionResolver:
     runtime_selection: LlmRuntimeSelectionV1
     catalog: LocalModelCatalogPort
     allow_development_models: bool = False
+    preferred_model_id: Callable[[], str | None] = lambda: None
 
     def get_approved_model(self, model_id: str) -> ApprovedModelInfo | None:
         approved = self.runtime_selection.get_approved_model(model_id)
@@ -24,7 +27,7 @@ class LocalModelSelectionResolver:
         if (
             not self.allow_development_models
             or profile is None
-            or model_id not in profile.model_ids
+            or model_id not in SELECTABLE_LOCAL_MODEL_IDS
         ):
             return None
         installed = next(
@@ -43,6 +46,13 @@ class LocalModelSelectionResolver:
         )
 
     def get_selected_model(self) -> ApprovedModelInfo | None:
+        preferred = self.preferred_model_id()
+        if preferred is not None:
+            return (
+                self._installed_approved_model(preferred)
+                if preferred in SELECTABLE_LOCAL_MODEL_IDS
+                else None
+            )
         profile = self.runtime_selection.local_model_profile
         if profile is not None:
             if not self._profile_ready():
@@ -54,17 +64,12 @@ class LocalModelSelectionResolver:
         return self._installed_approved_model(selected_model_id)
 
     def get_model_for_prompt(self, prompt_id: str) -> ApprovedModelInfo | None:
-        profile = self.runtime_selection.local_model_profile
-        if profile is None:
-            return self.get_selected_model()
-        if not self._profile_ready():
-            return None
-        return self.get_approved_model(profile.model_id_for_prompt(prompt_id))
+        return self.get_selected_model()
 
     def list_options(self) -> tuple[LocalModelRuntimeOptionV1, ...]:
         profile = self.runtime_selection.local_model_profile
         active_ids = (
-            frozenset(profile.model_ids)
+            frozenset((profile.reasoning_model_id,))
             if profile is not None
             else frozenset(
                 ()
@@ -73,15 +78,16 @@ class LocalModelSelectionResolver:
             )
         )
         installed_models = self.catalog.list_installed_models()
+        if (preferred := self.preferred_model_id()) is not None:
+            active_ids = frozenset((preferred,))
         installed_by_id = {item.model_id: item for item in installed_models}
-        model_ids = [item.model_id for item in installed_models]
-        model_ids.extend(sorted(active_ids.difference(installed_by_id)))
+        model_ids = SELECTABLE_LOCAL_MODEL_IDS
         return tuple(
             LocalModelRuntimeOptionV1(
                 schema_version=1,
                 model_id=model_id,
                 installed=model_id in installed_by_id,
-                approved=self.get_approved_model(model_id) is not None,
+                approved=self._installed_approved_model(model_id) is not None,
                 selected=model_id in active_ids,
             )
             for model_id in model_ids
@@ -89,9 +95,8 @@ class LocalModelSelectionResolver:
 
     def _profile_ready(self) -> bool:
         profile = self.runtime_selection.local_model_profile
-        return profile is not None and all(
-            self._installed_approved_model(model_id) is not None
-            for model_id in profile.model_ids
+        return profile is not None and (
+            self._installed_approved_model(profile.reasoning_model_id) is not None
         )
 
     def _installed_approved_model(self, model_id: str) -> ApprovedModelInfo | None:

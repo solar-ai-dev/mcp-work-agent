@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 
+SELECTABLE_LOCAL_MODEL_IDS = ("qwen3.5:9b", "qwen3.5:4b")
+
 _IDENTITY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}")
 
 
@@ -110,8 +112,7 @@ class LocalModelProfileV1:
         if any(not isinstance(models[key], str) for key in ("WORKER", "REASONING")):
             raise ValueError("LocalModelProfileV1 model type mismatch")
         if any(
-            not isinstance(key, str) or not isinstance(value, str)
-            for key, value in routes.items()
+            not isinstance(key, str) or not isinstance(value, str) for key, value in routes.items()
         ):
             raise ValueError("prompt inference-class mapping type mismatch")
         try:

@@ -8,6 +8,10 @@ export type SettingsView = {
   default_github_repository?: { repository: string; repository_id: number; account_id: string } | null;
   preferred_llm_mode: "AUTO" | "LOCAL_GPU" | "API_LLM";
   preferred_local_model_id: string | null;
+  selected_calendar_ids?: string[] | null;
+  selected_tasklist_ids?: string[] | null;
+  selected_github_repositories?: Array<{ repository: string; repository_id: number; account_id: string }> | null;
+  google_resource_account_id?: string | null;
   external_llm_consent: boolean;
   retention_days: number;
   theme: "LIGHT" | "DARK";

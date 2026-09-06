@@ -11,14 +11,18 @@ import type {
   TaskListContainer,
 } from "../../../api/contract";
 
-export function listTaskLists(continuation: string | null = null): Promise<{ schema_version: 1; items: TaskListContainer[]; next_page_token: string | null }> {
+export function listTaskLists(continuation: string | null = null, includeUnselected = false): Promise<{ schema_version: 1; items: TaskListContainer[]; next_page_token: string | null }> {
   const search = new URLSearchParams({ page_size: "100" });
   if (continuation) search.set("page_token", continuation);
+  if (includeUnselected) search.set("include_unselected", "true");
   return requestJson(`/api/v1/resources/task-lists?${search.toString()}`);
 }
 
-export function listCalendars(): Promise<{ schema_version: 1; items: CalendarContainer[]; next_page_token: string | null }> {
-  return requestJson("/api/v1/resources/calendars?page_size=100");
+export function listCalendars(continuation: string | null = null, includeUnselected = false): Promise<{ schema_version: 1; items: CalendarContainer[]; next_page_token: string | null }> {
+  const search = new URLSearchParams({ page_size: "100" });
+  if (continuation) search.set("page_token", continuation);
+  if (includeUnselected) search.set("include_unselected", "true");
+  return requestJson(`/api/v1/resources/calendars?${search.toString()}`);
 }
 
 export type ListResourcesRequest =

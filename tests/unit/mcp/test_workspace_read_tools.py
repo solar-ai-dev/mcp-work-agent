@@ -29,6 +29,40 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server.credentia
 
 
 @pytest.mark.parametrize(
+    "resource_type,key,path",
+    [
+        ("task", "task_list_id", "/lists/allowed/tasks"),
+        ("calendar_event", "calendar_id", "/calendars/allowed/events"),
+    ],
+)
+def test_recovery_read__scopes_provider_request__to_approved_container(
+    monkeypatch, resource_type, key, path
+):
+    from google_work_agent.adapters.connectors.google.workspace.mcp_server.dispatch_tool import (
+        dispatch_internal_tool,
+    )
+
+    calls = []
+
+    def google_api(_state, url, params=None):
+        calls.append(url)
+        return {"items": []}
+
+    monkeypatch.setattr(server, "_google_api", google_api)
+    result = dispatch_internal_tool(
+        None,
+        "search_by_recovery_fingerprint",
+        {
+            "resource_type": resource_type,
+            "recovery_fingerprint": "fingerprint",
+            key: "allowed",
+        },
+    )
+    assert result == {"items": []}
+    assert len(calls) == 1 and calls[0].endswith(path)
+
+
+@pytest.mark.parametrize(
     "snippet,expected",
     [
         ("Preview", "Preview"),
@@ -309,10 +343,13 @@ def test_gmail_thread__detail_tool__includes_full_thread_content(
 
 @pytest.mark.parametrize("empty_body", [False, True])
 def test_gmail_message_detail__decodes_subject__and_preserves_absent_reply_headers(
-    monkeypatch: pytest.MonkeyPatch, empty_body: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    empty_body: bool,
 ) -> None:
     message: dict[str, object] = {
-        "id": "message-1", "threadId": "thread-1", "labelIds": ["SENT"],
+        "id": "message-1",
+        "threadId": "thread-1",
+        "labelIds": ["SENT"],
         "payload": {
             "mimeType": "text/plain",
             "headers": [
@@ -371,8 +408,11 @@ def test_gmail_message_detail__fetches_full_format__and_includes_body(
         "snippet": "Message preview",
         "from": "Kim Daeri <kim.daeri@example.com>",
         "to": ["User <user@example.com>"],
-        "cc": ["team@example.com"], "bcc": [], "sent": False,
-        "thread_id": "thread-1", "rfc822_message_id": "<msg-id@example.com>",
+        "cc": ["team@example.com"],
+        "bcc": [],
+        "sent": False,
+        "thread_id": "thread-1",
+        "rfc822_message_id": "<msg-id@example.com>",
         "received_at": "Mon, 10 Aug 2026 09:15:00 +0900",
         "body": "Actual message body",
         "attachments": [
@@ -420,7 +460,10 @@ def test_gmail_message_detail__omits_body_and__attachments_when_absent(
         "snippet": "Message preview",
         "from": "pm@example.com",
         "to": ["user@example.com"],
-        "cc": [], "bcc": [], "sent": False, "thread_id": "thread-1",
+        "cc": [],
+        "bcc": [],
+        "sent": False,
+        "thread_id": "thread-1",
         "received_at": "Sat, 24 May 2025 09:15:00 +0900",
         "attachments": [],
     }

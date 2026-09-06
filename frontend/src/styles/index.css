@@ -1044,6 +1044,38 @@ input, select {
   z-index: 20;
 }
 
+.settings-drawer {
+  width: min(40rem, 100vw);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: -12px 0 40px rgb(0 0 0 / 12%);
+}
+.settings-drawer > .panel-header { padding: 1.25rem 1.5rem; flex-shrink: 0; }
+.settings-drawer .panel-header strong { font-size: 1.25rem; }
+.settings-drawer .panel-header p { margin: .35rem 0 0; font-size: .85rem; }
+.settings-tabs { display: flex; gap: 1.25rem; padding: 0 1.5rem; border-bottom: 1px solid var(--border); }
+.settings-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: .8rem .15rem; background: transparent; color: var(--muted); }
+.settings-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.settings-drawer > .panel-body { padding: 0 1.5rem 1.5rem; overflow-y: auto; display: block; }
+.settings-drawer .info-card { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 1.35rem 0; margin: 0; }
+.settings-drawer .info-card > strong { display: block; font-size: 1rem; margin-bottom: .6rem; }
+.settings-drawer p { font-size: .875rem; line-height: 1.5; margin: .4rem 0 .65rem; overflow-wrap: anywhere; }
+.settings-drawer .info-card > label, .settings-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 2.8rem; font-size: .875rem; }
+.settings-drawer input:not([type="checkbox"]):not([type="radio"]), .settings-drawer select { width: min(58%, 19rem); min-height: 2.1rem; font-size: .875rem; padding: .35rem .55rem; }
+.settings-drawer input[type="checkbox"], .settings-drawer input[type="radio"] { width: 1rem; height: 1rem; min-height: 1rem; flex: 0 0 1rem; padding: 0; margin: 0; accent-color: var(--accent); }
+.settings-drawer .info-card > label.settings-check { justify-content: flex-start; gap: .6rem; }
+.settings-selection { min-width: 0; margin: .85rem 0; padding: .6rem .75rem; border: 1px solid var(--border); border-radius: .6rem; max-height: 17rem; overflow-y: auto; }
+.settings-selection legend { font-size: .8rem; color: var(--muted); padding: 0 .3rem; }
+.settings-selection label { display: flex; align-items: center; gap: .65rem; padding: .45rem .1rem; font-size: .875rem; cursor: pointer; }
+.settings-selection span { overflow-wrap: anywhere; min-width: 0; }
+.settings-selection small { display: block; color: var(--muted); font-size: .75rem; margin-top: .15rem; }
+.settings-drawer .button-row { margin-top: .7rem; gap: .45rem; }
+.settings-drawer .button-primary, .settings-drawer .button-secondary, .settings-drawer .button-danger { font-size: .8rem; padding: .4rem .65rem; }
+.settings-diagnostics { margin-top: 1.25rem; }
+.settings-diagnostics summary { color: var(--muted); cursor: pointer; font-size: .875rem; padding: .5rem 0; }
+
 @media (max-width: 1080px) {
   .shell-grid,
   .shell-grid.conversation-panel-closed {

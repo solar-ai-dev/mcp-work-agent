@@ -4,7 +4,6 @@ import { ConversationHistoryPanel, useConversation } from "../features/conversat
 import { ResourceSidebar, ResourceViewer, type ResourceBrowserProjection } from "../features/resource_browser";
 import { getRuntime, type RuntimeSummary } from "../features/diagnostics";
 import {
-  FirstRunOnboardingScreen,
   SettingsDrawer,
   getCurrentGoogleAccount,
   getGoogleConnection,
@@ -31,7 +30,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
   const [google, setGoogle] = useState<GoogleConnection>(initial.google);
   const [currentAccount, setCurrentAccount] = useState<CurrentGoogleAccount["account"]>(initial.currentAccount);
   const [calendarTimezone, setCalendarTimezone] = useState(initial.calendarTimezone);
-  const [setupCompleted, setSetupCompleted] = useState(initial.setupCompleted);
   const [googleConnectPending, setGoogleConnectPending] = useState(false);
   const [statusLine, setStatusLine] = useState("로컬 API에 연결되어 있습니다.");
   const [workspaceReady, setWorkspaceReady] = useState(false);
@@ -275,22 +273,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
     return <main className="startup" aria-busy="true" aria-label="이전 작업 복구 중" />;
   }
 
-  if (!setupCompleted) {
-    return (
-      <FirstRunOnboardingScreen
-        runtime={runtime}
-        google={google}
-        statusLine={statusLine}
-        onConnectGoogle={() => void handleGoogleConnect()}
-        onRefreshConnections={refreshRuntimeSummary}
-        onComplete={() => {
-          setCalendarTimezone(settings.timezone);
-          setSetupCompleted(true);
-        }}
-      />
-    );
-  }
-
   return (
     <MainShell
       google={google}
@@ -314,7 +296,7 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
       ) : null}
     >
         <ResourceSidebar
-          scopeKey={`${runtime.service_instance_id}|${currentAccount?.account_id ?? "disconnected"}`}
+          scopeKey={`${runtime.service_instance_id}|${currentAccount?.account_id ?? "disconnected"}|${JSON.stringify([settings.selected_calendar_ids, settings.selected_tasklist_ids, settings.google_resource_account_id])}`}
           accountId={currentAccount?.account_id}
           connected={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}
           onConnect={() => setSettingsOpen(true)}

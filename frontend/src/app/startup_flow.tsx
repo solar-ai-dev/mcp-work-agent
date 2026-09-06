@@ -23,7 +23,6 @@ export type StartupFlowContext = {
   currentAccount: CurrentGoogleAccount["account"];
   settings: SettingsView;
   calendarTimezone: string;
-  setupCompleted: boolean;
 };
 
 type Props = {
@@ -127,39 +126,35 @@ export function StartupFlow({ children }: Props): JSX.Element {
         phase: "runtime",
         message: "보호된 실행 상태를 불러오고 있습니다.",
       }));
-      const [runtime, google, settings, firstAccount] = await Promise.all([
+      const [runtimeResult, googleResult, settingsResult, accountResult] = await Promise.allSettled([
         getRuntime(),
         getGoogleConnection(),
         getSettings(),
         getCurrentGoogleAccount(),
       ]);
-      const account = google.connection_status === "CONNECTED" && firstAccount.account === null
-        ? (await getCurrentGoogleAccount()).account
-        : firstAccount.account;
-      const apiConfigured = runtime.llm_providers.some(
-        (item) => item.provider === "API_LLM" && item.configured,
-      );
-      const localModelSelected = Boolean(
-        runtime.local_models.some(
-          (item) => item.selected && item.installed && item.approved,
-        ),
-      );
-      const llmConfigured = settings.preferred_llm_mode === "LOCAL_GPU"
-        ? localModelSelected
-        : settings.preferred_llm_mode === "API_LLM"
-          ? apiConfigured
-          : apiConfigured || localModelSelected;
-      const setupCompleted = Boolean(
-        settings.external_llm_consent
-        && llmConfigured,
-      );
+      if (settingsResult.status === "rejected") throw settingsResult.reason;
+      const settings = settingsResult.value;
+      const runtime: RuntimeSummary = runtimeResult.status === "fulfilled" ? runtimeResult.value : {
+        schema_version: 1, service_instance_id: "", connectors: [], llm_providers: [], local_models: [],
+        component_circuits: [], active_run_budget: null, recovery_required: false,
+        release_version: "", frontend_build_version: "", api_contract_version: API_CONTRACT_VERSION,
+        deployment_profile: "", runtime_mode: { schema_version: 1, requested_mode: settings.preferred_llm_mode, actual_runtime: null, fallback_reason: "RUNTIME_STATUS_UNAVAILABLE" },
+        database_status: "UNAVAILABLE", migration_status: "PENDING", sse_status: "UNAVAILABLE",
+        recent_sanitized_error_code: "RUNTIME_STATUS_UNAVAILABLE", launcher_status: "UNAVAILABLE",
+        manifest_status: "UNAVAILABLE", session_status: "ESTABLISHED", safe_mode: false,
+        last_backup_status: null, last_migration_status: null,
+      };
+      const google: GoogleConnection = googleResult.status === "fulfilled" ? googleResult.value : {
+        schema_version: 1, connector_id: "google_workspace", connection_status: "UNAVAILABLE",
+        account_id: null, display_email: null, granted_scopes: [], missing_required_scopes: [],
+      };
+      const account = accountResult.status === "fulfilled" ? accountResult.value.account : null;
       setContext({
         runtime,
         google,
         currentAccount: account,
         settings,
-        calendarTimezone: settings.timezone,
-        setupCompleted,
+        calendarTimezone: "Asia/Seoul",
       });
       setState({
         phase: "ready",

@@ -154,6 +154,32 @@ def test_lookup_unknown_result__has_exact__application_owner() -> None:
     assert LookupUnknownResultHandler.__name__ == "LookupUnknownResultHandler"
 
 
+def test_recovery__revoked_resource__remains_unresolved(tmp_path) -> None:
+    from google_work_agent.adapters.system.json_settings import (
+        FileSettingsStore,
+        JsonSettingsAdapter,
+    )
+    from google_work_agent.application.use_cases.resource.require_resource_selection import (
+        RequireResourceSelectionHandler,
+        SelectedResourceReadPort,
+    )
+
+    settings = replace(
+        JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json")).get_settings(),
+        selected_github_repositories=(),
+    )
+    read = _ReadPort([])
+    scoped = SelectedResourceReadPort(
+        read, RequireResourceSelectionHandler(lambda: settings, lambda _: "account")
+    )
+    query = LookupUnknownResultQueryV1(
+        "run", "action", "attempt", "CREATE", "fingerprint", _target()
+    )
+    result = _handler(scoped)(query)
+    assert result.disposition == "UNRESOLVED" and result.reason_codes == ["RESOURCE_NOT_SELECTED"]
+    assert read.calls == [] and query.target_resource_ref == _target()
+
+
 def test_github_create_unknown__requires_unique_complete_search__then_get_compare() -> None:
     marker = "<!-- gwa-recovery-fingerprint:fingerprint-1 -->"
     candidate = {

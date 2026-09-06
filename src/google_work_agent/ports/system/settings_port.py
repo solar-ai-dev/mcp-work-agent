@@ -59,6 +59,11 @@ class GitHubRepositoryDefaultV1:
 @dataclass(frozen=True, slots=True)
 class SettingsPatchV1:
     schema_version: Literal[1]
+    selected_calendar_ids: tuple[str, ...] | None = None
+    selected_tasklist_ids: tuple[str, ...] | None = None
+    selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None = None
+    google_resource_account_id: str | None = None
+    preferred_local_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None = None
     timezone: str | None = None
     default_tasklist_id: str | None = None
     default_calendar_id: str | None = None
@@ -110,6 +115,10 @@ class SettingsViewV1:
     circuit_open_duration_ms: int
     preferred_local_model_id: str | None = None
     default_github_repository: GitHubRepositoryDefaultV1 | None = None
+    selected_calendar_ids: tuple[str, ...] | None = None
+    selected_tasklist_ids: tuple[str, ...] | None = None
+    selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None = None
+    google_resource_account_id: str | None = None
 
 
 class SettingsPort(Protocol):

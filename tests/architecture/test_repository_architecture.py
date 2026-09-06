@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "google_work_agent"
 FINAL = os.getenv("GWA_ARCHITECTURE_FINAL_CUTOVER") == "1"
 
+
 def _agent_operation_manifest(mapping: str) -> dict[str, set[str]]:
     if "### Agent capability mapping" not in mapping:
         raise ValueError("missing Agent operation manifest")
@@ -37,16 +38,21 @@ def _agent_operation_manifest(mapping: str) -> dict[str, set[str]]:
         else:
             raise ValueError("invalid Agent operation manifest row")
     if set(roles) != {
-        "request_understanding", "tool_routing", "retrieval",
-        "work_analysis", "planning", "review",
+        "request_understanding",
+        "tool_routing",
+        "retrieval",
+        "work_analysis",
+        "planning",
+        "review",
     } or not all(roles.values()):
         raise ValueError("incomplete Agent owner manifest")
     return roles
 
 
 ROLES = _agent_operation_manifest(
-    (ROOT / "docs/canonical/16-repository-architecture/01-spec-to-code-deterministic-mapping.md")
-    .read_text(encoding="utf-8")
+    (
+        ROOT / "docs/canonical/16-repository-architecture/01-spec-to-code-deterministic-mapping.md"
+    ).read_text(encoding="utf-8")
 )
 DOMAIN_OWNERS = {
     "conversation",
@@ -242,7 +248,7 @@ def application_canonical_contracts() -> dict[str, set[str]]:
         )
         symbols = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", spans[path_index + 1]))
         contracts[spans[path_index]] = symbols
-    assert len(contracts) == 96
+    assert len(contracts) == 97
     return contracts
 
 
@@ -344,19 +350,28 @@ def test_immediate_agent__atomic__grammar() -> None:
     clean(_agent_operation_errors(ROOT, SRC, ROLES))
 
 
-@pytest.mark.parametrize("invalid_row,error", [
-    ("  *", "invalid Agent operation manifest row"),
-    ("  service.py", "invalid Agent operation manifest row"),
-    ("retrieval/", "duplicate manifest owner"),
-    ("  plan_query", "duplicate manifest operation"),
-])
+@pytest.mark.parametrize(
+    "invalid_row,error",
+    [
+        ("  *", "invalid Agent operation manifest row"),
+        ("  service.py", "invalid Agent operation manifest row"),
+        ("retrieval/", "duplicate manifest owner"),
+        ("  plan_query", "duplicate manifest operation"),
+    ],
+)
 def test_agent_operation_manifest__invalid_or_duplicate_row__rejects_mapping(
-    invalid_row: str, error: str,
+    invalid_row: str,
+    error: str,
 ) -> None:
     block = "\n".join(
-        f"{owner}/\n  plan_query" for owner in (
-            "request_understanding", "tool_routing", "work_analysis",
-            "planning", "review", "retrieval",
+        f"{owner}/\n  plan_query"
+        for owner in (
+            "request_understanding",
+            "tool_routing",
+            "work_analysis",
+            "planning",
+            "review",
+            "retrieval",
         )
     )
     manifest = "### Agent capability mapping\n```\n" + block
@@ -365,16 +380,21 @@ def test_agent_operation_manifest__invalid_or_duplicate_row__rejects_mapping(
         _agent_operation_manifest(manifest + "\n" + invalid_row + "\n```")
 
 
-@pytest.mark.parametrize("defect,expected", [
-    ("none", None),
-    ("extra", "unknown/broad agent capability"),
-    ("missing", "missing Agent operation"),
-    ("wrong_symbol", "must define plan_query()"),
-    ("missing_test", "missing mirrored Agent test owner"),
-    ("unknown_owner", "unknown agent owner"),
-])
+@pytest.mark.parametrize(
+    "defect,expected",
+    [
+        ("none", None),
+        ("extra", "unknown/broad agent capability"),
+        ("missing", "missing Agent operation"),
+        ("wrong_symbol", "must define plan_query()"),
+        ("missing_test", "missing mirrored Agent test owner"),
+        ("unknown_owner", "unknown agent owner"),
+    ],
+)
 def test_agent_operation_gate__fixture_violation__rejects_missing_or_extra_authority(
-    tmp_path: Path, defect: str, expected: str | None,
+    tmp_path: Path,
+    defect: str,
+    expected: str | None,
 ) -> None:
     source = tmp_path / "src"
     owner = source / "application/agents/retrieval"

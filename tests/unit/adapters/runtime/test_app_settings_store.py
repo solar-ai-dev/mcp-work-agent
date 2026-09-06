@@ -47,14 +47,18 @@ def test_google_defaults__explicit_clear__persists_without_affecting_other_setti
     adapter = _adapter(tmp_path)
     original = adapter.update_settings(
         SettingsPatchV1(
-            schema_version=1, default_calendar_id="calendar", default_tasklist_id="tasks",
+            schema_version=1,
+            default_calendar_id="calendar",
+            default_tasklist_id="tasks",
         ),
         "set-google-defaults",
     )
     unchanged = adapter.update_settings(SettingsPatchV1(schema_version=1), "omit-google-defaults")
     assert unchanged == original
     patch = SettingsPatchV1(
-        schema_version=1, clear_default_calendar=True, clear_default_tasklist=True,
+        schema_version=1,
+        clear_default_calendar=True,
+        clear_default_tasklist=True,
     )
     cleared = adapter.update_settings(patch, "clear-google-defaults")
     assert cleared.default_calendar_id is None
@@ -65,19 +69,21 @@ def test_google_defaults__explicit_clear__persists_without_affecting_other_setti
     assert adapter.reconcile_settings("clear-google-defaults", patch).status == "COMPLETED"
 
 
-def test_settings_patch__omits_concrete__local_model_selection(tmp_path: Path) -> None:
+def test_settings_patch__persists_selected__local_model(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
 
     updated = adapter.update_settings(
         SettingsPatchV1(
             schema_version=1,
             preferred_llm_mode="LOCAL_GPU",
+            preferred_local_model_id="qwen3.5:4b",
         ),
         "settings-local-model-1",
     )
 
     assert updated.preferred_llm_mode == "LOCAL_GPU"
-    assert "preferred_local_model_id" not in SettingsPatchV1.__dataclass_fields__
+    assert updated.preferred_local_model_id == "qwen3.5:4b"
+    assert _adapter(tmp_path).get_settings().preferred_local_model_id == "qwen3.5:4b"
 
 
 def test_settings_previous_field_set__when_loaded__adds_local_model_and_preserves_marker(

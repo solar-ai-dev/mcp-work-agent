@@ -197,7 +197,7 @@ def _build_signed_container(
         github_oauth_scope="repo",
         api_contract_version="1",
         policy_version="2026-08-06.p0",
-        database_migration_version="0019",
+        database_migration_version="0022",
         configuration_source="SIGNED_RELEASE_MANIFEST",
         service_instance_id="fixture-service",
         keyring_store=_MemorySecretStore(),
@@ -258,6 +258,7 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
                 "request_intent": {},
                 "answer_outline": {},
                 "evidence": [],
+                "temporal_constraints": [],
             },
             OutputSchemaDefinition(
                 "1",

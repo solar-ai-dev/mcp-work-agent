@@ -21,6 +21,7 @@ class ListCalendarsQuery:
     account_id: str
     page_token: str | None = None
     page_size: int = 50
+    include_unselected: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -53,15 +54,23 @@ class ListCalendarsHandler:
         connector_read: ConnectorReadPort,
         registry: SignedToolRegistry,
         continuation_store: LocalResourceContinuationStore,
+        inventory_read: ConnectorReadPort | None = None,
     ) -> None:
         self._connector_read = connector_read
+        self._inventory_read = inventory_read or connector_read
         self._registry = registry
         self._continuation_store = continuation_store
 
     def __call__(self, query: ListCalendarsQuery) -> ListCalendarsResult:
         if not 1 <= query.page_size <= 100:
             raise ValueError("page_size must be in 1..100")
-        scope = (query.session_digest, query.account_id, "calendars", str(query.page_size))
+        scope = (
+            query.session_digest,
+            query.account_id,
+            "calendars",
+            str(query.page_size),
+            str(query.include_unselected),
+        )
         try:
             provider_page_token = (
                 None
@@ -70,7 +79,8 @@ class ListCalendarsHandler:
             )
         except GoogleWorkspaceGatewayError as error:
             raise normalize_google_workspace_failure(error) from error
-        result = self._connector_read.execute_read(
+        reader = self._inventory_read if query.include_unselected else self._connector_read
+        result = reader.execute_read(
             self._registry.bind_required("google_workspace", "calendar_list_calendars", "READ"),
             {"page_token": provider_page_token, "page_size": query.page_size},
         )

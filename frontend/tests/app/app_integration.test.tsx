@@ -1468,10 +1468,11 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
 
   await waitFor(() => expect(document.querySelector(".topbar-actions")).not.toBeNull());
   await user.click(screen.getByRole("button", { name: "설정" }));
-  await screen.findByRole("region", { name: "런타임 모드" });
+  await user.click(screen.getByRole("tab", { name: "AI" }));
+  await screen.findByRole("region", { name: "AI 실행 설정" });
   await user.selectOptions(screen.getByLabelText("사용할 모델 실행 방식"), "AUTO");
-  await user.click(screen.getByRole("checkbox", { name: "외부 LLM 사용 동의" }));
-  await user.click(screen.getByRole("button", { name: "LLM 설정 저장" }));
+  await user.click(screen.getByRole("checkbox", { name: "외부 AI에 업무 내용 전송 허용" }));
+  await user.click(screen.getByRole("button", { name: "AI 설정 저장" }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/v1/settings",
@@ -1510,15 +1511,14 @@ test("TST-UI-201 header keeps account details in settings and shows product cont
   installUiContractFetch();
   render(<App />);
 
-  await screen.findByText("mcp-work-agent");
-  const header = within(screen.getByRole("banner"));
+  const header = within(await screen.findByRole("banner"));
 
-  await screen.findByText("메인 에이전트 · 실행 전 승인을 기다리고 있습니다.");
+  await screen.findByRole("button", { name: "설정" });
   expect(header.queryByText("user@example.com")).not.toBeInTheDocument();
   expect(header.queryByText("Google 연결됨")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "도움말" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "설정" })).toBeInTheDocument();
-  expect(screen.getByText("메인 에이전트 · 실행 전 승인을 기다리고 있습니다.")).toBeInTheDocument();
+  expect(header.queryByText(/메인 에이전트/)).not.toBeInTheDocument();
   expect(screen.queryByText("WAITING_APPROVAL")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "설정" }));
   const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
@@ -2986,17 +2986,13 @@ test("downloads an incoming Gmail attachment through the authenticated API", asy
   expect(click).toHaveBeenCalledOnce();
 });
 
-test("routes an incomplete first-run configuration to the onboarding checklist", async () => {
+test("opens the workspace without LLM configuration or external consent", async () => {
   installUiContractFetch({ setupCompleted: false, run: false });
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "mcp-work-agent 시작하기" })).toBeInTheDocument();
-  expect(screen.getByText("필요 · LLM 자동 연결")).toBeInTheDocument();
-  expect(screen.queryByRole("radio", { name: "API LLM" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("radio", { name: "Local LLM (Ollama)" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "설정 완료하고 시작" })).toBeInTheDocument();
-  expect(screen.queryByText("기본 리소스와 시간대")).not.toBeInTheDocument();
-  expect(document.querySelector("textarea.composer")).not.toBeInTheDocument();
+  await waitFor(() => expect(document.querySelector("textarea.composer")).toBeInTheDocument());
+  expect(screen.queryByRole("heading", { name: "mcp-work-agent 시작하기" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "설정 완료하고 시작" })).not.toBeInTheDocument();
 });
 
 test("stages an outbound file and modifies the Gmail draft with descriptors only", async () => {
@@ -3606,6 +3602,9 @@ function installUiContractFetch(options: {
         next_page_token: batchIndex + 1 < batchSizes.length ? `tasks-page-${batchIndex + 2}` : null,
         api_contract_version: "1",
       });
+    }
+    if (path.startsWith("/api/v1/resources/calendars?")) {
+      return jsonFetchResponse({ schema_version: 1, items: [{ schema_version: 1, calendar_id: "primary", title: "테스트 캘린더", primary: true }], next_page_token: null });
     }
     if (path.startsWith("/api/v1/resources/calendar")) {
       if (options.calendarListResponse) return options.calendarListResponse;

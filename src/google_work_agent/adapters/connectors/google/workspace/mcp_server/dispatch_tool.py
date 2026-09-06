@@ -171,6 +171,12 @@ def _search_by_recovery_fingerprint(
     resource_type = credential_provider._text_argument(arguments, "resource_type", maximum=64)
     fingerprint = credential_provider._text_argument(arguments, "recovery_fingerprint", maximum=512)
     marker = credential_provider._recovery_marker(fingerprint)
+    if resource_type == "task":
+        parent = credential_provider._text_argument(arguments, "task_list_id", maximum=512)
+        return {"items": _search_tasks_by_marker(state, marker, parent)}
+    if resource_type in {"calendar", "calendar_event"}:
+        parent = credential_provider._text_argument(arguments, "calendar_id", maximum=512)
+        return {"items": _search_calendar_events_by_marker(state, marker, parent)}
     search = _RECOVERY_SEARCHES.get(resource_type)
     if search is None:
         raise credential_provider._WorkspaceToolError("INVALID_ARGUMENT")
@@ -242,48 +248,34 @@ def _search_gmail_messages_by_marker(
 
 
 def _search_tasks_by_marker(
-    state: credential_provider.GoogleWorkspaceCredentialProvider, marker: str
+    state: credential_provider.GoogleWorkspaceCredentialProvider, marker: str, task_list_id: str
 ) -> list[dict[str, object]]:
     matches: list[dict[str, object]] = []
-    task_lists = credential_provider._google_api(
+    task_list_path = credential_provider.quote(task_list_id, safe="")
+    tasks = credential_provider._google_api(
         state,
-        "https://tasks.googleapis.com/tasks/v1/users/@me/lists",
-        {"maxResults": "100"},
+        f"https://tasks.googleapis.com/tasks/v1/lists/{task_list_path}/tasks",
+        {"maxResults": "100", "showHidden": "true"},
     )
-    for task_list in credential_provider._object_list(task_lists.get("items")):
-        task_list_id = credential_provider._required_response_text(task_list, "id")
-        task_list_path = credential_provider.quote(task_list_id, safe="")
-        tasks = credential_provider._google_api(
-            state,
-            f"https://tasks.googleapis.com/tasks/v1/lists/{task_list_path}/tasks",
-            {"maxResults": "100", "showHidden": "true"},
-        )
-        for item in credential_provider._object_list(tasks.get("items")):
-            notes = credential_provider._optional_text(item.get("notes"))
-            if notes and marker in notes:
-                matches.append(credential_provider._task_snapshot(item, task_list_id))
+    for item in credential_provider._object_list(tasks.get("items")):
+        notes = credential_provider._optional_text(item.get("notes"))
+        if notes and marker in notes:
+            matches.append(credential_provider._task_snapshot(item, task_list_id))
     return matches
 
 
 def _search_calendar_events_by_marker(
-    state: credential_provider.GoogleWorkspaceCredentialProvider, marker: str
+    state: credential_provider.GoogleWorkspaceCredentialProvider, marker: str, calendar_id: str
 ) -> list[dict[str, object]]:
     matches: list[dict[str, object]] = []
-    calendars = credential_provider._google_api(
+    calendar_path = credential_provider.quote(calendar_id, safe="")
+    events = credential_provider._google_api(
         state,
-        "https://www.googleapis.com/calendar/v3/users/me/calendarList",
-        {"maxResults": "100"},
+        f"https://www.googleapis.com/calendar/v3/calendars/{calendar_path}/events",
+        {"q": marker, "maxResults": "10"},
     )
-    for calendar in credential_provider._object_list(calendars.get("items")):
-        calendar_id = credential_provider._required_response_text(calendar, "id")
-        calendar_path = credential_provider.quote(calendar_id, safe="")
-        events = credential_provider._google_api(
-            state,
-            f"https://www.googleapis.com/calendar/v3/calendars/{calendar_path}/events",
-            {"q": marker, "maxResults": "10"},
-        )
-        for item in credential_provider._object_list(events.get("items")):
-            matches.append(credential_provider._event_snapshot(item, calendar_id))
+    for item in credential_provider._object_list(events.get("items")):
+        matches.append(credential_provider._event_snapshot(item, calendar_id))
     return matches
 
 
@@ -304,8 +296,6 @@ _INTERNAL_OPERATIONS: dict[str, _InternalOperation] = {
 _RECOVERY_SEARCHES: dict[str, _RecoverySearch] = {
     "gmail_draft": _search_gmail_drafts_by_marker,
     "gmail_message": _search_gmail_messages_by_marker,
-    "task": _search_tasks_by_marker,
-    "calendar_event": _search_calendar_events_by_marker,
 }
 
 

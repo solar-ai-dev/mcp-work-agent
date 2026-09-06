@@ -348,6 +348,10 @@ from google_work_agent.application.use_cases.resource.opaque_continuation_access
     LocalResourceContinuationStore,
     OpaqueConnectorResourceAccess,
 )
+from google_work_agent.application.use_cases.resource.require_resource_selection import (
+    RequireResourceSelectionHandler,
+    SelectedResourceReadPort,
+)
 from google_work_agent.application.use_cases.resource.resolve_selection_handle import (
     ResolveSelectionHandle,
 )
@@ -2503,11 +2507,28 @@ def build_production_runtime(
         list_repositories=list_repositories,
         current_account_id=current_github_account_id,
     )
+    inventory_reader = connector_reader
+    inventory_projection = ConnectorReadProjection(
+        connector_reader=inventory_reader, tool_registry=connector_bundle.tool_registry
+    )
+    resource_selection = RequireResourceSelectionHandler(
+        repository_access=get_repository_access,
+        settings=settings_service.get_settings,
+        current_account_id=lambda connector_id: (
+            current_github_account_id()
+            if connector_id == GITHUB_CONNECTOR_ID
+            else current_account_id()
+        ),
+    )
+    selected_resource_reader = SelectedResourceReadPort(
+        delegate=inventory_reader, require=resource_selection
+    )
     read_projection = ConnectorReadProjection(
-        connector_reader=connector_reader,
+        connector_reader=selected_resource_reader,
         tool_registry=connector_bundle.tool_registry,
     )
     dispatch_connector_write = DispatchConnectorWriteHandler(
+        resource_selection=resource_selection,
         unit_of_work_factory=unit_of_work_factory,
         tool_registry=connector_bundle.tool_registry,
         connector_write_port=connector_writer,
@@ -2642,11 +2663,11 @@ def build_production_runtime(
             prompt_execution_scope=prompt_execution_scope,
             timezone_provider=lambda: settings_service.get_settings().timezone,
             work_hours_provider=work_hours_provider,
-            default_tasklist_id_provider=lambda: (
-                settings_service.get_settings().default_tasklist_id or DEFAULT_TASK_LIST_ID
+            default_tasklist_id_provider=lambda: resource_selection.default_target(
+                "tasks", DEFAULT_TASK_LIST_ID
             ),
-            default_calendar_id_provider=lambda: (
-                settings_service.get_settings().default_calendar_id or DEFAULT_CALENDAR_ID
+            default_calendar_id_provider=lambda: resource_selection.default_target(
+                "calendar", DEFAULT_CALENDAR_ID
             ),
             attachment_verifier=attachment_staging,
             resume_target_registry=resume_target_registry,
@@ -2887,7 +2908,7 @@ def build_production_runtime(
         invoke_semantic_owner=_invoke_semantic_owner,
         resume_target_registry=resume_target_registry,
         lookup_unknown_result=LookupUnknownResultHandler(
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
             tool_registry=connector_bundle.tool_registry,
             recovery_search_binding=google_workspace_internal_read_binding(
                 "search_by_recovery_fingerprint"
@@ -3000,10 +3021,10 @@ def build_production_runtime(
         ConnectorResourceAccess(
             gateway=read_projection,
             default_calendar_id_provider=(
-                lambda: llm_runtime.settings_service().default_calendar_id or DEFAULT_CALENDAR_ID
+                lambda: resource_selection.browse_target("calendar", DEFAULT_CALENDAR_ID)
             ),
             default_tasklist_id_provider=(
-                lambda: llm_runtime.settings_service().default_tasklist_id or DEFAULT_TASK_LIST_ID
+                lambda: resource_selection.browse_target("tasks", DEFAULT_TASK_LIST_ID)
             ),
             timezone_provider=lambda: llm_runtime.settings_service().timezone,
         ),
@@ -3178,23 +3199,25 @@ def build_production_runtime(
         issue_selection_handle=issue_selection_handle,
         resolve_selection_handle=resolve_selection_handle,
         list_task_lists_handler=ListTaskListsHandler(
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
+            inventory_read=inventory_reader,
             registry=connector_bundle.tool_registry,
             continuation_store=resource_continuations,
         ),
         list_calendars_handler=ListCalendarsHandler(
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
+            inventory_read=inventory_reader,
             registry=connector_bundle.tool_registry,
             continuation_store=resource_continuations,
         ),
         get_task_resource_detail_handler=GetTaskResourceDetailHandler(
             resolve_handle=resolve_selection_handle,
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
             registry=connector_bundle.tool_registry,
         ),
         get_calendar_resource_detail_handler=GetCalendarResourceDetailHandler(
             resolve_handle=resolve_selection_handle,
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
             registry=connector_bundle.tool_registry,
         ),
         get_attachment_handler=GetAttachmentHandler(
@@ -3334,6 +3357,10 @@ def build_production_runtime(
             settings=settings_service,
             replay=operational_replay,
             repository_access=get_repository_access,
+            resource_inventory=inventory_projection,
+            google_account_id=current_account_id,
+            local_models=structured_inference_router.status_service,
+            has_active_run=production_runtime.workflow_execution.has_active_runs,
         ),
         list_backups_handler=ListBackupsHandler(backup_adapter),
         create_backup_handler=CreateBackupHandler(
@@ -3443,6 +3470,7 @@ def _build_llm_runtime(
     ollama_probe = LoopbackOllamaProbe(transport=ollama_transport)
     gemini_transport = GeminiHTTPClient()
     local_model_selection = LocalModelSelectionResolver(
+        preferred_model_id=lambda: settings_service.get_settings().preferred_local_model_id,
         runtime_selection=runtime_selection,
         catalog=ollama_transport,
         allow_development_models=(

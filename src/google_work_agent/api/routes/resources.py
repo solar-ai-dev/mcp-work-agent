@@ -82,6 +82,7 @@ def list_task_lists(
     dependencies: ResourceRouteDependency,
     page_token: str | None = Query(default=None),
     page_size: int = Query(default=50, ge=1, le=100),
+    include_unselected: bool = Query(default=False),
     x_api_contract_version: str | None = Header(default=None),
 ) -> TaskListContainerListResponseV1:
     _enforce_resource_access(request, dependencies, x_api_contract_version)
@@ -91,7 +92,9 @@ def list_task_lists(
         _raise_resource_handler_unavailable(request)
     try:
         result = cast(ListTaskListsHandler, handler)(
-            ListTaskListsQuery(session_digest, account_id, page_token, page_size)
+            ListTaskListsQuery(
+                session_digest, account_id, page_token, page_size, include_unselected
+            )
         )
     except ConnectorOperationFailure as error:
         _raise_connector_failure(error, request_id=request.state.request_id)
@@ -104,6 +107,7 @@ def list_calendars(
     dependencies: ResourceRouteDependency,
     page_token: str | None = Query(default=None),
     page_size: int = Query(default=50, ge=1, le=100),
+    include_unselected: bool = Query(default=False),
     x_api_contract_version: str | None = Header(default=None),
 ) -> CalendarContainerListResponseV1:
     _enforce_resource_access(request, dependencies, x_api_contract_version)
@@ -113,7 +117,9 @@ def list_calendars(
         _raise_resource_handler_unavailable(request)
     try:
         result = cast(ListCalendarsHandler, handler)(
-            ListCalendarsQuery(session_digest, account_id, page_token, page_size)
+            ListCalendarsQuery(
+                session_digest, account_id, page_token, page_size, include_unselected
+            )
         )
     except ConnectorOperationFailure as error:
         _raise_connector_failure(error, request_id=request.state.request_id)
@@ -424,7 +430,11 @@ def _raise_connector_failure(error: ConnectorOperationFailure, *, request_id: st
     error_code, status_code = mapping[error.code]
     raise ApiRequestError(
         error_code=error_code,
-        user_message="Resource request could not be completed.",
+        user_message=(
+            "설정에서 사용할 자료로 선택한 뒤 다시 요청해 주세요."
+            if error.detail_code == "RESOURCE_NOT_SELECTED"
+            else "자료 요청을 완료하지 못했습니다. 연결 및 접근 권한을 확인해 주세요."
+        ),
         status_code=status_code,
         request_id=request_id,
         retryable=error.retryable,

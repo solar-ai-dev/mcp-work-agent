@@ -110,7 +110,7 @@ def test_representative_valid__inputs_are__accepted() -> None:
         "gmail_send",
         {
             "draft_id": "draft-1",
-            "recovery_fingerprint": "fp",
+            "payload": {"recovery_fingerprint": "fp"},
             "claim_context": {"claim_version": 2},
         },
     )

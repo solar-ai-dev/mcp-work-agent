@@ -112,6 +112,7 @@ def patch_settings(
         _raise_service_unavailable(request, "SETTINGS_UPDATE_UNAVAILABLE")
     values = payload.settings_patch.model_dump()
     github_repository = values.pop("default_github_repository")
+    github_repositories = values.pop("selected_github_repositories")
     panel = values.pop("panel_preferences")
     settings_patch = SettingsPatchV1(
         **values,
@@ -127,6 +128,7 @@ def patch_settings(
                 command_id=payload.command_id,
                 settings_patch=settings_patch,
                 github_repository=github_repository,
+                github_repositories=github_repositories,
                 github_repository_supplied="default_github_repository"
                 in payload.settings_patch.model_fields_set,
             )

@@ -159,29 +159,48 @@ def execute_read(
                 )
             except ConnectorOperationFailure as error:
                 return _failed_read(
-                    error, run_id=run_id, binding=binding,
-                    read_result_handle=read_result_handle, provider_called=False,
+                    error,
+                    run_id=run_id,
+                    binding=binding,
+                    read_result_handle=read_result_handle,
+                    provider_called=False,
                 )
             except RetrievalReadBudgetExceeded:
                 return RetrievalReadExecutionV1(
-                    1, "FAILED", read_result_handle, binding.tool_id,
-                    None, False, "BUDGET_EXHAUSTED",
+                    1,
+                    "FAILED",
+                    read_result_handle,
+                    binding.tool_id,
+                    None,
+                    False,
+                    "BUDGET_EXHAUSTED",
                 )
     try:
         consume_retrieval_read_budget(
-            run_budget, run_id=run_id,
-            is_detail=plan["operation_kind"] == "DETAIL_FETCH", now_ms=now_ms,
+            run_budget,
+            run_id=run_id,
+            is_detail=plan["operation_kind"] == "DETAIL_FETCH",
+            now_ms=now_ms,
         )
     except RetrievalReadBudgetExceeded:
         return RetrievalReadExecutionV1(
-            1, "FAILED", read_result_handle, binding.tool_id, None, False, "BUDGET_EXHAUSTED",
+            1,
+            "FAILED",
+            read_result_handle,
+            binding.tool_id,
+            None,
+            False,
+            "BUDGET_EXHAUSTED",
         )
     try:
         result = connector_reader.execute_read(binding, arguments)
     except ConnectorOperationFailure as error:
         return _failed_read(
-            error, run_id=run_id, binding=binding,
-            read_result_handle=read_result_handle, provider_called=True,
+            error,
+            run_id=run_id,
+            binding=binding,
+            read_result_handle=read_result_handle,
+            provider_called=error.detail_code != "RESOURCE_NOT_SELECTED",
         )
     read_result_cache.put_read_result(
         RunRetrievalCacheEntryV1(
@@ -217,12 +236,20 @@ def _failed_read(
         raise error
     LOGGER.warning(
         "Connector READ target is unavailable",
-        extra={"run_id": run_id, "connector_id": binding.connector_id,
-               "tool_id": binding.tool_id, "failure_code": error.code.value},
+        extra={
+            "run_id": run_id,
+            "connector_id": binding.connector_id,
+            "tool_id": binding.tool_id,
+            "failure_code": error.code.value,
+        },
     )
     return RetrievalReadExecutionV1(
-        schema_version=1, status="FAILED", read_result_handle=read_result_handle,
-        tool_id=binding.tool_id, candidate_count=None, provider_called=provider_called,
+        schema_version=1,
+        status="FAILED",
+        read_result_handle=read_result_handle,
+        tool_id=binding.tool_id,
+        candidate_count=None,
+        provider_called=provider_called,
         failure_code=error.code.value,
     )
 

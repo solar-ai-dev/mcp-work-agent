@@ -18,6 +18,10 @@ class SettingsResponse(ApiModel):
     default_tasklist_id: str | None
     default_calendar_id: str | None
     default_github_repository: GitHubRepositoryDefaultV1 | None = None
+    selected_calendar_ids: tuple[str, ...] | None = None
+    selected_tasklist_ids: tuple[str, ...] | None = None
+    selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None = None
+    google_resource_account_id: str | None = None
     preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
     preferred_local_model_id: str | None
     external_llm_consent: bool

@@ -10,8 +10,6 @@ import { updateRuntimeMode, type RuntimeMode } from "./api/update_runtime_mode";
 import { updateSettings } from "./api/update_settings";
 import { listRepositories, type RepositoryItem } from "./api/list_repositories";
 
-const OLLAMA_WINDOWS_INSTALL_GUIDE_URL = "https://ollama.com/download/windows";
-
 const runtimeModeLabels: Record<RuntimeMode, string> = {
   AUTO: "자동 선택", LOCAL_GPU: "로컬 GPU", API_LLM: "외부 API 모델",
 };
@@ -38,6 +36,7 @@ type Props = {
 };
 
 export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOperationalStateChanged }: Props): JSX.Element {
+  const [tab, setTab] = useState<"connections" | "ai" | "general">("connections");
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [google, setGoogle] = useState<GoogleConnection | null>(null);
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
@@ -46,7 +45,8 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   const [repositoryCursor, setRepositoryCursor] = useState<string | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
-  const [selectedRepository, setSelectedRepository] = useState("");
+  const [selectedRepositories, setSelectedRepositories] = useState<string[]>([]);
+  const [googleInventoryError, setGoogleInventoryError] = useState<string | null>(null);
   const repositoryRequest = useRef(0);
   const [credential, setCredential] = useState<LlmCredentialStatus | null>(null);
   const [taskLists, setTaskLists] = useState<TaskListContainer[]>([]);
@@ -59,17 +59,25 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
 
   const load = useCallback(async (): Promise<void> => {
     const [nextSettings, nextGoogle, nextGitHub, nextCredential, nextTaskLists, nextCalendars] = await Promise.allSettled([
-      getSettings(), getGoogleConnection(), getGitHubConnection(), getLlmCredentialStatus(), listTaskLists(), listCalendars(),
+      getSettings(), getGoogleConnection(), getGitHubConnection(), getLlmCredentialStatus(),
+      loadContainerPages((cursor) => listTaskLists(cursor, true)),
+      loadContainerPages((cursor) => listCalendars(cursor, true)),
     ]);
     if (nextSettings.status === "fulfilled") {
-      setSettings(nextSettings.value);
-      setSelectedRepository(nextSettings.value.default_github_repository?.repository ?? "");
+      const value = nextSettings.value;
+      setSettings({ ...value, timezone: "Asia/Seoul",
+        selected_calendar_ids: value.selected_calendar_ids ?? [],
+        selected_tasklist_ids: value.selected_tasklist_ids ?? [],
+      });
+      setSelectedRepositories(value.selected_github_repositories?.map((item) => item.repository)
+        ?? []);
     }
     if (nextGoogle.status === "fulfilled") setGoogle(nextGoogle.value);
     if (nextGitHub.status === "fulfilled") setGitHub(nextGitHub.value);
     if (nextCredential.status === "fulfilled") setCredential(nextCredential.value);
-    if (nextTaskLists.status === "fulfilled") setTaskLists(nextTaskLists.value.items);
-    if (nextCalendars.status === "fulfilled") setCalendars(nextCalendars.value.items);
+    setTaskLists(nextTaskLists.status === "fulfilled" ? nextTaskLists.value : []);
+    setCalendars(nextCalendars.status === "fulfilled" ? nextCalendars.value : []);
+    setGoogleInventoryError(nextTaskLists.status === "rejected" || nextCalendars.status === "rejected" ? "사용 가능한 자료 목록을 확인하지 못했습니다. 연결 상태를 확인하고 새로고침해 주세요." : null);
     if ([nextSettings, nextGoogle, nextGitHub, nextCredential, nextTaskLists, nextCalendars].every((result) => result.status === "rejected")) {
       throw nextSettings.status === "rejected" ? nextSettings.reason : new Error("Settings unavailable");
     }
@@ -206,11 +214,9 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
 
   async function saveSettings(): Promise<void> {
     if (!settings) return;
-    await run("settings:update", async (commandId) => {
+    await run(`settings:update:${JSON.stringify([tab, settings.preferred_llm_mode, settings.external_llm_consent, settings.working_day_start_local, settings.working_day_end_local, settings.include_weekends, settings.calendar_buffer_minutes, settings.retention_days])}`, async (commandId) => {
       const updated = await updateSettings(commandId, {
         timezone: settings.timezone,
-        default_calendar_id: settings.default_calendar_id,
-        default_tasklist_id: settings.default_tasklist_id,
         preferred_llm_mode: settings.preferred_llm_mode,
         external_llm_consent: settings.external_llm_consent,
         retention_days: settings.retention_days,
@@ -220,6 +226,11 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
         calendar_buffer_minutes: settings.calendar_buffer_minutes,
       });
       setSettings(updated);
+      if (tab === "ai" && settings.preferred_llm_mode !== runtime?.runtime_mode.requested_mode) {
+        const operation = `runtime:${settings.preferred_llm_mode}`;
+        await updateRuntimeMode(commandIdFor(operation), settings.preferred_llm_mode);
+        commandIds.current.delete(operation);
+      }
     }, "설정을 저장했습니다.");
   }
 
@@ -233,25 +244,33 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   }
 
   const runtimeModes = availableRuntimeModes(runtime?.deployment_profile);
-  const productLocalModels = runtime?.local_models?.filter((model) => model.selected) ?? [];
-  const isLocalReady = productLocalModels.length > 0
-    && productLocalModels.every((model) => model.installed && model.approved);
+  const productLocalModels = runtime?.local_models?.filter((model) => ["qwen3.5:9b", "qwen3.5:4b"].includes(model.model_id)) ?? [];
 
   return (
-    <aside className="drawer" aria-label="설정 및 진단">
-      <div className="panel-header"><strong>설정·진단</strong><button className="button-secondary" type="button" onClick={close}>닫기</button></div>
+    <aside className="drawer settings-drawer" aria-label="설정 및 진단">
+      <div className="panel-header"><div><strong>설정</strong><p className="muted">연결할 자료와 작업 환경을 관리하세요.</p></div><button className="button-secondary" type="button" onClick={close}>닫기</button></div>
+      <div className="settings-tabs" role="tablist" aria-label="설정 분류">
+        {([ ["connections", "계정 및 연결"], ["ai", "AI"], ["general", "일반"] ] as const).map(([id, label]) => <button key={id} id={`settings-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`settings-panel-${id}`} onClick={() => setTab(id)}>{label}</button>)}
+      </div>
       <div className="panel-body">
         {message ? <p role="status" className="status-warn">{message}</p> : null}
-        <section className="info-card"><strong>표시</strong><div className="button-row"><button type="button" className={theme === "light" ? "button-primary" : "button-secondary"} onClick={() => onThemeChange("light")}>밝게</button><button type="button" className={theme === "dark" ? "button-primary" : "button-secondary"} onClick={() => onThemeChange("dark")}>어둡게</button></div></section>
-        <h2>계정 및 연결</h2>
+        <div role="tabpanel" id="settings-panel-connections" aria-labelledby="settings-tab-connections" hidden={tab !== "connections"}>
         <section className="info-card" aria-label="Google 연결">
           <strong>Google Workspace</strong><p>{google ? googleConnectionLabels[google.connection_status] : "확인 중"}</p>
           {google?.display_email ? <p>{google.display_email}</p> : null}
           {google?.missing_required_scopes.length ? <p className="status-warn">필요한 권한이 부족합니다. 재연결해 권한을 허용해 주세요.</p> : google?.connection_status === "CONNECTED" ? <p>필요 권한 확인됨</p> : null}
           {settings ? <>
-            <label>기본 캘린더<select value={settings.default_calendar_id ?? ""} onChange={(e) => patch("default_calendar_id", e.target.value || null)}><option value="">선택</option>{calendars.map((item) => <option key={item.calendar_id} value={item.calendar_id}>{item.title}{item.primary ? " (기본)" : ""}</option>)}</select></label>
-            <label>기본 태스크 목록<select value={settings.default_tasklist_id ?? ""} onChange={(e) => patch("default_tasklist_id", e.target.value || null)}><option value="">선택</option>{taskLists.map((item) => <option key={item.tasklist_id} value={item.tasklist_id}>{item.title}</option>)}</select></label>
-            <button type="button" className="button-secondary" disabled={busy} onClick={() => void saveSettings()}>Google 작업 기본값 저장</button>
+            <p className="muted">앱에서 사용할 자료를 선택하세요. 여러 개를 선택할 수 있습니다.</p>
+            <fieldset className="settings-selection" disabled={busy || google?.connection_status !== "CONNECTED"}><legend>캘린더</legend>
+              {calendars.map((item) => <label key={item.calendar_id}><input type="checkbox" checked={settings.selected_calendar_ids?.includes(item.calendar_id) ?? false} onChange={(e) => patch("selected_calendar_ids", toggleValue(settings.selected_calendar_ids ?? [], item.calendar_id, e.target.checked))} /><span>{item.title}{item.primary ? " · 기본 캘린더" : ""}</span></label>)}
+              {!calendars.length && !googleInventoryError ? <p className="muted">접근 가능한 캘린더가 없습니다.</p> : null}
+            </fieldset>
+            <fieldset className="settings-selection" disabled={busy || google?.connection_status !== "CONNECTED"}><legend>할일 목록</legend>
+              {taskLists.map((item) => <label key={item.tasklist_id}><input type="checkbox" checked={settings.selected_tasklist_ids?.includes(item.tasklist_id) ?? false} onChange={(e) => patch("selected_tasklist_ids", toggleValue(settings.selected_tasklist_ids ?? [], item.tasklist_id, e.target.checked))} /><span>{item.title}</span></label>)}
+              {!taskLists.length && !googleInventoryError ? <p className="muted">접근 가능한 할일 목록이 없습니다.</p> : null}
+            </fieldset>
+            {googleInventoryError && google?.connection_status === "CONNECTED" ? <p role="alert" className="status-warn">{googleInventoryError}</p> : null}
+            <div className="button-row"><button type="button" className="button-primary" disabled={busy || Boolean(googleInventoryError) || google?.connection_status !== "CONNECTED"} onClick={() => void run(`settings:google:${JSON.stringify([settings.selected_calendar_ids, settings.selected_tasklist_ids])}`, async (id) => { await updateSettings(id, { selected_calendar_ids: settings.selected_calendar_ids ?? [], selected_tasklist_ids: settings.selected_tasklist_ids ?? [] }); }, "사용할 Google 자료를 저장했습니다.")}>Google 자료 선택 저장</button><button type="button" className="button-secondary" disabled={busy} onClick={() => void run("settings:refresh", async () => {}, "자료 목록을 새로고침했습니다.")}>목록 새로고침</button></div>
           </> : null}
           <div className="button-row">
             {google?.connection_status !== "CONNECTED" ? <button type="button" className="button-primary" disabled={busy} onClick={() => void run("google:connect", async (id) => { const result = await startGoogleConnection(id); window.open(requireOAuthUrl(result.authorization_url), "_blank", "noopener,noreferrer"); }, "Google 연결 완료를 기다리고 있습니다.")}>연결</button> : null}
@@ -274,18 +293,15 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
             {githubAuthorization.verification_uri ? <button type="button" className="button-secondary" onClick={() => window.open(requireGitHubVerificationUrl(githubAuthorization.verification_uri!), "_blank", "noopener,noreferrer")}>GitHub 인증 페이지 열기</button> : null}
           </div> : null}
           {settings ? <div>
-            <p>저장된 기본 Repository: {settings.default_github_repository?.repository ?? "없음"}</p>
-            {settings.default_github_repository && github?.account_id && settings.default_github_repository.account_id !== github.account_id ? <p className="status-warn">다른 GitHub 계정의 기본값입니다. 현재 계정에서 다시 선택하거나 해제해 주세요.</p> : null}
-            <label>기본 Repository<select value={selectedRepository} disabled={github?.connection_status !== "CONNECTED" || repositoryLoading} onChange={(e) => setSelectedRepository(e.target.value)}>
-              <option value="">없음</option>
-              {selectedRepository && !repositories.some((item) => item.repository === selectedRepository) ? <option value={selectedRepository}>{selectedRepository} (접근 확인 필요)</option> : null}
-              {repositories.map((item) => <option key={item.repository_id} value={item.repository}>{item.repository}{item.private ? " (비공개)" : ""}</option>)}
-            </select></label>
+            <fieldset className="settings-selection" disabled={busy || github?.connection_status !== "CONNECTED" || repositoryLoading}><legend>사용할 저장소 · {selectedRepositories.length}개 선택</legend>
+              {repositories.map((item) => <label key={item.repository_id}><input type="checkbox" checked={selectedRepositories.includes(item.repository)} onChange={(e) => setSelectedRepositories(toggleValue(selectedRepositories, item.repository, e.target.checked))} /><span>{item.repository}{item.private ? <small>비공개</small> : null}</span></label>)}
+              {selectedRepositories.filter((name) => !repositories.some((item) => item.repository === name)).map((name) => <label key={name}><input type="checkbox" checked onChange={() => setSelectedRepositories(selectedRepositories.filter((value) => value !== name))} /><span>{name}<small>접근 재확인 필요</small></span></label>)}
+            </fieldset>
             {repositoryError ? <p role="alert" className="status-warn">{repositoryError}</p> : github?.connection_status === "CONNECTED" && !repositoryLoading && repositories.length === 0 ? <p>현재 페이지에 접근 가능한 Repository가 없습니다. 접근 관리에서 설치 범위를 확인해 주세요.</p> : null}
             {repositoryLoading ? <p>Repository 접근 권한을 확인하고 있습니다.</p> : null}
             <div className="button-row">
-              <button type="button" className="button-primary" disabled={busy || repositoryLoading || github?.connection_status !== "CONNECTED" || Boolean(selectedRepository && !repositories.some((item) => item.repository === selectedRepository))} onClick={() => void run(`github:repository:${selectedRepository}`, async (id) => { await updateSettings(id, { default_github_repository: selectedRepository || null }); }, "기본 Repository를 저장했습니다.")}>Repository 저장</button>
-              <button type="button" className="button-secondary" disabled={busy || !settings.default_github_repository} onClick={() => void run("github:repository:clear", async (id) => { await updateSettings(id, { default_github_repository: null }); }, "기본 Repository를 해제했습니다.")}>기본값 해제</button>
+              <button type="button" className="button-primary" disabled={busy || repositoryLoading || github?.connection_status !== "CONNECTED"} onClick={() => void run(`github:repositories:${JSON.stringify(selectedRepositories)}`, async (id) => { await updateSettings(id, { selected_github_repositories: selectedRepositories }); }, "사용할 저장소를 저장했습니다.")}>저장소 선택 저장</button>
+              <button type="button" className="button-secondary" disabled={busy || !selectedRepositories.length} onClick={() => setSelectedRepositories([])}>모두 해제</button>
               <button type="button" className="button-secondary" disabled={repositoryLoading || github?.connection_status !== "CONNECTED"} onClick={() => void refreshRepositories()}>Repository 새로고침</button>
               {repositoryCursor ? <button type="button" className="button-secondary" disabled={repositoryLoading} onClick={() => void refreshRepositories(repositoryCursor)}>Repository 더 보기</button> : null}
               <a className="button-secondary" href="https://github.com/settings/installations" target="_blank" rel="noreferrer">Repository 접근 관리</a>
@@ -297,38 +313,46 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
             {github?.connection_status === "CONNECTED" ? <button type="button" className="button-secondary" disabled={busy} onClick={() => void run("github:reconnect", async (id) => { setGitHubAuthorization(await startGitHubConnection(id)); }, "GitHub 재연결 인증을 기다리고 있습니다.")}>재연결</button> : null}
           </div>
         </section>
+        </div>
+        <div role="tabpanel" id="settings-panel-ai" aria-labelledby="settings-tab-ai" hidden={tab !== "ai"}>
         <section className="info-card" aria-label="Gemini API">
           <strong>Gemini API</strong><p>{credential === null ? "연결 상태를 확인할 수 없습니다" : credential.configured ? `${credential.storage_mode === "KEYRING" ? "PC에 안전하게 저장" : "이번 실행에서만 사용"} / ${credentialValidationLabels[credential.validation_status]}` : "설정되지 않음"}</p>
           <label>저장 방식<select value={storageMode} onChange={(e) => setStorageMode(e.target.value === "SESSION_ONLY" ? "SESSION_ONLY" : "KEYRING")}><option value="KEYRING">PC에 안전하게 저장</option><option value="SESSION_ONLY">이번 실행에서만 사용</option></select></label>
           <label>API 키<input type="password" autoComplete="off" placeholder="Gemini API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>
           <div className="button-row"><button type="button" className="button-primary" disabled={busy || !apiKey.trim()} onClick={() => void run("credential:store", async (id) => { await storeLlmCredential(id, apiKey, storageMode); }, "자격증명을 저장했습니다.", true)}>API 키 저장</button><button type="button" className="button-danger" disabled={busy} onClick={() => void run("credential:delete", async (id) => { await deleteLlmCredential(id); }, "자격증명을 삭제했습니다.", true)}>API 키 삭제</button><button type="button" className="button-secondary" disabled={busy} onClick={() => void testGeminiConnection()}>연결 테스트</button></div>
         </section>
-        {settings ? <section className="info-card" aria-label="작업 설정">
-          <strong>작업 설정</strong>
-          <label>시간대<input value={settings.timezone} onChange={(e) => patch("timezone", e.target.value)} /></label>
-          <label>업무 시작<input type="time" value={settings.working_day_start_local} onChange={(e) => patch("working_day_start_local", e.target.value)} /></label>
-          <label>업무 종료<input type="time" value={settings.working_day_end_local} onChange={(e) => patch("working_day_end_local", e.target.value)} /></label>
-          <label><input type="checkbox" checked={settings.include_weekends} onChange={(e) => patch("include_weekends", e.target.checked)} />주말 포함</label>
-          <label>일정 사이 여유 시간(분)<input type="number" min="0" value={settings.calendar_buffer_minutes} onChange={(e) => patch("calendar_buffer_minutes", Number(e.target.value))} /></label>
-          <label>보존 기간(일)<input type="number" min="1" value={settings.retention_days} onChange={(e) => patch("retention_days", Number(e.target.value))} /></label>
+        {settings ? <section className="info-card" aria-label="AI 실행 설정">
+          <strong>AI 실행 방식</strong>
           <label>사용할 모델 실행 방식<select value={settings.preferred_llm_mode} onChange={(e) => patch("preferred_llm_mode", e.target.value as RuntimeMode)}>{runtimeModes.map((mode) => <option key={mode} value={mode}>{runtimeModeLabels[mode]}</option>)}</select></label>
-          <label><input type="checkbox" checked={settings.external_llm_consent} onChange={(e) => patch("external_llm_consent", e.target.checked)} />외부 LLM 사용 동의</label>
-          <button type="button" className="button-primary" disabled={busy} onClick={() => void saveSettings()}>LLM 설정 저장</button>
+          <label className="settings-check"><input type="checkbox" checked={settings.external_llm_consent} onChange={(e) => patch("external_llm_consent", e.target.checked)} />외부 AI에 업무 내용 전송 허용</label>
+          <p className="muted">현재 요청 방식: {runtimeModeLabel(runtime?.runtime_mode.requested_mode)} · 실제: {runtimeModeLabel(runtime?.runtime_mode.actual_runtime)}</p>
+          <button type="button" className="button-primary" disabled={busy} onClick={() => void saveSettings()}>AI 설정 저장</button>
         </section> : null}
-        <section className="info-card" aria-label="런타임 모드">
-          <strong>런타임 모드</strong><p>요청 {runtimeModeLabel(runtime?.runtime_mode.requested_mode)} · 실제 {runtimeModeLabel(runtime?.runtime_mode.actual_runtime)}</p>{runtime?.runtime_mode.fallback_reason ? <p className="status-warn">요청한 실행 방식 대신 사용 가능한 방식으로 전환되었습니다.</p> : null}
-          <div className="button-row">{runtimeModes.map((mode) => <button key={mode} type="button" className="button-secondary" disabled={busy} onClick={() => void run(`runtime:${mode}`, async (id) => { await updateRuntimeMode(id, mode); }, `${runtimeModeLabels[mode]} 방식을 요청했습니다.`)}>{runtimeModeLabels[mode]}</button>)}</div>
-        </section>
         {runtime?.deployment_profile === "LOCAL_CAPABLE" ? <section className="info-card" aria-label="로컬 AI 준비">
           <strong>로컬 AI</strong>
-          <p>{isLocalReady ? "제품 로컬 AI가 준비되었습니다." : "Ollama와 제품 로컬 AI 모델 준비가 필요합니다."}</p>
-          {productLocalModels.length ? <ul>{productLocalModels.map((model) => <li key={model.model_id}>{model.model_id} · {model.installed && model.approved ? "준비됨" : "준비 필요"}</li>)}</ul> : <p className="muted">제품 모델 상태를 확인하고 있습니다.</p>}
-          <div className="button-row">
-            <a className="button-secondary" href={OLLAMA_WINDOWS_INSTALL_GUIDE_URL} target="_blank" rel="noreferrer">Ollama 설치 안내 열기</a>
-            <button type="button" className="button-secondary" disabled={busy} onClick={() => void onOperationalStateChanged()}>다시 검사</button>
-          </div>
+          <p className="muted">준비된 모델 하나를 선택하세요. 다음 작업부터 적용됩니다.</p>
+          <fieldset className="settings-selection" disabled={busy}><legend>사용할 로컬 모델</legend>
+            {productLocalModels.map((model) => <label key={model.model_id}><input type="radio" name="local-model" checked={settings?.preferred_local_model_id ? settings.preferred_local_model_id === model.model_id : model.selected} disabled={!model.installed || !model.approved} onChange={() => void run(`settings:model:${model.model_id}`, async (id) => { await updateSettings(id, { preferred_local_model_id: model.model_id }); }, `${model.model_id} 모델을 선택했습니다.`)} /><span>{model.model_id}<small>{model.installed && model.approved ? "준비됨" : model.installed ? "사용 가능 여부 확인 필요" : "설치되지 않음"}</small></span></label>)}
+          </fieldset>
+          {!productLocalModels.length ? <p className="muted">아직 모델 상태를 확인하지 못했습니다.</p> : null}
+          {productLocalModels.length > 0 && !productLocalModels.some((model) => model.installed && model.approved) ? <p role="status">사용 가능한 로컬 모델이 없습니다. 로컬 AI 요청은 실행할 수 없습니다.</p> : null}
+          <button type="button" className="button-secondary" disabled={busy} onClick={() => void run("runtime:inspect", async () => {}, "로컬 모델 검사를 마쳤습니다.")}>모델 검사</button>
         </section> : null}
-        <DiagnosticsPanel runtime={runtime} onRefresh={onOperationalStateChanged} />
+        </div>
+        <div role="tabpanel" id="settings-panel-general" aria-labelledby="settings-tab-general" hidden={tab !== "general"}>
+          <section className="info-card"><strong>화면</strong><label>테마<select aria-label="테마" value={theme} onChange={(e) => onThemeChange(e.target.value)}><option value="light">밝게</option><option value="dark">어둡게</option></select></label></section>
+          {settings ? <section className="info-card" aria-label="작업 설정">
+            <strong>업무 시간</strong>
+            <div className="settings-row"><span>시간대</span><span>한국 · 서울 (UTC+9)</span></div>
+            <label>업무 시작<input type="time" value={settings.working_day_start_local} onChange={(e) => patch("working_day_start_local", e.target.value)} /></label>
+            <label>업무 종료<input type="time" value={settings.working_day_end_local} onChange={(e) => patch("working_day_end_local", e.target.value)} /></label>
+            <label className="settings-check"><input type="checkbox" checked={settings.include_weekends} onChange={(e) => patch("include_weekends", e.target.checked)} />주말 포함</label>
+            <label>일정 사이 여유 시간(분)<input type="number" min="0" value={settings.calendar_buffer_minutes} onChange={(e) => patch("calendar_buffer_minutes", Number(e.target.value))} /></label>
+            <label>대화 보존 기간(일)<input type="number" min="1" max="30" value={settings.retention_days} onChange={(e) => patch("retention_days", Number(e.target.value))} /></label>
+            <button type="button" className="button-primary" disabled={busy} onClick={() => void saveSettings()}>일반 설정 저장</button>
+          </section> : null}
+          <details className="settings-diagnostics"><summary>진단 및 복구</summary><DiagnosticsPanel runtime={runtime} onRefresh={onOperationalStateChanged} /></details>
+        </div>
       </div>
     </aside>
   );
@@ -336,6 +360,25 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
 
 function availableRuntimeModes(profile: string | undefined): RuntimeMode[] {
   return profile === "LOCAL_CAPABLE" ? ["AUTO", "LOCAL_GPU", "API_LLM"] : ["API_LLM"];
+}
+
+function toggleValue(values: string[], value: string, checked: boolean): string[] {
+  return checked ? [...new Set([...values, value])] : values.filter((item) => item !== value);
+}
+
+async function loadContainerPages<T>(fetchPage: (cursor: string | null) => Promise<{ items: T[]; next_page_token: string | null }>): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < 100; page += 1) {
+    const result = await fetchPage(cursor);
+    items.push(...result.items);
+    cursor = result.next_page_token;
+    if (!cursor) return items;
+    if (seen.has(cursor)) break;
+    seen.add(cursor);
+  }
+  throw new Error("자료 목록을 모두 확인하지 못했습니다.");
 }
 
 function errorMessage(error: unknown, fallback: string): string {

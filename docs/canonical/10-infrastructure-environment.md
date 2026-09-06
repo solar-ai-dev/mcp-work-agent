@@ -831,7 +831,11 @@ default_calendar_id
 default_tasklist_id
 default_github_repository      # null or {repository, repository_id, account_id}; explicit user selection
 preferred_llm_mode            # AUTO | LOCAL_GPU | API_LLM; 새 Run/UI 기본값
-preferred_local_model_id      # deprecated read-only migration field; current product normalizes to null
+preferred_local_model_id      # null=release default; qwen3.5:9b or qwen3.5:4b, ready/approved only
+selected_calendar_ids         # null=legacy; []=none; account-bound multi-selection
+selected_tasklist_ids         # null=legacy; []=none; account-bound multi-selection
+selected_github_repositories  # null=legacy; []=none; repository/id/account bindings
+google_resource_account_id   # server-derived account binding for Google selections
 external_llm_consent          # bool, default false; API_LLM/AUTO→API prior-consent authority
 retention_days
 theme                         # LIGHT | DARK
@@ -854,11 +858,11 @@ circuit_open_duration_ms
 
 `PanelPreferencesV1`의 P0 field는 `right_panel_default_open: bool`과 `right_panel_default_tab: CONVERSATIONS | RESOURCES`다. pixel width·animation·temporary Drawer state 같은 UI-local tuning은 Settings schema가 아니다.
 
-`default_github_repository`는 0 또는 1개의 사용자 선택이다. 저장 시 현재 GitHub 계정 및 GitHub App installation의 접근 가능한 Repository에서 `repository`(canonical owner/repository), immutable Provider `repository_id`, `account_id`를 해소한다. 임의 metadata나 credential은 저장하지 않는다. 기존 JSON envelope에 additive null field로 atomic migration하며 기존 설정·operation marker를 보존한다. 계정 변경, repository rename/삭제 또는 권한 상실 뒤에는 같은 binding을 재검증하기 전 사용할 수 없다. 기본값 선택은 GitHub 권한이나 Write 승인이 아니다.
+`selected_github_repositories`는 사용자가 앱에서 사용할 저장소의 account/immutable-id-bound 목록이다. 저장 시 기존 Repository access owner가 현재 GitHub App 설치 접근 가능성을 확인한다. 외부 권한이나 Write 승인을 확대하지 않는다. `default_github_repository`는 이전 파일/Run 호환 필드이며 선택이 하나일 때만 파생하고 복수/빈 선택이면 해제한다. 저장소 미지정 요청은 복수 항목 중 하나를 추측하지 않는다. rename/삭제/계정 변경/접근 상실은 재검증 실패이며 다른 저장소로 fallback하지 않는다.
 
 `working_day_start_local < working_day_end_local`, `calendar_buffer_minutes >= 0`, P0 `retention_days`는 **1..30**을 검증한다. default는 30이고 31 이상 연장은 P1 policy change 전에는 거부한다. 이 setting은 01-B/04의 Conversation·Message·terminal Run 소유 데이터와 owning Checkpoint에만 적용하며 Audit 90일·Secret·Session Cache에는 적용하지 않는다. Calendar availability/conflict policy는 persisted `timezone + working_day_* + include_weekends + calendar_buffer_minutes`를 소비한다. `POL-CAL-004`의 초기 평일 09:00~18:00/주말 제외는 shipped default이지 별도 schema가 아니다.
 
-`preferred_llm_mode`는 **persisted default preference**다. `POST /api/v1/runtime/mode`는 Active Run이 없을 때 current Service requested runtime mode를 바꾸는 operational command이며 이 preference를 암묵적으로 persist하지 않는다. 이 process-local mutable value의 단일 authority는 `07 RuntimeModePort`이고 P0 binding은 `adapters/system/process_runtime_mode.py → ProcessRuntimeModeAdapter`다. Service restart 시 process-local mode는 startup에서 읽은 persisted `SettingsViewV1.preferred_llm_mode`로 초기화하며(Settings schema default는 `AUTO`), unresolved same-command replay는 `RuntimeModePort.reconcile_update(operation_ref, requested_mode)`가 current instance state를 비교해 `COMPLETED | SAFE_TO_RETRY`를 결정한다. UI가 기본 모드를 저장하려면 `PUT /api/v1/settings`를 사용한다. 사용자는 `API_LLM | LOCAL_GPU` mode만 선택할 수 있고 concrete Local model은 선택할 수 없다. nullable `preferred_local_model_id`는 이전 저장 데이터 호환을 위한 read-only migration field이며 current product는 null로 정규화하고 Router authority로 사용하지 않는다.
+`preferred_llm_mode`는 **persisted default preference**다. `POST /api/v1/runtime/mode`는 Active Run이 없을 때 current Service mode를 바꾸며 단일 mutable authority는 `07 RuntimeModePort`다. Service restart 시 Settings preference로 초기화하고 operational replay는 기존 reconcile 계약을 따른다. UI는 `AUTO | LOCAL_GPU | API_LLM`과 준비된 `qwen3.5:9b | qwen3.5:4b`를 선택할 수 있다. 구체 모델은 Settings preference를 기존 LocalModelSelectionResolver가 해석한다. inference class 구분은 유지하되 선택 모델 하나를 양쪽에 사용한다. 선택 모델이 준비되지 않았으면 다른 모델로 조용히 대체하지 않는다. API_ONLY는 Local 검사/선택을 제공하지 않는다.
 
 사용자 설정은 Versioned JSON Schema로 검증한다. 알 수 없는 Key는 무시하지 않고 Migration 또는 오류로 처리한다.
 
@@ -933,6 +937,14 @@ Python Runtime은 앱 전용으로 Bundle에 포함하며 System Python과 분�
 완전 삭제는 별도 선택과 경고 후 사용자 데이터·Backup·Settings·Log·Diagnostic까지 삭제한다.
 
 ## 12. Ollama와 Local Model provisioning
+
+### 2026-09-06 Settings 선택 계약 변경
+
+Settings의 `selected_calendar_ids`, `selected_tasklist_ids`, `selected_github_repositories`는 각각 최대 100개의 중복 없는 사용 범위다. wire의 GitHub 값은 owner/repository 배열이며 Application이 기존 Repository access owner로 검증해 account/id binding을 저장한다. Google 선택은 현재 연결 account에 묶인다. 누락/null은 기존 데이터 및 partial patch의 변경 없음, 빈 배열은 명시적 미선택이다. 기존 파일은 additive null 필드로 이행하며 기존 operational marker를 보존한다. 선택한 종류의 단일 default 필드는 하나를 선택한 경우에만 파생하며 복수/빈 선택에서는 해제한다. old default API는 선택 범위를 조용히 덮을 수 없다. 복수 작성 대상은 기존 확인 흐름으로 해소한다.
+
+Application의 자료 선택 gate는 검색/상세 조회와 WRITE, Verification/Recovery의 추가 조회 전에 현재 계정과 선택 범위를 검사한다. 미설정/null은 기존 default를 접근 권한으로 승격하지 않으며 명시적 선택 전에는 접근을 허용하지 않는다. 설정용 container inventory만 전체 접근 가능한 목록을 반환한다. 제외된 기존 승인·Attempt 대상은 바꾸지 않고 추가 I/O를 차단한다. 이미 발생한 외부 효과는 취소되지 않으며 결과 확인이 불가능하면 불확실성을 유지하고 blind retry하지 않는다. 설정 선택은 Provider authorization과 별개이며 접근 실패를 빈 결과로 바꾸지 않는다.
+
+시간대는 새 설정에서 `Asia/Seoul` 고정이다. `preferred_local_model_id`는 더 이상 read-only 필드가 아니며 9B/4B 중 설치와 승인 digest 검사가 통과한 모델만 저장한다. 기존 signed profile은 기본 9B를 유지하고 4B 동시 설치를 요구하지 않는다. 개발 smoke 환경의 설치 모델 검증과 signed release의 승인 목록을 구분하며, 배포 미승인 4B를 READY로 간주하지 않는다. Settings의 검사는 read-only이며 설치/pull을 유발하지 않는다. 진행 중 Run이 있으면 모델 변경을 차단한다.
 
 ### 12.1 Product boundary
 

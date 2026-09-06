@@ -72,7 +72,10 @@ class LlmRuntimeStatusRouter:
         return self.runtime_selection.selected_model
 
     def list_local_models(self) -> tuple[LocalModelRuntimeOptionV1, ...]:
-        if self.local_model_selection is None:
+        if (
+            self.local_model_selection is None
+            or self.runtime_selection.deployment_profile == "API_ONLY"
+        ):
             return ()
         return self.local_model_selection.list_options()
 

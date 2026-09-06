@@ -19,6 +19,9 @@ from google_work_agent.application.use_cases.plan.persistence_projection import 
     current_plan_tuple,
     load_plan_record,
 )
+from google_work_agent.application.use_cases.resource.require_resource_selection import (
+    RequireResourceSelectionHandler,
+)
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.approval.model import ApprovalStatusV1
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
@@ -26,6 +29,7 @@ from google_work_agent.domain.command_receipt.model import CommandReceiptStatus
 from google_work_agent.domain.execution_attempt.model import ExecutionAttemptStatusV1
 from google_work_agent.domain.plan.model import PlanStatusV1
 from google_work_agent.domain.run.model import RunStatusV1
+from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
 from google_work_agent.ports.connector.connector_read_port import JsonValue
 from google_work_agent.ports.connector.connector_write_port import (
     ConnectorWritePort,
@@ -58,10 +62,12 @@ class DispatchConnectorWriteHandler:
         unit_of_work_factory: Callable[[], UnitOfWork],
         tool_registry: SignedToolRegistry,
         connector_write_port: ConnectorWritePort,
+        resource_selection: RequireResourceSelectionHandler | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._tool_registry = tool_registry
         self._connector_write_port = connector_write_port
+        self._resource_selection = resource_selection
 
     def __call__(self, command: DispatchConnectorWriteCommandV1) -> DispatchConnectorWriteResultV1:
         expected_effect, connector_id = self._verify_dispatch_eligibility(command)
@@ -70,6 +76,28 @@ class DispatchConnectorWriteHandler:
             command.tool_id,
             expected_effect,
         )
+        if self._resource_selection is not None:
+            try:
+                self._resource_selection(
+                    connector_id,
+                    command.tool_id,
+                    cast(dict[str, JsonValue], command.tool_arguments),
+                )
+            except ConnectorOperationFailure as error:
+                return DispatchConnectorWriteResultV1(
+                    ConnectorWriteResultV1(
+                        schema_version=1,
+                        success=False,
+                        delivery_certainty="NOT_SENT",
+                        provider_request_id=None,
+                        response_metadata={},
+                        error_code=(
+                            "RESOURCE_NOT_SELECTED"
+                            if error.detail_code == "RESOURCE_NOT_SELECTED"
+                            else error.code.value
+                        ),
+                    )
+                )
         result = self._connector_write_port.execute_write(
             binding,
             cast(dict[str, JsonValue], command.tool_arguments),

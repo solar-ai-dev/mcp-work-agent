@@ -40,7 +40,7 @@ test("loads protected state only after readiness and compatible bootstrap", asyn
   vi.mocked(settingsApi.getSettings).mockResolvedValue({ timezone: "Asia/Seoul", preferred_llm_mode: "API_LLM", preferred_local_model_id: null, external_llm_consent: true } as never);
   vi.mocked(googleApi.getCurrentGoogleAccount).mockResolvedValue({ account: null } as never);
 
-  render(<StartupFlow>{(context) => <p>{context.setupCompleted ? "workspace" : "onboarding"}</p>}</StartupFlow>);
+  render(<StartupFlow>{() => <p>workspace</p>}</StartupFlow>);
 
   expect(await screen.findByText("workspace")).toBeInTheDocument();
   expect(api.bootstrapSession).toHaveBeenCalledWith({ bootstrap_secret: "secret" });
@@ -61,4 +61,15 @@ test("keeps failed automatic recovery passive without user recovery controls", a
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   expect(screen.queryByText("workspace")).not.toBeInTheDocument();
   expect(api.getReady).toHaveBeenCalledOnce();
+});
+
+test("opens core workspace when optional connection and runtime status are unavailable", async () => {
+  vi.mocked(api.getLive).mockResolvedValue({ api_contract_version: "1" } as never);
+  vi.mocked(api.getReady).mockResolvedValue({ status: "READY", api_contract_version: "1", checks: [] } as never);
+  vi.mocked(runtimeApi.getRuntime).mockRejectedValue(new Error("Ollama unavailable"));
+  vi.mocked(googleApi.getGoogleConnection).mockRejectedValue(new Error("not connected"));
+  vi.mocked(googleApi.getCurrentGoogleAccount).mockRejectedValue(new Error("not connected"));
+  vi.mocked(settingsApi.getSettings).mockResolvedValue({ timezone: "Asia/Seoul", preferred_llm_mode: "LOCAL_GPU", external_llm_consent: false } as never);
+  render(<StartupFlow>{(context) => <p>workspace {context.google.connection_status} {context.calendarTimezone} {context.runtime.local_models.length}</p>}</StartupFlow>);
+  expect(await screen.findByText("workspace UNAVAILABLE Asia/Seoul 0")).toBeInTheDocument();
 });

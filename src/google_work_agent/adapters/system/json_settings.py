@@ -25,7 +25,14 @@ from google_work_agent.ports.system.settings_port import (
 
 _MAX_SETTINGS_BYTES = 32 * 1024
 _SETTINGS_FIELDS = frozenset(SettingsViewV1.__dataclass_fields__)
-_ADDITIVE_FIELDS = {"preferred_local_model_id", "default_github_repository"}
+_ADDITIVE_FIELDS = {
+    "preferred_local_model_id",
+    "default_github_repository",
+    "selected_calendar_ids",
+    "selected_tasklist_ids",
+    "selected_github_repositories",
+    "google_resource_account_id",
+}
 _PATCH_FIELDS = frozenset(SettingsPatchV1.__dataclass_fields__) - {
     "schema_version",
     "github_repository_supplied",
@@ -95,7 +102,10 @@ class FileSettingsStore:
             raise ValueError("settings file exceeds size limit")
         payload = json.loads(raw.decode("utf-8"))
         if isinstance(payload, dict) and set(payload) == _LEGACY_FLAT_SETTINGS_FIELDS:
-            settings = _migrate_legacy_flat_settings(cast(dict[str, object], payload))
+            settings = replace(
+                _migrate_legacy_flat_settings(cast(dict[str, object], payload)),
+                timezone="Asia/Seoul",
+            )
             self.save(settings, marker=None)
             return settings, None
         if not isinstance(payload, dict) or set(payload) - {
@@ -114,7 +124,9 @@ class FileSettingsStore:
                 **dict.fromkeys(_ADDITIVE_FIELDS),
                 **settings_payload,
             }
-            settings = _view_from_payload(cast(dict[str, object], settings_payload))
+            settings = replace(
+                _view_from_payload(cast(dict[str, object], settings_payload)), timezone="Asia/Seoul"
+            )
             marker = _operation_marker(payload.get("last_operation"))
             self.save(settings, marker=marker)
             return settings, marker
@@ -122,6 +134,9 @@ class FileSettingsStore:
             raise ValueError("settings field set mismatch")
         settings = _view_from_payload(cast(dict[str, object], settings_payload))
         marker = _operation_marker(payload.get("last_operation"))
+        if settings.timezone != "Asia/Seoul":
+            settings = replace(settings, timezone="Asia/Seoul")
+            self.save(settings, marker=marker)
         return settings, marker
 
     def save(self, settings: SettingsViewV1, marker: dict[str, str] | None) -> None:
@@ -164,6 +179,8 @@ class JsonSettingsAdapter(SettingsPort):
     ) -> SettingsViewV1:
         if settings_patch.schema_version != 1 or not operation_ref.strip():
             raise ValueError("valid settings patch and operation_ref are required")
+        if settings_patch.timezone not in (None, "Asia/Seoul"):
+            raise ValueError("timezone must be Asia/Seoul")
         with self._lock:
             current, marker = self._store.load()
             patch_hash = _patch_hash(settings_patch)
@@ -186,6 +203,13 @@ class JsonSettingsAdapter(SettingsPort):
                 if settings_patch.default_tasklist_id is not None:
                     raise ValueError("cannot set and clear default task list together")
                 changes["default_tasklist_id"] = None
+            for selected, default in (
+                (settings_patch.selected_calendar_ids, "default_calendar_id"),
+                (settings_patch.selected_tasklist_ids, "default_tasklist_id"),
+                (settings_patch.selected_github_repositories, "default_github_repository"),
+            ):
+                if selected is not None:
+                    changes[default] = selected[0] if len(selected) == 1 else None
             updated = replace(current, **changes)
             _validate_settings(updated)
             self._store.save(
@@ -257,6 +281,17 @@ def _view_from_payload(payload: dict[str, object]) -> SettingsViewV1:
         circuit_failure_threshold=_required_int(payload, "circuit_failure_threshold"),
         circuit_open_duration_ms=_required_int(payload, "circuit_open_duration_ms"),
         preferred_local_model_id=_optional_string(payload["preferred_local_model_id"]),
+        selected_calendar_ids=_selection_ids(payload.get("selected_calendar_ids")),
+        selected_tasklist_ids=_selection_ids(payload.get("selected_tasklist_ids")),
+        google_resource_account_id=_optional_string(payload.get("google_resource_account_id")),
+        selected_github_repositories=(
+            None
+            if payload.get("selected_github_repositories") is None
+            else tuple(
+                GitHubRepositoryDefaultV1.from_payload(item)
+                for item in cast(list[object], payload["selected_github_repositories"])
+            )
+        ),
         default_github_repository=(
             None
             if payload["default_github_repository"] is None
@@ -342,6 +377,15 @@ def _validate_settings(settings: SettingsViewV1) -> None:
         raise ValueError("retention_days must be in 1..30")
     if settings.calendar_buffer_minutes < 0:
         raise ValueError("calendar_buffer_minutes must be non-negative")
+    for selected in (settings.selected_calendar_ids, settings.selected_tasklist_ids):
+        _selection_ids(selected)
+    repositories = settings.selected_github_repositories
+    if repositories is not None and (
+        len(repositories) > 100
+        or len({item.repository.casefold() for item in repositories}) != len(repositories)
+        or len({item.account_id for item in repositories}) > 1
+    ):
+        raise ValueError("invalid repository selection")
     if settings.preferred_local_model_id is not None and (
         not settings.preferred_local_model_id.strip()
         or len(settings.preferred_local_model_id) > 200
@@ -370,6 +414,15 @@ def _validate_hhmm(value: str) -> None:
 
 def _patch_hash(settings_patch: SettingsPatchV1) -> str:
     payload = asdict(settings_patch)
+    for field in (
+        "selected_calendar_ids",
+        "selected_tasklist_ids",
+        "selected_github_repositories",
+        "google_resource_account_id",
+        "preferred_local_model_id",
+    ):
+        if payload[field] is None:
+            payload.pop(field)
     for field in ("clear_default_calendar", "clear_default_tasklist"):
         if not payload[field]:
             payload.pop(field)
@@ -383,6 +436,25 @@ def _patch_hash(settings_patch: SettingsPatchV1) -> str:
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _selection_ids(value: object) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) > 100
+        or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item) > 512
+            or re.search(r"[\x00-\x1f\x7f]", item)
+            for item in value
+        )
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError("invalid resource selection")
+    return tuple(value)
 
 
 def _operation_marker(value: object) -> dict[str, str] | None:

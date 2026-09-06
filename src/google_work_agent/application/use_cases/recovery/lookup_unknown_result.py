@@ -167,6 +167,9 @@ class LookupUnknownResultHandler:
         if replay is not None:
             return replay
         result = self._lookup(query)
+        if result.reason_codes == ["RESOURCE_NOT_SELECTED"]:
+            # A scope denial is not a durable proof about the external effect.
+            return result
         return self._persist_proof(
             query,
             result,
@@ -189,6 +192,10 @@ class LookupUnknownResultHandler:
             )
             result = self._connector_read.execute_read(binding, arguments)
         except ConnectorOperationFailure as error:
+            if error.detail_code == "RESOURCE_NOT_SELECTED":
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED", strategy, [], [], ["RESOURCE_NOT_SELECTED"]
+                )
             if connector_id == "github":
                 return UnknownResultLookupResultV1(
                     "UNRESOLVED",
@@ -532,6 +539,13 @@ class LookupUnknownResultHandler:
                 {
                     "resource_type": target.resource_type.lower(),
                     "recovery_fingerprint": query.recovery_fingerprint,
+                    **(
+                        {"task_list_id": target.parent_resource_id}
+                        if target.resource_type.upper() == "TASK"
+                        else {"calendar_id": target.parent_resource_id}
+                        if target.resource_type.upper() in {"CALENDAR", "CALENDAR_EVENT"}
+                        else {}
+                    ),
                 },
             )
         if query.effect in {"UPDATE", "DELETE"}:
