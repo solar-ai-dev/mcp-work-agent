@@ -1,9 +1,13 @@
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from google_work_agent.adapters.system.sqlite_checkpoint import (
     SqliteCheckpointAdapter,
     _retrieval_requirements_from_checkpoint,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.system.contracts.workflow_handoff import (
     MainControlResumeTargetV2,
     WorkflowExecutionAdmissionV1,
@@ -118,3 +122,81 @@ def test_nested_retrieval__requirements_overlay_latest__root_resume_checkpoint(
     assert loaded.checkpoint_generation == 1
     assert len(loaded.retrieval_cache_requirements) == 1
     assert loaded.retrieval_cache_requirements[0].read_result_handle == "read-1"
+
+
+@pytest.mark.parametrize("blocking", [None, "EXECUTING", "admission", "PENDING"])
+def test_paused_budget__updates_only_budget__or_rejects_active_execution(
+    tmp_path: Path, blocking: str | None
+) -> None:
+    path = tmp_path / "paused.db"
+    adapter = SqliteCheckpointAdapter(path, now_ms=lambda: 0)
+    budget = build_default_run_budget()
+    native = {
+        "id": "checkpoint",
+        "v": 4,
+        "ts": "2026-09-06T00:00:00Z",
+        "channel_values": {"retry_budget": budget, "evidence": ["keep"]},
+        "channel_versions": {},
+        "versions_seen": {},
+        "updated_channels": [],
+    }
+    kind, blob = adapter.serde.dumps_typed(native)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT)")
+        db.execute(
+            "CREATE TABLE workflow_handoffs "
+            "(run_id TEXT, status TEXT, execution_admission_json TEXT)"
+        )
+        db.execute(
+            "INSERT INTO runs VALUES ('run', ?)",
+            (blocking if blocking == "EXECUTING" else "WAITING_APPROVAL",),
+        )
+        if blocking in {"admission", "PENDING"}:
+            db.execute(
+                "INSERT INTO workflow_handoffs VALUES ('run', ?, ?)",
+                (
+                    "PENDING" if blocking == "PENDING" else "CONSUMED",
+                    "{}" if blocking == "admission" else None,
+                ),
+            )
+        db.execute(
+            "INSERT INTO checkpoints VALUES ('thread', '', 'checkpoint', NULL, ?, ?, '{}')",
+            (kind, blob),
+        )
+        db.execute("""INSERT INTO workflow_checkpoint_envelopes (
+            langgraph_thread_id, checkpoint_id, checkpoint_generation, run_id,
+            graph_profile, graph_version, owner_scope,
+            retrieval_cache_requirements_json, created_at_ms
+        ) VALUES ('thread', 'checkpoint', 1, 'run', 'SIX_ROLE_BASELINE', 'v1', 'MAIN', '[]', 0)""")
+    calls = []
+
+    def update(current):
+        calls.append(current)
+        return {**current, "llm_calls_used": current["llm_calls_used"] + 1}
+
+    try:
+        if blocking:
+            with pytest.raises(ValueError):
+                adapter.update_paused_run_budget("run", update)
+            assert calls == []
+        else:
+            adapter.update_paused_run_budget("run", update)
+            adapter.update_paused_run_budget("run", update)
+            assert len(calls) == 2
+    finally:
+        adapter.close()
+    reopened = SqliteCheckpointAdapter(path, now_ms=lambda: 0)
+    try:
+        restored = reopened.get_tuple({"configurable": {"thread_id": "thread"}}).checkpoint
+        assert restored == {
+            **native,
+            "channel_values": {
+                "retry_budget": {**budget, "llm_calls_used": 0 if blocking else 2},
+                "evidence": ["keep"],
+            },
+        }
+        envelope = reopened.load_same_run_checkpoint("run", "thread")
+        assert envelope.checkpoint_generation == 1
+        assert envelope.checkpoint_id == "checkpoint"
+    finally:
+        reopened.close()

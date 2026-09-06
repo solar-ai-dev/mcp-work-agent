@@ -321,8 +321,7 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
             latest = self.load_same_run_checkpoint(*key)
             if latest is not None and (
                 pending_update is not None
-                or latest.retrieval_cache_requirements
-                != final_context.retrieval_requirements
+                or latest.retrieval_cache_requirements != final_context.retrieval_requirements
             ):
                 self.store_same_run_checkpoint(
                     replace(
@@ -353,6 +352,53 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
 
     def get_tuple(self, config: Any) -> Any:
         return self._delegate.get_tuple(config)
+
+    def update_paused_run_budget(
+        self, run_id: str, update: Callable[[Mapping[str, object]], Mapping[str, object]]
+    ) -> None:
+        """Commit only paused root budget usage before interactive provider I/O."""
+        with self._delegate.lock:
+            if self._connection.in_transaction:
+                raise ValueError("interactive budget update requires its own transaction")
+            try:
+                self._connection.execute("BEGIN IMMEDIATE;")
+                run = self._connection.execute(
+                    "SELECT status FROM runs WHERE id=?;", (run_id,)
+                ).fetchone()
+                active = self._connection.execute(
+                    """SELECT 1 FROM workflow_handoffs WHERE run_id=? AND
+                    (execution_admission_json IS NOT NULL OR status IN
+                        ('PENDING', 'MATERIALIZED')) LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                if run is None or run["status"] != "WAITING_APPROVAL" or active is not None:
+                    raise ValueError("interactive inference requires a settled approval wait")
+                row = self._connection.execute(
+                    """SELECT c.thread_id, c.checkpoint_id, c.type, c.checkpoint
+                    FROM checkpoints c JOIN workflow_checkpoint_envelopes e
+                      ON c.thread_id=e.langgraph_thread_id
+                     AND c.checkpoint_ns=e.checkpoint_ns AND c.checkpoint_id=e.checkpoint_id
+                    WHERE e.run_id=? AND e.checkpoint_ns=''
+                    ORDER BY e.checkpoint_generation DESC LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("interactive inference requires a root checkpoint")
+                checkpoint = self.serde.loads_typed((row["type"], bytes(row["checkpoint"])))
+                budget = checkpoint["channel_values"].get("retry_budget")
+                if not isinstance(budget, dict):
+                    raise ValueError("interactive inference requires a persisted RunBudget")
+                checkpoint["channel_values"]["retry_budget"] = dict(update(budget))
+                kind, blob = self.serde.dumps_typed(checkpoint)
+                self._connection.execute(
+                    """UPDATE checkpoints SET type=?, checkpoint=?
+                    WHERE thread_id=? AND checkpoint_ns='' AND checkpoint_id=?;""",
+                    (kind, blob, row["thread_id"], row["checkpoint_id"]),
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def list(
         self,

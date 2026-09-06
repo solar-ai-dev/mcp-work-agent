@@ -26,7 +26,7 @@ export type ConversationViewModel = {
     busyCommand: string | null;
     handleStartRun: (quickPrompt?: string) => Promise<void>;
     handleApprove: (action: RunAction, acknowledgements?: ReadonlySet<string>) => Promise<void>;
-    handleSimpleAction: (kind: "modify" | "reject" | "retry", action: RunAction, argumentsPatch?: Record<string, unknown>) => Promise<void>;
+    handleSimpleAction: (kind: "modify" | "reject" | "retry", action: RunAction, argumentsPatch?: Record<string, unknown> | string) => Promise<void>;
     handleAttachDescriptors: (action: RunAction, descriptors: StagedAttachmentDescriptor[]) => Promise<void>;
     handleCancelRun: () => Promise<void>;
     handleResumeRun: (resumeKind: "SAFE_CHECKPOINT_RESUME") => Promise<void>;
@@ -76,7 +76,7 @@ export function ConversationView({ children, viewModel }: ConversationViewProps)
               {showTransientRequest ? <UserMessageBubble content={runContext!.request_text} /> : null}
               {runSnapshot && !isTerminal ? <RunProgress snapshot={runSnapshot} latestEvent={latestRunEvent} busy={busyCommand} onResume={(kind) => void handleResumeRun(kind)} /> : null}
               {!isTerminal && runSnapshot?.pending_interrupt ? <ConfirmationCard interrupt={runSnapshot.pending_interrupt} text={confirmationText} busy={busyCommand === "confirm-run"} onTextChange={setConfirmationText} onSubmit={(option) => void handleConfirmation(option)} /> : null}
-              {runSnapshot && !isTerminal ? <div className="action-execution-flow"><ActionPlanCard snapshot={runSnapshot} busy={busyCommand} retryActionIds={retryActionIds} formatTime={formatTime} onApprove={(action, acknowledgements) => void handleApprove(action, acknowledgements)} onModify={(action, patch) => void handleSimpleAction("modify", action, patch)} onReject={(action) => void handleSimpleAction("reject", action)} onRetry={(action) => void handleSimpleAction("retry", action)} onAttachDescriptors={(action, descriptors) => handleAttachDescriptors(action, descriptors)} /><ExecutionStatusCard snapshot={runSnapshot} /></div> : null}
+              {runSnapshot && !isTerminal ? <div className="action-execution-flow"><ActionPlanCard snapshot={runSnapshot} busy={busyCommand} retryActionIds={retryActionIds} formatTime={formatTime} onApprove={(action, acknowledgements) => void handleApprove(action, acknowledgements)} onModify={(action, patch) => handleSimpleAction("modify", action, patch)} onReject={(action) => void handleSimpleAction("reject", action)} onRetry={(action) => void handleSimpleAction("retry", action)} onAttachDescriptors={(action, descriptors) => handleAttachDescriptors(action, descriptors)} /><ExecutionStatusCard snapshot={runSnapshot} /></div> : null}
               {runSnapshot && !isTerminal ? <RecoveryCard snapshot={runSnapshot} busy={busyCommand} onResolve={(kind) => void handleResolveRecovery(kind)} onErrorAction={(kind) => kind === "OPEN_DIAGNOSTICS" ? onOpenDiagnostics() : onOpenSettings()} /> : null}
             </section>
           </section>

@@ -8,6 +8,7 @@ from google_work_agent.application.prompt_runtime.dispatch_guarded_prompt import
     PromptInputGuardedProvider,
 )
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
+    consume_dispatch_budget,
     current_provider_dispatch_budget,
     current_provider_dispatch_run_id,
     provider_dispatch_budget_scope,
@@ -18,6 +19,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ActualRuntime,
+    LLMInvocationError,
     LLMToolCall,
     OutputSchemaDefinition,
     PromptReference,
@@ -26,6 +28,32 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     ToolCallProviderResponse,
     ToolDefinition,
 )
+
+
+def test_paused_accounting__counts_failure_and_retry__then_blocks_exhausted_dispatch() -> None:
+    budget = build_default_run_budget()
+    budget["llm_calls_used"] = budget["llm_call_limit"] - 2
+    calls = []
+    provider = _FakeProvider(fail_structured=True)
+    guarded = PromptInputGuardedProvider(provider, _RecordingValidator())
+
+    def account() -> None:
+        nonlocal budget
+        budget = consume_dispatch_budget(run_id="run", run_budget=budget, now_ms=0)
+        calls.append(budget["llm_calls_used"])
+
+    with provider_dispatch_execution_scope(run_id="run", paused_dispatch_accountant=account):
+        for _ in range(2):
+            with pytest.raises(TimeoutError):
+                _invoke_structured(guarded)
+        with pytest.raises(LLMInvocationError):
+            _invoke_structured(guarded)
+        assert current_provider_dispatch_run_id() == "run"
+    assert provider.structured_dispatches == 2
+    assert len(calls) == 2
+    with pytest.raises(TimeoutError):
+        _invoke_structured(guarded)
+    assert len(calls) == 2
 
 
 class _RecordingValidator:

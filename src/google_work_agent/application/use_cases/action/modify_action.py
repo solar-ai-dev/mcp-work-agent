@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from json import dumps, loads
-from typing import cast
+from typing import Literal, cast
 
+from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
+    compose_arguments_per_output_route,
+    tool_argument_candidate_output_schema,
+)
+from google_work_agent.application.agents.planning.contracts.planning_semantics import (
+    ActionObjectiveCandidateV1,
+)
+from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
+    planning_tool_argument_schema,
+)
+from google_work_agent.application.agents.planning.resolve_default_container import (
+    BoundSelectedToolSchemaV1,
+)
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.calendar_conflict_policy import (
     CalendarWorkHours,
@@ -49,6 +64,11 @@ from google_work_agent.application.use_cases.plan.persistence_projection import 
     current_plan_tuple,
     load_plan_record,
 )
+from google_work_agent.application.use_cases.run.account_provider_dispatch import (
+    consume_dispatch_budget,
+    provider_dispatch_execution_scope,
+)
+from google_work_agent.application.use_cases.run.guard_run_budget import validate_run_budget_v2
 from google_work_agent.application.use_cases.run.resume_confirmation import ResumeTargetIssuer
 from google_work_agent.application.use_cases.run.schedule_run_execution import (
     ScheduleRunExecutionCommand,
@@ -70,6 +90,11 @@ from google_work_agent.domain.command_receipt.model import CommandReceiptStatus
 from google_work_agent.domain.plan.model import PlanStatusV1
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.trace_event.model import TraceEvent as TraceEventRecord
+from google_work_agent.ports.llm.structured_inference_contracts import (
+    LLMInvocationError,
+    PromptReference,
+)
+from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 from google_work_agent.ports.system.contracts.workflow_handoff import (
@@ -89,6 +114,8 @@ _MODIFIABLE_ACTION_STATUSES = frozenset(
     }
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class ModifyActionCommand:
@@ -98,6 +125,7 @@ class ModifyActionCommand:
     action_id: str
     expected_version: int
     arguments_patch: dict[str, object]
+    modification_request: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +155,8 @@ class ModifyActionHandler:
         schedule_run_execution: Callable[[ScheduleRunExecutionCommand], RunExecutionAcceptedV1],
         work_hours_provider: Callable[[], CalendarWorkHours] | None = None,
         tool_registry: SignedToolRegistry,
+        modification_runtime: StructuredInferencePort | None = None,
+        modification_prompt: PromptReference | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._checkpoint_port = checkpoint_port
@@ -135,6 +165,11 @@ class ModifyActionHandler:
         self._resume_target_registry = resume_target_registry
         self._schedule_run_execution = schedule_run_execution
         self._registry = tool_registry
+        self._modification_runtime = modification_runtime
+        self._modification_prompt = modification_prompt
+        self._work_hours_provider = work_hours_provider or (
+            lambda: CalendarWorkHours(timezone="Asia/Seoul")
+        )
         self._task_duplicates = TaskDuplicateValidator(
             gateway=cast(TaskListGateway, gateway), now_ms=now_ms
         )
@@ -152,6 +187,11 @@ class ModifyActionHandler:
         )
 
     def __call__(self, command: ModifyActionCommand) -> ModifyActionResult:
+        if command.modification_request is not None:
+            resolved = self._resolve_modification(command)
+            if isinstance(resolved, ModifyActionResult):
+                return resolved
+            command = resolved
         fresh_duplicate_risk: dict[str, object] | None = None
         duplicate_arguments: dict[str, object] | None = None
         fresh_calendar_risk: dict[str, object] | None = None
@@ -590,9 +630,156 @@ class ModifyActionHandler:
         merged = dict(current_arguments)
         payload = current_arguments.get("payload")
         new_payload = dict(payload) if isinstance(payload, dict) else {}
-        new_payload.update(patch)
+        normalized_patch = dict(patch)
+        if "task_list_id" in merged and "due" in normalized_patch:
+            due = normalized_patch.pop("due")
+            new_payload.pop("due", None)
+            if due is None:
+                new_payload.pop("scheduled_date", None)
+            else:
+                new_payload["scheduled_date"] = due
+        new_payload.update(normalized_patch)
         merged["payload"] = new_payload
         return merged
+
+    def _resolve_modification(
+        self, command: ModifyActionCommand
+    ) -> ModifyActionCommand | ModifyActionResult:
+        # Interpretation is a non-mutating preparation step. The normal command
+        # still performs the current-version CAS and revokes approval authority.
+        with self._unit_of_work_factory() as unit_of_work:
+            existing = unit_of_work.command_receipts.get_by_command_id(command.command_id)
+            if existing is not None:
+                return self._resolve_existing_receipt(unit_of_work, existing, command)
+            action = self._require_action(unit_of_work, command.action_id)
+            plan = load_plan_record(unit_of_work.plans, action.plan_id)
+            if (
+                plan is None
+                or plan.status is PlanStatusV1.SUPERSEDED
+                or action.version != command.expected_version
+                or action.status not in _MODIFIABLE_ACTION_STATUSES
+            ):
+                return self._result(
+                    action=action,
+                    applied=False,
+                    result_code=ResultCode.STATE_CONFLICT,
+                    conflict_detail="수정할 미리보기가 변경되었습니다. 최신 내용을 확인하세요.",
+                )
+            run = unit_of_work.runs.get(plan.run_id)
+        if (
+            action.tool_name != TASK_CREATE_TOOL
+            or command.arguments_patch
+            or not command.modification_request
+            or not command.modification_request.strip()
+            or len(command.modification_request) > 2000
+        ):
+            return self._result(
+                action=action,
+                applied=False,
+                result_code=ResultCode.SCHEMA_VIOLATION,
+                conflict_detail="태스크 수정 요청을 구체적으로 입력하세요.",
+            )
+        if self._modification_runtime is None or self._modification_prompt is None or run is None:
+            return self._result(
+                action=action,
+                applied=False,
+                result_code=ResultCode.STATE_CONFLICT,
+                conflict_detail="자연어 수정을 준비할 수 없습니다. 직접 편집을 사용하세요.",
+            )
+        route: dict[str, object] = {
+            "route_id": action.id,
+            "connector_id": action.connector_id,
+            "resource_type": "TASK",
+            "effect": "CREATE",
+            "selected_tool_id": action.tool_name,
+        }
+        partial_schema = planning_tool_argument_schema(action.tool_name, modification=True)
+        bound = cast(
+            BoundSelectedToolSchemaV1,
+            {
+                **route,
+                "schema_version": 1,
+                "argument_schema": partial_schema,
+                "immutable_arguments": {},
+            },
+        )
+        objective: ActionObjectiveCandidateV1 = {
+            "schema_version": 1,
+            "route_id": action.id,
+            "objective": "현재 태스크 미리보기에서 사용자가 요청한 필드만 수정",
+            "target_semantics": "기존 Task List 유지",
+            "scope_constraints": [],
+            "evidence_refs": [],
+        }
+
+        def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+            assert self._modification_runtime is not None and self._modification_prompt is not None
+            return self._modification_runtime.infer(
+                cast(Literal["AUTO", "LOCAL_GPU", "API_LLM"], run.requested_mode),
+                self._modification_prompt,
+                prompt_input,
+                tool_argument_candidate_output_schema(prompt_input),
+            ).structured_output
+
+        try:
+
+            def consume_budget(current: Mapping[str, object]) -> Mapping[str, object]:
+                budget = validate_run_budget_v2(dict(current))
+                return dict(
+                    consume_dispatch_budget(run_id=run.id, run_budget=budget, now_ms=self._now_ms())
+                )
+
+            def account_paused_dispatch() -> None:
+                self._checkpoint_port.update_paused_run_budget(run.id, consume_budget)
+
+            with provider_dispatch_execution_scope(
+                run_id=run.id,
+                now_ms=self._now_ms,
+                paused_dispatch_accountant=account_paused_dispatch,
+            ):
+                candidates = compose_arguments_per_output_route(
+                    [route],
+                    objectives=[objective],
+                    bound_tool_schemas=[bound],
+                    invoke=invoke,
+                    modification={
+                        "request": command.modification_request,
+                        "current_arguments": loads(action.arguments_json),
+                        "reference_time": datetime.fromtimestamp(
+                            self._now_ms() / 1000, UTC
+                        ).isoformat(),
+                        "timezone": self._work_hours_provider().timezone,
+                    },
+                )
+            patch = cast(dict[str, object], candidates[0]["arguments"]["payload"])
+        except (ValueError, LLMInvocationError) as error:
+            _LOGGER.warning(
+                "Task modification interpretation failed",
+                extra={
+                    "run_id": run.id,
+                    "action_id": action.id,
+                    "failure_type": type(error).__name__,
+                },
+            )
+            return self._result(
+                action=action,
+                applied=False,
+                result_code=ResultCode.SCHEMA_VIOLATION,
+                conflict_detail=(
+                    "수정 내용을 확정하지 못했습니다. "
+                    "날짜와 바꿀 항목을 구체적으로 입력하거나 직접 편집하세요."
+                ),
+            )
+        if not patch:
+            return self._result(
+                action=action,
+                applied=False,
+                result_code=ResultCode.SCHEMA_VIOLATION,
+                conflict_detail=(
+                    "수정 내용을 확정하지 못했습니다. 날짜와 바꿀 항목을 구체적으로 입력하세요."
+                ),
+            )
+        return replace(command, arguments_patch=patch, modification_request=None)
 
     @staticmethod
     def _require_action(unit_of_work: UnitOfWork, action_id: str) -> ActionRecord:

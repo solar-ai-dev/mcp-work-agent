@@ -14,6 +14,7 @@ from google_work_agent.application.agents.planning.contracts.planning_tool_schem
     planning_tool_argument_schema,
 )
 from google_work_agent.application.agents.planning.resolve_default_container import (
+    BoundSelectedToolSchemaV1,
     PlanningArgumentBindingError,
     resolve_default_container,
 )
@@ -40,6 +41,83 @@ OBJECTIVE = {
 }
 
 
+@pytest.mark.parametrize("patch", [{"notes": ""}, {"due": None}, {"due": "2026-09-08"}])
+def test_compose_modification__explicit_changes__preserve_partial_shape(
+    patch: dict[str, object],
+) -> None:
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {
+            **ROUTE,
+            "schema_version": 1,
+            "immutable_arguments": {},
+            "argument_schema": planning_tool_argument_schema(
+                "tasks_create_task", modification=True
+            ),
+        },
+    )
+    modification = {
+        "request": "명시한 필드만 수정",
+        "current_arguments": {
+            "task_list_id": "list-1",
+            "payload": {"title": "그대로 유지", "notes": "기존 메모"},
+        },
+        "reference_time": "2026-09-06T00:00:00Z",
+        "timezone": "Asia/Seoul",
+    }
+
+    def invoke(_prompt_id: str, value: Mapping[str, object]) -> Mapping[str, object]:
+        assert value["modification"] == modification
+        result = {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": {"payload": patch},
+            "evidence_refs": [],
+        }
+        assert (
+            validate_output_schema(result, tool_argument_candidate_output_schema(value).json_schema)
+            == []
+        )
+        return result
+
+    result = compose_arguments_per_output_route(
+        [ROUTE],
+        objectives=[OBJECTIVE],  # type: ignore[list-item]
+        bound_tool_schemas=[bound],
+        modification=modification,
+        invoke=invoke,
+    )
+    assert result[0]["arguments"] == {"payload": patch}
+    assert "title" not in result[0]["arguments"]["payload"]  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [{"task_list_id": "other"}, {"status": "completed"}, {"due": "2026-02-30"}, {"notes": None}],
+)
+def test_compose_modification__unsupported_or_invalid_fields__rejects(
+    patch: dict[str, object],
+) -> None:
+    schema = planning_tool_argument_schema("tasks_create_task", modification=True)
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {**ROUTE, "schema_version": 1, "argument_schema": schema, "immutable_arguments": {}},
+    )
+    with pytest.raises(PlanningArgumentBindingError):
+        compose_arguments_per_output_route(
+            [ROUTE],
+            objectives=[OBJECTIVE],  # type: ignore[list-item]
+            bound_tool_schemas=[bound],
+            modification={"request": "수정"},
+            invoke=lambda *_: {
+                "schema_version": 1,
+                "route_id": "r1",
+                "arguments": {"payload": patch},
+                "evidence_refs": [],
+            },
+        )
+
+
 @pytest.mark.parametrize("invalid_field", ["description", "route", "container", "evidence"])
 def test_inference_schema__rejects_invalid_arguments__inside_repair_boundary(
     invalid_field: str,
@@ -49,14 +127,19 @@ def test_inference_schema__rejects_invalid_arguments__inside_repair_boundary(
         selected_tool_schema=planning_tool_argument_schema("tasks_create_task"),
         explicit_container_id="list-1",
     )
-    schema = tool_argument_candidate_output_schema({
-        "output_route": ROUTE, "tool_schema": bound["argument_schema"],
-        "evidence": [{"evidence_ref": "e1"}],
-    })
+    schema = tool_argument_candidate_output_schema(
+        {
+            "output_route": ROUTE,
+            "tool_schema": bound["argument_schema"],
+            "evidence": [{"evidence_ref": "e1"}],
+        }
+    )
     payload = {"title": "Report", "notes": "Review", "scheduled_date": "2026-09-07"}
     arguments: dict[str, object] = {"task_list_id": "list-1", "payload": payload}
     candidate: dict[str, object] = {
-        "schema_version": 1, "route_id": "r1", "arguments": arguments,
+        "schema_version": 1,
+        "route_id": "r1",
+        "arguments": arguments,
         "evidence_refs": ["e1"],
     }
     assert validate_output_schema(candidate, schema.json_schema) == []
@@ -175,7 +258,8 @@ def test_exact_calendar_create__preserves_all_constraints__in_arguments(
         assert prompt_input["request_intent"] == request_intent
         calls.append(prompt_id)
         return {
-            "schema_version": 1, "route_id": "calendar-route",
+            "schema_version": 1,
+            "route_id": "calendar-route",
             "arguments": {"payload": expected_payload},
             "evidence_refs": ["user-message-1"],
         }
@@ -216,9 +300,7 @@ def test_exact_task_create__materializes_arguments__without_llm() -> None:
     )
     request_intent = {
         "ambiguity": {"requires_confirmation": False},
-        "constraints": [
-            {"kind": "RESOURCE", "field": "title", "value": "Submit report"}
-        ],
+        "constraints": [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
     }
 
     result = compose_arguments_per_output_route(
@@ -287,16 +369,21 @@ def test_github_update_schema__missing_change__is_rejected(include_repository: b
         selected_tool_schema=planning_tool_argument_schema("github_update_issue"),
         request_intent=_github_intent("acme/repo"),
     )
-    schema = tool_argument_candidate_output_schema({
-        "output_route": route,
-        "tool_schema": bound["argument_schema"],
-        "evidence": [],
-    })
+    schema = tool_argument_candidate_output_schema(
+        {
+            "output_route": route,
+            "tool_schema": bound["argument_schema"],
+            "evidence": [],
+        }
+    )
     arguments: dict[str, object] = {"issue_number": 7}
     if include_repository:
         arguments["repository"] = "acme/repo"
     candidate = {
-        "schema_version": 1, "route_id": "r1", "arguments": arguments, "evidence_refs": [],
+        "schema_version": 1,
+        "route_id": "r1",
+        "arguments": arguments,
+        "evidence_refs": [],
     }
     assert validate_output_schema(candidate, schema.json_schema)
 

@@ -13,6 +13,7 @@ used by the per-route Planning argument writer.
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import cast
 
 from google_work_agent.application.agents.planning.resolve_default_container import (
     PlanningArgumentBindingError,
@@ -214,13 +215,33 @@ _PLANNING_TOOL_SCHEMAS: dict[str, JsonObject] = {
 }
 
 
-def planning_tool_argument_schema(tool_id: str) -> JsonObject:
+def planning_tool_argument_schema(tool_id: str, *, modification: bool = False) -> JsonObject:
     """Return a defensive copy of one registered Planning write schema."""
 
     schema = _PLANNING_TOOL_SCHEMAS.get(tool_id)
     if schema is None:
         raise PlanningArgumentBindingError(
             f"no Planning business argument schema registered for selected tool: {tool_id}"
+        )
+    if modification:
+        if tool_id != "tasks_create_task":
+            raise PlanningArgumentBindingError("Natural-language modification requires Task CREATE")
+        fields = cast(JsonObject, _TASK_CREATE_PAYLOAD["properties"])
+        return deepcopy(
+            _object_schema(
+                required=["payload"],
+                properties={
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": fields["title"],
+                            "notes": fields["notes"],
+                            "due": {"anyOf": [fields["scheduled_date"], {"type": "null"}]},
+                        },
+                    }
+                },
+            )
         )
     return deepcopy(schema)
 

@@ -9,8 +9,8 @@ export function rejectAction(payload: { action_id: string; command_id: string; e
   return requestJson(`/api/v1/actions/${encodeURIComponent(payload.action_id)}/reject`, { method: "POST", body: { command_id: payload.command_id, expected_version: payload.expected_version, reason_code: payload.reason_code ?? null, api_contract_version: API_CONTRACT_VERSION } });
 }
 
-export function modifyAction(payload: { action_id: string; command_id: string; expected_version: number; arguments_patch?: Record<string, unknown> }): Promise<ActionCommandResponse> {
-  return requestJson(`/api/v1/actions/${encodeURIComponent(payload.action_id)}/modify`, { method: "POST", body: { command_id: payload.command_id, expected_version: payload.expected_version, arguments_patch: payload.arguments_patch ?? {}, api_contract_version: API_CONTRACT_VERSION } });
+export function modifyAction(payload: { action_id: string; command_id: string; expected_version: number; arguments_patch?: Record<string, unknown>; modification_request?: string }): Promise<ActionCommandResponse> {
+  return requestJson(`/api/v1/actions/${encodeURIComponent(payload.action_id)}/modify`, { method: "POST", body: { command_id: payload.command_id, expected_version: payload.expected_version, arguments_patch: payload.arguments_patch ?? {}, ...(payload.modification_request ? { modification_request: payload.modification_request } : {}), api_contract_version: API_CONTRACT_VERSION } });
 }
 
 export function prepareRetry(payload: { action_id: string; command_id: string; expected_version: number }): Promise<ActionCommandResponse> {

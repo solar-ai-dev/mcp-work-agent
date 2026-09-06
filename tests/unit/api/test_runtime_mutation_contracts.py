@@ -14,6 +14,41 @@ from google_work_agent.api.schemas.runs.resume_run import ResumeRunRequestV2
 VERSION = "1"
 
 
+@pytest.mark.parametrize(
+    "modification,patch",
+    [
+        (" ", {}),
+        ("x" * 2001, {}),
+        ("메모는 빼줘", {"notes": ""}),
+    ],
+)
+def test_modify_input__rejects_ambiguous_transport__before_interpretation(
+    modification, patch
+) -> None:
+    with pytest.raises(ValidationError):
+        ModifyActionRequestV2.model_validate(
+            {
+                "api_contract_version": VERSION,
+                "command_id": "modify",
+                "expected_version": 0,
+                "modification_request": modification,
+                "arguments_patch": patch,
+            }
+        )
+
+
+def test_modify_input__keeps_explicit_removal__and_optional_legacy_contract() -> None:
+    payload = {
+        "api_contract_version": VERSION,
+        "command_id": "modify",
+        "expected_version": 0,
+        "arguments_patch": {"due": None, "notes": ""},
+    }
+    parsed = ModifyActionRequestV2.model_validate(payload)
+    assert parsed.model_dump(exclude={"modification_request"}) == payload
+    assert parsed.modification_request is None
+
+
 def test_server_request__hash_is__canonical_and_semantic() -> None:
     left = calculate_server_request_hash(
         operation="CancelRunRequestV2",

@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from tests.support.fakes.langgraph_e2e import LangGraphE2EGeminiTransport
 from tests.support.graph_path_recorder import GraphPathRecorder
 from tests.support.langgraph_product_driver import (
@@ -50,9 +51,25 @@ SCENARIOS = (
     "wrong_notes",
     "wrong_date",
     "wrong_status",
+    "modify",
+    "modify_clear_date",
+    "modify_ambiguous",
 )
 
 
+def checkpoint_budget(runtime_root: Path, run_id: str) -> dict[str, Any]:
+    with sqlite3.connect(runtime_root / "data/google_work_agent.db") as db:
+        row = db.execute(
+            "SELECT c.type, c.checkpoint FROM checkpoints c "
+            "JOIN workflow_checkpoint_envelopes e ON c.thread_id=e.langgraph_thread_id "
+            "AND c.checkpoint_ns=e.checkpoint_ns AND c.checkpoint_id=e.checkpoint_id "
+            "WHERE e.run_id=? AND e.checkpoint_ns='' "
+            "ORDER BY e.checkpoint_generation DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+    return dict(
+        JsonPlusSerializer().loads_typed((row[0], row[1]))["channel_values"]["retry_budget"]
+    )
 
 
 def load_google_seed() -> dict[str, Any]:
@@ -216,6 +233,15 @@ def measure(
             raise ValueError("Seed replay supports identical/create scenarios only")
         title = str(payload["title"])
     transport = LangGraphE2EGeminiTransport(task_payload=payload)
+    if scenario.startswith("modify"):
+        payload["scheduled_date"] = "2026-09-11"
+        transport.task_modification_patch = (
+            {}
+            if scenario == "modify_ambiguous"
+            else {"due": None}
+            if scenario == "modify_clear_date"
+            else {"due": "2026-09-08", "notes": ""}
+        )
     recorder = GraphPathRecorder()
     build = WorkflowGraphComposition.build
     report: dict[str, Any] = {
@@ -305,7 +331,8 @@ def measure(
                 )
                 assert browse.status_code == 200, browse.text
                 item = next(
-                    item for item in browse.json()["items"]
+                    item
+                    for item in browse.json()["items"]
                     if item["resource_id"] == seed["task"]["resource_id"]
                 )
                 detail = client.get(
@@ -350,6 +377,63 @@ def measure(
             )
             if waiting["run"]["status"] == "WAITING_APPROVAL":
                 action = waiting["actions"][0]
+                if scenario.startswith("modify"):
+                    report["budget_before_modification"] = checkpoint_budget(runtime_root, run_id)
+                    report["original_preview"] = action
+                    modify_command = {
+                        "api_contract_version": "1",
+                        "command_id": "modify-task",
+                        "expected_version": action["version"],
+                        "modification_request": "그 날짜로 바꿔줘"
+                        if scenario == "modify_ambiguous"
+                        else "예정일은 없애줘"
+                        if scenario == "modify_clear_date"
+                        else "예정일을 9월 8일로 바꾸고 메모는 빼줘",
+                    }
+                    modified = client.post(
+                        f"/api/v1/actions/{action['action_id']}/modify", json=modify_command
+                    )
+                    if scenario == "modify_ambiguous":
+                        assert modified.status_code == 422, modified.text
+                    else:
+                        assert modified.status_code == 200, modified.text
+                        stale = client.post(
+                            f"/api/v1/actions/{action['action_id']}/approve",
+                            json={
+                                "api_contract_version": "1",
+                                "command_id": "approve-old-preview",
+                                "expected_version": action["version"],
+                            },
+                        )
+                        assert stale.status_code == 409, stale.text
+                        waiting = cast(
+                            dict[str, Any],
+                            wait_for_action_status(
+                                client, run_id, {"MODIFIED"}, required_command="APPROVE_ACTION"
+                            ),
+                        )
+                        action = waiting["actions"][0]
+                        replay = client.post(
+                            f"/api/v1/actions/{action['action_id']}/modify", json=modify_command
+                        )
+                        assert replay.status_code == 200, replay.text
+                        report["stale_approval_status"] = stale.status_code
+                        expected_payload = dict(payload)
+                        if scenario == "modify_clear_date":
+                            expected_payload.pop("scheduled_date", None)
+                        else:
+                            expected_payload.update(scheduled_date="2026-09-08", notes="")
+                        assert action["arguments"] == {
+                            "task_list_id": task_list_id,
+                            "payload": expected_payload,
+                        }
+                        payload = expected_payload
+                        report["before_approval"] = waiting
+                    assert not any(
+                        event["tool_name"] == "tasks_create_task"
+                        for event in mcp_events(runtime_root)
+                    )
+                    report["modification_result"] = modified.json()
                 if scenario == "identical":
                     denied = client.post(
                         f"/api/v1/actions/{action['action_id']}/approve",
@@ -366,7 +450,7 @@ def measure(
                         for event in mcp_events(runtime_root)
                     )
                     reject_action(client, action, "reject-duplicate")
-                elif scenario == "reject":
+                elif scenario in {"reject", "modify_ambiguous"}:
                     reject_action(client, action, "reject-task")
                 else:
                     if scenario == "similar":
@@ -433,6 +517,7 @@ def measure(
             else:
                 final = waiting
             report["final"] = final
+            report["final_budget"] = checkpoint_budget(runtime_root, run_id)
     report["node_path"] = recorder.path
     report["prompt_path"] = [
         item["prompt_id"] for item in transport.invocations if item["kind"] == "invoke"
@@ -484,7 +569,7 @@ def measure(
     writes = [item for item in events if item["tool_name"] == "tasks_create_task"]
     status = report["final"]["run"]["status"]
     mismatch = scenario.startswith("wrong_")
-    no_write = scenario in {"reject", "identical"}
+    no_write = scenario in {"reject", "identical", "modify_ambiguous"}
     report["checks"] = {
         "no_write_before_approval": report["writes_before_approval"] == 0,
         "expected_write_count": len(writes) == (0 if no_write else 2 if scenario == "retry" else 1),
@@ -587,6 +672,15 @@ def measure(
                 "review.recheck_affected_dimensions" in report["prompt_path"]
                 and nodes.count("review") == 2
             ),
+            "all_actual_dispatches_accounted": report["final_budget"]["llm_calls_used"]
+            == len(report["prompt_path"]),
+            "modify_review_continuation": not scenario.startswith("modify")
+            or nodes.count("review") == (1 if scenario == "modify_ambiguous" else 2),
+            "modify_replay_no_extra_inference": not scenario.startswith("modify")
+            or report["prompt_path"].count("planning.compose_arguments_per_output_route") == 2,
+            "old_revision_cannot_approve": not scenario.startswith("modify")
+            or scenario == "modify_ambiguous"
+            or report["stale_approval_status"] == 409,
         }
     )
     report["measurement_status"] = "PASS" if all(report["checks"].values()) else "FAIL"

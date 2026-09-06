@@ -25,6 +25,7 @@ class LangGraphE2EGeminiTransport:
     crash_scenario: str | None = None
     task_payload: dict[str, object] | None = None
     calendar_payload: dict[str, object] | None = None
+    task_modification_patch: dict[str, object] | None = None
     _scenario_prompt_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def probe(self, *, api_key: str, timeout_seconds: int) -> ProbeResult:
@@ -78,6 +79,11 @@ class LangGraphE2EGeminiTransport:
             scenario=scenario,
             call_no=self._scenario_prompt_counts[key],
         )
+        if (
+            prompt_id == "planning.compose_arguments_per_output_route"
+            and "modification" in _base_projection(prompt_input)
+        ):
+            output["arguments"] = {"payload": dict(self.task_modification_patch or {})}
         if self.task_payload is not None:
             base = _base_projection(prompt_input)
             if (
@@ -91,7 +97,7 @@ class LangGraphE2EGeminiTransport:
                 ]
             if prompt_id == "planning.compose_arguments_per_output_route":
                 route = cast(Mapping[str, object], base["output_route"])
-                if route["resource_type"] == "TASK":
+                if route["resource_type"] == "TASK" and "modification" not in base:
                     output["arguments"] = {"payload": dict(self.task_payload)}
         if self.calendar_payload is not None:
             base = _base_projection(prompt_input)
@@ -101,7 +107,8 @@ class LangGraphE2EGeminiTransport:
             ):
                 output["constraints"] = [
                     {"kind": "RESOURCE", "field": name, "value": value}
-                    for name, value in self.calendar_payload.items() if value != ""
+                    for name, value in self.calendar_payload.items()
+                    if value != ""
                 ]
             if prompt_id == "planning.compose_arguments_per_output_route":
                 output["arguments"] = {"payload": dict(self.calendar_payload)}
@@ -113,16 +120,19 @@ class LangGraphE2EGeminiTransport:
                         query["operation"] = "FREEBUSY"
                     if str(route["resource_type"]).startswith("CALENDAR"):
                         spec = cast(dict[str, object], query["search_spec"])
-                        cast(list[object], spec["constraints"]).append({
-                            "kind": "TEMPORAL_RANGE",
-                            "axis": (
-                                "AVAILABILITY_WINDOW"
-                                if query["operation"] == "FREEBUSY" else "EVENT_TIME"
-                            ),
-                            "start_local": str(self.calendar_payload["start"])[:19],
-                            "end_local": str(self.calendar_payload["end"])[:19],
-                            "timezone": "Asia/Seoul",
-                        })
+                        cast(list[object], spec["constraints"]).append(
+                            {
+                                "kind": "TEMPORAL_RANGE",
+                                "axis": (
+                                    "AVAILABILITY_WINDOW"
+                                    if query["operation"] == "FREEBUSY"
+                                    else "EVENT_TIME"
+                                ),
+                                "start_local": str(self.calendar_payload["start"])[:19],
+                                "end_local": str(self.calendar_payload["end"])[:19],
+                                "timezone": "Asia/Seoul",
+                            }
+                        )
                     queries.append(query)
                 output["route_queries"] = queries
                 output["retrieval_order"] = [q["route_id"] for q in queries]
@@ -155,16 +165,17 @@ def _respond(
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
     if prompt_id == "request_understanding.detect_ambiguity":
-        needs_confirmation = (
-            scenario in {"RESTART_RESUME", "CALENDAR_CONFIRMATION"}
-            and not isinstance(base.get("confirmation_response"), Mapping)
-        )
+        needs_confirmation = scenario in {
+            "RESTART_RESUME",
+            "CALENDAR_CONFIRMATION",
+        } and not isinstance(base.get("confirmation_response"), Mapping)
         return {
             "requires_confirmation": needs_confirmation,
             "missing_information_owner": "USER" if needs_confirmation else "NONE",
             "reason_codes": ["MISSING_USER_CHOICE"] if needs_confirmation else [],
             "missing_fields": ["attendee" if scenario == "CALENDAR_CONFIRMATION" else "target"]
-            if needs_confirmation else [],
+            if needs_confirmation
+            else [],
         }
     if prompt_id == "tool_routing.determine_io_resources":
         inputs, outputs, effects = _route_semantics(scenario)
@@ -191,7 +202,9 @@ def _respond(
     if prompt_id == "retrieval.plan_query":
         routes = cast(list[Mapping[str, object]], base["input_routes"])
         searchable_routes = [
-            route for route in routes if _has_search_tool(route)
+            route
+            for route in routes
+            if _has_search_tool(route)
             or "calendar_query_freebusy" in cast(list[str], route["allowed_read_tool_ids"])
         ]
         is_followup = "current_round_no" in base
@@ -206,11 +219,15 @@ def _respond(
                 if "calendar_query_freebusy" in cast(list[str], route["allowed_read_tool_ids"]):
                     query["operation"] = "FREEBUSY"
                     spec = cast(dict[str, object], query["search_spec"])
-                    cast(list[object], spec["constraints"]).append({
-                        "kind": "TEMPORAL_RANGE", "axis": "AVAILABILITY_WINDOW",
-                        "start_local": "2026-09-03T09:00:00",
-                        "end_local": "2026-09-03T10:00:00", "timezone": "Asia/Seoul",
-                    })
+                    cast(list[object], spec["constraints"]).append(
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "AVAILABILITY_WINDOW",
+                            "start_local": "2026-09-03T09:00:00",
+                            "end_local": "2026-09-03T10:00:00",
+                            "timezone": "Asia/Seoul",
+                        }
+                    )
         route_ids = [str(route["route_id"]) for route in planned_routes]
         return {
             "schema_version": 2,

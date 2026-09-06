@@ -5,6 +5,7 @@
 
 ## 0. 문서 목적
 
+Task Preview의 자연어 수정 준비는 기존 `planning.compose_arguments_per_output_route`의 optional `modification` projection을 사용한다. `request`, persisted `current_arguments`, `reference_time`, `timezone`만 전달하며 supplied Tool schema는 허용된 부분 payload로 좁힌다. 응답에서 누락된 필드는 보존하고 notes 빈 문자열·due null만 명시적 제거로 해석한다. 모호하거나 허용 범위를 벗어난 요청은 빈 patch/검증 실패로 기존 Preview를 유지한다. 이 준비 단계는 Domain 사실을 변경하지 않으며, 이후 기존 ModifyAction CAS·Approval revoke·REVIEW_ENTRY handoff가 변경을 확정한다. Frontend parsing 또는 새 Prompt/Agent authority를 만들지 않는다.
 이 계약은 다음 항목을 하나의 기준으로 고정한다.
 
 1. 각 Agent/Node의 capability와 Typed Result 범위

@@ -48,6 +48,9 @@ _CURRENT_RUN_ID: ContextVar[str | None] = ContextVar(
 _CURRENT_NOW_MS: ContextVar[Callable[[], int] | None] = ContextVar(
     "google_work_agent_current_provider_dispatch_clock", default=None
 )
+_PAUSED_DISPATCH_ACCOUNTANT: ContextVar[Callable[[], None] | None] = ContextVar(
+    "google_work_agent_paused_dispatch_accountant", default=None
+)
 
 
 def bind_provider_dispatch_budget(run_budget: RunBudgetV2) -> RunBudgetV2:
@@ -88,7 +91,10 @@ def provider_dispatch_budget_scope(run_budget: RunBudgetV2) -> Iterator[RunBudge
 
 @contextmanager
 def provider_dispatch_execution_scope(
-    *, run_id: str = "direct-provider-dispatch", now_ms: Callable[[], int] = lambda: 0
+    *,
+    run_id: str = "direct-provider-dispatch",
+    now_ms: Callable[[], int] = lambda: 0,
+    paused_dispatch_accountant: Callable[[], None] | None = None,
 ) -> Iterator[None]:
     """Bound the provider-budget ContextVar to one graph invocation.
 
@@ -102,17 +108,23 @@ def provider_dispatch_execution_scope(
     _CURRENT_RUN_BUDGET.set(None)
     _CURRENT_RUN_ID.set(run_id)
     _CURRENT_NOW_MS.set(now_ms)
+    _PAUSED_DISPATCH_ACCOUNTANT.set(paused_dispatch_accountant)
     try:
         yield
     finally:
         _CURRENT_NOW_MS.set(None)
         _CURRENT_RUN_ID.set(None)
         _CURRENT_RUN_BUDGET.set(None)
+        _PAUSED_DISPATCH_ACCOUNTANT.set(None)
 
 
 def account_provider_dispatch() -> None:
     """Consume exactly one provider call immediately before external dispatch."""
 
+    paused_accountant = _PAUSED_DISPATCH_ACCOUNTANT.get()
+    if paused_accountant is not None:
+        paused_accountant()
+        return
     run_budget = _CURRENT_RUN_BUDGET.get()
     if run_budget is None:
         # Non-Run diagnostic/connection probes intentionally have no RunBudget.
@@ -121,13 +133,21 @@ def account_provider_dispatch() -> None:
     now_ms = _CURRENT_NOW_MS.get()
     if run_id is None or now_ms is None:
         raise RuntimeError("provider dispatch budget is missing execution context")
+    updated = consume_dispatch_budget(run_id=run_id, run_budget=run_budget, now_ms=now_ms())
+    mutable = cast(dict[str, object], run_budget)
+    mutable.clear()
+    mutable.update(updated)
+
+
+def consume_dispatch_budget(*, run_id: str, run_budget: RunBudgetV2, now_ms: int) -> RunBudgetV2:
+    """Pure dispatch accounting shared by live nodes and paused checkpoint CAS."""
     decision = GuardRunBudgetHandler()(
         GuardRunBudgetQueryV1(
             schema_version=1,
             run_id=run_id,
             current_budget=run_budget,
             requested_delta=RunBudgetDeltaV1(1, "LLM_CALL", 1),
-            now_ms=now_ms(),
+            now_ms=now_ms,
         )
     )
     if not decision.allowed:
@@ -138,10 +158,7 @@ def account_provider_dispatch() -> None:
         )
     # This is the sole increment for a real provider dispatch. Do not route it
     # through the historical post-result consumer: calls that raise must count.
-    validated = consume_llm_provider_calls(run_budget)
-    mutable = cast(dict[str, object], run_budget)
-    mutable.clear()
-    mutable.update(validated)
+    return consume_llm_provider_calls(run_budget)
 
 
 def merge_provider_dispatch_usage(run_budget: RunBudgetV2) -> RunBudgetV2:

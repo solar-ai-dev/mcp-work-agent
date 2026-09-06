@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime
+from datetime import date, datetime
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -57,12 +57,15 @@ def tool_argument_candidate_output_schema(
         raise ValueError("argument composition requires a bound Tool schema")
     if not isinstance(evidence, list):
         raise ValueError("argument composition requires current evidence")
-    refs = sorted({
-        ref
-        for item in evidence if isinstance(item, Mapping)
-        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
-        if isinstance(ref, str) and ref
-    })
+    refs = sorted(
+        {
+            ref
+            for item in evidence
+            if isinstance(item, Mapping)
+            for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+            if isinstance(ref, str) and ref
+        }
+    )
     output = deepcopy(TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA.json_schema)
     properties = cast(dict[str, object], output["properties"])
     properties["route_id"] = {"const": route["route_id"]}
@@ -85,7 +88,8 @@ def tool_argument_candidate_output_schema(
         argument_variants[0] if len(argument_variants) == 1 else {"oneOf": argument_variants}
     )
     properties["evidence_refs"] = {
-        "type": "array", "uniqueItems": True,
+        "type": "array",
+        "uniqueItems": True,
         "items": {"type": "string", "enum": refs} if refs else {"type": "string"},
         **({} if refs else {"maxItems": 0}),
     }
@@ -105,6 +109,7 @@ def compose_arguments_per_output_route(
     evidence: Sequence[Mapping[str, object]] = (),
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
+    modification: Mapping[str, object] | None = None,
 ) -> tuple[ToolArgumentCandidateV1, ...]:
     """Execute exactly one canonical semantic path for every frozen output route."""
     if not output_routes:
@@ -139,11 +144,15 @@ def compose_arguments_per_output_route(
             or bound_schema["effect"] != route.get("effect")
         ):
             raise ValueError("bound Tool schema escaped frozen route identity")
-        candidate: Mapping[str, object] | None = _deterministic_argument_candidate(
-            route=route,
-            request_intent=request_intent,
-            allowed_refs=allowed_refs,
-            objective=objective,
+        candidate: Mapping[str, object] | None = (
+            None
+            if modification is not None
+            else _deterministic_argument_candidate(
+                route=route,
+                request_intent=request_intent,
+                allowed_refs=allowed_refs,
+                objective=objective,
+            )
         )
         if candidate is None:
             prompt_input: dict[str, object] = {
@@ -158,6 +167,8 @@ def compose_arguments_per_output_route(
                 prompt_input["work_analysis"] = dict(work_analysis)
             if confirmation_response is not None:
                 prompt_input["confirmation_response"] = dict(confirmation_response)
+            if modification is not None:
+                prompt_input["modification"] = dict(modification)
             candidate = invoke(PROMPT_ID, prompt_input)
         if candidate.get("schema_version") != 1 or candidate.get("route_id") != route_id:
             raise ValueError("argument candidate escaped its frozen output route")
@@ -181,6 +192,17 @@ def compose_arguments_per_output_route(
                 "argument candidate does not satisfy selected Tool schema: "
                 + "; ".join(validation.error_paths[:8])
             )
+        if modification is not None:
+            patch_payload = arguments.get("payload")
+            due = patch_payload.get("due") if isinstance(patch_payload, dict) else None
+            if due is not None:
+                try:
+                    if not isinstance(due, str) or date.fromisoformat(due).isoformat() != due:
+                        raise ValueError("non-canonical date")
+                except ValueError as error:
+                    raise PlanningArgumentBindingError(
+                        "modification requires a valid planned date"
+                    ) from error
         if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
             raise ValueError("argument candidate evidence_refs must be strings")
         if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
@@ -217,9 +239,7 @@ def _deterministic_argument_candidate(
         "schema_version": 1,
         "route_id": route_id,
         "arguments": {"payload": payload},
-        "evidence_refs": [
-            ref for ref in objective.get("evidence_refs", []) if ref in allowed_refs
-        ],
+        "evidence_refs": [ref for ref in objective.get("evidence_refs", []) if ref in allowed_refs],
     }
 
 

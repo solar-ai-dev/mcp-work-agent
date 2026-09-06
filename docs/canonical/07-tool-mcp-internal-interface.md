@@ -1211,6 +1211,8 @@ Port 이름만 선언하고 callable shape를 Adapter 구현에 맡기지 않는
 
 For `StartRun`, `CheckpointPort.create_workflow_binding(...)` is used through the SQLite transaction-scoped adapter bound to the **same `SqliteUnitOfWork` connection** as Run/Message persistence and `WorkflowHandoffRepository.stage_pending(...)`; it MUST NOT perform an independent commit. This is the only place where initial WorkflowBinding creation is coupled to Domain-row creation. Later LangGraph checkpoint writes remain checkpointer-owned transactions.
 
+승인 대기 중 Task 자연어 수정의 실제 Provider dispatch는 `CheckpointPort.update_paused_run_budget(run_id, update)`로 기존 root checkpoint의 `RunBudgetV2`만 원자적으로 갱신한다. `update`는 Application의 순수 budget 검증/소비 callback이며 I/O를 수행하지 않는다. Adapter는 현재 Run이 `WAITING_APPROVAL`이고 실행 admission이 없음을 확인한 뒤 callback에 budget JSON projection만 전달한다. checkpoint 위치·generation·pending interrupt·다른 State는 유지하고, 소비 commit 후 Provider를 호출한다. 실패/repair 호출도 각각 소비하며 별도 카운터나 상한을 만들지 않는다. Application은 checkpoint blob을 열지 않는다. 이후 기존 ModifyAction CAS와 REVIEW_ENTRY handoff가 같은 budget에서 계속한다.
+
 Port method는 concrete Adapter class/path를 소유하지 않는다. 입력 size/range, secret redaction, timeout/retry/idempotency는 각 07/09/10 owner contract와 16 Adapter mapping을 함께 따른다.
 
 ## 5. Agent 내부 인터페이스
@@ -2003,6 +2005,7 @@ ModifyActionRequestV2
 - command_id
 - expected_version
 - arguments_patch: Tool별 허용 Patch Schema
+- modification_request?: bounded 자연어 수정 문자열. Task CREATE에서만 허용하며 non-empty arguments_patch와 함께 보내지 않는다. 기존 Planning argument-composition으로 부분 patch를 준비한 뒤 동일 ModifyAction CAS·Review handoff를 사용한다. 해석 실패는 기존 Preview를 보존한다. 누락 키는 유지, notes의 빈 문자열은 명시적 제거, due의 null은 예정일 제거다. due는 기존 scheduled_date와 함께 남기지 않고 canonical scheduled_date로 치환한다.
 
 RejectActionRequestV2
 - command_id

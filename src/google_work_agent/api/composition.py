@@ -164,6 +164,7 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     PromptRegistry,
     PromptRegistryError,
     default_prompt_manifest_path,
+    load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
@@ -3271,6 +3272,16 @@ def build_production_runtime(
             tool_registry=connector_bundle.tool_registry,
         ),
         modify_action_handler=ModifyActionHandler(
+            modification_runtime=llm_runtime,
+            modification_prompt=(
+                None
+                if isinstance(workflow_runtime, _PromptInactiveWorkflowRuntime)
+                else load_prompt_reference(
+                    "planning.compose_arguments_per_output_route",
+                    prompt_manifest_path,
+                    execution_scope=prompt_execution_scope,
+                )
+            ),
             unit_of_work_factory=unit_of_work_factory,
             checkpoint_port=checkpoint,
             now_ms=clock.now_ms,

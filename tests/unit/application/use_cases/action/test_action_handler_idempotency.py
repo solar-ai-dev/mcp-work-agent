@@ -4,6 +4,8 @@ from json import dumps
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
@@ -45,7 +47,8 @@ def _uow_with_receipt(response_json: str) -> MagicMock:
     return unit_of_work
 
 
-def test_modify_same__hash_receipt_replays__without_second_mutation() -> None:
+@pytest.mark.parametrize("natural_language", [False, True])
+def test_modify_same__hash_receipt_replays__without_second_mutation(natural_language: bool) -> None:
     unit_of_work = _uow_with_receipt(
         dumps(
             {
@@ -77,6 +80,7 @@ def test_modify_same__hash_receipt_replays__without_second_mutation() -> None:
             action_id="action-1",
             expected_version=1,
             arguments_patch={"subject": "new"},
+            modification_request="메모를 지워줘" if natural_language else None,
         )
     )
     assert result.request_replayed is True

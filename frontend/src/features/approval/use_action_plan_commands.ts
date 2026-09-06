@@ -18,13 +18,13 @@ export function useActionPlanCommands({ runSnapshot, busyCommand, setBusyCommand
     finally { setBusyCommand(null); }
   }, [busyCommand, commandIdFor, completeCommand, refreshRun, runSnapshot, selectRun, setBusyCommand]);
 
-  const handleSimpleAction = useCallback(async (kind: "modify" | "reject" | "retry", action: RunAction, argumentsPatch: Record<string, unknown> = {}): Promise<void> => {
+  const handleSimpleAction = useCallback(async (kind: "modify" | "reject" | "retry", action: RunAction, argumentsPatch: Record<string, unknown> | string = {}): Promise<void> => {
     if (!runSnapshot || busyCommand) return;
     const operation = `${kind}-${action.action_id}`;
     setBusyCommand(operation);
     try {
       const commandId = commandIdFor(operation);
-      if (kind === "modify") await modifyAction({ action_id: action.action_id, command_id: commandId, expected_version: action.version, arguments_patch: argumentsPatch });
+      if (kind === "modify") await modifyAction({ action_id: action.action_id, command_id: commandId, expected_version: action.version, ...(typeof argumentsPatch === "string" ? { modification_request: argumentsPatch } : { arguments_patch: argumentsPatch }) });
       else if (kind === "reject") await rejectAction({ action_id: action.action_id, command_id: commandId, expected_version: action.version });
       else await prepareRetry({ action_id: action.action_id, command_id: commandId, expected_version: action.version });
       completeCommand(operation);
