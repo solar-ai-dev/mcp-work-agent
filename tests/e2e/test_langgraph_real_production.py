@@ -2,33 +2,46 @@
 
 from __future__ import annotations
 
-import json
 import time
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.fakes.langgraph_e2e import LangGraphE2EGeminiTransport
-from tests.support.production_runtime import build_test_production_container
+from tests.support.langgraph_product_driver import (
+    API_HEADERS as _API_HEADERS,
+)
+from tests.support.langgraph_product_driver import (
+    approve_action as _approve_action,
+)
+from tests.support.langgraph_product_driver import (
+    bootstrap as _bootstrap,
+)
+from tests.support.langgraph_product_driver import (
+    build_container as _build_container,
+)
+from tests.support.langgraph_product_driver import (
+    create_conversation as _create_conversation,
+)
+from tests.support.langgraph_product_driver import (
+    mcp_events as _mcp_events,
+)
+from tests.support.langgraph_product_driver import (
+    reject_action as _reject_action,
+)
+from tests.support.langgraph_product_driver import (
+    start_run as _start_run,
+)
+from tests.support.langgraph_product_driver import (
+    wait_for_action_status as _wait_for_action_status,
+)
+from tests.support.langgraph_product_driver import (
+    wait_for_status as _wait_for_status,
+)
 
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
-from google_work_agent.adapters.llm.runtime.llm_credential_router import (
-    SessionMemorySecretStore,
-)
-from google_work_agent.api import composition
 from google_work_agent.api.app import create_app
-from google_work_agent.api.container import ApiContainer
-
-_BOOTSTRAP_SECRET = "langgraph-real-production-e2e-bootstrap"
-_SERVICE_INSTANCE_ID = "langgraph-real-production-e2e-service"
-_API_HEADERS = {
-    "Origin": "http://127.0.0.1:8000",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Dest": "empty",
-}
 
 
 @pytest.mark.parametrize("profile", tuple(GraphProfile))
@@ -140,9 +153,7 @@ def test_google_reads_reach__terminal_through_actual__retrieval_and_mcp(
     ]
     assert len(read_events) == 1
     invoked = {
-        str(item["prompt_id"])
-        for item in transport.invocations
-        if item.get("kind") == "invoke"
+        str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     }
     assert "tool_routing.select_tool_if_needed" not in invoked
     assert "retrieval.plan_query" in invoked
@@ -195,9 +206,7 @@ def test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_ll
     assert names.count("gmail_search_threads") == 1  # Sidebar listing only.
     assert names.count("gmail_get_thread") == 1
     invoked = [
-        str(item["prompt_id"])
-        for item in transport.invocations
-        if item.get("kind") == "invoke"
+        str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     ]
     assert "tool_routing.select_tool_if_needed" not in invoked
     assert not any(prompt_id.startswith("retrieval.") for prompt_id in invoked)
@@ -257,9 +266,7 @@ def test_approved_write_executes__claims_and_verifies__through_real_mcp(
     )
     assert isinstance(write_arguments.get("claim_context"), dict)
     invoked = {
-        str(item["prompt_id"])
-        for item in transport.invocations
-        if item.get("kind") == "invoke"
+        str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     }
     assert "tool_routing.select_tool_if_needed" not in invoked
     assert "retrieval.plan_query" in invoked
@@ -514,9 +521,7 @@ def test_verification_mismatch__requires_explicit__partial_resolution(
     names = [event["tool_name"] for event in _mcp_events(runtime_root)]
     assert names.count("calendar_create_event") == 1
     invoked = {
-        str(item["prompt_id"])
-        for item in transport.invocations
-        if item.get("kind") == "invoke"
+        str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     }
     assert "work_analysis.detect_duplicate_conflict_candidates" not in invoked
 
@@ -613,9 +618,7 @@ def test_recovery_recheck__resumes_verification__without_repeating_write(
         )
         recovery = _wait_for_status(client, run_id, {"RECOVERY_REQUIRED"})
         recovery_projection = cast(dict[str, object], recovery["recovery"])
-        assert "RECHECK" in cast(
-            list[str], recovery_projection["allowed_resolution_kinds"]
-        )
+        assert "RECHECK" in cast(list[str], recovery_projection["allowed_resolution_kinds"])
         response = client.post(
             f"/api/v1/runs/{run_id}/resolve-recovery",
             json={
@@ -714,9 +717,7 @@ def test_retrieval_cache_loss__restarts_from_durable__checkpoint_before_write(
     profile: GraphProfile,
 ) -> None:
     runtime_root = tmp_path / "retrieval-cache-loss" / profile.value
-    first_transport = LangGraphE2EGeminiTransport(
-        crash_prompt_id="retrieval.select_evidence"
-    )
+    first_transport = LangGraphE2EGeminiTransport(crash_prompt_id="retrieval.select_evidence")
     first_container = _build_container(
         runtime_root,
         transport=first_transport,
@@ -798,9 +799,7 @@ def test_review_issue__uses_real_back__edge_before_approval(
         completed = _wait_for_status(client, run_id, {"COMPLETED"})
 
     prompt_ids = [
-        str(item["prompt_id"])
-        for item in transport.invocations
-        if item.get("kind") == "invoke"
+        str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     ]
     assert "review.recheck_affected_dimensions" in prompt_ids
     assert completed["terminal_result_kind"] == "SUCCESS"
@@ -861,189 +860,13 @@ def test_context_adjustment__reenters_retrieval_and__requires_revised_approval(
         completed = _wait_for_status(client, run_id, {"COMPLETED"})
 
     retrieval_prompts = [
-        item
-        for item in transport.invocations
-        if item.get("prompt_id") == "retrieval.plan_query"
+        item for item in transport.invocations if item.get("prompt_id") == "retrieval.plan_query"
     ]
     assert len(retrieval_prompts) >= 2
     assert completed["terminal_result_kind"] == "SUCCESS"
     assert [event["tool_name"] for event in _mcp_events(runtime_root)].count(
         "tasks_create_task"
     ) == 1
-
-
-def _build_container(
-    runtime_root: Path,
-    *,
-    transport: LangGraphE2EGeminiTransport,
-    monkeypatch: pytest.MonkeyPatch,
-    profile: GraphProfile,
-) -> ApiContainer:
-    monkeypatch.setattr(composition, "GeminiHTTPClient", lambda: transport)
-    container = build_test_production_container(
-        runtime_root=runtime_root,
-        bootstrap_secret=_BOOTSTRAP_SECRET,
-        service_instance_id=_SERVICE_INSTANCE_ID,
-        mcp_module_name="tests.fakes.langgraph_e2e_mcp_server",
-        keyring_store=SessionMemorySecretStore(),
-        graph_profile=profile,
-    )
-    return replace(container, client_address_resolver=lambda _request: "127.0.0.1")
-
-
-def _bootstrap(client: TestClient, *, command_suffix: str = "initial") -> None:
-    bootstrap = client.post(
-        "/api/v1/session/bootstrap",
-        json={
-            "schema_version": 1,
-            "bootstrap_secret": _BOOTSTRAP_SECRET,
-            "frontend_api_contract_version": "1",
-        },
-    )
-    assert bootstrap.status_code == 200, bootstrap.text
-    credential = client.put(
-        "/api/v1/credentials/llm/gemini",
-        json={
-            "schema_version": 1,
-            "command_id": f"e2e-store-gemini-{command_suffix}",
-            "api_key": "e2e-gemini-key",
-            "storage_mode": "SESSION_ONLY",
-        },
-    )
-    assert credential.status_code == 200, credential.text
-    settings = client.put(
-        "/api/v1/settings",
-        headers={"X-API-Contract-Version": "1"},
-        json={
-            "schema_version": 1,
-            "command_id": "e2e-settings",
-            "settings_patch": {
-                "schema_version": 1,
-                "preferred_llm_mode": "API_LLM",
-                "external_llm_consent": True,
-                "default_tasklist_id": "task-list-e2e",
-                "default_calendar_id": "calendar-e2e",
-            },
-        },
-    )
-    assert settings.status_code == 200, settings.text
-
-
-def _create_conversation(client: TestClient, suffix: str) -> str:
-    response = client.post(
-        "/api/v1/conversations",
-        json={
-            "schema_version": 1,
-            "command_id": f"create-conversation-{suffix}",
-            "title": f"E2E {suffix}",
-        },
-    )
-    assert response.status_code == 201, response.text
-    return str(response.json()["conversation_id"])
-
-
-def _start_run(
-    client: TestClient,
-    conversation_id: str,
-    request_text: str,
-    *,
-    entry_mode: str = "AGENT_SEARCH",
-    selected_resource_handles: list[str] | None = None,
-) -> str:
-    response = client.post(
-        "/api/v1/runs",
-        json={
-            "api_contract_version": "1",
-            "command_id": f"start-{request_text.split(':', maxsplit=1)[-1].split()[0].lower()}",
-            "conversation_id": conversation_id,
-            "request_text": request_text,
-            "entry_mode": entry_mode,
-            "selected_resource_handles": selected_resource_handles or [],
-            "requested_mode": "API_LLM",
-        },
-    )
-    assert response.status_code == 202, response.text
-    return str(response.json()["run_id"])
-
-
-def _approve_action(
-    client: TestClient,
-    action: dict[str, object],
-    command_id: str,
-    *,
-    calendar_conflict_acknowledged: bool = False,
-) -> None:
-    response = client.post(
-        f"/api/v1/actions/{action['action_id']}/approve",
-        json={
-            "api_contract_version": "1",
-            "command_id": command_id,
-            "expected_version": action["version"],
-            "calendar_conflict_acknowledged": calendar_conflict_acknowledged,
-        },
-    )
-    assert response.status_code == 200, response.text
-
-
-def _reject_action(client: TestClient, action: dict[str, object], command_id: str) -> None:
-    response = client.post(
-        f"/api/v1/actions/{action['action_id']}/reject",
-        json={
-            "api_contract_version": "1",
-            "command_id": command_id,
-            "expected_version": action["version"],
-            "reason_code": "USER_REJECTED",
-        },
-    )
-    assert response.status_code == 200, response.text
-
-
-def _wait_for_status(
-    client: TestClient,
-    run_id: str,
-    expected: set[str],
-    *,
-    timeout_seconds: float = 20,
-) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_seconds
-    last: dict[str, object] = {}
-    while time.monotonic() < deadline:
-        response = client.get(
-            f"/api/v1/runs/{run_id}",
-            headers={"X-API-Contract-Version": "1"},
-        )
-        assert response.status_code == 200, response.text
-        last = cast(dict[str, object], response.json())
-        run = last.get("run")
-        if isinstance(run, dict) and run.get("status") in expected:
-            return last
-        time.sleep(0.02)
-    raise AssertionError(f"run did not reach {sorted(expected)}: {last}")
-
-
-def _wait_for_action_status(
-    client: TestClient,
-    run_id: str,
-    expected: set[str],
-    *,
-    timeout_seconds: float = 20,
-) -> dict[str, object]:
-    deadline = time.monotonic() + timeout_seconds
-    last: dict[str, object] = {}
-    while time.monotonic() < deadline:
-        response = client.get(
-            f"/api/v1/runs/{run_id}",
-            headers={"X-API-Contract-Version": "1"},
-        )
-        assert response.status_code == 200, response.text
-        last = cast(dict[str, object], response.json())
-        actions = last.get("actions")
-        if isinstance(actions, list) and any(
-            isinstance(action, dict) and action.get("status") in expected for action in actions
-        ):
-            return last
-        time.sleep(0.02)
-    raise AssertionError(f"action did not reach {sorted(expected)}: {last}")
 
 
 def _wait_for_prompt(
@@ -1088,9 +911,3 @@ def _wait_for_action_command(
             return last
         time.sleep(0.02)
     raise AssertionError(f"action did not allow {expected_command}: {last}")
-
-
-def _mcp_events(runtime_root: Path) -> list[dict[str, object]]:
-    path = runtime_root / "cache" / "langgraph-e2e-mcp-events.jsonl"
-    assert path.is_file(), f"MCP event log was not created: {path}"
-    return [cast(dict[str, object], json.loads(line)) for line in path.read_text().splitlines()]

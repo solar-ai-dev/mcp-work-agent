@@ -23,6 +23,7 @@ class LangGraphE2EGeminiTransport:
     invocations: list[dict[str, object]] = field(default_factory=list)
     crash_prompt_id: str | None = None
     crash_scenario: str | None = None
+    task_payload: dict[str, object] | None = None
     _scenario_prompt_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def probe(self, *, api_key: str, timeout_seconds: int) -> ProbeResult:
@@ -76,6 +77,21 @@ class LangGraphE2EGeminiTransport:
             scenario=scenario,
             call_no=self._scenario_prompt_counts[key],
         )
+        if self.task_payload is not None:
+            base = _base_projection(prompt_input)
+            if (
+                prompt_id == "request_understanding.identify_goal"
+                and scenario != "MAIL_TASK_CREATE"
+            ):
+                output["constraints"] = [
+                    {"kind": "RESOURCE", "field": name, "value": value}
+                    for name, value in self.task_payload.items()
+                    if value != ""
+                ]
+            if prompt_id == "planning.compose_arguments_per_output_route":
+                route = cast(Mapping[str, object], base["output_route"])
+                if route["resource_type"] == "TASK":
+                    output["arguments"] = {"payload": dict(self.task_payload)}
         return ProviderResponsePayload(
             content=json.dumps(output, sort_keys=True),
             model=model_id,
@@ -232,7 +248,7 @@ def _respond(
                     "dimension": prompt_id,
                     "code": "E2E_ACTION_REVISION",
                     "finding_kind": finding_kind,
-                    "description": "Exercise the real bounded Review back-edge",
+                    "description": "승인 전 계획 수정과 해당 검토 항목의 재검사가 필요합니다.",
                     "evidence_refs": [],
                     "affected_action_ids": action_ids,
                     "affected_route_ids": route_ids,
@@ -262,6 +278,7 @@ def _base_projection(prompt_input: Mapping[str, object]) -> Mapping[str, object]
 def _scenario(value: object) -> str:
     serialized = json.dumps(value, sort_keys=True, default=str).upper()
     for scenario in (
+        "MAIL_TASK_CREATE",
         "EVIDENCE_BACK_EDGE",
         "ANALYTICAL_READ",
         "RETRIEVAL_CACHE_LOSS",
@@ -330,7 +347,7 @@ def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:
         return ["CALENDAR"], [], []
     if scenario == "PARTIAL_APPROVAL":
         return ["TASK", "CALENDAR"], ["TASK", "CALENDAR"], ["CREATE", "CREATE"]
-    if scenario in {"EVIDENCE_BACK_EDGE", "CONTEXT_ADJUSTMENT"}:
+    if scenario in {"EVIDENCE_BACK_EDGE", "CONTEXT_ADJUSTMENT", "MAIL_TASK_CREATE"}:
         return ["EMAIL"], ["TASK"], ["CREATE"]
     if scenario in {"CALENDAR_WRITE", "VERIFICATION_MISMATCH", "RECOVERY"}:
         return ["CALENDAR"], ["CALENDAR"], ["CREATE"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -15,6 +16,8 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
     validate_claim_context as claim_context_validation,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    _task_snapshot,
+    _task_write_body,
     _WorkspaceToolError,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.project_registry import (
@@ -108,7 +111,32 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
                 key: value for key, value in arguments.items() if key != "claim_context"
             },
         )
-    _append_event({"tool_name": tool_name, "arguments": arguments})
+    event: dict[str, object] = {"tool_name": tool_name, "arguments": arguments}
+    if tool_name == "tasks_create_task" and _load_state().get("task_fixture_mode"):
+        claim = cast(dict[str, object], arguments["claim_context"])
+        database = _state_root().parent / "data/google_work_agent.db"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+            event["begin_committed_before_write"] = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM audit_events WHERE action_id = ? "
+                    "AND event_type = 'EXECUTION_DISPATCH_STARTED' "
+                    "AND json_extract(metadata_json, '$.attributes.attempt_id') = ? "
+                    "AND EXISTS (SELECT 1 FROM command_receipts cr "
+                    "WHERE cr.command_type = 'BeginExecutionAttempt' "
+                    "AND cr.aggregate_id = ? AND json_extract(cr.response_json, '$.applied') = 1)",
+                    (
+                        claim["action_id"],
+                        claim["execution_attempt_id"],
+                        claim["execution_attempt_id"],
+                    ),
+                ).fetchone()[0]
+                == 1
+            )
+        if not event["begin_committed_before_write"]:
+            raise AssertionError(
+                "Task Write reached Provider before committed BeginExecutionAttempt"
+            )
+    _append_event(event)
     payload = _tool_payload(tool_name, arguments)
     validate_tool_output(tool_name, payload)
     return payload
@@ -191,9 +219,7 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
     failure_mode = _failure_mode(arguments)
     fault_counts = cast(dict[str, int], state.setdefault("fault_counts", {}))
     claim_context = arguments.get("claim_context")
-    action_id = (
-        claim_context.get("action_id") if isinstance(claim_context, dict) else None
-    )
+    action_id = claim_context.get("action_id") if isinstance(claim_context, dict) else None
     fault_key = f"{failure_mode}:{tool_name}:{action_id}"
     fault_counts[fault_key] = int(fault_counts.get(fault_key, 0)) + 1
     fault_count = fault_counts[fault_key]
@@ -232,6 +258,19 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         "calendar_list_calendars",
         "calendar_list_events",
     }:
+        if tool_name == "tasks_list_tasklists" and state.get("task_list_snapshot"):
+            _save_state(state)
+            return {"items": [state["task_list_snapshot"]], "next_page_token": None}
+        if state.get("task_fixture_mode") and tool_name == "tasks_list_tasks":
+            items = [
+                item
+                for item in cast(dict[str, dict[str, object]], state.get("resources", {})).values()
+                if item["resource_type"] == "task"
+                and item["parent_id"] == arguments["task_list_id"]
+                and cast(dict[str, object], item["payload"]).get("status") != "completed"
+            ]
+            _save_state(state)
+            return {"items": items, "next_page_token": None}
         query = arguments.get("query")
         if isinstance(query, str) and query:
             items = [
@@ -277,6 +316,16 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         item_failure_mode = _failure_mode(
             {"payload": cast(dict[str, object], read_item.get("payload") or {})}
         )
+        if tool_name == "tasks_get_task" and state.get("task_verification_mutation"):
+            mutation = cast(dict[str, object], state["task_verification_mutation"])
+            read_item = {
+                **read_item,
+                "parent_id": mutation.get("parent_id", read_item["parent_id"]),
+                "payload": {
+                    **cast(dict[str, object], read_item["payload"]),
+                    **{key: value for key, value in mutation.items() if key != "parent_id"},
+                },
+            }
         if item_failure_mode == "VERIFICATION_MISMATCH" or (
             item_failure_mode == "RECOVERY" and counts[tool_name] == 1
         ):
@@ -338,6 +387,18 @@ def _write_fixture(
         resource_type = "task"
         resource_id = str(arguments.get("task_id") or f"task-write-{count}")
         parent_id = str(arguments.get("task_list_id", "task-list-e2e"))
+        provider_body = _task_write_body(payload, title_required=tool_name == "tasks_create_task")
+        return {
+            **_task_snapshot(
+                {
+                    "id": resource_id,
+                    "status": "needsAction",
+                    **provider_body,
+                },
+                parent_id,
+            ),
+            "recovery_fingerprint": fingerprint,
+        }
     elif tool_name.startswith("calendar"):
         resource_type = "calendar_event"
         resource_id = str(arguments.get("event_id") or f"event-write-{count}")
