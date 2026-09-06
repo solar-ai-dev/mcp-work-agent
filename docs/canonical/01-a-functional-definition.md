@@ -508,7 +508,7 @@
 - **내용:** Launcher/Manifest, React Build, Local Agent API/Session, Google Workspace·GitHub Connector 및 MCP/Credential 상태, LLM Runtime, SQLite/Migration, SSE, 최근 오류와 복구 Action의 **sanitized bounded projection**.
 - **제한:** 진단 화면/Bundle은 DB·Backup·Keyring 원본, Connector 원문, Prompt/Completion, Approval Snapshot/Claim Token, Credential/Secret을 노출하지 않으며 자동 외부 업로드하지 않는다.
 
-## 13. 범위 제외 기능
+## 13. 지원·제외 범위
 
 | ID | 기능 | 상태 |
 | --- | --- | --- |
@@ -550,7 +550,7 @@
 
 - **상태:** P0
 
-사용자 요청에서 목표·완료 조건·제약·모호성과 추가 업무 분석 필요 여부를 구조화할 수 있어야 한다. 이 기능은 Tool identity, Provider-native Query, Action Arguments를 직접 정하지 않으며, 모호성이 해결되지 않으면 사용자 확인 기능으로 연결한다. 특정 Write가 정책상 중복·충돌 사전 검사를 요구하면 그 정책 의존성을 보존해야 한다.
+사용자 요청에서 목표·완료 조건·제약·모호성과 추가 업무 분석 필요 여부를 구조화할 수 있어야 한다. 이 기능은 Tool identity, Provider-native Query, Action Arguments를 직접 정하지 않는다. 허용된 조회로 해소할 수 있는 모호성은 미해결 의미를 보존하여 조회로 넘기고, 사용자만 결정할 수 있는 필수 선택은 확인한다. 조회 후에도 남는 실제 모호성은 확인 질문으로 연결한다. 특정 Write가 정책상 중복·충돌 사전 검사를 요구하면 그 정책 의존성을 보존해야 한다.
 
 ### FN-102 Tool Route Agent
 
@@ -731,4 +731,4 @@ FN-100의 중앙 조정 기능은 같은 공식 runtime 조건에서 일관된 �
 
 - **상태:** P0
 - **기능:** Google Workspace, GitHub, Gemini API를 구분하고 Local AI 준비와 업무 기본값은 각 맥락에서 관리한다.
-- **완료 조건:** 기존 UI/API가 있으면 연결 경로를 복구·재사용한다. 하나의 서비스 상태가 다른 계정·credential·기본값을 덮어쓰지 않는다. 초기 미연결 안내로 종료된 요청은 Settings 연결 후 사용자가 새로 전송하며, 정상 실행 중 인증 만료로 멈춘 요청은 기존 명시적 안전 재개를 사용한다.
+- **완료 조건:** 각 연결 영역에서 상태 확인·연결·재연결·해제와 해당 기본값 관리를 완료할 수 있다. 하나의 서비스 상태가 다른 계정·credential·기본값을 덮어쓰지 않는다. 초기 미연결 안내로 종료된 요청은 Settings 연결 후 사용자가 새로 전송하며, 정상 실행 중 인증 만료로 멈춘 요청은 기존 명시적 안전 재개를 사용한다.
