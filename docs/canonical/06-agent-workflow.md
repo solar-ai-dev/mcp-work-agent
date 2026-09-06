@@ -312,6 +312,7 @@ WorkAnalysis.ROUTE_RECONSIDERATION_REQUIRED → Tool Route
 WorkAnalysis.BLOCKED → `BlockRun` applied → FINALIZE
 
 Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS
+  - 최초 terminal projection은 Retrieval `coverage=PARTIAL`을 결과 종류 `PARTIAL`로 보존한다. 답변이 존재한다는 이유로 `SUCCESS`로 승격하지 않으며, 이미 저장된 terminal 결과는 checkpoint의 coverage로 덮어쓰지 않는다.
 Planning.PLAN_READY → Review
 Planning.NEEDS_CONFIRMATION → interrupt(Planning owner)
 Planning.ROUTE_RECONSIDERATION_REQUIRED → Tool Route

@@ -78,6 +78,7 @@ def finalize_retrieval(
             *exclusion_obligation_segment_ids,
         ]
     )
+    unresolved_dates = project_unresolved_event_dates(evidence, query_attempts)
     return {
         "schema_version": 1,
         "meta": {
@@ -95,7 +96,11 @@ def finalize_retrieval(
                 *prior_ref,
             ],
         },
-        "coverage": _coverage(sufficiency_result["status"], acquisition_result),
+        "coverage": (
+            "PARTIAL"
+            if unresolved_dates and request_intent.get("requested_effect_hints") == ["READ"]
+            else _coverage(sufficiency_result["status"], acquisition_result)
+        ),
         "context_bundle_ref": None,
         "evidence_refs": [item["evidence_id"] for item in evidence],
         "selected_segment_ids": selected_ids,
@@ -110,9 +115,7 @@ def finalize_retrieval(
         "missing_information": missing_information_projection(sufficiency_result["issues"]),
         "retrieval_rounds": retrieval_round_count(current_round_no=current_round_no),
         "temporal_constraints": project_query_temporal_constraints(query_attempts),
-        "unresolved_event_dates": project_unresolved_event_dates(
-            evidence, query_attempts,
-        ),
+        "unresolved_event_dates": unresolved_dates,
         "person_candidates": list(person_candidates),
         "selected_person_identities": dict(selected_person_identities or {}),
     }

@@ -151,7 +151,7 @@
       "runtime_node_id": "planning.compose_answer",
       "input_schema_version": 2,
       "required_root_fields": ["user_request", "request_intent", "answer_outline", "evidence", "temporal_constraints"],
-      "optional_root_fields": ["work_analysis", "confirmation_response", "selected_person_identities"],
+        "optional_root_fields": ["work_analysis", "confirmation_response", "selected_person_identities", "coverage", "unresolved_event_dates", "missing_information", "source_statuses"],
       "output_schema_version": 1
     },
     {

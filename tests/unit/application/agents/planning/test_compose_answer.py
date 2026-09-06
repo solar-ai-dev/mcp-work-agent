@@ -29,11 +29,17 @@ def test_answer_draft_schema__binds_citations__to_approved_outline() -> None:
 
 
 @pytest.mark.parametrize("uncertain", [False, True])
-def test_partial_source_answer__preserves_yearless_date__without_another_model_call(
+def test_partial_source_answer__preserves_yearless_date__through_answer_prompt(
     uncertain: bool,
 ) -> None:
-    def forbidden(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
-        raise AssertionError("a bounded source projection needs no further inference")
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        assert prompt_input["coverage"] == "PARTIAL"
+        if uncertain:
+            assert prompt_input["unresolved_event_dates"] == retrieval["unresolved_event_dates"]
+        return {"schema_version": 2, "answer": "연수는 9월 4일입니다.", "evidence_refs": ["e1"]}
 
     retrieval: dict[str, object] = {"coverage": "PARTIAL"}
     if uncertain:
@@ -49,13 +55,15 @@ def test_partial_source_answer__preserves_yearless_date__without_another_model_c
                 "excerpt": "Received: 2026-08-26T09:00:00+09:00\n연수는 9월 4일입니다.",
             }
         ],
-        invoke=forbidden,
+        invoke=invoke,
         retrieval_result=retrieval,
     )
     assert answer["evidence_refs"] == ["e1"]
     assert "연수는 9월 4일입니다." in answer["answer"]
     assert "2026년 9월 4일" not in answer["answer"]
-    assert "수신 시각:" in answer["answer"]
+    assert calls == ["planning.compose_answer"]
+    assert "Received:" not in answer["answer"]
+    assert "확인한 자료 원문" not in answer["answer"]
     assert "부분 결과" in answer["answer"]
 
 
@@ -71,7 +79,9 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
         request_intent={
             "goal": "summary",
             "repository_default": {
-                "repository": "sample/project", "repository_id": 2, "account_id": "github:1",
+                "repository": "sample/project",
+                "repository_id": 2,
+                "account_id": "github:1",
             },
         },
         answer_outline={"sections": ["Conclusion"], "evidence_refs": ["e1"]},
@@ -86,25 +96,81 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
     assert isinstance(prompt_input, dict)
     assert prompt_input["request_intent"] == {"goal": "summary"}
     assert set(prompt_input) == {
-        "user_request", "request_intent", "answer_outline", "evidence", "temporal_constraints",
+        "user_request",
+        "request_intent",
+        "answer_outline",
+        "evidence",
+        "temporal_constraints",
     }
 
 
-def test_source_projection__reports_omitted_text__without_citing_invisible_evidence() -> None:
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "연수는 2026년 9월 4일입니다.",
+        "연수는 2026-09-04T14:00:00+09:00입니다. 연도는 미확정입니다.",
+        "연수는 9월 4일 금요일입니다.",
+        "연수는 9월 4일(금)입니다.",
+    ],
+)
+def test_compose_answer__promoted_yearless_date__rejects_even_with_disclaimer(answer: str) -> None:
+    with pytest.raises(ValueError, match="unresolved event date"):
+        compose_answer(
+            user_request="연수 일정",
+            request_intent={"requested_effect_hints": ["READ"]},
+            answer_outline={"sections": ["일정"], "evidence_refs": ["e1"]},
+            work_analysis=None,
+            evidence=[{"evidence_id": "e1", "excerpt": "9월 4일 연수"}],
+            retrieval_result={
+                "unresolved_event_dates": [{"evidence_id": "e1", "source_text": "9월 4일"}]
+            },
+            invoke=lambda *_: {"schema_version": 2, "answer": answer, "evidence_refs": ["e1"]},
+        )
+
+
+def test_partial_answer__summarizes_long_sources__without_copying_them() -> None:
     answer = compose_answer(
         user_request="메일 목록",
         request_intent={"requested_effect_hints": ["READ"]},
         answer_outline={"sections": ["자료"], "evidence_refs": ["e1", "e2"]},
         work_analysis=None,
-        evidence=[{"evidence_id": "e1", "excerpt": "짧은 원문"},
-                  {"evidence_id": "e2", "excerpt": "긴 원문" * MAX_USER_VISIBLE_ANSWER_CHARS}],
-        invoke=lambda *_: pytest.fail("source projection must not call inference"),
+        evidence=[
+            {"evidence_id": "e1", "excerpt": "짧은 원문"},
+            {"evidence_id": "e2", "excerpt": "긴 원문" * MAX_USER_VISIBLE_ANSWER_CHARS},
+        ],
+        invoke=lambda *_: {
+            "schema_version": 2,
+            "answer": "첫 자료에서 확인한 내용입니다.",
+            "evidence_refs": ["e1"],
+        },
         retrieval_result={"coverage": "PARTIAL"},
     )
-    assert "일부 원문은 생략" in answer["answer"]
-    assert "짧은 원문" in answer["answer"]
+    assert "첫 자료에서 확인한 내용" in answer["answer"]
+    assert "긴 원문" not in answer["answer"]
     assert answer["evidence_refs"] == ["e1"]
     assert len(answer["answer"]) <= MAX_USER_VISIBLE_ANSWER_CHARS
+
+
+def test_compose_answer__resource_id_as_sender__omits_diagnostic_without_corrupting_title() -> None:
+    result = compose_answer(
+        user_request="메일 요약",
+        request_intent={},
+        answer_outline={"sections": ["메일"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[
+            {
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:fixture1",
+                "excerpt": "Release1 연수 안내",
+            }
+        ],
+        invoke=lambda *_: {
+            "schema_version": 2,
+            "answer": "발신:_fixture1_\nRelease1 연수 안내",
+            "evidence_refs": ["e1"],
+        },
+    )
+    assert result["answer"] == "Release1 연수 안내"
 
 
 def test_confirmed_person__narrows_answer_projection__without_deleting_run_evidence() -> None:
@@ -116,8 +182,10 @@ def test_confirmed_person__narrows_answer_projection__without_deleting_run_evide
         ]
         return {"schema_version": 2, "answer": "B", "evidence_refs": ["e2"]}
 
-    evidence = [{"evidence_id": "e1", "segment_id": "s1", "excerpt": "A"},
-                {"evidence_id": "e2", "segment_id": "s2", "excerpt": "B"}]
+    evidence = [
+        {"evidence_id": "e1", "segment_id": "s1", "excerpt": "A"},
+        {"evidence_id": "e2", "segment_id": "s2", "excerpt": "B"},
+    ]
     result = compose_answer(
         user_request="김대리 메일",
         request_intent={},

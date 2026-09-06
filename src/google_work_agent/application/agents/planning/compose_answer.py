@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import cast
@@ -109,71 +110,14 @@ def compose_answer(
             target.update(cast(list[str], person["source_segment_ids"]))
         evidence = [item for item in evidence if item.get("segment_id") not in rejected - accepted]
         visible_refs = {_evidence_ref(item) for item in evidence}
-        answer_outline = {**answer_outline, "evidence_refs": [
-            ref for ref in answer_outline["evidence_refs"] if ref in visible_refs
-        ]}
+        answer_outline = {
+            **answer_outline,
+            "evidence_refs": [
+                ref for ref in answer_outline["evidence_refs"] if ref in visible_refs
+            ],
+        }
     approved_refs = set(answer_outline["evidence_refs"])
     approved_evidence = [dict(item) for item in evidence if _evidence_ref(item) in approved_refs]
-    uncertain_dates = (retrieval_result or {}).get("unresolved_event_dates", [])
-    unresolved_person = any(
-        isinstance(item, Mapping) and item.get("code") == "person_identity"
-        for item in cast(list[object], (retrieval_result or {}).get("missing_information", []))
-    )
-    grounded_lookup = (
-        request_intent.get("requested_effect_hints") == ["READ"]
-        and request_intent.get("analysis_requirement", "NONE") == "NONE"
-        and (
-            bool((retrieval_result or {}).get("temporal_constraints"))
-            or bool((retrieval_result or {}).get("person_candidates"))
-        )
-    )
-    if uncertain_dates or unresolved_person or (
-        approved_evidence and (
-            (retrieval_result or {}).get("coverage") == "PARTIAL" or grounded_lookup
-        )
-    ):
-        # Do not let free-form prose promote a search-year hypothesis into an event fact.
-        sections = []
-        if uncertain_dates:
-            sections.append(
-                "행사 연도가 확정되지 않은 자료가 있어 요청 기간에 해당하는지 확인이 필요합니다. "
-                "수신 연도를 행사 연도로 사용하지 않았으며, 요일도 계산하지 않았습니다."
-            )
-        if unresolved_person:
-            sections.append(
-                "요청하신 인물을 근거로 특정하지 못했습니다. 이름이나 이메일 확인이 필요합니다."
-            )
-        if any(
-            isinstance(item, Mapping) and item.get("failure_kind") is not None
-            for item in cast(list[object], (retrieval_result or {}).get("source_statuses", []))
-        ):
-            sections.append("일부 자료를 읽지 못했습니다. 검색 결과가 없다는 뜻은 아닙니다.")
-        cited: list[str] = []
-        omitted = False
-        for item in approved_evidence:
-            excerpt, ref = item.get("excerpt"), _evidence_ref(item)
-            if not isinstance(excerpt, str) or ref is None:
-                continue
-            quote = "\n".join(
-                "> " + line.replace("Received:", "수신 시각:", 1)
-                for line in excerpt.splitlines()
-                if not line.startswith(("Sender name:", "Sender email:"))
-            )
-            locator = item.get("locator")
-            sender = locator.get("sender_email") if isinstance(locator, Mapping) else None
-            section = (f"발신자: {sender}\n" if sender else "") + "확인한 자료 원문:\n" + quote
-            if sum(map(len, sections)) + len(section) > MAX_USER_VISIBLE_ANSWER_CHARS - 200:
-                omitted = True
-                continue
-            sections.append(section)
-            cited.append(ref)
-        if omitted:
-            sections.append(
-                "표시 길이 제한으로 일부 원문은 생략했습니다. 전체 자료를 표시한 답변은 아닙니다."
-            )
-        return _with_partial_scope({
-            "schema_version": 2, "answer": "\n\n".join(sections), "evidence_refs": cited,
-        }, {"coverage": "PARTIAL"} if uncertain_dates or unresolved_person else retrieval_result)
     prompt_input: dict[str, object] = {
         "user_request": user_request,
         "request_intent": {
@@ -190,6 +134,10 @@ def compose_answer(
     }
     if selected_people:
         prompt_input["selected_person_identities"] = selected_people
+    if retrieval_result is not None:
+        for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
+            if key in retrieval_result:
+                prompt_input[key] = deepcopy(retrieval_result[key])
     gmail_projection = project_gmail_read_planning(
         user_request=user_request,
         request_intent=request_intent,
@@ -243,9 +191,14 @@ def compose_answer(
     if not isinstance(answer, str) or not answer.strip():
         raise ValueError("compose_answer output requires answer")
     normalized_answer = normalize_generated_answer_prose(answer)
-    if any(item["axis"] == "MESSAGE_TIME" for item in cast(
-        list[dict[str, object]], prompt_input["temporal_constraints"],
-    )):
+    _validate_unresolved_date_claims(normalized_answer, retrieval_result)
+    if any(
+        item["axis"] == "MESSAGE_TIME"
+        for item in cast(
+            list[dict[str, object]],
+            prompt_input["temporal_constraints"],
+        )
+    ):
         # The provider projection contains received_at, not a proved sent-at timestamp.
         normalized_answer = normalized_answer.replace("보낸 날짜:", "수신 시각:")
     if len(normalized_answer) > MAX_USER_VISIBLE_ANSWER_CHARS:
@@ -266,6 +219,11 @@ def compose_answer(
             for item in approved_evidence
             if isinstance((excerpt := item.get("excerpt")), str)
         ],
+        internal_resource_ids=[
+            handle.partition(":")[2]
+            for item in approved_evidence
+            if isinstance((handle := item.get("resource_handle")), str)
+        ],
     )
     return _with_partial_scope(
         {"schema_version": 2, "answer": visible_answer, "evidence_refs": list(refs)},
@@ -274,12 +232,56 @@ def compose_answer(
 
 
 def _with_partial_scope(
-    draft: AnswerDraftCandidateV2, retrieval_result: Mapping[str, object] | None,
+    draft: AnswerDraftCandidateV2,
+    retrieval_result: Mapping[str, object] | None,
 ) -> AnswerDraftCandidateV2:
-    if retrieval_result is None or retrieval_result.get("coverage") != "PARTIAL":
+    if retrieval_result is None:
         return draft
-    notice = "확인한 범위의 부분 결과입니다. 요청한 전체 범위를 확인한 것은 아닙니다."
-    return {**draft, "answer": notice + "\n\n" + draft["answer"]}
+    notices: list[str] = []
+    if retrieval_result.get("unresolved_event_dates"):
+        notices.append("행사 연도가 확정되지 않아 요청 기간에 해당하는지 추가 확인이 필요합니다.")
+    if any(
+        isinstance(item, Mapping) and item.get("code") == "person_identity"
+        for item in cast(list[object], retrieval_result.get("missing_information", []))
+    ):
+        notices.append(
+            "요청하신 인물의 신원이 확정되지 않았습니다. 이름이나 이메일 확인이 필요합니다."
+        )
+    if any(
+        isinstance(item, Mapping) and item.get("failure_kind") is not None
+        for item in cast(list[object], retrieval_result.get("source_statuses", []))
+    ):
+        notices.append("일부 자료를 읽지 못했습니다. 검색 결과가 없다는 뜻은 아닙니다.")
+    if notices or retrieval_result.get("coverage") == "PARTIAL":
+        notices.insert(0, "확인한 범위의 부분 결과입니다. 요청한 전체 범위를 확인한 것은 아닙니다.")
+    answer = "\n\n".join([*notices, draft["answer"]])
+    if len(answer) > MAX_USER_VISIBLE_ANSWER_CHARS:
+        raise ValueError("compose_answer output exceeds the user-visible answer limit")
+    return {**draft, "answer": answer}
+
+
+def _validate_unresolved_date_claims(
+    answer: str,
+    retrieval_result: Mapping[str, object] | None,
+) -> None:
+    """Reject explicit year/weekday promotion of a known yearless source date."""
+    for item in cast(
+        list[Mapping[str, object]],
+        (retrieval_result or {}).get(
+            "unresolved_event_dates",
+            [],
+        ),
+    ):
+        source = str(item.get("source_text", ""))
+        date = re.search(r"(\d{1,2})\s*(?:월|[-/.])\s*(\d{1,2})", source)
+        if date is None:
+            continue
+        month, day = (int(value) for value in date.groups())
+        day_pattern = rf"0?{month}\s*(?:월|[-/.])\s*0?{day}(?!\d)(?:\s*일)?"
+        explicit_year = rf"(?<!\d)\d{{4}}\s*(?:년|[-/.])\s*{day_pattern}"
+        weekday = rf"{day_pattern}\s*\**\s*\(?[월화수목금토일](?:요일|\))"
+        if re.search(explicit_year, answer) or re.search(weekday, answer):
+            raise ValueError("compose_answer promoted an unresolved event date into a dated fact")
 
 
 def _evidence_ref(item: Mapping[str, object]) -> str | None:

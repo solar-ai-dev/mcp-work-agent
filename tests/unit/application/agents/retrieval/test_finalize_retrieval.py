@@ -8,6 +8,7 @@ from tests.support.context_retrieval import (
     _tool_route_plan,
 )
 
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceDraftV1,
@@ -16,6 +17,52 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
     finalize_retrieval,
 )
+
+
+def test_finalize_retrieval__unresolved_event_year__cannot_report_sufficient_coverage() -> None:
+    result = finalize_retrieval(
+        artifact_id="retrieval-yearless",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        selection_result=_selection_output(["segment-1"]),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "segment-1",
+                "kind": "excerpt",
+                "excerpt": "연수는 9월 4일입니다.",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=1,
+        query_attempts=[
+            cast(
+                QueryAttemptV1,
+                {
+                    "route_id": "route-gmail",
+                    "resource_type": "GMAIL_THREAD",
+                    "operation_kind": "SEARCH",
+                    "normalized_intent_constraints": [
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "EVENT_TIME",
+                            "timezone": "Asia/Seoul",
+                            "start_local": "2026-09-01T00:00:00",
+                            "end_local": "2026-09-08T00:00:00",
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+    assert result["unresolved_event_dates"] == [{"evidence_id": "e1", "source_text": "9월 4일"}]
+    assert result["coverage"] == "PARTIAL"
+    assert result["evidence_refs"] == ["e1"]
 
 
 def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> None:

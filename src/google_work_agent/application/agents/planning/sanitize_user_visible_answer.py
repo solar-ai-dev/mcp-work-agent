@@ -27,6 +27,7 @@ def sanitize_user_visible_answer(
     internal_refs: Iterable[str],
     user_request: str,
     source_texts: Iterable[str] = (),
+    internal_resource_ids: Iterable[str] = (),
 ) -> str:
     """Replace diagnostic-only refs and codes while retaining natural prose."""
 
@@ -34,9 +35,21 @@ def sanitize_user_visible_answer(
     reference_label = "확인한 자료" if korean else "the reviewed material"
     state_label = "내부 상태" if korean else "an internal status"
     result = answer
+    resource_ids = tuple(value for value in internal_resource_ids if value)
+    if resource_ids:
+        result = "\n".join(
+            line
+            for line in result.splitlines()
+            if not (
+                re.search(
+                    r"(?:발신(?:자)?|sender|message\s*id|thread\s*id|메시지\s*id)\s*:", line, re.I
+                )
+                and any(value in line for value in resource_ids)
+            )
+        )
     for ref in sorted(set(internal_refs), key=len, reverse=True):
         if ref:
-            result = result.replace(ref, reference_label)
+            result = re.sub(r"(?<![\w])" + re.escape(ref) + r"(?![\w])", reference_label, result)
     result = _INTERNAL_REFERENCE_TOKEN.sub(reference_label, result)
     result = _INTERNAL_FIELD_LABELS.sub(reference_label, result)
     result = _INTERNAL_RESOURCE_LABEL.sub("", result)

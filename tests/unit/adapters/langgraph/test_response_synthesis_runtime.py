@@ -26,17 +26,50 @@ def _answer() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize(
+    "durable_result,expected", [(None, "PARTIAL"), ("SUCCESS", "SUCCESS"), ("PARTIAL", "PARTIAL")]
+)
+def test_partial_retrieval_answer__terminal_projection__preserves_scope_and_durable_result(
+    durable_result,
+    expected,
+):
+    result = response_synthesis_node(
+        {
+            "run_id": "run-1",
+            "planning_result": _answer(),
+            "retrieval_result": {"coverage": "PARTIAL"},
+        },
+        read_terminal_facts=lambda _: {
+            "status": "PLANNING" if durable_result is None else "COMPLETED",
+            "version": 4,
+            "terminal_result_kind": durable_result,
+            "action_statuses": [],
+            "action_effect_types": [],
+        },
+        build_terminal_message=BuildTerminalMessageHandler(),
+    )
+    assert result["terminal_commit_intent"]["terminal_message"].result_kind == expected
+
+
 @pytest.mark.parametrize("status", ["CANCEL_REQUESTED", "VERIFYING"])
 def test_cancelled_verified_effect__keeps_cancel_intent__and_partial_message(status):
     result = response_synthesis_node(
         {"run_id": "run-1"},
         read_terminal_facts=lambda _: {
-            "status": status, "version": 4, "cancel_intent_active": True,
-            "terminal_result_kind": None, "action_statuses": ["VERIFIED"],
-            "action_effect_types": ["CREATE"], "actions": [{
-                "tool_name": "github_create_issue", "effect_type": "CREATE",
-                "status": "VERIFIED", "arguments": {"repository": "owner/repo", "title": "Test"},
-            }],
+            "status": status,
+            "version": 4,
+            "cancel_intent_active": True,
+            "terminal_result_kind": None,
+            "action_statuses": ["VERIFIED"],
+            "action_effect_types": ["CREATE"],
+            "actions": [
+                {
+                    "tool_name": "github_create_issue",
+                    "effect_type": "CREATE",
+                    "status": "VERIFIED",
+                    "arguments": {"repository": "owner/repo", "title": "Test"},
+                }
+            ],
         },
         build_terminal_message=BuildTerminalMessageHandler(),
     )

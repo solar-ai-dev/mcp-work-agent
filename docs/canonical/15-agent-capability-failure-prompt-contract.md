@@ -231,6 +231,14 @@ work_analysis.validate_work_analysis                      deterministic
 - `detect_duplicate_conflict_candidates`: duplicate/conflict **candidate**만 제안한다.
 - 실제 `DUPLICATES | CONFLICTS_WITH` 확정은 deterministic relation validator가 계속 소유한다.
 
+### Evidence-backed READ answer composition
+
+Planning `compose_answer`는 사람·시간 조건이나 `PARTIAL`이라는 이유만으로 답변 생성을 생략하고 Evidence 원문을 최종 답변으로 대체하지 않는다. 기존 결정적 resource/empty-result projection은 유지하되, 의미 요약이 필요한 답변은 기존 Prompt slot을 사용한다. 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 이 필드가 없으면 확정 사실을 추측하지 않는다.
+
+검색 기간은 행사 날짜의 사실 근거가 아니며 미확정 연도·인물을 확정 표현으로 승격하지 않는다. Planning은 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. 기존 RunBudget와 `Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS` 경로를 유지하며 별도 Review 호출이나 새로운 상태를 추가하지 않는다.
+
+알려진 연도 미확정 날짜를 명시적 연도 또는 요일로 승격한 답변은 Planning output validation에서 거절한다. 경고를 덧붙여 모순된 답변을 성공 처리하거나 날짜를 임의 교정하지 않는다. 기존 bounded failure 경로를 유지한다.
+
 ### Review LLM split
 
 Review는 goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsibility로 분리한다.

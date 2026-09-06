@@ -813,8 +813,8 @@ MESSAGE_TIME으로 바꾸지 않는다. 역할이 미해결이면 received-time 
 축소하지 않는다. 사용자 exclusion만 해당 후보 provenance를 철회할 수 있다.
 확인된 선택은 `selected_person_identities`로 same-Run에서 보존하며 Planning의 답변
 projection은 선택되지 않은 인물만의 근거를 제외한다. 원래 Run Evidence는 삭제하지 않는다.
-분석이 필요하지 않은 날짜·인물 lookup은 선택된 원문과 provider 수신시각의 bounded
-projection으로 답할 수 있다. 인용된 ISO offset을 임의의 오전/오후·요일로 재계산하지 않는다.
+분석이 필요하지 않은 날짜·인물 lookup도 선택된 근거의 의미를 Planning 답변으로 정리한다.
+Evidence 원문 dump는 답변 생성을 대체하지 않는다. 인용된 ISO offset을 임의의 오전/오후·요일로 재계산하지 않는다.
 `planning.compose_answer` V2 input의 optional `selected_person_identities`가 이 선택을
 전달한다. 기존 호출·checkpoint는 필드 생략이 가능하며 natural-language intent를 위조하지 않는다.
 
@@ -822,14 +822,14 @@ projection으로 답할 수 있다. 인용된 ISO offset을 임의의 오전/오
 선택된 Evidence의 연도 미확정 날짜(명시적 보고·집계 기간은 제외)는
 `unresolved_event_dates`에 원문·Evidence
 참조와 함께 전달한다. 다른 resource의 검색 시간 제약을 전파하지 않는다.
-READ의 해당 날짜 범위는 PARTIAL이며 Planning은 해당 근거를
-원문 인용과 연도 미확정 안내로 제시한다. 뉴스레터 CONTEXT의 집계 기간이나 수신시각을
+READ의 해당 날짜 범위는 PARTIAL이며 Retrieval finalization은 이를 coverage에 반영한다. Planning은 해당 근거를
+요청에 대한 요약과 연도 미확정 안내로 제시하며, 필요한 날짜 원문만 인용할 수 있다. 뉴스레터 CONTEXT의 집계 기간이나 수신시각을
 행사일로 사용하지 않는다. 구 checkpoint에서 이 선택 필드가 없으면 빈 목록으로 읽는다.
 
 READ follow-up은 기존 RunBudget 안에서 답변 outline/compose와 bounded repair 여유를
 남긴다. `analysis_requirement=REQUIRED`인 READ는 기존 Work Analysis의 여섯 semantic
-operation도 같은 상한 안에서 고려한다. 부분 결과의 답변은 인용 가능한 Evidence 원문을
-bounded projection으로 제공할 수 있으며, 추가 추론이나 전체 성공 주장을 요구하지 않는다.
+operation도 같은 상한 안에서 고려한다. 부분 결과도 확보한 답변 예산 안에서 근거를 요약하며
+전체 성공을 주장하지 않는다. 정상 no-result의 기존 결정적 projection은 유지한다.
 추가 수집이 답변 여유를 침범하면 이미 검증된 Evidence를 보존해 PARTIAL로
 닫는다. 결정적으로 종료할 수 있는 sufficiency는 LLM 호출을 요구하지 않으며 사용하지 않은
 호출을 counter/Trace에 기록하지 않는다. WRITE의 필수 Target/Argument/Policy Evidence가

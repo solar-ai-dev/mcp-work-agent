@@ -203,9 +203,17 @@ def _classify(
         )
         return "COMPLETE_ANSWER_ONLY", "ANSWER_DRAFT", "PARTIAL", message, [intent_reason]
     if answer_text is not None:
+        retrieval = state.get("retrieval_result")
+        retrieval_partial = (
+            durable_result is None
+            and isinstance(retrieval, Mapping)
+            and retrieval.get("coverage") == "PARTIAL"
+        )
         result = cast(
             TerminalResultKindV1,
-            "PARTIAL" if intent_result == "PARTIAL" or durable_result == "PARTIAL" else "SUCCESS",
+            "PARTIAL"
+            if intent_result == "PARTIAL" or durable_result == "PARTIAL" or retrieval_partial
+            else "SUCCESS",
         )
         return "COMPLETE_ANSWER_ONLY", "ANSWER_DRAFT", result, answer_text, []
     if action_effect_types and all(item == "READ" for item in action_effect_types):

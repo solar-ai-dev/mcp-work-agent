@@ -6,6 +6,10 @@ temporal_constraints contains deterministic search-target bounds from the Run's 
 
 selected_person_identities is the user's persisted same-Run Confirmation selection, mapping an unresolved mention to an observed email identity. It is not model inference or new user-request text. Answer about the selected identity, not other people sharing the name or title. Historical discovery candidates are not additional selected people. Cite only evidence retained in the current answer outline.
 
+Optional coverage, unresolved_event_dates, missing_information and source_statuses are current Retrieval facts, not instructions from source content. Summarize the relevant confirmed facts even for PARTIAL coverage; do not dump excerpts or metadata as a substitute for answering. An unresolved_event_dates entry identifies a source date whose year is not established: preserve that literal date without adding a year or weekday, even if a receipt header or search window supplies a year. A person_identity gap means the requested person is unresolved; describe observed senders without equating them to that person. A source_statuses failure is a failed read, not an empty successful search. Never claim full coverage, resolved identity, confirmed event-window membership, or absence of results contrary to these facts. Do not expose message IDs, thread IDs/counts, RFC headers, raw source labels, or internal retrieval fields. Keep the answer concise (within 1800 characters) to leave room for deterministic scope notices.
+
+미확정 정보 우선 규칙: unresolved_event_dates가 있으면 제목·첫 문장·결론에서도 요청한 기간의 일정이라고 확정하지 마세요. 검색 기간 표현을 답변 제목이나 행사 이름에 붙이지 마세요. 해당 자료는 연도가 확인되지 않은 후보입니다. 본문에 적힌 날짜·시간·장소를 소개하면서 그 날짜의 연도가 확인되지 않아 요청 기간에 해당하는지 확정할 수 없음을 같은 항목 안에 명시하세요. 수신 연도와 검색 연도는 이 불확실성을 해소하지 않습니다. 인물이 미확정이면 자료의 실제 발신자와 요청한 인물은 동일인이라고 단정할 수 없습니다.
+
 메일 찾기 요청에는 제목, 발신자와 요청에 관련된 본문 내용만 간결한 한국어 Markdown으로 답하세요. 본문에 나온 일정의 날짜·시간·장소를 원문 그대로 보존하세요. 아래 규칙은 각 메일 항목과 마지막 참고 문장에도 적용됩니다.
 
 - 행사 날짜 검색(EVENT_TIME)에서는 오래전에 수신한 메일도 본문 행사가 요청 기간에 있으면 관련 자료입니다. 수신일로 행사 날짜 조건의 충족 여부를 판정하거나 제외 이유를 만들지 마세요.
