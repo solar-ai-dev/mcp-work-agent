@@ -40,7 +40,7 @@ test("loads protected state only after readiness and compatible bootstrap", asyn
   vi.mocked(settingsApi.getSettings).mockResolvedValue({ timezone: "Asia/Seoul", preferred_llm_mode: "API_LLM", preferred_local_model_id: null, external_llm_consent: true } as never);
   vi.mocked(googleApi.getCurrentGoogleAccount).mockResolvedValue({ account: null } as never);
 
-  render(<StartupFlow>{() => <p>workspace</p>}</StartupFlow>);
+  render(<StartupFlow>{(context) => <p>{context.setupCompleted ? "workspace" : "onboarding"}</p>}</StartupFlow>);
 
   expect(await screen.findByText("workspace")).toBeInTheDocument();
   expect(api.bootstrapSession).toHaveBeenCalledWith({ bootstrap_secret: "secret" });

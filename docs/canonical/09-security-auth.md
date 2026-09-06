@@ -1,5 +1,7 @@
 # 09. 보안 · Auth 설계서
 
+로컬 세션 인증은 Core/UI/Conversation/승인 명령의 사용자 인증 경계이며 Google OAuth와 동일하지 않다. 미연결 시 `local-workspace` actor attribution을 사용해도 Connector scope/account/resource, Local API session/CSRF/contract version, Write Approval·Claim·Attempt 검증은 면제되지 않는다. 초기 Connector 연결 부족은 요청 종료 후 재전송이고, 실행 중 만료의 기존 REAUTH_REQUIRED/registered safe resume와 구분한다. 연결 callback에는 Run 자동 재개 권한이 없다.
+
 > **Authority:** security/auth trust boundary, credential/secret handling, security policy realization. Product policy와 interface/runtime semantics는 해당 owner를 따른다.
 
 GitHub Device Flow status projection은 optional `authorization_status` (`PENDING`, `SLOW_DOWN`, `APPROVED`, `EXPIRED`, `DENIED`)와 bounded `detail_code`를 포함한다. user code는 Provider 응답 그대로이며 Client ID는 개발/배포 구성이다. 일반 사용자에게 Client ID/secret/PAT를 요구하지 않는다. Repository 목록은 현재 GitHub App 설치와 user access의 교집합이며 선택은 권한을 확장하지 않는다. 기본 Repository는 계정 ID와 immutable Repository ID에 결속하고 사용 전 현재 접근을 재검증한다. Google/GitHub/Gemini credential authority는 독립적이다.

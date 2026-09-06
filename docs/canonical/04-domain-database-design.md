@@ -102,8 +102,9 @@
 
 불변 조건:
 
-- 현재 DB Schema v1.9에서도 Conversation은 하나의 Google Account에 속한다. 이는 P0 Google Workspace-first 영속 계약이며 Connector-neutral Core의 장기 의미로 승격하지 않는다.
-- `0007/0008`은 Action·ResourceRef의 connector identity를 일반화했지만 Conversation 소유권과 Connector Credential/Account 연결까지 일반화하지는 않았다. 두 번째 Connector가 Conversation-level account ownership을 요구하면 별도 새 Migration으로 확장하며 적용 Migration을 소급 수정하지 않는다.
+- Conversation의 `account_id`는 로컬 세션으로 인증된 사용자 attribution이다. 기존 Google account ID는 보존하며, Google 미연결 시 예약된 `local-workspace` identity를 사용한다. 이는 Provider 계정이나 Credential을 생성하거나 위조하지 않는다.
+- `0022_local_conversation_actor` forward Migration은 Conversation·Approval의 Google Account 필수 FK만 제거한다. Approval의 non-null actor, Action FK, snapshot/hash, version, Claim·Attempt 경계는 유지한다. Connector 접근 권한은 Conversation actor가 아니라 기존 credential/resource identity 검증이 소유한다.
+- 대화 목록은 현재 계정의 기존 대화와 로컬 대화를 함께 조회한다. 계정 연결 후에도 로컬 대화는 유지하며 다른 Google 계정의 목록을 자동 합치지 않는다. 선택 리소스는 API의 session-bound handle/current Connector account 검증을 통과해야 하며, 로컬 Conversation actor를 Provider account로 비교하지 않는다.
 - Conversation당 `finished_at_ms IS NULL`인 Run은 최대 1개다.
 - Message는 Conversation에 속하고 선택적으로 Run을 참조한다.
 
@@ -615,7 +616,7 @@ Connector Provider가 공통 Idempotency Header를 제공한다고 가정하지 
 
 ```
 connector_id
-Conversation owner account identity  # P0: Google account_id
+Conversation actor identity  # 기존 Google account_id 또는 local-workspace; 접근 권한이 아님
 Tool 유형 / Effect
 대상 Resource identity(resource_type + resource_id), 존재하는 경우
 정규화된 제목·핵심 시간/기한·수신자 집합 등 Effect별 business fingerprint
@@ -658,7 +659,7 @@ Conversation·Message·Run·Audit은 `(timestamp_ms, id)` Keyset Cursor를 사�
 ```sql
 SELECT id, title, updated_at_ms
 FROM conversations
-WHERE account_id = :account_id
+WHERE account_id IN (:account_id, 'local-workspace')
   AND (
        updated_at_ms < :cursor_time
        OR (updated_at_ms = :cursor_time AND id < :cursor_id)

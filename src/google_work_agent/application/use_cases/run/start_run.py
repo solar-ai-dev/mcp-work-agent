@@ -24,6 +24,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
 from google_work_agent.domain.audit_event.model import AuditEvent as AuditEventRecord
 from google_work_agent.domain.command_receipt.model import CommandReceipt as CommandReceiptRecord
 from google_work_agent.domain.command_receipt.model import CommandReceiptStatus
+from google_work_agent.domain.conversation.model import LOCAL_WORKSPACE_ACCOUNT_ID
 from google_work_agent.domain.message.model import Message as MessageRecord
 from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceRefRecord
 from google_work_agent.domain.results import ResultCode
@@ -348,7 +349,7 @@ class StartRunHandler:
         selected: list[SelectedResourceRef] = []
         seen: set[tuple[str, str, str]] = set()
         for identity in command.resolved_resource_selections:
-            if identity.account_id != account_id:
+            if account_id != LOCAL_WORKSPACE_ACCOUNT_ID and identity.account_id != account_id:
                 raise ValueError("resolved resource account does not own the conversation")
             key = (identity.connector_id, identity.resource_type, identity.resource_id)
             if key in seen:

@@ -25,13 +25,14 @@ type Props = {
   scopeKey: string;
   accountId: string | null | undefined;
   connected: boolean;
+  onConnect?: () => void;
   timezone: string;
   onProjectionChange: (projection: ResourceBrowserProjection) => void;
 };
 
 const PAGE_SIZE = 20;
 
-export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onProjectionChange }: Props): JSX.Element {
+export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onProjectionChange, onConnect }: Props): JSX.Element {
   const [source, setSource] = useState<ResourceSource>("gmail");
   const [filter, setFilter] = useState("");
   const [focusedItem, setFocusedItem] = useState<ResourceItem | null>(null);
@@ -122,11 +123,12 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
           <div className="resource-tabs" role="tablist" aria-label="자료 종류">
             {(["gmail", "tasks", "calendar"] as ResourceSource[]).map((tab) => <button key={tab} className={`resource-tab ${source === tab ? "selected" : ""}`} type="button" role="tab" aria-selected={source === tab} onClick={() => { setFilter(""); setSource(tab); setParentId(null); setFocusedItem(null); }}><span className="resource-tab-icon" aria-hidden="true">{tabIcon(tab)}</span><span className="resource-tab-label">{tabLabel(tab)}</span>{tab !== "calendar" ? <span className="resource-tab-count">{formatCount(tab === "gmail" ? gmail.count : tasks.count)}</span> : null}</button>)}
           </div>
-          <button className="icon-button" type="button" aria-label="현재 목록 새로고침" title="새로고침" onClick={() => { if (source === "gmail") void gmail.refresh(); else if (source === "tasks") void tasks.refresh(); else void calendar.refresh(); }}>↻</button>
+          <button className="icon-button" type="button" disabled={!connected} aria-label="현재 목록 새로고침" title="새로고침" onClick={() => { if (source === "gmail") void gmail.refresh(); else if (source === "tasks") void tasks.refresh(); else void calendar.refresh(); }}>↻</button>
         </div>
-        {source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: setFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} /> : null}
-        {source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: setFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} /> : null}
-        {source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
+        {!connected ? <div className="info-card"><p>Gmail·Tasks·Calendar를 사용하려면 Google Workspace를 연결하세요.</p><button className="button-primary" type="button" onClick={onConnect}>설정에서 Google 연결</button></div> : null}
+        {connected && source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: setFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} /> : null}
+        {connected && source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: setFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} /> : null}
+        {connected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
       </div>
     </aside>
   );

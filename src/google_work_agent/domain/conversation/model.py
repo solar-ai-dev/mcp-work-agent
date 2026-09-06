@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+LOCAL_WORKSPACE_ACCOUNT_ID = "local-workspace"
+
 
 @dataclass(frozen=True, slots=True)
 class Conversation:

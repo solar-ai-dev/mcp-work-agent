@@ -46,7 +46,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
     openFocusedContainer: () => undefined,
   });
   const conversation = useConversation({
-    currentAccount,
     selectedResourceHandles: resourceProjection.selectedContext.selectionHandles,
     onStatusLine: setStatusLine,
     requestedMode: runtime.runtime_mode.requested_mode,
@@ -90,10 +89,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
       return;
     }
     restoredOpenRunRef.current = true;
-    if (currentAccount === null) {
-      setWorkspaceReady(true);
-      return;
-    }
     void refreshConversations().then(async (items) => {
       const openConversation = items.find((item) => item.open_run_id !== null);
       if (openConversation?.open_run_id) {
@@ -322,6 +317,7 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
           scopeKey={`${runtime.service_instance_id}|${currentAccount?.account_id ?? "disconnected"}`}
           accountId={currentAccount?.account_id}
           connected={google.connection_status === "CONNECTED"}
+          onConnect={() => setSettingsOpen(true)}
           timezone={calendarTimezone}
           onProjectionChange={setResourceProjection}
         />

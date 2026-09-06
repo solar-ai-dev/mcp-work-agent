@@ -122,8 +122,8 @@ export function FirstRunOnboardingScreen({
         {loading ? <p role="status">설정 상태를 확인하고 있습니다.</p> : null}
         {error ? <p className="status-bad" role="alert">{error}</p> : null}
         <ol className="card-list">
-          <ChecklistItem title="Google 로그인과 권한" complete={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}>
-            <p>{google.connection_status === "CONNECTED" ? google.display_email : "Google 계정 연결이 필요합니다."}</p>
+          <ChecklistItem title="Google 로그인과 권한 (선택)" complete={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}>
+            <p>{google.connection_status === "CONNECTED" ? google.display_email : "Gmail·Tasks·Calendar를 사용할 때 연결하세요. 지금은 건너뛸 수 있습니다."}</p>
             {google.connection_status !== "CONNECTED" ? <button className="button-primary" type="button" onClick={onConnectGoogle} disabled={busy}>Google로 로그인</button> : null}
             <button className="button-secondary" type="button" onClick={() => void onRefreshConnections()} disabled={busy}>다시 확인</button>
           </ChecklistItem>
@@ -141,7 +141,8 @@ export function FirstRunOnboardingScreen({
             <button className="button-primary" type="button" onClick={() => void connectLLM()} disabled={busy || !apiKey.trim()}>API 키 저장 후 자동 연결</button>
           </ChecklistItem>
           <ChecklistItem title="시작 준비" complete={false}>
-            <button className="button-primary" type="button" onClick={onComplete} disabled={busy || google.connection_status !== "CONNECTED" || google.missing_required_scopes.length > 0 || !consentSaved || !diagnosticsReady || !llmReady}>설정 완료하고 시작</button>
+            <p>Google 연결은 건너뛸 수 있습니다. Gmail·Tasks·Calendar가 필요할 때 설정에서 연결하세요.</p>
+            <button className="button-primary" type="button" onClick={onComplete} disabled={busy || !consentSaved || !diagnosticsReady || !llmReady}>{google.connection_status === "CONNECTED" ? "설정 완료하고 시작" : "Google 연결 건너뛰고 시작"}</button>
           </ChecklistItem>
         </ol>
       </section>

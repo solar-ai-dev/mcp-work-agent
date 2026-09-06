@@ -150,9 +150,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
           ? apiConfigured
           : apiConfigured || localModelSelected;
       const setupCompleted = Boolean(
-        google.connection_status === "CONNECTED"
-        && google.missing_required_scopes.length === 0
-        && settings.external_llm_consent
+        settings.external_llm_consent
         && llmConfigured,
       );
       setContext({

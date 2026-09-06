@@ -34,6 +34,7 @@ from google_work_agent.application.use_cases.conversation.get_conversation_histo
 from google_work_agent.application.use_cases.conversation.list_conversations import (
     ListConversationsQuery,
 )
+from google_work_agent.domain.conversation.model import LOCAL_WORKSPACE_ACCOUNT_ID
 from google_work_agent.ports.system.api_access_port import EndpointPolicy
 
 router = APIRouter(prefix="/api/v1/conversations")
@@ -48,14 +49,7 @@ def create_conversation(
 ) -> ConversationItemV1:
     enforce_access(request, policy=EndpointPolicy.API_SESSION_REQUIRED)
     enforce_runtime_operation(request, operation="RUN_COMMANDS")
-    account_id = dependencies.current_account_id()
-    if account_id is None:
-        raise ApiRequestError(
-            error_code="AUTH_REQUIRED",
-            user_message="Google account connection is required.",
-            status_code=401,
-            request_id=request.state.request_id,
-        )
+    account_id = dependencies.current_account_id() or LOCAL_WORKSPACE_ACCOUNT_ID
     request_payload = payload.model_dump()
     result = dependencies.create_conversation_handler(
         CreateConversationCommand(
@@ -93,14 +87,7 @@ def list_conversations(
         request_id=request.state.request_id,
         request_version=x_api_contract_version,
     )
-    account_id = dependencies.current_account_id()
-    if account_id is None:
-        raise ApiRequestError(
-            error_code="AUTH_REQUIRED",
-            user_message="Google 계정 연결이 필요합니다.",
-            status_code=401,
-            request_id=request.state.request_id,
-        )
+    account_id = dependencies.current_account_id() or LOCAL_WORKSPACE_ACCOUNT_ID
     result = dependencies.list_conversations_handler(
         ListConversationsQuery(
             account_id=account_id,

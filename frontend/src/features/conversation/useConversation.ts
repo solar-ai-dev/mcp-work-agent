@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from "react";
-import type { CurrentGoogleAccount } from "../settings";
 import { useActionPlanCommands } from "../approval";
 import { useRecoveryCommands } from "../recovery";
 import { useRequestComposerController, useRunProjection, useStableCommandIds } from "../run";
@@ -9,13 +8,12 @@ import { useConversationHistoryProjection } from "./conversation_history_panel";
 export type { PendingConfirmation } from "../run";
 
 type UseConversationOptions = {
-  currentAccount: CurrentGoogleAccount["account"];
   selectedResourceHandles: string[];
   onStatusLine: (message: string) => void;
   requestedMode: "AUTO" | "LOCAL_GPU" | "API_LLM";
 };
 
-export function useConversation({ currentAccount, selectedResourceHandles, onStatusLine, requestedMode }: UseConversationOptions) {
+export function useConversation({ selectedResourceHandles, onStatusLine, requestedMode }: UseConversationOptions) {
   const [busyCommand, setBusyCommand] = useState<string | null>(null);
   const resetRunProjectionRef = useRef<() => void>(() => undefined);
   const onResetProjection = useCallback(() => resetRunProjectionRef.current(), []);
@@ -38,7 +36,6 @@ export function useConversation({ currentAccount, selectedResourceHandles, onSta
   resetRunProjectionRef.current = run.resetRunProjection;
 
   const composer = useRequestComposerController({
-    currentAccountId: currentAccount?.account_id ?? null,
     selectedConversationId: history.selectedConversationId,
     selectedResourceHandles,
     busyCommand,
@@ -56,7 +53,6 @@ export function useConversation({ currentAccount, selectedResourceHandles, onSta
   });
   const actionCommands = useActionPlanCommands({
     runSnapshot: run.runSnapshot,
-    currentAccountId: currentAccount?.account_id ?? null,
     busyCommand,
     setBusyCommand,
     commandIdFor,

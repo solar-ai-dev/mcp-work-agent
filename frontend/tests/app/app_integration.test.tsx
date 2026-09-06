@@ -1056,7 +1056,7 @@ test("starts Google OAuth from the disconnected status action", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "Google로 로그인" }));
+  await user.click(await screen.findByRole("button", { name: "Google 연결", exact: true }));
 
   expect(window.open).toHaveBeenCalledOnce();
   const [openedUrl, target, features] = vi.mocked(window.open).mock.calls[0];
@@ -1112,7 +1112,7 @@ test("does not open an unexpected authorization URL returned by the API", async 
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "Google로 로그인" }));
+  await user.click(await screen.findByRole("button", { name: "Google 연결", exact: true }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/v1/connections/google/start",
@@ -3142,8 +3142,8 @@ test("loads the account after Google connection provisioning and retries one ini
   );
 });
 
-test("shows a visible error and does not start a run when no current account is available", async () => {
-  const requests = installUiContractFetch({ accountResponses: [null, null] });
+test("starts a local request without a Google account", async () => {
+  const requests = installUiContractFetch({ accountResponses: [null, null], run: false });
   const user = userEvent.setup();
   render(<App />);
 
@@ -3151,9 +3151,8 @@ test("shows a visible error and does not start a run when no current account is 
   await user.type(document.querySelector("textarea.composer") as HTMLTextAreaElement, "계정 없는 실행");
   await user.click(screen.getByRole("button", { name: "보내기" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("현재 연결된 계정 정보를 찾지 못했습니다.");
-  expect(requests.some((request) => request.path === "/api/v1/conversations" && request.init?.method === "POST")).toBe(false);
-  expect(requests.some((request) => request.path === "/api/v1/runs" && request.init?.method === "POST")).toBe(false);
+  await waitFor(() => expect(requests.some((request) => request.path === "/api/v1/runs" && request.init?.method === "POST")).toBe(true));
+  expect(requests.some((request) => request.path === "/api/v1/conversations" && request.init?.method === "POST")).toBe(true);
 });
 
 test("shows a visible error and releases the composer when conversation creation fails", async () => {

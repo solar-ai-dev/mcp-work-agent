@@ -37,7 +37,6 @@ export async function submitNewRun(input: SubmitNewRunInput): Promise<SubmitNewR
 }
 
 type RequestComposerControllerOptions = {
-  currentAccountId: string | null;
   selectedConversationId: string | null;
   selectedResourceHandles: string[];
   busyCommand: string | null;
@@ -61,12 +60,6 @@ export function useRequestComposerController(options: RequestComposerControllerO
   useEffect(() => setComposerError(null), [options.selectedConversationId]);
 
   const handleStartRun = useCallback(async (quickPrompt?: string): Promise<void> => {
-    if (!options.currentAccountId) {
-      const message = "현재 연결된 계정 정보를 찾지 못했습니다.";
-      options.onStatusLine(message);
-      setComposerError(message);
-      return;
-    }
     const requestText = quickPrompt ?? composerText;
     if (!requestText.trim() || options.busyCommand) return;
     options.setBusyCommand("start-run");

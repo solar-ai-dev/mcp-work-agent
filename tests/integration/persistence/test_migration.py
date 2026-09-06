@@ -152,6 +152,7 @@ def test_runtime_and__documentation_expose__identical_forward_migrations() -> No
         (19, "legacy_v18_adoption"),
         (20, "github_resource_registration"),
         (21, "run_repository_default"),
+        (22, "local_conversation_actor"),
     ]
     assert migrations[0].checksum == calculate_migration_checksum(runtime)
 
@@ -165,6 +166,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
             (19, "legacy_v18_adoption", True),
             (20, "github_resource_registration", True),
             (21, "run_repository_default", True),
+            (22, "local_conversation_actor", True),
         ]
         tables = {
             str(row[0])
@@ -189,7 +191,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
         assert connection.execute("PRAGMA foreign_key_check;").fetchall() == []
 
         replay = apply_migrations(connection, now_ms=lambda: 999)
-        assert len(replay) == 4
+        assert len(replay) == 5
         assert all(result.applied is False for result in replay)
         receipt = connection.execute(
             "SELECT version, name, applied_at_ms FROM schema_migrations;"
@@ -378,6 +380,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
             (19, True),
             (20, True),
             (21, True),
+            (22, True),
         ]
         assert (
             connection.execute(
@@ -388,7 +391,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
         receipts = connection.execute(
             "SELECT version, name, checksum FROM schema_migrations ORDER BY version;"
         ).fetchall()
-        assert [int(row[0]) for row in receipts] == [*range(1, 22)]
+        assert [int(row[0]) for row in receipts] == [*range(1, 23)]
     finally:
         connection.close()
 
