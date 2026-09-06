@@ -336,7 +336,7 @@ def _resources(plan: SourceFetchPlanV1, result: ConnectorReadResultV1) -> list[d
                     ),
                     "resource_type": "calendar_freebusy",
                     "resource_id": calendar_id,
-                    "parent_id": None,
+                    "parent_id": calendar_id,
                     "version": plan["query_identity_hash"],
                     "related_resource_ids": [],
                     "connector_id": plan["connector_id"],

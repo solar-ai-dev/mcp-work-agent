@@ -70,7 +70,13 @@ def build_expected_verification_projection(
         return {"payload": task_expected_payload}
     if tool_name in {"calendar_create_event", "calendar_update_event"}:
         payload = _mapping(args.get("payload"), "payload")
-        event_expected_payload: dict[str, object] = {}
+        event_expected_payload: dict[str, object] = {
+            "parent_id": _required_string(args, "calendar_id"),
+        }
+        if tool_name == "calendar_create_event":
+            event_expected_payload.update({
+                "description": "", "attendees": [], "status": "confirmed",
+            })
         # Calendar GET exposes these approved fields. Missing or altered values
         # must fail comparison, including lost attendees or description.
         for argument_name in ("title", "start", "end", "description", "attendees"):
@@ -159,6 +165,8 @@ def normalize_actual_verification_projection(
         description = payload.get("description")
         if isinstance(description, str):
             payload["description"] = strip_resource_recovery_marker(description)
+        elif "description" in payload and description is None:
+            payload["description"] = ""
         attendees = payload.get("attendees")
         if isinstance(attendees, list):
             payload["attendees"] = sorted(str(item) for item in attendees)
@@ -175,7 +183,6 @@ def _canonical_calendar_instant(value: str) -> str:
         return value
     return (
         parsed.astimezone(UTC)
-        .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
     )

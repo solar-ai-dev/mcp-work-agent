@@ -12,11 +12,35 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
 )
 from google_work_agent.application.use_cases.verification.write_verification_projection import (
     build_expected_verification_projection,
+    normalize_actual_verification_projection,
 )
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
+
+
+def test_calendar_instants__subsecond_difference__is_not_erased() -> None:
+    first = normalize_actual_verification_projection(
+        tool_name="calendar_create_event",
+        actual={"payload": {"start": "2026-09-10T10:00:00+09:00"}},
+    )
+    second = normalize_actual_verification_projection(
+        tool_name="calendar_create_event",
+        actual={"payload": {"start": "2026-09-10T01:00:00.900Z"}},
+    )
+    assert first != second
+
+
+def test_calendar_create__unspecified_optional_fields__verifies_their_absence() -> None:
+    expected = build_expected_verification_projection(
+        tool_name="calendar_create_event",
+        arguments={"calendar_id": "calendar-1", "payload": {"title": "검토"}},
+    )
+    assert expected["payload"] == {
+        "title": "검토", "parent_id": "calendar-1", "status": "confirmed",
+        "description": "", "attendees": [],
+    }
 
 
 @dataclass

@@ -943,6 +943,8 @@ gmail_search_threads→gmail_thread; gmail_get_thread→gmail_thread; gmail_get_
 gmail_create_draft→gmail_draft; gmail_update_draft→gmail_draft; gmail_get_draft→gmail_draft; gmail_send→gmail_message
 tasks_list_tasklists→task_list; tasks_list_tasks→task; tasks_get_task→task; tasks_create_task→task; tasks_update_task→task; tasks_delete_task→task
 calendar_list_calendars→calendar; calendar_list_events→calendar_event; calendar_query_freebusy→calendar_freebusy; calendar_get_event→calendar_event
+
+FreeBusy의 Run-local acquisition projection은 조회 Calendar를 `parent_id`로 보존한다. `busy_intervals`와 조회 범위는 동일 Calendar의 conflict/feasibility consumer가 함께 소비하며 durable Event identity로 승격하지 않는다. Provider 응답의 Calendar별 오류·대상 누락·잘못된 busy 목록은 성공한 빈 목록이 아니라 조회 실패다.
 calendar_create_event→calendar_event; calendar_update_event→calendar_event; calendar_delete_event→calendar_event
 ```
 

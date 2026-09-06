@@ -43,7 +43,7 @@ class _CalendarRead:
                     "resource_id": "event-1",
                     "parent_id": "calendar-1",
                     "title": "Focus",
-                    "start": "2026-08-20T00:00:00.900Z",
+                    "start": "2026-08-20T00:00:00Z",
                     "end": "2026-08-20T01:00:00Z",
                     **self._extra_fields,
                 }
@@ -141,6 +141,8 @@ def test_calendar_expected_preserves__approved_description__and_attendees() -> N
     assert expected == {
         "payload": {
             "title": "Focus",
+            "parent_id": "calendar-1",
+            "status": "confirmed",
             "start": "2026-08-20T09:00:00+09:00",
             "end": "2026-08-20T10:00:00+09:00",
             "description": "Deep work",

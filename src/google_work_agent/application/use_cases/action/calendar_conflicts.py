@@ -355,7 +355,7 @@ def calendar_freebusy_intervals(
 def _freebusy_payload_intervals(payload: Mapping[str, object]) -> list[CalendarInterval]:
     values = payload.get("busy_intervals")
     if not isinstance(values, list):
-        return []
+        raise PolicyViolationError("calendar freebusy evidence is malformed")
     result: list[CalendarInterval] = []
     for value in values:
         if not isinstance(value, dict):

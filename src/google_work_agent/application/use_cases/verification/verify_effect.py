@@ -118,7 +118,10 @@ class VerifyEffectHandler:
                 dict[str, object],
                 loads(
                     approval.arguments_snapshot_json
-                    if action.tool_name in {"tasks_create_task", "tasks_update_task"}
+                    if action.tool_name in {
+                        "tasks_create_task", "tasks_update_task",
+                        "calendar_create_event", "calendar_update_event",
+                    }
                     else action.arguments_json
                 ),
             ),
@@ -230,7 +233,9 @@ class VerifyEffectHandler:
             query.expected_effect,
             normalizer_tool_name=normalizer_tool_name,
         )
-        if normalizer_tool_name == "tasks_update_task" and query.target_resource_ref is not None:
+        if normalizer_tool_name in {
+            "tasks_update_task", "calendar_update_event",
+        } and query.target_resource_ref is not None:
             expected = {**expected, "resource_id": query.target_resource_ref.resource_id}
         diffs = calculate_verification_subset_diff(expected, actual)
         return VerificationResultV1(
@@ -261,24 +266,15 @@ class VerifyEffectHandler:
                     dict[str, object],
                     loads(
                         binding.approval.arguments_snapshot_json
-                        if action.tool_name in {"tasks_create_task", "tasks_update_task"}
+                        if action.tool_name in {
+                            "tasks_create_task", "tasks_update_task",
+                            "calendar_create_event", "calendar_update_event",
+                        }
                         else action.arguments_json
                     ),
                 ),
                 cast(dict[str, object], loads(action.expected_json)),
             )
-            if action.tool_name in {"calendar_create_event", "calendar_update_event"}:
-                required_expected = build_expected_verification_projection(
-                    tool_name=action.tool_name,
-                    arguments=loads(action.arguments_json),
-                )
-                if calculate_verification_subset_diff(
-                    _business_expected(required_expected, normalizer_tool_name=action.tool_name),
-                    _business_expected(expected, normalizer_tool_name=action.tool_name),
-                ):
-                    raise ValueError(
-                        "persisted Calendar expectation does not cover approved arguments"
-                    )
             if action.effect_type == "SEND":
                 expected = {
                     **expected,
@@ -376,6 +372,8 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
         # A complete Task snapshot may omit absent optional Provider fields.
         # Do not add these defaults to a partial UPDATE expectation.
         business = {"notes": "", "due": None, **business}
+    if normalizer_tool_name == "calendar_update_event" and "resource_id" in actual:
+        business = {"description": "", "attendees": [], **business}
     if normalizer_tool_name == "github_update_issue":
         description = business.get("description")
         if isinstance(description, str):
@@ -423,7 +421,9 @@ def _persisted_expected_effect(
     arguments: dict[str, object],
     fallback: dict[str, object],
 ) -> dict[str, object]:
-    if tool_name in {"tasks_create_task", "tasks_update_task"}:
+    if tool_name in {
+        "tasks_create_task", "tasks_update_task", "calendar_create_event", "calendar_update_event",
+    }:
         return build_expected_verification_projection(tool_name=tool_name, arguments=arguments)
     if tool_name in {"github_create_issue", "github_update_issue"}:
         return {key: arguments[key] for key in ("title", "body") if key in arguments}

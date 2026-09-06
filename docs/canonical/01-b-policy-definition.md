@@ -418,6 +418,8 @@ System Policy, 사용자 요청, Source Context를 Prompt에서 명확히 분리
 
 Task CREATE의 비교 범위는 승인한 Task List, 제목, 메모, 예정일, 완료 상태이며 메모·예정일을 지정하지 않은 경우도 그 부재를 확인한다. 별도의 승인된 상태 변경이 없으면 새 Task의 상태는 미완료여야 한다. 재조회한 Task identity는 실행 결과의 ResourceRef와 일치해야 한다. 기존 persisted expected가 일부 필드를 생략했더라도 비교를 생략하지 않고 immutable Approval arguments에서 동일한 deterministic expected projection을 도출한다. Provider actual은 expected 도출에 사용하지 않는다. Task UPDATE는 대상 identity와 승인한 변경 필드만 비교한다.
 
+Calendar CREATE도 immutable Approval arguments에서 대상 Calendar, 제목, 시작·종료, description, attendees의 expected를 도출한다. 생략한 description과 attendees는 각각 빈 내용·빈 목록으로 비교하고, 생성 결과는 취소되지 않은 confirmed Event여야 한다. 재조회 Event identity는 실행 결과 ResourceRef와 일치해야 한다. Calendar UPDATE는 대상 identity와 승인한 변경 필드만 비교한다. 시간대 표기가 달라도 같은 instant는 같지만 서로 다른 instant를 같은 값으로 취급하지 않는다.
+
 ### POL-VER-003 불일치 처리
 
 Mismatch를 자동 수정하지 않고 사용자에게 차이와 Recovery Action을 보여준다. `MISMATCH` Action과 Verification 사실은 변경하지 않으며 Run은 `RECOVERY_REQUIRED`로 전환한다.

@@ -260,7 +260,10 @@ def test_legacy_calendar_expectation__cannot_skip_approved_fields__before_verifi
     )
     unit_of_work = _UnitOfWork(
         action=action,
-        approval=_approval(),
+        approval=replace(_approval(), arguments_snapshot_json=dumps({
+            "calendar_id": "calendar-1",
+            "payload": {"title": "Review", "attendees": ["a@example.com"]},
+        })),
         attempt=_attempt(ExecutionAttemptStatusV1.SUCCEEDED),
     )
     handler = VerifyEffectHandler(
@@ -269,7 +272,7 @@ def test_legacy_calendar_expectation__cannot_skip_approved_fields__before_verifi
         unit_of_work_factory=cast(Any, lambda: unit_of_work),
     )
 
-    with pytest.raises(ValueError, match="does not cover approved arguments"):
+    with pytest.raises(ValueError, match="does not match persisted execution binding"):
         handler(
             VerifyEffectQueryV1(
                 "run-1",

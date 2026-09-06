@@ -26,7 +26,26 @@ def _calendar_query_freebusy(
             "items": [{"id": calendar_id} for calendar_id in calendar_ids],
         },
     )
-    calendars = workspace_support.cast(dict[str, object], payload.get("calendars") or {})
+    calendars = payload.get("calendars")
+    if not isinstance(calendars, dict):
+        raise workspace_support._WorkspaceToolError("GOOGLE_REQUEST_FAILED")
+    for calendar_id in calendar_ids:
+        calendar = calendars.get(calendar_id)
+        if not isinstance(calendar, dict):
+            raise workspace_support._WorkspaceToolError("GOOGLE_REQUEST_FAILED")
+        errors = calendar.get("errors")
+        if errors:
+            reasons = (
+                {error.get("reason") for error in errors if isinstance(error, dict)}
+                if isinstance(errors, list)
+                else set()
+            )
+            raise workspace_support._WorkspaceToolError(
+                "NOT_FOUND" if "notFound" in reasons else "GOOGLE_REQUEST_FAILED"
+            )
+        busy = calendar.get("busy")
+        if not isinstance(busy, list) or any(not isinstance(item, dict) for item in busy):
+            raise workspace_support._WorkspaceToolError("GOOGLE_REQUEST_FAILED")
     return {
         "calendars": [
             {

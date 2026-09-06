@@ -11,11 +11,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+from google_work_agent.adapters.connectors.google.calendar.events.create_event import (
+    _calendar_create_body,
+)
 from google_work_agent.adapters.connectors.google.workspace.mcp_server import project_registry
 from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
     validate_claim_context as claim_context_validation,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    _event_snapshot,
     _task_snapshot,
     _task_write_body,
     _WorkspaceToolError,
@@ -112,7 +116,9 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
             },
         )
     event: dict[str, object] = {"tool_name": tool_name, "arguments": arguments}
-    if tool_name == "tasks_create_task" and _load_state().get("task_fixture_mode"):
+    if tool_name in {"tasks_create_task", "calendar_create_event"} and (
+        _load_state().get("task_fixture_mode") or _load_state().get("calendar_fixture_mode")
+    ):
         claim = cast(dict[str, object], arguments["claim_context"])
         database = _state_root().parent / "data/google_work_agent.db"
         with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
@@ -134,7 +140,7 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
             )
         if not event["begin_committed_before_write"]:
             raise AssertionError(
-                "Task Write reached Provider before committed BeginExecutionAttempt"
+                "Write reached Provider before committed BeginExecutionAttempt"
             )
     _append_event(event)
     payload = _tool_payload(tool_name, arguments)
@@ -245,9 +251,11 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         return {"items": items}
     if tool_name == "calendar_query_freebusy":
         _save_state(state)
+        if state.get("calendar_read_failure") == tool_name:
+            raise _ExternalFailure("PERMISSION_DENIED", "NOT_SENT")
         return {
             "calendars": [
-                {"calendar_id": item, "intervals": []}
+                {"calendar_id": item, "intervals": state.get("calendar_busy_intervals", [])}
                 for item in cast(list[str], arguments["calendar_ids"])
             ]
         }
@@ -258,6 +266,11 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         "calendar_list_calendars",
         "calendar_list_events",
     }:
+        if state.get("calendar_fixture_mode") and tool_name == "calendar_list_events":
+            _save_state(state)
+            if state.get("calendar_read_failure") == tool_name:
+                raise _ExternalFailure("PERMISSION_DENIED", "NOT_SENT")
+            return {"items": state.get("calendar_existing_events", []), "next_page_token": None}
         if tool_name == "tasks_list_tasklists" and state.get("task_list_snapshot"):
             _save_state(state)
             return {"items": [state["task_list_snapshot"]], "next_page_token": None}
@@ -316,14 +329,22 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         item_failure_mode = _failure_mode(
             {"payload": cast(dict[str, object], read_item.get("payload") or {})}
         )
-        if tool_name == "tasks_get_task" and state.get("task_verification_mutation"):
-            mutation = cast(dict[str, object], state["task_verification_mutation"])
+        mutation_key = (
+            "calendar_verification_mutation" if tool_name == "calendar_get_event"
+            else "task_verification_mutation"
+        )
+        if tool_name in {"tasks_get_task", "calendar_get_event"} and state.get(mutation_key):
+            mutation = cast(dict[str, object], state[mutation_key])
             read_item = {
                 **read_item,
+                "resource_id": mutation.get("resource_id", read_item["resource_id"]),
                 "parent_id": mutation.get("parent_id", read_item["parent_id"]),
                 "payload": {
                     **cast(dict[str, object], read_item["payload"]),
-                    **{key: value for key, value in mutation.items() if key != "parent_id"},
+                    **{
+                        key: value for key, value in mutation.items()
+                        if key not in {"parent_id", "resource_id"}
+                    },
                 },
             }
         if item_failure_mode == "VERIFICATION_MISMATCH" or (
@@ -403,6 +424,13 @@ def _write_fixture(
         resource_type = "calendar_event"
         resource_id = str(arguments.get("event_id") or f"event-write-{count}")
         parent_id = str(arguments.get("calendar_id", "calendar-e2e"))
+        if tool_name == "calendar_create_event":
+            return {
+                **_event_snapshot({
+                    "id": resource_id, "status": "confirmed", **_calendar_create_body(payload),
+                }, parent_id),
+                "recovery_fingerprint": fingerprint,
+            }
     elif "draft" in tool_name:
         resource_type = "gmail_draft"
         resource_id = str(arguments.get("draft_id") or f"draft-write-{count}")

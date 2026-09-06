@@ -16,7 +16,41 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
 
 
-def test_failed_read__survives_cache_hydration__without_becoming_empty_success():
+def test_freebusy_projection__checkpoint_sanitization__preserves_calendar_ownership() -> None:
+    from google_work_agent.application.use_cases.action.calendar_conflict_policy import (
+        CalendarWorkHours,
+    )
+    from google_work_agent.application.use_cases.action.calendar_conflicts import (
+        evidence_calendar_conflict_risk,
+    )
+
+    plan = cast(SourceFetchPlanV1, {
+        "route_id": "freebusy-route", "connector_id": "google_workspace",
+        "resource_type": "CALENDAR_FREEBUSY", "query_identity_hash": "a" * 64,
+        "effective_constraints": [{
+            "kind": "TEMPORAL_RANGE", "axis": "AVAILABILITY_WINDOW",
+            "start_local": "2026-09-10T10:00:00", "end_local": "2026-09-10T11:00:00",
+            "timezone": "Asia/Seoul",
+        }],
+    })
+    result = ConnectorReadResultV1(1, "calendar_query_freebusy", "request", {
+        "calendars": [{"calendar_id": "calendar-1", "intervals": [{
+            "start": "2026-09-10T01:00:00Z", "end": "2026-09-10T02:00:00Z", "transparency": "busy",
+        }]}],
+    }, None, 0)
+    acquisition = execute_read_projection.sanitize_acquisition_result(
+        execute_read_projection.project_acquisition_result([(plan, result)], remaining_budget={}),
+    )
+    risk = evidence_calendar_conflict_risk(
+        arguments={"calendar_id": "calendar-1", "payload": {
+            "start": "2026-09-10T10:00:00+09:00", "end": "2026-09-10T11:00:00+09:00",
+        }}, acquisition_result=acquisition, checked_at_ms=123,
+        work_hours=CalendarWorkHours(timezone="Asia/Seoul"),
+    )
+    assert cast(dict[str, object], risk["calendar_conflict"])["decision"] == "HARD_CONFLICT"
+
+
+def test_failed_read__survives_cache_hydration__without_becoming_empty_success() -> None:
     failed_plan = cast(SourceFetchPlanV1, {
         "route_id": "failed-route", "connector_id": "github", "resource_type": "GITHUB_ISSUE",
     })

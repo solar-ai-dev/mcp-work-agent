@@ -24,6 +24,7 @@ class LangGraphE2EGeminiTransport:
     crash_prompt_id: str | None = None
     crash_scenario: str | None = None
     task_payload: dict[str, object] | None = None
+    calendar_payload: dict[str, object] | None = None
     _scenario_prompt_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def probe(self, *, api_key: str, timeout_seconds: int) -> ProbeResult:
@@ -92,6 +93,39 @@ class LangGraphE2EGeminiTransport:
                 route = cast(Mapping[str, object], base["output_route"])
                 if route["resource_type"] == "TASK":
                     output["arguments"] = {"payload": dict(self.task_payload)}
+        if self.calendar_payload is not None:
+            base = _base_projection(prompt_input)
+            if (
+                prompt_id == "request_understanding.identify_goal"
+                and scenario != "MAIL_CALENDAR_CREATE"
+            ):
+                output["constraints"] = [
+                    {"kind": "RESOURCE", "field": name, "value": value}
+                    for name, value in self.calendar_payload.items() if value != ""
+                ]
+            if prompt_id == "planning.compose_arguments_per_output_route":
+                output["arguments"] = {"payload": dict(self.calendar_payload)}
+            if prompt_id == "retrieval.plan_query":
+                queries = []
+                for route in cast(list[Mapping[str, object]], base["input_routes"]):
+                    query = _route_query(route)
+                    if "calendar_query_freebusy" in cast(list[str], route["allowed_read_tool_ids"]):
+                        query["operation"] = "FREEBUSY"
+                    if str(route["resource_type"]).startswith("CALENDAR"):
+                        spec = cast(dict[str, object], query["search_spec"])
+                        cast(list[object], spec["constraints"]).append({
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": (
+                                "AVAILABILITY_WINDOW"
+                                if query["operation"] == "FREEBUSY" else "EVENT_TIME"
+                            ),
+                            "start_local": str(self.calendar_payload["start"])[:19],
+                            "end_local": str(self.calendar_payload["end"])[:19],
+                            "timezone": "Asia/Seoul",
+                        })
+                    queries.append(query)
+                output["route_queries"] = queries
+                output["retrieval_order"] = [q["route_id"] for q in queries]
         return ProviderResponsePayload(
             content=json.dumps(output, sort_keys=True),
             model=model_id,
@@ -121,14 +155,16 @@ def _respond(
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
     if prompt_id == "request_understanding.detect_ambiguity":
-        needs_confirmation = scenario == "RESTART_RESUME" and not isinstance(
-            base.get("confirmation_response"), Mapping
+        needs_confirmation = (
+            scenario in {"RESTART_RESUME", "CALENDAR_CONFIRMATION"}
+            and not isinstance(base.get("confirmation_response"), Mapping)
         )
         return {
             "requires_confirmation": needs_confirmation,
             "missing_information_owner": "USER" if needs_confirmation else "NONE",
             "reason_codes": ["MISSING_USER_CHOICE"] if needs_confirmation else [],
-            "missing_fields": ["target"] if needs_confirmation else [],
+            "missing_fields": ["attendee" if scenario == "CALENDAR_CONFIRMATION" else "target"]
+            if needs_confirmation else [],
         }
     if prompt_id == "tool_routing.determine_io_resources":
         inputs, outputs, effects = _route_semantics(scenario)
@@ -154,7 +190,10 @@ def _respond(
         }
     if prompt_id == "retrieval.plan_query":
         routes = cast(list[Mapping[str, object]], base["input_routes"])
-        searchable_routes = [route for route in routes if _has_search_tool(route)]
+        searchable_routes = [
+            route for route in routes if _has_search_tool(route)
+            or "calendar_query_freebusy" in cast(list[str], route["allowed_read_tool_ids"])
+        ]
         is_followup = "current_round_no" in base
         planned_routes = (
             [route for route in searchable_routes if _supports_keyword_expansion(route)]
@@ -162,6 +201,16 @@ def _respond(
             else searchable_routes
         )
         route_queries = [_route_query(route, is_followup=is_followup) for route in planned_routes]
+        if not is_followup:
+            for route, query in zip(planned_routes, route_queries, strict=True):
+                if "calendar_query_freebusy" in cast(list[str], route["allowed_read_tool_ids"]):
+                    query["operation"] = "FREEBUSY"
+                    spec = cast(dict[str, object], query["search_spec"])
+                    cast(list[object], spec["constraints"]).append({
+                        "kind": "TEMPORAL_RANGE", "axis": "AVAILABILITY_WINDOW",
+                        "start_local": "2026-09-03T09:00:00",
+                        "end_local": "2026-09-03T10:00:00", "timezone": "Asia/Seoul",
+                    })
         route_ids = [str(route["route_id"]) for route in planned_routes]
         return {
             "schema_version": 2,
@@ -278,6 +327,8 @@ def _base_projection(prompt_input: Mapping[str, object]) -> Mapping[str, object]
 def _scenario(value: object) -> str:
     serialized = json.dumps(value, sort_keys=True, default=str).upper()
     for scenario in (
+        "MAIL_CALENDAR_CREATE",
+        "CALENDAR_CONFIRMATION",
         "MAIL_TASK_CREATE",
         "EVIDENCE_BACK_EDGE",
         "ANALYTICAL_READ",
@@ -337,6 +388,8 @@ def _resource_hints(scenario: str) -> list[str]:
 
 
 def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:
+    if scenario == "MAIL_CALENDAR_CREATE":
+        return ["EMAIL"], ["CALENDAR"], ["CREATE"]
     if scenario == "ANSWER_ONLY":
         return [], [], []
     if scenario in {"GMAIL_READ", "ANALYTICAL_READ"}:
@@ -349,7 +402,7 @@ def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:
         return ["TASK", "CALENDAR"], ["TASK", "CALENDAR"], ["CREATE", "CREATE"]
     if scenario in {"EVIDENCE_BACK_EDGE", "CONTEXT_ADJUSTMENT", "MAIL_TASK_CREATE"}:
         return ["EMAIL"], ["TASK"], ["CREATE"]
-    if scenario in {"CALENDAR_WRITE", "VERIFICATION_MISMATCH", "RECOVERY"}:
+    if scenario in {"CALENDAR_WRITE", "CALENDAR_CONFIRMATION", "VERIFICATION_MISMATCH", "RECOVERY"}:
         return ["CALENDAR"], ["CALENDAR"], ["CREATE"]
     return ["TASK"], ["TASK"], ["CREATE"]
 

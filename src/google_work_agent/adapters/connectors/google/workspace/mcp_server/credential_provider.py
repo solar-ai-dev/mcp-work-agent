@@ -693,7 +693,9 @@ def _event_snapshot(item: dict[str, object], calendar_id: str) -> dict[str, obje
             or "UTC",
             "attendees": attendees,
             "location": _optional_text(item.get("location")),
-            "description": _optional_text(item.get("description")),
+            "description": (
+                item.get("description") if isinstance(item.get("description"), str) else None
+            ),
         },
     )
 
