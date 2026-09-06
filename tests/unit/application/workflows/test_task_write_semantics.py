@@ -43,6 +43,21 @@ def test_scheduled_date_maps__to_google_due__at_provider_boundary() -> None:
     }
 
 
+@pytest.mark.parametrize("notes", ["", "  메모\n두 번째 줄  \n"])
+def test_approved_notes__provider_mapping__preserves_exact_text(notes: str) -> None:
+    assert server._task_write_body({"title": "보고서", "notes": notes}, title_required=True) == {
+        "title": "보고서",
+        "notes": notes,
+    }
+    snapshot = server._task_snapshot(
+        {"id": "task-1", "title": "  보고서  ", "notes": notes}, "list-1"
+    )
+    observed = snapshot["payload"]
+    assert isinstance(observed, dict)
+    assert observed["notes"] == notes
+    assert observed["title"] == "  보고서  "
+
+
 @pytest.mark.parametrize("value", ["2026-02-30", "20260907", "2026-09-07T14:00:00+09:00"])
 def test_scheduled_date__invalid__rejects_before_provider_write(value: str) -> None:
     with pytest.raises(server._WorkspaceToolError, match="INVALID_ARGUMENT"):

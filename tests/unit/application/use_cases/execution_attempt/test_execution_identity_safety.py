@@ -270,12 +270,63 @@ def test_legacy_calendar_expectation__cannot_skip_approved_fields__before_verifi
     )
 
     with pytest.raises(ValueError, match="does not cover approved arguments"):
-        handler(VerifyEffectQueryV1(
-            "run-1", "action-1", "attempt-1", "CREATE", {"payload": {"title": "Review"}}, None,
-        ))
+        handler(
+            VerifyEffectQueryV1(
+                "run-1",
+                "action-1",
+                "attempt-1",
+                "CREATE",
+                {"payload": {"title": "Review"}},
+                None,
+            )
+        )
 
     assert connector.calls == 0
     assert unit_of_work.commit_calls == 0
+
+
+def test_task_legacy_expectation__rebuilds_from_approval__without_mutable_action_values() -> None:
+    approved = {
+        "task_list_id": "list-approved",
+        "payload": {
+            "title": "승인 제목",
+            "notes": "승인 메모",
+            "scheduled_date": "2026-09-08",
+        },
+    }
+    unit_of_work = _UnitOfWork(
+        action=replace(
+            _action(ActionStatusV1.EXECUTED),
+            arguments_json=dumps({"payload": {"title": "변경된 값"}}),
+            expected_json=dumps({"payload": {"title": "승인 제목"}}),
+        ),
+        approval=replace(_approval(), arguments_snapshot_json=dumps(approved)),
+        attempt=_attempt(ExecutionAttemptStatusV1.SUCCEEDED),
+    )
+    connector = _ConnectorRead()
+    handler = VerifyEffectHandler(
+        connector_read=cast(Any, connector),
+        tool_registry=load_signed_tool_registry(),
+        unit_of_work_factory=cast(Any, lambda: unit_of_work),
+        resolve_resource_ref=cast(Any, object()),
+    )
+    projected = handler.project_persisted_query(
+        run_id="run-1",
+        action_id="action-1",
+        execution_attempt_id="attempt-1",
+    )
+    assert projected.expected_effect == {
+        "payload": {
+            "parent_id": "list-approved",
+            "status": "needsAction",
+            "title": "승인 제목",
+            "notes": "승인 메모",
+            "due": "2026-09-08",
+        }
+    }
+    with pytest.raises(ValueError, match="does not match persisted execution binding"):
+        handler(replace(projected, expected_effect={"payload": {"title": "승인 제목"}}))
+    assert connector.calls == 0
 
 
 def test_begin_verification__rejects_stale__attempt_before_mutation() -> None:

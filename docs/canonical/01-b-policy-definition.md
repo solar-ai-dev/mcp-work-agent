@@ -416,6 +416,8 @@ System Policy, 사용자 요청, Source Context를 Prompt에서 명확히 분리
 
 승인 당시의 expected와 실제 actual을 독립적으로 비교한다. 표현상의 공백·줄바꿈·시간대 정규화는 가능하지만 업무 의미를 바꾸지 않는다. 대상·제목·본문 의미·Task 예정일·Event 시간·GitHub Issue의 승인된 변경 내용이 다르면 mismatch다. 실제 결과에 맞춰 expected를 사후 수정해서 통과시키지 않는다. 부분 UPDATE는 승인된 변경 필드의 의미로 비교한다.
 
+Task CREATE의 비교 범위는 승인한 Task List, 제목, 메모, 예정일, 완료 상태이며 메모·예정일을 지정하지 않은 경우도 그 부재를 확인한다. 별도의 승인된 상태 변경이 없으면 새 Task의 상태는 미완료여야 한다. 재조회한 Task identity는 실행 결과의 ResourceRef와 일치해야 한다. 기존 persisted expected가 일부 필드를 생략했더라도 비교를 생략하지 않고 immutable Approval arguments에서 동일한 deterministic expected projection을 도출한다. Provider actual은 expected 도출에 사용하지 않는다. Task UPDATE는 대상 identity와 승인한 변경 필드만 비교한다.
+
 ### POL-VER-003 불일치 처리
 
 Mismatch를 자동 수정하지 않고 사용자에게 차이와 Recovery Action을 보여준다. `MISMATCH` Action과 Verification 사실은 변경하지 않으며 Run은 `RECOVERY_REQUIRED`로 전환한다.

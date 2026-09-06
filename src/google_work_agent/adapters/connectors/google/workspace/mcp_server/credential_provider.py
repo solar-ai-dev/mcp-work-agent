@@ -600,12 +600,15 @@ def _task_write_body(payload: dict[str, object], *, title_required: bool) -> dic
     # (see _build_final_dispatch_arguments); tasks_update_task never carries it.
     recovery_fingerprint = _optional_text(payload.get("recovery_fingerprint"))
     if "notes" in payload or recovery_fingerprint:
-        notes = _optional_text(payload.get("notes"))
+        notes = payload.get("notes", "")
+        if not isinstance(notes, str):
+            raise _WorkspaceToolError("INVALID_ARGUMENT")
         if recovery_fingerprint:
             marker = _recovery_marker(recovery_fingerprint)
             notes = f"{notes}\n\n{marker}" if notes else marker
-        if notes:
-            body["notes"] = notes
+        # Approved notes are business text: preserve whitespace and explicit
+        # empty values; only the server-owned recovery marker may be appended.
+        body["notes"] = notes
     if "scheduled_date" in payload:
         scheduled_date = _optional_text(payload.get("scheduled_date"))
         if scheduled_date:
@@ -645,8 +648,8 @@ def _task_snapshot(item: dict[str, object], task_list_id: str) -> dict[str, obje
         (task_list_id,),
         item.get("updated"),
         {
-            "title": _optional_text(item.get("title")) or task_id,
-            "notes": _optional_text(item.get("notes")),
+            "title": item.get("title") if isinstance(item.get("title"), str) else task_id,
+            "notes": item.get("notes") if isinstance(item.get("notes"), str) else None,
             "due": _optional_text(item.get("due")),
             "status": _optional_text(item.get("status")),
             "completed": _optional_text(item.get("completed")),

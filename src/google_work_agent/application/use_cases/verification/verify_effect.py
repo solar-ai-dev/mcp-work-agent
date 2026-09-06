@@ -114,7 +114,14 @@ class VerifyEffectHandler:
         )
         expected = _persisted_expected_effect(
             action.tool_name,
-            cast(dict[str, object], loads(action.arguments_json)),
+            cast(
+                dict[str, object],
+                loads(
+                    approval.arguments_snapshot_json
+                    if action.tool_name in {"tasks_create_task", "tasks_update_task"}
+                    else action.arguments_json
+                ),
+            ),
             cast(dict[str, object], loads(action.expected_json)),
         )
         if action.effect_type == "SEND" and approval is not None:
@@ -223,6 +230,8 @@ class VerifyEffectHandler:
             query.expected_effect,
             normalizer_tool_name=normalizer_tool_name,
         )
+        if normalizer_tool_name == "tasks_update_task" and query.target_resource_ref is not None:
+            expected = {**expected, "resource_id": query.target_resource_ref.resource_id}
         diffs = calculate_verification_subset_diff(expected, actual)
         return VerificationResultV1(
             "VERIFIED" if not diffs else "MISMATCH",
@@ -248,7 +257,14 @@ class VerifyEffectHandler:
             _require_verification_source_state(action.status, attempt.status)
             expected = _persisted_expected_effect(
                 action.tool_name,
-                cast(dict[str, object], loads(action.arguments_json)),
+                cast(
+                    dict[str, object],
+                    loads(
+                        binding.approval.arguments_snapshot_json
+                        if action.tool_name in {"tasks_create_task", "tasks_update_task"}
+                        else action.arguments_json
+                    ),
+                ),
                 cast(dict[str, object], loads(action.expected_json)),
             )
             if action.tool_name in {"calendar_create_event", "calendar_update_event"}:
@@ -356,6 +372,10 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
         if not isinstance(payload, dict)
         else {**{key: value for key, value in actual.items() if key != "payload"}, **payload}
     )
+    if normalizer_tool_name == "tasks_update_task" and "resource_id" in actual:
+        # A complete Task snapshot may omit absent optional Provider fields.
+        # Do not add these defaults to a partial UPDATE expectation.
+        business = {"notes": "", "due": None, **business}
     if normalizer_tool_name == "github_update_issue":
         description = business.get("description")
         if isinstance(description, str):
@@ -403,12 +423,10 @@ def _persisted_expected_effect(
     arguments: dict[str, object],
     fallback: dict[str, object],
 ) -> dict[str, object]:
+    if tool_name in {"tasks_create_task", "tasks_update_task"}:
+        return build_expected_verification_projection(tool_name=tool_name, arguments=arguments)
     if tool_name in {"github_create_issue", "github_update_issue"}:
-        return {
-            key: arguments[key]
-            for key in ("title", "body")
-            if key in arguments
-        }
+        return {key: arguments[key] for key in ("title", "body") if key in arguments}
     if tool_name == "github_close_issue":
         return {"state": "CLOSED"}
     if tool_name == "github_reopen_issue":

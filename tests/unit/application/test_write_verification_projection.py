@@ -71,6 +71,8 @@ def test_task_create_expected__maps_scheduled_date__to_provider_due() -> None:
             "title": "Prepare report",
             "notes": "Use Q3 numbers",
             "due": "2026-08-20",
+            "parent_id": "list-1",
+            "status": "needsAction",
         }
     }
 

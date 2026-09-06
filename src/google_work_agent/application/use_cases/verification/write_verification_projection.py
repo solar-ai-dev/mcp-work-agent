@@ -57,7 +57,11 @@ def build_expected_verification_projection(
         return {"payload": expected_payload}
     if tool_name in {"tasks_create_task", "tasks_update_task"}:
         payload = _mapping(args.get("payload"), "payload")
-        task_expected_payload: dict[str, object] = {}
+        task_expected_payload: dict[str, object] = {
+            "parent_id": _required_string(args, "task_list_id"),
+        }
+        if tool_name == "tasks_create_task":
+            task_expected_payload.update({"notes": "", "due": None, "status": "needsAction"})
         for name in ("title", "notes", "status"):
             if name in payload:
                 task_expected_payload[name] = payload[name]
@@ -145,6 +149,8 @@ def normalize_actual_verification_projection(
         notes = payload.get("notes")
         if isinstance(notes, str):
             payload["notes"] = strip_resource_recovery_marker(notes)
+        elif "notes" in payload and notes is None:
+            payload["notes"] = ""
     if tool_name in {"calendar_create_event", "calendar_update_event"}:
         for field_name in ("start", "end"):
             value = payload.get(field_name)
