@@ -42,8 +42,8 @@
 - **상태:** P0
 - **입력:** 앱 첫 실행, 선택적인 Google/GitHub 연결, API 또는 Local 추론 방식과 필요한 동의.
 - **처리:** Core 환경 검사와 업무 Connector 연결 안내를 구분한다. Google 연결은 건너뛸 수 있고 Settings 또는 해당 기능이 필요할 때 수행한다. Calendar·Task List·repository 기본값도 이후에 정할 수 있다.
-- **출력:** Google·GitHub가 모두 미연결이어도 진입 가능한 메인 화면과 연결·AI 준비 상태.
-- **예외·완료 조건:** 필수 Core 오류와 Connector 미연결을 혼동하지 않는다. 일반 사용자는 Client ID/secret/포트/설치 명령을 입력하지 않는다. Google Workspace와 기존 Gmail·Tasks·Calendar 기능은 유지한다.
+- **출력:** 업무 Connector와 Model Provider가 모두 미연결이어도 Core가 정상이면 진입 가능한 메인 화면과 개별 연결·AI 사용 가능 상태.
+- **예외·완료 조건:** 필수 Core 오류와 Connector·Model Provider 미연결을 혼동하지 않는다. 연결 설정과 외부 LLM 전송 동의를 마치지 않아도 메인 화면·저장 이력·Settings를 사용할 수 있다. Local-only 사용에 외부 전송 동의를 강제하지 않는다. 일반 사용자는 제품용 Client ID/secret/포트를 입력하지 않는다. Google Workspace와 기존 Gmail·Tasks·Calendar 기능은 유지한다.
 
 ### FN-002 Google 계정 연결
 
@@ -110,7 +110,7 @@
 - **처리:** loopback binding, 제품 Asset/API/DB/Migration과 필수 Core 계약을 확인해 Local UI를 제공한다. Connector의 credential/permission 상태는 기능 availability로 따로 표시한다.
 - **출력:** Local Service 상태, 메인 UI 진입, 필요한 설정·진단 안내.
 - **예외:** local binding 실패, Service 시작 실패, DB Safe Mode, 필수 Asset/contract 실패.
-- **완료 조건:** Google·GitHub가 모두 미연결이어도 Core readiness와 메인 UI는 정상이다. Local Session 인증과 외부 업무 계정 로그인은 별개다.
+- **완료 조건:** Google·GitHub·Model Provider가 모두 미연결이어도 Core readiness와 메인 UI는 정상이다. 모델 미준비나 외부 전송 동의 부재를 Core 장애로 취급하지 않는다. Local Session 인증과 외부 업무 계정 로그인은 별개다.
 
 ### FN-009 Frontend·API 세션과 버전 확인
 
@@ -127,7 +127,7 @@
 - **입력:** 한국어 또는 영어 자연어, 선택적 Query·기간·사람·이메일·Keyword, 이번 요청에서 명시적으로 선택한 Gmail·Task·Event·GitHub Issue Resource.
 - **처리:** Resource를 먼저 선택하지 않은 Agent 검색형 요청과, 사용자가 Resource를 명시적으로 선택한 요청을 모두 시작할 수 있어야 하며 각각 새 current-run 처리 단위로 시작한다. 기본 요청 생성은 Google Credential을 전역 전제로 삼지 않고, 필요한 Connector가 판단된 시점에 해당 연결·권한을 확인한다.
 - **출력:** 요청 진입 유형, 처리 단계, 현재 Source, 진행 상태.
-- **예외:** Runtime 미설정은 추론 준비 안내로 구분한다. 필요한 Connector의 초기 미연결·App 미설치·repository 접근 불가·permission 부족은 필요한 설정 조치를 안내한 뒤 현재 요청을 종료한다. 종료한 요청은 연결 대기로 suspend하거나 OAuth 완료 후 자동 resume하지 않는다. 사용자가 연결 후 다시 전송하면 새 Run을 시작한다.
+- **예외:** 사용할 모델이 없는 새 추론 요청은 연결·준비 안내로 종료하되 앱을 잠그지 않는다. 모델 없이 의미 판단을 수행한 것처럼 처리하거나 명시적 Local 요청을 몰래 외부 모델로 전환하지 않는다. 필요한 Connector의 초기 미연결·App 미설치·repository 접근 불가·permission 부족은 필요한 설정 조치를 안내한 뒤 현재 요청을 종료한다. 종료한 요청은 연결 대기로 suspend하거나 OAuth 완료 후 자동 resume하지 않는다. 사용자가 연결 후 다시 전송하면 새 Run을 시작한다.
 - **완료 조건:** 같은 Conversation에는 여러 USER 요청과 대응 Run이 순차적으로 존재할 수 있지만 동시에 Active Run이 둘 이상 생기지 않는다. 새 사용자 요청은 이전 Run의 Message·Agent Artifact·Evidence·Plan·Confirmation·Checkpoint를 숨은 업무 Context로 자동 승계하지 않고, 사용자가 이번 요청에서 명시적으로 선택한 Resource만 Entry Context로 사용할 수 있다.
 
 ### FN-011 요청 범위 제한
@@ -180,18 +180,20 @@
 
 - **상태:** P0
 - **입력:** 자료 선택 없이 제출한 사람·기간·업무 개념·키워드·복합 목표.
-- **처리:** 요청 의미를 보존하고 필요한 Source 범위에서 후보 검색 → 필요한 상세 → 근거 선택을 수행한다. 제목과 본문, 참여자 metadata와 관련 자료를 구분해 활용한다.
+- **처리:** 요청 의미를 보존하고 필요한 Source 범위에서 첫 검색 가설 → 실제 검색 결과 관찰 → 필요한 상세 → 근거 선택을 수행한다. 사람·시간·업무 개념 중 어떤 미해결 조건을 먼저 확인할지 선택하고, 반환된 자료와 부족한 정보에 따라 다음 가설·페이지·상세 조회·확인 질문·종료 중 필요한 행동을 정한다. 제목과 본문, 참여자 metadata와 관련 자료를 구분해 활용한다.
 - **출력:** 확인한 자료와 근거 기반 답변 또는 실행안. 검색 표현의 확장은 가설이며 사용자 사실이 아니다.
-- **완료 조건:** 사용자 표현이 원문과 정확히 같지 않아도 관련 후보를 발견할 수 있어야 한다. exact 제목·Resource·project anchor는 보존하고, 모든 Source 무조건 조회나 무제한 검색을 하지 않는다.
+- **완료 조건:** 사용자 표현이 원문과 정확히 같지 않아도 관련 후보를 발견할 수 있어야 한다. 명시 제목·이메일·Resource·project anchor와 Source 범위는 보존하며, planner의 탐색 가설과 구분한다. 같은 문자열·정해진 Tool 순서 하나만 정답으로 강제하지 않고, 실제 필요한 근거를 발견했는지와 선택·답변에 사용했는지를 구분해 확인한다. 모든 Source 무조건 조회나 무제한 검색을 하지 않는다.
 
 ### FN-018 Run 진행 Event 구독·복구
 
 - **상태:** P0
-- **기능:** Run에서 실제 발생한 책임별 실행 회차를 순서대로 누적한다. 다음 단계가 시작돼도 이전 행을 지우지 않는다. 각 행을 열어 그 회차의 기존 결과·허용된 근거를 확인할 수 있어야 한다.
-- **처리:** 같은 실행의 진행·완료는 같은 행을 갱신하고, 새 back-edge 실행은 새 행을 추가한다. 단순 resume는 재실행과 구분한다. 표시하지 않은 단계를 완료로 꾸미지 않는다.
-- **정보:** 이미 생성·검증된 상태·Agent 결과·계획·승인·실행·검증·복구 결과를 사용한다. Activity 전용 LLM 호출·Prompt·요약 Agent를 만들지 않는다. 표시·클릭 때문에 외부 업무 Tool을 재호출하지 않는다.
-- **복원:** SSE와 저장된 실행 이력·Snapshot으로 중복·역순 이벤트를 조정하고 refresh/reconnect/restart 후 같은 Run 이력을 복원한다. 최신 상태 하나로 과거 실행을 추정하지 않는다.
-- **완료 조건:** 같은 Run의 질문·재인증·복구는 이력을 이어가고, 새 Run은 격리된다. 행별 상세가 해당 시점의 결과와 일치하며 후보·부분 결과·UNKNOWN_RESULT·취소를 성공으로 과장하지 않는다.
+- **기능:** 실제 Agent/책임 실행을 상위 행으로 구분하고, 그 실행 안에서 확인·생성·검증·복구한 작업 사실을 발생 순서대로 하위 기록에 누적한다. 최종 artifact의 일부 필드나 처리 카운터만 보여주는 기능이 아니다.
+- **처리:** 의미 있는 중간 결과가 확인되면 실행 종료 전에도 해당 실행의 기록에 반영한다. 다음 결과·Agent 종료·다음 Agent 시작이 이전 작업 사실을 덮어쓰거나 삭제하지 않는다. 동일 사실의 재전달은 중복 표시하지 않고, 새 back-edge 실행과 동일 실행의 interrupt/resume를 구분한다.
+- **내용:** 요청 이해는 목표·사람·기간·업무 조건, Tool Route는 실제 선택 기능·대상, Retrieval은 실제 발견·해소·선택한 근거, Planning은 작성한 업무 값, Review/Validation은 검사 대상과 결과를 보여준다. 실행·복구는 실제 확인된 외부 효과 및 미확인 범위를 구분한다. 없는 값이나 이유를 생성하지 않으며 모든 내부 함수·State key 변경을 사용자 기록으로 확대하지 않는다.
+- **검증 의미:** 출력 schema의 형식 검사, 업무 내용과 Evidence의 대조, 실제 Provider 결과 재조회는 서로 다른 사실이다. 값이 State에 있다는 이유만으로 검증 완료라 하지 않고, 실제 검사 결과 또는 성공이 보장된 검증 경계에 근거한다. 출력값·근거·실행 회차와 표시 내용을 연결해 확인할 수 있어야 한다.
+- **정보:** 이미 생성된 typed State/result와 검증 결과, 승인·실행·Verification·Recovery 사실을 사용한다. Activity 전용 LLM·Prompt·요약 Agent나 표시용 외부 업무 조회를 추가하지 않는다. 저장 정보의 Local API 조회는 가능하다. raw Prompt/Completion·hidden reasoning·전체 Provider payload를 작업 설명으로 노출하지 않는다.
+- **복원:** 같은 Conversation에서 요청 B가 시작돼도 요청 A의 Agent 행·하위 기록·최종 답변은 읽기 전용으로 남는다. SSE와 저장된 실행 이력·Snapshot을 연결해 refresh/reconnect/restart·대화 이동 후 복원한다. 최신 phase/Plan으로 과거 결과와 순서를 추정하지 않는다. 과거 기록이 없거나 보존 만료면 그 한계를 알린다.
+- **완료 조건:** Run·실행 회차별 기록이 격리되고, 진행/대기/완료 상태 갱신과 하위 사실 누적을 함께 유지한다. 정상 0건·후보·부분 결과·검증 실패·UNKNOWN_RESULT·취소를 사실대로 표시한다. 이력 보존은 기존 retention 안에서 제공하고 새 Run의 숨은 업무 Context나 재실행 권위로 사용하지 않는다. 표시·관측 실패가 업무 명령의 재실행을 유발하지 않는다.
 
 ### Resource Browser·Sidebar 공통 요구
 
@@ -290,7 +292,7 @@
 
 - **상태:** P0
 - **기능:** 근거가 부족하고 새 정보 가능성이 있을 때만 현재 허용 범위에서 다음 page·추가 detail·변경 검색을 수행한다.
-- **처리:** 동일 query와 같은 detail을 의미 없이 반복하지 않는다. 검색 round와 detail hydration의 예산을 구분하며 기존 RunBudget을 준수한다. 새로운 조회가 기존에 선택한 유효 Evidence를 불필요하게 지우지 않는다.
+- **처리:** 후속 검색은 앞선 실제 관측과 미해결 조건에 근거한다. 명시된 사용자 제약은 보존하되 planner가 만든 탐색 단서는 새 정보 가능성에 따라 변경할 수 있다. 동일 query·detail의 무진전 반복과 적법한 다음 페이지·제한된 일시 오류 재시도를 구분한다. 검색 round와 detail hydration의 예산을 구분하며 기존 RunBudget을 준수한다. 새로운 조회가 기존에 선택한 유효 Evidence를 불필요하게 지우지 않는다.
 - **출력:** 추가 탐색의 결과 또는 부족한 범위가 표시된 부분 답변. 확인한 근거가 있으면 예산 소진 때문에 답변 자체가 사라지지 않아야 한다.
 - **완료 조건:** 필요한 최종 답변 처리도 예산 안에서 가능해야 한다. 정상 no-result, 일부 실패, 인증 불가, 전혀 시도하지 못한 조회를 구분한다. READ 부분 종료를 WRITE 필수정보 충족으로 오인하지 않는다. 범위 확대는 기존 확인 절차를 따른다.
 
@@ -544,7 +546,7 @@
 
 - **상태:** P0
 - **기능:** 현재 typed State, durable fact, artifact freshness와 남은 의무에 따라 필요한 책임을 선택한다. 고정된 Agent 순서를 모두 통과하게 하지 않는다.
-- **완료 조건:** 필요한 실행·skip·제한된 back-edge·사용자 대기·재인증·복구·취소·종료가 연결된다. upstream 변경으로 stale해진 결과를 재사용하지 않고 같은 의미 상태의 무한 반복을 막는다. Provider별 의미 판단이나 Write 안전성을 두 번째 Supervisor에 복제하지 않는다.
+- **완료 조건:** 필요한 실행·skip·제한된 back-edge·사용자 대기·재인증·복구·취소·종료가 연결된다. upstream 변경으로 stale해진 결과를 재사용하지 않고 같은 의미 상태의 무한 반복을 막는다. 현재 상태가 요구하는 적법한 책임 이동을 이전 단계의 고정 순서만으로 막지 않는다. 모든 Edge 삭제나 모든 Node 사이의 무제한 이동을 요구하는 것은 아니며 입력 의존성·승인·검증·복구 순서는 유지한다. Main의 Stage 선택과 Subgraph 내부 실행 가능성은 구분한다. Provider별 의미 판단이나 Write 안전성을 두 번째 Supervisor에 복제하지 않는다.
 
 ### FN-101 요청 이해 Agent
 
@@ -685,7 +687,7 @@ FN-100의 중앙 조정 기능은 같은 공식 runtime 조건에서 일관된 �
 - **상태:** P0
 - **입력:** 사용자가 선택한 Conversation.
 - **처리:** 저장된 메시지와 Run 이력을 시간순·bounded 조회로 복원한다. 오래된 자료가 잘리면 그 사실을 알린다.
-- **출력:** 저장 시각·내용·Run 상태와 보존된 Activity. 조회 자체는 업무 상태나 checkpoint를 변경하지 않는다.
+- **출력:** 저장 시각·내용·각 Run의 상태와 Agent 실행별 하위 작업 내역을 포함한 보존 Activity. 현재 Run뿐 아니라 Conversation에 속한 과거 Run을 해당 사용자 요청·최종 답변과 함께 조회할 수 있다. 조회 자체는 업무 상태나 checkpoint를 변경하지 않는다.
 - **완료 조건:** 과거 이력을 새 Run의 Prompt Context로 자동 전달하지 않는다. terminal Run 뒤 새 요청과 same-Run resume가 구분된다.
 
 ## 19. GitHub 및 외부 AI 설정 기능

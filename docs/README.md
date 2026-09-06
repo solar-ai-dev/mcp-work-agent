@@ -12,7 +12,8 @@
 | [기능 정의](canonical/01-a-functional-definition.md) | 사용자가 무엇을 할 수 있고 어떤 결과를 받아야 하는가? |
 | [정책 정의](canonical/01-b-policy-definition.md) | 어떤 조건에서 허용·확인·승인·차단하는가? |
 | [UI · UX](canonical/02-ui-ux-design.md) | 사용자가 어디서 보고 조작하며 진행과 결과를 어떻게 구분하는가? |
-| [작업 현황 · 남은 검증](product-decisions/2026-09-06-product-document-realignment.md) | 무엇이 확인됐고 무엇을 다음에 검증해야 하는가? |
+| [최신 합의 · 잔여 검증](product-decisions/2026-09-06-activity-query-routing-clarification.md) | Activity·Query 전략·상태 기반 이동에서 무엇을 더 충족해야 하는가? |
+| [이전 문서 정리 시점의 인계 기록](product-decisions/2026-09-06-product-document-realignment.md) | 당시 어떤 범위가 확인됐고 무엇이 미확인이었는가? |
 
 각 제품 문서에 설명과 상세 본문을 함께 둔다. 별도 설명본을 또 하나의 원본으로 관리하지 않는다. GitHub는 수정 원본, Notion은 선정한 원문의 읽기용 게시본이다.
 
