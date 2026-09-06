@@ -1500,6 +1500,10 @@ class RetrievalSubgraph:
                                 "frozen_routes": frozen_routes,
                                 "route_policies": route_policies,
                                 "prior_plans": prior_canonical,
+                                "person_candidates": state.get("person_candidates", []),
+                                "selected_person_identities": state.get(
+                                    "selected_person_identities"
+                                ),
                                 "prior_read_result_handles": handles,
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,

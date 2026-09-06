@@ -81,8 +81,8 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
     ("match_mode", "expected"),
     [
         ("PHRASE", '"프로젝트 일정"'),
-        ("ALL", "프로젝트 일정"),
-        ("ANY", "{프로젝트 일정}"),
+        ("ALL", '"프로젝트" "일정"'),
+        ("ANY", '{"프로젝트" "일정"}'),
     ],
 )
 def test_gmail_keyword_lowering__different_match_modes__produces_distinct_queries(
@@ -154,3 +154,20 @@ def test_gmail_temporal_lowering__event_and_receipt_dates__keeps_axes_distinct(a
         end = int(datetime(2026, 9, 8, tzinfo=zone).timestamp())
         expected += f" after:{start} before:{end}"
     assert arguments["query"] == expected
+
+
+@pytest.mark.parametrize("term", ['alpha" OR from:attacker@example.test', "alpha\nbeta", "a\\b"])
+def test_gmail_keyword_lowering__query_grammar_escape__rejects_before_provider(term: str) -> None:
+    plan = cast(SourceFetchPlanV1, {
+        "route_id": "r", "connector_id": "google_workspace", "resource_type": "GMAIL_THREAD",
+        "operation_kind": "SEARCH", "effective_constraints": [
+            {"kind": "KEYWORD", "terms": [term], "match_mode": "ALL"},
+        ],
+    })
+    with pytest.raises(ValueError):
+        execute_read_projection.project_connector_call(
+            plan, route=cast(InputToolRouteV1, {
+                "route_id": "r", "connector_id": "google_workspace",
+                "resource_type": "GMAIL_THREAD", "allowed_read_tool_ids": ["gmail_search_threads"],
+            }), page_size=20,
+        )

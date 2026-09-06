@@ -12,14 +12,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval.assess_sufficiency import select_followup_routes
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     bind_required_container_constraints,
+    followup_planner_projection,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
     QueryAttemptV1,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    PLANNER_CONCEPT_MANIFESTATION_LIMIT,
     RetrievalConstraintKindV1,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
@@ -42,7 +45,9 @@ from google_work_agent.application.agents.retrieval.plan_query_expansion import 
     plan_query_expansion,
 )
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
+    gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
+    requested_gmail_concepts,
     requested_participant_identities,
     resolve_gmail_query_periods,
     validate_requested_concepts,
@@ -437,9 +442,21 @@ def plan_query(
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
     )
+    meaningful_kinds = gmail_planner_constraint_kinds(prompt_input)
+    if meaningful_kinds is not None:
+        supported_kinds = {
+            route["route_id"]: (
+                frozenset(supported_kinds[route["route_id"]]).intersection(meaningful_kinds)
+                | route_policies[route["route_id"]].required_kinds
+                if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+                else supported_kinds[route["route_id"]]
+            )
+            for route in frozen_routes
+        }
     planner_input = _project_route_constraint_policies(
         prompt_input, route_policies, supported_kinds=supported_kinds
     )
+    concepts_by_route = requested_gmail_concepts(prompt_input, frozen_routes)
     is_followup = "current_round_no" in prompt_input
     bounded_output_schema = bind_retrieval_query_plan_output_schema(
         base_schema=output_schema,
@@ -452,6 +469,21 @@ def plan_query(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
         is_followup=is_followup,
+        requested_concepts=concepts_by_route,
+        next_page_route_ids={
+            str(summary["route_id"]) for summary in cast(list[Mapping[str, object]],
+                prompt_input.get("read_result_summaries", []))
+            if summary.get("has_next_page") is True and summary.get("exhausted") is not True
+        },
+        prior_concept_manifestations={
+            route["route_id"]: {
+                term for attempt in cast(list[QueryAttemptV1],
+                                         prompt_input.get("prior_query_attempts", []))
+                if attempt["route_id"] == route["route_id"]
+                for constraint in attempt["normalized_intent_constraints"]
+                if constraint["kind"] == "CONCEPT" for term in constraint["manifestations"]
+            } for route in frozen_routes
+        },
         allowed_participant_identities=requested_participant_identities(prompt_input),
         resolved_temporal_constraints=resolve_gmail_query_periods(
             prompt_input=prompt_input,
@@ -569,6 +601,14 @@ def _validate_query_plan_round(
                 reason_code="QUERY_OPERATION_FIELD_MISMATCH",
                 affected_field_paths=("$.route_queries[].search_spec.mode",),
             )
+        constraints = (search_spec["constraints"] if search_spec["mode"] == "INITIAL"
+                       else search_spec["constraint_delta"]["upsert_constraints"])
+        if any(item["kind"] == "CONCEPT"
+               and len(item["manifestations"]) > PLANNER_CONCEPT_MANIFESTATION_LIMIT
+               for item in constraints):
+            raise RetrievalV2ValidationError(
+                "one search hypothesis allows at most 3 manifestations"
+            )
     return plan
 
 
@@ -581,6 +621,12 @@ def _project_route_constraint_policies(
     """Expose the existing deterministic route policy to the semantic planner."""
 
     result = deepcopy(dict(prompt_input))
+    if isinstance(result.get("prior_query_attempts"), list):
+        result["prior_query_attempts"] = followup_planner_projection(
+            current_round_no=0,
+            prior_query_attempts=cast(list[QueryAttemptV1], result["prior_query_attempts"]),
+            unresolved_sufficiency_issues=[], read_result_summaries=[],
+        )["prior_query_attempts"]
     routes = result.get("input_routes")
     if not isinstance(routes, list):
         return result
@@ -736,6 +782,9 @@ def has_retrieval_followup_path(
     """Return whether the frozen route can produce information not read yet."""
 
     routes = tool_route_plan["input_plan"]["input_routes"]
+    eligible_route_ids = {route["route_id"] for route in select_followup_routes({
+        "unresolved_sufficiency_issues": list(unresolved_sufficiency_issues),
+    }, routes)}
     return deterministic_query_plan(
         prompt_input={
             "request_intent": request_intent,
@@ -756,11 +805,15 @@ def has_retrieval_followup_path(
         not has_explicit_gmail_subject(request_intent["constraints"])
         and any(
             attempt["operation_kind"] == "SEARCH"
+            and attempt["route_id"] in eligible_route_ids
             and attempt.get("stop_reason") == "COMPLETE"
+            and not any(other["route_id"] == attempt["route_id"]
+                        and other.get("stop_reason") not in {"COMPLETE", None}
+                        for other in query_attempts)
             and sum(
                 other["operation_kind"] == "SEARCH" and other["route_id"] == attempt["route_id"]
                 for other in query_attempts
-            ) == 1
+            ) < 3
             and any(item["kind"] == "CONCEPT" for item in attempt["normalized_intent_constraints"])
             for attempt in query_attempts
         )

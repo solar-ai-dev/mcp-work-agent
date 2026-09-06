@@ -12,12 +12,16 @@ import re
 import sys
 import time
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime
 from functools import partial
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -76,6 +80,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferenceResultV1
 from google_work_agent.ports.system.contracts.workflow_execution import (
+    SelectedResourceRef,
     WorkflowCorrelationContext,
     WorkflowStartRequest,
 )
@@ -149,9 +154,43 @@ class MeasurementInference:
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "schema_errors": errors,
+                "semantic_input": deepcopy(kwargs["prompt_input"]),
+                "structured_output": content,
             }
         )
         return result
+
+
+class TrajectoryRecorder(BaseCallbackHandler):
+    """Observe real node callbacks without replacing routing or node execution."""
+
+    def __init__(self) -> None:
+        self.steps: list[dict[str, Any]] = []
+        self.active: dict[Any, dict[str, Any]] = {}
+
+    def on_chain_start(self, serialized: Any, inputs: Any, *, run_id: Any,
+                       metadata: Any = None, **kwargs: Any) -> None:
+        node = (metadata or {}).get("langgraph_node")
+        if node and kwargs.get("name") == node:
+            step = {"node": node, "status": "START"}
+            self.steps.append(step)
+            self.active[run_id] = step
+
+    def on_chain_end(self, outputs: Any, *, run_id: Any, **kwargs: Any) -> None:
+        step = self.active.pop(run_id, None)
+        if step is not None:
+            step["status"] = "END"
+            if isinstance(outputs, Mapping):
+                step["state"] = deepcopy({key: outputs[key] for key in (
+                    "query_plan", "query_attempts", "__context_query_attempts__",
+                    "sufficiency", "evidence_selection", "retrieval_result", "__target__",
+                    "retry_budget", "person_candidates", "selected_person_identities",
+                ) if key in outputs})
+
+    def on_chain_error(self, error: BaseException, *, run_id: Any, **kwargs: Any) -> None:
+        step = self.active.pop(run_id, None)
+        if step is not None:
+            step.update(status="INTERRUPT_OR_ERROR", error=type(error).__name__)
 
 
 class FixtureConnector:
@@ -229,6 +268,7 @@ class FixtureConnector:
         )
         if binding.tool_id == "gmail_get_thread":
             if self.fail_detail:
+                self.calls[-1]["failure"] = "PERMISSION_DENIED"
                 raise ConnectorOperationFailure(
                     ConnectorFailureCode.PERMISSION_DENIED, "FIXTURE_DETAIL_ACCESS_REMOVED",
                 )
@@ -271,6 +311,8 @@ class FixtureConnector:
                 if ":" not in term:
                     items = [item for item in items if term in source_text(item)]
             output = {"items": items}
+        self.calls[-1]["result_ids"] = [item["resource_id"] for item in
+                                      output.get("items", [output.get("item")])]
         return ConnectorReadResultV1(
             1,
             binding.tool_id,
@@ -282,12 +324,29 @@ class FixtureConnector:
 
 
 def measure(scenario: str) -> dict[str, Any]:
+    receipt_cases = {"receipt", "budget", "this_week", "next_week"}
     request_text = (
         "9월 첫째주에 온 메일 찾아줘"
-        if scenario in {"receipt", "budget"} else "9월 첫째주 일정 찾아줘"
+        if scenario in receipt_cases else "9월 첫째주 일정 찾아줘"
     )
     if scenario.startswith("person_"):
         request_text = "김대리 메일 찾아줘"
+    if scenario == "partial_failure":
+        request_text = "제목이 '한마음 체육대회 안내'인 메일에서 9월 첫째주 행사 날짜를 확인해줘"
+    request_text = {
+        "this_week": "이번 주에 온 메일 찾아줘",
+        "next_week": "다음 주에 온 메일 찾아줘",
+        "yearless": "제목이 '공동 연수 안내'인 메일의 9월 첫째주 행사 날짜를 확인해줘",
+        "multiple_dates": "제목이 '한마음 체육대회 안내'인 메일의 9월 첫째주 행사 날짜를 확인해줘",
+        "exact_title": "제목이 '한마음 체육대회 안내'인 메일을 읽어줘",
+        "selected": "선택한 메일을 읽어줘",
+        "person_name": "김하늘 메일 찾아줘",
+        "person_homonym": "김하늘 메일 찾아줘",
+        "person_concept": "김대리의 검토 관련 메일 찾아줘",
+    }.get(scenario, request_text)
+    mention = "김하늘" if scenario in {"person_name", "person_homonym"} else "김대리"
+    period = {"this_week": "이번주", "next_week": "다음주"}.get(scenario, "9월첫째주")
+    selected = scenario == "selected"
     run_id = str(uuid4())
     now = int(datetime.fromisoformat("2026-09-06T12:00:00+09:00").timestamp() * 1000)
     budget = build_default_run_budget(started_at_ms=now)
@@ -302,10 +361,13 @@ def measure(scenario: str) -> dict[str, Any]:
         run_id=run_id,
         conversation_id=run_id,
         workflow_key=run_id,
-        entry_mode="AGENT_SEARCH",
+        entry_mode="RESOURCE_SELECTED" if selected else "AGENT_SEARCH",
         requested_mode="LOCAL_GPU",
         request_text=request_text,
-        selected_resource_ids=(),
+        selected_resource_ids=("august-announcement",) if selected else (),
+        selected_resources=(SelectedResourceRef(
+            "selected-fixture", "google_workspace", "GMAIL_THREAD", "august-announcement",
+        ),) if selected else (),
         run_budget=budget,
         correlation=WorkflowCorrelationContext(run_id, None, "1"),
     )
@@ -319,13 +381,31 @@ def measure(scenario: str) -> dict[str, Any]:
         {
             "goal": request_text,
             "completion_conditions": ["근거에 맞는 조회 답변"],
-            "constraints": [],
+            # Query-planning measurement has a declared RequestIntent fixture;
+            # real Request Understanding is exercised separately through the app.
+            "constraints": ([] if scenario in {"selected", "exact_title"} else
+                [{"kind": "PERSON", "field": "person", "value": [mention]},
+                 *([{"kind": "USER_REQUIREMENT", "field": "business_concepts",
+                     "value": ["검토"]}] if scenario == "person_concept" else [])]
+                if scenario.startswith("person_") else [
+                    {"kind": "DATE", "field": "period", "value": [period]},
+                    {"kind": "TIME", "field": "temporal_axis", "value": [
+                        "MESSAGE_TIME" if scenario in receipt_cases
+                        else "EVENT_TIME",
+                    ]},
+                    *([] if scenario in receipt_cases | {
+                        "partial_failure", "yearless", "multiple_dates",
+                    } else [
+                        {"kind": "USER_REQUIREMENT", "field": "business_concepts",
+                         "value": ["일정"]},
+                    ]),
+                ]),
             "requested_effect_hints": ["READ"],
             "requested_resource_hints": ["GMAIL_THREAD"],
             "analysis_requirement": "NONE",
         },
         request_text=request_text,
-        entry_mode="AGENT_SEARCH",
+        entry_mode=request.entry_mode,
     )
     state["request_intent"] = {
         **candidate,
@@ -365,10 +445,19 @@ def measure(scenario: str) -> dict[str, Any]:
         MeasurementInference(),
         FixtureConnector(
             empty=scenario == "empty", fail_detail=scenario == "partial_failure",
-            person=scenario if scenario.startswith("person_") else None,
+            person=("person_multiple" if scenario in {"person_multiple", "person_homonym"}
+                    else "person_unique") if scenario.startswith("person_") else None,
         ),
         RunScopedEvidenceStore(),
     )
+    if scenario == "person_homonym":
+        for item in connector.items:
+            if not item["resource_id"].endswith("-email"):
+                item["payload"]["sender_name"] = "김하늘 대리"
+    if scenario == "multiple_dates":
+        connector.items[0]["payload"]["body"] += (
+            " 안내문 발행일은 2026년 8월 25일이며 접수 마감일은 2026년 8월 28일입니다."
+        )
     graph = RetrievalSubgraph(
         llm_runtime=inference,
         prompt_manifest_path=None,
@@ -395,24 +484,35 @@ def measure(scenario: str) -> dict[str, Any]:
     wrapper.add_node("retrieval", graph)
     wrapper.add_edge(START, "retrieval")
     wrapper.add_edge("retrieval", END)
-    compiled = wrapper.compile(checkpointer=InMemorySaver())
+    compiled = wrapper.compile(checkpointer=InMemorySaver(serde=JsonPlusSerializer(
+        allowed_msgpack_modules=[
+            ("google_work_agent.ports.system.contracts.workflow_execution", "WorkflowStartRequest"),
+            ("google_work_agent.ports.system.contracts.workflow_execution",
+             "WorkflowCorrelationContext"),
+            ("google_work_agent.ports.system.contracts.workflow_execution", "SelectedResourceRef"),
+        ],
+    )))
+    trajectory = TrajectoryRecorder()
     report: dict[str, Any] = {
         "scenario": scenario,
         "run_id": run_id,
         "verification_kind": "LIVE_OLLAMA_PRODUCTION_RETRIEVAL_GRAPH_FIXTURE_CONNECTOR",
         "product_e2e": False,
+        "request_understanding": "DECLARED_INTENT_FIXTURE",
         "request": request_text,
+        "request_intent": deepcopy(state["request_intent"]),
         "seeded_llm_calls": budget["llm_calls_used"],
         "seeded_detail_fetches": budget["detail_fetches_used"],
     }
     start = time.monotonic()
     try:
         with provider_dispatch_execution_scope(run_id=run_id, now_ms=clock_ms):
-            config: Any = {"recursion_limit": 100, "configurable": {"thread_id": run_id}}
+            config: Any = {"recursion_limit": 100, "configurable": {"thread_id": run_id},
+                           "callbacks": [trajectory]}
             result = compiled.invoke(state, config=config)
             if result.get("__interrupt__"):
                 report["confirmation"] = result["__interrupt__"][0].value
-                if scenario == "person_multiple":
+                if scenario in {"person_multiple", "person_homonym"}:
                     result = compiled.invoke(Command(resume={
                         "schema_version": 1, "response_kind": "OPTION",
                         "selected_option": "second@example.test", "free_text": None,
@@ -468,6 +568,7 @@ def measure(scenario: str) -> dict[str, Any]:
             "elapsed_seconds": round(time.monotonic() - start, 2),
             "llm_calls": inference.calls,
             "connector_calls": connector.calls,
+            "trajectory": trajectory.steps,
         }
     )
     report["checks"] = grade(report)
@@ -487,7 +588,19 @@ def grade(report: dict[str, Any]) -> dict[str, bool]:
         "answer_present": bool(answer),
         "actual_model": bool(report["llm_calls"])
         and all(call["actual_model"] == "qwen3.5:9b" for call in report["llm_calls"]),
-        "no_repeated_read": len(calls) == len({json.dumps(call, sort_keys=True) for call in calls}),
+        "no_repeated_read": len(calls) == len({json.dumps(
+            [call["tool"], call["arguments"]], sort_keys=True) for call in calls}),
+        "trajectory_recorded": bool(report.get("trajectory")),
+        "bounded_discovery": all(
+            len(re.findall(r'"[^"]+"', group)) <= 3
+            for call in calls for group in re.findall(r"\{([^}]+)\}",
+                                                     call["arguments"].get("query", ""))
+        ),
+        "planner_has_no_provider_query": all(
+            "query_spec" not in attempt
+            for call in report["llm_calls"] if call["prompt"] == "retrieval.plan_query"
+            for attempt in call["semantic_input"].get("prior_query_attempts", [])
+        ),
         "citations_for_visible_evidence": not evidence
         or bool(report.get("answer", {}).get("evidence_refs")),
         "no_invented_weekday_or_receipt_conversion": not re.search(
@@ -512,13 +625,13 @@ def grade(report: dict[str, Any]) -> dict[str, bool]:
                 and not re.search(r"2026\s*년\s*9\s*월\s*4\s*일", answer),
             "uncertainty_partial": result.get("coverage") == "PARTIAL" and "부분 결과" in answer,
         })
-    elif scenario in {"receipt", "budget"}:
+    elif scenario in {"receipt", "budget", "this_week"}:
         expected = {
             "gmail_thread:newsletter-period", "gmail_thread:later-event",
         }
         checks["receipt_axis_not_event_axis"] = (
             resources == expected
-            if scenario == "receipt"
+            if scenario in {"receipt", "this_week"}
             else bool(resources) and resources <= expected
         )
         if scenario == "budget":
@@ -529,7 +642,8 @@ def grade(report: dict[str, Any]) -> dict[str, bool]:
                 call["tool"] != "gmail_get_thread" for call in calls
             )
     elif scenario.startswith("person_"):
-        chosen = "second@example.test" if scenario == "person_multiple" else "first@example.test"
+        chosen = ("second@example.test" if scenario in {"person_multiple", "person_homonym"}
+                  else "first@example.test")
         checks["identity_followup"] = any(
             chosen in call["arguments"].get("query", "") for call in calls
         )
@@ -539,13 +653,14 @@ def grade(report: dict[str, Any]) -> dict[str, bool]:
         checks["email_only_evidence_linked"] = any(
             item["resource_handle"].endswith("-email") for item in evidence
         )
-        if scenario == "person_multiple":
+        if scenario in {"person_multiple", "person_homonym"}:
+            mention = "김하늘" if scenario == "person_homonym" else "김대리"
             checks["same_run_selection"] = (
                 bool(report.get("confirmation"))
-                and result.get("selected_person_identities") == {"김대리": chosen}
+                and result.get("selected_person_identities") == {mention: chosen}
             )
             checks["answer_respects_selected_identity"] = (
-                "first@example.test" not in answer and "김하늘" not in answer
+                "first@example.test" not in answer
                 and (chosen in answer or "김바다" in answer)
             )
     elif scenario == "partial_failure":
@@ -553,6 +668,21 @@ def grade(report: dict[str, Any]) -> dict[str, bool]:
             result.get("coverage") == "PARTIAL" and bool(evidence) and "부분 결과" in answer
             and any(item["failure_kind"] == "SCOPE" for item in result.get("source_statuses", []))
         )
+    elif scenario in {"yearless", "multiple_dates", "exact_title", "selected"}:
+        resource = "yearless-event" if scenario == "yearless" else "august-announcement"
+        checks["exact_resource_evidence"] = resources == {"gmail_thread:" + resource}
+        if scenario == "yearless":
+            checks["year_unresolved"] = (
+                bool(result.get("unresolved_event_dates")) and not re.search(
+                    r"2026\s*년\s*9\s*월\s*4\s*일", answer,
+                )
+            )
+        if scenario == "selected":
+            checks["selected_skips_search"] = [call["tool"] for call in calls] == [
+                "gmail_get_thread",
+            ]
+        if scenario == "multiple_dates":
+            checks["event_date_not_publication_or_deadline"] = "9월 3일" in answer
     else:
         checks["empty_not_failure"] = not evidence and "찾지 못" in answer and all(
             item["failure_kind"] is None for item in result.get("source_statuses", [])
@@ -566,10 +696,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario", choices=["event", "receipt", "empty", "budget", "partial_failure",
-                               "person_unique", "person_multiple"],
+                               "person_unique", "person_multiple", "person_name", "person_homonym",
+                               "person_concept", "this_week", "next_week", "yearless",
+                               "multiple_dates", "exact_title", "selected"],
         required=True,
     )
+    parser.add_argument("--output", type=Path, help="Persist fixture-only query trajectory as JSON")
     arguments = parser.parse_args()
     report = measure(arguments.scenario)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if arguments.output is not None:
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8",
+        )
+        print(json.dumps({key: report.get(key) for key in (
+            "scenario", "run_id", "measurement_status", "checks", "error",
+        )}, ensure_ascii=False))
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
     sys.exit(0 if report["measurement_status"] == "PASS" else 1)

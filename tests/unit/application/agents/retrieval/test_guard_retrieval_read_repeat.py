@@ -13,6 +13,27 @@ from google_work_agent.application.agents.retrieval.guard_retrieval_read_repeat 
 )
 
 
+def test_guard_retrieval_read_repeat__new_lowering__preserves_semantic_repeat_guard() -> None:
+    constraints = [{"kind": "KEYWORD", "terms": ["exact"], "match_mode": "ALL"}]
+    attempt = cast(QueryAttemptV1, {
+        "run_id": "run", "connector_id": "google_workspace",
+        "operation_kind": "SEARCH", "stop_reason": "COMPLETE",
+        "normalized_intent_constraints": constraints,
+        "query_spec": {"tool_id": "gmail_search_threads", "canonical_arguments": {
+            "query": "exact", "page_size": 20,
+        }},
+    })
+    with pytest.raises(QueryUnchangedAfterFailureError):
+        guard_retrieval_read_repeat(
+            plan=cast(SourceFetchPlanV1, {
+                "connector_id": "google_workspace", "operation_kind": "SEARCH",
+                "effective_constraints": constraints,
+            }), run_id="run", tool_id="gmail_search_threads",
+            canonical_arguments={"query": '"exact"', "page_size": 20},
+            continuation=None, prior_query_attempts=[attempt],
+        )
+
+
 @pytest.mark.parametrize("previous_run,blocked", [("run-1", True), ("run-2", False)])
 def test_guard_retrieval_read_repeat__same_query__blocks_only_current_run(
     previous_run: str, blocked: bool,

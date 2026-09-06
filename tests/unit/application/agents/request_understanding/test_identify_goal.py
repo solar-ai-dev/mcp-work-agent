@@ -344,7 +344,7 @@ def test_identify_goal__vague_mail_read__requires_original_search_semantics() ->
     ] == 1
 
 
-def test_identify_goal__inference_omits_vague_search__restores_semantics() -> None:
+def test_identify_goal__inference_omits_topic__preserves_request_without_dictionary() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -373,7 +373,7 @@ def test_identify_goal__inference_omits_vague_search__restores_semantics() -> No
     assert "start" not in by_field
     assert "end" not in by_field
     assert by_field["original_search_request"] == [request_text]
-    assert by_field["search_terms"] == ["회의"]
+    assert "search_terms" not in by_field
     assert by_field["required_information"] == ["일정"]
     assert candidate["analysis_requirement"] == "REQUIRED"
 

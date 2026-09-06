@@ -42,7 +42,9 @@ def match_person_mention(mention: str, display_name: str) -> bool:
         return True
     requested = _KOREAN_NAME_TITLE.fullmatch(mention.strip())
     if requested is None:
-        return False
+        # A complete name remains the same metadata identity when a title is appended.
+        # Do not use substring/surname matching for a name-only request.
+        return any(found["name"] == target for found in _KOREAN_NAME_TITLE.finditer(display_name))
     return any(
         found["title"] == requested["title"]
         and (

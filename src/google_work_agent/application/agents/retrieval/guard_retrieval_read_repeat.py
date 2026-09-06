@@ -25,7 +25,10 @@ def guard_retrieval_read_repeat(
         if attempt["run_id"] == run_id
         and attempt["connector_id"] == plan["connector_id"]
         and attempt["query_spec"]["tool_id"] == tool_id
-        and attempt["query_spec"]["canonical_arguments"] == canonical_arguments
+        and (attempt["query_spec"]["canonical_arguments"] == canonical_arguments
+             or (attempt["operation_kind"] in {"SEARCH", "NEXT_PAGE"}
+                 and plan["operation_kind"] in {"SEARCH", "NEXT_PAGE"}
+                 and attempt["normalized_intent_constraints"] == plan["effective_constraints"]))
         and attempt["stop_reason"] != "EXHAUSTED"
     ]
     if plan["operation_kind"] != "NEXT_PAGE":

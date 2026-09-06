@@ -75,8 +75,8 @@ def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
     )
 
 
-def test_retrieval_followup_path__search_or_unread_page__allows() -> None:
-    assert has_retrieval_followup_path(
+def test_retrieval_followup_path__lexical_anchor_or_unread_page__distinguishes() -> None:
+    assert not has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
         tool_route_plan=_tool_route_plan(
             allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
@@ -379,164 +379,33 @@ def test_retrieval_followup__no_required_google_issue__keeps_query_planning_llm(
     assert len(runtime.calls) == 1
 
 
-def test_no_result_vague_phrase__relaxes_once__without_llm() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[])
-    prompt_ref = PromptReference(
-        prompt_bundle_version="test",
-        prompt_id="retrieval.plan_query",
-        prompt_version="1",
-        content_hash="hash",
-        agent_role="retrieval",
-        subgraph_name="retrieval",
-        node_name="plan_query",
-        node_state="INITIAL",
-        purpose="plan_query",
-        input_schema_version="v2",
-        output_schema_version="v2",
-    )
-    frozen_routes = [
-        {
-            "route_id": "route-1",
-            "resource_type": "GMAIL_THREAD",
-            "connector_id": "google_workspace",
-            "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
-            "required": True,
-            "reason_codes": ["USER_REQUEST"],
-        }
-    ]
-    prior_attempt = cast(
-        QueryAttemptV1,
-        {
-            "route_id": "route-1",
-            "round_no": 0,
-            "operation_kind": "SEARCH",
-            "normalized_intent_constraints": [
-                {
-                    "kind": "KEYWORD",
-                    "terms": ["회의 관련 메일"],
-                    "match_mode": "PHRASE",
-                }
-            ],
-        },
+@pytest.mark.parametrize("terms", [["회의 관련 메일"], ["프로젝트", "일정"]])
+def test_query_expansion__lexical_anchor_only__does_not_relax_with_dictionary(
+    terms: list[str],
+) -> None:
+    from google_work_agent.application.agents.retrieval.plan_query_expansion import (
+        plan_query_expansion,
     )
 
-    result, _, llm_invoked = plan_query(
-        llm_runtime=runtime,
-        prompt_ref=prompt_ref,
-        revision_prompt_ref=prompt_ref,
-        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+    assert plan_query_expansion(
         prompt_input={
-            "request_intent": {
-                "constraints": [
-                    {"kind": "RESOURCE", "field": "subject", "value": "meeting_email"},
-                    {
-                        "kind": "USER_REQUIREMENT",
-                        "field": "original_search_request",
-                        "value": ["회의 관련 메일을 찾아줘"],
-                    },
-                ]
-            },
             "current_round_no": 0,
-            "prior_query_attempts": [prior_attempt],
-            "unresolved_sufficiency_issues": [{"required": True, "resolution_source": "GOOGLE"}],
-            "read_result_summaries": [
-                {"route_id": "route-1", "result_count": 0, "exhausted": True}
-            ],
-        },
-        requested_mode="LOCAL_GPU",
-        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
-        route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
-        retry_budget=build_default_run_budget(),
-    )
-
-    assert llm_invoked is False
-    assert runtime.calls == []
-    assert result["route_queries"] == [
-        {
-            "route_id": "route-1",
-            "operation": "SEARCH",
-            "reason_codes": ["QUERY_RELAXED_AFTER_NO_RESULTS"],
-            "search_spec": {
-                "mode": "CHANGED",
-                "constraint_delta": {
-                    "upsert_constraints": [
-                        {"kind": "KEYWORD", "terms": ["회의"], "match_mode": "ANY"}
-                    ],
-                    "remove_constraint_kinds": [],
-                },
-            },
-            "detail_candidate_ref": None,
-        }
-    ]
-
-
-def test_project_schedule_search__no_result__relaxes_generic_schedule_term() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[])
-    prompt_ref = PromptReference(
-        prompt_bundle_version="test",
-        prompt_id="retrieval.plan_query",
-        prompt_version="1",
-        content_hash="hash",
-        agent_role="retrieval",
-        subgraph_name="retrieval",
-        node_name="plan_query",
-        node_state="INITIAL",
-        purpose="plan_query",
-        input_schema_version="v2",
-        output_schema_version="v2",
-    )
-    frozen_routes = [
-        {
-            "route_id": "route-1",
-            "resource_type": "GMAIL_THREAD",
-            "connector_id": "google_workspace",
-            "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
-            "required": True,
-            "reason_codes": ["USER_REQUEST"],
-        }
-    ]
-    prior_attempt = cast(
-        QueryAttemptV1,
-        {
-            "route_id": "route-1",
-            "round_no": 0,
-            "operation_kind": "SEARCH",
-            "normalized_intent_constraints": [
-                {
-                    "kind": "KEYWORD",
-                    "terms": ["프로젝트", "일정"],
-                    "match_mode": "ALL",
-                }
-            ],
-        },
-    )
-
-    result, _, llm_invoked = plan_query(
-        llm_runtime=runtime,
-        prompt_ref=prompt_ref,
-        revision_prompt_ref=prompt_ref,
-        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
-        prompt_input={
             "request_intent": {"constraints": []},
-            "current_round_no": 0,
-            "prior_query_attempts": [prior_attempt],
+            "prior_query_attempts": [{
+                "route_id": "route-1", "operation_kind": "SEARCH", "stop_reason": "COMPLETE",
+                "normalized_intent_constraints": [
+                    {"kind": "KEYWORD", "terms": terms, "match_mode": "ALL"},
+                ],
+            }],
             "unresolved_sufficiency_issues": [{"required": True, "resolution_source": "GOOGLE"}],
             "read_result_summaries": [
-                {"route_id": "route-1", "result_count": 0, "exhausted": True}
+                {"route_id": "route-1", "result_count": 0, "exhausted": True},
             ],
         },
-        requested_mode="LOCAL_GPU",
-        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
-        route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
-        retry_budget=build_default_run_budget(),
-    )
-
-    assert llm_invoked is False
-    changed = result["route_queries"][0]["search_spec"]
-    assert changed is not None
-    assert changed["constraint_delta"]["upsert_constraints"] == [
-        {"kind": "KEYWORD", "terms": ["프로젝트"], "match_mode": "ANY"}
-    ]
+        frozen_routes=_tool_route_plan(
+            allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"],
+        )["input_plan"]["input_routes"],
+    ) is None
 
 
 def test_general_search__with_semantic_choice__keeps_query_planning_llm() -> None:

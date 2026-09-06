@@ -127,14 +127,27 @@ RETRIEVING checkpoint load
 
 의미 검색은 exact anchor와 검색 가설을 분리한다. `CONCEPT(concept, manifestations)`는
 사용자 `business_concepts`에 결합된 bounded planner 가설이며, 특정 개념의 고정 동의어
-목록으로 대체하지 않는다. Provider syntax 없는 서로 다른 manifestation을 1~12개 허용하며,
-literal concept 하나만 반환한 계획은 같은 EVENT_TIME의 날짜 표기 가설로 보완할 수 있으며,
-이 보완이 불가능하면 기존 semantic revision 대상이다. exact subject/프로젝트
-anchor는 보존한다. 후보의 concept match는 발견 신호일 뿐 Evidence relevance나 행사 사실이 아니다.
-행사 의미의 concept 가설이 빈 결과이면 동일 EVENT_TIME 범위의 날짜 표기(월·ISO 등)를
-다음 bounded discovery 가설로 사용할 수 있다. 수신일 필터로 전환하거나 exact anchor를
-제거하지 않는다. 날짜 언급은 후보 발견만 소유하며 뉴스레터 기간·행사일 relevance는 이후
-Evidence selection이 판정한다. 같은 가설 반복과 기존 검색/detail budget 상한은 유지한다.
+목록으로 대체하지 않는다. 새 Planner 출력은 Provider syntax 없는 서로 다른 manifestation을
+한 검색에 1~3개만 허용한다. 기존 v2 artifact의 12개 상한은 읽기 호환용이며 기존 query/hash를
+잘라서 재해석하지 않는다. literal-only 가설은 bounded semantic revision 대상이지 코드가
+날짜 표기나 고정 동의어로 치환할 대상이 아니다. 후보의 concept match는 발견 신호일 뿐
+Evidence relevance나 행사 사실이 아니다.
+
+검색 가설은 기존 `RouteQueryIntentV2`의 operation(발견/상세/페이지), semantic constraints,
+`reason_codes`(검색 목적과 해결할 insufficiency), `required_information`(성공 조건)으로 표현한다.
+미해결 사람·시간·업무 의미는 RequestIntent와 SufficiencyIssue에서 소비한다. CHANGED 가설은
+같은 route의 성공한 검색 관측과 미해결 issue에 근거해야 하며 실패를 0건 관측으로 보지 않는다.
+고정 불용 업무 단어 제거, 자동 ALL→ANY 완화, 날짜 문자열만의 자동 fallback은 금지한다.
+Planner가 EVENT_TIME 후보 부재라는 관측에 근거해 요청 기간의 본문 날짜 언급을 다음
+discovery 단서로 선택할 수는 있다. 이는 원래 concept/window를 유지하는 가설이며 날짜
+표기와 최종 검색어를 코드가 고정 목록으로 제공하지 않는다. 날짜 언급만으로 행사 relevance를
+인정하지 않고 detail의 실제 사건/날짜를 검증한다.
+같은 가설 반복과 기존 검색/detail budget 상한은 유지한다.
+
+Request Understanding의 의미 추론은 `search_terms`와 `business_concepts`를 생성한다.
+후처리가 업무 단어 사전이나 '메일 앞 단어' 정규식으로 이를 교체하거나 특정 단어를
+business concept으로 승격하지 않는다. 명시적 quoted subject/사람 표기/기간의 원문 보존은
+유지한다. 예를 들어 사용 방식의 수식어는 명시적 제목이나 업무 anchor가 아니다.
 
 월만 지정한 요청의 검색 연도는 사실 확정과 구분한다. 명시 연도는 그대로 사용하고,
 수신 시각 검색은 Run-local 기준 이미 시작된 가장 최근 해당 월, 행사 검색은 인접 연도 중
@@ -331,6 +344,9 @@ prior SourceFetchPlanV1.effective_constraints
 - `CHANGED`는 같은 frozen `route_id` 안의 semantic 검색 제약만 바꾼다. Connector·Resource·Tool 재선택이 아니다.
 - `upsert_constraints`는 `kind`별로 기존 값을 교체하거나 새 값을 추가한다. P0에서 같은 Route의 effective set은 동일 `kind`를 중복 보유하지 않는다.
 - `remove_constraint_kinds`는 해당 `kind` 전체를 제거한다. frozen Route 또는 Policy Precondition이 필수로 요구하는 constraint는 제거할 수 없다.
+- CHANGED merge는 기존 temporal role/window, resource/container identity, 상태, 확정 participant 및 lexical anchor 값을 보존한다. CONCEPT의 manifestation만 같은 concept 안에서 변경한다. 이름 discovery KEYWORD를 제거하려면 current-Run typed person candidate의 유일한 identity 또는 검증된 Confirmation 선택과 일치하는 exact PARTICIPANT로 전환해야 한다. LLM reason code만으로 이 예외를 승인하지 않는다.
+- follow-up Prompt의 prior attempt projection은 semantic constraint·operation·reason·결과 수·stop reason·query hash만 포함한다. 원본 QueryAttempt의 `query_spec`는 Builder/관측용이고 LLM 입력에서 제외한다.
+- 새 Gmail lexical lowering은 각 KEYWORD를 literal quote로 묶어 사용자/모델 문자열의 Provider operator 실행을 막는다. 지원하지 않는 quote/backslash/control delimiter는 Provider 호출 전에 차단한다. QueryAttempt의 retrieval config v3를 기록하되 과거 attempt/query를 수정하지 않는다. 동일 semantic constraints의 이미 수행한 검색은 lowering 표현이 달라져도 반복으로 차단하여 checkpoint 재진입이 새 검색 기회가 되지 않게 한다.
 - merge 뒤 effective constraints가 prior와 의미상 동일하면 `QUERY_UNCHANGED_AFTER_FAILURE`로 fail-closed하며 새 Retrieval Round로 인정하지 않는다.
 - 같은 delta 안에서 같은 `kind`를 upsert와 remove에 동시에 넣거나, Route가 지원하지 않는 constraint, 값 없는 constraint, 모순 temporal range는 Provider 호출 전에 차단한다.
 - 날짜/시간 문자열은 semantic local value이며 Provider RFC3339/Gmail query syntax가 아니다. `start_local/end_local`은 offset 없는 ISO local date 또는 local datetime이고 `timezone`은 IANA timezone ID다. 파싱·Timezone 해석·interval 계산·Provider 표현 변환은 deterministic code가 수행하며 invalid/ambiguous local value는 Provider 호출 전에 차단한다.
@@ -771,7 +787,9 @@ class QueryAttemptV1:
 
 Retrieval의 `PersonCandidateV1(mention, identity, display_names, source_segment_ids)`는
 관측 metadata의 표시 이름↔email 결합만 보존한다. 다른 메시지의 같은 email에 붙은 별칭은
-합칠 수 있지만 surname/title만으로 서로 다른 email을 합치지 않는다. 이 bounded 후보는
+합칠 수 있지만 surname/title만으로 서로 다른 email을 합치지 않는다. 이름만 지정한 요청은
+metadata의 동일한 전체 이름에 직급이 붙은 경우에도 후보로 연결한다. 이름의 부분 문자열이나
+성만으로 다른 전체 이름을 일치시키지 않으며, 동명이인의 email은 별도 후보로 유지한다. 이 bounded 후보는
 Retrieval local checkpoint 및 `RetrievalResultV1.person_candidates`에 보존한다. 이전 artifact에
 필드가 없으면 빈 후보로 취급하며, 후보의 source segment provenance가 제외된 경우 재사용하지 않는다.
 복수 후보는 기존 Retrieval Confirmation 옵션으로 노출하고 선택 email은 해당 후보 집합에서만
@@ -785,6 +803,10 @@ Retrieval local checkpoint 및 `RetrievalResultV1.person_candidates`에 보존�
 - Calendar 시간 overlap은 conflict와 분리하며 관계 근거를 Work Analysis에 전달한다.
 
 ## 18. 정보 부족 분류와 결정적 종료 Guard
+
+시간 역할은 RequestIntent의 typed 의미를 보존한다. 수신/발송 표현이 명확한 경우만
+MESSAGE_TIME으로 보강하며, 알려진 행사 단어 목록에 없다는 이유로 EVENT_TIME을
+MESSAGE_TIME으로 바꾸지 않는다. 역할이 미해결이면 received-time lowering을 하지 않는다.
 
 인물 후보는 수집된 SourceSegment의 metadata와 명시적인 이름·이메일 연결을 근거로 만든다.
 답변용 Evidence 선택이 다른 사람의 자료를 제외했더라도 실제 복수 후보를 단일 인물로

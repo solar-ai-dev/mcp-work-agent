@@ -29,6 +29,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
+    gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import rag_retrieve_rerank
@@ -45,6 +46,13 @@ ROUTE: InputToolRouteV1 = {
     "required": True, "reason_codes": ["USER_REQUEST"],
 }
 POLICIES = {"gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+
+
+def test_gmail_constraint_kinds__requested_status_scope__remains_available() -> None:
+    kinds = gmail_planner_constraint_kinds({"request_intent": {"constraints": [
+        {"kind": "SCOPE", "field": "status", "value": "UNREAD"},
+    ]}})
+    assert kinds is not None and "STATUS_SCOPE" in kinds
 
 
 def _concept() -> dict[str, object]:
@@ -105,7 +113,10 @@ def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
     )
     candidate = preserve_vague_read_semantics.preserve_vague_read_semantics(
         {
-            "goal": request, "completion_conditions": ["관련 메일 확인"], "constraints": [],
+            "goal": request, "completion_conditions": ["관련 메일 확인"], "constraints": [
+                {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["KAN-93"]},
+                {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},
+            ],
             "requested_resource_hints": ["GMAIL_THREAD"], "requested_effect_hints": ["READ"],
             "analysis_requirement": "NONE",
         },

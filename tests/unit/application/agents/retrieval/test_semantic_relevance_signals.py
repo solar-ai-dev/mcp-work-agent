@@ -64,6 +64,9 @@ def test_receipt_candidate__body_and_provider_timestamp__uses_provider_timestamp
     ("이과장", "이서연 과장", True), ("이과장", "김서연 과장", False),
     ("박 팀장", "박지훈 팀장", True), ("박 팀장", "박지훈 대리", False),
     ("정수진 부장", "정수민 부장", False),
+    ("김하늘", "김하늘 대리", True), ("김하늘", "김하늘대리", True),
+    ("김하늘", "김하늘 과장", True), ("김", "김하늘 대리", False),
+    ("하늘", "김하늘 대리", False), ("김하늘", "김하늘빛 대리", False),
     ("Alex Morgan", "Alex Morgan", True), ("Alex Morgan", "Alex Taylor", False),
 ])
 def test_person_match__abbreviated_name__remains_candidate(

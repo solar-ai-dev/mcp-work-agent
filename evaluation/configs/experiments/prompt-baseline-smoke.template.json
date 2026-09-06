@@ -20,7 +20,7 @@
     "kind": "CURRENT_PRODUCT_BASELINE",
     "candidate_id": "current-product-baseline",
     "path": "src/google_work_agent/application/prompt_runtime/prompt_manifest.json",
-    "bundle_hash": "13504f8a8acc68b49fd23b306087db6e3acaf797f05f6f4c0bec9ec7e76f72f9",
+    "bundle_hash": "d4469b55455757ac26d4e12493fe45613a5a7e285ee6808dcd0810b8593823a5",
     "product_binding_status": "CURRENT_PRODUCT_BASELINE"
   },
   "repetitions": 3,

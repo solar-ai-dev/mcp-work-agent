@@ -467,9 +467,9 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
         if constraint["kind"] == "CONCEPT":
             terms.append("{" + " ".join(f'"{term}"' for term in constraint["manifestations"]) + "}")
         elif constraint["kind"] == "KEYWORD":
-            value = " ".join(constraint["terms"])
+            value = " ".join(_gmail_literal(term) for term in constraint["terms"])
             if constraint["match_mode"] == "PHRASE":
-                terms.append(f'"{value}"')
+                terms.append(_gmail_literal(" ".join(constraint["terms"])))
             elif constraint["match_mode"] == "ANY" and len(constraint["terms"]) > 1:
                 terms.append("{" + value + "}")
             else:
@@ -495,6 +495,12 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
     if not terms:
         raise ValueError("EMAIL retrieval requires a translatable constraint")
     return " ".join(terms)
+
+
+def _gmail_literal(value: str) -> str:
+    if any(character in value for character in '\\"\r\n'):
+        raise ValueError("Gmail lexical anchor contains unsupported query delimiters")
+    return f'"{value}"'
 
 
 def _gmail_participant_query(constraint: ParticipantConstraintV1) -> str:

@@ -68,11 +68,11 @@ def test_participant_validation__unresolved_or_unsafe__rejects_schema_builder_an
 
 
 @pytest.mark.parametrize(("mention", "discovery_query"), [
-    ("김대리", "대리 박람회"),
-    ("이과장", "과장 박람회"),
-    ("박 팀장", "박람회 팀장"),
-    ("정수진 부장", "박람회 정수진"),
-    ("Alex Morgan", "Alex Morgan 박람회"),
+    ("김대리", '"대리" "박람회"'),
+    ("이과장", '"과장" "박람회"'),
+    ("박 팀장", '"박람회" "팀장"'),
+    ("정수진 부장", '"박람회" "정수진"'),
+    ("Alex Morgan", '"Alex Morgan" "박람회"'),
 ])
 def test_person_discovery__unresolved_mention__does_not_invent_email(
     mention: str, discovery_query: str,

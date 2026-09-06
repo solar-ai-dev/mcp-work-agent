@@ -52,13 +52,16 @@ def test_period_only_listing__model_business_topics__does_not_inherit() -> None:
         ("2026년 9월 첫째주 체육대회 메일 찾아줘", "EVENT_TIME"),
         ("이번주에 받은 회의 메일", "MESSAGE_TIME"),
         ("다음주에 열리는 박람회 관련 메일", "EVENT_TIME"),
+        ("다음주 발대식 관련 메일", "EVENT_TIME"),
     ],
 )
 def test_temporal_meaning__event_request__preserves_separately_from_receipt(
     request_text: str, axis: str
 ) -> None:
+    candidate = _candidate()
+    candidate["constraints"].append({"kind": "TIME", "field": "temporal_axis", "value": [axis]})
     result = operation.preserve_vague_read_semantics(
-        _candidate(),
+        candidate,
         request_text=request_text,
         entry_mode="AGENT_SEARCH",
     )
@@ -89,16 +92,16 @@ def test_explicit_day__day_request__does_not_expand_to_month() -> None:
     assert not any(item["field"] == "period" for item in result["constraints"])
 
 
-def test_model_periods__duplicate_values__cannot_override_user_axis_or_run_year() -> None:
+def test_model_periods__duplicate_values__cannot_override_receipt_axis_or_run_year() -> None:
     candidate = _candidate()
     candidate["constraints"] += [
         {"kind": "DATE", "field": "period", "value": "2025-09-01T00:00:00Z"},
         {"kind": "DATE", "field": "period", "value": "2025-09-07T23:59:59Z"},
-        {"kind": "TIME", "field": "temporal_axis", "value": "MESSAGE_TIME"},
-        {"kind": "TIME", "field": "temporal_axis", "value": "MESSAGE_TIME"},
+        {"kind": "TIME", "field": "temporal_axis", "value": "EVENT_TIME"},
+        {"kind": "TIME", "field": "temporal_axis", "value": "EVENT_TIME"},
     ]
     result = operation.preserve_vague_read_semantics(
-        candidate, request_text="9월 첫째주 일정 관련 메일 찾아줘.", entry_mode="AGENT_SEARCH"
+        candidate, request_text="9월 첫째주에 받은 메일 찾아줘.", entry_mode="AGENT_SEARCH"
     )
     constraints = result["constraints"]
     assert len([item for item in constraints if item["field"] == "period"]) == 1
@@ -108,14 +111,21 @@ def test_model_periods__duplicate_values__cannot_override_user_axis_or_run_year(
         now_ms=int(datetime(2026, 9, 6, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000),
     )
     assert resolved == {
-        "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
+        "kind": "TEMPORAL_RANGE", "axis": "MESSAGE_TIME",
         "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
         "timezone": "Asia/Seoul",
     }
-    assert candidate["constraints"][-1]["value"] == "MESSAGE_TIME"
+    assert candidate["constraints"][-1]["value"] == "EVENT_TIME"
 
 
-def test_vague_read_semantics__placeholder_input__restores_search_and_removes_placeholder() -> None:
+def test_temporal_meaning__unresolved_role__does_not_default_to_receipt() -> None:
+    result = operation.preserve_vague_read_semantics(
+        _candidate(), request_text="9월 첫째주 관련 메일 찾아줘", entry_mode="AGENT_SEARCH",
+    )
+    assert not any(item["field"] == "temporal_axis" for item in result["constraints"])
+
+
+def test_vague_read_semantics__placeholder__preserves_request_without_inventing_topic() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(),
         request_text="회의 관련 메일이 있는데 그거 분석해서 일정 정리해줘.",
@@ -128,7 +138,7 @@ def test_vague_read_semantics__placeholder_input__restores_search_and_removes_pl
     assert by_field["original_search_request"] == [
         "회의 관련 메일이 있는데 그거 분석해서 일정 정리해줘."
     ]
-    assert by_field["search_terms"] == ["회의"]
+    assert "search_terms" not in by_field
     assert by_field["required_information"] == ["일정"]
 
 
@@ -142,7 +152,7 @@ def test_vague_read_semantics__people_periods_and_topics__preserves() -> None:
     by_field = {constraint["field"]: constraint["value"] for constraint in result["constraints"]}
     assert by_field["person"] == ["김대리"]
     assert by_field["period"] == ["지난주"]
-    assert by_field["search_terms"] == ["일정"]
+    assert "search_terms" not in by_field
 
 
 def test_vague_read_semantics__discussion_verbs__does_not_use_as_search_terms() -> None:
@@ -154,7 +164,7 @@ def test_vague_read_semantics__discussion_verbs__does_not_use_as_search_terms() 
 
     by_field = {constraint["field"]: constraint["value"] for constraint in result["constraints"]}
     assert by_field["period"] == ["지난주"]
-    assert by_field["search_terms"] == ["프로젝트", "일정"]
+    assert "search_terms" not in by_field
 
 
 def test_gmail_subject__explicit_literal__replaces_broad_search_terms() -> None:
@@ -181,25 +191,25 @@ def test_gmail_subject__explicit_literal__replaces_broad_search_terms() -> None:
     assert "search_terms" not in by_field
 
 
-def test_vague_read_semantics__model_broad_query__replaces_with_source_terms() -> None:
+def test_vague_read_semantics__model_topic__is_not_replaced_by_last_word_before_mail() -> None:
     candidate = _candidate()
     candidate["constraints"].append(
         {
             "kind": "USER_REQUIREMENT",
             "field": "search_terms",
-            "value": ["최근 회의 메일"],
+            "value": ["협업 프로젝트"],
         }
     )
 
     result = operation.preserve_vague_read_semantics(
         candidate,
-        request_text="최근 회의 메일 중 아직 후속 작업이 안 된 내용을 정리해줘.",
+        request_text="협업 프로젝트와 관련된 메일을 실제 메일의 근거로 정리해줘.",
         entry_mode="AGENT_SEARCH",
     )
 
     by_field = {constraint["field"]: constraint["value"] for constraint in result["constraints"]}
-    assert by_field["search_terms"] == ["회의"]
-    assert by_field["period"] == ["최근"]
+    assert by_field["search_terms"] == ["협업 프로젝트"]
+    assert "business_concepts" not in by_field
 
 
 def test_vague_read_semantics__answer_information__does_not_make_query_text() -> None:
@@ -211,7 +221,7 @@ def test_vague_read_semantics__answer_information__does_not_make_query_text() ->
 
     by_field = {constraint["field"]: constraint["value"] for constraint in result["constraints"]}
     assert by_field["period"] == ["최근"]
-    assert by_field["search_terms"] == ["회의"]
+    assert "search_terms" not in by_field
     assert by_field["required_information"] == ["후속 작업", "최신 결정"]
 
 
@@ -220,7 +230,7 @@ def test_mail_to_task__source_search__preserves_write_intent() -> None:
     candidate["requested_effect_hints"] = ["READ", "CREATE"]
     candidate["requested_resource_hints"] = ["GMAIL_THREAD", "TASK"]
     candidate["constraints"] = [
-        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": "깨진 검색어"},
+        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": "런타임 검증 회의"},
         {"kind": "RESOURCE", "field": "task_list", "value": "기본 목록"},
     ]
     request = "런타임 검증 회의 관련 메일을 찾아서 후속 업무를 Google Tasks에 등록해줘."
@@ -231,7 +241,7 @@ def test_mail_to_task__source_search__preserves_write_intent() -> None:
     )
     by_field = {item["field"]: item["value"] for item in result["constraints"]}
     assert by_field["original_search_request"] == [request]
-    assert by_field["search_terms"] == "회의"
+    assert by_field["search_terms"] == "런타임 검증 회의"
     assert by_field["required_information"] == ["후속 작업"]
     assert by_field["task_list"] == "기본 목록"
     assert result["requested_effect_hints"] == ["READ", "CREATE"]

@@ -1,4 +1,7 @@
-from google_work_agent.application.agents.retrieval.build_query import build_query_attempt
+from google_work_agent.application.agents.retrieval.build_query import (
+    build_query_attempt,
+    followup_planner_projection,
+)
 
 
 def test_query_attempt__uses_bounded_query__and_page_identities() -> None:
@@ -57,3 +60,18 @@ def test_query_attempt__uses_bounded_query__and_page_identities() -> None:
     assert changed["removed_constraints"] == ["KEYWORD"]
     assert changed["previous_query_hash"] == "query-hash"
     assert changed["change_reason_code"] == "QUERY_RELAXED_AFTER_NO_RESULTS"
+
+    projection = followup_planner_projection(
+        current_round_no=1, prior_query_attempts=[attempt, changed],
+        unresolved_sufficiency_issues=[{"required": True, "description": "missing event date"}],
+        read_result_summaries=[{"route_id": "route-1", "result_count": 1}],
+    )
+    for original, projected in zip(
+        [attempt, changed], projection["prior_query_attempts"], strict=True,
+    ):
+        assert "query_spec" in original
+        assert "query_spec" not in projected
+        assert (projected["normalized_intent_constraints"]
+                == original["normalized_intent_constraints"])
+        assert projected["candidate_count"] == original["candidate_count"]
+        assert projected["stop_reason"] == original["stop_reason"]

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping
 from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     CONCEPT_LITERAL_PATTERN,
-    CONCEPT_MANIFESTATION_LIMIT,
     PARTICIPANT_EMAIL_PATTERN,
+    PLANNER_CONCEPT_MANIFESTATION_LIMIT,
     TemporalRangeConstraintV1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
@@ -39,8 +40,12 @@ _CONSTRAINT_SCHEMA = {
                 "concept": _NON_EMPTY_STRING,
                 "manifestations": {
                     "type": "array",
+                    "description": (
+                        "One coherent search hypothesis: 1 to 3 short literal source-text terms "
+                        "in the user's language. Not invented document titles or descriptions."
+                    ),
                     "minItems": 1,
-                    "maxItems": CONCEPT_MANIFESTATION_LIMIT,
+                    "maxItems": PLANNER_CONCEPT_MANIFESTATION_LIMIT,
                     "uniqueItems": True,
                     "items": {
                         "type": "string", "minLength": 1,
@@ -228,6 +233,11 @@ def _route_query_schema(
                 "minItems": 1,
                 "uniqueItems": True,
                 "items": _NON_EMPTY_STRING,
+                "description": (
+                    "검색 목적과 선택 근거. CHANGED는 이전 관측 → 부족한 사실 → "
+                    "이번 단서가 그 부족함을 해결하는 이유를 설명한다. "
+                    "동의어를 바꿨다는 설명만으로는 근거가 아니다."
+                ),
             },
             "search_spec": search_spec,
             "detail_candidate_ref": detail_candidate_ref,
@@ -267,6 +277,7 @@ RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "type": "array",
                 "minItems": 1,
                 "items": _NON_EMPTY_STRING,
+                "description": "이번 가설의 성공 조건과 detail에서 검증할 원래 요청의 의미.",
             },
             "retrieval_order": {
                 "type": "array",
@@ -291,6 +302,9 @@ def bind_retrieval_query_plan_output_schema(
     is_followup: bool = False,
     resolved_temporal_constraints: Mapping[str, TemporalRangeConstraintV1] | None = None,
     allowed_participant_identities: Collection[str] | None = None,
+    requested_concepts: Mapping[str, Collection[str]] | None = None,
+    prior_concept_manifestations: Mapping[str, Collection[str]] | None = None,
+    next_page_route_ids: Collection[str] | None = None,
 ) -> OutputSchemaDefinition:
     """Bind planner-generated identities to values validated in the current state."""
 
@@ -306,8 +320,14 @@ def bind_retrieval_query_plan_output_schema(
     )
     bound_operations: list[dict[str, object]] = []
     for route_id in allowed_route_ids:
+        concepts = (requested_concepts or {}).get(route_id, ())
         for template in operation_templates:
             operation_schema = deepcopy(template)
+            fields = cast(dict[str, object], operation_schema["properties"])
+            operation = cast(dict[str, object], fields["operation"])["const"]
+            if (operation == "NEXT_PAGE" and next_page_route_ids is not None
+                    and route_id not in next_page_route_ids):
+                continue
             _bind_route_operation(
                 operation_schema,
                 route_id=route_id,
@@ -325,12 +345,42 @@ def bind_retrieval_query_plan_output_schema(
                 _bind_status_scope_values(
                     operation_schema, route_status_values.get(route_id, ())
                 )
+            if concepts:
+                _bind_concept_hypothesis(
+                    operation_schema, concepts,
+                    prior_manifestations=(prior_concept_manifestations or {}).get(route_id, ()),
+                )
             bound_operations.append(operation_schema)
     route_queries["items"] = {"oneOf": bound_operations}
     return OutputSchemaDefinition(
         schema_version=base_schema.schema_version,
         json_schema=json_schema,
     )
+
+
+def _bind_concept_hypothesis(
+    value: object, concepts: Collection[str], *,
+    prior_manifestations: Collection[str],
+) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _bind_concept_hypothesis(item, concepts,
+                                     prior_manifestations=prior_manifestations)
+    elif isinstance(value, dict):
+        properties = value.get("properties")
+        if isinstance(properties, dict) and properties.get("kind") == {"const": "CONCEPT"}:
+            properties["concept"] = {"type": "string", "enum": sorted(concepts)}
+            if prior_manifestations:
+                previous = "|".join(re.escape(term) for term in sorted(prior_manifestations))
+                properties["manifestations"]["contains"] = {
+                    "type": "string", "pattern": f"^(?!(?:{previous})$).+",
+                }
+                properties["manifestations"]["description"] += (
+                    " At least one term must differ from previously attempted manifestations."
+                )
+        for child in value.values():
+            _bind_concept_hypothesis(child, concepts,
+                                     prior_manifestations=prior_manifestations)
 
 
 def _bind_status_scope_values(value: object, allowed_values: Collection[str]) -> None:
@@ -362,8 +412,10 @@ def _bind_route_operation(
         "const": route_id,
     }
     operation = cast(dict[str, object], operation_properties["operation"])["const"]
-    if is_followup and operation in {"SEARCH", "FREEBUSY"}:
-        operation_properties["search_spec"] = deepcopy(_CHANGED_SEARCH_SPEC)
+    if operation in {"SEARCH", "FREEBUSY"}:
+        operation_properties["search_spec"] = deepcopy(
+            _CHANGED_SEARCH_SPEC if is_followup else _INITIAL_SEARCH_SPEC
+        )
     if operation == "DETAIL_FETCH":
         candidates = sorted(set(detail_candidate_refs))
         if candidates:
@@ -412,6 +464,9 @@ def _bind_constraint_ref_values(
                 for item, kind in zip(options, declared_kinds, strict=True)
                 if kind in allowed_constraint_kinds
             ]
+            if len(value["oneOf"]) == 1:
+                only_option = value.pop("oneOf")[0]
+                value.update(only_option)
     properties = value.get("properties")
     if isinstance(properties, dict):
         kind_schema = properties.get("kind")

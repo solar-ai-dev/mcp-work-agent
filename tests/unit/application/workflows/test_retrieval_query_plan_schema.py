@@ -46,6 +46,30 @@ def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     assert validate_output_schema(candidate, schema.json_schema)
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_bound_concept_hypothesis__current_meaning__rejects_unbounded_or_different_concept(
+    changed: bool,
+) -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"], supported_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
+        requested_concepts={"gmail": ["업무 개념"]}, is_followup=changed,
+    )
+    concept = {"kind": "CONCEPT", "concept": "업무 개념", "manifestations": ["자료"]}
+    spec = ({"mode": "CHANGED", "constraint_delta": {
+        "upsert_constraints": [concept], "remove_constraint_kinds": [],
+    }} if changed else {"mode": "INITIAL", "constraints": [concept]})
+    candidate = {"schema_version": 2, "route_queries": [{
+        "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["MISSING_EVIDENCE"],
+        "search_spec": spec, "detail_candidate_ref": None,
+    }], "required_information": ["source text"], "retrieval_order": ["gmail"]}
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    concept["manifestations"] = ["하나", "둘", "셋", "넷"]
+    assert validate_output_schema(candidate, schema.json_schema)
+    concept["manifestations"] = ["자료"]
+    concept["concept"] = "unrelated"
+    assert validate_output_schema(candidate, schema.json_schema)
+
+
 @pytest.mark.parametrize("identity, valid", [
     ("@default", False), ("primary", False), ("김대리", False),
     ("bonggyulim0728@gmail.com", True),
@@ -251,6 +275,25 @@ def test_runtime_binding__rejects_unvalidated__container_ref() -> None:
         "primary"
     ]
     assert validate_output_schema(candidate, schema.json_schema) == []
+
+
+@pytest.mark.parametrize("is_followup", [False, True])
+def test_runtime_binding__query_round__accepts_only_current_mode(is_followup: bool) -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["r"], supported_constraint_kinds={"r": ["KEYWORD"]}, is_followup=is_followup,
+    )
+    constraint = {"kind": "KEYWORD", "terms": ["exact"], "match_mode": "PHRASE"}
+    initial = {"mode": "INITIAL", "constraints": [constraint]}
+    changed = {"mode": "CHANGED", "constraint_delta": {
+        "upsert_constraints": [constraint], "remove_constraint_kinds": [],
+    }}
+    query = {"route_id": "r", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
+             "search_spec": changed if is_followup else initial, "detail_candidate_ref": None}
+    candidate = {"schema_version": 2, "route_queries": [query], "required_information": ["read"],
+                 "retrieval_order": ["r"]}
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    query["search_spec"] = initial if is_followup else changed
+    assert validate_output_schema(candidate, schema.json_schema)
 
 
 def test_temporal_constraint__rejects_offset_bearing__local_value() -> None:

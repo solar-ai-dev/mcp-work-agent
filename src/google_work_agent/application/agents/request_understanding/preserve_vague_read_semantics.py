@@ -33,50 +33,6 @@ _EXPLICIT_SUBJECT_PATTERNS = (
     re.compile(r"(?:제목)(?:이|가|은|는)?\s*(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"),
     re.compile(r"(?i)(?:subject)\s*(?:is\s*)?(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"),
 )
-_DIRECT_TOPIC_PATTERNS = (
-    re.compile(r"(?P<topic>[0-9A-Za-z가-힣_+\-]{2,})\s*(?:관련|에\s*관한)\s*(?:메일|이메일)"),
-    re.compile(r"(?P<topic>[0-9A-Za-z가-힣_+\-]{2,})\s*(?:메일|이메일)"),
-)
-_DISCUSSED_TOPIC_PATTERN = re.compile(
-    r"(?P<topic>(?:[0-9A-Za-z가-힣_+\-]+\s+){0,3}[0-9A-Za-z가-힣_+\-]+)\s*"
-    r"(?:얘기한|얘기했던|이야기한|이야기했던|논의한|논의했던)\s*(?:메일|이메일)"
-)
-_TOPIC_STOPWORDS = frozenset(
-    {
-        "관련",
-        "메일",
-        "이메일",
-        "최근",
-        "지난주",
-        "지난주에",
-        "이번주",
-        "이번주에",
-        "다음주",
-        "다음주에",
-        "지난달",
-        "지난달에",
-        "이번달",
-        "이번달에",
-        "얘기한",
-        "얘기했던",
-        "이야기한",
-        "이야기했던",
-        "논의한",
-        "논의했던",
-    }
-)
-_FALLBACK_BUSINESS_TOPICS = (
-    "회의",
-    "프로젝트",
-    "일정",
-    "예산",
-    "계약",
-    "채용",
-    "출시",
-    "보고서",
-    "장애",
-    "보안",
-)
 
 
 def preserve_vague_read_semantics(
@@ -116,21 +72,6 @@ def preserve_vague_read_semantics(
             values=explicit_subjects,
             replace_existing=True,
         )
-    else:
-        _merge_constraint(
-            constraints,
-            kind="USER_REQUIREMENT",
-            field="search_terms",
-            values=_search_topics(request_text),
-            replace_existing=True,
-        )
-        if "일정" in request_text:
-            _merge_constraint(
-                constraints,
-                kind="USER_REQUIREMENT",
-                field="business_concepts",
-                values=["일정"],
-            )
     _merge_constraint(
         constraints,
         kind="PERSON",
@@ -156,23 +97,12 @@ def preserve_vague_read_semantics(
                 for item in constraints
                 if item["field"] not in {"date_period_start", "date_period_end"}
             ]
-        axes = []
-        for period in periods:
-            tail = request_text[period.end() :]
-            message_time = re.match(r"\s*(?:에\s*)?(?:온|받은|수신|도착|보낸|발송)", tail)
-            event_time = re.match(
-                r"\s*(?:의\s*|에\s*(?:있는|열리는|개최되는)?\s*)?"
-                r"(?:일정|회의|행사|박람회|체육대회|교육|출장|방문)",
-                tail,
+        if all(re.match(r"\s*(?:에\s*)?(?:온|받은|수신|도착|보낸|발송)",
+                        request_text[period.end():]) for period in periods):
+            _merge_constraint(
+                constraints, kind="TIME", field="temporal_axis",
+                values=["MESSAGE_TIME"], replace_existing=True,
             )
-            axes.append("EVENT_TIME" if event_time and not message_time else "MESSAGE_TIME")
-        _merge_constraint(
-            constraints,
-            kind="TIME",
-            field="temporal_axis",
-            values=axes,
-            replace_existing=True,
-        )
     _merge_constraint(
         constraints,
         kind="USER_REQUIREMENT",
@@ -229,23 +159,6 @@ def _without_unstated_placeholders(
             }
         )
     return result
-
-
-def _search_topics(request_text: str) -> list[str]:
-    topics: list[str] = []
-    people = {match.group(0) for match in _PERSON_PATTERN.finditer(request_text)}
-    for pattern in _DIRECT_TOPIC_PATTERNS:
-        topics.extend(match.group("topic") for match in pattern.finditer(request_text))
-    for match in _DISCUSSED_TOPIC_PATTERN.finditer(request_text):
-        topics.extend(
-            token
-            for token in match.group("topic").split()
-            if token not in _TOPIC_STOPWORDS
-            and not any(token.startswith(person) for person in people)
-        )
-    if not topics:
-        topics.extend(topic for topic in _FALLBACK_BUSINESS_TOPICS if topic in request_text)
-    return list(dict.fromkeys(topic for topic in topics if topic not in _TOPIC_STOPWORDS))
 
 
 def _required_information(request_text: str) -> list[str]:

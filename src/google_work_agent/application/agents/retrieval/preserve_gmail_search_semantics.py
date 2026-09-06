@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime, timedelta
 from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
-    CONCEPT_MANIFESTATION_LIMIT,
     RetrievalV2ValidationError,
     TemporalRangeConstraintV1,
     validate_participant_identity,
@@ -57,6 +55,44 @@ def requested_participant_identities(prompt_input: Mapping[str, object]) -> list
         for constraint in constraints if constraint["kind"] == "PARTICIPANT"
         for person in cast(list[dict[str, str]], constraint["participants"])
     })
+
+
+def gmail_planner_constraint_kinds(
+    prompt_input: Mapping[str, object],
+) -> set[str] | None:
+    """Narrow optional lexical/status filters to current user meaning, not examples."""
+    intent = prompt_input.get("request_intent")
+    if not isinstance(intent, Mapping):
+        return None
+    constraints = intent.get("constraints")
+    if not isinstance(constraints, list) or not constraints:
+        return None
+    explicit = _explicit_gmail_constraints(constraints, now_ms=None, timezone=None)
+    kinds = {str(item["kind"]) for item in explicit} | {
+        "CONTAINER_REF", "RESOURCE_REF", "PARTICIPANT",
+    }
+    if _requested_concepts(constraints):
+        kinds.add("CONCEPT")
+    if any(isinstance(item, Mapping) and item.get("kind") in {"DATE", "TIME"}
+           for item in constraints):
+        kinds.add("TEMPORAL_RANGE")
+    if any(
+        isinstance(item, Mapping) and item.get("kind") == "SCOPE"
+        and item.get("field") == "status" for item in constraints
+    ):
+        kinds.add("STATUS_SCOPE")
+    return kinds
+
+
+def requested_gmail_concepts(
+    prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
+) -> dict[str, set[str]]:
+    intent = prompt_input.get("request_intent")
+    if not isinstance(intent, Mapping) or has_explicit_gmail_subject(intent.get("constraints")):
+        return {}
+    concepts = _requested_concepts(intent.get("constraints"))
+    return {route["route_id"]: concepts for route in frozen_routes
+            if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"} and concepts}
 
 
 def preserve_gmail_search_semantics(
@@ -143,45 +179,7 @@ def preserve_gmail_search_semantics(
                 if not isinstance(item, Mapping) or item.get("kind") != "CONCEPT"
                 or item.get("concept") in concepts
             ]
-            temporal = next((item for item in explicit_constraints
-                             if item["kind"] == "TEMPORAL_RANGE"), None)
-            alternatives = temporal_discovery_manifestations(temporal) if temporal else []
-            if alternatives:
-                for item in search_spec["constraints"]:
-                    if not isinstance(item, dict) or item.get("kind") != "CONCEPT":
-                        continue
-                    phrases = item.get("manifestations", [])
-                    if isinstance(phrases, list) and not any(
-                        isinstance(phrase, str) and str(item["concept"]) not in phrase
-                        for phrase in phrases
-                    ):
-                        item["manifestations"] = alternatives
-                        route_query["reason_codes"] = ["TEMPORAL_DISCOVERY_HYPOTHESIS"]
     return candidate
-
-
-def temporal_discovery_manifestations(constraint: Mapping[str, object]) -> list[str]:
-    """Date spellings are bounded discovery hypotheses, never a concept dictionary."""
-    if constraint.get("axis") != "EVENT_TIME" or not constraint.get("start_local"):
-        return []
-    start = datetime.fromisoformat(str(constraint["start_local"]))
-    end = datetime.fromisoformat(str(constraint.get("end_local") or constraint["start_local"]))
-    if end > start:
-        end -= timedelta(microseconds=1)
-    months = min(12, max(1, (end.year - start.year) * 12 + end.month - start.month + 1))
-    return list(
-        dict.fromkeys(
-            spelling
-            for format_index in range(5)
-            for offset in range(months)
-            for month in [(start.month - 1 + offset) % 12 + 1]
-            for spelling in [
-                [f"{month}월", f"-{month:02}-", f"{month}/", f"{month:02}/", f".{month:02}."][
-                    format_index
-                ]
-            ]
-        )
-    )[:CONCEPT_MANIFESTATION_LIMIT]
 
 
 def validate_requested_concepts(
