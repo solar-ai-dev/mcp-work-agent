@@ -54,6 +54,9 @@ class GraphPathRecorder(BaseCallbackHandler):
                 "__context_query_attempts__",
                 "sufficiency",
                 "evidence_selection",
+                "evidence_drafts",
+                "person_candidates",
+                "selected_person_identities",
                 "retry_budget",
             ):
                 value = outputs.get(key)

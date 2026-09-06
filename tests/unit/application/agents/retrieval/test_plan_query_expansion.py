@@ -18,6 +18,7 @@ def test_plan_query_expansion__page_summary__continues_only_unexhausted_route(
                 {"required": True, "resolution_source": "CONNECTOR", "route_id": "issues"},
             ], "read_result_summaries": [
                 {"route_id": "issues", "has_next_page": True, "exhausted": exhausted},
+                {"route_id": "issues", "has_next_page": False, "exhausted": False},
             ],
         }, frozen_routes=[cast(InputToolRouteV1, {
             "route_id": "issues", "connector_id": "github", "resource_type": "GITHUB_ISSUE",

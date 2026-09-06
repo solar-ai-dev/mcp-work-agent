@@ -39,6 +39,9 @@ from google_work_agent.application.agents.retrieval.match_temporal_evidence impo
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     RetrievalValidationError,
 )
+from google_work_agent.application.agents.retrieval.project_attempted_detail_refs import (
+    project_attempted_detail_refs,
+)
 from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
     project_query_temporal_constraints,
 )
@@ -118,6 +121,17 @@ def deterministic_sufficiency(
     if remaining > _answer_call_reserve(request_intent) or set(
         request_intent["requested_effect_hints"]
     ) != {"READ"}:
+        metadata_candidates = [draft for draft in evidence_drafts
+                               if (draft["locator"] or {}).get("is_metadata_only") is True]
+        if metadata_candidates:
+            detail_need = _require_gmail_candidate_details(
+                {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
+                request_intent=request_intent, tool_route_plan=tool_route_plan,
+                evidence_drafts=metadata_candidates,
+                attempted_detail_candidate_refs=project_attempted_detail_refs(query_attempts),
+            )
+            if detail_need["issues"]:
+                return detail_need
         source_result = _deterministic_source_sufficiency(
             request_intent=request_intent, tool_route_plan=tool_route_plan,
             acquisition_result=acquisition_result, evidence_drafts=evidence_drafts,
@@ -149,6 +163,23 @@ def _deterministic_source_sufficiency(
     retry_budget: RunBudgetV2,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
 ) -> SufficiencyResultV2 | None:
+    if (
+        not evidence_drafts and set(request_intent["requested_effect_hints"]) == {"READ"}
+        and acquisition_result["source_summaries"] and all(
+            summary.get("status") == "COMPLETE" and summary.get("resource_count") == 0
+            for summary in acquisition_result["source_summaries"]
+        )
+    ):
+        empty_result = _fail_closed_on_empty_required_acquisition(
+            {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
+            tool_route_plan=tool_route_plan, acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+        )
+        if empty_result["issues"]:
+            return enforce_sufficiency_guard(
+                empty_result, request_intent=request_intent, retry_budget=retry_budget,
+                evidence_supported_partial_possible=False,
+            )
     terminal_read_failure = any(
         summary.get("status") == "FAILED"
         and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED", "BUDGET_EXHAUSTED"}
@@ -236,6 +267,7 @@ def assess_sufficiency(
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     attempted_detail_candidate_refs: Collection[str] = (),
     query_attempts: Sequence[QueryAttemptV1] = (),
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
     deterministic = deterministic_sufficiency(
@@ -282,6 +314,21 @@ def assess_sufficiency(
         evidence_drafts=evidence_drafts,
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
     )
+    if tool_route_plan is not None and set(request_intent["requested_effect_hints"]) == {"READ"}:
+        unread_routes = {
+            summary.get("route_id") for summary in read_result_summaries
+            if summary.get("has_next_page") is True and summary.get("exhausted") is not True
+        }
+        for route in tool_route_plan["input_plan"]["input_routes"]:
+            if (route["route_id"] not in unread_routes
+                    or "RESOURCE_SELECTED" in route["reason_codes"]):
+                continue
+            validated["issues"].append({
+                "slot": "source_page_coverage", "route_id": route["route_id"],
+                "issue_type": "MISSING", "required": True, "safety_critical": False,
+                "resolution_source": "GOOGLE" if route["connector_id"] == "google_workspace"
+                else "CONNECTOR", "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
+            })
     validated = _bind_issue_routes(validated, tool_route_plan=tool_route_plan)
     if (
         validated["status"] == "SUFFICIENT"
@@ -927,6 +974,8 @@ def _require_gmail_candidate_details(
         tool_route_plan is None
         or not (
             request_intent["analysis_requirement"] == "REQUIRED"
+            or any((draft["locator"] or {}).get("is_metadata_only") is True
+                   for draft in evidence_drafts)
             or any(
                 item["kind"] == "PERSON" or item["field"] == "business_concepts"
                 for item in request_intent["constraints"]

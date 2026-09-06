@@ -36,6 +36,17 @@ def test_load_prompt__input_contract_closes__exact_slot_set() -> None:
     assert contract.slot_ids == REQUIRED_PROMPT_SLOT_IDS
 
 
+def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> None:
+    payload = _payload()
+    entries = cast(list[dict[str, object]], payload["entries"])
+    entry = next(item for item in entries
+                 if item["prompt_slot_id"] == "request_understanding.identify_goal")
+    assert entry["output_schema_version"] == 2
+    entry["output_schema_version"] = 1
+    with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
+        load_prompt_input_contract(_write(tmp_path, payload))
+
+
 def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
     contract = load_prompt_input_contract()
 

@@ -453,10 +453,14 @@ def plan_query(
             )
             for route in frozen_routes
         }
-    planner_input = _project_route_constraint_policies(
-        prompt_input, route_policies, supported_kinds=supported_kinds
-    )
     concepts_by_route = requested_gmail_concepts(prompt_input, frozen_routes)
+    planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = {
+        route_id: ({"CONCEPT"} if concepts_by_route.get(route_id) else kinds)
+        for route_id, kinds in supported_kinds.items()
+    }
+    planner_input = _project_route_constraint_policies(
+        prompt_input, route_policies, supported_kinds=planner_kinds
+    )
     is_followup = "current_round_no" in prompt_input
     bounded_output_schema = bind_retrieval_query_plan_output_schema(
         base_schema=output_schema,
@@ -464,7 +468,7 @@ def plan_query(
         route_status_values={
             route["route_id"]: status_scope_values(route) for route in frozen_routes
         },
-        supported_constraint_kinds=supported_kinds,
+        supported_constraint_kinds=planner_kinds,
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
@@ -564,7 +568,7 @@ def plan_query(
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
             detail_candidate_refs=detail_candidate_refs,
-            previous_output=candidate,
+            previous_output=result.structured_output,
             failure_reason_code=error.reason_code,
             affected_field_paths=error.affected_field_paths,
             failure_detail=str(error),

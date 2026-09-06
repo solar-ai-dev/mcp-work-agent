@@ -32,6 +32,56 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 )
 
 
+def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() -> None:
+    intent = _intent()
+    intent.update(analysis_requirement="NONE", constraints=[])
+    runtime = FakeLLMRuntime(deque())
+    route_plan = _tool_route_plan()
+    route_plan["input_plan"]["input_routes"][0].update(
+        resource_type="GMAIL_THREAD",
+        allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"],
+    )
+    result = assess_sufficiency(
+        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
+        request_intent=intent, tool_route_plan=route_plan,
+        acquisition_result=_acquisition_result(), retry_budget=_run_budget(used=0),
+        evidence_drafts=[{"schema_version": 1, "evidence_id": "e1",
+                          "resource_handle": "gmail_thread:thread-kim", "segment_id": "s1",
+                          "kind": "excerpt", "excerpt": "unclear title",
+                          "locator": {"is_metadata_only": True}, "reason_codes": ["CONTEXT"]}],
+    )
+    assert result["status"] == "NEEDS_MORE_DATA"
+    assert result["issues"][0]["reason_codes"] == ["CANDIDATE_DETAIL_REQUIRED"]
+    assert runtime.calls == []
+@pytest.mark.parametrize("has_next,exhausted,used,expected", [
+    (True, False, 0, "NEEDS_MORE_DATA"), (True, False, 2, "PARTIAL"),
+    (True, True, 0, "SUFFICIENT"), (False, False, 0, "SUFFICIENT"),
+])
+def test_sufficiency_node__unread_page__requires_bounded_coverage(
+    has_next, exhausted, used, expected,
+) -> None:
+    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    intent = _intent()
+    intent.update(analysis_requirement="NONE", constraints=[])
+    result = assess_sufficiency_node(
+        {"request_intent": intent,
+         "evidence_selection": {"schema_version": 2, "evidence_drafts": [],
+                                "selected_segment_ids": [], "excluded_segment_ids": []}},
+        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
+        tool_route_plan=_tool_route_plan(), acquisition_result=_acquisition_result(),
+        retry_budget=_run_budget(used=used), evidence_drafts=[{
+            "schema_version": 1, "evidence_id": "e1", "resource_handle": "gmail_thread:thread-kim",
+            "segment_id": "s1", "kind": "excerpt", "excerpt": "현재 확인한 한 개의 자료",
+            "locator": {}, "reason_codes": ["SUPPORTS"],
+        }], read_result_summaries=[{
+            "route_id": "route-gmail", "has_next_page": has_next, "exhausted": exhausted,
+        }],
+    )["sufficiency"]
+    assert result["status"] == expected
+    if has_next and not exhausted:
+        assert result["issues"][0]["reason_codes"] == ["UNREAD_PAGE_AVAILABLE"]
+
+
 def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard() -> None:
     intent = _intent()
     intent.update(analysis_requirement="NONE", constraints=[])
@@ -355,6 +405,27 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
 
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"]
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(failed):
+    acquisition = _acquisition_result()
+    acquisition["source_summaries"][0].update(
+        status="FAILED" if failed else "COMPLETE", resource_count=0, resource_handles=[],
+    )
+    if failed:
+        acquisition["source_summaries"][0]["error_code"] = "PERMISSION_DENIED"
+    runtime = FakeLLMRuntime(deque())
+    result = assess_sufficiency(
+        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
+        request_intent=_intent(), tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition, evidence_drafts=[], retry_budget=_run_budget(used=0),
+    )
+    reasons = {code for issue in result["issues"] for code in issue["reason_codes"]}
+    expected_reason = "SOURCE_PERMISSION_DENIED" if failed else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
+    assert expected_reason in reasons
+    assert ("REQUIRED_SOURCE_RETURNED_NO_RESOURCES" in reasons) is not failed
+    assert runtime.calls == []
 
 
 @pytest.mark.parametrize("mail_count", [0, 1])

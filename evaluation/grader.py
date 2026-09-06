@@ -65,7 +65,9 @@ def _grade_business(case: Mapping[str, object], observed: Mapping[str, object]) 
     if requested == "ANSWER":
         awaiting_confirmation = observed.get(
             "terminal_state"
-        ) == "WAITING_CONFIRMATION" and case.get("expected_interactions") == ["CONFIRMATION"]
+        ) == "WAITING_CONFIRMATION" and case.get("expected_interactions") == [
+            {"type": "CONFIRMATION"}
+        ]
         answer = observed.get("final_answer")
         if not awaiting_confirmation and (not isinstance(answer, str) or not answer.strip()):
             failures.append("REQUIRED_ANSWER_MISSING")
@@ -236,9 +238,31 @@ def _grade_retrieval(case: Mapping[str, object], observed: Mapping[str, object])
             failures.append("RESOURCE_ALLOWLIST_VIOLATION")
     anchors = _strings(gold.get("exact_anchors", []), "exact_anchors")
     resolved = _mapping(observed.get("resolved_identities", {}), "resolved_identities")
-    intent = json.dumps(observed.get("semantic_constraints", {}), ensure_ascii=False).casefold()
+    semantic_constraints = observed.get("semantic_constraints", [])
+    if isinstance(semantic_constraints, list):
+        semantic_constraints = [
+            item for item in semantic_constraints
+            if not isinstance(item, Mapping) or item.get("field") != "original_search_request"
+        ]
+    intent = json.dumps(semantic_constraints, ensure_ascii=False).casefold()
     if any(anchor.casefold() not in intent for anchor in anchors):
         failures.append("REQUEST_CONSTRAINT_LOST")
+    for anchor, required_fields in _mapping(
+        gold.get("semantic_anchor_fields", {}), "semantic_anchor_fields",
+    ).items():
+        for required_field in _strings(required_fields, "semantic_anchor_fields"):
+            values = [
+                value for item in semantic_constraints if isinstance(item, Mapping)
+                and item.get("field") == required_field
+                for value in (item["value"] if isinstance(item.get("value"), list)
+                              else [item.get("value")])
+            ] if isinstance(semantic_constraints, list) else []
+            if re.sub(r"\s+", "", anchor).casefold() not in {
+                re.sub(r"\s+", "", value).casefold() for value in values if isinstance(value, str)
+            }:
+                failures.append("SEMANTIC_CONSTRAINT_ROLE_MISMATCH")
+    discovery_terms = _mapping(gold.get("discovery_anchor_terms", {}), "discovery_anchor_terms")
+    exact_identity_seen: set[str] = set()
     for index, step in enumerate(trace):
         if not step.get("reason_codes") or not step.get("required_information"):
             failures.append("SEARCH_PURPOSE_OR_SUCCESS_CRITERIA_MISSING")
@@ -246,9 +270,19 @@ def _grade_retrieval(case: Mapping[str, object], observed: Mapping[str, object])
         if step.get("operation") == "SEARCH" and any(
             a.casefold() not in constraints
             and str(resolved.get(a, "__unresolved_identity__")).casefold() not in constraints
+            and not (
+                a not in exact_identity_seen
+                and any(term.casefold() in constraints for term in _strings(
+                    discovery_terms.get(a, []), "discovery_anchor_terms",
+                ))
+            )
             for a in anchors
         ):
             failures.append("EXACT_ANCHOR_LOST")
+        exact_identity_seen.update(
+            mention for mention, identity in resolved.items()
+            if isinstance(identity, str) and identity.casefold() in constraints
+        )
         if index and step.get("operation") == "SEARCH" and not step.get("observation_refs"):
             failures.append("CHANGED_HYPOTHESIS_WITHOUT_OBSERVATION")
         if (

@@ -247,6 +247,7 @@ class OllamaHTTPClient(OllamaTransport):
                         "content_hash": prompt_ref.content_hash,
                     },
                     "input": prompt_input,
+                    "output_schema": output_schema.json_schema,
                 },
                 sort_keys=True,
                 ensure_ascii=False,

@@ -26,6 +26,38 @@ from google_work_agent.ports.llm.output_schema_validation import validate_output
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 
+def test_evidence_selection__no_candidates__does_not_invoke_model() -> None:
+    runtime = FakeLLMRuntime(deque())
+    budget = _run_budget(used=0)
+    result, returned_budget = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=_intent(),
+        rag_candidates=[], segments=[], retry_budget=budget,
+    )
+    assert result == {"schema_version": 2, "selected_segment_ids": [],
+                      "excluded_segment_ids": [], "evidence_drafts": []}
+    assert returned_budget == budget
+    assert runtime.calls == []
+
+
+def test_search_candidate__metadata_only__is_context_not_a_business_fact() -> None:
+    intent = _intent()
+    intent.update(analysis_requirement="NONE", requested_effect_hints=["READ"])
+    runtime = FakeLLMRuntime(deque())
+    result, _ = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=intent,
+        rag_candidates=[{"segment_id": "candidate", "resource_ref": "gmail_thread:1",
+                         "retrieval_score": 0.0, "reason_codes": []}],
+        segments=[SourceSegment("candidate", "gmail_thread:1", "GMAIL", "gmail_thread", "1",
+                                None, None, {"is_metadata_only": True}, "unclear title")],
+        retry_budget=_run_budget(used=0),
+    )
+    assert result["selected_segment_ids"] == ["candidate"]
+    assert result["evidence_drafts"][0]["role"] == "CONTEXT"
+    assert runtime.calls == []
+
+
 @pytest.mark.parametrize("has_topic", [False, True])
 def test_receipt_listing__uses_receipt_not_event_date__unless_content_is_requested(
     has_topic: bool,

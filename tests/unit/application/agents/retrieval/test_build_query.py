@@ -21,6 +21,46 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 )
 
 
+@pytest.mark.parametrize("matching", [True, False])
+def test_build_query__detail_then_page__uses_search_continuation(matching: bool) -> None:
+    route = cast(InputToolRouteV1, {
+        "route_id": "r1", "connector_id": "google_workspace", "resource_type": "GMAIL_THREAD",
+        "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+        "required": True, "reason_codes": ["USER_REQUEST"],
+    })
+    policy = {"r1": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+    query = {
+        "route_id": "r1", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
+        "search_spec": {"mode": "INITIAL", "constraints": [
+            {"kind": "KEYWORD", "terms": ["project"], "match_mode": "PHRASE"},
+        ]}, "detail_candidate_ref": None,
+    }
+    plan = {"schema_version": 2, "route_queries": [query],
+            "required_information": ["mail"], "retrieval_order": ["r1"]}
+    search = build_query(plan, frozen_routes=[route], route_policies=policy)[0]
+    query.update(operation="DETAIL_FETCH", search_spec=None, detail_candidate_ref="gmail_thread:t1")
+    detail = build_query(plan, frozen_routes=[route], route_policies=policy,
+                         prior_plans={"r1": search}, detail_candidate_refs=["gmail_thread:t1"])[0]
+    query.update(operation="NEXT_PAGE", detail_candidate_ref=None)
+    summaries = [
+        {"route_id": "r1",
+         "query_identity_hash": search["query_identity_hash"] if matching else "other",
+         "read_result_handle": "search-page", "has_next_page": True, "exhausted": False},
+        {"route_id": "r1", "query_identity_hash": detail["query_identity_hash"],
+         "read_result_handle": "detail", "has_next_page": False, "exhausted": True},
+    ]
+    if not matching:
+        with pytest.raises(RetrievalV2ValidationError, match="validated prior read-result"):
+            build_query(plan, frozen_routes=[route], route_policies=policy,
+                        prior_plans={"r1": detail}, read_result_summaries=summaries)
+        return
+    page = build_query(plan, frozen_routes=[route], route_policies=policy,
+                       prior_plans={"r1": detail}, read_result_summaries=summaries)[0]
+    assert page["query_identity_hash"] == search["query_identity_hash"]
+    assert page["prior_read_result_handle"] == "search-page"
+    assert page["effective_constraints"] == search["effective_constraints"]
+
+
 def test_build_query__preserves_exact__frozen_resource_type() -> None:
     route = cast(
         InputToolRouteV1,

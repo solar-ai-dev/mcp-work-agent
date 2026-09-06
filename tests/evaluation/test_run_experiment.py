@@ -29,7 +29,7 @@ class _ProductApiStub:
             "actions": [],
             "approvals": [],
             "verification_summary": {},
-            "context_preview": {"resource_refs": ["resource:RES-1"]},
+            "context_preview": {"items": [{"resource_type": "resource", "resource_id": "RES-1"}]},
             "pending_interrupt": None,
         }
 

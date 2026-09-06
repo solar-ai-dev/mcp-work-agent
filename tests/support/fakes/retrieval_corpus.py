@@ -144,11 +144,16 @@ def _term(token: str) -> Any:
     operator, separator, value = token.partition(":")
     if not separator:
         operator, value = "text", token
-    if operator not in {"text", "subject", "from", "to", "cc", "bcc", "after", "before"}:
+    if operator not in {"text", "subject", "from", "to", "cc", "bcc", "after", "before",
+                        "in", "is", "label"}:
         raise ValueError(f"unsupported provider operator: {operator}")
     value = value.strip('"').replace('\\"', '"').casefold()
     if not value:
         raise ValueError("empty provider term")
+    if operator in {"in", "is", "label"} and value not in {
+        "inbox", "sent", "draft", "drafts", "unread", "read", "trash", "spam",
+    }:
+        raise ValueError("unsupported provider label")
     boundary = None
     if operator in {"after", "before"}:
         boundary = int(value) if value.isdecimal() else datetime.fromisoformat(value).timestamp()
@@ -158,6 +163,12 @@ def _term(token: str) -> Any:
             assert boundary is not None
             stamps = [datetime.fromisoformat(m["sent_at"]).timestamp() for m in thread["messages"]]
             result = any(t >= boundary if operator == "after" else t < boundary for t in stamps)
+        elif operator in {"in", "is", "label"}:
+            # Legacy shared corpus models received/read inbox mail unless the
+            # resource explicitly supplies labels; never infer labels from a case.
+            labels = {str(label).casefold() for label in thread.get("label_ids", ["INBOX"])}
+            result = ("unread" not in labels if value == "read" else
+                      ("draft" if value == "drafts" else value) in labels)
         elif operator == "subject":
             result = value in thread["subject"].casefold()
         elif operator in {"from", "to", "cc", "bcc"}:

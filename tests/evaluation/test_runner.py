@@ -7,7 +7,7 @@ from typing import cast
 from evaluation.client import ProductApiClient
 
 # isort: split
-from evaluation.runner import main, run_case, write_result
+from evaluation.runner import main, normalize_snapshot, run_case, write_result
 
 
 class _ProductApiStub:
@@ -40,9 +40,20 @@ class _ProductApiStub:
             "actions": [],
             "approvals": [],
             "verification_summary": {},
-            "context_preview": {"resource_refs": ["resource:RES-1"]},
+            "context_preview": {"items": [{"resource_type": "resource", "resource_id": "RES-1"}]},
             "pending_interrupt": None,
         }
+
+
+def test_snapshot__pending_confirmation__projects_interaction_kind() -> None:
+    observed = normalize_snapshot({
+        "run": {"status": "WAITING_CONFIRMATION"},
+        "pending_interrupt": {
+            "interrupt_id": "interrupt-1", "semantic_owner_id": "context_retriever",
+            "question": "어느 사람인가요?", "options": [], "response_mode": "CHOICE",
+        },
+    })
+    assert observed["interactions"] == [{"type": "CONFIRMATION"}]
 
 
 def test_runner_load__invoke_grade__serialize_chain(tmp_path: Path) -> None:

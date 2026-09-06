@@ -22,6 +22,7 @@ class BuildQueryInput(TypedDict):
     detail_candidate_refs: NotRequired[Collection[str]]
     person_candidates: NotRequired[Sequence[PersonCandidateV1]]
     selected_person_identities: NotRequired[Mapping[str, str] | None]
+    read_result_summaries: NotRequired[Sequence[Mapping[str, object]] | None]
 
 
 def project_build_query_input(state: Mapping[str, object]) -> BuildQueryInput:

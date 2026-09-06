@@ -189,11 +189,41 @@ def _select_ranked_evidence(
         requested_resource_hints=request_intent["requested_resource_hints"],
         limit=min(context_budget.max_normalized_context_items, context_budget.max_evidence),
     )
+    if not eligible_candidates:
+        return {
+            "schema_version": 2, "evidence_drafts": [],
+            "selected_segment_ids": [], "excluded_segment_ids": obligations,
+        }, retry_budget
     receipt_selection = _receipt_listing_selection(
         request_intent, eligible_candidates, segments, query_attempts, obligations,
     )
     if receipt_selection is not None:
         return receipt_selection, retry_budget
+    detailed_handles = {
+        segment.resource_handle for segment in segments
+        if segment.locator.get("message_id")
+        or segment.locator.get("is_metadata_only") is False
+    }
+    metadata_ids = {
+        segment.segment_id for segment in segments
+        if segment.resource_type == "gmail_thread"
+        and segment.locator.get("is_metadata_only") is True
+        and segment.resource_handle not in detailed_handles
+        and set(request_intent["requested_effect_hints"]) == {"READ"}
+    }
+    if eligible_candidates and all(
+        item["segment_id"] in metadata_ids for item in eligible_candidates
+    ):
+        ids = [item["segment_id"] for item in eligible_candidates]
+        return {
+            "schema_version": 2,
+            "selected_segment_ids": ids,
+            "excluded_segment_ids": obligations,
+            "evidence_drafts": [{
+                "segment_id": identity, "role": "CONTEXT",
+                "relevance_reason": "Provider 검색 후보이며 본문 관련성은 상세 조회 전 미확정",
+            } for identity in ids],
+        }, retry_budget
     deterministic_selection = _exact_selected_read_selection(
         request_intent=request_intent,
         candidates=eligible_candidates,
@@ -227,6 +257,7 @@ def _select_ranked_evidence(
     output_schema = bind_evidence_selection_schema(
         candidate_resource_refs=candidate_resource_refs,
         max_evidence=context_budget.max_evidence,
+        metadata_candidate_ids=metadata_ids,
     )
     result = llm_runtime.infer(
         requested_mode,

@@ -56,7 +56,9 @@ class PromptRuntimeInputContractEntryV1:
     def __post_init__(self) -> None:
         if not self.prompt_slot_id or not self.runtime_node_id:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
-        output_version = 3 if self.prompt_slot_id == "retrieval.select_evidence" else 1
+        output_version = {
+            "retrieval.select_evidence": 3, "request_understanding.identify_goal": 2,
+        }.get(self.prompt_slot_id, 1)
         input_versions = {3} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}
         if (
             self.input_schema_version not in input_versions

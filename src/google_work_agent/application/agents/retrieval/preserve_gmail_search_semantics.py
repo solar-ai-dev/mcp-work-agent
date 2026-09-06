@@ -76,11 +76,11 @@ def gmail_planner_constraint_kinds(
     if any(isinstance(item, Mapping) and item.get("kind") in {"DATE", "TIME"}
            for item in constraints):
         kinds.add("TEMPORAL_RANGE")
-    if any(
-        isinstance(item, Mapping) and item.get("kind") == "SCOPE"
-        and item.get("field") == "status" for item in constraints
-    ):
-        kinds.add("STATUS_SCOPE")
+    if kinds == {"CONTAINER_REF", "RESOURCE_REF", "PARTICIPANT"}:
+        # Missing RU search fields are not evidence that the original request has
+        # no lexical meaning. Keep the planner's bounded discovery capability;
+        # exact participants, periods and statuses still require their own facts.
+        kinds.add("KEYWORD")
     return kinds
 
 
@@ -201,19 +201,28 @@ def validate_requested_concepts(
         if not isinstance(spec, Mapping) or spec.get("mode") != "INITIAL":
             continue
         constraints = spec.get("constraints", [])
-        for concept in concepts:
+        if concepts:
+            hypotheses = [item for item in constraints
+                          if item.get("kind") == "CONCEPT" and item.get("concept") in concepts]
+            if not hypotheses:
+                raise RetrievalV2ValidationError(
+                    "discovery hypothesis must retain a requested business concept",
+                    reason_code="QUERY_USER_CONSTRAINT_MISSING",
+                    affected_field_paths=("$.route_queries[].search_spec.constraints",),
+                )
             if not any(
-                item.get("kind") == "CONCEPT" and item.get("concept") == concept
-                and any(concept not in term for term in item.get("manifestations", []))
+                item.get("kind") == "CONCEPT"
+                and any(item["concept"] not in term for term in item.get("manifestations", []))
                 and not any(
                     separator in term for term in item.get("manifestations", [])
                     for separator in ",;，；"
                 )
-                for item in constraints
+                for item in hypotheses
             ):
                 raise RetrievalV2ValidationError(
                     "business concept requires at least one discovery phrase "
                     "without its literal label",
+                    reason_code="QUERY_TOO_NARROW",
                     affected_field_paths=("$.route_queries[].search_spec.constraints",),
                 )
 
@@ -241,6 +250,7 @@ def _explicit_gmail_constraints(
     subjects: list[str] = []
     search_terms: list[str] = []
     business_concepts: list[str] = []
+    statuses: list[str] = []
     discovery_terms: dict[str, str] = {}
     participant_fields = {
         "sender": "SENDER",
@@ -278,12 +288,17 @@ def _explicit_gmail_constraints(
             "search_criteria_subject",
         }:
             subjects.extend(exact_values)
-        elif kind == "USER_REQUIREMENT" and field == "search_terms":
+        elif kind in {"USER_REQUIREMENT", "SCOPE"} and field == "search_terms":
             search_terms.extend(exact_values)
         elif kind == "USER_REQUIREMENT" and field == "business_concepts":
             business_concepts.extend(exact_values)
+        elif kind == "SCOPE" and field == "status":
+            statuses.extend(entry.upper() for entry in exact_values
+                            if entry.upper() in {"ANY", "SENT", "DRAFT"})
 
     result: list[dict[str, object]] = []
+    if statuses:
+        result.append({"kind": "STATUS_SCOPE", "values": list(dict.fromkeys(statuses))})
     if participants:
         result.append({"kind": "PARTICIPANT", "participants": participants, "match_mode": "ALL"})
     if subjects and (not search_terms or has_explicit_gmail_subject(value)):

@@ -52,6 +52,7 @@ def build_query(
     detail_candidate_refs: Collection[str] = (),
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
+    read_result_summaries: Sequence[Mapping[str, object]] | None = None,
 ) -> list[SourceFetchPlanV1]:
     """Validate/merge semantic constraints and materialize deterministic read plans."""
     prior_plans = prior_plans or {}
@@ -85,6 +86,7 @@ def build_query(
                 "GMAIL_THREAD", "GMAIL_MESSAGE",
             } else ()),
             selected_person_identities=selected_person_identities or {},
+            read_result_summaries=read_result_summaries,
         )
         for route_id in validated["retrieval_order"]
     ]
@@ -144,6 +146,7 @@ def _build_one(
     prior_read_result_handle: str | None,
     person_candidates: Sequence[PersonCandidateV1],
     selected_person_identities: Mapping[str, str],
+    read_result_summaries: Sequence[Mapping[str, object]] | None,
 ) -> SourceFetchPlanV1:
     operation = query["operation"]
     effective = (
@@ -151,8 +154,6 @@ def _build_one(
         if operation in {"SEARCH", "FREEBUSY"}
         else ([] if prior_plan is None else prior_plan["effective_constraints"])
     )
-    if operation == "NEXT_PAGE" and prior_read_result_handle is None:
-        raise RetrievalV2ValidationError("NEXT_PAGE requires a validated prior read-result handle")
     if prior_plan is not None and operation in {"SEARCH", "FREEBUSY"}:
         _validate_anchor_continuity(
             prior_plan["effective_constraints"], effective,
@@ -161,6 +162,25 @@ def _build_one(
         )
     resource_type = route["resource_type"]
     normalized = _normalize_constraints(effective)
+    query_identity = _query_identity(route, operation, normalized, query["detail_candidate_ref"])
+    if operation == "NEXT_PAGE" and prior_plan is not None:
+        query_identity = (
+            _query_identity(route, "SEARCH", normalized, None)
+            if prior_plan["operation_kind"] == "DETAIL_FETCH"
+            else prior_plan["query_identity_hash"]
+        )
+        if read_result_summaries is not None:
+            pending = [
+                summary["read_result_handle"] for summary in read_result_summaries
+                if summary.get("route_id") == route["route_id"]
+                and summary.get("query_identity_hash") == query_identity
+                and summary.get("has_next_page") is True
+                and summary.get("exhausted") is not True
+                and isinstance(summary.get("read_result_handle"), str)
+            ]
+            prior_read_result_handle = cast(str, pending[-1]) if pending else None
+    if operation == "NEXT_PAGE" and prior_read_result_handle is None:
+        raise RetrievalV2ValidationError("NEXT_PAGE requires a validated prior read-result handle")
     return {
         "schema_version": 1,
         "route_id": route["route_id"],
@@ -168,11 +188,7 @@ def _build_one(
         "resource_type": resource_type,
         "operation_kind": operation,
         "effective_constraints": normalized,
-        "query_identity_hash": (
-            prior_plan["query_identity_hash"]
-            if operation == "NEXT_PAGE" and prior_plan is not None
-            else _query_identity(route, operation, normalized, query["detail_candidate_ref"])
-        ),
+        "query_identity_hash": query_identity,
         "prior_read_result_handle": prior_read_result_handle,
         "detail_candidate_ref": query["detail_candidate_ref"],
     }

@@ -20,7 +20,7 @@
     "kind": "CURRENT_PRODUCT_BASELINE",
     "candidate_id": "current-product-baseline",
     "path": "src/google_work_agent/application/prompt_runtime/prompt_manifest.json",
-    "bundle_hash": "ea7ebf90429672ce0d3d1ff1cf9512c86c96bc12acf36cbe39b40d9e0008f0af",
+    "bundle_hash": "41dc4fb20f2530abaa3d09a870fd4a09919140b73b58ac0fedc67011e4cd26f9",
     "product_binding_status": "CURRENT_PRODUCT_BASELINE"
   },
   "repetitions": 3,
@@ -28,7 +28,7 @@
   "trial_failure_policy": "CONTINUE",
   "grader": {
     "path": "evaluation/grader.py",
-    "sha256": "6bb26ba7c87eee97f59190ff02f662a9ae57a5555344b2fd927522013944b1e7"
+      "sha256": "50db17332a50c0da159127619fb7785509a605194e0c91d568de18b4bfc473b0"
   },
   "comparison_group": "prompt-mcp-research-smoke-v1",
   "results_root": "evaluation/results",

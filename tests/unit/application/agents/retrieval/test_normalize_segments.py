@@ -52,6 +52,13 @@ def test_segment_id__is_stable__and_content_sensitive() -> None:
     assert changed != first
 
 
+def test_gmail_preview__without_body__preserves_metadata_only_fact() -> None:
+    result = _result("known body")
+    assert normalize_segments(result)[0].locator["is_metadata_only"] is False
+    result["source_summaries"][0]["resources"][0]["payload"] = {"subject": "reference"}
+    assert normalize_segments(result)[0].locator["is_metadata_only"] is True
+
+
 def test_github_issue__preserves_observed_metadata__separately_from_description() -> None:
     result = cast(AcquisitionResultV1, {
         "schema_version": 1, "resource_handles": ["github_issue:sample/project#17"],

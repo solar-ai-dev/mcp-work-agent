@@ -8,7 +8,9 @@ This DEVELOPMENT_SMOKE diagnostic is not release Prompt activation evidence.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import time
@@ -38,7 +40,11 @@ from google_work_agent.adapters.connectors.runtime.mcp_oauth_credential import (
     McpOAuthCredentialAdapter,
 )
 from google_work_agent.adapters.langgraph.main.graph import WorkflowGraphComposition
+from google_work_agent.adapters.llm.ollama import transport as ollama_transport
 from google_work_agent.adapters.llm.runtime.llm_credential_router import SessionMemorySecretStore
+from google_work_agent.adapters.llm.runtime.structured_inference_router import (
+    StructuredInferenceRuntimeRouter,
+)
 from google_work_agent.adapters.system.system_clock import SystemClockAdapter
 from google_work_agent.api.app import create_app
 from google_work_agent.ports.connector.connector_failure import (
@@ -47,12 +53,20 @@ from google_work_agent.ports.connector.connector_failure import (
 )
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.connector.oauth_credential_port import OAuthConnectionMetadata
+from google_work_agent.ports.llm.structured_inference_contracts import LLMInvocationError
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "evaluation/datasets/retrieval/query_strategy"
 
 
-def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
+def measure(
+    case_id: str, product_sha: str, output: Path, *, fixed_sampling: bool = False,
+    enable_thinking: bool = False,
+) -> dict[str, Any]:
+    current_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    if current_sha != product_sha:
+        raise ValueError("product-sha must identify the current checkout")
+    production_diff = subprocess.check_output(["git", "diff", "HEAD", "--", "src"], cwd=ROOT)
     case = load_case(case_id, DATA / "cases.jsonl")
     manifest = json.loads((DATA / "corpus_manifest.json").read_text(encoding="utf-8"))
     corpus_paths = [ROOT / p for p in manifest["splits"][case["split"]]]
@@ -75,7 +89,21 @@ def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
                 sender_email=last.get("sender", ""),
                 sender_name=last.get("sender_name", ""),
                 received_at=last.get("sent_at"),
-                messages=messages,
+                message_count=len(messages),
+                messages=[
+                    {
+                        "message_id": message["message_id"],
+                        "thread_id": thread["thread_id"],
+                        "sender_name": message.get("sender_name", ""),
+                        "sender_email": message["sender"],
+                        "recipients": [*message.get("to", []), *message.get("cc", [])],
+                        "received_at": message["sent_at"],
+                        "subject": thread["subject"],
+                        "body": message["body"],
+                        "body_truncated": False,
+                    }
+                    for message in messages
+                ],
             )
         return {
             "resource_type": "gmail_thread",
@@ -134,7 +162,15 @@ def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
         raise AssertionError("external WRITE forbidden in retrieval diagnostic")
 
     build_graph = WorkflowGraphComposition.build
+    post_json = ollama_transport._post_json
+
+    def measured_post_json(**kwargs: Any) -> Any:
+        if enable_thinking and kwargs.get("path") == "/api/generate":
+            kwargs["payload"] = {**kwargs["payload"], "think": True}
+        return post_json(**kwargs)
+
     with (
+        patch.object(ollama_transport, "_post_json", measured_post_json),
         patch.object(McpConnectorReadAdapter, "execute_read", read),
         patch.object(McpConnectorWriteAdapter, "execute_write", deny_write),
         patch.object(McpOAuthCredentialAdapter, "get_connection_status", connected),
@@ -158,15 +194,40 @@ def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
         container = replace(container, client_address_resolver=lambda _: "127.0.0.1")
         runtime = container.structured_inference_port
         assert runtime is not None
+        if fixed_sampling:
+            assert isinstance(runtime, StructuredInferenceRuntimeRouter)
+            runtime.runtime_policy = replace(
+                runtime.runtime_policy, sampling_temperature=0.0, sampling_seed=0,
+            )
         infer = runtime.infer
 
         def observed_infer(*args: Any, **kwargs: Any) -> Any:
-            result = infer(*args, **kwargs)
+            try:
+                result = infer(*args, **kwargs)
+            except LLMInvocationError as error:
+                # This runner accepts synthetic corpus only; retain bounded validator diagnostics.
+                failure = {
+                    "prompt": args[1].prompt_id,
+                    "prompt_version": args[1].prompt_version,
+                    "prompt_hash": args[1].content_hash,
+                    "error_code": error.code.value,
+                    "error_detail": str(error)[:4000],
+                }
+                inference_calls.append(failure)
+                print(json.dumps(failure, ensure_ascii=False), flush=True)
+                raise
             inference_calls.append(
                 {
                     "prompt": args[1].prompt_id,
+                    "prompt_version": args[1].prompt_version,
+                    "prompt_hash": args[1].content_hash,
                     "model": result.model,
                     "actual_runtime": result.actual_runtime,
+                    "inference_class": runtime.runtime_selection.local_model_profile
+                        .inference_class_for_prompt(args[1].prompt_id),
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                    "latency_ms": result.latency_ms,
                     "input": deepcopy(args[2]),
                     "output": deepcopy(result.structured_output),
                 }
@@ -258,7 +319,15 @@ def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
                     attempts[attempt["query_attempt_id"]] = attempt
     observed["semantic_constraints"] = artifacts.get("request_intent", {}).get("constraints", [])
     retrieval = artifacts.get("retrieval_result", {})
-    observed["resolved_identities"] = retrieval.get("selected_person_identities", {})
+    observed["resolved_identities"] = retrieval.get(
+        "selected_person_identities", artifacts.get("selected_person_identities", {}),
+    )
+    if observed["terminal_state"] == "WAITING_CONFIRMATION":
+        drafts = artifacts.get("evidence_drafts", [])
+        observed["evidence_resource_refs"] = sorted({item["resource_handle"] for item in drafts})
+        observed["evidence_ids"] = [item["evidence_id"] for item in drafts]
+    observed["pending_interrupt"] = snapshot.get("pending_interrupt")
+    observed["person_candidates"] = artifacts.get("person_candidates", [])
     for attempt in attempts.values():
         planned: dict[str, Any] = next(
             (
@@ -297,9 +366,20 @@ def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
     )
     result.update(
         execution_kind="PRODUCTION_GRAPH_LOCAL_LLM_SYNTHETIC_READ",
+        sampling_conditions={
+            "kind": "EVALUATION_FIXED" if fixed_sampling else "PRODUCT_DEFAULT",
+            "temperature": 0.0 if fixed_sampling else None,
+            "seed": 0 if fixed_sampling else None,
+        },
+        thinking_conditions={
+            "kind": "EVALUATION_ENABLED" if enable_thinking else "PRODUCT_DEFAULT",
+            "enabled": enable_thinking,
+        },
         run_id=run_id,
         runtime_root=str(runtime_root),
         graph_path=recorder.path,
+        production_diff_sha256=hashlib.sha256(production_diff).hexdigest(),
+        production_worktree_modified=bool(production_diff),
         llm_calls=inference_calls,
         corpus_hashes={str(p.relative_to(ROOT)): file_sha256(p) for p in corpus_paths},
         request_intent=artifacts.get("request_intent"),
@@ -313,6 +393,10 @@ def measure(case_id: str, product_sha: str, output: Path) -> dict[str, Any]:
             )
         },
     )
+    if production_diff != subprocess.check_output(["git", "diff", "HEAD", "--", "src"], cwd=ROOT):
+        raise RuntimeError(
+            "Product source changed during measurement; rerun with a stable checkout"
+        )
     write_result(output, result)
     return result
 
@@ -324,7 +408,14 @@ if __name__ == "__main__":
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--product-sha", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fixed-sampling", action="store_true",
+                        help="Evaluation-only temperature=0/seed=0; not a Product default change")
+    parser.add_argument("--enable-thinking", action="store_true",
+                        help="Evaluation-only Ollama think=true; reasoning text is not recorded")
     args = parser.parse_args()
-    report = measure(args.case_id, args.product_sha, args.output)
+    report = measure(
+        args.case_id, args.product_sha, args.output, fixed_sampling=args.fixed_sampling,
+        enable_thinking=args.enable_thinking,
+    )
     print(json.dumps({"run_id": report["run_id"], "grade": report["grade"]}), flush=True)
     raise SystemExit(0 if report["metrics"]["passed"] else 2)

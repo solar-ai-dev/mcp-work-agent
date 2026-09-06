@@ -147,8 +147,10 @@ def _without_unstated_placeholders(
         retained = [
             value
             for value in values
-            if value.casefold().strip() not in _PLACEHOLDER_VALUES
-            or value.casefold().strip() in request_normalized
+            if value.strip() and (
+                value.casefold().strip() not in _PLACEHOLDER_VALUES
+                or value.casefold().strip() in request_normalized
+            )
         ]
         if not retained:
             continue

@@ -171,6 +171,8 @@ Provider-resource files (never a case ID, question, Gold or relevance labels), s
 the same corpus with a bounded query grammar, separates list metadata from details,
 binds pages to the query and rejects unsupported syntax instead of returning empty data.
 This is not a second Product search engine or a live Gmail implementation.
+Legacy corpus messages without explicit label metadata are received/read inbox mail;
+`in:sent` and draft queries do not match them. Unsupported labels fail explicitly.
 
 Run the real production Graph/Router/Local qwen3.5:9b through the API with only external
 OAuth/READ boundaries replaced. This does **not** use the old declared-intent leaf test:

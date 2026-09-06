@@ -40,5 +40,9 @@ def guard_retrieval_read_repeat(
     # means that page was already consumed (including A -> B -> A token cycles).
     if continuation is not None:
         token_hash = sha256(continuation.encode()).hexdigest()
-        if sum(attempt["page_state_hash"] == token_hash for attempt in matching) > 1:
+        if any(
+            attempt["page_state_hash"] == token_hash
+            and any(later["operation_kind"] == "NEXT_PAGE" for later in matching[index + 1:])
+            for index, attempt in enumerate(matching)
+        ):
             raise QueryUnchangedAfterFailureError("QUERY_UNCHANGED_AFTER_FAILURE")

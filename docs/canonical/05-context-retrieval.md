@@ -135,6 +135,9 @@ Evidence relevance나 행사 사실이 아니다.
 
 검색 가설은 기존 `RouteQueryIntentV2`의 operation(발견/상세/페이지), semantic constraints,
 `reason_codes`(검색 목적과 해결할 insufficiency), `required_information`(성공 조건)으로 표현한다.
+`CONCEPT`는 한 가설에 하나만 허용하는 기존 kind uniqueness를 따른다. 복합 개념 요청은
+그중 하나를 후보 발견 축으로 선택할 수 있다. 모든 개념은 RequestIntent와 Evidence/Sufficiency의
+검증 의무에 남기며 단일 검색에 모두 AND하도록 요구하거나 요청 제약을 삭제하지 않는다.
 미해결 사람·시간·업무 의미는 RequestIntent와 SufficiencyIssue에서 소비한다. CHANGED 가설은
 같은 route의 성공한 검색 관측과 미해결 issue에 근거해야 하며 실패를 0건 관측으로 보지 않는다.
 고정 불용 업무 단어 제거, 자동 ALL→ANY 완화, 날짜 문자열만의 자동 fallback은 금지한다.
@@ -144,7 +147,46 @@ discovery 단서로 선택할 수는 있다. 이는 원래 concept/window를 유
 인정하지 않고 detail의 실제 사건/날짜를 검증한다.
 같은 가설 반복과 기존 검색/detail budget 상한은 유지한다.
 
+Query semantic revision은 기존 FailureRecord의 `QUERY_USER_CONSTRAINT_MISSING`(요청 개념 누락),
+`QUERY_TOO_NARROW`(literal-only concept)로 수정 이유를 구분한다. 모델 재요청에는 원래의
+모델 출력 후보만 전달하고, Application이 복원한 exact anchor/기간/container를 모델 출력으로
+위조하지 않는다. 수정 후 같은 deterministic binding과 validator를 다시 적용한다.
+
 Request Understanding의 의미 추론은 `search_terms`와 `business_concepts`를 생성한다.
+구조화된 검색 필드가 빠져도 원 요청이 남아 있으면 Planner의 bounded KEYWORD 발견을
+닫지 않는다. 필드 부재를 exact identity·기간·상태의 근거로 삼지는 않으며, 기존 Route
+정책과 Provider 문법 검증을 그대로 적용한다. `SCOPE.search_terms`도 같은 원문 anchor로
+소비하며 사용자 값 자체를 새로 추측하지 않는다.
+새 Request Goal 출력의 `search_terms/business_concepts/required_information`은
+`USER_REQUIREMENT` kind로 검증한다. 기존 typed intent의 `SCOPE.search_terms` 소비는 유지한다.
+빈 날짜·상태 placeholder는 검색 제약으로 승격하지 않는다. Temporal 출력 스키마도
+기존 validator와 동일하게 적어도 한 개의 유효한 local boundary를 요구한다.
+Gmail-only AGENT_SEARCH의 Goal 추론 경계는 `constraints`의 이름이 고정된 슬롯 객체를
+사용한다: search_terms, business_concepts, required_information, person, sender, recipient,
+subject, period, temporal_axis, status. 모든 슬롯을 응답하되 미언급 값은 빈 배열로 둔다.
+새 Goal 추론 계약 v2의 슬롯 객체는 같은 identify_goal owner에서 기존 ConstraintV1 목록으로
+변환하며 `RequestIntentV2`와 checkpoint 구조를 바꾸지 않는다. 다른 Connector/WRITE의
+목록 표현은 유지한다. 기간과 인물의 명시적 표기는 기존 보존 연산의 값을 재사용한다.
+목록형 과거 Goal 출력을 새 Gmail 추론 경계에서 병렬로 허용하지 않는다.
+Gmail-only 검색의 period에는 temporal_axis를 함께 출력한다. Gmail 검색 상태는
+현재 지원하는 명시적 ANY/DRAFT/SENT 값만 고정하며, 다른 Resource의 OPEN 등의 값으로
+임의 메일 상태 필터를 생성하지 않는다.
+
+READ Sufficiency는 같은 Run Cache의 bounded read-result summary에서 미소비 다음 페이지를
+확인한다. selected exact resource 조회를 제외한 검색은 미확인 페이지가 남으면 전체 확인으로
+판정하지 않고 기존 `source_page_coverage` MISSING issue와 budget 안에서 NEXT_PAGE를 수행한다.
+예산상 불가능하면 PARTIAL로 종료한다. raw continuation이나 새 budget authority를 만들지 않는다.
+같은 Route의 상세 조회는 검색의 미소비 페이지를 대체하지 않는다. NEXT_PAGE는 현재
+검색 제약의 query identity에 결합된 cache handle을 사용하고, 상세 resource의 query identity나
+마지막 상세 handle을 pagination authority로 사용하지 않는다.
+각 query identity의 최신 page summary만 continuation 상태를 대표한다. 마지막 페이지가
+소진되면 이전 페이지의 토큰을 다시 소비하지 않으며, QueryAttempt 이력으로도 이미 소비한
+토큰의 재사용을 Provider 호출 전에 차단한다.
+Gmail 본문이 없는 검색 preview의 locator는 `is_metadata_only=true`를 보존한다.
+이는 실제 query에 일치한 후보이지 업무 사실의 확정 근거가 아니다. 아직 본문을 읽지 않은
+preview는 CONTEXT로 유지하고 기존 제한된 detail fetch로 관련성을 판단한다. 제목에
+핵심 단어가 없다는 이유만으로 본문 관련성을 부정하지 않는다. 이미 본문을 읽은 후보와
+기존 checkpoint의 해당 marker 없는 Evidence는 기존 relevance 판단을 유지한다.
 후처리가 업무 단어 사전이나 '메일 앞 단어' 정규식으로 이를 교체하거나 특정 단어를
 business concept으로 승격하지 않는다. 명시적 quoted subject/사람 표기/기간의 원문 보존은
 유지한다. 예를 들어 사용 방식의 수식어는 명시적 제목이나 업무 anchor가 아니다.

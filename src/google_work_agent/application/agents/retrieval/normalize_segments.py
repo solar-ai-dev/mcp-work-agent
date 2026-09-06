@@ -171,7 +171,10 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
                     value is not None and not isinstance(value, str) for value in metadata.values()
                 ):
                     raise ValueError("invalid Gmail candidate metadata")
-                units.append({**raw, "_message_locator": metadata})
+                units.append({**raw, "_message_locator": {
+                    **metadata,
+                    "is_metadata_only": not any(key in payload for key in ("body", "text")),
+                }})
             else:
                 units.append(raw)
             continue

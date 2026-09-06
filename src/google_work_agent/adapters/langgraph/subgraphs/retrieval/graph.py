@@ -636,7 +636,9 @@ class RetrievalSubgraph:
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
         )
         selection = cast(Any, patch["evidence_selection"])
-        revised_retry_budget = cast(RunBudgetV2, patch["retry_budget"])
+        revised_retry_budget = consume_llm_call_budget(
+            {**state, "retry_budget": cast(RunBudgetV2, patch["retry_budget"])}
+        )
         calls_used = revised_retry_budget["llm_calls_used"] - calls_before
         updated_local = dict(local_state)
         updated_local["node_state"] = "SELECT_EVIDENCE_COMPLETE"
@@ -650,9 +652,7 @@ class RetrievalSubgraph:
                 CONTEXT_SELECTION_OUTPUT_KEY: selection,
                 "rag_candidates": rag_candidates,
                 "evidence_selection": selection,
-                "retry_budget": consume_llm_call_budget(
-                    {**state, "retry_budget": revised_retry_budget}
-                ),
+                "retry_budget": revised_retry_budget,
                 "trace_context": merge_trace_context(
                     state,
                     graph_profile=self._graph_profile.value,
@@ -877,6 +877,7 @@ class RetrievalSubgraph:
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
             confirmation_response=confirmation_response,
             attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
+            read_result_summaries=self._bounded_read_result_summaries(state),
         )
         sufficiency_result = cast(SufficiencyResultV2, patch["sufficiency"])
         llm_provider_result: dict[str, object] = {"structured_output_attempts": 1}
@@ -1505,6 +1506,7 @@ class RetrievalSubgraph:
                                     "selected_person_identities"
                                 ),
                                 "prior_read_result_handles": handles,
+                                "read_result_summaries": self._bounded_read_result_summaries(state),
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,
                                 "detail_candidate_refs": detail_candidate_refs,
@@ -1886,7 +1888,7 @@ class RetrievalSubgraph:
     def _bounded_read_result_summaries(
         self, state: ContextRetrievalLocalState
     ) -> list[dict[str, object]]:
-        summaries: list[dict[str, object]] = []
+        summaries: dict[tuple[str, str], dict[str, object]] = {}
         bindings = cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
         for handle in cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])):
             raw = bindings.get(handle)
@@ -1905,8 +1907,7 @@ class RetrievalSubgraph:
             output = resolution.entry.read_result.output
             raw_items = output.get("items", [])
             count = len(raw_items) if isinstance(raw_items, list) else 1 if "item" in output else 0
-            summaries.append(
-                {
+            summaries[(route_id, query_hash)] = {
                     "read_result_handle": handle,
                     "route_id": route_id,
                     "query_identity_hash": query_hash,
@@ -1917,8 +1918,7 @@ class RetrievalSubgraph:
                     if token is None
                     else sha256(token.encode()).hexdigest(),
                 }
-            )
-        return summaries
+        return list(summaries.values())
 
 
 def _retrieval_required_signal(signal: object) -> RetrievalRequiredV1 | None:

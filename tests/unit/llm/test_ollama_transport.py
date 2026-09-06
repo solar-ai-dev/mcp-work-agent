@@ -177,7 +177,10 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
             output_schema_version="v1",
         ),
         prompt_input={"request": "김대리 일정", "evidence": "9월 3일 오후 2시 서울 코엑스"},
-        output_schema=OutputSchemaDefinition(schema_version="1", json_schema={}),
+        output_schema=OutputSchemaDefinition(schema_version="1", json_schema={
+            "type": "object", "required": ["anchor"], "additionalProperties": False,
+            "properties": {"anchor": {"type": "string", "description": "원문 고유명"}},
+        }),
         timeout_seconds=5,
         instruction_text="You are a test assistant.",
     )
@@ -193,6 +196,10 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
     assert "9월 3일 오후 2시 서울 코엑스" in prompt_text
     assert "\\u" not in prompt_text
     assert json.loads(prompt_text)["input"]["request"] == "김대리 일정"
+    assert json.loads(prompt_text)["output_schema"] == sent_body["format"]
+    assert json.loads(prompt_text)["output_schema"]["properties"]["anchor"] == {
+        "type": "string", "description": "원문 고유명",
+    }
     assert result.latency_ms == 3_565
 
 

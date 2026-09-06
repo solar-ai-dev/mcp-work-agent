@@ -19,7 +19,7 @@ def observation():
         "semantic_constraints": ["오로라", "김대리", "EVENT_TIME"],
         "resolved_identities": {"김대리": "haneul.kim@example.test"},
         "terminal_state": "COMPLETED",
-        "terminal_result_kind": "FULL",
+        "terminal_result_kind": "SUCCESS",
         "interactions": [],
         "actions": [],
         "durable_effects": [],
@@ -117,6 +117,23 @@ def test_retrieval_grade__confirmation_without_candidate_evidence__fails():
     assert "ANSWER_REQUIRED_EVIDENCE_MISSING" not in reasons(case, observed)
 
 
+@pytest.mark.parametrize("wrong_role", [False, True])
+def test_retrieval_grade__project_as_sender__rejects_accidentally_matching_query(wrong_role):
+    case = load_case("SQ-DEV-003", DATA / "cases.jsonl")
+    observed = observation()
+    observed["semantic_constraints"] = [
+        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["오로라"]},
+        {"kind": "PERSON", "field": "person", "value": ["김대리"]},
+        {"kind": "PERSON", "field": "sender", "value": ["김대리"]},
+    ]
+    if wrong_role:
+        observed["semantic_constraints"] = [
+            {"kind": "PERSON", "field": "person", "value": ["김대리"]},
+            {"kind": "PERSON", "field": "sender", "value": ["오로라"]},
+        ]
+    assert ("SEMANTIC_CONSTRAINT_ROLE_MISMATCH" in reasons(case, observed)) is wrong_role
+
+
 def test_retrieval_grade__empty_detail__does_not_prove_search_no_result():
     case = load_case("SQ-DEV-006", DATA / "cases.jsonl")
     observed = observation()
@@ -181,8 +198,40 @@ def test_retrieval_grade__exact_identity_followup__preserves_resolved_mention():
     )
 
 
+def test_retrieval_grade__title_discovery__must_not_regress_after_exact_identity():
+    case = load_case("SQ-DEV-001", DATA / "cases.jsonl")
+    observed = observation()
+    observed["query_trajectory"][0]["constraints"] = ["오로라", "대리"]
+    assert "EXACT_ANCHOR_LOST" not in reasons(case, observed)
+    exact = deepcopy(observed["query_trajectory"][0])
+    exact.update(constraints=["오로라", "haneul.kim@example.test"], observation_refs=["prior"])
+    fuzzy = deepcopy(observed["query_trajectory"][0])
+    fuzzy["observation_refs"] = ["prior-exact"]
+    observed["query_trajectory"].extend([exact, fuzzy])
+    assert "EXACT_ANCHOR_LOST" in reasons(case, observed)
+
+
+def test_retrieval_grade__original_request_only__does_not_prove_constraints_preserved():
+    observed = observation()
+    observed["semantic_constraints"] = [{"field": "original_search_request",
+                                         "value": "오로라 김대리 EVENT_TIME"}]
+    assert "REQUEST_CONSTRAINT_LOST" in reasons(
+        load_case("SQ-DEV-001", DATA / "cases.jsonl"), observed,
+    )
+
+
 def test_shared_corpus__participant_time_conjunction__matches_same_message():
     corpus = RetrievalCorpus([DATA / "corpus_extension.json"])
     # The coordinator's message is before Aug 25; a later message in the same
     # thread must not satisfy this sender+received-time query for them.
     assert corpus.search("from:coordinator@example.test after:1787612400")["threads"] == []
+
+
+def test_shared_corpus__message_labels__are_provider_facts_not_question_answers():
+    corpus = RetrievalCorpus([DATA / "corpus_extension.json"])
+    assert corpus.search("in:inbox")["threads"]
+    assert corpus.search("in:sent")["threads"] == []
+    assert corpus.search("is:unread")["threads"] == []
+    assert corpus.search("is:read")["threads"]
+    with pytest.raises(ValueError):
+        corpus.search("in:unsupported")

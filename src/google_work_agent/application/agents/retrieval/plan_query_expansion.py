@@ -152,6 +152,7 @@ def _read_summaries(prompt_input: Mapping[str, object]) -> dict[str, Mapping[str
         cast(str, item["route_id"]): item
         for item in value
         if isinstance(item, Mapping) and isinstance(item.get("route_id"), str)
+        and item.get("has_next_page") is True and item.get("exhausted") is not True
     }
 
 

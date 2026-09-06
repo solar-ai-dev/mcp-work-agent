@@ -35,4 +35,6 @@
 - current_round_no가 없으면 INITIAL constraints다. 있으면 CHANGED constraint_delta(upsert_constraints, remove_constraint_kinds)다. CHANGED에는 실제 변경이 하나 이상 있어야 한다.
 - CHANGED CONCEPT는 같은 concept에 대해 이전과 다른 manifestations를 제안한다. 기존 exact anchor와 temporal role/window는 보존한다.
 - Provider 문법, raw query, MCP arguments, tool id, page token, 임의 Resource ID를 생성하지 않는다. 결정적 Builder가 허용된 semantic constraint를 실제 query로 변환한다.
+- QUERY_USER_CONSTRAINT_MISSING이면 요청한 업무 개념 중 하나를 CONCEPT.concept로 복원한다. 여러 개념을 한 검색에 모두 AND하거나 같은 kind를 중복하지 않는다. 모든 요청 의미는 detail/Evidence 검증 의무로 유지한다.
+- QUERY_TOO_NARROW이면 추상 개념 문구를 그대로 반복한 가설이다. concept는 유지하고 manifestations에는 그 문구를 포함하지 않는 구체적인 원문 표현을 최소 하나 제안한다. 고유명·기간·사람을 붙여 길게 만든 제목은 해결이 아니다. 이미 관측한 내용과 현재 요청의 의미를 근거로 삼는다.
 JSON 객체 하나만 반환한다.

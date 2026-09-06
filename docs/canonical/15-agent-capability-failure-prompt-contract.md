@@ -22,6 +22,10 @@ Task Preview의 자연어 수정 준비는 기존 `planning.compose_arguments_pe
 
 - Product Prompt는 **사용자 요청, 허용된 Context, Policy Summary, Failure Record 같은 선언된 Runtime 입력만** 본다.
 - `gold`, `grader`, `expected_route`, benchmark score는 Product Prompt 입력이 아니다.
+- Ollama structured transport는 선언된 동일 OutputSchema를 `format`과 모델이 읽는
+  요청 본문에 함께 전달한다. grammar enforcement만으로 필드 의미가 전달됐다고
+  간주하지 않는다. 이 provider protocol projection은 새 업무 입력·Prompt authority가
+  아니며, 허용 enum/필드 의미와 기존 응답 validator를 서로 다르게 만들지 않는다.
 - Failure-specific Prompt는 별도 전체 Prompt가 아니라 **Base Slot + Failure Instruction Block**으로 조립한다.
 - Evaluation diagnostic decomposition에서도 Product Prompt 입력과 Gold/Grader metadata를 파일·schema 수준에서 분리한다.
 - Current Prompt Runtime은 `06 Workflow`의 current LLM responsibility set과 본 문서의 PromptRef/Input Contract에서 파생한다. required PromptRef = runtime caller = manifest = source = assembled = input-contract exact-set equality를 만족해야 하며 numeric Slot count나 non-current bundle version을 current authority로 사용하지 않는다. DEV·Holdout·Safety Gate는 구현된 Prompt artifact의 release activation만 결정한다.

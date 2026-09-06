@@ -26,7 +26,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 from .preserve_vague_read_semantics import preserve_vague_read_semantics
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v1",
+    schema_version="request-goal-candidate-v2",
     json_schema={
         "type": "object",
         "required": [
@@ -63,10 +63,26 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "completion_conditions": {"type": "array", "items": {"type": "string"}},
             "constraints": {
                 "type": "array",
+                "description": (
+                    "검색 의미를 분리한다: 고유 프로젝트/이름의 원문 anchor는 "
+                    "USER_REQUIREMENT.search_terms, 추상 업무는 "
+                    "USER_REQUIREMENT.business_concepts, 사람은 PERSON.person, "
+                    "기간은 DATE.period, 수신/행사 구분은 TIME.temporal_axis. "
+                    "한 문장에 사람·프로젝트·업무·답변 지시를 합쳐 검색어로 만들지 않는다. "
+                    "요청에 없는 빈 날짜/상태/시간 필드는 생략한다."
+                ),
                 "items": {
                     "type": "object",
                     "required": ["kind", "field", "value"],
                     "additionalProperties": False,
+                    "allOf": [
+                        {
+                            "if": {"properties": {"field": {"enum": [
+                                "search_terms", "business_concepts", "required_information",
+                            ]}}},
+                            "then": {"properties": {"kind": {"const": "USER_REQUIREMENT"}}},
+                        },
+                    ],
                     "properties": {
                         "kind": {
                             "enum": [
@@ -79,7 +95,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                                 "USER_REQUIREMENT",
                             ]
                         },
-                        "field": {"type": "string"},
+                        "field": {"type": "string", "minLength": 1},
                         "value": {
                             "oneOf": [
                                 {"type": "string"},
@@ -139,6 +155,14 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
         },
     },
 )
+
+
+_GMAIL_GOAL_SLOT_KINDS = {
+    "search_terms": "USER_REQUIREMENT", "business_concepts": "USER_REQUIREMENT",
+    "required_information": "USER_REQUIREMENT", "person": "PERSON",
+    "sender": "PERSON", "recipient": "PERSON", "subject": "RESOURCE",
+    "period": "DATE", "temporal_axis": "TIME", "status": "SCOPE",
+}
 
 
 def identify_goal(
@@ -369,6 +393,11 @@ def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDef
     """Constrain explicit effects without granting execution authority."""
 
     has_explicit_read = _has_explicit_read_authority(request.request_text)
+    gmail_search = (
+        request.entry_mode == "AGENT_SEARCH"
+        and _explicit_read_resource_hints(request.request_text) == ["GMAIL_THREAD"]
+        and not _has_explicit_write_marker(request.request_text)
+    )
     outside_literals = request.request_text
     for pattern in _QUOTED_LITERAL_PATTERNS:
         outside_literals = pattern.sub(" ", outside_literals)
@@ -380,7 +409,10 @@ def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDef
         )
         is not None
     )
-    if not (has_explicit_read or has_explicit_create or _selected_resource_hints(request)):
+    if not (
+        has_explicit_read or has_explicit_create or gmail_search
+        or _selected_resource_hints(request)
+    ):
         return IDENTIFY_GOAL_OUTPUT_SCHEMA
     schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
     if has_explicit_read or _selected_resource_hints(request):
@@ -388,9 +420,81 @@ def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDef
     if has_explicit_create:
         effects = cast(dict[str, object], schema["properties"])["requested_effect_hints"]
         cast(dict[str, object], effects)["contains"] = {"const": "CREATE"}
-    if request.entry_mode == "AGENT_SEARCH" and has_explicit_read:
+    if request.entry_mode == "AGENT_SEARCH" and (has_explicit_read or gmail_search):
         constraints = cast(dict[str, object], schema["properties"])["constraints"]
         cast(dict[str, object], constraints)["minItems"] = 1
+        if gmail_search:
+            preserved = preserve_vague_read_semantics(
+                {"goal": "", "completion_conditions": [], "constraints": [],
+                 "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
+                 "analysis_requirement": "NONE"},
+                request_text=request.request_text, entry_mode=request.entry_mode,
+            )
+            explicit = {item["field"]: item["value"] for item in preserved["constraints"]}
+            slot_properties: dict[str, object] = {
+                field: {"type": "array", "items": {
+                            "type": "string", "minLength": 1, "pattern": r".*[^\s\[\]{}].*",
+                        },
+                        "maxItems": 8}
+                for field in _GMAIL_GOAL_SLOT_KINDS
+            }
+            slot_properties["temporal_axis"] = {
+                "type": "array", "maxItems": 1,
+                "minItems": int("period" in explicit),
+                "items": {"enum": ["MESSAGE_TIME", "EVENT_TIME"]},
+                "description": (
+                    "기간이 메일 수신/발송을 제한할 때만 MESSAGE_TIME. "
+                    "메일에서 찾는 행사/일정의 기간이면 EVENT_TIME. 자료원이 메일인 것과 구별한다."
+                ),
+            }
+            slot_properties["search_terms"] = {
+                "type": "array", "maxItems": 8, "items": {
+                    "type": "string", "minLength": 1, "pattern": r".*[^\s\[\]{}].*",
+                },
+                "description": (
+                    "사용자 원문에 있는 프로젝트 고유명만 그대로 복사한다. "
+                    "일반 명사·업무 개념·인물·기간·답변 지시는 제외한다. "
+                    "고유명에 단어를 붙여 확장하지 않는다."
+                ),
+            }
+            cast(dict[str, object], slot_properties["business_concepts"])["description"] = (
+                "사용자가 찾는 원래 업무 개념만 짧게 보존한다. "
+                "동의어나 하위 업무를 생성하지 않는다. "
+                "날짜·담당·최종 여부는 required_information이다. "
+                "메일 조회·검색·확인·요약은 수행할 동작이지 업무 개념이 아니다."
+            )
+            for field, description in {
+                "person": "원문에 명시된 사람 이름·직급·별칭만. 프로젝트명을 붙이지 않는다.",
+                "sender": "누가 보냈는지 명시된 경우 그 사람 표현만. 프로젝트와 업무 수식어 제외.",
+                "recipient": "누가 받았는지 명시된 경우만. 본문에 등장하는 사람과 구분한다.",
+                "period": "날짜가 제한하는 대상의 기간 표현을 그대로 보존한다.",
+                "required_information": (
+                    "답변에서 확인할 사실. 검색 원문에 있어야 할 문구가 아니다."
+                ),
+                "status": "명시된 메일 상태만. 다른 자료원의 OPEN/INCOMPLETE 등을 만들지 않는다.",
+            }.items():
+                cast(dict[str, object], slot_properties[field])["description"] = description
+            for field in ("person", "period"):
+                if field in explicit:
+                    cast(dict[str, object], slot_properties[field])["minItems"] = 1
+            if (
+                "subject" not in explicit
+                and re.search(r"제목|subject", request.request_text, re.I) is None
+            ):
+                cast(dict[str, object], slot_properties["subject"])["maxItems"] = 0
+            cast(dict[str, object], schema["properties"])["constraints"] = {
+                "type": "object", "additionalProperties": False,
+                "required": list(slot_properties), "properties": slot_properties,
+                "description": (
+                    "모든 의미 슬롯을 각각 확인한다. 미언급은 []이며 값을 추측하지 않는다."
+                ),
+            }
+            properties = cast(dict[str, object], schema["properties"])
+            schema["properties"] = {
+                "constraints": properties["constraints"],
+                **{key: value for key, value in properties.items() if key != "constraints"},
+            }
+            schema["required"] = list(cast(dict[str, object], schema["properties"]))
     return OutputSchemaDefinition(
         schema_version=IDENTIFY_GOAL_OUTPUT_SCHEMA.schema_version,
         json_schema=schema,
@@ -402,7 +506,19 @@ def _has_explicit_read_authority(request_text: str) -> bool:
     return (
         bool(_explicit_read_resource_hints(request_text))
         and any(marker in normalized for marker in _EXPLICIT_READ_MARKERS)
-        and not any(marker in normalized for marker in _EXPLICIT_WRITE_MARKERS)
+        and not _has_explicit_write_marker(request_text)
+    )
+
+
+def _has_explicit_write_marker(request_text: str) -> bool:
+    outside_literals = request_text.casefold()
+    for pattern in _QUOTED_LITERAL_PATTERNS:
+        outside_literals = pattern.sub(" ", outside_literals)
+    outside_literals = re.sub(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", " ", outside_literals)
+    return any(
+        re.search(rf"\b{marker}\b", outside_literals) is not None
+        if marker.isascii() else marker in outside_literals
+        for marker in _EXPLICIT_WRITE_MARKERS
     )
 
 
@@ -428,7 +544,7 @@ def is_general_answer_only_request(request_text: str) -> bool:
         any(marker in normalized for marker in _GENERAL_ANSWER_ONLY_CONTENT_MARKERS)
         and any(marker in normalized for marker in _GENERAL_ANSWER_ONLY_RESPONSE_MARKERS)
         and not any(marker in normalized for marker in _CURRENT_WORKSPACE_FACT_MARKERS)
-        and not any(marker in normalized for marker in _EXPLICIT_WRITE_MARKERS)
+        and not _has_explicit_write_marker(request_text)
     )
 
 
@@ -569,4 +685,11 @@ def _validate_goal_candidate(
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
         raise ValueError(f"request goal candidate is invalid: {'; '.join(errors)}")
+    root = cast(dict[str, object], value)
+    if isinstance(root["constraints"], dict):
+        slots = cast(dict[str, list[str]], root["constraints"])
+        value = {**root, "constraints": [
+            {"kind": _GMAIL_GOAL_SLOT_KINDS[field], "field": field, "value": values}
+            for field, values in slots.items() if values
+        ]}
     return cast(RequestGoalCandidateV1, value)

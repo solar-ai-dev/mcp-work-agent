@@ -209,8 +209,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _context_resource_refs(value: object) -> list[str]:
     if not isinstance(value, Mapping):
         return []
-    refs = value.get("resource_refs", [])
-    return [item for item in refs if isinstance(item, str)] if isinstance(refs, list) else []
+    items = value.get("items", [])
+    if not isinstance(items, list):
+        return []
+    return [
+        f"{item['resource_type']}:{item['resource_id']}"
+        for item in items
+        if isinstance(item, Mapping)
+        and isinstance(item.get("resource_type"), str)
+        and isinstance(item.get("resource_id"), str)
+    ]
 
 
 def _verification_events(value: object) -> list[dict[str, object]]:
@@ -224,7 +232,14 @@ def _verification_events(value: object) -> list[dict[str, object]]:
 
 def _interaction_projection(snapshot: Mapping[str, object]) -> list[object]:
     pending = snapshot.get("pending_interrupt")
-    return [] if pending is None else [pending]
+    if pending is None:
+        return []
+    run = _mapping(snapshot.get("run"), "run")
+    if run.get("status") == "WAITING_CONFIRMATION":
+        return [{"type": "CONFIRMATION"}]
+    if run.get("status") == "WAITING_APPROVAL":
+        return [{"type": "APPROVAL"}]
+    return [pending]
 
 
 def _mapping(value: object, field: str) -> Mapping[str, object]:

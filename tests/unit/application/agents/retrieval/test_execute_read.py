@@ -465,3 +465,12 @@ def test_next_page__first_unread_page__does_not_treat_as_repeat() -> None:
     )
     assert result.provider_called
     assert reader.calls == [{"query": "bounded", "page_token": "opaque"}]
+    consumed = {**attempt, "operation_kind": "NEXT_PAGE", "page_state_hash": None}
+    with pytest.raises(QueryUnchangedAfterFailureError):
+        execute_read(
+            plan=plan, run_id="run", binding=_binding(), tool_arguments={"query": "bounded"},
+            connector_reader=reader, read_result_cache=cache, read_result_handle="repeated",
+            run_budget=build_default_run_budget(), now_ms=0,
+            prior_query_attempts=[attempt, consumed],
+        )
+    assert len(reader.calls) == 1

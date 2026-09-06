@@ -1,6 +1,7 @@
 """Current-run output schema and resource coverage for evidence selection."""
 
 from collections.abc import Collection, Mapping
+from typing import cast
 
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
@@ -34,6 +35,7 @@ def required_resource_segments(
 def bind_evidence_selection_schema(
     *, candidate_resource_refs: Mapping[str, str],
     max_evidence: int,
+    metadata_candidate_ids: Collection[str] = (),
 ) -> OutputSchemaDefinition:
     """Require one assessment per visible candidate, without parallel ID lists.
 
@@ -64,7 +66,15 @@ def bind_evidence_selection_schema(
                 "schema_version": {"type": "integer", "enum": [3]},
                 "segment_assessments": {
                     "type": "object", "required": ids, "additionalProperties": False,
-                    "properties": {segment_id: assessment for segment_id in ids},
+                    "properties": {
+                        segment_id: {
+                            **assessment, "properties": {
+                                **cast(dict[str, object], assessment["properties"]),
+                                "role": {"const": "CONTEXT"},
+                            },
+                        } if segment_id in metadata_candidate_ids else assessment
+                        for segment_id in ids
+                    },
                 },
             },
         },

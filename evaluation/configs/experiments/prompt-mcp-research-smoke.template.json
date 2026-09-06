@@ -28,7 +28,7 @@
   "trial_failure_policy": "CONTINUE",
   "grader": {
     "path": "evaluation/grader.py",
-    "sha256": "6bb26ba7c87eee97f59190ff02f662a9ae57a5555344b2fd927522013944b1e7"
+      "sha256": "50db17332a50c0da159127619fb7785509a605194e0c91d568de18b4bfc473b0"
   },
   "comparison_group": "prompt-mcp-research-smoke-v1",
   "results_root": "evaluation/results",

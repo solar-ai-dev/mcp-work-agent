@@ -58,6 +58,8 @@ _CONSTRAINT_SCHEMA = {
             "type": "object",
             "additionalProperties": False,
             "required": ["kind", "axis", "start_local", "end_local", "timezone"],
+            "if": {"properties": {"start_local": {"type": "null"}}},
+            "then": {"properties": {"end_local": {"type": "string"}}},
             "properties": {
                 "kind": {"const": "TEMPORAL_RANGE"},
                 "axis": {
@@ -179,23 +181,8 @@ _CHANGED_SEARCH_SPEC = {
             "type": "object",
             "additionalProperties": False,
             "required": ["upsert_constraints", "remove_constraint_kinds"],
-            "oneOf": [
-                {
-                    "type": "object",
-                    "required": ["upsert_constraints"],
-                    "properties": {
-                        "upsert_constraints": {"type": "array", "minItems": 1}
-                    },
-                },
-                {
-                    "type": "object",
-                    "required": ["upsert_constraints", "remove_constraint_kinds"],
-                    "properties": {
-                        "upsert_constraints": {"type": "array", "maxItems": 0},
-                        "remove_constraint_kinds": {"type": "array", "minItems": 1},
-                    }
-                },
-            ],
+            "if": {"properties": {"upsert_constraints": {"maxItems": 0}}},
+            "then": {"properties": {"remove_constraint_kinds": {"minItems": 1}}},
             "properties": {
                 "upsert_constraints": {"type": "array", "items": _CONSTRAINT_SCHEMA},
                 "remove_constraint_kinds": {
@@ -431,6 +418,15 @@ def _bind_route_operation(
         temporal_constraint=temporal_constraint,
         allowed_participant_identities=allowed_participant_identities,
     )
+    if operation in {"SEARCH", "FREEBUSY"} and allowed_constraint_kinds == {"CONCEPT"}:
+        spec = cast(dict[str, object], operation_properties["search_spec"])
+        fields = cast(dict[str, object], spec["properties"])
+        if is_followup:
+            delta = cast(dict[str, object], fields["constraint_delta"])
+            fields = cast(dict[str, object], delta["properties"])
+            cast(dict[str, object], fields["upsert_constraints"])["maxItems"] = 1
+        else:
+            cast(dict[str, object], fields["constraints"])["maxItems"] = 1
 
 
 def _bind_constraint_ref_values(

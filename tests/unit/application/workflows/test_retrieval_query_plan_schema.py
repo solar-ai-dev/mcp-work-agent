@@ -10,6 +10,28 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
+@pytest.mark.parametrize("start,end,valid", [
+    (None, None, False), ("2026-09-01", None, True),
+    (None, "2026-09-08", True), ("2026-09-01", "2026-09-08", True),
+])
+def test_temporal_range__partial_or_empty_bounds__preserves_contract(start, end, valid):
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"], supported_constraint_kinds={"gmail": ["TEMPORAL_RANGE"]},
+    )
+    candidate = {
+        "schema_version": 2, "route_queries": [{
+            "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
+            "search_spec": {"mode": "INITIAL", "constraints": [{
+                "kind": "TEMPORAL_RANGE", "axis": "MESSAGE_TIME",
+                "start_local": start, "end_local": end, "timezone": "Asia/Seoul",
+            }]}, "detail_candidate_ref": None,
+        }], "required_information": ["received mail"], "retrieval_order": ["gmail"],
+    }
+    assert (not validate_output_schema(candidate, schema.json_schema)) is valid
+    candidate["route_queries"][0]["search_spec"]["constraints"] = [{"start_local": start}]
+    assert validate_output_schema(candidate, schema.json_schema)
+
+
 def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     temporal: TemporalRangeConstraintV1 = {
         "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
