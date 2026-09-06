@@ -1,124 +1,53 @@
 # 12. Architecture Enforcement
 
-**Normative detail of the current Repository Architecture Source.**
+**상태:** CANONICAL
 
-Architecture checks must be machine-enforceable where practical.
+Architecture 검사는 문서 inventory가 아니라 실제 source/import/caller/contract를 검사한다.
 
-Required enforcement families:
+## Required gates
 
-- forbidden production filename patterns, including generic `runtime.py/service.py/manager.py/processor.py/engine.py/handler.py/helpers.py/utils.py/common.py/shared.py/misc.py/config.py` and broad multi-authority `errors.py` unless explicitly registered
-- forbidden dependency edges/imports
-- Provider SDK access outside connector MCP adapters
-- multiple semantic-authority detection
-- `_compat` zero on `main`
-- production→evaluation import ban
-- Evaluation repository root exact: current code/data/result/scoring artifacts live under top-level `evaluation/`; top-level `experiments/` and live `evaluation/compat/` trees zero
-- Evaluation artifact closure: `datasets/{retrieval,agent,e2e}/**`, `configs/**`, `prompt_candidates/**`, root scoring contract, public client/dataset/grader/one-case runner, Prompt candidate/Experiment Plan/batch/comparison operations, and local-by-default result policy match the current 13/16 manifest
-- Evaluation execution closure: Evaluation→Product internal Python import zero, dynamic file:symbol target registry zero, direct Node/Subgraph/Main Profile invocation zero, fake Product adapter zero; Product invocation uses only supported public API/CLI/subprocess
-- Evaluation fixture boundary closure: synthetic fixture assets remain dataset input under `evaluation/datasets/e2e/fixtures/**`; fixture-backed Product processes are provisioned outside Evaluation and Gold/evaluator fields never enter Product requests
-- static fixture grammar closure: checked-in provider/resource fixtures use `tests/fixtures/data/<provider>/<resource>/<scenario>.json` UTF-8 JSON; architecture validators do not require an enumerated concrete `<scenario>` closed set unless an owner source explicitly names one
-- LangGraph node thin-adapter boundary
-- routing operation-per-file: final production `routing/route_after_<stage>.py`, no catch-all `routing.py`
-- Domain transition/guard operation-per-file; no broad multi-capability `commands.py`, `transitions.py`, or `guards.py`
-- Agent semantic responsibility operation-per-file under `application/agents/<role>/`
-- owner-local contract package rule; no global catch-all production `contracts/` package
-- unit-test mirror checks for migrated capabilities
-- direct concrete-adapter imports from Application
-- barrel exports that hide concrete authority
-- Current Workflow atomic responsibility ownership: heavy-Agent broad modules must not collapse distinct `facts / relations / gaps / risks`, `action objective / arguments`, or Review inspection dimensions into one production implementation file
-- Local SLLM node implementation paths must map one semantic LLM responsibility to one owner-local operation file; deterministic aggregators/builders remain separate from LLM callers
-- Domain Repository manifest exact coverage: every 04 persistence capability maps to one owner-specific Repository + SQLite adapter + test; generic Repository authority zero
-- registry separation/uniqueness: exactly one `ConnectorRuntimeRegistry`, `SignedToolRegistry`, `NodeRegistry`, `ResumeTargetRegistry`, `PromptRegistry`, and Graph Profile Registry; no catch-all registry/service locator
-- Prompt runtime exact-set closure: 15 current 21 `prompt_slot_id` set = runtime Product-LLM caller set = `prompt_manifest.json` = concrete `sources/<prompt_id>.md` = `prompt_runtime_input_contract_v1.json`; `prompt_id == prompt_slot_id`, duplicate/missing/extra/broad-predecessor Prompt source zero
-- Prompt input-contract loader exact: `application/prompt_runtime/load_prompt_input_contract.py → load_prompt_input_contract()` is the only repository loader/validator for `PromptRuntimeInputContractV1`; alternate generic config loader authority zero
-- exact 35 Agent Runtime Node adapter/projection/router manifest coverage; supporting deterministic operations must not create extra runtime nodes
-- Agent semantic operation exact-set authority exists only in `16/01 Canonical Required-Operation Manifest`; parent 16 duplicate operation list zero; current exact set includes all 43 rows, including deterministic supporting operations
-- non-persistence outbound exact mapping exists only as the single 24-row Port↔Adapter table in `16/07`; parallel Port-only list zero and `OperationalCommandReplayPort` present exactly once
-- one production composition root: `api/composition.py → build_production_runtime()`; concrete binding outside it zero
-- handoff reconciliation owner exact: `application/use_cases/run/redrive_workflow_handoffs.py → RedriveWorkflowHandoffsHandler`; same handler owns startup + live semantics with precedence CONSUMED active-continuation/domain fence → BLOCKED_BINDING Recovery → PENDING/DISPATCHED dispatch head → generic SAFE. `adapters/system/workflow_handoff_reconciliation_loop.py → WorkflowHandoffReconciliationLoop` may only drive that handler; direct loop/startup WEP/LangGraph orchestration zero
-- WorkflowHandoff persisted projection exact: StageV1 vs persisted V1 separated; persisted row includes `run_sequence`, `version`, optional `WorkflowExecutionAdmissionV1`, submit-failure reason, applied checkpoint evidence, nullable no-control hash, `SUPERSEDED`; trigger lookup only through `get_by_trigger_command_id`. `GraphCheckpointEnvelopeV1` additionally carries `active_handoff_id/run_sequence` typed lineage until release boundary
-- WorkflowHandoff ordering/transition surface exact: `get_dispatch_head`, `list_redriveable`, `list_blocked_binding`, pre-WEP `claim_execution_admission`, authority-aware non-ACCEPTED `release_execution_admission`, NORMAL CONSUMED settlement, CONSUMED recovery-admission settlement, `supersede_unconsumed_for_run`, SUPERSEDED settlement; raw SQL reset/reorder side-channel zero. Exact same-admission WEP replay is idempotent ACCEPTED. Release/settlement must compare persisted admission expected Run version with current Run.version; stale NORMAL admission is retired to SUPERSEDED rather than restored to PENDING/BLOCKED, and stale recovery admission is cleared while status remains CONSUMED. `CONSUMED_CONTINUATION_RECOVERY` bypasses dispatch-head membership only through `ScheduleRunExecutionHandler`, claims a persisted RESUME admission from the latest active-lineage checkpoint, and never mutates CONSUMED back to dispatch status
-- operational artifact recovery exact: replay reservation `operation_ref` reaches Backup/Restore/Diagnostics/Attachment callables and their `reconcile_*`; Application raw filesystem reconciliation zero
-- `StructuredInferencePort` production binding exactly one `StructuredInferenceRuntimeRouter`; direct leaf provider binding to Application/Agent zero
-- external API LLM leaf grammar exact: `adapters/llm/<provider>/structured_inference.py → <Provider>StructuredInferenceAdapter`, `credential.py → <Provider>LlmCredentialAdapter`, `runtime_status.py → <Provider>LlmRuntimeStatusAdapter`; alternate live symbols/paths zero
-- P0 local LLM leaf exact: `adapters/llm/ollama/structured_inference.py → OllamaStructuredInferenceAdapter`, `adapters/llm/ollama/runtime_status.py → OllamaLlmRuntimeStatusAdapter`; Ollama credential leaf zero
-- provider-parameterized `LlmCredentialPort` / `LlmRuntimeStatusPort` production binding exactly one Router each; Application/API direct provider leaf selection zero
-- concrete external API provider/model identity is not inferred from Repository Architecture; hard-coded Core/Application/Agent default provider/model absent current 10/13 Release selection = zero
-- `WorkflowExecutionPort` production binding exactly one background executor; FastAPI direct background primitive/LangGraph executor selection zero
-- Confirmation wire/controller closure: `PendingInterruptResponseV1` exact projection + `run.confirm_run`; undefined legacy interrupt DTO alias current reference zero
-- connector-neutral circuit keys: provider-specific Core circuit enum values zero; Connector circuit identity carries connector_id
+- forbidden generic filename과 version/generation suffix
+- Domain→outward, Application→concrete Adapter, LangGraph→SQLite/Provider, Route→DB/Adapter concrete, Product→Evaluation 등 금지 dependency
+- Provider SDK·SQLite·subprocess의 Adapter 경계
+- operation-per-file naming과 owner-local contract package
+- capability당 live production authority 하나, concrete composition root 하나
+- migrated capability의 production caller cut-over와 old import/export/authority 0
+- Port/Adapter binding uniqueness와 persistence mirror
+- LangGraph thin node, registered route/resume target, Domain truth와 checkpoint/projection 분리
+- 외부 I/O 중 SQLite write transaction 0
+- Approval → Claim → BeginExecutionAttempt commit → WRITE → Verification/Recovery 경계
+- `UNKNOWN_RESULT` blind resend와 duplicate dispatch 0
+- Frontend의 policy/execution/owner 추론 0
+- test 간 private helper import 0, fixture ownership, 적용 migration 보존
+- runtime Prompt/Tool/Connector manifest와 schema/hash의 loader·consumer 정합성
+- Evaluation→Product internal import와 두 번째 Product authority 0
 
-Architecture enforcement complements, but does not replace, behavioral tests. Enforcement allowlists may only encode exceptions already present in the Repository Architecture Exception Registry; an enforcement-only exception is itself a contract violation.
+## Test strategy
 
-## Local Runtime provisioning activation gate
+검사는 가능한 한 AST/import graph, source tree, runtime manifest/schema와 production composition을 직접 사용한다. Canonical에 파일·심볼·테스트의 거대한 exact 목록을 만들고 이를 parser input으로 사용하지 않는다. 새 operation은 concern contract와 실제 owner/caller/test를 함께 갱신하며, Git diff와 코드 검색으로 closure를 확인한다.
 
-- The following constraints become active together only when the automatic provisioning capability is implemented and added to the exact manifests; the current repository must not claim that closure early.
-- `runtime_status.provision_local_runtime` exact Application owner/file/symbol/test; alternate install/service/manager authority zero after activation.
-- `LocalRuntimeProvisioningPort` has exactly one production binding `OllamaLocalRuntimeProvisioningAdapter`; Application/API/Agent direct filesystem/download/subprocess/Ollama CLI access zero.
-- installer source exact `installer/windows/local_runtime_provisioning_definition.py → WindowsLocalRuntimeProvisioningDefinition`; generic installer manager/script root zero.
-- `ModelManifestV2` owns Ollama installer identity/hash and approved model digest set only; `LocalModelProductDecisionV2` alone owns the active single-model profile, same-model `WORKER|REASONING` class bindings, and hardware/platform thresholds. Cross-artifact hash/release/class binding mismatch, class bindings resolving to different model identities, mixed V1/V2 production set, and duplicate values in SignedBuildConfig, Prompt source, Settings, Agent code are structural failures.
-- `StructuredInferenceRequestV2.inference_tier` closed set exact `WORKER|REASONING`; unknown/free-string tier and model-name parsing authority zero.
-- Product LLM caller supplies PromptRef+tier; concrete model resolution occurs only in `StructuredInferenceRuntimeRouter` using verified `LocalModelProductDecisionV2.active_profile` and `ModelManifestV2` validation.
-- `API_ONLY` provisioning artifact/side effect zero; `LOCAL_CAPABLE` model weights and Ollama executable are not embedded in the Windows Installer.
-- Browser/LLM/Connector Source supplied URL/path/model tag/shell argument cannot reach provisioning Adapter.
-- pre-existing Ollama uninstall/update authority and product shutdown kill path zero by default.
+Enforcement를 통과시키기 위해 allowlist를 넓히거나 assertion을 약화하거나 skip/xfail/ignore를 추가하지 않는다. 예외는 `13 Exception Registry`에 구조적 이유와 범위를 먼저 기록한 경우에만 허용한다.
 
-## Structural closure enforcement gate
+## Structural closure
 
-The final architecture suite must prove both presence and absence. Positive discovery of canonical files is insufficient.
+완료 판정은 다음을 모두 요구한다.
 
-Required final checks include:
-
-- canonical required-operation manifest exact-set coverage;
-- one live production authority per capability;
-- intended production caller closure across API, LangGraph, composition, and other production orchestrators;
-- old production caller/import path zero for migrated capabilities;
-- concrete barrel export zero for migrated authorities;
-- Application root broad semantic module zero;
-- legacy `application/workflows/**` production authority zero;
-- final `read_*` / `write_*` compatibility facade zero when it exposes migrated concrete authority;
-- `_compat` zero on `main`;
-- banned filename/version-suffix detection with only Exception Registry allowances;
-- Agent operation-per-file coverage against the current 06/15 semantic responsibility set;
-- unit-test canonical owner-path coverage and legacy test-import zero;
-- Application forbidden dependency checks for FastAPI responsibility, LangGraph routing responsibility, concrete Connector/MCP Adapter, Provider SDK/API client, and concrete SQLite adapter/direct SQLite access.
-
-Architecture enforcement must classify old-path literals that exist solely inside negative enforcement tests as `EXPECTED_ENFORCEMENT`; they do not count as a live import/export/caller.
-
-### Caller-closure proof
-
-For each required Application capability, validation records at least:
-
-```
-capability
-canonical owner module/symbol
-expected production boundary callers
-observed canonical callers
-observed legacy callers
-observed old imports/exports
-canonical test owner
-closure verdict
+```text
+naming/placement
++ dependency direction
++ single production authority
++ production caller cut-over
++ old authority/import/export absence
++ Port/Adapter and transaction boundary
++ owned tests and safety regression
 ```
 
-The capability passes only when expected callers are accounted for and legacy caller/import/export counts are zero.
+이 Gate는 behavioral regression과 실제 제품 검증을 대신하지 않는다. 문서 파일의 존재, Issue 상태, 과거 closure report만으로 구현 완료를 판정하지 않는다.
 
-### Final structural verdict
+## Local runtime gate
 
-```
-STRUCTURAL_CONTRACT_PASS
-= naming/placement/dependency pass
-+ required-operation manifest pass
-+ single-authority pass
-+ caller-closure pass
-+ compatibility-zero pass
-+ test-ownership pass
-```
+Architecture 검사는 지원 모델 allowlist/readiness authority와 Runtime Router binding이 하나인지 확인한다. Browser/Prompt/Connector source의 임의 model ID, URL, path, shell fragment가 Adapter 실행으로 이어지지 않아야 한다. 제품에 Ollama 설치, model pull, download/provisioning authority가 존재해서는 안 되며, Local과 Gemini 자동 fallback도 없어야 한다.
 
-This structural verdict is necessary but does not replace behavioral regression required by 12 Test Design.
+## Preservation
 
-- repository callable closure: mutable lifecycle repositories expose only exact `update_if_version_and_status(...)` public mutation method; alias/command-specific repository mutation authority prohibited
-- connector installation manifest closure: `installed_connector_manifest.json` rows/paths must match 10 contract + 16 connector package mapping and every installed artifact must be covered by verified Release Manifest hash
-- signed Tool artifact closure: implementation Tool manifest set/fields == 07 current Registry rows; installed signed-tool-registry/projection hashes are Release-Manifest covered; Connector adapters import no `application/tool_registry/**`
-- resume identity closure: semantic owner/profile→compiled subgraph mapping exact; `RegisteredResumeTargetRefV2` agent/main forms only; main resume stages exactly `RETRIEVAL_ENTRY|PLANNING_ENTRY|REVIEW_ENTRY|PREFLIGHT|READ_EXECUTION|VERIFICATION|RECOVERY|CANCEL_RESOLUTION`; external-control entry stages are issued only by the 06/07 handoff matrix, `PREFLIGHT` requires no in-flight Write Attempt, `READ_EXECUTION` requires Legacy READ Action EXECUTING + no ExecutionAttempt, and `ACTION_EXECUTION` is never resumable
-
-- WEP ACCEPTED is not the durable linearization point: every WEP submission carries `WorkflowExecutionSubmissionV2(admission=...)` whose admission was already CAS-committed against handoff + Run authority versions; ACCEPTED requires no repository write.
+문서 정리로 spec-to-code snapshot이나 audit ledger를 제거해도 dependency, ownership, single-authority, write safety 검사는 유지한다. API/wire/checkpoint/migration/manifest 실행 버전과 실제 runtime/test fixture는 문서 버전이나 inventory와 별개로 보존한다.

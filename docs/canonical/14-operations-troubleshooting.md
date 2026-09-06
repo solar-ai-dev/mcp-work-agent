@@ -6,7 +6,7 @@
 
 - **문서명:** 14. mcp-work-agent · 예외 처리 · 운영 · 트러블슈팅 가이드
 - **상태:** Draft v2.27
-- **기준일:** 2026-09-03
+- **기준일:** 2026-09-07
 - **대상:** P0 MVP
 - **운영 형태:** Windows 11 x64 로컬 단일 사용자 애플리케이션
 - **공식 Browser:** 최신 Chrome·Microsoft Edge
@@ -114,7 +114,7 @@ flowchart TD
 | SSE 단절 | 재연결·Snapshot 조회 | Backoff 적용 | Action 재실행 |
 | MCP Read 전 Process 종료 | Process 재시작·Schema 재검증 | 1회 | Write 자동 전송 |
 | Connector Provider Read 429·5xx | Connector 정책 범위의 제한된 Backoff Retry | Policy·Budget 범위 | 무한 Retry |
-| LLM API 429·일시적 5xx | Retry 또는 AUTO Fallback | Retry 1회·Fallback 1회 | 명시적 LOCAL_GPU 자동 전환 |
+| LLM API 429·일시적 5xx | 동일 Gemini 경로의 bounded Retry | Retry 1회 | Local 자동 전환 |
 | Structured Output 실패 | 동일 단계 Repair | 1회 | 무한 Prompt 반복 |
 | Write `NOT_SENT` 확정 실패 | `FAILED` 저장 | 자동 재실행 없음 | `FAILED → EXECUTING` |
 | `MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST` | `UNKNOWN_RESULT`·GET/Search | 조회 Budget 범위 | 새 Attempt·Write |
@@ -286,44 +286,34 @@ OAuth 성공은 credential 연결만 완료하며 Run을 자동 resume하지 않
 
 ### 12.2 LOCAL_CAPABLE
 
-- Ollama는 Product Core에 내장되지 않지만 `LOCAL_CAPABLE` provisioning이 approved Runtime/model 준비를 조정한다. shared/pre-existing Runtime의 silent update·강제 종료·자동 제거는 금지한다.
+- Ollama는 Product Core에 내장되지 않은 별도 runtime이다. 제품은 상태와 설치된 지원 모델을 검사할 뿐 install·pull·update·종료·제거하지 않는다.
 
 확인:
 
 - Ollama Loopback Endpoint
 - 지원 Version
-- 승인 Model ID
+- 지원 Model ID (`qwen3.5:9b`, `qwen3.5:4b`)
 - GPU·VRAM Profile
 - Structured Output Smoke Test
 - OOM·Timeout
 
-AUTO는 기술적 Local 실패에서 API Fallback 최대 1회를 허용한다. 명시적 `LOCAL_GPU`는 사용자 동의 없이 API로 전환하지 않는다.
+Local 실패는 Gemini fallback 조건이 아니다. 재검사에서도 지원 모델이 하나면 그 모델을 선택하고, 검사 실패와 모델 미설치를 구분한다.
 
-## 12-A. Local Runtime provisioning Runbook
-
-### 정상 흐름
+## 12-A. Local Runtime 검사 Runbook
 
 ```text
 Runtime Detail 확인
-→ `NOT_STARTED | REPAIR_REQUIRED`이면 `로컬 AI 준비`
-→ Ollama/active-model component progress 확인
-→ READY 뒤 tier Smoke Test 결과 확인
-→ LOCAL_GPU 활성화
+→ Ollama probe 성공/실패 확인
+→ 설치된 지원 모델 목록 확인
+→ 하나면 자동 선택, 둘이면 persisted 선택 검증
+→ 테스트 추론 결과와 실제 선택 모델 확인
 ```
 
-### 장애별 조치
-
-- `INSUFFICIENT_DISK`: 사용자가 정리할 안전 용량을 표시하고 동일 operation을 retry한다. verified model store를 임의 삭제하지 않는다.
-- `DOWNLOAD_INTERRUPTED`: staging/partial range를 Adapter가 reconcile한다. Browser refresh나 새 command로 중복 full download를 만들지 않는다.
-- `RUNTIME_SIGNATURE_INVALID | RUNTIME_HASH_MISMATCH | MODEL_DIGEST_MISMATCH`: 즉시 Local 사용 차단, staging 격리·진단 표시, API 가능 여부 확인. 수동 파일 교체나 임의 mirror를 안내하지 않는다.
-- `PREEXISTING_RUNTIME_INCOMPATIBLE`: silent upgrade/uninstall하지 않고 signed repair 범위와 shared-runtime 영향을 표시한다.
-- `OLLAMA_NOT_READY`: installed state와 process/loopback readiness를 구분해 bounded restart/readiness probe를 수행한다. 다른 사용자가 소유한 process를 강제 종료하지 않는다.
-- `PROFILE_INCOMPLETE | TIER_UNRESOLVED`: Model Manifest/Release 설치 무결성을 확인하고 model-name 문자열로 fallback하지 않는다.
-- 반복 실패는 `진단 열기 | 다시 시도 | API로 계속`만 제공하며 사용자에게 `ollama pull`, 임의 installer, shell command를 안내하지 않는다.
-
-### Uninstall
-
-pre-existing/shared Ollama는 항상 보존한다. 제품이 다운로드한 모델도 기본 보존이며 사용자가 `로컬 AI 모델도 삭제`를 명시적으로 선택한 경우에만 registered product model refs를 제거한다.
+- `OLLAMA_NOT_READY`: process/loopback readiness 실패로 표시하고 재검사를 제공한다.
+- `NO_SUPPORTED_MODEL`: 모델 준비 안내를 제공하되 Core 진입과 이력 조회를 유지한다.
+- `INSPECTION_FAILED`: 모델 없음으로 표현하지 않고 진단 정보와 재검사를 제공한다.
+- unsupported model은 선택하지 않으며 arbitrary model tag나 endpoint 입력을 받지 않는다.
+- 설치·pull·download·삭제·shell command를 앱이 수행하지 않는다.
 
 ## 13. LLM·Structured Output·Retrieval Runbook
 

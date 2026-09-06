@@ -1,7 +1,7 @@
 # 11. 관측성 · 로그 · 감사 설계서
 
 > **Authority:** observability/log/trace/audit projection, sanitization과 retention. Domain/Workflow lifecycle 의미는 관측 event로 재정의하지 않는다.  
-> **상태:** Draft v2.24 · **기준일:** 2026-09-03 · **외부 Telemetry:** Production 기본 OFF
+> **상태:** Draft v2.24 · **기준일:** 2026-09-07 · **외부 Telemetry:** Production 기본 OFF
 
 ## 0. 사람이 먼저 볼 것
 
@@ -132,7 +132,7 @@ mcp-*.jsonl
 - Agent invocation·repair·handoff
 - Retrieval page·candidate·detail·budget
 - LLM runtime·token·latency·fallback
-- Run Snapshot의 actual runtime은 해당 Run의 persisted `LLM_CALL_COMPLETED` 관측값으로 복원한다. LOCAL_GPU와 API_LLM이 모두 관측되면 MIXED이며, 호출이 없으면 기존 nullable 관측값을 유지한다. 요청 모드나 현재 Settings로 실행 이력을 추측하지 않고, 이 조회는 Domain 상태/버전을 변경하지 않는다. 모델·inference class·Prompt 연결은 기존 LLM Trace를 유지한다.
+- Run Snapshot의 actual runtime은 해당 Run의 persisted `LLM_CALL_COMPLETED` 관측값으로 복원한다. 현재 새 Run은 Local/Gemini 자동 전환이 없으므로 하나의 runtime만 관측되어야 한다. 과거 Run에서 LOCAL_GPU와 API_LLM이 모두 관측된 경우에는 history를 다시 쓰지 않고 legacy `MIXED`로 표시한다. 호출이 없으면 nullable 관측값을 유지하며 현재 Settings로 과거 실행을 추측하지 않는다.
 - MCP process·handshake·tool
 - Connector·Provider read·write·verification. P0 Google Workspace는 `connector_id=google_workspace`로 기록
 - SQLite transaction·busy·migration·backup
@@ -161,22 +161,19 @@ Runtime operational event identity:
 
 Metric/Diagnostic projection은 `circuit_kind + connector_id? + llm_runtime? + state + retry_at_ms` 및 bounded used/limit만 노출한다. `CONNECTOR` key는 connector_id로 correlation하고 Provider 이름을 Core circuit enum으로 승격하지 않는다. OAuth/LLM secret, raw MCP/Provider payload, Prompt text는 event attribute에 넣지 않는다. Circuit event는 Domain truth가 아니며 06/10 operational control state를 관측한다.
 
-### 5.2 Local Runtime provisioning Trace
+### 5.2 Local Runtime inspection Trace
 
 다음 event identity를 사용한다.
 
 ```text
-LOCAL_RUNTIME_PROVISIONING_STARTED
-LOCAL_RUNTIME_COMPONENT_DOWNLOAD_STARTED
-LOCAL_RUNTIME_COMPONENT_DOWNLOAD_COMPLETED
-LOCAL_RUNTIME_COMPONENT_VERIFIED
-LOCAL_RUNTIME_COMPONENT_INSTALL_FAILED
-LOCAL_RUNTIME_PROVISIONING_READY
-LOCAL_RUNTIME_PROVISIONING_RECONCILED
-LOCAL_MODEL_PROFILE_RESOLVED
+LOCAL_RUNTIME_INSPECTION_STARTED
+LOCAL_RUNTIME_INSPECTION_FAILED
+LOCAL_RUNTIME_INSPECTION_COMPLETED
+LOCAL_MODEL_SELECTION_CHANGED
+LOCAL_MODEL_RESOLVED
 ```
 
-기록 허용값은 `operation_ref`, component kind, origin, approved version/profile ID, expected/observed digest의 bounded mismatch code, bytes/progress, duration, result code다. Raw download URL, installer command line, local user path, model binary, Prompt/Completion은 기록하지 않는다. `LOCAL_MODEL_PROFILE_RESOLVED`는 requested `inference_tier`와 resolved model ID/profile hash를 Trace에 남기되 API key나 raw model response는 포함하지 않는다. Provisioning Trace는 Domain lifecycle/Audit authority가 아니며 실패가 기존 Domain Write를 재실행시키지 않는다.
+기록 허용값은 inspection identity, Ollama readiness, 지원 모델 presence, 이전/현재 선택, 실제 resolved model, bounded failure code와 duration이다. Raw local path, process command, model binary, Prompt/Completion은 기록하지 않는다. inspection Trace는 Domain lifecycle/Audit authority가 아니며 실패가 기존 Run binding이나 Domain Write를 바꾸지 않는다.
 
 ## 6. Audit 필수 Event
 

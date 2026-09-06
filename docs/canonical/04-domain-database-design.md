@@ -8,7 +8,7 @@
 | --- | --- |
 | 문서명 | 04. mcp-work-agent 도메인 · 데이터베이스 설계서 |
 | 상태 | Draft v1.27 |
-| 기준일 | 2026-08-24 |
+| 기준일 | 2026-09-07 |
 | 대상 | P0 MVP |
 | Database | SQLite |
 | 저장 형태 | 하나의 제품 DB 파일 · Domain과 LangGraph Checkpoint 논리 분리 |
@@ -230,11 +230,11 @@ erDiagram
 ### 8.1 runs
 
 - `entry_mode`: AGENT_SEARCH 또는 RESOURCE_SELECTED
-- `requested_mode`: `AUTO | LOCAL_GPU | API_LLM`; StartRun에서 immutable snapshot, same-Run restart/resume authority
+- `requested_mode`: 새 Run은 `LOCAL_GPU | API_LLM`; legacy Run의 `AUTO`는 history/resume compatibility로만 읽음. StartRun의 immutable snapshot이 same-Run restart/resume authority
 - `status`: Workflow의 현재 단계
 - `langgraph_thread_id`: Checkpoint 재개 Key
 - `budget_json`: 호출 수·Token·Retry·시간 상한 Snapshot
-- `default_github_repository_json`: nullable, non-secret `GitHubRepositoryDefaultV1`의 Run 생성 시 immutable Settings snapshot. Source는 `SETTINGS_DEFAULT`이며 승인/접근 권한이 아니다. forward Migration 0021로 추가하고 이전 Run은 null을 유지한다. Run CAS에서 변경할 수 없다.
+- `default_github_repository_json`: Migration 0021로 추가된 legacy immutable snapshot. 기존 Run history/resume 해석에만 사용하고 새 Run의 접근 allowlist나 WRITE target authority로 사용하지 않는다. 기존 row를 다시 쓰지 않는다.
 - `version`: 낙관적 상태 전이
 - `finished_at_ms IS NULL`: Open Run
 
@@ -548,7 +548,7 @@ BEGIN IMMEDIATE
 → COMMIT
 ```
 
-P0 첫 Connector는 Google Workspace지만 Domain/Application이 Google Provider API를 직접 호출한다는 의미가 아니다.
+현재 Google Workspace와 GitHub Connector는 같은 connector-neutral Domain/Application 경계를 사용하며, Domain/Application이 Provider API를 직접 호출한다는 의미가 아니다.
 
 ### 10.6 GET Verification
 
@@ -697,11 +697,11 @@ Sidebar 목록 batch
 → 클릭·선택한 Resource만 상세 조회
 ```
 
-복수 선택 상세 조회는 **Application-level bounded batch responsibility**로 처리한다. Provider가 개별 상세 Endpoint만 제공해 concrete Adapter 내부 HTTP 호출이 여러 번 필요하더라도 중복 제거, 제한된 동시성, 메모리 재사용, 후보 수 상한을 적용한다. 구체 Port method와 MCP Tool ID는 `07 Interface`, repository path/file/symbol은 `16 Repository Architecture`가 소유한다.
+복수 선택 상세 조회는 **Application-level bounded batch responsibility**로 처리한다. Provider가 개별 상세 Endpoint만 제공해 concrete Adapter 내부 HTTP 호출이 여러 번 필요하더라도 중복 제거, 제한된 동시성, 메모리 재사용, 후보 수 상한을 적용한다. 구체 Port method와 MCP Tool ID는 `07 Interface`, repository 배치 문법은 `16 Repository Architecture`가 소유한다.
 
 ## 16. Persistence repository capability boundary
 
-04가 요구하는 Repository 책임은 method 이름이 아니라 다음 persistence capability다. 구체 operation/path/file/symbol은 16이 단일 권위로 매핑한다.
+04가 요구하는 Repository 책임은 method 이름이 아니라 다음 persistence capability다. 구현은 16의 owner-local naming·placement·single-authority 문법을 따른다.
 
 - Conversation/Message keyset page read
 - Run snapshot read
@@ -808,7 +808,7 @@ SQLAlchemy·Alembic은 P0 고정 기술로 강제하지 않는다. 명시적 SQL
 - `04 Domain·DB` — persistent fact, aggregate invariant, transaction/consistency semantics를 소유한다.
 - `Domain State Transition Contract` — lifecycle transition·guard·command semantics를 소유한다.
 - `10 Infrastructure` — migration 실행·startup ordering·operational DB configuration을 소유한다.
-- `16 Repository Architecture` — Repository/Adapter의 path·file·symbol·callable placement를 매핑한다.
+- `16 Repository Architecture` — Repository/Adapter의 ownership·naming·placement·dependency 문법을 정의한다.
 - `12 Test`와 `State Transition Test Matrix` — 위 계약의 구현 준수를 검증하며 새 persistence/lifecycle 의미를 만들지 않는다.
 
 SQL migration은 위 semantic authority를 구현하는 downstream artifact이며 별도 설계 authority가 아니다.
@@ -964,7 +964,7 @@ Connector/LLM 외부 호출 동안 SQLite Write Transaction을 유지하지 않�
 
 ### 27.3 Per-Run requested mode
 
-`runs.requested_mode = AUTO | LOCAL_GPU | API_LLM`은 StartRun UoW에서 immutable snapshot으로 저장하며 same-Run restart/resume의 durable authority다. process-local runtime mode나 user preference가 기존 Run 값을 덮어쓰지 않는다.
+`runs.requested_mode`는 StartRun UoW에서 immutable snapshot으로 저장하며 same-Run restart/resume의 durable authority다. 새 Run은 `LOCAL_GPU | API_LLM`만 기록한다. 기존 `AUTO` row는 과거 실행 해석과 안전한 resume compatibility를 위해 보존하며 history rewrite로 바꾸지 않는다. process-local runtime mode나 user preference가 기존 Run 값을 덮어쓰지 않는다.
 
 ### 27.4 Pre-dispatch claimed-attempt abort
 

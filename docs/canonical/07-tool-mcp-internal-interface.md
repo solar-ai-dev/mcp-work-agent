@@ -1,5 +1,16 @@
 # 07. Tool · MCP · 내부 인터페이스 명세서
 
+> **Authority:** Local API, Connector MCP Tool, 내부 Port·Command/Query typed interface. Domain/Workflow/Retrieval behavior와 repository placement는 해당 owner를 따른다.
+
+## 0. 문서 정보
+
+- **상태:** Draft v2.34
+- **기준일:** 2026-09-07
+- **대상:** P0 MVP
+- **배포 형태:** Windows 설치 파일 기반 로컬 애플리케이션
+
+## 현재 계약 보충
+
 ### 초기 연결 prerequisite 내부 계약
 
 `CheckConnectorPrerequisitesQuery(connector_ids, admitted_connector_ids, run_id)`는 확정된 Route의 ID와 현재 Run에서 확인된 ID만 받는다. `CheckConnectorPrerequisitesResult(admitted_connector_ids, user_message)`는 token-free projection이며 credential과 새 auth-wait lifecycle을 소유하지 않는다. Google/GitHub binding은 Composition이 기존 `OAuthCredentialPort`로 주입한다.
@@ -10,22 +21,13 @@ Query의 optional `resource_types`는 Request Understanding candidate의 resourc
 
 Conversation create/list API는 로컬 세션·version·runtime access 검사를 유지하지만 Google credential은 선행조건이 아니다. 요청/응답 schema는 변경하지 않으며 내부 actor attribution/persistence 변경은 04의 `0022` 계약을 따른다.
 
-> **Authority:** Local API, Connector MCP Tool, 내부 Port·Command/Query typed interface. Domain/Workflow/Retrieval behavior와 repository placement는 해당 owner를 따른다.
-
-## 0. 문서 정보
-
-- **상태:** Draft v2.34
-- **기준일:** 2026-09-06
-- **대상:** P0 MVP
-- **배포 형태:** Windows 설치 파일 기반 로컬 애플리케이션
-
 ## 1. 범위
 
 이 문서는 세 가지 인터페이스를 정의한다.
 
 1. React Frontend와 FastAPI Local Agent Service 사이의 Local API
 2. Python Application·LangGraph·Domain 사이의 내부 Port·Command 계약
-3. FastAPI Local Agent Service가 관리하는 Connector MCP Runtime과 Connector별 MCP Server의 Tool 계약. P0 첫 구현은 Google Workspace MCP Server다.
+3. FastAPI Local Agent Service가 관리하는 Connector MCP Runtime과 Connector별 MCP Server의 Tool 계약. 현재 Google Workspace와 GitHub Connector가 같은 connector-neutral 경계를 사용한다.
 
 다음은 제공하지 않는다.
 
@@ -88,7 +90,7 @@ class ReconcileRetrievalCacheRestartResultV1:
 
 ### 1.3 Authority boundary
 
-07은 Local API, internal typed interface, Port/MCP Tool schema의 owner다. Domain lifecycle/state는 State Contract, workflow edge/target은 `06`, security policy는 `09`, repository path/file/symbol은 `16`을 직접 참조한다. 다른 Concern의 의미를 wire 예시로 재정의하지 않는다.
+07은 Local API, internal typed interface, Port/MCP Tool schema의 owner다. Domain lifecycle/state는 State Contract, workflow edge/target은 `06`, security policy는 `09`, repository ownership·placement 문법은 `16`을 직접 참조한다. 다른 Concern의 의미를 wire 예시로 재정의하지 않는다.
 
 ## 2. 설치·Runtime 경계
 
@@ -117,7 +119,7 @@ Windows Installer
 - 운영 UI와 API는 same-origin이다.
 - Endpoint별 인증은 20. 인증 Matrix를 따른다. Bootstrap·Health·OAuth Callback은 기존 Local Session을 요구하지 않는다.
 - **Domain Aggregate mutation Command**는 `command_id + 대상 Aggregate ID + expected_version`을 포함한다. `expected_version`은 해당 Domain Aggregate의 optimistic concurrency authority다.
-- **Non-Domain operational Command**(Connection/Credential/Settings/Runtime Mode/Local Runtime Provisioning/Backup·Restore/Diagnostics/Shutdown/Attachment staging)는 `command_id + operation-specific Versioned Request Schema`를 사용한다. Concern owner가 별도의 versioned target/revision을 정의한 경우에만 그 revision을 요구하며, Domain `expected_version`을 임의 생성·재사용하지 않는다.
+- **Non-Domain operational Command**(Connection/Credential/Settings/Runtime Mode/Local Runtime inspection/Backup·Restore/Diagnostics/Shutdown/Attachment staging)는 `command_id + operation-specific Versioned Request Schema`를 사용한다. Concern owner가 별도의 versioned target/revision을 정의한 경우에만 그 revision을 요구하며, Domain `expected_version`을 임의 생성·재사용하지 않는다.
 - `command_id`가 있는 Local API Command는 Application에서 Versioned Request Schema를 canonicalize해 request hash를 계산한다. 같은 ID+같은 hash는 같은 operation result로 replay하고 같은 ID+다른 hash는 conflict다. Domain Aggregate mutation만 04의 durable `command_receipts` 계약을 사용하며, non-Domain side effect의 replay/idempotency는 해당 Application owner가 **`OperationalCommandReplayPort`**로 동일 command identity/hash/result를 adjudicate한 뒤 operation Port를 호출하는 단일 경로로 보장한다.
 - API Handler는 Domain 상태를 직접 수정하거나 concrete Port/Adapter를 직접 호출하지 않고 Application Command를 호출한다.
 - 응답 유실·재전송에도 동일 Command의 side effect를 중복 적용하지 않는다.
@@ -131,8 +133,8 @@ Windows Installer
 | --- | --- | --- |
 | Liveness | `GET /health/live` | FastAPI Process 응답 여부 |
 | Core Readiness | `GET /health/ready` | Manifest·Asset·API Contract·SQLite·Migration·Domain·Keyring Adapter·MCP Executable·Tool Schema |
-| Runtime Detail | `GET /api/v1/runtime` | `RuntimeDetailResponseV2`: Connector별 Credential·Scope/Permission·LLM Provider·Ollama·signed Local profile·provisioning summary·Recovery 상태. P0에는 Google Workspace 상태를 포함 |
-| Local Runtime Provisioning | `POST /api/v1/runtime/local/provision` | `LOCAL_CAPABLE`에서 Release-approved Ollama와 Signed Local Model Profile 준비를 시작·reconcile하는 non-Domain operational Command |
+| Runtime Detail | `GET /api/v1/runtime` | `RuntimeDetailResponseV2`: Connector별 Credential·Scope/Permission, Gemini, Ollama inspection, 설치된 지원 모델, 현재 선택, Recovery 상태 |
+| Local model inspection | runtime/settings inspection query | Ollama와 설치된 `qwen3.5:9b | qwen3.5:4b`를 읽고 설치 부작용 없이 상태를 반환 |
 | Session | `POST /api/v1/session/bootstrap` | Launcher Bootstrap으로 Local Session 수립 |
 | Conversation | `GET/POST /api/v1/conversations` | 대화 조회·생성 |
 | Conversation History | `GET /api/v1/conversations/{conversation_id}/history` | 저장된 Message·Run Timeline 조회. Agent 새 Run Context 입력용이 아님 |
@@ -147,8 +149,8 @@ Windows Installer
 | Resume | `POST /api/v1/runs/{run_id}/resume` | REAUTH/Safe Checkpoint/Recovery RECHECK의 discriminated resume |
 | Recovery Resolution | `POST /api/v1/runs/{run_id}/resolve-recovery` | 명시적 Recovery resolution |
 | Resource | `GET /api/v1/resources/{source}` where `source ∈ {gmail,tasks,calendar}` | Sidebar 목록·검색·opaque Local API continuation 조회 |
-| Task List Containers | `GET /api/v1/resources/task-lists` | Default Task List 선택용 bounded container 목록 |
-| Calendar Containers | `GET /api/v1/resources/calendars` | Default Calendar 선택용 bounded container 목록 |
+| Task List Containers | `GET /api/v1/resources/task-lists` | Settings allowlist 선택용 bounded container inventory |
+| Calendar Containers | `GET /api/v1/resources/calendars` | Settings allowlist 선택용 bounded container inventory |
 | Gmail Exact Count | `GET /api/v1/resources/gmail/count` | Sidebar용 exact Gmail count. Browse continuation과 독립된 read-only Query |
 | Gmail Detail | `GET /api/v1/resources/gmail/{resource_id}` | Local Session으로 Gmail Thread의 최신 Message UI 상세 조회 |
 | Task Detail | `GET /api/v1/resources/tasks/{resource_id}` | required `selection_handle` 검증 후 Task focus 상세 조회 |
@@ -297,7 +299,6 @@ class RuntimeDetailResponseV2:
     safe_mode: bool
     last_backup_status: str | None
     last_migration_status: str | None
-    local_runtime_provisioning: "LocalRuntimeProvisioningStatusV1"
 
 class SessionBootstrapRequestV1:
     schema_version: Literal[1]
@@ -442,7 +443,7 @@ class WorkflowBindingV1:
     langgraph_thread_id: str
     graph_profile: GraphProfileIdV1
     graph_version: str
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
     created_at_ms: int
 ```
 
@@ -458,7 +459,7 @@ conversation_id
 request_text: 1..65536 UTF-8
 entry_mode: AGENT_SEARCH | RESOURCE_SELECTED
 selected_resource_handles: list[str], max 20
-requested_mode: AUTO | LOCAL_GPU | API_LLM
+requested_mode: LOCAL_GPU | API_LLM
 ```
 
 - Browser는 새 Aggregate/Workflow identity인 `run_id`, `user_message_id`, `workflow_key`, `langgraph_thread_id`를 생성하거나 Wire Request로 제출하지 않는다. `command_id`는 **한 번의 사용자 Submit 의도마다 Frontend가 생성해 동일 transport retry에서 그대로 재사용하는 idempotency identity**이고 `conversation_id`는 기존 Timeline Aggregate를 지정하는 값이다. 새 사용자 Submit은 새 `command_id`를 사용하며 같은 사용자 의도의 네트워크 재시도에서 새 ID를 발급하면 안 된다. `workflow_key`는 StartRun 성공 후 Application/Workflow가 생성하는 opaque server-owned workflow-binding identity이며 Browser 입력/표시 authority가 아니다.
@@ -530,7 +531,7 @@ GitHub Issue selection은 기존 shape를 그대로 사용해 `connector_id="git
 - `ResourceListResponseV1.next_page_token`은 Client 관점의 opaque Local API continuation이다. Frontend는 이를 Google Provider token이나 UI page number로 해석하지 않고 다음 Local API 요청에 그대로 전달한다. Provider raw token은 Adapter 내부 구현 세부사항이다.
 - Gmail Browse는 configured `page_size` default이고 optional `include_thread_metadata`의 기본값은 `true`다. 아직 표시하지 않을 intermediate page를 통과할 때만 `false`를 사용해 Thread ID/list metadata/continuation만 확보하고 visible target page는 metadata를 hydrate한다. target hydration 중 필요한 Provider Read 하나라도 실패하면 partial placeholder page를 만들지 않고 해당 page Read를 실패 처리한다.
 - Gmail 기본 Sidebar scope는 `INBOX + PRIMARY` Thread이며 exact badge count도 같은 scope다. Sidebar 검색은 Primary 제한 없이 일반 mailbox를 검색하되 Spam·Trash를 제외하고 기본 Gmail badge count는 유지한다. Count traversal은 body/attachment/detail N+1 없이 필요한 최소 list metadata만 사용한다.
-- Tasks 기본 Browse는 configured/default Task List에 `show_completed=false`, `show_hidden=false`, `show_deleted=false`, Provider `page_size<=100`을 사용한다. Application은 Task metadata batch와 opaque continuation을 반환하고 React Client Session Cache가 이를 configured `SIDEBAR_PAGE_SIZE` page로 slice한다. continuation이 있으면 현재 materialized batch에서 계산되는 page 범위만 알고, 알려진 마지막 page에서만 다음 batch를 append한다. terminal 뒤 누적 수로 exact total과 마지막 UI page를 확정한다. `tasks.get`은 focus/선택 detail에만 사용한다.
+- Tasks Browse는 사용자가 선택한 allowlist 안의 명시적 Task List에 `show_completed=false`, `show_hidden=false`, `show_deleted=false`, Provider `page_size<=100`을 사용한다. 빈 allowlist나 미결정 목록을 Provider 첫 목록으로 보정하지 않는다. Application은 Task metadata batch와 opaque continuation을 반환하고 React Client Session Cache가 이를 configured `SIDEBAR_PAGE_SIZE` page로 slice한다. `tasks.get`은 focus/선택 detail에만 사용한다.
 - Tasks `status_scope=incomplete|completed`를 지원하고 기본은 `incomplete`다. completed materialization은 `show_completed=true`, `show_hidden=true`, `show_deleted=false`, `page_size<=100`으로 terminal까지 읽은 뒤 mixed Provider 결과에서 `task_status=completed`만 `resource_id` 기준 dedupe한다. raw Google `completed` timestamp는 존재할 때 `completed_at` metadata로 보존한다.
 - Calendar Month Browse는 `monthAnchor`에서 계산한 configured timezone의 explicit `[gridStart, gridEnd)`와 `singleEvents=true`를 사용하며 Provider `page_size<=100`을 terminal까지 순회한다. `time_min/time_max`가 생략된 일반 Upcoming Browse는 configured timezone 기준 현재 시각부터 90일 후까지의 bounded default window를 사용한다.
 - `ResourceCountResponseV1.source`는 Sidebar/API projection의 source-family vocabulary(`gmail|tasks|calendar`)이며, `SignedToolRegistryEntryV1.resource_type`과 다른 개념이다. Connector resource identity가 필요한 내부 Route/Retrieval/Persistence에서는 canonical Registry `resource_type`을 exact-copy하며, Count projection에서 `resource_type`이라는 이름으로 source family를 재사용하지 않는다.
@@ -970,7 +971,7 @@ Connector MCP child가 소비하는 것은 Registry 자체가 아니라 `MCPTool
 
 ### 4.1 Canonical outbound Port capability manifest
 
-아래는 현재 Interface가 요구하는 **logical Port capabilities**다. Repository path/file/symbol placement는 `16 Repository Architecture`가 소유한다.
+아래는 현재 Interface가 요구하는 **logical Port capabilities**다. Repository ownership·naming·placement 문법은 `16 Repository Architecture`가 소유한다.
 
 | Boundary | Required Port capability |
 | --- | --- |
@@ -1078,7 +1079,7 @@ class RunExecutionRefV1:
     langgraph_thread_id: str
     graph_profile: GraphProfileIdV1
     graph_version: str
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
     resume_target: RegisteredResumeTargetRefV2 | None
 
 class ConfirmationResumeControlV1:
@@ -1119,7 +1120,7 @@ class WorkflowExecutionBindingV1:
     langgraph_thread_id: str
     graph_profile: GraphProfileIdV1
     graph_version: str
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
     checkpoint_id: str | None
     checkpoint_generation: int
     resume_target: RegisteredResumeTargetRefV2 | None
@@ -1200,8 +1201,7 @@ Port 이름만 선언하고 callable shape를 Adapter 구현에 맡기지 않는
 | `WorkflowHandoffRepository` | `stage_pending(stage: WorkflowHandoffStageV1) -> WorkflowHandoffV1`; `get(handoff_id) -> WorkflowHandoffV1 | None`; `get_by_trigger_command_id(trigger_command_id) -> WorkflowHandoffV1 | None`; `get_dispatch_head(run_id) -> WorkflowHandoffV1 | None`; `list_redriveable(limit) -> list[WorkflowHandoffV1]`; `list_blocked_binding(limit) -> list[WorkflowHandoffV1]`; `claim_execution_admission(handoff_id, expected_version, admission: WorkflowExecutionAdmissionV1) -> WorkflowHandoffV1`; `release_execution_admission(handoff_id, expected_version, admission_id, reason_code: WorkflowExecutionReleaseReasonV1) -> WorkflowHandoffV1`; `mark_consumed_and_clear_payload(handoff_id, expected_version, admission_id, applied_checkpoint_id, applied_checkpoint_generation) -> WorkflowExecutionSettlementV1`; `complete_recovery_admission(handoff_id, expected_version, admission_id, admission_checkpoint_id, admission_checkpoint_generation) -> WorkflowExecutionSettlementV1`; `mark_superseded(handoff_id, expected_version, reason_code) -> WorkflowHandoffV1`; `supersede_unconsumed_for_run(run_id, reason_code) -> list[WorkflowHandoffV1]`. `claim_execution_admission` atomically checks persisted handoff version + owning Run authority version; NORMAL PENDING head becomes DISPATCHED, CONSUMED recovery stays CONSUMED. `release_execution_admission` also atomically checks the persisted admission `expected_run_version`: `AUTHORITY_EPOCH_CHANGED` is legal only when that epoch is actually stale; WEP non-ACCEPTED reasons are legal for their matching submit result. Equal epoch applies ordinary non-ACCEPTED release; stale epoch retires NORMAL directly to SUPERSEDED **with payload body cleared and `superseded_at_ms` set** (or clears only a recovery admission while keeping CONSUMED), never resurrecting a stale lower-sequence head. Both settlement methods apply the same Run-version fence and return `AUTHORITY_STALE_RETIRED` after performing that durable stale retirement. `supersede_unconsumed_for_run` retires only rows without an active execution admission |
 | `OperationalCommandReplayPort` | `reserve_or_replay(context: OperationalCommandContextV1) -> OperationalReplayDecisionV2`; `mark_uncertain(context, recovery_ref) -> None`; `store_result(context, result_ref, bounded_result) -> None`; the reservation creates/persists one opaque server-owned `operation_ref` before side effect and returns the same ref on same-command recovery; non-Domain command crash/replay only, Domain lifecycle receipt 0 |
 | `SettingsPort` | `get_settings() -> SettingsViewV1`; `update_settings(settings_patch: SettingsPatchV1, operation_ref: str) -> SettingsViewV1`; `reconcile_settings(operation_ref: str, settings_patch: SettingsPatchV1) -> OperationalReconcileResultV1`. Settings file update와 non-secret operation marker는 adapter가 같은 atomic replace에 기록한다 |
-| `RuntimeModePort` | `get_requested_mode() -> Literal["AUTO","LOCAL_GPU","API_LLM"]`; `set_requested_mode(requested_mode, operation_ref) -> Literal["AUTO","LOCAL_GPU","API_LLM"]`; `reconcile_update(operation_ref, requested_mode) -> OperationalReconcileResultV1`. current Service process-local requested-mode의 단일 mutable authority이며 Settings/Run/StructuredInferenceRouter 내부 field가 아니다 |
-| `LocalRuntimeProvisioningPort` | `provision(operation_ref, model_manifest: ModelManifestV2, product_decision: LocalModelProductDecisionV2) -> LocalRuntimeProvisioningStatusV1`; `get_status() -> LocalRuntimeProvisioningStatusV1`; `reconcile_provision(operation_ref, model_manifest: ModelManifestV2, product_decision: LocalModelProductDecisionV2) -> OperationalReconcileResultV1`. Download/install/process invocation/model-pull/digest verification은 concrete Adapter 내부에만 존재한다. |
+| `RuntimeModePort` | `get_requested_mode() -> Literal["LOCAL_GPU","API_LLM"]`; `set_requested_mode(requested_mode, operation_ref) -> Literal["LOCAL_GPU","API_LLM"]`; `reconcile_update(operation_ref, requested_mode) -> OperationalReconcileResultV1`. current Service process-local requested-mode의 단일 mutable authority이며 Settings/Run/StructuredInferenceRouter 내부 field가 아니다 |
 | `BackupPort` | `create_backup(operation_ref) -> BackupMetadataV1`; `reconcile_backup(operation_ref) -> OperationalReconcileResultV1`; `restore_backup(backup_ref, operation_ref) -> RestoreResultV1`; `reconcile_restore(backup_ref, operation_ref) -> OperationalReconcileResultV1`; `list_backups() -> list[BackupMetadataV1]` |
 | `DiagnosticsPort` | `create_bundle(scope, run_id?, operation_ref) -> DiagnosticBundleMetadataV1`; `reconcile_bundle(operation_ref) -> OperationalReconcileResultV1` |
 | `ShutdownPort` | `request_shutdown(operation_ref) -> ShutdownAcceptedV1`; `reconcile_shutdown(operation_ref) -> OperationalReconcileResultV1`. Adapter는 process exit trigger 전에 operation_ref bounded acceptance marker를 durable하게 기록해 restart 후 previous shutdown completion을 판정한다 |
@@ -1217,13 +1217,13 @@ For `StartRun`, `CheckpointPort.create_workflow_binding(...)` is used through th
 
 승인 대기 중 Task 자연어 수정의 실제 Provider dispatch는 `CheckpointPort.update_paused_run_budget(run_id, update)`로 기존 root checkpoint의 `RunBudgetV2`만 원자적으로 갱신한다. `update`는 Application의 순수 budget 검증/소비 callback이며 I/O를 수행하지 않는다. Adapter는 현재 Run이 `WAITING_APPROVAL`이고 실행 admission이 없음을 확인한 뒤 callback에 budget JSON projection만 전달한다. checkpoint 위치·generation·pending interrupt·다른 State는 유지하고, 소비 commit 후 Provider를 호출한다. 실패/repair 호출도 각각 소비하며 별도 카운터나 상한을 만들지 않는다. Application은 checkpoint blob을 열지 않는다. 이후 기존 ModifyAction CAS와 REVIEW_ENTRY handoff가 같은 budget에서 계속한다.
 
-Port method는 concrete Adapter class/path를 소유하지 않는다. 입력 size/range, secret redaction, timeout/retry/idempotency는 각 07/09/10 owner contract와 16 Adapter mapping을 함께 따른다.
+Port method는 concrete Adapter class/path를 소유하지 않는다. 입력 size/range, secret redaction, timeout/retry/idempotency는 각 07/09/10 owner contract와 16 Adapter boundary 문법을 함께 따른다.
 
 ## 5. Agent 내부 인터페이스
 
 Main Graph와 Agent Subgraph는 Versioned Typed State로 연결한다. Main State는 공식 결과만 누적하고 Subgraph 내부 Query candidate·LLM candidate·RAG score는 Local State/Run Cache에 둔다.
 
-`WorkflowStartRequest.default_github_repository` / `RunInputV1.default_github_repository`는 additive nullable `GitHubRepositoryDefaultV1`이다. 이전 checkpoint는 null이며 현재 Settings를 재조회해 채우지 않는다. Application `finalize_intent`만 같은 값을 `RequestIntentV2.repository_default` JSON object로 투영할 수 있다. `identify_goal` Prompt에는 Settings 기본값을 전달하지 않는다. 해당 Prompt는 명시적 사용자 표현만 추출하며, 결정적 Application owner가 별도 기본값을 해소한다. constraints의 USER_REQUEST provenance로 재작성하지 않는다. Prompt source/version/hash 및 input allowlist는 함께 갱신한다. Local API의 Run context projection은 이 내부 credential-bound default를 노출하지 않는다.
+`WorkflowStartRequest.default_github_repository` / `RunInputV1.default_github_repository`와 `RequestIntentV2.repository_default`는 기존 Run/checkpoint를 읽기 위한 nullable legacy compatibility field다. 새 Run의 Resource 접근 또는 WRITE target을 이 값으로 결정하지 않으며 현재 Settings를 재조회해 채우거나 USER_REQUEST provenance로 재작성하지 않는다. Local API의 current Run context projection은 active Settings allowlist와 explicit/selected target만 사용한다.
 
 ```
 RunInputV1
@@ -1306,42 +1306,30 @@ calendar_delete_event
 
 `calendar_update_event`는 승인된 참석자 추가·수정을 지원한다. `calendar_delete_event`는 승인 필수 DELETE Effect다. 반복 Event 전체 일괄 수정은 등록하지 않는다.
 
-### 9-A. Local Runtime provisioning wire contract
+### 9-A. Local Runtime inspection contract
 
 ```python
 InferenceTierV1 = Literal["WORKER", "REASONING"]
 
-class LocalProvisioningComponentV1:
-    component_kind: Literal["OLLAMA_RUNTIME", "ACTIVE_MODEL"]
-    status: Literal["PENDING", "DOWNLOADING", "INSTALLING", "VERIFYING", "READY", "FAILED"]
-    progress_percent: int | None
-    downloaded_bytes: int | None
-    total_bytes: int | None
+class LocalModelOptionV1:
+    model_id: Literal["qwen3.5:9b", "qwen3.5:4b"]
+    installed: bool
+    available: bool
+
+class LocalRuntimeInspectionV1:
+    schema_version: Literal[1]
+    inspection_status: Literal["READY", "NO_SUPPORTED_MODEL", "INSPECTION_FAILED"]
+    ollama_ready: bool
+    local_models: list[LocalModelOptionV1]
+    selected_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None
+    actual_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None
     error_code: str | None
-
-class LocalRuntimeProvisioningStatusV1:
-    schema_version: Literal[1]
-    overall_status: Literal["NOT_REQUIRED", "NOT_STARTED", "IN_PROGRESS", "READY", "REPAIR_REQUIRED", "FAILED"]
-    runtime_origin: Literal["NONE", "PREEXISTING", "PRODUCT_PROVISIONED"]
-    active_profile_id: str | None
-    components: list[LocalProvisioningComponentV1]
-    retryable: bool
-
-class ProvisionLocalRuntimeRequestV1:
-    schema_version: Literal[1]
-    command_id: str
-
-class ProvisionLocalRuntimeResponseV1:
-    schema_version: Literal[1]
-    operation_ref: str
-    status: LocalRuntimeProvisioningStatusV1
 ```
 
-- Browser는 URL, installer path, version, model ID, digest 또는 shell argument를 보내지 않는다.
-- Application은 `OperationalCommandReplayPort`로 command/hash/result를 판정하고 verified `ModelManifestV2 + LocalModelProductDecisionV2`의 hash/profile binding을 검증한 뒤 `LocalRuntimeProvisioningPort`만 호출한다.
-- same command replay는 같은 `operation_ref`와 현재 status를 반환하며, unresolved reservation은 Adapter reconciliation 후에만 재개한다.
-- `RuntimeDetailResponseV2.local_runtime_provisioning`이 current operation/profile/component progress를 bounded projection한다. V1 response에 필드를 소급 추가하지 않는다.
-- `API_ONLY`에서는 `NOT_REQUIRED`이며 provisioning Command는 deterministic unsupported result를 반환하고 side effect 0이다.
+- Browser는 URL, installer path, arbitrary model ID/digest 또는 shell argument를 보내지 않는다.
+- inspection은 read-only이며 install, pull, download, process control side effect가 0이다.
+- 하나의 지원 모델만 available이면 그 모델을 선택한다. 둘 다 available이고 유효한 persisted 선택이 없을 때만 사용자 선택이 필요하다.
+- 진행 중 Run의 immutable model binding은 inspection/recheck로 변경하지 않는다.
 
 ## 10. 내부 결정 인터페이스
 
@@ -1647,7 +1635,7 @@ class ConnectorWriteResultV1:
 
 class StructuredInferenceRequestV2:
     schema_version: Literal[2]
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
     inference_tier: InferenceTierV1
     prompt_ref: PromptRefV1
     input_projection: JSONValue
@@ -1674,7 +1662,7 @@ AccessContextHandle = str  # opaque, process-local handle; raw OAuth token이 �
 
 ### Execution · Verification · UNKNOWN_RESULT Application boundary
 
-External I/O orchestration과 Domain persistence를 같은 operation/file에 합치지 않는다. 16 Repository Architecture가 exact path/symbol을 소유하며 이 문서는 callable contract를 소유한다.
+External I/O orchestration과 Domain persistence를 같은 operation/file에 합치지 않는다. 16 Repository Architecture가 ownership·placement 문법을 소유하며 이 문서는 callable contract를 소유한다.
 
 ```python
 class DispatchConnectorWriteCommandV1:
@@ -1768,7 +1756,7 @@ fallback_reason?
 - `API_ONLY`: API Provider만 활성화한다.
 - `LOCAL_CAPABLE`: API Provider와 Ollama Adapter를 포함한다.
 - 명시적 `LOCAL_GPU` 실패 시 자동 API 전환을 금지한다.
-- `AUTO`는 기술적 실패에서 API fallback 최대 1회다.
+- Local과 Gemini, 9B와 4B 사이의 inference-failure fallback은 없다.
 - 반환 Trace Metadata에는 `prompt_bundle_version`, `prompt_id`, `prompt_version`, `content_hash`, `agent_role`, `subgraph_name`, `node_name`, `node_state`, `purpose`, `input_schema_version`, `output_schema_version`을 포함하되 Prompt 원문은 포함하지 않는다.
 
 ## 19. 08 제공 계약
@@ -1919,7 +1907,7 @@ StartRunRequestV1
 - entry_mode: AGENT_SEARCH | RESOURCE_SELECTED
 - request_text: 1..65536 UTF-8
 - selected_resource_handles: list[str], max 20
-- requested_mode: AUTO | LOCAL_GPU | API_LLM
+- requested_mode: LOCAL_GPU | API_LLM
 
 # server-owned; request에서 수신하지 않음
 run_id
@@ -2148,19 +2136,19 @@ class PanelPreferencesV1:
     right_panel_default_tab: Literal["CONVERSATIONS", "RESOURCES"]
 
 class SettingsPatchV1:
-    # 2026-09-06 additive selection contract (same Settings authority):
+    # account-bound resource allowlists:
     selected_calendar_ids: tuple[str, ...] | None
     selected_tasklist_ids: tuple[str, ...] | None
     selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None
     google_resource_account_id: str | None  # server-derived, never browser authority
     preferred_local_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None
     schema_version: Literal[1]
-    timezone: str | None = None
-    default_tasklist_id: str | None = None
-    default_calendar_id: str | None = None
-    default_github_repository: GitHubRepositoryDefaultV1 | None = None
+    timezone: str | None = None  # legacy wire compatibility; only Asia/Seoul accepted
+    default_tasklist_id: str | None = None  # legacy read/write compatibility; no new target authority
+    default_calendar_id: str | None = None  # legacy read/write compatibility; no new target authority
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None  # legacy only
     github_repository_supplied: bool = False  # internal patch presence; true + null clears
-    preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"] | None = None
+    preferred_llm_mode: Literal["LOCAL_GPU", "API_LLM"] | None = None
     external_llm_consent: bool | None = None
     retention_days: int | None = None  # P0: 1..30, default 30
     theme: Literal["LIGHT", "DARK"] | None = None
@@ -2184,11 +2172,11 @@ class SettingsViewV1:
     selected_github_repositories: tuple[GitHubRepositoryDefaultV1, ...] | None
     google_resource_account_id: str | None
     schema_version: Literal[1]
-    timezone: str
-    default_tasklist_id: str | None
-    default_calendar_id: str | None
-    default_github_repository: GitHubRepositoryDefaultV1 | None = None
-    preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    timezone: str  # always Asia/Seoul
+    default_tasklist_id: str | None  # legacy projection
+    default_calendar_id: str | None  # legacy projection
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None  # legacy projection
+    preferred_llm_mode: Literal["LOCAL_GPU", "API_LLM"]
     preferred_local_model_id: Literal["qwen3.5:9b", "qwen3.5:4b"] | None
     external_llm_consent: bool
     retention_days: int  # P0 current value: 1..30
@@ -2212,20 +2200,20 @@ class UpdateSettingsRequestV1:
     command_id: str
     settings_patch: SettingsPatchV1
 
-# Wire settings_patch.default_github_repository is owner/repository | null;
-# omission preserves, null clears. account_id/repository_id are server-derived only.
+# Legacy wire settings_patch.default_github_repository is owner/repository | null;
+# omission preserves, null clears. It does not define current access or WRITE target.
 # UpdateSettingsCommand preserves wire presence separately from the typed storage patch.
 # GitHubRepositoryDefaultV1 = {repository: str, repository_id: int, account_id: str}
 
 class UpdateRuntimeModeRequestV1:
     schema_version: Literal[1]
     command_id: str
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
 
 class RuntimeModeStatusV1:
     schema_version: Literal[1]
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
-    actual_runtime: Literal["LOCAL_GPU", "API_LLM", "MIXED"] | None
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
+    actual_runtime: Literal["LOCAL_GPU", "API_LLM"] | None
     fallback_reason: str | None
 
 class CreateBackupRequestV1:
@@ -2290,7 +2278,7 @@ class StagedAttachmentDescriptorV1:
     expires_at_ms: int
 ```
 
-`SettingsPatchV1`은 **partial patch**다. 생략/null은 변경 없음이며 자료 선택의 빈 배열은 명시적 미선택이다. selected Calendar/Task List ID와 GitHub Repository binding 배열은 기존 Settings authority에 저장한다. wire GitHub 배열은 이름만 받고 server가 account/id를 검증한다. inventory endpoint의 `include_unselected=true`는 설정용 container 목록 조회에만 적용하며 개별 자료 조회나 WRITE 권한 우회가 아니다. 이전 단일 default는 자료 범위가 설정되면 하나만 선택한 경우에만 파생한다. `preferred_local_model_id`는 준비된 `qwen3.5:9b | qwen3.5:4b` 중 하나를 선택하는 persisted preference이며 배포 승인/digest 검증을 우회하지 않는다. 검사 API는 설치 부작용이 없다. `timezone`의 새 입력은 `Asia/Seoul`만 허용하며 valid working-day `HH:MM`, start<end, buffer>=0, retention 1..30과 기존 budget bounds를 유지한다. RuntimeModePort는 current mode authority로 유지하며 Settings preference는 별도 저장한다.
+`SettingsPatchV1`은 **partial patch**다. 생략/null은 변경 없음이며 자료 선택의 빈 배열은 명시적 미선택이다. selected Calendar/Task List ID와 GitHub Repository binding 배열은 기존 Settings authority에 저장한다. wire GitHub 배열은 이름만 받고 server가 account/id를 검증한다. inventory endpoint의 `include_unselected=true`는 설정용 container 목록 조회에만 적용하며 개별 자료 조회나 WRITE 권한 우회가 아니다. legacy 단일 default는 active 접근/target authority가 아니다. `preferred_local_model_id`는 available `qwen3.5:9b | qwen3.5:4b` 중 하나를 선택하는 persisted preference다. 검사 API는 설치 부작용이 없다. timezone은 `Asia/Seoul` 고정이며 valid working-day `HH:MM`, start<end, buffer>=0, retention 1..30과 기존 budget bounds를 유지한다. RuntimeModePort는 current mode authority로 유지하며 Settings preference는 별도 저장한다.
 
 규칙:
 
@@ -2440,7 +2428,7 @@ Main Graph Typed State
 - Local State는 invocation 범위 단편 상태이며 장기 Memory가 아니다.
 - Agent가 다른 Agent를 직접 호출하는 내부 Port는 제공하지 않는다.
 - Agent Subgraph는 `ConnectorWritePort`나 concrete MCP/Provider Write adapter를 직접 받지 않는다.
-- Retrieval Subgraph는 Connector Port를 직접 받지 않는다. 결정적 Retrieval Node는 Retrieval owner의 `execute_read` Application operation을 호출하고, 그 operation만 `ConnectorReadPort`를 사용한다. 정확한 repository path/file/symbol은 `16 Repository Architecture`가 소유한다. `ToolRoutePlanV2.input_plan.input_routes[].allowed_read_tool_ids` 밖의 Tool 호출은 Application operation에서 Provider 호출 전에 거절한다.
+- Retrieval Subgraph는 Connector Port를 직접 받지 않는다. 결정적 Retrieval Node는 Retrieval owner의 `execute_read` Application operation을 호출하고, 그 operation만 `ConnectorReadPort`를 사용한다. 구현 배치는 `16 Repository Architecture`의 owner-local grammar를 따른다. `ToolRoutePlanV2.input_plan.input_routes[].allowed_read_tool_ids` 밖의 Tool 호출은 Application operation에서 Provider 호출 전에 거절한다.
 - Planning Subgraph는 `OutputPlanV1`을 그대로 소비한다. `ActionOutputPlanV1`일 때만 `output_routes[].selected_tool_id`를 사용하며 다른 Tool을 제안할 수 없고, `AnswerOutputPlanV1`에는 Action Tool Route가 존재하지 않는다.
 - 앞 단계 State 수정이 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`, `RETRIEVE_MORE` 같은 disposition을 반환하고 Main Supervisor가 Back-edge를 선택한다.
 - Query candidate·Page Token·RAG score·LLM candidate는 Main State에 승격하지 않는다.
@@ -2607,22 +2595,23 @@ sha256
 - Draft CREATE/UPDATE·SEND의 Canonical Business Arguments에는 Attachment Descriptor를 포함하고, 실제 bytes의 size/SHA-256을 실행 직전 재검증한다.
 - Browser가 임의 Local Path를 MCP Argument로 지정할 수 없다.
 
-## 31. Planning Default Container Binding 계약
+## 31. Planning Container Binding 계약
 
 Planning LLM이 `tasklist_id`, `calendar_id` 같은 Runtime container ID를 숨은 값으로 추측하는 것을 금지한다.
 
 ```
 OutputToolRouteV1 + selected resource/context
-→ deterministic DefaultContainerResolver
-→ selected resource parent/container 우선
-→ 없으면 app settings의 default_tasklist_id/default_calendar_id
+→ deterministic container resolver
+→ selected resource parent 또는 allowlist 안의 explicit target
+→ unresolved이면 사용자 결정 요구
 → bound Tool Schema Projection(const/immutable field)
 → Planning Argument Writer
 → deterministic Plan/Argument Assembler
 ```
 
-- `tasks_create_task | tasks_update_task | tasks_delete_task`에 필요한 `tasklist_id`는 대상 Resource의 parent Task List가 있으면 이를 우선하고, 그렇지 않으면 설정된 `default_tasklist_id`를 결정적으로 바인딩한다.
-- `calendar_create_event | calendar_update_event | calendar_delete_event`의 `calendar_id`도 대상 Event의 parent Calendar가 있으면 이를 우선하고, 그렇지 않으면 설정된 `default_calendar_id`를 사용한다.
+- `tasks_create_task | tasks_update_task | tasks_delete_task`의 `tasklist_id`는 대상 Resource parent 또는 allowlist 안의 current-run explicit target으로 확정한다.
+- `calendar_create_event | calendar_update_event | calendar_delete_event`의 `calendar_id`도 대상 Event parent 또는 allowlist 안의 current-run explicit target으로 확정한다.
+- 복수 allowlist의 첫 항목과 legacy default field는 target resolver input이 아니다.
 - 바인딩된 container field는 LLM이 변경할 수 없는 `const/immutable` Tool Schema Projection으로 노출하거나 LLM writable field에서 제외한다.
 - 필수 container를 결정적으로 해석할 수 없으면 Argument Writer를 호출하지 않고 사용자 소유 container 선택/확인 요구로 전환한다.
 - 최종 Action Arguments는 deterministic Assembler가 bound field와 LLM semantic arguments를 병합한 뒤 Tool Schema로 다시 검증한다.
@@ -2630,21 +2619,21 @@ OutputToolRouteV1 + selected resource/context
 
 ### 31.1 GitHub repository binding
 
-Settings API의 `default_calendar_id` / `default_tasklist_id`는 생략하면 유지하고 명시적 null이면 해제한다. 내부 `SettingsPatchV1.clear_default_calendar` / `clear_default_tasklist`는 API의 명시적 null을 운반하는 표시이며 저장된 Settings field가 아니다. 이전 command의 hash/replay는 false인 새 표시를 제외해 유지한다.
+Settings API의 `default_calendar_id` / `default_tasklist_id`는 legacy file/wire compatibility field이며 새 access/target authority가 아니다. 현재 contract는 `selected_calendar_ids` / `selected_tasklist_ids` allowlist와 current-run explicit target을 사용한다.
 
 저장된 Repository의 immutable account/id binding은 결정적 Application 검증용이다. `planning.outline_answer`와 `planning.compose_answer`의 Prompt request_intent projection은 `repository_default`를 제외하고, 실제 조회한 Repository/Issue 표시는 Evidence를 사용한다. 이 표시용 projection은 durable Run의 원본 binding을 변경하지 않는다.
 
-`github_create_issue | github_update_issue | github_close_issue | github_reopen_issue`의 system/container argument `repository`도 새 resolver 없이 기존 deterministic `DefaultContainerResolver`가 바인딩한다.
+`github_create_issue | github_update_issue | github_close_issue | github_reopen_issue`의 repository는 selected Issue parent 또는 provenance-validated explicit target에서 결정적으로 바인딩한다.
 
-- 허용 source는 current-run selected GitHub Issue의 검증된 `parent_resource_id`, `06`의 provenance-validated explicit `owner/repository`, 그리고 사용자가 Settings에서 저장하고 Run 시작 시 동결한 GitHub 기본 Repository다. 기본값은 앞의 두 source가 모두 없을 때만 사용할 수 있으며 사용자 요청 source-span으로 위조하지 않는다.
+- 허용 source는 current-run selected GitHub Issue의 검증된 `parent_resource_id` 또는 `06`의 provenance-validated explicit `owner/repository`이며 둘 다 Run 시작 시 동결한 Settings allowlist 안에 있어야 한다. 복수 allowlist의 첫 항목이나 legacy default를 target으로 사용하지 않는다.
 - source가 하나이면 그것을 사용하고, 둘 다 있으며 같으면 하나로 정규화한다. 둘이 다르면 silent precedence/overwrite 없이 Argument Writer 전에 기존 Confirmation 또는 fail-closed 경로로 전환한다. source가 없을 때도 Argument Writer가 repository를 추측하지 않고 기존 사용자 Confirmation/selection lifecycle을 사용한다.
 - 확정된 `repository`는 bound Tool Schema Projection의 `const/immutable` field다. Argument Writer가 생략하면 deterministic Assembler가 binding을 주입하고, 같은 값을 내면 허용하며, 다른 값을 내면 reject한다. 조용히 overwrite하거나 LLM repair로 repository authority를 변경하지 않는다. Tool identity는 frozen `OutputToolRouteV1.selected_tool_id`를 그대로 사용한다.
 - `github_update_issue | github_close_issue | github_reopen_issue`의 existing target은 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`가 bound `repository`와 exact match해야 한다. mismatch는 Planning validation/Approval admission/Preflight에서 fail closed하고 모든 Connector I/O는 0이다. Provider GET은 이미 검증된 target의 freshness/preflight observation일 뿐 repository identity를 발견하거나 consistency를 성립시키는 authority가 아니다.
 - 이 binding은 기존 `Planning validation → Approval → Preflight → Claim → BeginExecutionAttempt persisted → ConnectorWritePort` 순서를 변경하지 않으며, 새 GitHub Planning service/Port/State/Artifact를 만들지 않는다.
 
-### 32.1 Default container selection validation
+### 31.2 Allowlist selection validation
 
-`default_tasklist_id` and `default_calendar_id` are saved only after Application validates the submitted ID against the current connected account's container discovery result (or an equivalent same-account ConnectorRead lookup) through the `resource` owner. Browser-provided title/source metadata is not authority. Account change/disconnect invalidates a default that no longer resolves; Planning then requires a fresh container selection rather than guessing.
+Calendar/Task List/Repository allowlist는 Application이 current connected account의 container inventory와 immutable identity로 검증한 뒤 저장한다. Browser-provided title/source metadata는 authority가 아니다. Account 변경·disconnect·access loss는 기존 선택을 무효화하며 Planning은 current-run target을 새로 확정해야 한다. Inventory 조회는 업무 데이터 access나 WRITE target을 만들지 않는다.
 
 ## 32. Frontend/API bootstrap compatibility contract
 
@@ -2699,7 +2688,7 @@ OAuth connection success 자체는 특정 Run continuation payload가 아니며 
 - `RuntimeModePort` is the sole process-local mutable authority for the current Service requested mode. `runtime_mode.update_runtime_mode` uses `OperationalCommandReplayPort` then `RuntimeModePort.set_requested_mode`; `runtime_status.get_runtime_status` reads `RuntimeModePort.get_requested_mode` and combines it with LLM runtime status to project `RuntimeModeStatusV1`. No Application module global, Settings field, or `StructuredInferenceRuntimeRouter` private mutable field is a second authority.
 - StartRun persists exact `requested_mode` on Run and projects it into `RunInputV1`, `WorkflowBindingV1`, `RunExecutionRefV1`; same-Run resume never substitutes `preferred_llm_mode` or process runtime mode.
 - `external_llm_consent` is the only prior-consent fact. `ExternalLlmTransferScopeV1` is a display projection, not authority.
-- Default Task List/Calendar choosers use `GET /api/v1/resources/task-lists` and `/calendars`; React never calls MCP directly and empty containers remain discoverable.
+- Task List/Calendar allowlist choosers use `GET /api/v1/resources/task-lists` and `/calendars`; React never calls MCP directly and empty containers remain discoverable. 이 inventory read는 선택된 업무 데이터 access authority가 아니다.
 - Safe Mode Restore uses `GET /api/v1/backups` to obtain opaque `backup_ref`; raw path/latest-backup guessing is forbidden.
 - Settings re-entry reads LLM credential status through `GET /api/v1/credentials/llm/{provider}`.
 - Google account UI uses `ConnectionMetadataV1.display_email`; `account_id` remains opaque.
@@ -2723,7 +2712,7 @@ class ExternalLlmTransferScopeV1:
 
 P0는 별도 Browser ACK를 consent로 요구하지 않는다. 01-B의 “external call 전에 표시”의 enforceable 의미는 **exact input projection에서 계산한 current `ExternalLlmTransferScopeV1`을 server-side Run projection/checkpoint metadata에 먼저 저장하고 `EXTERNAL_LLM_SCOPE_PUBLISHED` SSE를 append한 뒤에만 external provider adapter를 호출**하는 것이다. 실제 Browser paint/network timing은 security authority가 아니다.
 
-`StructuredInferenceRuntimeRouter`의 API branch는 매 호출마다 `(1) current external_llm_consent=true`, `(2) caller가 `run.project_external_llm_transfer_scope`로 exact input projection scope를 만들었음`, `(3) CheckpointPort에 같은 scope hash가 publish됨`을 확인한다. 셋 중 하나라도 없으면 external provider call 0이다. AUTO→API fallback도 동일하다. 이후 Retrieval/Route 변화로 source/data-class set이 달라지면 새 scope hash/revision을 publish한 뒤에만 다음 external call을 허용한다.
+`StructuredInferenceRuntimeRouter`의 API branch는 매 호출마다 `(1) current external_llm_consent=true`, `(2) caller가 `run.project_external_llm_transfer_scope`로 exact input projection scope를 만들었음`, `(3) CheckpointPort에 같은 scope hash가 publish됨`을 확인한다. 셋 중 하나라도 없으면 external provider call 0이다. 이후 Retrieval/Route 변화로 source/data-class set이 달라지면 새 scope hash/revision을 publish한 뒤에만 다음 external call을 허용한다. Local branch는 이 consent를 요구하지 않으며 양쪽 branch 사이 자동 fallback은 없다.
 
 ## 35. AbortClaimedExecution internal contract
 

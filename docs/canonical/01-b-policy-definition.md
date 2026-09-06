@@ -1,7 +1,7 @@
 # 01-B. 정책 정의서
 
 > **Authority:** 안전·금지·승인 정책. 시스템·Domain·Interface 구현 세부는 `00 Project Source Guide`의 전문 owner를 따른다.  
-> **수정일:** 2026-09-06 · **상태:** 제품 정책 정리본 — 구현·출시 검증 완료를 뜻하지 않음
+> **수정일:** 2026-09-07 · **상태:** 제품 정책 정리본 — 구현·출시 검증 완료를 뜻하지 않음
 
 ## 0. 사람이 먼저 볼 핵심 정책
 
@@ -210,7 +210,7 @@ Tentative는 경고로 처리하고, Declined 또는 Free Event는 Busy에서 �
 
 ### POL-CAL-004 작업 시간
 
-일정 자동 배치는 사용자가 설정한 timezone·업무 시간·주말·Buffer를 적용한다. 초기 기준은 평일 09:00~18:00, 주말 제외다. 명시된 사용자 시각을 편의상 다른 시각으로 몰래 바꾸지 않는다. 정확한 설정 field·기본값의 저장 방식은 기존 환경 계약을 따른다.
+일정 자동 배치는 제품 고정 timezone `Asia/Seoul`과 사용자가 설정한 업무 시간·주말·Buffer를 적용한다. 초기 기준은 평일 09:00~18:00, 주말 제외다. 명시된 사용자 시각을 편의상 다른 시각으로 몰래 바꾸지 않는다.
 
 ## 10. 중복·충돌 정책
 
@@ -289,27 +289,19 @@ API LLM 모드에서 Gmail Context를 외부 Provider로 전송하는 것은 사
 
 ### POL-LLM-001 CPU-only
 
-CPU-only 또는 GPU 기준 미달 PC는 API_LLM으로 고정한다. CPU Local LLM은 지원하지 않는다.
+Local AI readiness는 실제 Ollama와 지원 모델 검사 결과로 판단한다. Local이 준비되지 않았다고 Gemini로 자동 전환하지 않는다.
 
 ### POL-LLM-002 P0 GPU 사용 가능 환경
 
-P0에서 검증된 GPU 환경은 AUTO, LOCAL_GPU, API_LLM을 모두 제공한다. Local 모드는 후속 기능이 아니라 P0 제품 기능이다.
+Settings의 사용자 실행 방식은 `LOCAL_GPU`(Local AI)와 `API_LLM`(Gemini)뿐이다. 사용자용 AUTO는 없다.
 
-### POL-LLM-003 AUTO fallback
+### POL-LLM-003 Runtime 간 자동 fallback 금지
 
-AUTO는 다음 기술 오류에서 API로 최대 1회 fallback할 수 있다.
-
-- Local Runtime 연결 실패
-- 모델 없음 또는 로드 실패
-- GPU OOM
-- Timeout
-- 반복된 Structured Output 실패
-
-단순한 답변 품질 불만이나 낮은 자신감만으로 자동 fallback하지 않는다.
+Gemini 미준비를 Local로, Local 미준비·OOM·Timeout·Structured Output 실패를 Gemini로 자동 전환하지 않는다. 선택한 runtime을 사용할 수 없으면 해당 요청을 중단하고 설정·연결 안내를 제공한다.
 
 ### POL-LLM-004 명시 모드
 
-사용자가 LOCAL_GPU 또는 API_LLM을 명시 선택하면 동의 없이 다른 모드로 전환하지 않는다.
+사용자가 Local AI 또는 Gemini를 선택하면 동의 없이 다른 runtime으로 전환하지 않는다.
 
 ### POL-LLM-005 Ollama 고정
 
@@ -317,24 +309,22 @@ AUTO는 다음 기술 오류에서 API로 최대 1회 fallback할 수 있다.
 
 ### POL-LLM-006 모델 선택·Tier
 
-제품은 출시 검증을 통과한 승인 Local Model Profile만 사용한다. 업무 Agent와 일반 사용자 입력은 임의 model ID/digest를 선택할 수 없다. WORKER/REASONING은 책임 class이며 실제 모델은 검증된 profile에서 결정한다.
+지원 Local 모델은 `qwen3.5:9b`, `qwen3.5:4b`뿐이다. 업무 Agent와 임의 사용자 문자열은 model ID/digest를 정하지 않는다. WORKER/REASONING 책임 class가 서로 다른 모델을 자동 선택하지 않는다.
 
-확정한 기본 제품 방향은 두 class 모두 `qwen3.5:9b`다. `qwen3.5:4b`는 향후 선택 가능한 profile 후보일 뿐 이번 기본 설치·활성 모델이 아니다. 개발 환경에서 9B 추론에 성공했다고 signed release·hardware·설치 검증을 통과한 것으로 보지 않는다. 이번 문서 변경이 배포 profile을 자동 활성화하지 않는다.
+검사에서 지원 모델이 하나만 있으면 그 모델을 자동 사용한다. 이전 선택 모델이 사라져도 다른 지원 모델 하나가 있으면 별도 확인 없이 전환한다. 두 모델이 있고 유효한 기존 선택이 없을 때만 사용자 선택이 필요하다. inference 실패 때마다 모델을 교대하거나 진행 중 Run binding을 바꾸지 않는다.
 
 ### POL-LLM-007 배포 프로필
 
 - `API_ONLY`: Ollama·GPU·모델 파일 불필요. CPU-only와 GPU 없는 팀원의 기본 프로필.
-- `LOCAL_CAPABLE`: Ollama Adapter, automatic provisioning capability, Signed Local Model Profile과 Local 설정을 포함한다. 검증된 GPU에서만 Local 기능을 활성화한다.
+- `LOCAL_CAPABLE`: Ollama 상태·설치 모델 검사와 Local 설정을 포함한다. Local readiness가 확인된 경우에만 Local 기능을 활성화한다.
 - 두 프로필은 동일한 LangGraph, Tool Schema, Policy, Test Suite를 사용한다.
 
-### POL-LLM-008 Local Runtime provisioning 안전
+### POL-LLM-008 Local Runtime 비개입
 
-- provisioning은 `SYSTEM` 위험 등급의 결정적 Application/System operation이며 LLM Tool이 아니다.
-- 다운로드 URL, installer identity, Ollama version, model tag/digest, tier binding은 verified Release Manifest와 Model Manifest에서만 온다.
-- Browser·Prompt·Connector Source가 임의 URL, shell argument, model tag 또는 digest를 주입할 수 없다.
-- Signature/hash/digest가 맞지 않으면 설치·실행·모델 사용을 fail-closed하고 API 사용 가능 여부와 복구 Action만 표시한다.
-- 기존 호환 Ollama는 `PREEXISTING`, 제품이 준비한 항목은 `PRODUCT_PROVISIONED`로 구분한다. Uninstall은 기존 Ollama를 제거하지 않으며 제품 모델 삭제도 사용자의 명시적 선택이 필요하다.
-- Runtime 중 silent update는 금지한다. Ollama/Model 변경은 signed product upgrade 또는 명시적 repair provisioning으로만 수행한다.
+- 제품은 Ollama 설치, model pull, download/provisioning, 설치 Wizard를 제공하지 않는다.
+- Browser·Prompt·Connector Source가 임의 URL, shell argument, model tag 또는 digest를 실행 authority에 전달할 수 없다.
+- 제품은 사용자 동의 없이 모델을 설치·삭제하거나 shared Ollama를 update·종료·제거하지 않는다.
+- 모델이 없으면 안내만 제공하며 Core UI와 기존 이력 접근을 차단하지 않는다.
 
 ## 13. API LLM 개인정보 정책
 
@@ -367,7 +357,7 @@ Credential, Authorization Header, Token, API Key 패턴은 로그 기록 전에 
 
 ### POL-SEC-003 연결 해제
 
-Google/GitHub 연결 해제와 API Key 삭제는 해당 credential의 로컬 저장·세션 사용을 해제한다. 다른 Connector의 credential을 삭제하거나 정상 연결을 실패로 만들지 않는다. 계정 변경 뒤 이전 계정의 기본 Resource와 접근 권한을 무조건 재사용하지 않는다. Provider revoke 가능 여부와 로컬 폐기를 구분한다.
+Google/GitHub 연결 해제와 API Key 삭제는 해당 credential의 로컬 저장·세션 사용을 해제한다. 다른 Connector의 credential을 삭제하거나 정상 연결을 실패로 만들지 않는다. 계정 변경 뒤 이전 계정의 Resource allowlist와 접근 권한을 재사용하지 않는다. Provider revoke 가능 여부와 로컬 폐기를 구분한다.
 
 ## 15. Prompt Injection 정책
 
@@ -570,7 +560,7 @@ FastAPI Local Agent Service는 `127.0.0.1`의 동적 포트에만 바인딩한�
 
 #### POL-LOCAL-003 외부 Endpoint 제한
 
-외부 통신은 등록된 Google/GitHub Provider, 승인 API LLM, 각 인증 Endpoint와 검증된 제품 provisioning 목적지로 제한한다. 사용자·Source 본문의 URL이 임의 서버 Fetch나 shell 실행을 유발하면 안 된다. Frontend는 제품 API를 통해 업무 연결을 사용하고, 인증·접근 관리 링크는 명시적인 사용자 동작으로 연다.
+외부 통신은 등록된 Google/GitHub Provider, 승인 API LLM과 각 인증 Endpoint로 제한한다. 사용자·Source 본문의 URL이 임의 서버 Fetch나 shell 실행을 유발하면 안 된다. Frontend는 제품 API를 통해 업무 연결을 사용하고, 인증·접근 관리 링크는 명시적인 사용자 동작으로 연다.
 
 #### POL-LOCAL-004 Local Session 수립
 
@@ -783,7 +773,7 @@ Write는 현재 승인과 실행 admission에 결합된 유효한 single-use Cla
 
 ### External LLM prior-consent exact rule
 
-API_LLM과 AUTO의 외부 fallback은 같은 저장된 동의 guard를 따른다. 전송 scope는 실제 입력의 최소 Source/data-class를 기준으로 호출 전에 server projection에 게시한다. Scope가 달라지면 다음 외부 호출 전에 갱신한다. Browser paint ACK나 추가 버튼을 새로운 동의 authority로 만들지 않는다. Exact wire/publish 순서는 기존 보안·Interface 계약을 따른다.
+API_LLM은 저장된 외부 전송 동의 guard를 따른다. 전송 scope는 실제 입력의 최소 Source/data-class를 기준으로 호출 전에 server projection에 게시한다. Scope가 달라지면 다음 외부 호출 전에 갱신한다. Browser paint ACK나 추가 버튼을 새로운 동의 authority로 만들지 않는다. Local-only 사용에는 이 동의를 요구하지 않는다.
 
 ## 28. GitHub 계정·저장소·Issue 정책
 
@@ -791,13 +781,13 @@ API_LLM과 AUTO의 외부 fallback은 같은 저장된 동의 guard를 따른다
 
 계정 인증 성공과 App 설치·저장소 접근 허용은 별개다. 현재 사용자와 App이 모두 접근 가능한 범위만 사용한다. 초기 사용 전제가 충족되지 않은 요청은 공통 Connector 전제 정책으로 종료하며 GitHub 전용 인증 대기·설치 감시 workflow를 추가하지 않는다. 권한 부족·미설치·미연결은 Issue 없음과 구분한다. Client ID는 제품 개발·배포 구성이고, 일반 사용자에게 PAT·client secret 입력을 요구해 제품 인증을 우회하지 않는다.
 
-### POL-GH-002 기본 저장소의 효력
+### POL-GH-002 저장소 allowlist의 효력
 
-기본 저장소는 사용자가 명시적으로 정한 편의 설정이다. 접근 권한·Write 승인·현재 선택 Resource의 identity를 대신하지 않는다. 현재 요청의 명시 저장소와 selected Issue가 모순되면 임의 우선순위를 적용하지 않는다. 기본값은 명시 대상이 없을 때만 검증 후 사용한다.
+저장소 선택은 Provider permission과 함께 모든 Browse/Retrieval/READ/WRITE의 접근 상한이다. 현재 요청의 명시 저장소는 그 안에서만 범위를 좁힌다. selected Issue와 명시 저장소가 모순되면 임의 우선순위나 첫 항목을 적용하지 않는다. 복수 allowlist는 WRITE target을 제공하지 않으며 빈 선택은 전체 허용이 아니다.
 
 ### POL-GH-003 Run 대상 고정
 
-유효한 저장소 선택의 출처와 현재 Run 대상 binding을 구분하여 보존한다. 설정 변경은 이미 시작되거나 승인된 Run을 다른 저장소로 옮기지 않는다. 계정 변경·접근 철회·삭제·이름 변경 이후 기존 기본값을 무조건 신뢰하거나 다른 저장소로 silent fallback하지 않는다.
+유효한 저장소 선택의 출처와 현재 Run 대상 binding을 구분하여 보존한다. 설정 변경은 이미 시작되거나 승인된 Run을 다른 저장소로 옮기지 않는다. 계정 변경·접근 철회·삭제·이름 변경 이후 기존 저장 선택을 무조건 신뢰하거나 다른 저장소로 silent fallback하지 않는다.
 
 ### POL-GH-004 기존 Issue 무결성
 

@@ -9,7 +9,7 @@ src/.../<verb>_<object>.py
 → tests/unit/.../test_<verb>_<object>.py
 ```
 
-Frontend/release-source exceptions are exact and owned by `02 Directory Ownership` manifests:
+Frontend/release-source mirrors follow their owning directories:
 
 ```text
 frontend/src/app/<responsibility>.ts(x)
@@ -70,24 +70,8 @@ Applied SQL migrations remain immutable. Structural refactoring must not rename,
 - repository code/tests must satisfy current canonical ownership;
 - executable applied migration history remains intact and checksum-valid.
 
-### Required-operation manifest enforcement
+### Ownership enforcement
 
-Repository validation must consume a **canonical required-operation manifest** derived from the current semantic mapping authority, not from files discovered in the implementation tree.
+Repository validation은 실제 source tree, symbol, imports, runtime manifest/schema와 production callers를 사용한다. Application handler와 Agent operation의 owner/path/symbol/test mirror를 검사하되 Canonical에 current inventory를 복제해 parser input으로 사용하지 않는다.
 
-For Application use cases, the manifest key is:
-
-```
-semantic_owner + operation + canonical_path + canonical_symbol + canonical_test_path
-```
-
-For Agent semantic operations, the manifest key additionally preserves the current 06/15 responsibility identity mapping.
-
-Validation uses closed-set comparison:
-
-```
-required manifest operations
-= canonical production authorities found
-= canonical test owners expected
-```
-
-Missing required operations, unexpected extra live authorities, or multiple files satisfying one manifest capability are structural failures. A scaffold-only file does not satisfy the manifest unless the canonical symbol is live and the intended callers are closed.
+Missing owner test, filename과 다른 public operation, 예상 caller 미연결, old import/export, 같은 semantic capability의 복수 live implementation은 구조 실패다. Scaffold-only file이나 문서 row의 존재는 capability 완료 근거가 아니다.

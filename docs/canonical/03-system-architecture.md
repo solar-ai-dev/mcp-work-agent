@@ -8,7 +8,7 @@
 | --- | --- |
 | 문서명 | 03. mcp-work-agent 시스템 아키텍처 설계서 |
 | 상태 | Draft v3.14 |
-| 기준일 | 2026-09-03 |
+| 기준일 | 2026-09-07 |
 | 대상 릴리스 | P0 MVP |
 | 공식 환경 | Windows 11 x64 · 최신 Chrome·Microsoft Edge |
 | 제품 형태 | 단일 사용자용 로컬 Web UI + Python Agent 애플리케이션 |
@@ -166,8 +166,8 @@ FastAPI Route
 | ARC-006 | 외부 Connector 연동은 MCP `stdio` 공통 경계 | 제품 Core는 Connector ID·Resource Type·MCP Tool/Port 계약에만 의존하고 Provider API·SDK·Credential Adapter는 Connector MCP Server 내부에 격리한다. P0 Google Workspace는 이 일반 경계의 첫 구현이며 Local API는 Provider API의 대체 경로가 아니다. |
 | ARC-007 | Checkpoint와 Domain Store 분리 | Graph 재개 상태와 제품의 승인·실행 사실을 별도로 보존한다. |
 | ARC-008 | 모든 쓰기 후 Effect별 결정적 검증 | Tool 응답만 신뢰하지 않는다. CREATE·UPDATE는 GET 비교, DELETE는 대상 부재/삭제 상태, SEND는 Sent 결과 조회를 사용한다. |
-| ARC-009 | Local Runtime은 Ollama로 고정 | `LOCAL_CAPABLE` provisioning이 release-approved Ollama를 준비하지만 Ollama는 별도 Loopback process로 유지한다. |
-| ARC-010 | `API_ONLY`·`LOCAL_CAPABLE` 분리 | `API_ONLY`에는 provisioning을 넣지 않고, `LOCAL_CAPABLE`만 signed Runtime/Model Profile을 자동 준비한다. |
+| ARC-009 | Local Runtime은 Ollama로 고정 | 별도 Loopback process의 상태와 설치된 지원 모델만 검사하며 제품이 설치·pull·provisioning하지 않는다. |
+| ARC-010 | Core와 optional capability 분리 | Connector/LLM 미준비가 Core UI·Settings·기존 이력 접근을 막지 않는다. |
 
 ### 4.1 Application-owned Run execution boundary
 
@@ -301,9 +301,9 @@ flowchart TB
 | Chrome·Edge + React Frontend | 로컬 UI Client | 탭이 닫히거나 새로고침되어도 영구 Run 상태는 SQLite에 남는다. |
 | FastAPI Local Agent Service | 제품의 중심 Python 프로세스 | REST·SSE·Application·Agent가 중단되며 Checkpoint와 Domain 상태로 복구한다. |
 | Google Workspace MCP Server | Local Agent Service가 관리하는 단일 자식 프로세스 | Google 읽기·쓰기 Tool이 중단된다. 쓰기 중 장애는 결과 재조회 후 상태를 확정한다. |
-| Ollama | 선택적 로컬 외부 프로세스 | LOCAL_GPU가 실패하며 명시 모드 또는 AUTO fallback 정책으로 분기한다. |
+| Ollama | 선택적 로컬 외부 프로세스 | Local AI 요청만 중단하고 Gemini로 자동 전환하지 않는다. |
 | Google Workspace APIs | 외부 시스템 | 일시 오류·인증 만료·Quota 오류를 공통 오류로 변환한다. |
-| API LLM Provider | 선택적 외부 추론 시스템 | API_LLM 실패 또는 AUTO fallback 실패로 처리한다. |
+| API LLM Provider | 선택적 외부 추론 시스템 | Gemini 요청만 실패 처리하고 Local로 자동 전환하지 않는다. |
 
 ## 7. 프런트엔드와 로컬 에이전트 서비스 논리 구조
 
@@ -783,45 +783,23 @@ estimated_cost
 structured_output_attempts
 ```
 
-### 16.1-A Signed Local Model Profile과 inference tier
+### 16.1-A Local model selection과 inference tier
 
-Product LLM caller는 concrete model/provider를 선택하지 않고 `StructuredInferencePort`에 `inference_tier=WORKER|REASONING`을 전달한다. `StructuredInferenceRuntimeRouter`만 verified `LocalModelProductDecisionV2.active_profile`을 읽고 각 tier binding을 `ModelManifestV2` allowlist/digest와 대조한 뒤 exact Ollama model identity에 resolve한다. API branch는 Release Config가 허용하면 두 tier를 같은 API model에 매핑할 수 있지만 caller contract는 동일하다.
+Product LLM caller는 concrete model/provider를 선택하지 않고 `StructuredInferencePort`에 책임 metadata를 전달한다. Runtime Router는 새 Run의 선택 방식과 Local model binding을 확정한다. 지원 Local 모델은 `qwen3.5:9b`, `qwen3.5:4b`이며 한 Run에서 WORKER/REASONING 역할별 switching을 하지 않는다.
 
-초기 Local 후보 Profile:
-
-```text
-WORKER    → qwen3.5:9b
-REASONING → qwen3.5:9b
-```
-
-이 single-model mapping은 13 Evaluation을 통과해 signed Release artifact가 된 경우에만 활성화된다. `WORKER | REASONING`은 Prompt responsibility metadata이며 모델 전환 신호가 아니다. Agent code, Prompt text, Browser 설정, model-name 문자열 parsing은 model authority가 아니다. concrete model 교체는 semantic owner·Graph topology·Port를 바꾸지 않는 Release configuration change다.
-
-### 16.1-B Provisioning boundary
-
-`LOCAL_CAPABLE` 최초 설정의 Runtime preparation은 `runtime_status.provision_local_runtime → LocalRuntimeProvisioningPort → OllamaLocalRuntimeProvisioningAdapter` 단일 경계가 소유한다. Adapter는 signed source/digest를 검증하고 기존 compatible Runtime을 보존한다. Ollama는 계속 별도 Loopback process이며 Product Core·Agent·Domain에 내장되지 않는다. API route와 UI는 status/command만 사용하고 shell/download/install semantics를 소유하지 않는다.
+앱 시작과 Settings 재검사는 Ollama와 설치된 지원 모델을 Adapter를 통해 관측한다. 하나만 있으면 그 모델을 선택하고, 두 개가 있으면 유효한 persisted preference를 유지하거나 사용자 선택을 요구한다. 이 선택은 진행 중 Run의 immutable binding을 바꾸지 않는다. 제품은 install, model pull, download/provisioning을 수행하지 않는다.
 
 ### 16.2 모드 규칙
 
 | 환경·선택 | 동작 |
 | --- | --- |
-| CPU-only 또는 GPU 기준 미달 | `API_LLM` 고정 |
-| `API_ONLY` 배포 | `API_LLM`만 사용 |
-| `LOCAL_CAPABLE`  • `LOCAL_GPU` | Ollama만 사용하며 동의 없는 API 전환 금지 |
-| `LOCAL_CAPABLE`  • `API_LLM` | API Provider만 사용 |
-| `LOCAL_CAPABLE`  • `AUTO` | Ollama 우선, 허용된 기술 실패에서 API로 최대 1회 fallback |
+| Local AI 선택 | 선택한 지원 Ollama model만 사용; Gemini 자동 전환 금지 |
+| Gemini 선택 | API Provider만 사용; Local 자동 전환 금지 |
 | 사용 가능한 Runtime 없음 | Agent 실행 차단과 설정 Action 제공 |
 
 `POST /api/v1/runtime/mode`의 current-Service requested mode는 process-local `RuntimeModePort`가 단일 mutable authority다. 이것은 persisted Settings `preferred_llm_mode`와 분리되고, 이미 시작된 Run의 immutable `requested_mode`를 바꾸지 않는다. `RuntimeModePort` concrete binding은 16의 system adapter이며 `StructuredInferenceRuntimeRouter` 내부 mutable field나 Application module global을 두 번째 authority로 사용하지 않는다.
 
-AUTO fallback 허용 원인:
-
-- Local Runtime 연결 실패
-- 제품 모델 없음 또는 로드 실패
-- GPU OOM
-- Timeout
-- 반복된 Structured Output 실패
-
-답변 품질 불만이나 낮은 자신감만으로 자동 fallback하지 않는다.
+기술 오류, 모델 부재, OOM, Timeout, Structured Output 실패는 선택한 runtime의 실패다. 다른 runtime이나 다른 Local model을 묵시적으로 시도하지 않는다.
 
 ### 16.3 Structured Output
 
@@ -1005,7 +983,7 @@ Launcher가 Service lifecycle을 소유하고, 종료 시 새로운 작업 admis
 
 - API_ONLY의 모든 Core 포함
 - Ollama Adapter와 Runtime 진단 추가
-- 검증된 GPU에서 AUTO·LOCAL_GPU·API_LLM 제공
+- Local AI·Gemini 선택과 Local 지원 모델 검사 제공
 - Evaluation Runner·non-release candidate artifact는 사용자 배포에 포함하지 않음
 
 두 프로필은 동일한 Tool Schema, Policy, Agent Graph, Domain State Machine과 테스트 Suite를 사용한다.
@@ -1039,7 +1017,7 @@ Launcher가 Service lifecycle을 소유하고, 종료 시 새로운 작업 admis
 - `ShutdownPort`
 - `AttachmentStagingPort`
 
-Repository placement/symbol 이름은 16 Repository Architecture의 `ports/<boundary>/<capability>_port.py` grammar와 canonical capability Port mapping을 따른다. P0 Google Workspace는 Connector Adapter binding이며 Provider 이름을 붙인 별도 Core Port authority를 만들지 않는다.
+Repository placement/symbol 이름은 16 Repository Architecture의 `ports/<boundary>/<capability>_port.py` grammar를 따른다. Google Workspace와 GitHub는 Connector Adapter binding이며 Provider 이름을 붙인 별도 Core Port authority를 만들지 않는다.
 
 ### 24.2 테스트 계층
 
@@ -1095,7 +1073,7 @@ D. WRITE Approval→Claim→Execution→Verification vertical slice
 E. UNKNOWN_RESULT / Recovery / Reauth
 F. real Connector MCP integration
 G. SSE/checkpoint restart recovery
-H. Local LLM/AUTO runtime
+H. Local LLM/Gemini runtime
 I. Evaluation / Installer / Upgrade
 ```
 

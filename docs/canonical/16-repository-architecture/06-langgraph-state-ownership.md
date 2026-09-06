@@ -1,179 +1,79 @@
 # 06. LangGraph · State Ownership
 
-**Normative detail of the current Repository Architecture Source.**
+**목적:** Workflow 의미를 복제하지 않고 LangGraph 구현의 ownership, placement, dependency와 single-authority 규칙을 정의한다.
 
-Main Graph routing is deterministic. Six native semantic owners are `request_understanding`, `tool_routing`, `retrieval`, `work_analysis`, `planning`, `review`.
+**Authority:** Repository Architecture의 LangGraph·State 배치 문법
 
-Initial Connector prerequisite is owned by `application/use_cases/connection/check_connector_prerequisites.py`, invoked by the existing Tool Routing `nodes/validate_route_node.py`. Main and the intake subgraphs share optional `admitted_connector_ids` as Run-local control facts. The caller projects the Application result as an admission patch and local `prerequisite_message`. Main only projects `PREREQUISITE_UNMET` to the 06/07 terminal contract. No new graph node, Provider-specific Main branch, Prompt field, or Domain auth-wait state is introduced.
+**상태:** CANONICAL
 
-Request Understanding `nodes/detect_ambiguity_node.py` also invokes this same Application owner before user Confirmation, using exact Registry resource hints. It carries the same admission patch and local prerequisite message; its existing finalization boundary may emit `finalize_intent`. Both callers share one prerequisite authority; neither implements OAuth policy.
+**수정일:** 2026-09-07
 
-Repository placement is fixed:
+## 1. Semantic owner
 
-```
-application/agents/<role>/<verb>_<object>.py
+Main Graph routing은 결정적이며 전문 의미 owner는 `request_understanding`, `tool_routing`, `retrieval`, `work_analysis`, `planning`, `review`다. Runtime Node ID, State field, edge, interrupt, resume 의미는 `06 Agent·Workflow`, PromptRef는 `15 Agent·Prompt`가 소유한다. 이 문서는 그 목록이나 실행 순서를 재정의하지 않는다.
+
+초기 Connector prerequisite는 하나의 Application use case가 소유한다. Tool Routing과 Request Understanding의 기존 Node는 확정된 Connector/Registry 입력을 전달하고 typed admission 결과만 State에 projection한다. 각 Node가 OAuth 정책을 복제하거나 Provider별 Main branch, Prompt field, Domain auth-wait 상태를 만들지 않는다.
+
+## 2. Placement grammar
+
+```text
+application/agents/<semantic_owner>/<verb>_<object>.py
 adapters/langgraph/main/routing/route_after_<stage>.py
-adapters/langgraph/subgraphs/<role>/routing/route_after_<stage>.py
-adapters/langgraph/subgraphs/<role>/nodes/<verb>_<object>_node.py
+adapters/langgraph/subgraphs/<semantic_owner>/nodes/<verb>_<object>_node.py
+adapters/langgraph/subgraphs/<semantic_owner>/projections/<verb>_<object>_projection.py
+adapters/langgraph/subgraphs/<semantic_owner>/routing/route_after_<stage>.py
 ```
 
-Catch-all final-production `routing.py` is prohibited. Router symbols are `route_after_<stage>()`.
+Catch-all production `routing.py`, broad Agent service, generic node manager는 허용하지 않는다. Router symbol은 `route_after_<stage>()`, Node symbol은 의미 operation을 드러내는 이름을 사용한다.
 
-A LangGraph node is a thin adapter only:
+## 3. Thin Node boundary
 
-```
+LangGraph Node는 다음만 수행하는 Adapter다.
+
+```text
 typed input projection
-→ application semantic call
+→ owner-local Application semantic call
 → typed owner-field patch
-→ optional WorkflowSignal
+→ 필요한 경우 WorkflowSignal
 ```
 
-A node must not own business semantics, concrete persistence, Provider SDK access, or Domain transition authority.
+Node는 business/policy 의미, concrete persistence, Provider SDK/API, 외부 Write, Domain transition authority를 소유하지 않는다. 외부 I/O가 필요한 deterministic Node는 Application use case를 호출하고 Application은 Port를 사용한다.
 
-Repository semantic owner/package is `Tool Routing` / `tool_routing`; existing contract artifact `ToolRoutePlanV2` remains unchanged.
+Runtime Node와 Application operation은 서로 다른 namespace다. 하나의 deterministic Node가 여러 owner-local validation/assembly operation을 호출할 수 있고, supporting operation이 별도 파일에 있다는 이유만으로 새 Node·router·checkpoint·resume target이 되지 않는다. 반대로 실제로 독립된 semantic Agent execution은 broad Node 하나에 합치지 않는다.
 
-Versioned Runtime Node identifiers and PromptRef IDs remain owned by 06 Workflow / 15 Prompt·Failure and are not silently renamed by Repository Architecture. Repository operation labels are a separate naming namespace: e.g. runtime `analysis.extract_facts` maps to repository `work_analysis.extract_work_facts`, and runtime `request.*` maps to repository owner `request_understanding.*`. Supporting deterministic Application operations may also have repository files without becoming independent LangGraph Nodes. Current examples are `retrieval.resolve_availability`, plus `work_analysis.validate_work_analysis` inside runtime `analysis.finalize`, `planning.validate_plan` inside runtime `planning.assemble`, and `review.validate_review` inside runtime `review.aggregate_findings`.
+## 4. State ownership
 
-The current Workflow / Prompt·Failure contracts own the heavy-Agent atomic responsibility topology. Repository implementation therefore keeps these semantic calls in distinct operation files under their existing owner packages:
+- Main State에는 downstream이 소비할 versioned typed result와 workflow control fact만 둔다.
+- invocation-local candidate, LLM intermediate, RAG score, raw continuation은 owning Subgraph Local State 또는 지정 Run cache에 둔다.
+- Domain Store는 approval·execution·verification 사실, LangGraph checkpoint는 resume 위치, Activity/SSE는 projection이다.
+- Node는 자기 owner field만 patch하며 다른 Agent 결과나 Domain truth를 직접 수정하지 않는다.
+- 이전 Run의 Message/Evidence/Plan/Approval/Activity를 새 Run의 hidden semantic memory로 주입하지 않는다.
 
-```
-work_analysis/
-  extract_work_facts
-  resolve_entity_relations
-  resolve_temporal_dependencies
-  detect_duplicate_conflict_candidates
-  validate_relations                 # deterministic
-  assess_information_gaps
-  assess_operational_risks
-  assemble_work_analysis             # deterministic
-  validate_work_analysis             # deterministic
+## 5. Registry single authority
 
-planning/
-  outline_answer
-  compose_answer
-  draft_action_objective_per_output_route
-  compose_arguments_per_output_route
-  build_dependencies                 # deterministic
-  assemble_plan                      # deterministic
-  validate_plan                      # deterministic
+`NodeRegistry`는 compiled graph의 current Node identity와 semantic-owner/profile binding을 조회하는 단일 production authority다. `ResumeTargetRegistry`는 `06 Agent·Workflow`가 허용한 node boundary와 main control stage의 safe-resume reference를 발급·검증하는 단일 authority다.
 
-review/
-  inspect_goal_and_evidence
-  inspect_action_scope_and_route
-  inspect_constraints_and_policy_summary
-  aggregate_review_findings          # deterministic
-  validate_review                    # deterministic
-  recheck_affected_dimensions
-```
+- graph version/profile/owner/node/stage가 없거나 stale하면 fail-closed한다.
+- Subgraph-local lookup dict, profile별 중복 registry, checkpoint Adapter의 별도 target table, free-string resume target을 금지한다.
+- supporting deterministic operation은 Workflow owner가 topology를 versioning하지 않는 한 registry target으로 추가하지 않는다.
+- external Write dispatch 단계는 임의 resume target이 아니다. 실행 사실을 먼저 Domain에서 reconcile하고 Verification/Recovery 경계를 따른다.
 
-The deterministic planning dependency repository implementation capability/file uses `build_dependencies`; `planning.compose_dependencies` is not a Product Prompt/LLM authority. Runtime Node/Prompt IDs remain 06/15 authority, while this page controls repository placement and file responsibility.
+현재 registry set은 문서의 file/symbol/test 표가 아니라 compiled definitions와 production composition에서 생성한다. Architecture test는 실제 source/registry/caller를 비교하고 모든 Node를 열거한 별도 spec-to-code snapshot을 읽지 않는다.
 
-## Current Runtime Node → repository operation mapping
+## 6. Activity와 terminal control
 
-| Runtime identity/stage | Repository semantic operation |
-| --- | --- |
-| `request.identify_goal` | `request_understanding.identify_goal` |
-| `request.detect_ambiguity` | `request_understanding.detect_ambiguity` |
-| `request.finalize` | `request_understanding.finalize_intent` → `request_understanding.validate_intent` |
-| Tool Route precondition stage | `tool_routing.resolve_policy_preconditions` |
-| `retrieval.rag_retrieve` | `retrieval.rag_retrieve_rerank` |
-| `analysis.finalize` | `work_analysis.assemble_work_analysis` → `work_analysis.validate_work_analysis` |
-| Planning entry branch | `planning.choose_answer_or_action_from_route` |
-| `planning.derive_dependencies` | `planning.build_dependencies` |
-| Planning pre-argument binding | `planning.resolve_default_container` |
-| `planning.assemble` | `planning.assemble_plan` → `planning.validate_plan` |
-| `review.inspect_action_scope_route` | `review.inspect_action_scope_and_route` |
-| `review.inspect_constraints_policy` | `review.inspect_constraints_and_policy_summary` |
-| `review.aggregate_findings` | `review.aggregate_review_findings` → `review.validate_review` |
+Activity callback은 실제 LangGraph execution identity와 typed output을 Application의 Activity 기록 경계로 전달하는 관측 Adapter다. UI 문구, Domain transition, 두 번째 Event Store, 새 Graph node를 소유하지 않으며 기록 실패가 업무 명령을 재실행하거나 실패시키면 안 된다.
 
-Arrow-separated operation pairs execute inside the same deterministic runtime node/stage; they do not create hidden LangGraph nodes.
+Terminal control은 `RESPONSE_SYNTHESIS → TERMINAL_COMMIT → FINALIZE`의 기존 책임 분리를 유지한다. 응답 합성은 terminal intent를 만들고, commit은 owning lifecycle handler를 한 번 적용하며, finalize는 commit 이후 Trace/SSE만 방출한다. 이 control stage를 semantic Agent owner로 표시하지 않는다.
 
-## Node Registry · Resume Target Registry exact production authority
+## 7. Enforcement
 
-06 owns Runtime Node IDs and safe-resume semantics. Repository lookup/placement is singular:
+Architecture gate는 실제 source tree와 import graph를 기준으로 다음을 검사한다.
 
-```text
-adapters/langgraph/registry/node_registry.py
-→ NodeRegistry
+- Node/Projection/Router의 owner-local naming과 operation-per-file 책임
+- Node의 Application Port 경유와 concrete Adapter/Provider/SQLite 의존 0
+- Node/Resume registry production authority 하나와 stale/free-string target 0
+- production caller cut-over, legacy import/export, duplicate authority
+- Activity·terminal callback이 business execution authority를 갖지 않음
 
-adapters/langgraph/registry/resume_target_registry.py
-→ ResumeTargetRegistry
-```
-
-`NodeRegistry` is built at graph compile time from the exact 35 current Agent runtime-node rows below plus the 06-owned profile binding `SemanticAgentOwnerIdV1 × GraphProfileIdV1 → CompiledAgentSubgraphIdV1`. It provides `get_required(graph_version, graph_profile, semantic_owner_id, node_id)` / `contains(...)` and returns the expected compiled-subgraph namespace for that node.
-
-`ResumeTargetRegistry` is the **single safe-resume target authority** and issues/validates `RegisteredResumeTargetRefV2` in two closed forms:
-
-```text
-issue_agent_node(graph_profile, semantic_owner_id, node_id, graph_version)
-→ AgentNodeResumeTargetV2
-→ must match NodeRegistry + exact profile semantic→physical binding
-
-issue_main_stage(graph_profile, stage_id, graph_version)
-→ MainControlResumeTargetV2
-→ stage_id must be one of RETRIEVAL_ENTRY | PLANNING_ENTRY | REVIEW_ENTRY | PREFLIGHT | READ_EXECUTION | VERIFICATION | RECOVERY | CANCEL_RESOLUTION
-
-validate(ref)
-→ fail closed on unknown/stale profile/version/owner/subgraph/node/stage
-```
-
-All 35 current Agent runtime nodes are safe **node-boundary** registry targets because they do not perform external Write or Domain mutation directly. Main control stages are **not** NodeRegistry entries; only the 06-owned resumable main-stage closed set is accepted directly by `ResumeTargetRegistry`. `READ_EXECUTION` is a Legacy READ-only non-mutating compatibility target and requires `Run=EXECUTING + READ Action=EXECUTING + ExecutionAttempt row=0`; approval-gated Write는 사용할 수 없다. `ACTION_EXECUTION` is explicitly not resumable: after Write dispatch start, Run may still be `WAITING_APPROVAL`, so current ExecutionAttempt/delivery fact must force reconciliation/Verification/Recovery before any resume.
-
-Graph profile builders register node definitions and exact semantic-owner→compiled-subgraph bindings, then build one ResumeTargetRegistry bound to the compiled `graph_version`. Subgraph-local dicts, profile-specific duplicate registries, second Main-stage registries, checkpoint-adapter lookup tables, and free-string target validation are prohibited.
-
-Tests:
-
-```text
-tests/architecture/langgraph/registry/test_node_registry.py
-tests/architecture/langgraph/registry/test_resume_target_registry.py
-```
-
-## Exact 35 Runtime Node adapter manifest
-
-This table is the closed repository realization of the 35 current Agent Runtime Node IDs in 06. The **typed state fields/output semantics themselves remain 06 authority**; node adapters may patch only the owner-local typed state/result declared there and may not invent foreign Main State fields.
-
-| Runtime Node ID | Exact node adapter | Exact input projection | Called Application operation(s) | Exact router | Resume target | Test |
-| --- | --- | --- | --- | --- | --- | --- |
-| `request.identify_goal` | `adapters/langgraph/subgraphs/request_understanding/nodes/identify_goal_node.py` → `identify_goal_node()` | `adapters/langgraph/subgraphs/request_understanding/projections/identify_goal_projection.py` → `project_identify_goal_input()` | `request_understanding.identify_goal` | `adapters/langgraph/subgraphs/request_understanding/routing/route_after_identify_goal.py` → `route_after_identify_goal()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/request_understanding/test_identify_goal_node.py` |
-| `request.detect_ambiguity` | `adapters/langgraph/subgraphs/request_understanding/nodes/detect_ambiguity_node.py` → `detect_ambiguity_node()` | `adapters/langgraph/subgraphs/request_understanding/projections/detect_ambiguity_projection.py` → `project_detect_ambiguity_input()` | `request_understanding.detect_ambiguity` | `adapters/langgraph/subgraphs/request_understanding/routing/route_after_detect_ambiguity.py` → `route_after_detect_ambiguity()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/request_understanding/test_detect_ambiguity_node.py` |
-| `request.finalize` | `adapters/langgraph/subgraphs/request_understanding/nodes/finalize_intent_node.py` → `finalize_intent_node()` | `adapters/langgraph/subgraphs/request_understanding/projections/finalize_intent_projection.py` → `project_finalize_intent_input()` | `request_understanding.finalize_intent → request_understanding.validate_intent` | `adapters/langgraph/subgraphs/request_understanding/routing/route_after_finalize_intent.py` → `route_after_finalize_intent()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/request_understanding/test_finalize_intent_node.py` |
-| `route.determine_resources` | `adapters/langgraph/subgraphs/tool_routing/nodes/determine_io_resources_node.py` → `determine_io_resources_node()` | `adapters/langgraph/subgraphs/tool_routing/projections/determine_io_resources_projection.py` → `project_determine_io_resources_input()` | `tool_routing.determine_io_resources` | `adapters/langgraph/subgraphs/tool_routing/routing/route_after_determine_io_resources.py` → `route_after_determine_io_resources()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/tool_routing/test_determine_io_resources_node.py` |
-| `route.bind_candidates` | `adapters/langgraph/subgraphs/tool_routing/nodes/bind_registry_candidates_node.py` → `bind_registry_candidates_node()` | `adapters/langgraph/subgraphs/tool_routing/projections/bind_registry_candidates_projection.py` → `project_bind_registry_candidates_input()` | `tool_routing.bind_registry_candidates` | `adapters/langgraph/subgraphs/tool_routing/routing/route_after_bind_registry_candidates.py` → `route_after_bind_registry_candidates()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/tool_routing/test_bind_registry_candidates_node.py` |
-| `route.select_tool` | `adapters/langgraph/subgraphs/tool_routing/nodes/select_tool_if_needed_node.py` → `select_tool_if_needed_node()` | `adapters/langgraph/subgraphs/tool_routing/projections/select_tool_if_needed_projection.py` → `project_select_tool_if_needed_input()` | `tool_routing.select_tool_if_needed` | `adapters/langgraph/subgraphs/tool_routing/routing/route_after_select_tool_if_needed.py` → `route_after_select_tool_if_needed()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/tool_routing/test_select_tool_if_needed_node.py` |
-| `route.finalize` | `adapters/langgraph/subgraphs/tool_routing/nodes/finalize_route_node.py` → `finalize_route_node()` | `adapters/langgraph/subgraphs/tool_routing/projections/finalize_route_projection.py` → `project_finalize_route_input()` | `tool_routing.finalize_route` | `adapters/langgraph/subgraphs/tool_routing/routing/route_after_finalize_route.py` → `route_after_finalize_route()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/tool_routing/test_finalize_route_node.py` |
-| `route.validate` | `adapters/langgraph/subgraphs/tool_routing/nodes/validate_route_node.py` → `validate_route_node()` | `adapters/langgraph/subgraphs/tool_routing/projections/validate_route_projection.py` → `project_validate_route_input()` | `tool_routing.validate_route` | `adapters/langgraph/subgraphs/tool_routing/routing/route_after_validate_route.py` → `route_after_validate_route()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/tool_routing/test_validate_route_node.py` |
-| `retrieval.plan_query` | `adapters/langgraph/subgraphs/retrieval/nodes/plan_query_node.py` → `plan_query_node()` | `adapters/langgraph/subgraphs/retrieval/projections/plan_query_projection.py` → `project_plan_query_input()` | `retrieval.plan_query` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_plan_query.py` → `route_after_plan_query()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_plan_query_node.py` |
-| `retrieval.build_query` | `adapters/langgraph/subgraphs/retrieval/nodes/build_query_node.py` → `build_query_node()` | `adapters/langgraph/subgraphs/retrieval/projections/build_query_projection.py` → `project_build_query_input()` | `retrieval.build_query` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_build_query.py` → `route_after_build_query()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_build_query_node.py` |
-| `retrieval.execute_read` | `adapters/langgraph/subgraphs/retrieval/nodes/execute_read_node.py` → `execute_read_node()` | `adapters/langgraph/subgraphs/retrieval/projections/execute_read_projection.py` → `project_execute_read_input()` | `retrieval.execute_read` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_execute_read.py` → `route_after_execute_read()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_execute_read_node.py` |
-| `retrieval.normalize_segments` | `adapters/langgraph/subgraphs/retrieval/nodes/normalize_segments_node.py` → `normalize_segments_node()` | `adapters/langgraph/subgraphs/retrieval/projections/normalize_segments_projection.py` → `project_normalize_segments_input()` | `retrieval.normalize_segments` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_normalize_segments.py` → `route_after_normalize_segments()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_normalize_segments_node.py` |
-| `retrieval.rag_retrieve` | `adapters/langgraph/subgraphs/retrieval/nodes/rag_retrieve_rerank_node.py` → `rag_retrieve_rerank_node()` | `adapters/langgraph/subgraphs/retrieval/projections/rag_retrieve_rerank_projection.py` → `project_rag_retrieve_rerank_input()` | `retrieval.rag_retrieve_rerank` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_rag_retrieve_rerank.py` → `route_after_rag_retrieve_rerank()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_rag_retrieve_rerank_node.py` |
-| `retrieval.select_evidence` | `adapters/langgraph/subgraphs/retrieval/nodes/select_evidence_node.py` → `select_evidence_node()` | `adapters/langgraph/subgraphs/retrieval/projections/select_evidence_projection.py` → `project_select_evidence_input()` | `retrieval.select_evidence` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_select_evidence.py` → `route_after_select_evidence()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_select_evidence_node.py` |
-| `retrieval.assess_sufficiency` | `adapters/langgraph/subgraphs/retrieval/nodes/assess_sufficiency_node.py` → `assess_sufficiency_node()` | `adapters/langgraph/subgraphs/retrieval/projections/assess_sufficiency_projection.py` → `project_assess_sufficiency_input()` | `retrieval.assess_sufficiency` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_assess_sufficiency.py` → `route_after_assess_sufficiency()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_assess_sufficiency_node.py` |
-| `retrieval.finalize` | `adapters/langgraph/subgraphs/retrieval/nodes/finalize_retrieval_node.py` → `finalize_retrieval_node()` | `adapters/langgraph/subgraphs/retrieval/projections/finalize_retrieval_projection.py` → `project_finalize_retrieval_input()` | `retrieval.finalize_retrieval` | `adapters/langgraph/subgraphs/retrieval/routing/route_after_finalize_retrieval.py` → `route_after_finalize_retrieval()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/retrieval/test_finalize_retrieval_node.py` |
-| `analysis.extract_facts` | `adapters/langgraph/subgraphs/work_analysis/nodes/extract_work_facts_node.py` → `extract_work_facts_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/extract_work_facts_projection.py` → `project_extract_work_facts_input()` | `work_analysis.extract_work_facts` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_extract_work_facts.py` → `route_after_extract_work_facts()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_extract_work_facts_node.py` |
-| `analysis.resolve_entity_relations` | `adapters/langgraph/subgraphs/work_analysis/nodes/resolve_entity_relations_node.py` → `resolve_entity_relations_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/resolve_entity_relations_projection.py` → `project_resolve_entity_relations_input()` | `work_analysis.resolve_entity_relations` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_resolve_entity_relations.py` → `route_after_resolve_entity_relations()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_resolve_entity_relations_node.py` |
-| `analysis.resolve_temporal_dependencies` | `adapters/langgraph/subgraphs/work_analysis/nodes/resolve_temporal_dependencies_node.py` → `resolve_temporal_dependencies_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/resolve_temporal_dependencies_projection.py` → `project_resolve_temporal_dependencies_input()` | `work_analysis.resolve_temporal_dependencies` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_resolve_temporal_dependencies.py` → `route_after_resolve_temporal_dependencies()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_resolve_temporal_dependencies_node.py` |
-| `analysis.detect_duplicate_conflict_candidates` | `adapters/langgraph/subgraphs/work_analysis/nodes/detect_duplicate_conflict_candidates_node.py` → `detect_duplicate_conflict_candidates_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/detect_duplicate_conflict_candidates_projection.py` → `project_detect_duplicate_conflict_candidates_input()` | `work_analysis.detect_duplicate_conflict_candidates` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_detect_duplicate_conflict_candidates.py` → `route_after_detect_duplicate_conflict_candidates()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_detect_duplicate_conflict_candidates_node.py` |
-| `analysis.validate_relations` | `adapters/langgraph/subgraphs/work_analysis/nodes/validate_relations_node.py` → `validate_relations_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/validate_relations_projection.py` → `project_validate_relations_input()` | `work_analysis.validate_relations` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_validate_relations.py` → `route_after_validate_relations()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_validate_relations_node.py` |
-| `analysis.assess_information_gaps` | `adapters/langgraph/subgraphs/work_analysis/nodes/assess_information_gaps_node.py` → `assess_information_gaps_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/assess_information_gaps_projection.py` → `project_assess_information_gaps_input()` | `work_analysis.assess_information_gaps` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_assess_information_gaps.py` → `route_after_assess_information_gaps()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_assess_information_gaps_node.py` |
-| `analysis.assess_operational_risks` | `adapters/langgraph/subgraphs/work_analysis/nodes/assess_operational_risks_node.py` → `assess_operational_risks_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/assess_operational_risks_projection.py` → `project_assess_operational_risks_input()` | `work_analysis.assess_operational_risks` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_assess_operational_risks.py` → `route_after_assess_operational_risks()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_assess_operational_risks_node.py` |
-| `analysis.finalize` | `adapters/langgraph/subgraphs/work_analysis/nodes/assemble_work_analysis_node.py` → `assemble_work_analysis_node()` | `adapters/langgraph/subgraphs/work_analysis/projections/assemble_work_analysis_projection.py` → `project_assemble_work_analysis_input()` | `work_analysis.assemble_work_analysis → work_analysis.validate_work_analysis` | `adapters/langgraph/subgraphs/work_analysis/routing/route_after_assemble_work_analysis.py` → `route_after_assemble_work_analysis()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/work_analysis/test_assemble_work_analysis_node.py` |
-| `planning.outline_answer` | `adapters/langgraph/subgraphs/planning/nodes/outline_answer_node.py` → `outline_answer_node()` | `adapters/langgraph/subgraphs/planning/projections/outline_answer_projection.py` → `project_outline_answer_input()` | `planning.outline_answer` | `adapters/langgraph/subgraphs/planning/routing/route_after_outline_answer.py` → `route_after_outline_answer()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/planning/test_outline_answer_node.py` |
-| `planning.compose_answer` | `adapters/langgraph/subgraphs/planning/nodes/compose_answer_node.py` → `compose_answer_node()` | `adapters/langgraph/subgraphs/planning/projections/compose_answer_projection.py` → `project_compose_answer_input()` | `planning.compose_answer` | `adapters/langgraph/subgraphs/planning/routing/route_after_compose_answer.py` → `route_after_compose_answer()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/planning/test_compose_answer_node.py` |
-| `planning.draft_action_objective_per_output_route` | `adapters/langgraph/subgraphs/planning/nodes/draft_action_objective_per_output_route_node.py` → `draft_action_objective_per_output_route_node()` | `adapters/langgraph/subgraphs/planning/projections/draft_action_objective_per_output_route_projection.py` → `project_draft_action_objective_per_output_route_input()` | `planning.draft_action_objective_per_output_route` | `adapters/langgraph/subgraphs/planning/routing/route_after_draft_action_objective_per_output_route.py` → `route_after_draft_action_objective_per_output_route()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/planning/test_draft_action_objective_per_output_route_node.py` |
-| `planning.compose_arguments_per_output_route` | `adapters/langgraph/subgraphs/planning/nodes/compose_arguments_per_output_route_node.py` → `compose_arguments_per_output_route_node()` | `adapters/langgraph/subgraphs/planning/projections/compose_arguments_per_output_route_projection.py` → `project_compose_arguments_per_output_route_input()` | `planning.compose_arguments_per_output_route` | `adapters/langgraph/subgraphs/planning/routing/route_after_compose_arguments_per_output_route.py` → `route_after_compose_arguments_per_output_route()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/planning/test_compose_arguments_per_output_route_node.py` |
-| `planning.derive_dependencies` | `adapters/langgraph/subgraphs/planning/nodes/build_dependencies_node.py` → `build_dependencies_node()` | `adapters/langgraph/subgraphs/planning/projections/build_dependencies_projection.py` → `project_build_dependencies_input()` | `planning.build_dependencies` | `adapters/langgraph/subgraphs/planning/routing/route_after_build_dependencies.py` → `route_after_build_dependencies()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/planning/test_build_dependencies_node.py` |
-| `planning.assemble` | `adapters/langgraph/subgraphs/planning/nodes/assemble_plan_node.py` → `assemble_plan_node()` | `adapters/langgraph/subgraphs/planning/projections/assemble_plan_projection.py` → `project_assemble_plan_input()` | `planning.assemble_plan → planning.validate_plan` | `adapters/langgraph/subgraphs/planning/routing/route_after_assemble_plan.py` → `route_after_assemble_plan()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/planning/test_assemble_plan_node.py` |
-| `review.inspect_goal_and_evidence` | `adapters/langgraph/subgraphs/review/nodes/inspect_goal_and_evidence_node.py` → `inspect_goal_and_evidence_node()` | `adapters/langgraph/subgraphs/review/projections/inspect_goal_and_evidence_projection.py` → `project_inspect_goal_and_evidence_input()` | `review.inspect_goal_and_evidence` | `adapters/langgraph/subgraphs/review/routing/route_after_inspect_goal_and_evidence.py` → `route_after_inspect_goal_and_evidence()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/review/test_inspect_goal_and_evidence_node.py` |
-| `review.inspect_action_scope_route` | `adapters/langgraph/subgraphs/review/nodes/inspect_action_scope_and_route_node.py` → `inspect_action_scope_and_route_node()` | `adapters/langgraph/subgraphs/review/projections/inspect_action_scope_and_route_projection.py` → `project_inspect_action_scope_and_route_input()` | `review.inspect_action_scope_and_route` | `adapters/langgraph/subgraphs/review/routing/route_after_inspect_action_scope_and_route.py` → `route_after_inspect_action_scope_and_route()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/review/test_inspect_action_scope_and_route_node.py` |
-| `review.inspect_constraints_policy` | `adapters/langgraph/subgraphs/review/nodes/inspect_constraints_and_policy_summary_node.py` → `inspect_constraints_and_policy_summary_node()` | `adapters/langgraph/subgraphs/review/projections/inspect_constraints_and_policy_summary_projection.py` → `project_inspect_constraints_and_policy_summary_input()` | `review.inspect_constraints_and_policy_summary` | `adapters/langgraph/subgraphs/review/routing/route_after_inspect_constraints_and_policy_summary.py` → `route_after_inspect_constraints_and_policy_summary()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/review/test_inspect_constraints_and_policy_summary_node.py` |
-| `review.aggregate_findings` | `adapters/langgraph/subgraphs/review/nodes/aggregate_review_findings_node.py` → `aggregate_review_findings_node()` | `adapters/langgraph/subgraphs/review/projections/aggregate_review_findings_projection.py` → `project_aggregate_review_findings_input()` | `review.aggregate_review_findings → review.validate_review` | `adapters/langgraph/subgraphs/review/routing/route_after_aggregate_review_findings.py` → `route_after_aggregate_review_findings()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/review/test_aggregate_review_findings_node.py` |
-| `review.recheck` | `adapters/langgraph/subgraphs/review/nodes/recheck_affected_dimensions_node.py` → `recheck_affected_dimensions_node()` | `adapters/langgraph/subgraphs/review/projections/recheck_affected_dimensions_projection.py` → `project_recheck_affected_dimensions_input()` | `review.recheck_affected_dimensions` | `adapters/langgraph/subgraphs/review/routing/route_after_recheck_affected_dimensions.py` → `route_after_recheck_affected_dimensions()` | YES · node-boundary only | `tests/architecture/langgraph/subgraphs/review/test_recheck_affected_dimensions_node.py` |
-
-Supporting deterministic operations `tool_routing.resolve_policy_preconditions`, `retrieval.resolve_availability`, `planning.resolve_default_container`, `work_analysis.validate_work_analysis`, `planning.validate_plan`, `review.validate_review` remain operation-per-file Application capabilities but **do not create extra Runtime Node/Router/ResumeTarget entries** unless 06 explicitly versions the topology.
-
-## Main control-stage terminal boundary
-
-`adapters/langgraph/activity_callback.py → RunActivityCallback` observes existing LangGraph task lifecycle callbacks only. It passes checkpoint namespace identity and typed output to Application `trace_event.record_run_activity`; it owns no UI wording, Domain transition, DB write or new graph node. Invocation config carries this callback; observation failures must not replay or fail a business command. Tests: `tests/integration/workflow/test_run_activity.py`.
-
-`RESPONSE_SYNTHESIS → TERMINAL_COMMIT → FINALIZE` is the only current terminal-output control chain. `RESPONSE_SYNTHESIS` creates `TerminalAssistantMessageInputV1/TerminalCommitIntentV1`; `TERMINAL_COMMIT` invokes exactly one existing terminal lifecycle handler; `FINALIZE` emits post-commit Trace/SSE only. These control nodes do not become semantic Agent owners.
+Runtime Node나 safe-resume set이 변경되면 owning Workflow contract와 graph/checkpoint compatibility를 먼저 갱신한다. 이 문서에는 현재 파일·심볼·테스트 inventory를 복제하지 않는다.

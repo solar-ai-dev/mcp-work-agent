@@ -1,11 +1,11 @@
 # 08. 시퀀스 설계서
 
 > **Authority:** cross-layer participant interaction order와 crash/replay cut. State/Workflow/API/Infrastructure semantics는 해당 owner를 따른다.  
-> **상태:** Draft v3.29 · **기준일:** 2026-09-03 · **대상:** P0 MVP
+> **상태:** Draft v3.29 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적과 범위
 
-이 문서는 주요 Use Case에서 React, FastAPI, Application, LangGraph Supervisor, 전문 Agent, Domain, Connector MCP Runtime, Provider API와 SQLite가 **어떤 순서로 상호작용하는지** 정의한다. P0 구체 시퀀스는 Google Workspace Connector를 사용한다.
+이 문서는 주요 Use Case에서 React, FastAPI, Application, LangGraph Supervisor, 전문 Agent, Domain, Connector MCP Runtime, Provider API와 SQLite가 **어떤 순서로 상호작용하는지** 정의한다. Google Workspace와 GitHub는 같은 connector-neutral 실행 경계를 사용하며, Provider별 차이는 해당 Connector 내부에 둔다.
 
 이 문서가 소유하는 내용:
 
@@ -223,24 +223,20 @@ Crash windows:
 - binding mismatch: release 시 Run authority epoch가 current일 때만 `BLOCKED_BINDING` durable commit → startup/live reconciler가 deterministic `system:handoff-binding-recovery:<handoff_id>` Recovery reconciliation → SUPERSEDED settlement. newer Reauth/Recovery/Cancel/terminal로 epoch가 이미 stale이면 old NORMAL handoff를 직접 SUPERSEDED하여 false CHECKPOINT_MISMATCH Recovery를 만들지 않는다.
 - CONSUMED 이후 crash: latest descendant checkpoint에 `active_handoff_id` lineage가 남고 current Domain/child-fact fence가 허용하면 `CONSUMED_CONTINUATION_RECOVERY`, not SAFE_CHECKPOINT_RESUME. `REAUTH_REQUIRED|RECOVERY_REQUIRED|terminal` 또는 non-cancel-compatible CANCEL_REQUESTED이면 old continuation 0.
 
-### 3.4 LOCAL_CAPABLE first-run provisioning sequence
+### 3.4 LOCAL_CAPABLE inspection sequence
 
 ```text
-React Onboarding
-→ POST /api/v1/runtime/local/provision(command_id)
-→ runtime_status.provision_local_runtime
-→ OperationalCommandReplayPort reserve/reconcile
-→ LocalRuntimeProvisioningPort
-→ existing Ollama compatibility probe
-→ verified Ollama Artifact download/signature/hash check if required
-→ controlled prerequisite install/readiness
-→ Signed Local Model Profile resolve
-→ active single model download/digest verify
-→ structured inference smoke tests
-→ Runtime Detail READY projection
+Application startup or Settings recheck
+→ Ollama loopback probe
+→ installed model inventory read
+→ supported model filter (qwen3.5:9b | qwen3.5:4b)
+→ one available: select it
+→ both available: preserve valid preference or request user selection
+→ no model / inspection failure: distinct unavailable projection
+→ Runtime Detail projection with selected and actual model
 ```
 
-외부 download/installer/model operation 중 Domain SQLite transaction을 유지하지 않는다. Stable `operation_ref`와 adapter-owned staging/reconciliation으로 crash를 복구하며 same command는 installer/model effect를 중복 적용하지 않는다. Browser가 URL/path/model tag를 공급하지 않는다. 실패하면 typed provisioning status를 저장·표시하고 API fallback 가능 여부를 투영한다.
+검사는 설치·pull·download side effect를 만들지 않는다. Browser가 endpoint/path/model tag를 공급하지 않으며 재검사가 진행 중 Run의 binding을 변경하지 않는다.
 
 ### 3.5 Product LLM inference sequence
 
@@ -449,7 +445,7 @@ sequenceDiagram
         SUP->>RET: User Request + Intent + ToolRoutePlanV2.input_plan.input_routes + budget
         alt exact RESOURCE_SELECTED detail이 current typed state에서 하나로 결정됨
             RET->>RET: deterministic DETAIL_FETCH materialization + validation
-        else exact TASK CREATE duplicate pre-read가 default Task List로 하나로 결정됨
+        else exact TASK CREATE duplicate pre-read가 allowlist 안의 explicit Task List 하나로 결정됨
             RET->>RET: deterministic TASK SEARCH materialization + validation
         else query semantic 판단 필요
             RET->>LLM: plan_query PromptRef
@@ -1427,22 +1423,13 @@ sequenceDiagram
     participant DB as Trace·Checkpoint
 
     SUP->>LR: Agent Structured Output 요청
-    alt API_LLM 명시
+    alt Gemini 선택
         LR->>P: API 호출
         P-->>LR: Structured Output
-    else LOCAL_GPU 명시
+    else Local AI 선택
         LR->>O: Local 호출
         O-->>LR: 결과 또는 오류
-        Note over LR: 자동 API 전환 금지
-    else AUTO
-        LR->>O: Local 호출
-        alt 기술 오류·fallback 가능
-            O-->>LR: 연결·OOM·Timeout·반복 Schema 실패
-            LR->>P: API fallback 최대 1회
-            P-->>LR: Structured Output
-        else 정상
-            O-->>LR: Structured Output
-        end
+        Note over LR: Gemini 또는 다른 Local model로 자동 전환 금지
     end
     LR->>DB: actual_runtime·model·fallback reason·usage
     LR-->>SUP: 검증된 Agent Result

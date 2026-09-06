@@ -1,5 +1,11 @@
 # 06. Agent · Workflow 설계서
 
+> **Authority:** Agent·Workflow runtime topology, State projection, Node/Edge/Interrupt와 registered continuation semantics. Domain lifecycle은 State Contract, Retrieval은 `05`, typed interface는 `07`을 따른다.
+>
+> **상태:** Draft v7.29 · **기준일:** 2026-09-07 · **DB Schema:** v1.9 · **대상:** P0 MVP
+
+## 현재 계약 보충
+
 ### Retrieval 인물 선택 후 같은 Run 검색
 
 05 소유 후보를 선택한 Confirmation은 기존 `retrieval.assess_sufficiency` origin과
@@ -24,9 +30,6 @@ Request Understanding의 `detect_ambiguity`에서도 같은 use case를 사용�
 - Repository 설치·접근 검증은 기존 `GetRepositoryAccess`/Connector READ owner를 유지한다. 접근 불가를 정상 no-result로 바꾸거나 다른 repository로 fallback하지 않는다.
 - OAuth callback은 Run-neutral이다. 초기 실패에서 interrupt/인증 대기 checkpoint/자동 resume를 만들지 않는다.
 
-> **Authority:** Agent·Workflow runtime topology, State projection, Node/Edge/Interrupt와 registered continuation semantics. Domain lifecycle은 State Contract, Retrieval은 `05`, typed interface는 `07`을 따른다.  
-> **상태:** Draft v7.29 · **기준일:** 2026-09-06 · **DB Schema:** v1.9 · **대상:** P0 MVP
-
 ## 0. 먼저 이해할 것
 
 - **Main Graph:** 전체 Run의 순서·분기·Interrupt·Back-edge를 결정하는 결정적 LangGraph Supervisor다.
@@ -37,7 +40,7 @@ Request Understanding의 `detect_ambiguity`에서도 같은 use case를 사용�
 - **Schema:** Node·Subgraph가 만들 수 있는 구조와 닫힌 값을 통제한다.
 - **Prompt:** 선택된 Node가 지금 해야 할 한 가지 판단·작성 작업만 지시한다.
 - **Edge:** Node Result와 공식 State를 기준으로 코드가 결정한다. LLM 자유 텍스트가 다음 Node를 선택하지 않는다.
-- **Tool Route:** IN에서 어떤 Connector·Resource·Read Tool을 사용할지, OUT으로 어떤 Connector·Resource·Effect·Tool을 사용할지 한 번 결정해 Main State에 저장한다. Downstream Agent는 재선택하지 않는다. P0 첫 Connector는 Google Workspace다.
+- **Tool Route:** IN에서 어떤 Connector·Resource·Read Tool을 사용할지, OUT으로 어떤 Connector·Resource·Effect·Tool을 사용할지 한 번 결정해 Main State에 저장한다. Downstream Agent는 재선택하지 않는다. Google Workspace와 GitHub는 같은 connector-neutral Route 경계를 사용한다.
 - **Write:** 어떤 Agent Subgraph도 직접 실행하지 않는다.
 
 ## 1. Main LangGraph
@@ -390,7 +393,7 @@ class RunInputV1:
     entry_mode: Literal["AGENT_SEARCH", "RESOURCE_SELECTED"]
     user_request: str
     selected_resource_refs: list[SelectedResourceRefV1]
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
 
 WorkflowPhaseV2 = Literal[
     "INITIALIZE", "REQUEST_UNDERSTANDING", "TOOL_ROUTING", "RETRIEVAL",
@@ -765,8 +768,9 @@ class RequestIntentV2:
 - `repository`처럼 owner가 없는 bare 값은 기존 deterministic default authority가 없는 한 `AmbiguityV1.requires_confirmation=true`로 처리한다. 기존 Request Understanding nested Confirmation과 동일 Run checkpoint resume를 사용하며 GitHub 전용 node, state, edge 또는 resume target을 추가하지 않는다.
 - current-run `SelectedResourceRefV1`이 GitHub Issue를 나타내면 `(connector_id="github", resource_type="github_issue", resource_id="owner/repository#issue_number", parent_resource_id="owner/repository")`를 보존하며, 검증된 `parent_resource_id`가 repository container authority가 될 수 있다. 동일 Run의 explicit provenance-validated repository도 존재하면 두 identity는 exact match해야 한다. 불일치에는 silent precedence를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로를 사용한다.
 - 이 provenance는 `ConstraintV1`의 선택적 source binding이며 새 Main State field나 장기 repository authority Artifact가 아니다. 권위는 기존 finalized `RequestIntentV2`, `SelectedResourceRefV1`/`ResourceRef`, frozen Route와 immutable Planning arguments 안에만 존재한다.
-- Settings 기본 Repository는 사용자 문장이 아닌 `SETTINGS_DEFAULT` provenance다. `StartRun`은 `GitHubRepositoryDefaultV1`을 Run의 immutable `default_github_repository_json`에 snapshot하며 `WorkflowStartRequest`와 기존 `RunInputV1.default_github_repository`로 전달한다. 이전 Run/checkpoint는 null로 해석하고 현재 Settings로 보충하지 않는다. 기존 `finalize_intent`가 finalized `RequestIntentV2.repository_default`에 같은 fact를 JSON projection한다. LLM은 이 필드를 생산하지 않는다. selected/explicit이 없을 때만 사용하며 bare explicit 값이나 identity conflict를 default로 보정하지 않는다.
-- `retrieval.execute_read`는 GitHub default 사용 전 `resource.get_repository_access`로 현재 계정/저장소 ID와 접근을 검증한다. 권한 실패는 no-result가 아니며 반복/대체 Repository fallback을 금지한다. 승인, mandatory Write 정보, Claim/Attempt 정책은 변경하지 않는다.
+- Settings GitHub Repository 목록은 Run 시작 시 account/immutable-ID-bound allowlist로 동결한다. 이는 사용자 문장의 target provenance가 아니며 LLM이 생산하지 않는다. explicit/selected repository는 이 목록 안에서만 범위를 좁힌다.
+- allowlist가 여러 개이거나 target이 미결정이면 첫 항목이나 legacy default로 WRITE target을 보정하지 않는다. 필요한 사용자 결정은 기존 Confirmation을 사용한다. 이전 Run/checkpoint는 시작 당시 binding을 유지하고 현재 Settings로 보충하지 않는다.
+- `retrieval.execute_read`는 사용 전 current Provider access와 frozen allowlist를 검증한다. 권한 실패는 no-result가 아니며 반복/대체 Repository fallback을 금지한다. 승인, mandatory Write 정보, Claim/Attempt 정책은 변경하지 않는다.
 
 ### 3.2 ToolRoutePlanV2
 
@@ -1626,31 +1630,13 @@ Tool 관련 실패 Owner:
 
 Planning에서 발견된 Tool 불일치는 `TOOL_ROUTE_EFFECT_MISMATCH` 또는 대응 Route failure로 정규화하고 Tool Route 재검토로 redirect한다.
 
-### 13.1 Runtime Node ID → semantic/repository operation closure
+### 13.1 Runtime Node와 Application operation의 구분
 
-Runtime Node ID와 repository operation ID는 다른 namespace이므로 문자열 equality를 강제하지 않는다. **전체 current Runtime Node/stage 1:1 mapping의 repository authority는 16/01 `Runtime Node ID → Application operation closed mapping`이며 모든 current ID를 열거한다.** 아래 표는 이름이 다르거나 여러 deterministic operation이 한 runtime node 안에서 이어지는 non-identity/special mapping만 요약한다. supporting deterministic operation은 명시된 runtime node 내부에서 실행되며 별도 checkpoint/resume target을 만들지 않는다.
-
-| Runtime stage/node | Semantic/Application operation | Runtime placement |
-| --- | --- | --- |
-| `request.identify_goal` | `request_understanding.identify_goal` | 독립 runtime node |
-| `request.detect_ambiguity` | `request_understanding.detect_ambiguity` | 독립 runtime node |
-| `request.finalize` | `request_understanding.finalize_intent` → `request_understanding.validate_intent` | 같은 deterministic finalize node 내부 |
-| Tool Route precondition stage | `tool_routing.resolve_policy_preconditions` | Registry binding 전 deterministic stage, 별도 LLM node 아님 |
-| `retrieval.rag_retrieve` | `retrieval.rag_retrieve_rerank` | 독립 runtime node |
-| `analysis.finalize` | `work_analysis.assemble_work_analysis` → `work_analysis.validate_work_analysis` | 같은 deterministic finalize node 내부 |
-| Planning subgraph entry | `planning.choose_answer_or_action_from_route` | route branch 결정 deterministic entry operation, 별도 resume node 아님 |
-| `planning.derive_dependencies` | `planning.build_dependencies` | 독립 deterministic runtime node |
-| Planning argument pre-bind | `planning.resolve_default_container` | argument writer 전 deterministic stage |
-| `planning.assemble` | `planning.assemble_plan` → `planning.validate_plan` | 같은 deterministic assemble node 내부 |
-| `review.inspect_action_scope_route` | `review.inspect_action_scope_and_route` | 독립 runtime node |
-| `review.inspect_constraints_policy` | `review.inspect_constraints_and_policy_summary` | 독립 runtime node |
-| `review.aggregate_findings` | `review.aggregate_review_findings` → `review.validate_review` | 같은 deterministic aggregate node 내부 |
-
-`validate_intent`, `choose_answer_or_action_from_route`, `resolve_policy_preconditions`, `resolve_default_container`, `validate_work_analysis`, `validate_plan`, `validate_review`는 독립 LangGraph Node를 요구하지 않는다. 16은 각 semantic operation의 file/symbol을 매핑한다.
+Runtime Node ID와 repository operation ID는 서로 다른 namespace이므로 문자열 equality를 강제하지 않는다. Runtime Node는 checkpoint·resume 가능한 물리 실행 단위이고, Application operation은 owner 내부의 의미 책임이다. 하나의 deterministic Node가 여러 검증 operation을 순서대로 호출할 수 있으며 supporting operation이 별도 파일에 있다는 이유만으로 Node·checkpoint·resume target이 되지 않는다. 구체 파일 inventory는 이 문서나 16에 복제하지 않고 실제 registry, composition, production caller와 architecture test로 확인한다.
 
 ## 14. Node Registry
 
-이 절의 표는 실행 흐름 설명용 요약이다. **Runtime Node ID 자체는 이 06 문서가 소유**하고, repository owner/path/file/symbol 이름은 `16 Repository Architecture`가 매핑한다. 두 identifier namespace는 같은 semantic responsibility를 가리킬 수 있지만 문자열이 같아야 하는 것은 아니다. 예를 들어 현재 Runtime Node ID의 `request.*`, `analysis.*` 표기는 checkpoint/resume topology의 runtime identity이고, repository capability label의 `request_understanding.*`, `work_analysis.*`는 code ownership/naming identity다. 16은 Runtime Node ID를 자동 rename하지 않으며, 구현 시 두 식별자를 명시적으로 매핑해야 한다.
+이 절의 표는 실행 흐름 설명용 요약이다. **Runtime Node ID 자체는 이 06 문서가 소유**하고, repository 구현은 `16 Repository Architecture`의 owner·naming·placement 문법을 따른다. 두 identifier namespace는 같은 semantic responsibility를 가리킬 수 있지만 문자열이 같아야 하는 것은 아니다. 예를 들어 현재 Runtime Node ID의 `request.*`, `analysis.*` 표기는 checkpoint/resume topology의 runtime identity이고, repository capability label의 `request_understanding.*`, `work_analysis.*`는 code ownership/naming identity다.
 
 Node Registry는 **Subgraph와 Node의 실제 runtime 책임**을 나타내며 PromptRef 수나 repository operation label과 동일하지 않다.
 
@@ -1684,12 +1670,12 @@ Node Registry는 **Subgraph와 Node의 실제 runtime 책임**을 나타내며 P
 Runtime-node closure rule:
 
 - `validate_work_analysis`, `validate_plan`, `validate_review`는 각각 독립 Product LLM responsibility가 아니며 **별도 LangGraph Runtime Node ID를 만들지 않는다**. 현재 runtime topology에서는 `analysis.finalize`, `planning.assemble`, `review.aggregate_findings` node 내부의 deterministic Application operation으로 실행한다.
-- 따라서 16의 operation-per-file mapping에는 validator 파일이 독립적으로 존재할 수 있지만, 06의 Resume Target Registry/Node Registry에는 위 세 validator를 별도 node/resume target으로 등록하지 않는다.
+- 따라서 validator operation이 독립 파일에 존재할 수 있지만, 06의 Resume Target Registry/Node Registry에는 위 세 validator를 별도 node/resume target으로 등록하지 않는다.
 - `review.recheck` 결과는 반드시 `review.aggregate_findings`로 돌아가 그 node 내부 `aggregate_review_findings → validate_review`를 재통과한 뒤에만 disposition을 반환한다.
 
 registered node/resume target set이 변경되면 compiled Resume Target Registry의 `graph_version`을 반드시 증가시키고, 현재 registry와 일치하지 않는 checkpoint는 추측 resume하지 않는다.
 
-Repository placement는 16/06의 `NodeRegistry`와 `ResumeTargetRegistry`가 단일 authority다. 06은 runtime node/resume semantics만 소유하며 Registry path/file/symbol이나 duplicate lookup table을 정의하지 않는다.
+`NodeRegistry`와 `ResumeTargetRegistry`는 runtime lookup의 단일 production authority다. 06은 runtime node/resume semantics만 소유하며 Registry path/file/symbol이나 duplicate code inventory를 정의하지 않는다.
 
 ### 14.1 Current Request Understanding / Tool Route / Retrieval registry
 
@@ -1824,10 +1810,10 @@ Startup drain은 batch 크기가 limit 미만이라는 이유로 종료하지 �
 - `REASONING`: ambiguity 판정, Tool Route semantic selection, Retrieval planning/sufficiency, Work Analysis, Planning, Review를 기본으로 한다.
 - 동일 Prompt slot의 tier는 signed Prompt/Model release binding에서 고정하며 LLM 출력, free text, Runtime confidence가 바꿀 수 없다.
 - `request.detect_ambiguity`는 현재 반복 Confirmation 결함 재현 Case가 닫힐 때까지 `REASONING` 후보로 평가한다.
-- Resume/Repair/Revision은 원 호출의 tier를 유지한다. tier fallback이나 model substitution은 03/10 Router policy와 13 Gate만 소유한다.
+- Resume/Repair/Revision은 원 호출의 tier와 Run model binding을 유지한다. tier fallback이나 model substitution을 만들지 않는다.
 - Agent State와 Checkpoint에는 concrete model name을 실행 권위로 저장하지 않고 PromptRef/tier/release-profile identity와 관측 결과만 보존한다.
 
-현재 candidate binding은 `WORKER=qwen3.5:9b`, `REASONING=qwen3.5:9b`인 단일 모델 구성이다. class는 Prompt 책임 metadata로만 남고 같은 Run에서 concrete model swap을 만들지 않는다. Evaluation/Release 활성화 전에는 current signed production binding을 대체하지 않는다.
+지원 모델은 `qwen3.5:9b`, `qwen3.5:4b`이며 새 Run 시작 시 하나를 binding한다. WORKER/REASONING class는 Prompt 책임 metadata일 뿐 역할별 모델 switching 신호가 아니다. 진행 중 Run에서는 재검사나 inference 오류로 concrete model을 바꾸지 않는다.
 
 ## 19-B. State-derived conditional execution
 

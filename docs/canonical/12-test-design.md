@@ -1,7 +1,7 @@
 # 12. 테스트 설계서
 
 > **Authority:** current owner contract와 State Transition Test Matrix의 product regression verification. Expected assertion은 검증 oracle이며 새 behavioral authority가 아니다.  
-> **상태:** Draft v3.53 · **기준일:** 2026-09-03 · **OS:** Windows 11 x64 · **Browser:** Chrome·Edge
+> **상태:** Draft v3.53 · **기준일:** 2026-09-07 · **OS:** Windows 11 x64 · **Browser:** Chrome·Edge
 
 ## 1. 목적과 계층
 
@@ -180,7 +180,7 @@ Open Run 1, Active Approval 1, Active Attempt 1, Version Conflict, DAG Cycle, Un
 - Agent 간 직접 호출·Peer-to-Peer 금지
 - Agent invocation 수와 LLM Call 수를 별도 계수
 - Local SLLM atomic decomposition 검증: Work Analysis의 `extract_work_facts / resolve_entity_relations / resolve_temporal_dependencies / detect_duplicate_conflict_candidates / assess_information_gaps / assess_operational_risks`, Planning의 `draft_action_objective_per_output_route / compose_arguments_per_output_route`, Review의 `inspect_goal_and_evidence / inspect_action_scope_and_route / inspect_constraints_and_policy_summary`가 서로 다른 PromptRef와 최소 Typed Projection을 사용해야 한다. 한 Prompt가 다른 atomic responsibility의 출력까지 동시에 생성하면 실패. `validate_relations / assemble_work_analysis / validate_work_analysis / build_dependencies / assemble_plan / validate_plan / aggregate_review_findings / validate_review`는 deterministic이므로 Product PromptRef가 있으면 실패
-- Prompt Runtime exact-set closure: 15의 current 21 `prompt_slot_id` set = runtime Product-LLM caller set = `application/prompt_runtime/prompt_manifest.json` key set = concrete `sources/<prompt_id>.md` filename set = `prompt_runtime_input_contract_v1.json` key set이어야 한다. `prompt_id == prompt_slot_id`; broad predecessor `work_analysis.resolve_relations`, `review.inspect`, `review.recheck` source/manifest row는 0이어야 한다. `prompt_version/content_hash/activation_status`는 same-slot current manifest/release metadata이며 source set cardinality를 늘리지 않는다.
+- Prompt Runtime exact-set closure: 15의 current `prompt_slot_id` set = runtime Product-LLM caller set = `application/prompt_runtime/prompt_manifest.json` key set = concrete `sources/<prompt_id>.md` filename set = `prompt_runtime_input_contract_v1.json` key set이어야 한다. `prompt_id == prompt_slot_id`; retired broad predecessor source/manifest row는 0이어야 한다. `prompt_version/content_hash/activation_status`는 same-slot current manifest/release metadata이며 source set cardinality를 늘리지 않는다.
 - Prompt input-contract realization: `load_prompt_input_contract()`가 schema version 1, duplicate/unknown slot, manifest/source/caller equality를 fail-closed하고, 06/15 allowlist 밖 Conversation history·previous-run artifact·raw Provider continuation·Gold/Grader field가 있으면 실패한다.
 - Strong-runtime fusion parity 검증: fuse된 Profile은 atomic Profile과 동일 Typed candidate semantics, final disposition, failure localization을 재현해야 하며 parity 실패 시 fusion Profile을 Release 후보로 사용할 수 없음
 - Review aggregator는 deterministic이어야 하며 각 inspector Finding을 stable issue code로 합치되 새 semantic issue를 생성하지 않아야 함
@@ -268,7 +268,7 @@ Open Run 1, Active Approval 1, Active Attempt 1, Version Conflict, DAG Cycle, Un
 - Synthetic Branch Completeness Fixture는 Request/Tool Route/Retrieval/Work Analysis/Planning/Review의 모든 공식 disposition과 Domain/Application의 Preflight·Verification·Recovery 결과 분기를 최소 1회 이상 통과해야 한다. 각 Case는 END, 사용자 interrupt/suspend 또는 명시된 owner back-edge 중 하나로 닫혀야 하며 implicit fall-through·무한 self-loop·정의되지 않은 terminal을 허용하지 않는다.
 - `workflow_phase`는 닫힌 Enum, `selected_resource_refs`는 `SelectedResourceRefV1`, Request constraint/ambiguity는 Typed Schema 사용
 - `OutputPlanV1` discriminated-union shape: ANSWER에는 `output_routes` field가 absent, ACTION에는 minItems=1. ANSWER serializer가 `output_routes=[]`를 만들거나 두 representation을 모두 허용하면 실패다.
-- `ConnectorReadPort.execute_read` actual Protocol과 16 mapping은 `ValidatedConnectorToolBindingV1` signature가 exact match해야 하며 tool_id-only signature 재도입, Adapter의 `application/tool_registry/**` import, 별도 tool→connector lookup authority는 실패다.
+- `ConnectorReadPort.execute_read` actual Protocol과 production caller는 `ValidatedConnectorToolBindingV1` signature가 exact match해야 하며 tool_id-only signature 재도입, Adapter의 `application/tool_registry/**` import, 별도 tool→connector lookup authority는 실패다.
 - Upstream State revision 시 based_on downstream Artifact stale 처리 검증
 - `PlanReviewResultV2` discriminated union에서 `PASS + confirmation` 같은 불가능 조합 생성 차단
 - Prompt Registry Key 검증
@@ -283,7 +283,7 @@ Open Run 1, Active Approval 1, Active Attempt 1, Version Conflict, DAG Cycle, Un
 - `ORACLE` Node Run과 `LIVE` Handoff Run 분리
 - `RESOURCE_SELECTED`에서 불필요한 Workspace Search 금지
 - exact selected Resource 1개 + exact detail READ Tool 1개인 초기 Retrieval은 `plan_query` LLM 0, deterministic `DETAIL_FETCH` validator 통과, Connector detail READ 1회를 검증한다. 복수 후보·일반 Agent Search·follow-up은 query-planning LLM을 유지한다.
-- 제목 하나와 검증된 기본 Task List 하나로 고정된 `TASK + CREATE`는 중복 검사 Query Planning LLM 0, deterministic `SEARCH + CONTAINER_REF` validator 통과, 실제 Task READ와 중복 Work Analysis 유지를 검증한다. 복수 Task List·추가 검색 제약·follow-up에서는 Query Planning LLM을 유지한다.
+- 제목 하나와 allowlist 안의 명시적 Task List 하나로 고정된 `TASK + CREATE`는 중복 검사 Query Planning LLM 0, deterministic `SEARCH + CONTAINER_REF` validator 통과, 실제 Task READ와 중복 Work Analysis 유지를 검증한다. 복수/미결정 Task List·추가 검색 제약·follow-up에서는 Query Planning LLM을 유지한다.
 - `output_mode=ANSWER`에서 Action Argument/Plan Node 미호출
 - 단순 ACTION은 Arguments가 사용자 입력으로 충분하고 관계·충돌·중복 해석이 불필요하면 Work Analysis skip 가능; ACTION 자체만으로 Analysis 강제 금지. 단 `TASK + CREATE` 중복 검사와 `CALENDAR + CREATE` 충돌 검사는 `01-B`의 P0 필수 Policy Precondition이므로 이 skip 조건에 포함하지 않는다.
 - Policy-only Task/Calendar CREATE는 entity/temporal LLM을 호출하지 않고 guarded duplicate/conflict 책임으로 직행한다. fact operand 2개 미만은 deterministic empty candidate + relation validation, 2개 이상은 duplicate/conflict LLM candidate + relation validation을 검증한다. 명시적 Analysis 요청의 전체 relation 경로를 이 최적화로 축소하면 실패다.
@@ -395,7 +395,7 @@ Backup/Restore/OAuth start/Credential/Settings/Runtime Mode/Diagnostics/Shutdown
 
 ### 10.3 External LLM disclosure temporal gate
 
-For `API_LLM` and `AUTO→API`: exact `ExternalLlmTransferScopeV1` hash must be stored in run-scoped CheckpointPort metadata and `EXTERNAL_LLM_SCOPE_PUBLISHED` appended before provider adapter invocation. Missing/stale scope or `external_llm_consent=false` means provider call count 0. Scope expansion after Retrieval/Route change requires a new published revision/hash. Browser ACK is not required and must not be treated as consent authority.
+For `API_LLM`: exact `ExternalLlmTransferScopeV1` hash must be stored in run-scoped CheckpointPort metadata and `EXTERNAL_LLM_SCOPE_PUBLISHED` appended before provider adapter invocation. Missing/stale scope or `external_llm_consent=false` means provider call count 0. Scope expansion after Retrieval/Route change requires a new published revision/hash. Browser ACK is not required and must not be treated as consent authority. Local-only execution requires no external consent and no Local↔Gemini fallback path exists.
 
 ### 10.4 Retrieval cache-loss restart gate
 
@@ -417,25 +417,22 @@ Crash at page1→page2, detail fetch, normalize, evidence selection, sufficiency
 - User install, no admin, no Python·Node
 - Production·distributed test Signature
 - API_ONLY without Ollama
-- LOCAL_CAPABLE clean VM automatic provisioning: compatible existing Ollama reuse 또는 signed Ollama 준비 → active single model download·digest verification → smoke test → READY; manual CLI·external install guidance 0
+- LOCAL_CAPABLE model inspection: Ollama probe, supported 9B/4B inventory, single-available automatic choice, persisted valid choice, no-model, inspection-failure matrix
 - Upgrade Backup·Migration·Safe Mode·Downgrade block
 - Default uninstall preserves DB·Backup·Settings and deletes OAuth·LLM credentials
 
-### 9-A. Local Runtime provisioning · tier routing
+### 9-A. Local Runtime inspection · selection
 
 필수 regression:
 
-- `API_ONLY`는 provisioning endpoint가 side effect 0의 unsupported result를 반환하고 Ollama/model artifact를 요구하지 않는다.
-- `LOCAL_CAPABLE` clean Windows VM에서 사용자 CLI 없이 Ollama → active single model → Smoke Test → READY를 완료한다.
-- compatible pre-existing Ollama는 보존·재사용하며 product uninstall/shutdown이 제거·강제 종료하지 않는다.
-- incompatible pre-existing version, insufficient disk, network interruption, partial download, installer failure, signature/hash/digest mismatch를 fail-closed한다.
-- same command/restart/crash에서 `OperationalCommandReplayPort`가 같은 operation을 reconcile하고 duplicate installer/model download를 만들지 않는다.
-- Browser/Prompt/Connector Source supplied URL/path/model/tag/digest/shell fragment가 provisioning effect에 반영되지 않는다.
-- Product LLM caller는 `StructuredInferenceRequestV2`의 exact `InferenceTierV1`을 보내고 Router만 `LocalModelProductDecisionV2.active_profile`을 resolve한다. Agent/Prompt/provider leaf에 concrete model branch/table이 있으면 실패다.
-- unknown tier, missing/duplicate profile row, Product Decision↔Model Manifest hash mismatch, tier model digest mismatch, unapproved installed model, mixed V1/V2 artifact set은 inference 전 차단한다.
-- repair/resume/revision이 model authority를 바꾸지 않고 actual inference class/profile/model이 Trace와 Result에 일치하며 같은 Run의 concrete model swap은 0이다.
-- uninstall에서 pre-existing Ollama 보존, product model cleanup 명시 선택, user data/credential 기존 정책을 함께 검증한다.
-- clean-VM/upgrade/uninstall Release Gate에서 Windows installer 본체에 Ollama executable/model weight가 포함되지 않았음을 검사한다.
+- 앱 시작과 Settings 재검사가 실제 Ollama probe와 설치된 `qwen3.5:9b | qwen3.5:4b`를 관측한다.
+- 9B만/4B만이면 해당 모델을 자동 사용하고, 이전 선택이 unavailable이어도 유일한 지원 모델로 전환한다.
+- 두 모델+유효 선택은 유지하고 두 모델+선택 없음은 사용자 선택을 요구한다.
+- 지원 모델 없음과 inspection failure를 구분하고 current selection/actual model projection을 검증한다.
+- 진행 중 Run의 binding은 재검사·repair·resume으로 바뀌지 않는다.
+- WORKER/REASONING 역할별 switching, inference 실패 model 교대, Local↔Gemini fallback, 지원 외 모델 선택이 0임을 검증한다.
+- Browser/Prompt/Connector Source supplied URL/path/model/tag/shell fragment가 실행 authority에 도달하지 않음을 검증한다.
+- 제품 install/pull/download/provisioning side effect가 0이고 Core UI·Settings·기존 이력은 Local 미준비에도 접근 가능해야 한다.
 
 ## 13. Observability
 
@@ -910,42 +907,21 @@ canonical test owner active
 behavior regression preserved
 ```
 
-### 27.2 Application required-operation manifest
+### 27.2 Architecture ownership and caller closure
 
-The architecture test suite must load the canonical required-operation mapping owned by Repository Architecture and compare it as a closed set against the repository. For each required Application row, assert:
+Architecture tests는 Canonical의 spec-to-code snapshot을 parser input으로 사용하지 않고 실제 source tree, AST/import graph, runtime manifest/schema, composition과 production callers를 검사한다.
 
-- exactly one canonical production module/symbol exists;
-- the expected canonical unit-test owner path exists;
-- no second live authority satisfies the same semantic capability;
-- production caller inventory is closed across FastAPI, LangGraph, composition/dependency wiring, and other production orchestrators;
-- old caller/import/export paths are zero.
+- Application handler와 Agent operation의 filename/symbol/owner/test grammar
+- Agent owner set과 operation-per-file 책임
+- capability별 live production authority 하나와 old caller/import/export 0
+- Domain/Application/Adapter/API/LangGraph/Frontend dependency direction
+- Frontend `app` composition, feature ownership, presentation-only `ui` 경계
+- Launcher single composition, installer/release root와 Product Runtime import 분리
+- signed build/Prompt/Tool/Connector manifest loader·consumer와 tamper fail-closed
+- Local model inspection/selection authority 하나, install/pull/download side effect 0
+- lifecycle state-changing input의 Command taxonomy와 read-only Query 구분
 
-Artifact taxonomy regression: state-changing `execution_attempt.reconcile_inflight_executions` and `run.reconcile_retrieval_cache_restart` inputs must be `*CommandV1`, never `*QueryV1`. Query-named state-changing reconciliation artifacts are a closed-world failure.
-
-At minimum, manifest coverage includes the canonical Application owners `conversation`, `message`, `run`, `plan`, `action`, `approval`, `claim`, `execution_attempt`, `verification`, `recovery`, `resource_ref`, and the six Agent owners `request_understanding`, `tool_routing`, `retrieval`, `work_analysis`, `planning`, `review`. Exact required operations come from the current semantic/state-transition authority and Repository Architecture mapping, never from implementation discovery. The exact-set regression must in particular include `execution_attempt.abort_claimed_execution`, `execution_attempt.reconcile_inflight_executions`, `run.project_external_llm_transfer_scope`, and `run.reconcile_retrieval_cache_restart`; treating any of these mapped production authorities as an unexpected extra is a test failure.
-
-### 27.2-A Frontend exact responsibility manifest regression
-
-Architecture test는 16 `Frontend exact responsibility manifest`를 closed set으로 읽고 다음을 검증한다.
-
-- 각 manifest row의 exact production file + primary symbol + canonical test owner가 정확히 하나 존재한다.
-- UI-001은 `diagnostics/startup_check.tsx`, UI-002는 `settings/first_run_onboarding.tsx`, FN-001 top-level orchestration은 `app/startup_flow.tsx`에만 존재하며 별도 `onboarding/` owner 0.
-- FN-009 session/bootstrap과 compatibility gate, FN-014/015/016 resource browser, FN-018 SSE/progress, FN-021A/FN-042A attachment, FN-078 history, FN-082 diagnostics가 manifest 밖 competing feature module을 갖지 않는다.
-- `frontend/src/ui/**`는 presentation-only이며 API call/cache/domain authority 0; `shared/common/utils/service/manager` feature owner package 0.
-
-### 27.2-B Launcher / Installer / Release exact manifest regression
-
-Architecture/Release test는 16 `Launcher · Installer · Release exact manifest`를 closed set으로 읽고 다음을 검증한다.
-
-- Launcher responsibility마다 exact file/symbol/test owner가 하나만 존재하고 `launcher/entrypoint.py` 외 second launcher orchestration root 0.
-- single-instance, installation verification, verified Signed Build Config projection, data-dir/ACL, dynamic port, bootstrap secret, service-instance ID, service spawn/readiness/browser/shutdown responsibility가 manifest 밖 generic manager/service/runtime module로 이동하지 않는다.
-- installer source root는 `installer/windows/**`, release tooling root는 `release/**`뿐이며 alternate `packaging/`, `build/`, `scripts/release/` production authority 0.
-- `API_ONLY`/`LOCAL_CAPABLE` profile, One-folder assembly, Windows installer build, Release Manifest, Code Signing/Timestamp가 각 canonical operation으로 존재한다.
-- product runtime import graph에서 `installer/**` 또는 `release/**` import 0.
-- Signed Build Config installed authority는 `release-manifest.json + .sig` 하나뿐이다. manifest는 closed `ReleaseManifestV1`이며 `oauth_env/oauth_client_id`를 포함하고 `release/generate_release_manifest.py`가 materialize, `launcher/verify_installation.py`가 signature/hash verify, `launcher/release_build_config.py`가 verified manifest에서만 `SignedBuildConfigV1`을 project해야 한다. competing `build-config.json`, unsigned production env/settings authority는 0이다. P0 manifest/Installer/Keyring/environment/CLI에 `client_secret` 또는 `OAUTH_CLIENT_SECRET` field/path가 있으면 실패다.
-- Production signed-locked field를 Launcher arg/User Settings/ambient env로 override 0. tampered/missing signature, wrong `oauth_env/oauth_client_id`, manifest-field mismatch는 MCP child spawn 전 fail-closed다. MCP child의 `GOOGLE_OAUTH_ENV/GOOGLE_OAUTH_CLIENT_ID`는 verified projection과 exact match해야 한다. Signed P0에는 `client_secret` 전달 경로가 없음을 유지한다. 별도로 `EXPLICIT_DEVELOPMENT`는 `.env.local` optional compatibility credential이 authorization-code/refresh grant에만 포함되고 `repr`·오류·connection projection·child environment에는 노출되지 않음을 검증한다.
-- `LOCAL_CAPABLE`은 `src/google_work_agent/ports/llm/approved_model_manifest.py`의 단일 parser를 사용해 `release/generate_model_manifest.py`가 생성하고 Release Manifest hash chain에 포함한 `ModelManifestV2 → model-manifest-v2.json(approved Ollama installer identity/hash + approved model ID/digest/parameter class/download size)`과, 그 canonical hash에서 active single-model binding 및 hardware requirement를 선택한 `LocalModelProductDecisionV2 → local-model-product-decision-v2.json`을 요구한다. Product composition은 signed fixture로 모든 inference class가 같은 approved Local model로 resolve되고 unapproved/digest-mismatch가 fail-closed됨을 증명한다. 같은 Ollama/model/profile authority가 `SignedBuildConfigV1`, User Settings, Prompt, Agent code에 중복되면 실패다. `API_ONLY`는 두 local artifact와 provisioning side effect를 모두 금지한다.
-- Release CLI가 검증한 Prompt bundle과 `service_distribution` package 기본 Prompt가 달라도 signed output/runtime은 `manifests/prompt/`의 검증된 전자만 사용한다. Prompt manifest·input contract·source·activation evidence 각각의 tamper는 Release 또는 installed runtime에서 fail closed하고, signed composition의 package 기본 Prompt fallback은 0이어야 한다. `EXPLICIT_DEVELOPMENT`의 package DRAFT + `DEVELOPMENT_SMOKE` 경로는 그대로 유지한다.
+Git diff와 semantic code search로 migrated capability의 expected production callers를 확인한다. 문서에 모든 current file/symbol/test row를 복제하지 않는다.
 
 ### 27.3 Final structural negative tests
 
@@ -989,118 +965,16 @@ A canonical directory that is empty, scaffold-only, or not yet wired is an imple
 - required Audit append 실패는 같은 UoW의 Receipt/Domain mutation/final ASSISTANT Message(terminal command인 경우)와 함께 rollback한다.
 - `RecordReviewResult`와 `POLICY_CONFIRMATION_RECORDED`는 각각 Application persistence/Policy Confirmation concern이며 lifecycle Command count에 포함하지 않는다.
 
-## 28. Production-authority closed-set regression
+## 28. Production authority와 실행 결정성 회귀
 
-이 절은 behavioral contract를 새로 만들지 않고 16 Repository Architecture의 production placement/single-authority closure를 검증한다.
+이 절은 file/path inventory를 복제하지 않고 실제 source, runtime registry, composition, caller, schema와 behavior로 구조·실행 계약을 검증한다.
 
-### 28.1 Domain Repository manifest
-
-- 04 §16 persistence capability 각각이 16/07의 exact Repository/SQLite Adapter/Test row 하나에만 매핑된다.
-- `ConversationRepository`, `MessageRepository`, `RunRepository`, `PlanRepository`, `ActionRepository`, `ApprovalRepository`, `ExecutionAttemptRepository`, `VerificationRepository`, `RecoveryRepository`, `ResourceRefRepository`, `EvidenceRepository`, `CommandReceiptRepository`, `RetentionRepository` 이외 generic `DomainRepository|CRUDRepository|RepositoryManager` production authority 0.
-- `ClaimExecution`은 별도 ClaimRepository를 만들지 않고 Action+Approval+ExecutionAttempt+Receipt+Audit repositories를 하나의 UoW에서 사용한다.
-- hidden mutable dependency-result repository/status column authority 0.
-
-### 28.2 Registry single authority
-
-- `ConnectorRuntimeRegistry`: exactly one production class/path; connector_id별 active process binding only.
-- `SignedToolRegistry`: exactly one Core Tool semantic registry; MCP descriptor/projected registry가 competing authority가 아님.
-- `NodeRegistry` + `ResumeTargetRegistry`: active graph_version/node target validation의 유일한 lookup authority.
-- `PromptRegistry`: active PromptRef/manifest/source lookup의 유일한 runtime registry; LLM adapter prompt selection 0.
-- Graph Profile lookup은 `adapters/langgraph/profiles/profile_registry.py → get_graph_profile_builder()`만 소유하며 별도 registry class authority를 만들지 않는다.
-- generic `RegistryManager`, catch-all service locator, subgraph-local duplicate resume registry 0.
-
-### 28.3 LangGraph exact adapter manifest
-
-- 06 current Agent Runtime Node set = 35.
-- 16/06 exact node adapter rows = 35/35.
-- 각 row는 exact node file/symbol + projection file/symbol + Application operation(s) + router file/symbol + architecture test를 가진다.
-- `validate_work_analysis`, `validate_plan`, `validate_review`, `resolve_policy_preconditions`, `resolve_availability`, `resolve_default_container`가 extra Runtime Node/ResumeTarget로 승격되지 않는다.
-- undefined/extra current production Agent node = 0.
-
-### 28.4 Confirmation wire/controller
-
-- `RunSnapshotResponseV1.pending_interrupt` wire type은 `PendingInterruptResponseV1` 하나다.
-- internal `ConfirmationRequiredV1 → PendingInterruptResponseV1` projection에서 resume_target/checkpoint metadata가 Browser로 노출되지 않는다.
-- current legacy interrupt DTO alias definition/reference = 0.
-- `/confirm → run.confirm_run → ResumeConfirmation(applied=true) + same-UoW WorkflowHandoff(PENDING) → post-commit schedule_run_execution(handoff_id)` 경로 하나만 허용.
-- PolicyConfirmationReceiptV1 생성 production authority는 ConfirmRun/Application control boundary 하나다.
-
-### 28.5 LLM Runtime Router
-
-- Application/Agent가 import하는 inference boundary는 `StructuredInferencePort` 하나.
-- production concrete binding = `StructuredInferenceRuntimeRouter` exactly one.
-- leaf API/Ollama inference adapter를 Application/Agent/FastAPI가 직접 import/select하는 경로 0.
-- external API provider leaf file/symbol mirror exact: `<provider>/structured_inference.py → <Provider>StructuredInferenceAdapter`, `<provider>/credential.py → <Provider>LlmCredentialAdapter`, `<provider>/runtime_status.py → <Provider>LlmRuntimeStatusAdapter`.
-- Ollama leaf exact: `ollama/structured_inference.py → OllamaStructuredInferenceAdapter`, `ollama/runtime_status.py → OllamaLlmRuntimeStatusAdapter`; `ollama/credential.py` production artifact 0.
-- concrete leaf tests mirror `tests/unit/adapters/llm/<provider>/test_{structured_inference,credential,runtime_status}.py` and `tests/unit/adapters/llm/ollama/test_{structured_inference,runtime_status}.py`.
-- `LlmCredentialPort`/`LlmRuntimeStatusPort`도 production Router binding exactly one; provider-specific credential/status leaf를 Application/API가 직접 선택하는 경로 0.
-- concrete external API provider/model name은 10/13의 current Release selection 없이 Repository/Core default로 발명·고정되지 않는다.
-- AUTO fallback/actual_runtime/provider/model/fallback_reason은 Router contract로만 기록.
-
-### 28.6 Background Run execution
-
-- `StartRun` UoW commit 이전 `WorkflowExecutionPort.submit` = 0.
-- committed Run은 `run.schedule_run_execution → WorkflowExecutionPort → BackgroundRunExecutorAdapter` 한 경로로만 LangGraph 실행.
-- Confirmation/Reauth/Recovery resume도 owning lifecycle command `applied=true` 이후 같은 execution boundary 사용.
-- FastAPI `BackgroundTasks`, `asyncio.create_task`, concrete worker queue/LangGraph executor 직접 선택 0.
-- 동일 run_id concurrent worker execution은 하나만 허용.
-
-### 28.7 Composition root
-
-- production Service entry/composition = `api/app.py → create_app() → api/composition.py → build_production_runtime()` exactly one.
-- `application/composition.py`, `launcher/composition.py`, FastAPI route/startup-helper ad-hoc concrete binding, adapter-local second root 0.
-- composition root는 wiring만 수행하고 Tool/Prompt/Policy/Domain semantic 결정 0.
-
-### 28.8 Connector-neutral circuit
-
-- Core circuit key는 `ComponentCircuitKeyV1`.
-- `CONNECTOR` branch는 connector_id 필수, `LLM_RUNTIME` branch는 `API_LLM|LOCAL_GPU` 필수.
-- Core closed enum에 `GOOGLE_API`, `MICROSOFT_API` 등 provider-specific circuit identity 0.
-- second Connector 추가 시 circuit semantic enum 수정 없이 connector_id row만 추가.
-
-### 28.9 Review six-disposition persistence regression
-
-- `ROUTE_RECONSIDERATION → plan.record_review_result → restart → guarded BeginPlanning`을 검증한다.
-- `CONFIRM → plan.record_review_result → restart → guarded RequestConfirmation`을 검증한다.
-- six-disposition set과 `RecordReviewResultCommandV1.disposition`의 set equality를 architecture contract test로 고정한다.
-- stale `expected_plan_version` 또는 `based_on_action_versions`는 conflict이고 durable writer/guard를 우회하지 않는다.
-
-### 28.10 Frontend/API compatibility regression
-
-- matching supported contract version → bootstrap `COMPATIBLE`, mutation/SSE admission allowed.
-- unsupported version → `INCOMPATIBLE`, mutation/SSE 0.
-- Browser가 ConversationHistory를 먼저 호출해야 version을 알 수 있는 경로는 금지한다.
-
-### 28.11 AbortClaimedExecution regression
-
-- Claim → cancel → before Begin: Write 0, Attempt FAILED, Action CANCELLED, FinalizeCancel reachable.
-- Claim → crash → restart → before Begin: Write 0, `AbortClaimedExecution` → Action/Attempt FAILED, retry/cancel path reachable.
-- Claim → invalid ClaimContext / pre-Begin credential failure: same non-cancel settlement.
-- BeginExecutionAttempt vs Abort race: exactly one APPLIED by CAS; if Begin wins, Abort 0 and in-flight result-resolution path; if Abort wins, Write 0.
-
-## 29. Implementation determinism regression
-
-Architecture regression must assert:
-
-- Review 6-disposition set == durable Review writer set.
-- `requested_mode` survives StartRun→restart→same-Run resume exactly.
-- external LLM provider call requires persisted consent=true; revoke blocks subsequent external calls.
-- bootstrap incompatible API contract blocks mutation/SSE.
-- Task List/Calendar container discovery and Backup list routes exist in 07↔16 exact route set.
-- LLM credential status and Google `display_email` are re-readable non-secret projections.
-- Runtime diagnostics projection renders every FN-082 required category without secret/raw path.
-- non-Domain operational command replay uses `OperationalCommandReplayPort`, never Domain `command_receipts`.
-- pre-Begin CLAIMED Attempt is settleable only by `BeginExecutionAttempt` or `AbortClaimedExecution`, never stranded.
-
-### 29.1 Operational/UI transport regression
-
-- task-list/calendar container list routes return bounded container projections and call registered READ tools through `ConnectorReadPort`.
-- `GET /api/v1/backups` survives Safe Mode and yields opaque selectable refs.
-- `GET /api/v1/credentials/llm/{provider}` rehydrates `configured/storage_mode/validation_status` without secret material.
-- connection status exposes verified `display_email` while `account_id` remains opaque.
-- FN-082 required diagnostics categories are renderable from protected `/api/v1/runtime` only.
-- 07 Local API route set equals 16 mapping set after these read surfaces are included.
-
-### 29.2 Lifecycle/audit closed-set regression
-
-`AbortClaimedExecution` must be present in State Contract, 16 handler mapping, 11 Audit mapping (`EXECUTION_CLAIM_ABORTED`), State Matrix, and unit/E2E tests. Missing or extra lifecycle family across these surfaces fails architecture regression.
+- Domain Repository, Connector/Tool/Node/Resume/Prompt Registry, LLM Runtime Router, background executor, composition root는 capability별 production authority 하나여야 한다. generic manager/service locator나 provider-specific Core authority를 허용하지 않는다.
+- Application/Agent는 abstract Port만 사용하고 Provider SDK, concrete Connector/SQLite/LangGraph executor를 직접 선택하지 않는다. Frontend는 compatibility·업무 target·approval·execution authority를 만들지 않는다.
+- Runtime Node/Resume Target set은 06의 current registry와 일치하며 supporting validator/Application operation을 별도 Node로 승격하지 않는다.
+- Confirmation/Reauth/Recovery는 owning lifecycle command가 durable하게 적용된 뒤 등록된 execution boundary를 사용한다. StartRun commit 전 background submit은 0이고 동일 Run의 동시 worker는 하나다.
+- Local/Gemini 선택, external consent, selected Local model, active Run binding은 저장·재시작·same-Run resume에서 보존된다. 새 요청에는 cross-runtime AUTO fallback이 없고 Local 단일 가용 모델 선택은 10의 현재 규칙을 따른다.
+- API contract 불일치는 mutation/SSE를 막으며 non-secret connection/runtime/diagnostic projection만 재조회할 수 있다.
+- Claim 이후 Begin 전 cancel·crash·credential failure는 `BeginExecutionAttempt` 또는 `AbortClaimedExecution`의 CAS 경계에서 정리한다. Begin 전 Write는 0이고 Begin/Abort race에서 하나만 적용된다.
+- Review disposition과 durable writer, lifecycle command와 Audit event, Port protocol과 production caller는 각 owning typed contract의 current set과 일치해야 한다. 숫자 count나 문서 row를 별도 권위로 고정하지 않는다.
+- applied migration checksum, runtime manifest/schema/hash, evaluation fixture/runner와 required artifact는 문서 버전과 독립적으로 검증한다.

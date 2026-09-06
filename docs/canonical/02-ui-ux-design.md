@@ -1,7 +1,7 @@
 # 02. UI · UX 설계서
 
 > **Authority:** 사용자 화면·상호작용과 UX 상태 표현. Domain/Workflow/API semantics는 해당 전문 owner를 따른다.  
-> **수정일:** 2026-09-06 · **상태:** 제품 UX 요구사항 — 구현·E2E 완료 여부는 별도 작업 현황에서 관리
+> **수정일:** 2026-09-07 · **상태:** 제품 UX 요구사항 — 구현·E2E 완료 여부는 별도 작업 현황에서 관리
 
 ## 1. 문서 목적
 
@@ -31,7 +31,7 @@
 - 읽기·검색·분석은 사용자 요청 범위 안에서 자동 진행한다.
 - 쓰기 Action만 사용자 승인을 요구한다.
 - 앱이 자동으로 판단할 수 있는 값은 먼저 제안하고, 불명확하거나 정책상 필요한 경우에만 질문한다.
-- 인증 갱신, 승인 profile의 준비와 상태 점검은 시스템이 조정한다. 사용자가 정한 기본 Resource와 현재 요청의 명시 대상을 존중한다. OAuth 계정 동의, 외부 전송 동의, Secret 입력, Write 승인처럼 사용자 권한이 필요한 값만 입력받는다.
+- 인증 갱신과 상태 점검은 시스템이 조정한다. Settings allowlist와 현재 요청의 명시 대상을 존중한다. OAuth 계정 동의, 외부 전송 동의, Secret 입력, Write 승인처럼 사용자 권한이 필요한 값만 입력받는다.
 - 진행 중인 한 문장을 교체하지 않고 실제 작업 행을 누적하며, 각 행에서 필요한 상세를 펼친다. 기술 로그 전체를 그대로 노출하지 않는다.
 
 ## 3. 실행·화면 구조
@@ -112,13 +112,11 @@ Core가 준비되면 메인 화면에 진입하고 저장된 이력·Settings를
 
 ### 6.1 형태
 
-여러 페이지를 넘기는 Wizard가 아니라 하나의 온보딩 화면에서 체크리스트가 순서대로 진행된다. 현재 필요한 행동 하나만 강조하고 완료된 단계는 자동으로 접는다.
+첫 실행도 일반 Settings와 같은 compact 화면을 사용한다. 큰 카드나 순차 체크리스트를 메인 구조로 만들지 않고 현재 상태와 필요한 다음 행동만 보여준다.
 
 ### 6.2 진행 순서
 
-업무 Connector와 Model Provider 연결은 `나중에 연결` 또는 `건너뛰고 시작`으로 미루고 메인 화면에 진입할 수 있다. 어느 연결의 미설정이나 외부 전송 미동의를 이유로 다음 단계를 잠그지 않는다. AI 방식과 개인정보 동의·준비 상태는 업무 연결과 구분해 안내한다. Local 지원 환경이면 제품이 승인된 Runtime/모델 준비를 진행하고, API 방식이면 credential과 외부 전송 동의를 구분해 받는다.
-
-기본 Calendar·Task List·GitHub Repository는 설정에서 선택할 수 있지만 모든 값을 최초 진입의 필수 Form으로 요구하지 않는다. 실제 요청의 대상을 정할 수 없을 때 해당 선택만 요청한다.
+업무 Connector와 AI 연결은 나중에 설정할 수 있고 메인 화면 진입을 막지 않는다. AI 방식과 외부 전송 동의·준비 상태는 업무 연결과 구분한다. Calendar·Task List·GitHub Repository allowlist는 접근 가능한 목록에서 체크하며 빈 선택은 해당 종류를 사용하지 않는다는 뜻이다.
 
 ### 6.3 Google 로그인
 
@@ -126,27 +124,22 @@ Google 연결 카드의 CTA는 `Google로 로그인`이며 앱 전체의 필수 
 
 ### 6.4 LLM 연결 방식 선택
 
-- 사용자는 `API LLM | Local LLM` 중 실행 방식을 고를 수 있지만 concrete Local model은 고르지 않는다.
+- 사용자는 `Gemini | Local AI` 중 실행 방식을 고른다. Local AI 안에서는 설치된 지원 모델 9B/4B를 단일 선택한다.
 - API LLM은 제품에서 지원하는 Provider·고정 Model과 API Key 입력을 표시한다. API Key 기본 저장 위치는 OS Keyring이며 Secret 원문과 저장 세부는 화면 전환 후 다시 노출하지 않는다.
-- Local LLM은 verified Release의 Signed Local Model Profile과 Hardware gate를 교차 검증하고 제품이 승인된 단일 Model을 준비한다.
-- 선택 이후의 연결, readiness 검사, 실패 복구는 시스템이 수행하며 사용자가 endpoint·model tag·설치 명령을 입력하지 않는다.
-- 기본 Calendar·Task List·Timezone은 최초 설정 완료 조건이 아니며 필요 시 Settings 또는 실제 Action 계획에서 결정한다.
+- Local LLM은 실제 Ollama와 설치된 지원 모델을 검사한다. 사용자가 endpoint·임의 model tag·설치 명령을 입력하지 않는다.
+- Resource allowlist와 Working hours는 최초 진입 조건이 아니며 timezone은 `Asia/Seoul`로 고정한다.
 
-### 6.5 Local AI 자동 준비
+### 6.5 Local AI 검사
 
-- GPU 기준을 충족한 `LOCAL_CAPABLE` 환경에서만 표시한다.
-- Local LLM을 선택하면 준비를 자동 시작하며 Settings의 `로컬 AI 준비`는 중단된 준비·repair를 다시 확인하는 단일 진입점이다. 사용자가 Ollama 설치 프로그램이나 터미널 명령을 직접 다루지 않는다.
-- 단계는 `환경 확인 → Ollama 준비 → 승인 모델 준비 → 무결성 검증 → 테스트 추론` 순서로 표시한다.
-- 각 단계는 `대기 | 다운로드 중 | 설치 중 | 검증 중 | 완료 | 다시 시도 필요` 상태와 진행률·남은 용량을 제공한다.
-- 기본 사용자 문구는 `로컬 AI 모델`을 사용하고 model ID/digest는 진단 상세에서만 노출한다.
-- 네트워크 단절·앱 재시작 뒤에는 같은 operation을 reconcile하고 완료 Artifact를 다시 다운로드하지 않는다.
-- Signature/hash/digest 불일치, 디스크 부족, 기존 Ollama 비호환은 정확한 조치와 `다시 시도`를 표시하며 검증 전 `LOCAL_GPU`를 활성화하지 않는다.
-- 기존 호환 Ollama는 보존하고 사용한다. 제품 제거 화면은 기존 Ollama를 자동 삭제하지 않으며 제품이 받은 모델 삭제는 별도 선택으로 제공한다.
-- API 사용 가능 시 provisioning 중에도 API_LLM 경로를 함께 표시한다. GPU가 없거나 기준 미달이면 Local provisioning UI와 Local 옵션을 표시하지 않는다.
+- 앱 시작 시 Ollama 상태와 `qwen3.5:9b`, `qwen3.5:4b` 설치 여부를 검사하고 Settings에서 재검사할 수 있다.
+- 지원 모델 하나만 있으면 그 모델을 자동 사용한다. 두 모델이 있고 유효한 기존 선택이 없을 때만 단일 선택을 요구한다.
+- 이전 선택이 없어져 다른 지원 모델 하나만 남으면 별도 확인 없이 전환하고 현재 선택과 실제 사용 모델을 함께 갱신한다.
+- 검사 실패와 모델 미설치를 다른 상태로 표시한다. 모델이 없으면 간단한 안내와 재검사만 제공한다.
+- 설치 Wizard, 다운로드/pull CTA, arbitrary endpoint/model 입력, Local→Gemini 자동 전환을 제공하지 않는다.
 
 ### 6.6 두 번째 이후 실행
 
-최초 설정 항목을 다시 입력받지 않는다. 시작 검사에서 Credential, API Key, Ollama, 모델, 기본 Resource를 자동 검증하고 문제가 있는 항목만 메인 화면에서 수정 요청한다.
+최초 설정 항목을 다시 입력받지 않는다. 시작 검사에서 Core, credential, Ollama, 지원 모델을 확인하고 문제가 있는 capability만 Settings에서 조치하도록 안내한다.
 
 ## 7. UI-003 메인 화면
 
@@ -245,7 +238,7 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 ### 9.4 목록 조회와 Pagination
 
-- Tasks Sidebar는 기존 Task List 조회 API의 목록 선택·새로고침·추가 페이지 조회를 제공한다. 기본 조회는 설정된 목록(미설정 시 Provider 첫 목록)이며, 다른 목록을 선택하면 그 목록의 미래 예정일을 포함한 미완료 Task를 조회한다. Browse 선택은 생성용 기본 Task List 설정을 변경하지 않는다. 계정·목록 전환 시 완료 항목과 preload까지 이전 조회 상태를 폐기한다.
+- Tasks Sidebar는 allowlist 안의 Task List 선택·새로고침·추가 페이지 조회를 제공한다. allowlist가 비었거나 목록이 미결정이면 Provider 첫 목록을 임의 선택하지 않는다. 다른 허용 목록을 선택하면 그 목록의 미래 예정일을 포함한 미완료 Task를 조회한다. Browse 선택은 Settings allowlist나 WRITE target을 변경하지 않는다. 계정·목록 전환 시 완료 항목과 preload까지 이전 조회 상태를 폐기한다.
 - Gmail·Tasks Sidebar의 visible page size는 configured `SIDEBAR_PAGE_SIZE`이며 Agent Retrieval의 configured `RETRIEVAL_PAGE_SIZE`와는 별도 계약이다. Local API continuation은 opaque 값으로 취급하고 Frontend가 Provider token이나 page number로 해석하지 않는다.
 - Gmail은 아직 방문하지 않은 intermediate page에서 metadata hydration을 생략해 다음 continuation만 확보하고 visible target page만 metadata를 hydrate한다. token-known과 metadata-loaded 상태를 React Client Session Cache에서 구분하며 이미 받은 page 재방문은 API를 호출하지 않는다.
 - Tasks는 Provider가 허용하는 metadata batch를 받고 UI에서 configured `SIDEBAR_PAGE_SIZE`로 slice한다. continuation이 있으면 현재 materialized batch에서 계산되는 page 범위만 표시하고 알려진 마지막 page에서만 다음 batch를 가져온다. terminal batch 뒤 누적 수로 exact total과 마지막 page를 확정한다.
@@ -256,7 +249,7 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 ### 9.5 Source별 기본 정렬
 
 - Gmail: 최근 수신 Thread부터 표시한다.
-- Tasks: configured/default Task List의 미완료 Task를 Google Tasks Provider 반환 순으로 표시한다. 정렬 옵션은 `기본 순서`와 `날짜순`만 제공하며, 날짜순을 명시한 경우에만 전체 결과를 materialize해 `scheduled_date` 오름차순·날짜 없는 Task 후순위로 정렬한다.
+- Tasks: 사용자가 선택한 허용 Task List의 미완료 Task를 Google Tasks Provider 반환 순으로 표시한다. 정렬 옵션은 `기본 순서`와 `날짜순`만 제공하며, 날짜순을 명시한 경우에만 전체 결과를 materialize해 `scheduled_date` 오름차순·날짜 없는 Task 후순위로 정렬한다.
 - Calendar의 Sidebar Month View와 별도 generic Upcoming Browse 범위는 §30.1이 단일 UI authority다.
 - 과거 Calendar 조회에서는 사용자가 지정한 기간을 우선한다.
 
@@ -306,10 +299,9 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 입력창 가까이에 Compact Selector로 표시한다.
 
-- API_ONLY 환경: `API_LLM`만 표시
-- LOCAL_CAPABLE 환경: `AUTO`, `LOCAL_GPU`, `API_LLM`
+- 사용자 선택은 `Local AI`, `Gemini`만 표시
 - Active Run 중에는 모드 변경을 잠근다.
-- AUTO가 API로 전환되면 전환 이유를 채팅 상태 문장으로 표시한다.
+- 선택한 runtime 미준비 시 다른 runtime으로 자동 전환하지 않고 현재 요청을 종료한 뒤 설정 안내를 표시한다.
 
 ### 10.4 입력창
 
@@ -461,7 +453,7 @@ Local Agent Service가 응답하지 않으면 화면 전체를 초기화하지 �
 
 ### 13.1 사용자 메시지와 Timeline 표시
 
-사용자 메시지는 우측 Bubble로 표시하고 역할 이름을 반복하지 않는다. 저장된 메시지 시각을 사용자 timezone으로 변환하며 현재 시각으로 대체하지 않는다.
+사용자 메시지는 우측 Bubble로 표시하고 역할 이름을 반복하지 않는다. 저장된 메시지 시각을 제품 timezone `Asia/Seoul`로 변환하며 현재 시각으로 대체하지 않는다.
 
 Local Calendar Date가 달라질 때만 날짜 구분선을 둔다. 오늘·어제·올해의 다른 날짜·다른 연도를 구분한다. 오래된 대화를 다시 사용해도 과거 날짜 그룹을 유지한다.
 
@@ -590,7 +582,7 @@ GitHub 예: `이 저장소의 Issue를 확인하려면 GitHub 연결과 저장�
 
 ## 18. UI-008 설정·진단 Drawer
 
-2026-09-06 제품 변경: 기존 Drawer 안에 계정 및 연결 / AI / 일반 탭을 둔다. 캘린더·할일 목록·GitHub 저장소는 단일 기본값이 아니라 앱에서 사용할 접근 가능 항목을 다중 선택한다. 빈 선택은 해당 종류의 자료를 사용하지 않는다는 뜻이다. 외부 권한을 변경하지 않는다. 목록 로딩/빈 결과/실패를 구분하고 선택 저장 후 재진입·새로고침에도 복원한다. 아래의 단일 기본값 설명은 이전 데이터 호환에만 해당한다.
+Drawer 안에서 Google, GitHub, Gemini, Local AI, 일반 설정, 진단을 구분한다. 캘린더·할일 목록·GitHub 저장소는 앱에서 사용할 접근 가능 항목을 다중 선택한다. 빈 선택은 해당 종류의 자료를 사용하지 않는다는 뜻이다. 외부 권한을 변경하지 않는다. 목록 로딩/빈 결과/실패를 구분하고 선택 저장 후 재진입·새로고침에도 복원한다.
 
 Local AI는 `qwen3.5:9b`, `qwen3.5:4b`를 검사하고 준비된 모델 하나를 선택한다. 두 모델 동시 설치를 요구하지 않고 설치 안내/다운로드 CTA를 제공하지 않는다. 배포 manifest/digest 검증은 유지한다. 시간대는 한국 `Asia/Seoul`로 고정하며 업무 시간·AI 동의는 작은 설정 행/체크박스로 제공한다. 진단은 접힌 보조 영역이다.
 
@@ -602,7 +594,7 @@ Theme과 시작 시 패널 선호 등 기존 표시 설정을 유지한다. 화�
 
 ### 18.2 Google Workspace
 
-미연결이면 Google 연결 CTA를 제공하되 메인 화면을 잠그지 않는다. 연결 시 현재 표시용 계정, 필요한 권한 상태, 재연결·계정 변경·연결 해제를 제공한다. 기본 Calendar와 Task List는 실제 반환된 container에서 선택하며, 항목이 비어 있는 container도 정상 목록으로 보여준다. 계정 ID를 이메일처럼 표시하지 않는다.
+미연결이면 Google 연결 CTA를 제공하되 메인 화면을 잠그지 않는다. 연결 시 현재 표시용 계정, 필요한 권한 상태, 재연결·계정 변경·연결 해제를 제공한다. Calendar와 Task List는 실제 반환된 container에서 여러 항목을 체크한다. 항목이 비어 있는 container도 정상 목록으로 보여준다. 계정 ID를 이메일처럼 표시하지 않는다.
 
 ### 18.3 GitHub
 
@@ -610,11 +602,11 @@ Theme과 시작 시 패널 선호 등 기존 표시 설정을 유지한다. 화�
 
 Client ID는 제품 구성이다. 일반 사용자 Settings에 Client ID·PAT·client secret 입력을 추가하지 않는다. 제품 설정 누락과 사용자 인증 실패를 구분해 안내한다.
 
-연결 후에는 표시용 GitHub 계정, App/권한 상태, 접근 가능한 owner/repository 목록, 목록 새로고침, 기본 Repository 0/1개 선택·변경·해제, `저장소 접근 관리`를 제공한다. 접근 관리는 GitHub의 해당 App 설치/접근 화면으로 이동하는 안내이며 앱 안의 선택만으로 GitHub 권한을 바꾼다고 표시하지 않는다.
+연결 후에는 표시용 GitHub 계정, App/권한 상태, 접근 가능한 owner/repository 목록, 목록 새로고침, 복수 Repository 체크·해제, `저장소 접근 관리`를 제공한다. 접근 관리는 GitHub의 해당 App 설치/접근 화면으로 이동하는 안내이며 앱 안의 선택만으로 GitHub 권한을 바꾼다고 표시하지 않는다.
 
-목록 로딩, 정상 빈 목록, 접근 실패를 구분한다. 권한 변경 후 다시 조회할 수 있어야 한다. 기본값 저장은 Settings 재진입·새로고침·재실행 후 복원하며 계정 변경이나 접근 상실 시 유효성을 다시 확인하도록 안내한다.
+목록 로딩, 정상 빈 목록, 접근 실패를 구분한다. 권한 변경 후 다시 조회할 수 있어야 한다. allowlist는 Settings 재진입·새로고침·재실행 후 복원하며 계정 변경이나 접근 상실 시 유효성을 다시 확인한다.
 
-기본값과 현재 요청의 명시 저장소를 구분하고, selected Issue와 명시 저장소가 충돌하면 어느 쪽을 의미하는지 확인한다. 저장된 기본값으로 그 충돌을 조용히 덮지 않는다. 설정 변경이 진행 중인 Run의 대상을 바꿨다고 표시하지 않는다.
+allowlist와 현재 요청의 명시 저장소를 구분하고, selected Issue와 명시 저장소가 충돌하면 어느 쪽을 의미하는지 확인한다. 목록의 첫 항목으로 충돌을 덮지 않는다. 설정 변경이 진행 중인 Run의 대상을 바꿨다고 표시하지 않는다.
 
 ### 18.4 Gemini API
 
@@ -624,11 +616,11 @@ Google Workspace 로그인과 구분되는 외부 AI credential 영역이다. �
 
 API Key 설정과 외부 업무 Context 전송 동의는 별개 control이다. 외부 AI를 사용하는 Run에는 Backend가 제공한 전송 범위를 보여주고, scope 갱신에 맞춰 표시한다. 매 호출마다 새로운 UI ACK를 요구하지 않는다.
 
-### 18.5 로컬 AI와 업무 기본값
+### 18.5 로컬 AI와 업무 범위
 
-로컬 AI는 Google/GitHub/Gemini 연결 카드와 별도 영역으로 둔다. 선택 AI 방식, Ollama/승인 모델 준비 상태, 준비·재시도·진단을 표시한다. 현재 제품의 기본 Local 방향은 qwen3.5:9b이며 실제 활성 여부는 검증된 runtime 상태로 표시한다.
+로컬 AI는 Google/GitHub/Gemini 연결과 별도 영역으로 둔다. Ollama 검사 상태, 설치된 두 지원 모델, 현재 단일 선택, 재검사를 표시한다. 지원 모델 하나만 있으면 자동 선택 결과를 정확히 반영한다.
 
-Timezone·업무 시간·주말·Buffer와 Google 기본 container, GitHub 기본 repository는 기존 설정 경로로 저장한다. Frontend에 별도 Calendar/Repository 판단 표를 만들지 않는다.
+Timezone은 `Asia/Seoul` 고정값으로 compact하게 표시하고 Working hours·주말·Buffer와 구분한다. Resource allowlist는 Backend 계약으로 저장하며 Frontend에 별도 target 결정 정책을 만들지 않는다.
 
 ### 18.6 데이터·진단·복구
 
@@ -657,19 +649,17 @@ Secret, 승인/Claim 권위 값, 전체 Provider 원문을 Browser Storage에 �
 
 ### LOCAL_CAPABLE
 
-- `AUTO`, `LOCAL_GPU`, `API_LLM` 제공
-- Local Runtime provisioning 진행·복구 상태와 active single-model Signed Profile readiness 표시
-- 명시적 LOCAL_GPU 실패 시 자동 전환하지 않고 API 전환 Action 제공
-- AUTO fallback 발생 시 이유와 실제 Runtime 표시
+- `Local AI`, `Gemini` 선택만 제공
+- Ollama/지원 모델 검사 상태와 선택된 실제 모델 표시
+- Local 실패 시 Gemini로 자동 전환하지 않고 현재 요청 종료와 설정 안내
 
 공통 UI, Agent 흐름, 승인 정책, Tool Schema는 두 프로필에서 동일하다.
 
-### 20.1 Provisioning 중단·복구 UX
+### 20.1 Local 검사 오류 UX
 
-- 브라우저를 닫아도 Service가 안전하게 진행할 수 있는 단계는 계속되며, 다음 실행에서 persisted operational reservation과 실제 Artifact 상태를 reconcile한다.
-- 사용자가 취소하면 아직 시작하지 않은 다운로드만 중단하고 이미 설치된 shared Ollama를 임의 제거하지 않는다.
-- 동일 오류가 반복되면 수동 CLI를 안내하지 않고 `진단 열기`, `다시 시도`, `API로 계속` 중 현재 상태에서 허용되는 Action만 제공한다.
-- Model Profile이 Release Gate를 통과하지 않았거나 digest가 다르면 `지원되지 않는 로컬 모델`로 표시하고 실행 대상으로 선택하지 않는다.
+- 검사 실패, Ollama 미실행, 지원 모델 미설치를 구분한다.
+- `재검사`, `진단 열기`와 간단한 준비 안내만 제공하고 설치·pull·download를 수행하지 않는다.
+- 지원 외 모델은 목록에 표시하거나 실행 대상으로 선택하지 않는다.
 
 ## 21. P0 반응형 기준
 
@@ -789,7 +779,7 @@ Loading, Empty, Error, Selected, Focus, Disabled, Submitting, 사용자 대기�
 - 날짜 cell은 Event 0개면 marker 없음, 1개면 dot 하나, 2개 이상이면 dot+count를 표시한다. 날짜 클릭은 API 호출 없이 selected-date 목록만 변경한다. Month 검색은 완전히 materialize한 cache를 client-side filter하며 marker/count와 selected-date 목록에 함께 적용한다.
 - All-day Event는 `[start.date, end.date)`, timed Event는 configured timezone에서 `[start, end)`와 실제로 겹치는 날짜 cell에 표시한다. 정확히 다음 날 00:00에 끝나는 Event는 다음 날 cell에 표시하지 않는다. 반복 Event는 occurrence 단위다.
 - Event row는 제목 아래에 시간 범위를 표시한다. 같은 날 시간 Event는 `YYYY년 M월 D일 (요일) 오전/오후 h:mm - 오전/오후 h:mm`, All-day Event는 `YYYY년 M월 D일 (요일) · 하루 종일`로 표시한다. Sidebar에는 `시작`, `종료` label을 표시하지 않고 중앙 Resource Viewer의 상세 필드는 유지한다.
-- Calendar tab에는 numeric badge를 표시하지 않는다. 일반 Upcoming Browse는 사용자 Timezone 기준 현재부터 **향후 90일** 기본 범위를 유지하지만 Month View range와 혼용하지 않는다.
+- Calendar tab에는 numeric badge를 표시하지 않는다. 일반 Upcoming Browse는 `Asia/Seoul` 기준 현재부터 **향후 90일** 기본 범위를 유지하지만 Month View range와 혼용하지 않는다.
 - Refresh는 현재 monthAnchor·selected date를 유지하고 현재 visible grid cache만 fresh materialize한다.
 
 ### 30.2 Tasks Sidebar

@@ -1,7 +1,7 @@
 # 13. 평가 · 실험 설계서
 
 > **Authority:** experiment design, Dataset/Gold/Grader, candidate comparison, scoring과 release-evaluation evidence. Product behavior는 `00 Project Source Guide`의 concern owners가 소유한다.  
-> **상태:** Draft v3.33 · **기준일:** 2026-09-03 · **선행 Gate:** Dataset·Grader Integrity + 12 Safety Regression 100%
+> **상태:** Draft v3.33 · **기준일:** 2026-09-07 · **선행 Gate:** Dataset·Grader Integrity + 12 Safety Regression 100%
 
 ## 1. 목적과 범위
 
@@ -110,36 +110,28 @@ FUSED_REFERENCE
 - Product LLM call count / token / p50·p95 latency
 - repair/revision localization: 한 atomic node 실패가 다른 responsibility 재호출로 번지는지 여부
 
-Release 판단은 current single-model profile `qwen3.5:9b`를 동일 Prompt·Schema·Policy·Fixture에서 검증한다. 이전 4B/9B switching 후보는 실제 Run latency에서 model load/swap 비용을 만들었으므로 active product candidate가 아니다. 강한 API Runtime의 fusion은 atomic parity를 통과한 경우에만 허용한다. Product LLM hard cap은 24다.
+Release 판단은 지원 모델 `qwen3.5:9b`, `qwen3.5:4b`를 동일 Prompt·Schema·Policy·Fixture에서 각각 검증한다. 한 Run은 선택 모델 하나만 사용하며 역할별 switching이나 실패 시 model 교대를 평가 후보로 두지 않는다. Product LLM hard cap은 24다.
 
-### 1.3 Qwen3.5 single-model Local candidate decision
+### 1.3 Qwen3.5 Local model evaluation
 
-Local Runtime 방향 후보는 다음 단일 구성을 사용한다.
-
-```text
-profile_id  = qwen3.5-9b-single-model-v1
-WORKER      = qwen3.5:9b
-REASONING   = qwen3.5:9b
-```
-
-이 profile은 product direction candidate지만 Release-active configuration이 아니다. 동일 PromptRef/Schema/Gold/Graph/Policy/Tool Registry를 고정하고 실제 single-model runtime behavior를 평가한다. `WORKER | REASONING` class는 관측 metadata이며 같은 Run에서 concrete model을 바꾸지 않는다.
+Local Runtime은 9B와 4B를 각각 single-model configuration으로 평가한다. 동일 PromptRef/Schema/Gold/Graph/Policy/Tool Registry를 고정하고 `WORKER | REASONING` class가 concrete model switching을 일으키지 않음을 검증한다.
 
 최소 평가:
 
 - Node contract valid first pass, repair rate, schema failure isolation
 - semantic accuracy, selected-resource preservation, over-confirmation rate, repeated-question rate, forward-progress rate
-- 특히 현재 9B live path에서 재현된 `RESOURCE_SELECTED → request.detect_ambiguity → Confirmation → same ambiguity` Case
+- `RESOURCE_SELECTED → request.detect_ambiguity → Confirmation → same ambiguity` 회귀 Case
 - Tool Route exact/allowed route, Retrieval query/sufficiency, Work Analysis, Action objective/arguments, Review false PASS/REVISE
 - Gmail actual READ reachability와 approval-gated WRITE/Verification E2E
 - cold load overhead, same-Run model swap count 0, peak VRAM/RAM, token throughput, p50/p95 latency, total Run latency, fallback rate
 - representative Answer/READ/ACTION별 Main stage invocation sequence와 불필요한 Retrieval/Work Analysis invocation 수
-- provisioning download size/time, cold-start readiness, interrupted-download recovery
+- cold-start readiness, inspection accuracy, single-available selection과 no-model/failure 구분
 
 Inference-class rules:
 
-- `WORKER | REASONING`은 Prompt responsibility와 측정 구간을 구분할 수 있지만 둘 다 exact `qwen3.5:9b` identity로 resolve한다.
+- `WORKER | REASONING`은 Prompt responsibility와 측정 구간만 구분하며 한 Run에서는 사용자가 선택하거나 가용성 규칙으로 정한 같은 모델을 사용한다.
 - Prompt, Agent, 사용자 설정은 concrete model이나 class→model mapping을 바꾸지 않는다.
-- 9B가 Safety/Contract/BTS를 통과하지 못하면 profile은 탈락하며 새로운 approved single-model candidate를 별도 Product Decision으로 평가한다.
+- 각 지원 모델은 Safety/Contract/BTS 기준을 독립적으로 통과해야 하며 한 모델의 실패를 다른 모델 자동 fallback으로 숨기지 않는다.
 
 Release Gate:
 
@@ -150,8 +142,9 @@ AND over-confirmation / no-progress Gate PASS
 AND E2E BTS threshold PASS
 AND Gmail READ/WRITE safety path PASS
 AND target hardware resource/latency Gate PASS
-AND clean provisioning/upgrade/uninstall Gate PASS
-→ signed `ModelManifestV2` allowlist + `LocalModelProductDecisionV2.active_profile` eligibility
+AND startup/settings inspection matrix PASS
+AND install/pull/download side effect 0
+→ supported Local model eligibility
 ```
 
 Parameter count나 model tag만으로 지원을 승인하지 않는다. exact resolved model digest와 candidate config hash가 Result에 결합되고, 승인 결과는 `LocalModelProductDecisionV2`가 exact `ModelManifestV2` hash와 tier profile을 고정해야 한다.
@@ -527,7 +520,7 @@ Current non-Python artifact family는 다음과 같다.
 | Result | dataset/grader/Product hash + public observation + metrics | UTF-8 strict JSON; case/run마다 하나 |
 | Scoring contract | `scoring-contract-v1.1` | UTF-8 strict JSON |
 
-Current runner는 checked-in Dataset을 strict load하고 외부에서 준비된 Product endpoint를 public API로 호출한 뒤 public response만 정규화한다. Fixture를 Product internal type으로 투영하거나 Node/Graph callable을 직접 실행하지 않는다. Controlled fixture가 필요한 실험은 동일 fixture-backed Product process를 Evaluation 밖에서 provision한다. Exact producer/consumer path·symbol·filename은 16 mapping을 따른다.
+Current runner는 checked-in Dataset을 strict load하고 외부에서 준비된 Product endpoint를 public API로 호출한 뒤 public response만 정규화한다. Fixture를 Product internal type으로 투영하거나 Node/Graph callable을 직접 실행하지 않는다. Controlled fixture가 필요한 실험은 동일 fixture-backed Product process를 Evaluation 밖에서 준비한다. Producer/consumer는 16의 ownership·dependency 문법을 따르며 exact file inventory를 이 문서에 복제하지 않는다.
 
 Current Micro Dataset logical ID set은 §7.4의 다음 six IDs와 exact equality다.
 
@@ -540,7 +533,7 @@ injection_variants
 paraphrase_robustness
 ```
 
-각 Micro Dataset은 UTF-8 JSON Lines를 사용하고 각 row는 `micro_case_id`와 원본 `case_id`를 반드시 포함한다. ID set을 확장하려면 13의 Evaluation contract를 먼저 갱신하고 exact repository filename/path는 16 mapping에서 함께 갱신한다.
+각 Micro Dataset은 UTF-8 JSON Lines를 사용하고 각 row는 `micro_case_id`와 원본 `case_id`를 반드시 포함한다. ID set을 확장하려면 13의 Evaluation contract를 먼저 갱신하고 실제 dataset loader·runner·grader와 ownership 검사를 함께 갱신한다.
 
 ### 7.3 실험 Projection
 
@@ -1072,12 +1065,11 @@ Fixture Relation Model
 ```
 APPROVED_FOR_API
 APPROVED_FOR_LOCAL_PROFILE
-APPROVED_FOR_AUTO_FALLBACK
 REJECTED
 DEFERRED
 ```
 
-Decision Record에는 Candidate Config Hash, Dataset·Projection·Grader Version, 반복 수, 품질·안전·비용·Latency, 주요 실패 Case, Node·Handoff 원인, 채택·탈락 근거를 포함한다. API candidate를 `APPROVED_FOR_API` 또는 `APPROVED_FOR_AUTO_FALLBACK`로 채택할 때는 해당 Candidate Config가 사용한 concrete external `provider`와 `model` identity를 release-selection evidence로 함께 고정한다. Local profile 채택은 §10 Infrastructure의 verified Model Manifest materialization으로 이어진다.
+Decision Record에는 Candidate Config Hash, Dataset·Projection·Grader Version, 반복 수, 품질·안전·비용·Latency, 주요 실패 Case, Node·Handoff 원인, 채택·탈락 근거를 포함한다. API candidate를 `APPROVED_FOR_API`로 채택할 때는 concrete external provider/model identity를 release-selection evidence로 고정한다. Local model 결과는 지원 모델별로 구분한다.
 
 이 `provider/model` 값은 **Release selection artifact**이지 Repository Architecture의 closed semantic owner/Port/operation identifier가 아니다. 따라서 16의 `<provider>` leaf grammar를 concrete Provider 하나로 영구 고정하지 않으며, current Product Decision Record/Release configuration에 값이 없으면 구현자가 Provider/Model을 추측하지 않는다.
 

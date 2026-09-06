@@ -1,6 +1,7 @@
 # 01-A. 기능 정의서
 
-수정일: 2026-09-06  
+수정일: 2026-09-07
+
 상태: 제품 기능 요구사항 — P0는 필수 범위이며 구현 완료 표시가 아님  
 목적: 사용자 기능의 입력·처리·출력·예외·완료 조건
 
@@ -25,7 +26,7 @@
 
 | 영역 | 기능 |
 | --- | --- |
-| 설정 | 첫 실행, Google·GitHub 연결, GitHub repository 관리, Gemini API credential, Local Runtime 준비, 기본 Resource 선택 |
+| 설정 | Google·GitHub 연결, 복수 Resource allowlist, Gemini credential, Local 모델 검사·선택, 일반 설정, 진단 |
 | 요청 | 자연어 입력, 범위 지정, 실행 취소, Run 재개 |
 | Context | Retrieval Source 범위 확정, 검색, 정규화, Evidence, 재검색, Gmail 첨부파일 Metadata 조회·사용자 요청 시 다운로드 |
 | 분석 | 관계 연결, 중복, 충돌, 업무 가능성 |
@@ -37,11 +38,11 @@
 
 ## 4. 초기 설정·Local Runtime 기능
 
-### FN-001 첫 실행 Wizard
+### FN-001 첫 실행 안내
 
 - **상태:** P0
 - **입력:** 앱 첫 실행, 선택적인 Google/GitHub 연결, API 또는 Local 추론 방식과 필요한 동의.
-- **처리:** Core 환경 검사와 업무 Connector 연결 안내를 구분한다. Google 연결은 건너뛸 수 있고 Settings 또는 해당 기능이 필요할 때 수행한다. Calendar·Task List·repository 기본값도 이후에 정할 수 있다.
+- **처리:** Core 환경 검사와 업무 Connector 연결 안내를 구분한다. Google/GitHub 연결은 건너뛸 수 있고 Settings 또는 해당 기능이 필요할 때 수행한다. Calendar·Task List·repository allowlist도 이후에 정할 수 있다. 큰 온보딩 체크리스트나 설치 Wizard로 만들지 않는다.
 - **출력:** 업무 Connector와 Model Provider가 모두 미연결이어도 Core가 정상이면 진입 가능한 메인 화면과 개별 연결·AI 사용 가능 상태.
 - **예외·완료 조건:** 필수 Core 오류와 Connector·Model Provider 미연결을 혼동하지 않는다. 연결 설정과 외부 LLM 전송 동의를 마치지 않아도 메인 화면·저장 이력·Settings를 사용할 수 있다. Local-only 사용에 외부 전송 동의를 강제하지 않는다. 일반 사용자는 제품용 Client ID/secret/포트를 입력하지 않는다. Google Workspace와 기존 Gmail·Tasks·Calendar 기능은 유지한다.
 
@@ -67,33 +68,32 @@
 - **상태:** P0
 - **입력:** 하드웨어, Ollama 상태, 설치 모델, API Key.
 - **처리:** CPU-only 여부, GPU 기준 충족, Ollama 연결, Local 테스트 추론, API 연결을 확인한다.
-- **출력:** 사용 가능한 모드, 배포 프로필, 고정된 실행 모드.
-- **규칙:** CPU-only 또는 GPU 기준 미달은 API_LLM 고정. Local 제품 Runtime은 Ollama만 지원한다. `LOCAL_CAPABLE` 최초 설정은 Release-approved Ollama와 Signed Local Model Profile을 자동 준비하고, 이후 실행은 Version·모델 digest·Structured Output 상태를 다시 검증한다. Ollama는 별도 Process로 유지하며 제품 종료 시 공유 Runtime을 강제 종료하지 않는다.
+- **출력:** Ollama 검사 성공/실패, 설치된 지원 모델, Gemini 준비 상태, 현재 선택과 실제 사용 가능 상태.
+- **규칙:** Local 제품 Runtime은 Ollama만 지원하며 지원 모델은 `qwen3.5:9b`, `qwen3.5:4b`다. 제품은 Ollama 설치·model pull·download/provisioning을 수행하지 않는다. 검사 실패와 지원 모델 미설치를 구분한다.
 
 ### FN-005 LLM 모드 선택
 
 - **상태:** P0
 - **선행 조건:** Runtime 진단 완료.
-- **처리:** API_ONLY에서는 API_LLM만 표시한다. LOCAL_CAPABLE과 검증된 GPU에서는 AUTO, LOCAL_GPU, API_LLM을 표시한다.
+- **처리:** 사용자는 `Local AI` 또는 `Gemini` 중 하나를 선택한다. Local은 설치된 지원 모델을 검사하며 하나만 있으면 그 모델을 자동 사용한다. 둘 다 있고 유효한 기존 선택이 없을 때만 사용자가 9B/4B를 고른다.
 - **출력:** 사용자 선택 모드와 실제 실행 모드.
-- **완료 조건:** P0에서 API와 Local 모드를 모두 사용할 수 있다.
+- **완료 조건:** 사용자용 AUTO나 Local↔Gemini fallback 없이 선택한 방식만 사용하고, 진행 중 Run binding은 설정 재검사로 바뀌지 않는다.
 
 ### FN-006 배포 프로필 선택
 
 - **상태:** P0 배포 기능
 - **프로필:** `API_ONLY`, `LOCAL_CAPABLE`.
 - **API_ONLY:** Ollama 의존성 없이 실행하며 GPU가 없는 팀원과 CPU-only 사용자에게 제공한다.
-- **LOCAL_CAPABLE:** Local Runtime 진단과 자동 provisioning UI를 제공한다. Windows Installer 본체에는 Ollama 실행 파일·모델 weight·실험 Runner·미승인 후보를 포함하지 않지만, 최초 설정에서 verified Artifact를 다운로드·설치·검증해 사용자가 별도 터미널 작업 없이 Local Runtime을 사용할 수 있게 한다.
+- **LOCAL_CAPABLE:** 실제 Ollama와 설치된 지원 모델을 검사하고 선택·재검사 UI를 제공한다. Installer나 앱이 Ollama·모델을 설치하거나 내려받지 않는다.
 - **완료 조건:** 동일 제품 Core/Policy 의미를 유지하면서 배포 Artifact 의존성과 Runtime capability가 프로필별로 분리된다.
 
-### FN-006A Local Runtime 자동 준비
+### FN-006A Local Runtime 검사와 가용 모델 선택
 
 - **상태:** P0 배포 기능
-- **사용자 목적:** 별도 CLI 없이 승인된 Local AI를 준비한다.
-- **처리:** 환경 확인 → 기존 호환 Ollama 재사용 또는 승인된 설치 → 모델 다운로드 → identity/digest 검증 → 테스트 추론 → 사용 가능 상태 반영.
-- **출력:** 준비 항목, 확인 가능한 다운로드량·진행, 중단·재시도 상태와 실패 원인.
-- **모델:** WORKER/REASONING 모두 `qwen3.5:9b`를 사용하는 기본 profile이 제품 목표다. 4B는 향후 선택지이며 이번 필수 준비 대상이 아니다. 개발 실행 확인과 signed Release 활성화는 구분한다.
-- **완료 조건:** API_ONLY에 설치 부작용이 없고, 공유 Ollama를 훼손하지 않으며, 실패·중단·재시작 후 검증된 상태로 이어간다. 준비 미완료를 READY로 표시하지 않는다.
+- **사용자 목적:** 설치된 지원 Local AI의 현재 상태를 정확히 알고 사용할 모델을 정한다.
+- **처리:** 앱 시작과 Settings 재검사에서 Ollama 상태와 두 지원 모델을 확인한다. 하나만 있으면 이전 선택과 달라도 그 모델로 전환한다. 두 개가 있고 유효한 선택이 있으면 유지한다.
+- **출력:** 검사 상태, 설치된 지원 모델, 현재 선택, 실제 사용 모델, 재검사 동작.
+- **완료 조건:** 모델 없음과 검사 실패를 구분하고, 역할별 switching·추론 실패 fallback·지원 외 모델·설치 부작용 없이 상태를 UI와 Runtime에 동일하게 반영한다.
 
 ### FN-007 OAuth 배포 환경 관리
 
@@ -273,7 +273,7 @@
 
 - **상태:** P0
 - **입력:** current-run에 확정된 Calendar Read 범위, 기간·Calendar·Resource 제약, 또는 검증된 Calendar/Event Resource reference.
-- **처리:** 필요한 Event와 FreeBusy 정보를 Source-native Read로 조회하고, 사용자 Timezone과 정책상 Busy/Tentative/Free 의미를 일관되게 적용해 일정 충돌·가용성 판단에 사용할 수 있는 Context를 만든다. LLM이 Provider-native 시간 표현이나 raw API arguments를 직접 작성·실행하지 않는다.
+- **처리:** 필요한 Event와 FreeBusy 정보를 Source-native Read로 조회하고, 제품 timezone `Asia/Seoul`과 정책상 Busy/Tentative/Free 의미를 일관되게 적용해 일정 충돌·가용성 판단에 사용할 수 있는 Context를 만든다. LLM이 Provider-native 시간 표현이나 raw API arguments를 직접 작성·실행하지 않는다.
 - **출력:** 현재 Run에 귀속된 Event Context, Busy Interval, 가용 Slot 후보와 Evidence.
 
 ### FN-024 Context 정규화
@@ -379,7 +379,7 @@
 ### FN-043 Task 제안
 
 - **상태:** P0
-- **입력:** 사용자 목표·Evidence·중복 검사 결과·현재 기본 Task List.
+- **입력:** 사용자 목표·Evidence·중복 검사 결과·allowlist 안에서 확정된 Task List.
 - **처리:** 결정 가능한 제목·메모·예정일·목록을 완성해 compact 승인안으로 제시한다. 불명확하거나 정책상 필요한 값만 질문한다. 기존 Task와 정확 중복이면 그 결과를 제시하며 임의 추가 생성하지 않는다.
 - **날짜:** 수행 예정일과 업무 마감을 별도로 보존한다. 마감만 있는 요청으로 due를 자동 생성하지 않는다.
 - **완료 조건:** 승인 Preview와 실제 Task의 목록·제목·메모·예정일이 일치하고 재조회 검증된다. 완료·수정·삭제는 해당 사용자 의도와 별도 승인 범위를 따른다.
@@ -388,7 +388,7 @@
 
 - **상태:** P0
 - **입력:** 직접 일정 요청 또는 메일 등에서 확인한 행사·업무 근거.
-- **처리:** 제목·calendar·시작/종료·timezone·설명·참석자와 충돌 정보를 포함해 생성·허용 변경안을 제시한다. 명시된 시작/종료가 있으면 소요시간을 중복 질문하지 않는다. 설정으로 해소 가능한 기본 calendar는 재입력시키지 않는다.
+- **처리:** 제목·calendar·시작/종료·timezone·설명·참석자와 충돌 정보를 포함해 생성·허용 변경안을 제시한다. 명시된 시작/종료가 있으면 소요시간을 중복 질문하지 않는다. allowlist 안의 단일 calendar가 현재 요청에서 확정되면 재입력시키지 않는다.
 - **예외:** 시간·대상·참석자가 미해결이면 임의로 채우지 않는다. FreeBusy/기존 Event 조회 실패를 충돌 없음으로 처리하지 않는다. 수신일을 행사일로 쓰지 않는다.
 - **완료 조건:** Evidence → 승인 Preview → 실제 Event → 재조회 Verification이 같은 의미를 가진다. 알림·참석자 등 외부 영향도 승인 내용과 일치한다.
 
@@ -700,13 +700,13 @@ FN-100의 중앙 조정 기능은 같은 공식 runtime 조건에서 일관된 �
 - **출력:** 연결 계정·인증 상태·권한 상태. 제품 설정 누락, 인증 거절, 코드 만료와 연결 해제를 구분한다.
 - **완료 조건:** 실제 인증 후 허용된 조회가 가능하고 재시작 시 지원되는 credential 보존이 동작한다. GitHub 미연결이 Core 진입·Google 요청을 막지 않으며 Google 미연결도 GitHub 요청을 막지 않는다. 연결 완료가 이전에 종료한 요청을 재개하지 않는다.
 
-### FN-121 GitHub Repository 조회·기본값 관리
+### FN-121 GitHub Repository 조회·allowlist 관리
 
 - **상태:** P0
-- **입력:** 연결된 계정, 저장소 새로고침·선택·기본값 저장·변경·해제.
-- **처리:** 계정과 App이 접근할 수 있는 repository를 표시한다. App 접근 관리 페이지와 앱의 작업 기본값을 구분한다. 기본값은 0 또는 1개이며 소유자/이름이 명확해야 한다.
-- **출력:** 선택값과 접근 상태. 목록 실패는 빈 목록이 아니며 권한 제거·계정 변경·repository 변경 후 재검증한다.
-- **완료 조건:** refresh/restart 후 선택을 보존하고 요청에 실제 사용한다. 명시 요청과 selected Resource가 일치하면 그것을 우선하며, 서로 충돌하면 임의 우선순위로 해소하지 않는다. 둘 다 없을 때만 사용자 설정을 사용한다. 설정 변경은 진행 중·승인된 Run을 바꾸지 않는다.
+- **입력:** 연결된 계정, 저장소 목록 새로고침, 복수 선택·해제·저장.
+- **처리:** 계정과 App이 접근할 수 있는 repository inventory를 표시하고, 그중 앱이 접근할 수 있는 범위를 복수 allowlist로 저장한다. GitHub App 권한과 Settings allowlist를 구분하며 빈 선택을 전체 허용이나 단일 기본값으로 해석하지 않는다.
+- **출력:** 선택 목록과 각 접근 상태. 목록 실패는 빈 목록이 아니며 권한 제거·계정 변경·repository 변경 후 재검증한다.
+- **완료 조건:** refresh/restart 후 allowlist를 보존하고 Browse/Retrieval/READ/WRITE 상한으로 사용한다. 현재 Run의 명시/선택 Resource는 allowlist 안에서만 좁히며 충돌이나 미확정 WRITE target을 첫 항목으로 해소하지 않는다. 설정 변경은 진행 중·승인된 Run을 바꾸지 않는다.
 
 ### FN-122 GitHub Issue 검색·상세
 
@@ -732,5 +732,5 @@ FN-100의 중앙 조정 기능은 같은 공식 runtime 조건에서 일관된 �
 ### FN-125 연결 Settings 분리
 
 - **상태:** P0
-- **기능:** Google Workspace, GitHub, Gemini API를 구분하고 Local AI 준비와 업무 기본값은 각 맥락에서 관리한다.
-- **완료 조건:** 각 연결 영역에서 상태 확인·연결·재연결·해제와 해당 기본값 관리를 완료할 수 있다. 하나의 서비스 상태가 다른 계정·credential·기본값을 덮어쓰지 않는다. 초기 미연결 안내로 종료된 요청은 Settings 연결 후 사용자가 새로 전송하며, 정상 실행 중 인증 만료로 멈춘 요청은 기존 명시적 안전 재개를 사용한다.
+- **기능:** Google Workspace, GitHub, Gemini API, Local AI, 일반 설정, 진단을 구분하고 Resource allowlist와 Working hours를 각 맥락에서 관리한다.
+- **완료 조건:** 각 연결 영역에서 상태 확인·연결·재연결·해제와 해당 allowlist 관리를 완료할 수 있다. 하나의 서비스 상태가 다른 계정·credential·허용 범위를 덮어쓰지 않는다. 초기 미연결 안내로 종료된 요청은 Settings 연결 후 사용자가 새로 전송하며, 정상 실행 중 인증 만료로 멈춘 요청은 기존 명시적 안전 재개를 사용한다.

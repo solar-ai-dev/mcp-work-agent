@@ -62,15 +62,10 @@ def test_retired_one_time_and_parallel_authority_paths__are_absent__without_stal
             assert retired not in content, f"{path.relative_to(ROOT)} still references {retired}"
 
 
-def test_product_closure__contains_exactly__three_artifacts() -> None:
+def test_historical_document_snapshots__are_not__live_authorities() -> None:
     tracked = _tracked_files()
-    closure = sorted(path for path in tracked if path.startswith("docs/artifacts/product-closure/"))
-
-    assert closure == [
-        "docs/artifacts/product-closure/01-canonical-implementation-traceability.csv",
-        "docs/artifacts/product-closure/02-cross-layer-runtime-traceability.csv",
-        "docs/artifacts/product-closure/03-product-closure-report.md",
-    ]
+    assert not any(path.startswith("docs/artifacts/product-closure/") for path in tracked)
+    assert not any(path.startswith("docs/product-decisions/") for path in tracked)
 
 
 def test_top_level_config__is_retained_by__current_install_consumers() -> None:
@@ -97,9 +92,10 @@ def test_byte_hashed_prompt_artifacts__pin_checkout_bytes__across_platforms() ->
     assert "src/google_work_agent/application/prompt_runtime/sources/*.md text eol=lf" in attributes
     assert "evaluation/prompt_candidates/** text eol=lf" in attributes
     assert len(plans) == 2
-    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == plans[0]["prompt_candidate"][
-        "bundle_hash"
-    ]
+    assert (
+        hashlib.sha256(manifest.read_bytes()).hexdigest()
+        == plans[0]["prompt_candidate"]["bundle_hash"]
+    )
     for plan in plans:
         for field in ("dataset", "candidate_config", "grader"):
             artifact = plan[field]
@@ -163,11 +159,12 @@ def _is_alias_statement(node: ast.stmt) -> bool:
 
 
 def _tracked_files() -> set[str]:
-    return set(
+    candidates = set(
         subprocess.run(
             ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
         ).stdout.splitlines()
     )
+    return {path for path in candidates if (ROOT / path).is_file()}
 
 
 def _text_files(tracked: set[str]) -> list[Path]:

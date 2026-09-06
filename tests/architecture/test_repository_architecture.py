@@ -13,47 +13,25 @@ SRC = ROOT / "src" / "google_work_agent"
 FINAL = os.getenv("GWA_ARCHITECTURE_FINAL_CUTOVER") == "1"
 
 
-def _agent_operation_manifest(mapping: str) -> dict[str, set[str]]:
-    if "### Agent capability mapping" not in mapping:
-        raise ValueError("missing Agent operation manifest")
-    section = mapping.split("### Agent capability mapping", 1)[1]
-    if section.count("```") < 2:
-        raise ValueError("missing Agent operation manifest block")
-    block = section.split("```", 2)[1]
-    roles: dict[str, set[str]] = {}
-    owner: str | None = None
-    for line in block.splitlines():
-        if not line.strip():
-            continue
-        if re.fullmatch(r"[a-z][a-z_]+/", line):
-            owner = line[:-1]
-            if owner in roles:
-                raise ValueError("duplicate manifest owner")
-            roles[owner] = set()
-        elif owner is not None and re.fullmatch(r"  [a-z][a-z0-9_]+", line):
-            operation = line.strip()
-            if operation in roles[owner]:
-                raise ValueError("duplicate manifest operation")
-            roles[owner].add(operation)
-        else:
-            raise ValueError("invalid Agent operation manifest row")
-    if set(roles) != {
-        "request_understanding",
-        "tool_routing",
-        "retrieval",
-        "work_analysis",
-        "planning",
-        "review",
-    } or not all(roles.values()):
-        raise ValueError("incomplete Agent owner manifest")
-    return roles
+AGENT_OWNERS = {
+    "request_understanding",
+    "tool_routing",
+    "retrieval",
+    "work_analysis",
+    "planning",
+    "review",
+}
 
 
-ROLES = _agent_operation_manifest(
-    (
-        ROOT / "docs/canonical/16-repository-architecture/01-spec-to-code-deterministic-mapping.md"
-    ).read_text(encoding="utf-8")
-)
+def _agent_operations(source: Path) -> dict[str, set[str]]:
+    base = source / "application" / "agents"
+    return {
+        owner: {path.stem for path in (base / owner).glob("*.py") if path.name != "__init__.py"}
+        for owner in AGENT_OWNERS
+    }
+
+
+ROLES = _agent_operations(SRC)
 DOMAIN_OWNERS = {
     "conversation",
     "message",
@@ -182,8 +160,7 @@ def internal(module: str) -> tuple[str, ...]:
 
 
 def pascal(stem: str) -> str:
-    acronyms = {"llm": "LLM", "oauth": "OAuth"}
-    return "".join(acronyms.get(part, part.capitalize()) for part in stem.split("_"))
+    return "".join(part.capitalize() for part in stem.split("_"))
 
 
 def owned_symbols(path: Path) -> set[str]:
@@ -207,48 +184,15 @@ def exported_symbols(path: Path) -> set[str]:
     return result
 
 
-def application_canonical_contracts() -> dict[str, set[str]]:
+def application_handler_contracts() -> dict[str, set[str]]:
     contracts: dict[str, set[str]] = {}
-    mapping = (
-        ROOT
-        / "docs"
-        / "canonical"
-        / "16-repository-architecture"
-        / "01-spec-to-code-deterministic-mapping.md"
-    ).read_text(encoding="utf-8")
-    core = mapping.split("### Application capability mapping", 1)[1].split(
-        "### Agent capability mapping", 1
-    )[0]
-    for line in core.splitlines():
-        if not line.startswith("|"):
+    base = SRC / "application" / "use_cases"
+    for path in base.glob("*/*.py"):
+        if path.name == "__init__.py":
             continue
-        spans = re.findall(r"`([^`]+)`", line)
-        if not spans or not re.fullmatch(r"[a-z][a-z0-9_]*", spans[0]):
-            continue
-        owner = spans[0]
-        for operation in spans[1:]:
-            if operation.startswith("application/use_cases/"):
-                break
-            if re.fullmatch(r"[a-z][a-z0-9_]*", operation):
-                path = f"application/use_cases/{owner}/{operation}.py"
-                handler = "".join(part.capitalize() for part in operation.split("_"))
-                contracts[path] = {f"{handler}Handler"}
-
-    boundary = mapping.split("### Local API boundary capability manifest", 1)[1].split(
-        "### Provider-neutral Application rule", 1
-    )[0]
-    for line in boundary.splitlines():
-        if not line.startswith("|") or "application/use_cases/" not in line:
-            continue
-        spans = re.findall(r"`([^`]+)`", line)
-        path_index = next(
-            index
-            for index, span in enumerate(spans)
-            if span.startswith("application/use_cases/") and span.endswith(".py")
-        )
-        symbols = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", spans[path_index + 1]))
-        contracts[spans[path_index]] = symbols
-    assert len(contracts) == 97
+        expected = f"{pascal(path.stem)}Handler"
+        if any(symbol.endswith("Handler") for symbol in classes(path)):
+            contracts[rel(path).removeprefix("src/google_work_agent/")] = {expected}
     return contracts
 
 
@@ -301,9 +245,25 @@ def test_immediate_domain__operation_per__file() -> None:
     clean(errors)
 
 
-def test_immediate_application__use_case_grammar__from_current_canonical() -> None:
+def test_immediate_application__use_case_handler__matches_filename() -> None:
     errors: list[str] = []
-    for relative_path, expected_symbols in application_canonical_contracts().items():
+    production_calls: dict[str, set[Path]] = {}
+    for caller in pyfiles():
+        if caller.name == "__init__.py":
+            continue
+        for node in ast.walk(tree(caller)):
+            if not isinstance(node, ast.Call):
+                continue
+            symbol = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if symbol is not None:
+                production_calls.setdefault(symbol, set()).add(caller)
+    for relative_path, expected_symbols in application_handler_contracts().items():
         path = SRC / relative_path
         if not path.is_file():
             errors.append(f"missing Application capability module: {rel(path)}")
@@ -311,6 +271,10 @@ def test_immediate_application__use_case_grammar__from_current_canonical() -> No
         missing = expected_symbols - exported_symbols(path)
         if missing:
             errors.append(f"{rel(path)} missing exact symbols: {sorted(missing)}")
+        for symbol in expected_symbols:
+            callers = production_calls.get(symbol, set()) - {path}
+            if not callers:
+                errors.append(f"{rel(path)}::{symbol} has no production caller")
     clean(errors)
 
 
@@ -348,36 +312,6 @@ def _agent_operation_errors(root: Path, source: Path, roles: dict[str, set[str]]
 
 def test_immediate_agent__atomic__grammar() -> None:
     clean(_agent_operation_errors(ROOT, SRC, ROLES))
-
-
-@pytest.mark.parametrize(
-    "invalid_row,error",
-    [
-        ("  *", "invalid Agent operation manifest row"),
-        ("  service.py", "invalid Agent operation manifest row"),
-        ("retrieval/", "duplicate manifest owner"),
-        ("  plan_query", "duplicate manifest operation"),
-    ],
-)
-def test_agent_operation_manifest__invalid_or_duplicate_row__rejects_mapping(
-    invalid_row: str,
-    error: str,
-) -> None:
-    block = "\n".join(
-        f"{owner}/\n  plan_query"
-        for owner in (
-            "request_understanding",
-            "tool_routing",
-            "work_analysis",
-            "planning",
-            "review",
-            "retrieval",
-        )
-    )
-    manifest = "### Agent capability mapping\n```\n" + block
-    assert set(_agent_operation_manifest(manifest + "\n```")) == set(ROLES)
-    with pytest.raises(ValueError, match=error):
-        _agent_operation_manifest(manifest + "\n" + invalid_row + "\n```")
 
 
 @pytest.mark.parametrize(

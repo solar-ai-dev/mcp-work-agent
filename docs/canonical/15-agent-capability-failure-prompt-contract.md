@@ -1,7 +1,7 @@
 # 15. Agent Capability · Failure · Prompt 공통 계약
 
 > **Authority:** Agent capability·normalized failure·Prompt runtime contract. 승인/Claim/Write/Verification/Domain lifecycle의 최종 판정은 해당 owner를 따른다.  
-> **상태:** Approved v1.32 · **기준일:** 2026-09-03 · **대상:** P0 Product Agent/Prompt Runtime
+> **상태:** Approved v1.32 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
 
 ## 0. 문서 목적
 
@@ -37,7 +37,7 @@ Task Preview의 자연어 수정 준비는 기존 `planning.compose_arguments_pe
 - Prompt source·failure instruction·LLM output은 tier/model을 변경하거나 더 큰 모델 재호출을 요구할 수 없다.
 - `WORKER`는 13에서 해당 Prompt slot의 bounded extraction/classification 안정성이 검증된 경우에만 허용한다. ambiguity, Tool Routing, Retrieval planning/sufficiency, Analysis, Planning, Review는 기본 `REASONING` 후보다.
 - Schema Repair/Semantic Revision/Confirmation resume은 원 invocation tier를 유지한다. allowed fallback/substitution은 Router/Release policy가 결과 Metadata로만 투영한다.
-- 현재 반복 Confirmation 결함은 `request.detect_ambiguity`의 Projection→candidate→validator→disposition을 current `qwen3.5:9b` single-model profile에서 재현·회귀하는 required evaluation case다.
+- 반복 Confirmation 결함은 `request.detect_ambiguity`의 Projection→candidate→validator→disposition을 각 지원 Local 모델에서 재현·회귀하는 required evaluation case다.
 
 ### Conversation · Run Prompt 입력 경계
 
@@ -152,7 +152,7 @@ Graph Profile 간 semantic responsibility parity를 유지한다. 특히 `SINGLE
 
 ### 1.4 Local SLLM Responsibility·Complexity 계약
 
-P0 Local 방향 승인 후보는 모든 Prompt class가 `qwen3.5:9b` 하나로 resolve되는 Signed Local Model Profile이며 13 Gate/Release 서명 전에는 active signed product binding이 아니다. 모델 크기를 이유로 업무 의미를 heuristic으로 삭제하거나 등록 Tool을 임의 shortlist하지 않는다. 대신 각 LLM Node가 한 번에 해결해야 하는 **semantic branching과 Output Schema 복잡도**를 작게 유지하고, 실제 허용 한계는 Model·Runtime별 Contract Complexity Gate에서 측정한다.
+지원 Local 모델은 `qwen3.5:9b`, `qwen3.5:4b`다. 한 Run은 선택된 모델 하나를 모든 Prompt class에서 사용하고 역할별 switching을 하지 않는다. 모델 크기를 이유로 업무 의미를 heuristic으로 삭제하거나 등록 Tool을 임의 shortlist하지 않는다. 대신 각 LLM Node가 한 번에 해결해야 하는 **semantic branching과 Output Schema 복잡도**를 작게 유지하고, 실제 허용 한계는 Model·Runtime별 Contract Complexity Gate에서 측정한다.
 
 설계 원칙:
 

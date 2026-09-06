@@ -1,15 +1,15 @@
 # 05. Context · Retrieval 설계서
 
 > **Authority:** Context·Retrieval semantics. Tool Route/Workflow/Domain의 전문 의미는 해당 owner를 직접 소비한다.  
-> **상태:** Draft v2.18 · **기준일:** 2026-09-05 · **대상:** P0 MVP
+> **상태:** Draft v2.18 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적
 
-확정된 Connector Input Route에서 필요한 자료를 최소 호출로 수집하고, 가져온 자료를 그대로 다음 LLM에 전달하지 않고 **관련 Segment를 RAG로 검색·정렬하여 Evidence만 선별**한다. P0에서는 Google Workspace Connector의 Gmail·Tasks·Calendar를 지원한다. 영구 Vector Index는 P0 필수가 아니며 Run-scoped Retrieval/Reranking을 기본 구조로 사용한다.
+확정된 Connector Input Route에서 필요한 자료를 최소 호출로 수집하고, 가져온 자료를 그대로 다음 LLM에 전달하지 않고 **관련 Segment를 RAG로 검색·정렬하여 Evidence만 선별**한다. 현재 Connector 범위는 Google Workspace의 Gmail·Tasks·Calendar와 GitHub Issue이며, 각 Connector의 frozen Route와 allowlist를 보존한다. 영구 Vector Index는 P0 필수가 아니며 Run-scoped Retrieval/Reranking을 기본 구조로 사용한다.
 
 ## 2. 확정 결정
 
-- `CTX-001`: 요청 시점 Connector 원본 연합 검색. P0 Source는 Google Workspace의 Gmail·Tasks·Calendar다.
+- `CTX-001`: 요청 시점 Connector 원본 연합 검색. 현재 Source는 Google Workspace의 Gmail·Tasks·Calendar와 GitHub Issue다.
 - `CTX-002`: IN/OUT Tool Route 선택은 Retrieval 이전 `Tool Route Subgraph`가 소유
 - `CTX-003`: Retrieval은 고정된 `input_routes`만 사용하고 Resource·Connector·Tool 종류를 재선택하지 않음. `input_routes`에는 사용자 의미상 필요한 READ뿐 아니라 `01-B` Policy Precondition으로 결정적으로 보강된 필수 READ도 포함될 수 있으며 Retrieval은 `required=true`인 Route를 임의 생략하지 않음. 단 사용자 지정 범위를 벗어나는 Policy Precondition Route는 Tool Route의 `SCOPE_EXPANSION_REQUIRED` Confirmation이 완료된 뒤에만 Input Route로 확정될 수 있으며 Retrieval이 스스로 범위를 확대하지 않음
 - `CTX-004`: LLM이 Raw Query·Page Token·MCP Arguments를 직접 실행하지 않음
@@ -309,7 +309,7 @@ class RetrievalQueryPlanV2:
 
 초기 `RESOURCE_SELECTED`에서 frozen IN Route가 1개이고 Registry의 exact detail READ Tool과 current-Run 검증 Resource ref가 각각 하나로 결정되면 `plan_query` LLM은 호출하지 않는다. Retrieval owner의 deterministic materialization이 `DETAIL_FETCH` plan을 만들고 동일 validator를 통과시킨다. 복수 Route·복수 ref·일반 검색·follow-up에서는 이 branch를 사용하지 않는다.
 
-정확한 `TASK + CREATE` 요청에서 제목, Policy-required `TASK | TASK_LIST` Route, 검증된 기본 Task List ref가 각각 하나로 고정되면 중복 검사 목적의 초기 Query Plan은 결정적 `SEARCH + CONTAINER_REF`로 materialize하고 동일 validator를 통과시킨다. 실제 Tasks Connector READ와 Work Analysis 중복 판정은 유지한다. 복수 Task List, 일반 Task 검색, 추가 사용자 제약 또는 follow-up Retrieval에는 이 branch를 사용하지 않는다.
+정확한 `TASK + CREATE` 요청에서 제목, Policy-required `TASK | TASK_LIST` Route, allowlist 안의 명시적 단일 Task List ref가 각각 하나로 고정되면 중복 검사 목적의 초기 Query Plan은 결정적 `SEARCH + CONTAINER_REF`로 materialize하고 동일 validator를 통과시킨다. 실제 Tasks Connector READ와 Work Analysis 중복 판정은 유지한다. 복수 Task List, 미결정 target, 일반 Task 검색, 추가 사용자 제약 또는 follow-up Retrieval에는 이 branch를 사용하지 않는다.
 
 금지:
 
@@ -391,7 +391,7 @@ prior SourceFetchPlanV1.effective_constraints
 - 새 Gmail lexical lowering은 각 KEYWORD를 literal quote로 묶어 사용자/모델 문자열의 Provider operator 실행을 막는다. 지원하지 않는 quote/backslash/control delimiter는 Provider 호출 전에 차단한다. QueryAttempt의 retrieval config v3를 기록하되 과거 attempt/query를 수정하지 않는다. 동일 semantic constraints의 이미 수행한 검색은 lowering 표현이 달라져도 반복으로 차단하여 checkpoint 재진입이 새 검색 기회가 되지 않게 한다.
 - merge 뒤 effective constraints가 prior와 의미상 동일하면 `QUERY_UNCHANGED_AFTER_FAILURE`로 fail-closed하며 새 Retrieval Round로 인정하지 않는다.
 - 같은 delta 안에서 같은 `kind`를 upsert와 remove에 동시에 넣거나, Route가 지원하지 않는 constraint, 값 없는 constraint, 모순 temporal range는 Provider 호출 전에 차단한다.
-- 날짜/시간 문자열은 semantic local value이며 Provider RFC3339/Gmail query syntax가 아니다. `start_local/end_local`은 offset 없는 ISO local date 또는 local datetime이고 `timezone`은 IANA timezone ID다. 파싱·Timezone 해석·interval 계산·Provider 표현 변환은 deterministic code가 수행하며 invalid/ambiguous local value는 Provider 호출 전에 차단한다.
+- 날짜/시간 문자열은 semantic local value이며 Provider RFC3339/Gmail query syntax가 아니다. `start_local/end_local`은 offset 없는 ISO local date 또는 local datetime이고 current product의 `timezone`은 `Asia/Seoul`이다. 파싱·Timezone 해석·interval 계산·Provider 표현 변환은 deterministic code가 수행하며 invalid/ambiguous local value는 Provider 호출 전에 차단한다.
 - `ParticipantConstraintV1.participants`는 역할별 identity를 함께 보존하므로 `from A + to B`처럼 서로 다른 participant role을 한 constraint 안에서 표현할 수 있다.
 - `ResourceRefConstraintV1.resource_refs`와 `ContainerRefConstraintV1.container_refs`는 현재 Run/Route에서 이미 검증된 내부 ref만 허용하며 raw Provider resource ID를 LLM이 새로 발명하는 권위가 아니다.
 - `QueryAttemptV1.added_constraints/removed_constraints` 같은 이름 목록은 관측·follow-up summary다. **다음 실행계획의 값 권위가 아니며** `SourceFetchPlanV1.effective_constraints`를 재구성하는 두 번째 source로 사용하지 않는다.
@@ -641,7 +641,7 @@ Calendar Route는 §5의 Release-canonical `RouteQueryIntentV2 + SemanticRetriev
 
 - Event 조회는 `RouteQueryIntentV2.operation=SEARCH|DETAIL_FETCH`, FreeBusy가 실제로 필요할 때만 `operation=FREEBUSY`를 사용한다. 한 Retrieval round에서 둘 다 필요하면 Query Planner가 typed Route intent를 순서대로 발급하고 deterministic `SourceFetchPlanBuilder`가 각각 materialize한다.
 - 시간 범위는 `TemporalRangeConstraintV1(axis=EVENT_TIME|AVAILABILITY_WINDOW, start_local, end_local, timezone)`로 표현한다. relative weekday/daypart 해석은 Request Understanding/typed intent의 bounded semantics를 소비하고 실제 RFC3339 계산·Timezone 적용·interval arithmetic은 deterministic builder가 전담한다.
-- Daypart canonical window는 사용자 Timezone 기준 `MORNING 06:00–12:00`, `AFTERNOON 12:00–18:00`, `EVENING 18:00–21:00`이다.
+- Daypart canonical window는 `Asia/Seoul` 기준 `MORNING 06:00–12:00`, `AFTERNOON 12:00–18:00`, `EVENING 18:00–21:00`이다.
 - 다른 Resource의 `business_deadline`을 Calendar Query 기준점으로 쓰려면 Work Analysis 결과를 받아 Additional Retrieval로 재진입해야 한다.
 
 ## 9. 후보 점수 초기값
