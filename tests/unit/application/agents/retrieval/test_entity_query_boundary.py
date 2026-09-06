@@ -50,7 +50,7 @@ def _plan(identity: str) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("identity", ["김대리", "김철수 대리", "@default", "primary", 'a"@b.com'])
-def test_unresolved_or_unsafe_identity_fails_schema_builder_and_old_checkpoint_lowering(
+def test_participant_validation__unresolved_or_unsafe__rejects_schema_builder_and_checkpoint(
     identity: str,
 ) -> None:
     plan = _plan(identity)
@@ -74,7 +74,7 @@ def test_unresolved_or_unsafe_identity_fails_schema_builder_and_old_checkpoint_l
     ("정수진 부장", "박람회 정수진"),
     ("Alex Morgan", "Alex Morgan 박람회"),
 ])
-def test_person_is_discovered_without_inventing_an_email(
+def test_person_discovery__unresolved_mention__does_not_invent_email(
     mention: str, discovery_query: str,
 ) -> None:
     prompt_input = {"request_intent": {"constraints": [
@@ -92,7 +92,7 @@ def test_person_is_discovered_without_inventing_an_email(
     assert requested_participant_identities(prompt_input) == []
 
 
-def test_model_participant_is_bound_to_current_request_email_not_an_invented_email() -> None:
+def test_model_participant__current_request_email__rejects_invented_email() -> None:
     prompt_input = {"request_intent": {"constraints": [
         {"kind": "EMAIL", "field": "sender", "value": "kim@example.com"},
     ]}}
@@ -108,7 +108,7 @@ def test_model_participant_is_bound_to_current_request_email_not_an_invented_ema
     assert validate_output_schema(_plan("invented@example.com"), unresolved_schema.json_schema)
 
 
-def test_any_participant_search_is_not_a_body_email_keyword() -> None:
+def test_participant_search__any_role__does_not_use_body_keyword() -> None:
     plan = _plan("kim@example.com")
     fetch = build_query(plan, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     constraint = fetch["effective_constraints"][0]

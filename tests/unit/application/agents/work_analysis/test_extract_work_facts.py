@@ -48,7 +48,7 @@ def test_extract_work_facts__uses_exact_contract__and_bounded_evidence() -> None
     assert "fact_id" not in candidate_schema["properties"]
 
 
-def test_extract_work_facts__assigns_unique_ids_to_repeated_semantic_candidates() -> None:
+def test_extract_work_facts__repeated_candidates__assigns_unique_ids() -> None:
     candidate = {
         "kind": "TEXT_CLAIM",
         "subject": "latest decision",
@@ -87,7 +87,7 @@ def test_extract_work__facts_rejects_old__or_stale_schema() -> None:
         )
 
 
-def test_extract_work_facts__empty_evidence_cannot_prove_requested_creation() -> None:
+def test_extract_work_facts__empty_evidence__does_not_prove_creation() -> None:
     runtime = WorkAnalysisRuntimeFake({"fact_candidates": []})
     result = extract_work_facts(
         semantic_input={

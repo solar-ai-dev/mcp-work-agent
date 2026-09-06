@@ -97,7 +97,7 @@ def test_assess_information__gaps_exposes_disposition_invariants__to_repair() ->
     assert "question" in branches["NEEDS_CONFIRMATION"]["required"]
 
 
-def test_read_only_missing_evidence__does_not_interrupt_for_user_confirmation() -> None:
+def test_read_only_gap__missing_evidence__does_not_interrupt_for_confirmation() -> None:
     request_intent = intent()
     request_intent["requested_effect_hints"] = ["READ"]
     result = combine_information_gap_assessment(
@@ -137,7 +137,7 @@ def test_read_only_missing_evidence__does_not_interrupt_for_user_confirmation() 
     }
 
 
-def test_write_user_owned_choice__preserves_confirmation() -> None:
+def test_write_gap__user_owned_choice__preserves_confirmation() -> None:
     request_intent = intent()
     request_intent["requested_effect_hints"] = ["CREATE"]
     assessment = {

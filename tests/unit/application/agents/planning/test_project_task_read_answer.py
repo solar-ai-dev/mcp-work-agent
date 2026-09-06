@@ -3,7 +3,7 @@ from google_work_agent.application.agents.planning.project_task_read_answer impo
 )
 
 
-def test_task_read_answer__lists_concrete_task_evidence_in_user_language() -> None:
+def test_task_read_answer__concrete_evidence__lists_in_user_language() -> None:
     result = project_task_read_answer(
         user_request="Google Tasks의 현재 할 일을 목록으로 알려줘.",
         request_intent={
@@ -40,7 +40,7 @@ def test_task_read_answer__lists_concrete_task_evidence_in_user_language() -> No
     }
 
 
-def test_task_read_answer__does_not_replace_analytical_or_mixed_resource_answers() -> None:
+def test_task_read_answer__analytical_or_mixed_request__does_not_replace() -> None:
     assert (
         project_task_read_answer(
             user_request="태스크를 분석해줘.",

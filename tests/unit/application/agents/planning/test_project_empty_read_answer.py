@@ -24,7 +24,7 @@ def test_github_access_failure__requires_access_action__never_claims_empty_issue
     assert failure_kind not in result.draft["answer"]
 
 
-def test_partial_source_failure__is_not_presented_as_no_result() -> None:
+def test_source_failure__partial__does_not_claim_no_result() -> None:
     result = project_empty_read_answer(
         user_request="최근 회의 메일을 찾아줘.",
         request_intent={
@@ -45,7 +45,7 @@ def test_partial_source_failure__is_not_presented_as_no_result() -> None:
     assert "CONNECTOR_UNAVAILABLE" not in result.draft["answer"]
 
 
-def test_no_result_criteria__uses_only_user_owned_search_constraints() -> None:
+def test_no_result_criteria__user_owned_constraints__uses_only_authorized_values() -> None:
     result = project_empty_read_answer(
         user_request="지난주 프로젝트 일정 메일을 찾아줘.",
         request_intent={

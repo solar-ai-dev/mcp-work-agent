@@ -46,7 +46,7 @@ def test_aggregate_review__findings_uses__closed_safety_precedence() -> None:
     assert result["status"] == "BLOCK"
 
 
-def test_confirmation__does_not_promote_missing_information_to_executable_options() -> None:
+def test_confirmation__missing_information__does_not_create_executable_options() -> None:
     finding = _finding("CONFIRMATION")
     finding["description"] = "메일을 특정할 수 없습니다. 보낸 사람이나 제목을 알려 주시겠어요?"
     finding["required_information"] = ["CONFIRM_SENDER", "REFETCH_WITH_CORRECTION"]

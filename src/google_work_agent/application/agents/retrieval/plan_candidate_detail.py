@@ -27,7 +27,7 @@ _DETAIL_TOOL_BY_RESOURCE_TYPE = {
 }
 
 
-def deterministic_candidate_detail_plan(
+def plan_candidate_detail(
     *,
     prompt_input: Mapping[str, object],
     frozen_routes: Sequence[InputToolRouteV1],
@@ -81,4 +81,4 @@ def deterministic_candidate_detail_plan(
     )
 
 
-__all__ = ["deterministic_candidate_detail_plan"]
+__all__ = ["plan_candidate_detail"]

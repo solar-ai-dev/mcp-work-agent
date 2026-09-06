@@ -163,7 +163,7 @@ def test_confirmed_person__narrows_answer_projection__without_deleting_run_evide
         },
     ],
 )
-def test_compose_preserves_resolved_period_and_does_not_invent_legacy_bounds(
+def test_compose_answer__resolved_period__preserves_without_inventing_legacy_bounds(
     retrieval: dict[str, object] | None,
 ) -> None:
     captured: dict[str, object] = {}
@@ -212,7 +212,7 @@ def test_compose_answer__with_unapproved_evidence__projects_only_outline_refs() 
     assert captured["evidence"] == [{"evidence_id": "e-decision", "excerpt": "네비게이션바로 확정"}]
 
 
-def test_compose_normalizes__harmless_surrounding_whitespace() -> None:
+def test_compose_answer__surrounding_whitespace__normalizes() -> None:
     result = compose_answer(
         user_request="요약해줘.",
         request_intent={"goal": "summary"},
@@ -229,7 +229,7 @@ def test_compose_normalizes__harmless_surrounding_whitespace() -> None:
     assert result["answer"] == "확인한 메일을 요약했습니다."
 
 
-def test_compose_removes__internal_evidence_refs_and_reason_codes() -> None:
+def test_compose_answer__internal_refs_and_reason_codes__removes() -> None:
     result = compose_answer(
         user_request="메일 근거를 요약해줘.",
         request_intent={"goal": "summary"},
@@ -248,7 +248,7 @@ def test_compose_removes__internal_evidence_refs_and_reason_codes() -> None:
     assert result["answer"] == "확인한 자료에서 내부 상태를 확인했습니다."
 
 
-def test_compose_internal_reference_labels__preserve_english_request_language() -> None:
+def test_compose_reference_labels__english_request__preserves_language() -> None:
     result = compose_answer(
         user_request="Summarize the email evidence.",
         request_intent={"goal": "summary"},
@@ -346,7 +346,7 @@ def test_compose_answer__with_internal_thread_id__removes_resource_identity() ->
     assert result["answer"] == "선택한 Gmail 스레드 내용을 요약했습니다."
 
 
-def test_compose_empty_gmail_read__explains_search_result_without_llm() -> None:
+def test_compose_gmail_read__empty_result__explains_without_llm() -> None:
     invoked = False
 
     def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
@@ -446,7 +446,7 @@ def test_compose_answer__with_nested_section_string__projects_natural_markdown()
     assert "evidence_refs" not in result["answer"]
 
 
-def test_compose_rejects__answer_over_user_visible_limit() -> None:
+def test_compose_answer__over_visible_limit__rejects() -> None:
     with pytest.raises(ValueError, match="user-visible answer limit"):
         compose_answer(
             user_request="요약해줘.",
@@ -462,7 +462,7 @@ def test_compose_rejects__answer_over_user_visible_limit() -> None:
         )
 
 
-def test_compose_task_read__uses_grounded_projection_without_llm() -> None:
+def test_compose_task_read__concrete_evidence__projects_without_llm() -> None:
     invoked = False
 
     def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:

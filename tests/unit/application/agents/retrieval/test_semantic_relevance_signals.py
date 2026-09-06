@@ -35,7 +35,9 @@ def _segment(key: str, text: str, **locator: object) -> SourceSegment:
     ("9월 8일 교육", False), ("8월 31일 출장", False),
     ("2026년 9월 31일 행사", False), ("Received: 2026-09-03T10:00:00+09:00", False),
 ])
-def test_event_candidate_date_never_comes_from_receipt_header(text: str, matches: bool) -> None:
+def test_event_candidate__receipt_header__does_not_infer_event_date(
+    text: str, matches: bool
+) -> None:
     assert match_temporal_evidence(
         _segment("a", text, received_at="2026-08-20T10:00:00+09:00"), WINDOW,
     ) is matches
@@ -46,7 +48,7 @@ def test_event_candidate_date_never_comes_from_receipt_header(text: str, matches
     ("2026-09-07T15:00:00+00:00", False), ("2026-09-03T10:00:00", False),
     ("Thu, 3 Sep 2026 10:00:00 +0900", True), ("invalid", False), (None, False),
 ])
-def test_receipt_candidate_uses_provider_timestamp_not_body(
+def test_receipt_candidate__body_and_provider_timestamp__uses_provider_timestamp(
     received: object, matches: bool,
 ) -> None:
     assert match_temporal_evidence(
@@ -64,13 +66,13 @@ def test_receipt_candidate_uses_provider_timestamp_not_body(
     ("정수진 부장", "정수민 부장", False),
     ("Alex Morgan", "Alex Morgan", True), ("Alex Morgan", "Alex Taylor", False),
 ])
-def test_abbreviated_name_is_only_a_candidate(
+def test_person_match__abbreviated_name__remains_candidate(
     mention: str, display_name: str, matches: bool,
 ) -> None:
     assert match_person_mention(mention, display_name) is matches
 
 
-def test_all_relevance_signals_are_bound_to_real_plan_and_provider_metadata() -> None:
+def test_relevance_signals__plan_and_provider_metadata__retains_binding() -> None:
     intent = cast(RequestIntentV2, {
         "goal": "조회", "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
     })
@@ -103,7 +105,7 @@ def test_all_relevance_signals_are_bound_to_real_plan_and_provider_metadata() ->
     assert set(ranked[0]) == {"segment_id", "resource_ref", "retrieval_score", "reason_codes"}
 
 
-def test_calendar_window_does_not_score_gmail_and_body_email_is_not_sender() -> None:
+def test_relevance_signals__calendar_window_and_gmail__does_not_confuse_date_or_sender() -> None:
     intent = cast(RequestIntentV2, {"goal": "조회", "constraints": []})
     plan = cast(SourceFetchPlanV1, {
         "resource_type": "CALENDAR_EVENT", "effective_constraints": [WINDOW],

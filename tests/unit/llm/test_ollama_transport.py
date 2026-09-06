@@ -212,7 +212,7 @@ def _prompt_ref_for_sampling_tests() -> PromptReference:
     )
 
 
-def test_tool_call__preserves_literal_korean_in_model_input(
+def test_tool_call__korean_literal__preserves_model_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[Request] = []

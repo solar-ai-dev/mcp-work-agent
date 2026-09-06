@@ -21,13 +21,13 @@ def test_initial_round_is__zero_and_projects__one_completed_round() -> None:
     assert retrieval_round_count(current_round_no=0) == 1
 
 
-def test_followup_attempt__advances_before_recording_its_round() -> None:
+def test_followup_attempt__next_round__advances_before_recording() -> None:
     assert advance_current_round_no(current_round_no=0, is_followup=False) == 0
     assert advance_current_round_no(current_round_no=0, is_followup=True) == 1
     assert advance_current_round_no(current_round_no=1, is_followup=True) == 2
 
 
-def test_fourth_attempt__is_blocked_before_another_connector_read() -> None:
+def test_fourth_attempt__round_limit_reached__blocks_before_connector_read() -> None:
     with pytest.raises(RetrievalRoundLimitExceeded):
         advance_current_round_no(current_round_no=2, is_followup=True)
 

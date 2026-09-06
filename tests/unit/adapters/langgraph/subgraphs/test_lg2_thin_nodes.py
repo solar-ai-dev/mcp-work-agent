@@ -47,6 +47,8 @@ def test_retrieval_projection__is_operation__allowlisted() -> None:
         "request_intent": {"goal": "find evidence"},
         "rag_candidates": [],
         "exclusion_obligation_segment_ids": ["segment-1"],
+        "query_attempts": [],
+        "prior_selection": None,
     }
 
 

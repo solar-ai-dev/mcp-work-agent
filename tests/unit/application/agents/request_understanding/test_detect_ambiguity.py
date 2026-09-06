@@ -158,7 +158,7 @@ def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -
     assert runtime.calls == []
 
 
-def test_general_advice__does_not_ask_for_model_invented_user_choice() -> None:
+def test_general_advice__model_invented_choice__does_not_ask_user() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     request = _answer_only_request("프로젝트 회의 준비 원칙을 한 문장으로 알려줘.")
     candidate: RequestGoalCandidateV1 = {

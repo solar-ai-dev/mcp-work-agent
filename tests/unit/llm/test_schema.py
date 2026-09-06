@@ -11,7 +11,7 @@ from __future__ import annotations
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
-def test_contains_cardinality__supports_zero_and_exactly_one_in_untyped_fragments() -> None:
+def test_contains_cardinality__untyped_fragments__supports_zero_and_exactly_one() -> None:
     matching = {"properties": {"segment_id": {"const": "mail"}}}
     one = {"contains": matching, "minContains": 1, "maxContains": 1}
     zero = {"contains": matching, "minContains": 0, "maxContains": 0}
@@ -26,7 +26,7 @@ def test_contains_cardinality__supports_zero_and_exactly_one_in_untyped_fragment
     assert "'segment_id': {'const': 'mail'}" in validate_output_schema([other], one)[0]
 
 
-def test_discriminated_union__reports_selected_variant_field_without_other_variants() -> None:
+def test_discriminated_union__selected_variant__reports_only_its_fields() -> None:
     schema = {"oneOf": [
         {"type": "object", "required": ["kind", "start"],
          "properties": {"kind": {"const": "TIME"}, "start": {"type": "string"}}},
@@ -43,7 +43,7 @@ def test_discriminated_union__reports_selected_variant_field_without_other_varia
     ]
 
 
-def test_overlapping_union__remains_invalid_without_guessing_variant() -> None:
+def test_overlapping_union__ambiguous_variant__remains_invalid() -> None:
     branch = {"properties": {"kind": {"const": "TIME"}}}
     assert validate_output_schema({"kind": "TIME"}, {"oneOf": [branch, branch]}) == [
         "$ must match exactly one schema in oneOf (matched 2)",

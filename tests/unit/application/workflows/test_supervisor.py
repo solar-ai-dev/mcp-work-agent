@@ -848,7 +848,7 @@ def test_waiting_approval__during_fresh_review__allows_domain_validation() -> No
     assert routed["target"] == SupervisorTarget.DOMAIN_VALIDATION.value
 
 
-def test_recovery_owner_suspend__does_not_create_same_state_self_loop() -> None:
+def test_recovery_owner_suspend__same_state__does_not_self_loop() -> None:
     candidate = make_supervisor_decision(
         target=SupervisorTarget.SUSPEND,
         next_phase=None,
@@ -871,7 +871,7 @@ def test_recovery_owner_suspend__does_not_create_same_state_self_loop() -> None:
     assert routed["target"] == SupervisorTarget.SUSPEND.value
 
 
-def test_cancel_owner_ready_to_finalize__reaches_terminal_message_instead_of_self_loop() -> None:
+def test_cancel_owner__ready_to_finalize__reaches_terminal_message() -> None:
     candidate = make_supervisor_decision(
         target=SupervisorTarget.RESPONSE_SYNTHESIS,
         next_phase=None,

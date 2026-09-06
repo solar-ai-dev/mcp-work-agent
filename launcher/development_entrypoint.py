@@ -77,6 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
             mcp_manifest_version=MCP_MANIFEST_VERSION,
+            github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID"),
+            github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
             keyring_store=SessionMemorySecretStore(),
         )
 

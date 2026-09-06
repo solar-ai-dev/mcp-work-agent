@@ -8,7 +8,7 @@ import pytest
 from scripts import seed_google_e2e as seed
 
 
-def test_send_fixture_display_name_never_changes_authenticated_sender_address() -> None:
+def test_send_fixture__display_name__preserves_authenticated_sender_address() -> None:
     args = seed.parser().parse_args([
         "--tag", "closure31-person", "mail-send", "--to", seed.TEST_ACCOUNTS[0],
         "--sender-name", "김철수 대리 (GWA 테스트)",
@@ -26,7 +26,7 @@ def test_send_fixture_display_name_never_changes_authenticated_sender_address() 
     assert "[GWA E2E closure31-person]" in str(message["Subject"])
 
 
-def test_send_fixture_rejects_display_name_header_injection() -> None:
+def test_send_fixture__display_name_header_injection__rejects() -> None:
     args = seed.parser().parse_args([
         "--tag", "closure31-person", "mail-send", "--to", seed.TEST_ACCOUNTS[0],
         "--sender-name", "이름\nBcc: other@example.com", "--subject", "test", "--body", "test",
@@ -36,7 +36,7 @@ def test_send_fixture_rejects_display_name_header_injection() -> None:
 
 
 @pytest.mark.parametrize("received_at", ["2026-08-20T10:00:00+09:00", "2026-08-20T10:00:00"])
-def test_import_fixture_preserves_sender_and_date_without_sending(received_at: str) -> None:
+def test_import_fixture__sender_and_date__preserves_without_sending(received_at: str) -> None:
     args = seed.parser().parse_args([
         "--tag", "closure31", "mail-import", "--to", seed.TEST_ACCOUNTS[0],
         "--sender", seed.TEST_ACCOUNTS[1], "--sender-name", "김철수 대리 (테스트)",
@@ -60,7 +60,7 @@ def test_import_fixture_preserves_sender_and_date_without_sending(received_at: s
     assert "가져온 테스트 자료" in message.get_content()
 
 
-def test_task_fixture_preserves_notes_and_planned_date() -> None:
+def test_task_fixture__notes_and_planned_date__preserves() -> None:
     args = seed.parser().parse_args([
         "--tag", "closure4", "task-upload", "--title", "보고서",
         "--notes", "자료 정리", "--scheduled-date", "2026-09-07",
@@ -73,7 +73,7 @@ def test_task_fixture_preserves_notes_and_planned_date() -> None:
     }
 
 
-def test_calendar_fixture_rejects_timezone_less_input() -> None:
+def test_calendar_fixture__timezone_less_input__rejects() -> None:
     args = seed.parser().parse_args([
         "--tag", "closure4", "calendar-upload", "--title", "회의",
         "--start", "2026-09-08T14:00:00", "--end", "2026-09-08T14:30:00",
@@ -82,7 +82,7 @@ def test_calendar_fixture_rejects_timezone_less_input() -> None:
         seed.build_fixture(args)
 
 
-def test_mail_fixture_rejects_other_recipients() -> None:
+def test_mail_fixture__other_recipients__rejects() -> None:
     with pytest.raises(SystemExit):
         seed.parser().parse_args([
             "--tag", "closure4", "mail-send", "--to", "other@example.com",
@@ -92,7 +92,7 @@ def test_mail_fixture_rejects_other_recipients() -> None:
 
 @pytest.mark.parametrize("uncertain", [False, True])
 @pytest.mark.parametrize("command", ["task-upload", "mail-import"])
-def test_fixture_does_not_repeat_completed_or_uncertain_write(
+def test_fixture_write__completed_or_uncertain__does_not_repeat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uncertain: bool,
     command: str,
 ) -> None:

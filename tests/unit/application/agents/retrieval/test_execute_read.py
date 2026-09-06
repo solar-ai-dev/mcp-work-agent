@@ -51,7 +51,7 @@ from google_work_agent.ports.system.settings_port import GitHubRepositoryDefault
         ({}, 1000, None),
     ],
 )
-def test_query_attempt_count_is_bounded_acquired_resources_not_provider_estimate(
+def test_query_attempt_count__provider_estimate__uses_bounded_acquired_resources(
     output: dict[str, JsonValue],
     total: int | None,
     count: int | None,
@@ -285,7 +285,7 @@ def test_invalid_continuation__binding_prevents__provider_call(
 
 
 @pytest.mark.parametrize("detail_used,expected_calls", [(0, 1), (12, 0)])
-def test_detail_dispatch__charges_only_detail_dimension_and_honors_limit(
+def test_detail_dispatch__detail_dimension__charges_only_detail_and_honors_limit(
     detail_used: int, expected_calls: int
 ) -> None:
     plan: SourceFetchPlanV1 = {
@@ -357,7 +357,9 @@ def test_exhausted_continuation__does_not__restart_provider_read() -> None:
 
 
 @pytest.mark.parametrize("operation", ["SEARCH", "DETAIL_FETCH", "NEXT_PAGE"])
-def test_repeated_read__blocked_before_provider_and_budget_charge(operation: str) -> None:
+def test_repeated_read__same_query__blocks_before_provider_and_budget_charge(
+    operation: str,
+) -> None:
     plan = cast(SourceFetchPlanV1, {**_plan(), "operation_kind": operation})
     args: dict[str, JsonValue] = (
         {"query": "bounded"} if operation != "DETAIL_FETCH" else {"thread_id": "t1"}
@@ -419,7 +421,7 @@ def test_repeated_read__blocked_before_provider_and_budget_charge(operation: str
     assert budget["source_page_calls_used"] == 0
 
 
-def test_first_unread_page__is_not_mistaken_for_repeat() -> None:
+def test_next_page__first_unread_page__does_not_treat_as_repeat() -> None:
     plan = _plan()
     cache = InMemoryRunRetrievalCache()
     cache.put_read_result(

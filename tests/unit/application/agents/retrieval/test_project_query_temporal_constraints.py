@@ -5,7 +5,7 @@ from google_work_agent.application.agents.retrieval.project_query_temporal_const
 )
 
 
-def test_initial_temporal_meaning_survives_changed_query_and_detail() -> None:
+def test_query_temporal_constraints__changed_query_and_detail__retains_initial_meaning() -> None:
     target = {
         "kind": "TEMPORAL_RANGE",
         "axis": "EVENT_TIME",
@@ -28,7 +28,7 @@ def test_initial_temporal_meaning_survives_changed_query_and_detail() -> None:
     assert project_query_temporal_constraints([]) == []
 
 
-def test_partial_new_temporal_contract_fails_closed() -> None:
+def test_query_temporal_constraints__partial_contract__fails_closed() -> None:
     with pytest.raises(ValueError, match="fields are invalid"):
         project_query_temporal_constraints(
             [

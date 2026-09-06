@@ -8,7 +8,7 @@ from google_work_agent.ports.llm.output_schema_validation import validate_output
 
 
 @pytest.mark.parametrize("recheck", [False, True])
-def test_review_output__requires_korean_description_in_initial_and_repair_schema(
+def test_review_output__initial_and_repair_schema__requires_korean_description(
     recheck: bool,
 ) -> None:
     dimension = "review.inspect_goal_and_evidence"

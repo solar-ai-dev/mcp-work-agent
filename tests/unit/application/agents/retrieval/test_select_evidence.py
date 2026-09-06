@@ -66,7 +66,7 @@ def test_receipt_listing__uses_receipt_not_event_date__unless_content_is_request
     {}, {"other": {"role": "CONTEXT", "relevance_reason": "존재하지 않는 후보"}},
     {"mail": {"role": "EXCLUDED", "relevance_reason": ""}},
 ])
-def test_missing_invented_or_unjustified_assessment__uses_bounded_repair(
+def test_source_assessment__missing_invented_or_unjustified__uses_bounded_repair(
     invalid: dict[str, object],
 ) -> None:
     draft = {"segment_id": "mail", "role": "CONTEXT", "relevance_reason": "인물 후보"}
@@ -94,7 +94,7 @@ def test_missing_invented_or_unjustified_assessment__uses_bounded_repair(
     assert evidence[0]["excerpt"] == segment.text
 
 
-def test_materialization__rejects_inconsistent_legacy_selection_without_guessing() -> None:
+def test_materialization__inconsistent_legacy_selection__rejects_without_guessing() -> None:
     with pytest.raises(ValueError, match="inconsistent selected segment/evidence binding"):
         materialize_evidence_drafts(
             {"schema_version": 2, "selected_segment_ids": ["mail"],
@@ -103,7 +103,7 @@ def test_materialization__rejects_inconsistent_legacy_selection_without_guessing
         )
 
 
-def test_assessment_object_order_cannot_change_ranked_detail_priority():
+def test_source_assessment__object_order_changes__preserves_ranked_detail_priority():
     segments = [SourceSegment(key, f"gmail_thread:{key}", "GMAIL", "gmail_thread", key,
                               None, None, {}, "박람회 참석 안내") for key in ("z-top", "a-low")]
     runtime = FakeLLMRuntime(deque([_llm_result({
@@ -127,7 +127,7 @@ def test_assessment_object_order_cannot_change_ranked_detail_priority():
     ]
 
 
-def test_selection_input_budget__keeps_each_requested_source_and_binds_schema_to_visible_ids():
+def test_selection_budget__multiple_sources__represents_each_and_binds_visible_schema():
     segments = [
         SourceSegment(f"mail-{n}", f"gmail_thread:{n}", "GMAIL", "gmail_thread", str(n),
                       None, None, {}, "회의 안내")
@@ -260,7 +260,7 @@ def test_select_evidence__sole_exact_selected_read__skips_llm() -> None:
     assert result["evidence_drafts"][0]["role"] == "SUPPORTS"
 
 
-def test_irrelevant_search_candidates__can_all_be_excluded_without_repair_or_fabricated_evidence():
+def test_search_candidates__all_irrelevant__excludes_without_repair_or_fabrication():
     output = {"schema_version": 2, "evidence_drafts": [], "selected_segment_ids": [],
               "excluded_segment_ids": ["outside-period"]}
     runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(output))]))
@@ -410,7 +410,7 @@ def test_select_evidence__repairs_container_only_selection__for_task_read() -> N
     assert budget["semantic_revisions_used_by_failure"]
 
 
-def test_select_evidence__promotes_meeting_record_over_notification_for_detail_read() -> None:
+def test_select_evidence__meeting_record_and_notification__prioritizes_record_detail() -> None:
     notification_only = {
         "schema_version": 2,
         "evidence_drafts": [
@@ -499,7 +499,7 @@ def test_select_evidence__promotes_meeting_record_over_notification_for_detail_r
     }
 
 
-def test_select_evidence__preserves_one_candidate_per_explicit_work_lineage() -> None:
+def test_select_evidence__explicit_work_lineages__preserves_each_candidate() -> None:
     empty_selection = {
         "schema_version": 2,
         "evidence_drafts": [],
@@ -591,7 +591,7 @@ def test_select_evidence__preserves_one_candidate_per_explicit_work_lineage() ->
     ) == 2
 
 
-def test_select_evidence__prefers_detail_content_over_same_thread_search_preview() -> None:
+def test_select_evidence__same_thread_preview_and_detail__prefers_detail() -> None:
     preview_selection = {
         "schema_version": 2,
         "evidence_drafts": [

@@ -44,7 +44,7 @@ def test_scheduled_date_maps__to_google_due__at_provider_boundary() -> None:
 
 
 @pytest.mark.parametrize("value", ["2026-02-30", "20260907", "2026-09-07T14:00:00+09:00"])
-def test_invalid_scheduled_date_is_rejected_before_provider_write(value: str) -> None:
+def test_scheduled_date__invalid__rejects_before_provider_write(value: str) -> None:
     with pytest.raises(server._WorkspaceToolError, match="INVALID_ARGUMENT"):
         server._task_write_body({"title": "Report", "scheduled_date": value}, title_required=True)
 

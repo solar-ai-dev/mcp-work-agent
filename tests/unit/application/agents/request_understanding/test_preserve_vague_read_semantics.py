@@ -28,7 +28,7 @@ def _candidate() -> RequestGoalCandidateV1:
     }
 
 
-def test_period_only_listing_does_not_inherit_model_business_topics() -> None:
+def test_period_only_listing__model_business_topics__does_not_inherit() -> None:
     candidate = _candidate()
     candidate["constraints"].extend([
         {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정 관련 메일"]},
@@ -54,7 +54,7 @@ def test_period_only_listing_does_not_inherit_model_business_topics() -> None:
         ("다음주에 열리는 박람회 관련 메일", "EVENT_TIME"),
     ],
 )
-def test_temporal_meaning_is_preserved_separately_from_message_receipt(
+def test_temporal_meaning__event_request__preserves_separately_from_receipt(
     request_text: str, axis: str
 ) -> None:
     result = operation.preserve_vague_read_semantics(
@@ -67,7 +67,7 @@ def test_temporal_meaning_is_preserved_separately_from_message_receipt(
     assert fields["period"]
 
 
-def test_relative_period_does_not_keep_llm_invented_absolute_bounds() -> None:
+def test_relative_period__llm_invented_bounds__does_not_keep() -> None:
     candidate = _candidate()
     candidate["constraints"] += [
         {"kind": "DATE", "field": "date_period_start", "value": "2026-09-07"},
@@ -82,14 +82,14 @@ def test_relative_period_does_not_keep_llm_invented_absolute_bounds() -> None:
     assert "date_period_end" not in fields
 
 
-def test_explicit_day_is_not_expanded_to_whole_month() -> None:
+def test_explicit_day__day_request__does_not_expand_to_month() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(), request_text="9월 3일 체육대회 관련 메일 찾아줘", entry_mode="AGENT_SEARCH"
     )
     assert not any(item["field"] == "period" for item in result["constraints"])
 
 
-def test_duplicate_model_periods_cannot_override_user_event_time_or_run_year() -> None:
+def test_model_periods__duplicate_values__cannot_override_user_axis_or_run_year() -> None:
     candidate = _candidate()
     candidate["constraints"] += [
         {"kind": "DATE", "field": "period", "value": "2025-09-01T00:00:00Z"},
@@ -115,7 +115,7 @@ def test_duplicate_model_periods_cannot_override_user_event_time_or_run_year() -
     assert candidate["constraints"][-1]["value"] == "MESSAGE_TIME"
 
 
-def test_vague_read_semantics__restores_search_meaning_and_removes_placeholder() -> None:
+def test_vague_read_semantics__placeholder_input__restores_search_and_removes_placeholder() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(),
         request_text="회의 관련 메일이 있는데 그거 분석해서 일정 정리해줘.",
@@ -132,7 +132,7 @@ def test_vague_read_semantics__restores_search_meaning_and_removes_placeholder()
     assert by_field["required_information"] == ["일정"]
 
 
-def test_vague_read_semantics__preserves_people_periods_and_business_topics() -> None:
+def test_vague_read_semantics__people_periods_and_topics__preserves() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(),
         request_text="지난주에 김대리와 이야기했던 프로젝트 일정 메일을 찾아봐.",
@@ -145,7 +145,7 @@ def test_vague_read_semantics__preserves_people_periods_and_business_topics() ->
     assert by_field["search_terms"] == ["일정"]
 
 
-def test_vague_read_semantics__does_not_use_discussion_verbs_as_search_terms() -> None:
+def test_vague_read_semantics__discussion_verbs__does_not_use_as_search_terms() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(),
         request_text="지난주에 프로젝트 일정 얘기한 메일 찾아서 해야 할 일 정리해줘.",
@@ -157,7 +157,7 @@ def test_vague_read_semantics__does_not_use_discussion_verbs_as_search_terms() -
     assert by_field["search_terms"] == ["프로젝트", "일정"]
 
 
-def test_explicit_gmail_subject__replaces_broad_search_terms_with_exact_literal() -> None:
+def test_gmail_subject__explicit_literal__replaces_broad_search_terms() -> None:
     request_text = (
         "Gmail에서 제목이 '절대로 존재하지 않는 3/8 검증 메일 20260905'인 메일을 찾아 분석해줘."
     )
@@ -181,7 +181,7 @@ def test_explicit_gmail_subject__replaces_broad_search_terms_with_exact_literal(
     assert "search_terms" not in by_field
 
 
-def test_vague_read_semantics__replaces_model_broad_query_with_source_terms() -> None:
+def test_vague_read_semantics__model_broad_query__replaces_with_source_terms() -> None:
     candidate = _candidate()
     candidate["constraints"].append(
         {
@@ -202,7 +202,7 @@ def test_vague_read_semantics__replaces_model_broad_query_with_source_terms() ->
     assert by_field["period"] == ["최근"]
 
 
-def test_vague_read_semantics__preserves_answer_information_without_making_it_query_text() -> None:
+def test_vague_read_semantics__answer_information__does_not_make_query_text() -> None:
     result = operation.preserve_vague_read_semantics(
         _candidate(),
         request_text="최근 회의 메일 중 아직 후속 작업이 안 된 내용과 최신 결정을 정리해줘.",
@@ -215,7 +215,7 @@ def test_vague_read_semantics__preserves_answer_information_without_making_it_qu
     assert by_field["required_information"] == ["후속 작업", "최신 결정"]
 
 
-def test_mail_to_task__preserves_source_search_without_changing_write_intent() -> None:
+def test_mail_to_task__source_search__preserves_write_intent() -> None:
     candidate = _candidate()
     candidate["requested_effect_hints"] = ["READ", "CREATE"]
     candidate["requested_resource_hints"] = ["GMAIL_THREAD", "TASK"]

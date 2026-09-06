@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import uuid
 from pathlib import Path
 from typing import NoReturn
@@ -32,6 +33,8 @@ def development_runtime_config(
         working_directory=PROJECT_ROOT,
         mcp_manifest_version=MCP_MANIFEST_VERSION,
         mcp_module_name=mcp_module_name,
+        github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID"),
+        github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
     )
 
 

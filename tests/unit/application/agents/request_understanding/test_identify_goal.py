@@ -344,7 +344,7 @@ def test_identify_goal__vague_mail_read__requires_original_search_semantics() ->
     ] == 1
 
 
-def test_identify_goal__restores_vague_search_semantics_omitted_by_inference() -> None:
+def test_identify_goal__inference_omits_vague_search__restores_semantics() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {

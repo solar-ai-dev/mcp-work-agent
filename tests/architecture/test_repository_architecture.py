@@ -12,63 +12,42 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "google_work_agent"
 FINAL = os.getenv("GWA_ARCHITECTURE_FINAL_CUTOVER") == "1"
 
-ROLES = {
-    "request_understanding": {
-        "identify_goal",
-        "detect_ambiguity",
-        "finalize_intent",
-        "validate_intent",
-    },
-    "tool_routing": {
-        "determine_io_resources",
-        "resolve_policy_preconditions",
-        "bind_registry_candidates",
-        "select_tool_if_needed",
-        "finalize_route",
-        "validate_route",
-    },
-    "retrieval": {
-        "plan_query",
-        "build_query",
-        "execute_read",
-        "normalize_segments",
-        "resolve_availability",
-        "rag_retrieve_rerank",
-        "select_evidence",
-        "assess_sufficiency",
-        "finalize_retrieval",
-    },
-    "work_analysis": {
-        "extract_work_facts",
-        "resolve_entity_relations",
-        "resolve_temporal_dependencies",
-        "detect_duplicate_conflict_candidates",
-        "validate_relations",
-        "assess_information_gaps",
-        "assess_operational_risks",
-        "assemble_work_analysis",
-        "validate_work_analysis",
-    },
-    "planning": {
-        "choose_answer_or_action_from_route",
-        "outline_answer",
-        "compose_answer",
-        "resolve_default_container",
-        "draft_action_objective_per_output_route",
-        "compose_arguments_per_output_route",
-        "build_dependencies",
-        "assemble_plan",
-        "validate_plan",
-    },
-    "review": {
-        "inspect_goal_and_evidence",
-        "inspect_action_scope_and_route",
-        "inspect_constraints_and_policy_summary",
-        "aggregate_review_findings",
-        "validate_review",
-        "recheck_affected_dimensions",
-    },
-}
+def _agent_operation_manifest(mapping: str) -> dict[str, set[str]]:
+    if "### Agent capability mapping" not in mapping:
+        raise ValueError("missing Agent operation manifest")
+    section = mapping.split("### Agent capability mapping", 1)[1]
+    if section.count("```") < 2:
+        raise ValueError("missing Agent operation manifest block")
+    block = section.split("```", 2)[1]
+    roles: dict[str, set[str]] = {}
+    owner: str | None = None
+    for line in block.splitlines():
+        if not line.strip():
+            continue
+        if re.fullmatch(r"[a-z][a-z_]+/", line):
+            owner = line[:-1]
+            if owner in roles:
+                raise ValueError("duplicate manifest owner")
+            roles[owner] = set()
+        elif owner is not None and re.fullmatch(r"  [a-z][a-z0-9_]+", line):
+            operation = line.strip()
+            if operation in roles[owner]:
+                raise ValueError("duplicate manifest operation")
+            roles[owner].add(operation)
+        else:
+            raise ValueError("invalid Agent operation manifest row")
+    if set(roles) != {
+        "request_understanding", "tool_routing", "retrieval",
+        "work_analysis", "planning", "review",
+    } or not all(roles.values()):
+        raise ValueError("incomplete Agent owner manifest")
+    return roles
+
+
+ROLES = _agent_operation_manifest(
+    (ROOT / "docs/canonical/16-repository-architecture/01-spec-to-code-deterministic-mapping.md")
+    .read_text(encoding="utf-8")
+)
 DOMAIN_OWNERS = {
     "conversation",
     "message",
@@ -329,28 +308,95 @@ def test_immediate_application__use_case_grammar__from_current_canonical() -> No
     clean(errors)
 
 
-def test_immediate_agent__atomic__grammar() -> None:
+def _agent_operation_errors(root: Path, source: Path, roles: dict[str, set[str]]) -> list[str]:
     errors: list[str] = []
-    base = SRC / "application" / "agents"
+    base = source / "application" / "agents"
     if not base.exists():
-        return
+        return ["missing Agent capability root"]
     errors.extend(
         f"unknown agent owner: {p.name}"
         for p in base.iterdir()
-        if p.is_dir() and p.name not in ROLES and p.name != "__pycache__"
+        if p.is_dir() and p.name not in roles and p.name != "__pycache__"
     )
-    for role, allowed in ROLES.items():
+    for role, allowed in roles.items():
         owner = base / role
         if not owner.exists():
+            errors.append(f"missing Agent owner: {role}")
             continue
+        for operation in sorted(allowed):
+            if not (owner / f"{operation}.py").is_file():
+                errors.append(f"missing Agent operation: {role}.{operation}")
+            if not (
+                root / "tests/unit/application/agents" / role / f"test_{operation}.py"
+            ).is_file():
+                errors.append(f"missing mirrored Agent test owner: {role}.{operation}")
         for path in owner.glob("*.py"):
             if path.name == "__init__.py":
                 continue
             if path.stem not in allowed:
-                errors.append(f"unknown/broad agent capability: {rel(path)}")
+                errors.append(f"unknown/broad agent capability: {path.relative_to(root)}")
             elif path.stem not in functions(path):
-                errors.append(f"{rel(path)} must define {path.stem}()")
-    clean(errors)
+                errors.append(f"{path.relative_to(root)} must define {path.stem}()")
+    return errors
+
+
+def test_immediate_agent__atomic__grammar() -> None:
+    clean(_agent_operation_errors(ROOT, SRC, ROLES))
+
+
+@pytest.mark.parametrize("invalid_row,error", [
+    ("  *", "invalid Agent operation manifest row"),
+    ("  service.py", "invalid Agent operation manifest row"),
+    ("retrieval/", "duplicate manifest owner"),
+    ("  plan_query", "duplicate manifest operation"),
+])
+def test_agent_operation_manifest__invalid_or_duplicate_row__rejects_mapping(
+    invalid_row: str, error: str,
+) -> None:
+    block = "\n".join(
+        f"{owner}/\n  plan_query" for owner in (
+            "request_understanding", "tool_routing", "work_analysis",
+            "planning", "review", "retrieval",
+        )
+    )
+    manifest = "### Agent capability mapping\n```\n" + block
+    assert set(_agent_operation_manifest(manifest + "\n```")) == set(ROLES)
+    with pytest.raises(ValueError, match=error):
+        _agent_operation_manifest(manifest + "\n" + invalid_row + "\n```")
+
+
+@pytest.mark.parametrize("defect,expected", [
+    ("none", None),
+    ("extra", "unknown/broad agent capability"),
+    ("missing", "missing Agent operation"),
+    ("wrong_symbol", "must define plan_query()"),
+    ("missing_test", "missing mirrored Agent test owner"),
+    ("unknown_owner", "unknown agent owner"),
+])
+def test_agent_operation_gate__fixture_violation__rejects_missing_or_extra_authority(
+    tmp_path: Path, defect: str, expected: str | None,
+) -> None:
+    source = tmp_path / "src"
+    owner = source / "application/agents/retrieval"
+    owner.mkdir(parents=True)
+    if defect != "missing":
+        symbol = "other" if defect == "wrong_symbol" else "plan_query"
+        (owner / "plan_query.py").write_text(f"def {symbol}(): pass\n", encoding="utf-8")
+    if defect == "extra":
+        (owner / "second_authority.py").write_text(
+            "def second_authority(): pass\n", encoding="utf-8"
+        )
+    if defect == "unknown_owner":
+        (owner.parent / "other_agent").mkdir()
+    if defect != "missing_test":
+        mirror = tmp_path / "tests/unit/application/agents/retrieval"
+        mirror.mkdir(parents=True)
+        (mirror / "test_plan_query.py").write_text("", encoding="utf-8")
+    errors = _agent_operation_errors(tmp_path, source, {"retrieval": {"plan_query"}})
+    if expected is None:
+        assert errors == []
+    else:
+        assert any(expected in error for error in errors)
 
 
 def test_immediate_persistence__port_sqlite__mirror() -> None:

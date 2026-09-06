@@ -13,7 +13,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 )
 
 
-def test_restore_retrieval_continuation__preserves_bounded_prior_query() -> None:
+def test_restore_retrieval_continuation__prior_query__preserves_bounds() -> None:
     plan = cast(
         SourceFetchPlanV1,
         {
@@ -53,7 +53,7 @@ def test_restore_retrieval_continuation__preserves_bounded_prior_query() -> None
     assert result["read_result_handles"] == ["read-1"]
 
 
-def test_restore_retrieval_continuation__old_checkpoint_uses_fresh_read() -> None:
+def test_restore_retrieval_continuation__old_checkpoint__uses_fresh_read() -> None:
     assert retrieval_continuation_projection.restore_retrieval_continuation(
         {}, has_prior_result=True
     ) == {
@@ -65,7 +65,7 @@ def test_restore_retrieval_continuation__old_checkpoint_uses_fresh_read() -> Non
     }
 
 
-def test_restore_retrieval_continuation__rejects_partial_checkpoint() -> None:
+def test_restore_retrieval_continuation__partial_checkpoint__rejects() -> None:
     with pytest.raises(ValueError, match="incomplete"):
         retrieval_continuation_projection.restore_retrieval_continuation(
             {"__context_canonical_plans__": {}},

@@ -228,6 +228,7 @@ request_understanding/
   detect_ambiguity
   finalize_intent
   validate_intent
+  preserve_vague_read_semantics
 
 tool_routing/
   determine_io_resources
@@ -236,6 +237,7 @@ tool_routing/
   select_tool_if_needed
   finalize_route
   validate_route
+  format_route_confirmation
 
 retrieval/
   plan_query
@@ -247,6 +249,20 @@ retrieval/
   select_evidence
   assess_sufficiency
   finalize_retrieval
+  format_calendar_freebusy_evidence
+  guard_retrieval_read_repeat
+  has_explicit_gmail_subject
+  is_complete_create_policy_read
+  match_person_mention
+  match_temporal_evidence
+  plan_candidate_detail
+  plan_query_expansion
+  preserve_gmail_search_semantics
+  prioritize_material_gmail_evidence
+  project_attempted_detail_refs
+  project_query_temporal_constraints
+  resolve_relative_period
+  retain_unchanged_evidence
 
 work_analysis/
   extract_work_facts
@@ -269,6 +285,14 @@ planning/
   build_dependencies
   assemble_plan
   validate_plan
+  complete_analysis_answer_outline
+  normalize_generated_answer_prose
+  project_empty_read_answer
+  project_gmail_decision_read_answer
+  project_gmail_read_planning
+  project_gmail_security_read_answer
+  project_task_read_answer
+  sanitize_user_visible_answer
 
 review/
   inspect_goal_and_evidence
@@ -300,6 +324,26 @@ adapters/langgraph/subgraphs/<role>/nodes/<verb>_<object>_node.py
 
 Supporting deterministic operations that 06 keeps inside an existing node/stage keep their canonical Application operation file/test but do **not** require a second LangGraph Node, Router, Edge, or resume target. Current examples are `retrieval.resolve_availability`, `work_analysis.validate_work_analysis` inside runtime `analysis.finalize`, `planning.validate_plan` inside runtime `planning.assemble`, and `review.validate_review` inside runtime `review.aggregate_findings`.
 
+The exact list above includes the following concern-owned deterministic support. This table
+explains their derivation; it is not an independently extensible allowlist. Each listed operation
+uses the same file/symbol/unit-test grammar above. Structural validation must reject missing
+operations, additional unlisted files, mismatched entry symbols and missing mirrored test owners.
+No supporting operation introduces a new LLM responsibility, Runtime Node or resume target.
+
+| Concern contract | Existing runtime consumer | Supporting operations |
+| --- | --- | --- |
+| 01-A/06 Request Understanding: preserve current user constraints without resolving search-time identities | `request.identify_goal` | `request_understanding.preserve_vague_read_semantics` |
+| 02 user-facing wording + 06 Tool Route/Policy scope Confirmation; no new permission decision | Tool Route Confirmation projection | `tool_routing.format_route_confirmation` |
+| 05 Calendar availability and SourceSegment representation | `retrieval.normalize_segments` | `retrieval.format_calendar_freebusy_evidence` |
+| 05 QueryAttempt no-repeat and separate search/detail budgets | `retrieval.execute_read` | `retrieval.guard_retrieval_read_repeat` |
+| 05 exact Gmail anchor, deterministic Create policy pre-read completeness | query planning / sufficiency | `retrieval.has_explicit_gmail_subject`, `retrieval.is_complete_create_policy_read` |
+| 05 bounded metadata/detail acquisition, same-route expansion and inherited search constraints | `retrieval.plan_query` | `retrieval.plan_candidate_detail`, `retrieval.plan_query_expansion`, `retrieval.project_attempted_detail_refs`, `retrieval.project_query_temporal_constraints` |
+| 05 current Evidence relevance, source lineage, unchanged-source preservation | `retrieval.select_evidence` | `retrieval.prioritize_material_gmail_evidence`, `retrieval.retain_unchanged_evidence` |
+| 05 date/identity provenance and exact-anchor semantics | query planning / selection / sufficiency | Remaining resolution support is detailed immediately below |
+| 06 Planning: complete outlines from existing typed Analysis/Evidence without adding facts | `planning.outline_answer` | `planning.complete_analysis_answer_outline` |
+| 06 Planning: deterministic AnswerDraft when evidence already establishes the answer; 02 readable, grounded responses | `planning.outline_answer` / `planning.compose_answer` | `planning.project_empty_read_answer`, `planning.project_gmail_read_planning`, `planning.project_gmail_decision_read_answer`, `planning.project_gmail_security_read_answer`, `planning.project_task_read_answer` |
+| 02 user-visible prose + 06/15 evidence-bound answer schema; internal identifiers are not business facts | `planning.compose_answer` | `planning.normalize_generated_answer_prose`, `planning.sanitize_user_visible_answer` |
+
 ### Semantic retrieval resolution mapping (05 owner)
 
 The following exact supporting-operation mappings implement 05's source-date, identity and
@@ -310,15 +354,15 @@ bounded-search contracts. They are not new workflow nodes or independent retriev
 | Run-local period search hypothesis; never a source event year | `retrieval/resolve_relative_period.py` → `resolve_relative_period` | `tests/unit/application/agents/retrieval/test_resolve_relative_period.py` |
 | Source receipt/event/reporting-date comparison and uncertainty projection | `retrieval/match_temporal_evidence.py` → `match_temporal_evidence`, `project_unresolved_event_dates` | `tests/unit/application/agents/retrieval/test_match_temporal_evidence.py` |
 | Unresolved mention, exact-email alias join and source provenance | `retrieval/match_person_mention.py` → `match_person_mention`, `project_person_candidates` | `tests/unit/application/agents/retrieval/test_match_person_mention.py` |
-| User-owned anchor preservation and concept discovery validation | `retrieval/preserve_gmail_search_semantics.py` → `preserve_gmail_search_semantics`, `validate_requested_concepts` | `tests/unit/application/agents/retrieval/test_business_concept_search.py` |
-| Bounded next-page, date-spelling and resolved-identity search hypotheses | `retrieval/plan_query_expansion.py` → `deterministic_followup_query_plan` | Retrieval unit and `tests/component/langgraph/test_production_agent_subgraphs.py` |
+| User-owned anchor preservation and concept discovery validation | `retrieval/preserve_gmail_search_semantics.py` → `preserve_gmail_search_semantics`, `validate_requested_concepts` | `tests/unit/application/agents/retrieval/test_preserve_gmail_search_semantics.py` |
+| Bounded next-page, date-spelling and resolved-identity search hypotheses | `retrieval/plan_query_expansion.py` → `plan_query_expansion` | `tests/unit/application/agents/retrieval/test_plan_query_expansion.py` |
 
 Paths above are relative to `application/agents/`. The old `expand_business_concept` fixed-example
 authority is removed; production concepts come from the bounded query-planning contract.
 `assess_sufficiency` owns deterministic READ reserve/termination, `finalize_retrieval` authors the
 typed parent artifact, and `planning/compose_answer` projects uncertainty and confirmed-person scope
-without changing persisted Run Evidence. Existing structural closed-set reconciliation outside
-these mappings is not waived by this section.
+without changing persisted Run Evidence. No placement, dependency or authority exception is
+granted to an operation outside the exact manifest.
 
 ### Local Runtime provisioning target mapping
 

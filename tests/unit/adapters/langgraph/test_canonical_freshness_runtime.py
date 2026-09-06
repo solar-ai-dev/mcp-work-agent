@@ -133,7 +133,7 @@ def test_identical_back_edge__without_new_revision__fails_closed() -> None:
     assert guarded["reason_code"] == "SUPERVISOR_NO_PROGRESS"
 
 
-def test_supervisor_trace__records_stage_produced_revision_after_invalidation() -> None:
+def test_supervisor_trace__after_invalidation__records_stage_produced_revision() -> None:
     state = _state()
     revised_intent = {"meta": _meta("intent-1", 2)}
     decision = make_supervisor_decision(

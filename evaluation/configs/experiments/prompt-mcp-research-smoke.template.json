@@ -2,7 +2,7 @@
   "schema_version": 1,
   "experiment_id": "prompt-mcp-research-smoke-template",
   "experiment_kind": "PROMPT",
-  "product_sha": "21e8e8cc26a5c5fe985f05525ee04bef50d0af9e",
+  "product_sha": "a9893eca69b6bde5ad9c48de8720c3b29b5ba457",
   "dataset": {
     "path": "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
     "sha256": "52c5967da7e9606582cc05cbf5017996f0ddeafed7f5957ebe94d79a2416bfd8",

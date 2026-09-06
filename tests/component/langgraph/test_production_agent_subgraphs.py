@@ -636,7 +636,7 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     ("retrieval.assess_sufficiency", 1, ["retrieval.plan_query", "retrieval.select_evidence",
                                         "retrieval.assess_sufficiency"]),
 ])
-def test_retrieval_cancellation_returns_to_main_without_another_external_call(
+def test_retrieval_cancellation__requested__returns_to_main_without_external_call(
     cancel_after: str, expected_reads: int, expected_prompts: list[str],
 ) -> None:
     from google_work_agent.adapters.langgraph.main.routing.route_after_context_retriever import (
@@ -695,7 +695,7 @@ def test_retrieval_cancellation_returns_to_main_without_another_external_call(
     ("rag_retrieve", 1, ["retrieval.plan_query"]),
     ("select_evidence", 1, ["retrieval.plan_query", "retrieval.select_evidence"]),
 ])
-def test_retrieval_cancellation_between_scheduled_nodes_prevents_new_io(
+def test_retrieval_cancellation__between_scheduled_nodes__prevents_new_io(
     cancel_after_update: str, expected_reads: int, expected_prompts: list[str],
 ) -> None:
     cancelled = False

@@ -18,7 +18,7 @@ from google_work_agent.ports.llm.output_schema_validation import validate_output
     ("CONTEXT", "SUPPORTS"), ("CONTRADICTS", "CONTEXT"),
     ("EXCLUDED", "SUPPORTS"), ("EXCLUDED", "EXCLUDED"),
 ])
-def test_each_visible_source_requires_one_explicit_assessment(roles):
+def test_source_assessment__visible_candidates__requires_one_per_source(roles):
     schema = bind_evidence_selection_schema(
         candidate_resource_refs={"mail": "gmail_thread:1", "task": "task:2"}, max_evidence=12,
     )
@@ -40,7 +40,7 @@ def test_each_visible_source_requires_one_explicit_assessment(roles):
     {"role": "SUCCESS", "relevance_reason": "임의 성공"},
     {"role": "CONTEXT", "relevance_reason": "관련 자료", "segment_id": "other"},
 ])
-def test_unsupported_role_missing_reason_or_parallel_identity_is_rejected(assessment):
+def test_source_assessment__invalid_role_reason_or_identity__rejects(assessment):
     schema = bind_evidence_selection_schema(
         candidate_resource_refs={"mail": "gmail_thread:1"}, max_evidence=12,
     )
@@ -49,14 +49,14 @@ def test_unsupported_role_missing_reason_or_parallel_identity_is_rejected(assess
     )
 
 
-def test_empty_candidates_do_not_require_invented_evidence():
+def test_source_assessment__empty_candidates__does_not_invent_evidence():
     schema = bind_evidence_selection_schema(candidate_resource_refs={}, max_evidence=12)
     assert validate_output_schema(
         {"schema_version": 3, "segment_assessments": {}}, schema.json_schema,
     ) == []
 
 
-def test_old_inference_shape_is_not_silently_accepted():
+def test_source_assessment__old_inference_shape__rejects():
     schema = bind_evidence_selection_schema(candidate_resource_refs={}, max_evidence=12)
     assert validate_output_schema(
         {"schema_version": 2, "selected_segment_ids": [], "excluded_segment_ids": [],
@@ -64,14 +64,14 @@ def test_old_inference_shape_is_not_silently_accepted():
     )
 
 
-def test_visible_candidates_cannot_exceed_evidence_budget():
+def test_source_assessment__visible_candidates__honors_evidence_budget():
     with pytest.raises(ValueError, match="budget"):
         bind_evidence_selection_schema(
             candidate_resource_refs={"mail": "gmail_thread:1", "task": "task:2"}, max_evidence=1,
         )
 
 
-def test_inference_schema_version_matches_prompt_contract_and_manifest():
+def test_source_assessment_schema__runtime_version__matches_prompt_and_manifest():
     import json
 
     contract = next(entry for entry in load_prompt_input_contract().entries

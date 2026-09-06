@@ -211,6 +211,7 @@ def test_projection_allowlists__are_owner__local() -> None:
         "identify_goal_projection",
         "detect_ambiguity_projection",
         "finalize_intent_projection",
+        "request_confirmation_projection",
     }
     assert {path.stem for path in (TR / "projections").glob("*_projection.py")} == {
         "determine_io_resources_projection",

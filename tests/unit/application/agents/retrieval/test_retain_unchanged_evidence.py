@@ -49,7 +49,7 @@ def _plan(operation: str = "DETAIL_FETCH") -> SourceFetchPlanV1:
     })
 
 
-def test_only_unchanged_other_resources_are_retained() -> None:
+def test_retain_evidence__unchanged_other_resources__preserves() -> None:
     assert preferred_detail_evidence_ids(_selection(), [_plan()]) == ["kept", "preview"]
     result = retain_unchanged_evidence(
         _selection(), source_fetch_plans=[_plan()], segments=_segments(),
@@ -60,14 +60,14 @@ def test_only_unchanged_other_resources_are_retained() -> None:
 
 
 @pytest.mark.parametrize("operation", ["SEARCH", "NEXT_PAGE", "FREEBUSY"])
-def test_non_detail_round_requires_fresh_assessment(operation: str) -> None:
+def test_retain_evidence__non_detail_round__requires_fresh_assessment(operation: str) -> None:
     assert preferred_detail_evidence_ids(_selection(), [_plan(operation)]) == []
     assert retain_unchanged_evidence(
         _selection(), source_fetch_plans=[_plan(operation)], segments=_segments(),
     ) is None
 
 
-def test_new_invocation_or_changed_segment_cannot_reuse_judgments() -> None:
+def test_retain_evidence__new_invocation_or_changed_segment__does_not_reuse() -> None:
     assert retain_unchanged_evidence(
         None, source_fetch_plans=[_plan()], segments=_segments(),
     ) is None
@@ -76,7 +76,7 @@ def test_new_invocation_or_changed_segment_cannot_reuse_judgments() -> None:
     ) is None
 
 
-def test_inconsistent_checkpoint_selection_is_not_silently_repaired() -> None:
+def test_retain_evidence__inconsistent_checkpoint__does_not_silently_repair() -> None:
     selection = _selection()
     selection["excluded_segment_ids"].append("kept")
     with pytest.raises(ValueError, match="inconsistent prior"):
@@ -86,7 +86,7 @@ def test_inconsistent_checkpoint_selection_is_not_silently_repaired() -> None:
 
 
 @pytest.mark.parametrize("excluded", [[], ["kept"]])
-def test_detail_can_reject_its_preview_without_erasing_other_source_evidence(
+def test_retain_evidence__detail_rejects_preview__keeps_other_sources(
     excluded: list[str],
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result({

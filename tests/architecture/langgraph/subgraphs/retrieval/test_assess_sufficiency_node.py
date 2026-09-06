@@ -48,7 +48,7 @@ def test_assess_sufficiency_router__preserves_frozen_route__and_three_round_boun
     )
 
 
-def test_assess_sufficiency_router__does_not_count_duplicate_attempts_as_new_rounds() -> None:
+def test_assess_sufficiency_router__duplicate_attempts__does_not_count_new_rounds() -> None:
     state = {
         "sufficiency": {"status": "NEEDS_MORE_DATA"},
         "tool_route_plan": {"input_plan": {}},

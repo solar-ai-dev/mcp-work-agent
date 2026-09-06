@@ -77,7 +77,7 @@ def test_github_issue__preserves_observed_metadata__separately_from_description(
 
 
 @pytest.mark.parametrize("overlap", [0, 20])
-def test_long_source_chunks_preserve_header_and_item_line_boundaries(overlap: int) -> None:
+def test_source_chunking__long_source__preserves_header_and_line_boundaries(overlap: int) -> None:
     text = (
         "Received: 2026-08-31T12:37:03+00:00\n"
         "Upcoming openings 09/01 ~ 09/07\n\n"
@@ -104,7 +104,7 @@ def test_long_source_chunks_preserve_header_and_item_line_boundaries(overlap: in
     )
 
 
-def test_search_candidate_keeps_provider_sender_without_promoting_body_mentions() -> None:
+def test_search_candidate__sender_metadata__does_not_promote_body_mentions() -> None:
     acquisition = _result("김정우 대리에게 문의하세요")
     resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
     payload = cast(dict[str, object], resources[0]["payload"])
@@ -124,7 +124,7 @@ def test_search_candidate_keeps_provider_sender_without_promoting_body_mentions(
         normalize_segments(acquisition)
 
 
-def test_detail_growth_keeps_acquired_evidence_and_round_rebuild_is_stable() -> None:
+def test_detail_growth__acquired_evidence__preserves_identity_on_rebuild() -> None:
     acquisition = _result("\n".join(f"항목 {n}의 날짜와 업무 내용입니다." for n in range(20)))
     budget = ContextBudget(max_segments=4, chunk_target_tokens=70, chunk_max_tokens=100)
     prior = normalize_segments(acquisition, context_budget=budget)
@@ -162,7 +162,7 @@ def test_detail_growth_keeps_acquired_evidence_and_round_rebuild_is_stable() -> 
     assert protected not in {segment.segment_id for segment in changed}
 
 
-def test_thread_messages_keep_later_decisions_after_an_earlier_signature() -> None:
+def test_thread_messages__earlier_signature__keeps_later_decisions() -> None:
     acquisition = _result("unused")
     source = acquisition["source_summaries"][0]
     messages = [
@@ -208,7 +208,7 @@ def test_thread_messages_keep_later_decisions_after_an_earlier_signature() -> No
     assert "old quote" not in text and "김철수 드림" not in text
 
 
-def test_partial_message_metadata_fails_closed_instead_of_using_flattened_body() -> None:
+def test_message_metadata__partial__fails_closed_without_flattened_body() -> None:
     acquisition = _result("unused")
     acquisition["source_summaries"][0]["resources"] = [
         {
@@ -226,7 +226,7 @@ def test_partial_message_metadata_fails_closed_instead_of_using_flattened_body()
         normalize_segments(acquisition)
 
 
-def test_identical_chunks_in_two_messages_retain_distinct_identity_and_header_provenance() -> None:
+def test_source_chunks__identical_text_in_two_messages__keeps_distinct_provenance() -> None:
     acquisition = _result("unused")
     messages = [
         {
@@ -310,7 +310,7 @@ def test_freebusy_evidence__preserves_intervals_without__implying_an_event(
         assert "busy_intervals: []" in text
 
 
-def test_normalize_segments__shares_bounded_context_across_resources() -> None:
+def test_normalize_segments__multiple_resources__shares_bounded_context() -> None:
     acquisition = _result("unused")
     acquisition["source_summaries"][0]["resources"] = [
         {

@@ -1,4 +1,4 @@
-"""Semantic concept discovery across the production query and evidence boundaries."""
+"""Gmail semantic preservation across production query and evidence boundaries."""
 
 from datetime import datetime
 from typing import cast
@@ -55,7 +55,7 @@ def _concept() -> dict[str, object]:
     }
 
 
-def test_period_only_mail_request_reaches_provider_without_invented_schedule_filter() -> None:
+def test_mail_request__period_only__reaches_provider_without_schedule_filter() -> None:
     request = "9월 첫째주에 온 메일 찾아줘."
     intent = preserve_vague_read_semantics.preserve_vague_read_semantics(
         {
@@ -96,7 +96,7 @@ def _plan(constraints: list[object]) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("exact_subject", [False, True])
-def test_schedule_concept_keeps_project_anchor_but_never_broadens_an_exact_subject(
+def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
     exact_subject: bool,
 ) -> None:
     request = (
@@ -154,7 +154,7 @@ def test_schedule_concept_keeps_project_anchor_but_never_broadens_an_exact_subje
     [], ["회의", "회의"], [str(index) for index in range(13)], ["from:someone@example.com"],
     ['회의" OR is:unread'], ["회의\n방문"],
 ])
-def test_concept_schema_and_builder_reject_unbounded_or_provider_syntax(
+def test_concept_schema_builder__unbounded_or_provider_syntax__rejects(
     manifestations: list[str],
 ) -> None:
     candidate = _plan([{"kind": "CONCEPT", "concept": "일정", "manifestations": manifestations}])
@@ -163,7 +163,7 @@ def test_concept_schema_and_builder_reject_unbounded_or_provider_syntax(
         build_query(candidate, frozen_routes=[ROUTE], route_policies=POLICIES)
 
 
-def test_concept_only_search_is_bounded_and_new_query_identity_preserves_changes() -> None:
+def test_concept_search__concept_only__bounds_query_and_preserves_changed_identity() -> None:
     concept = _concept()
     assert concept is not None
     candidate = _plan([concept])
@@ -180,7 +180,7 @@ def test_concept_only_search_is_bounded_and_new_query_identity_preserves_changes
     assert "after:" not in str(arguments["query"])
 
 
-def test_concept_ranking_is_a_candidate_signal_not_an_event_fact() -> None:
+def test_concept_ranking__matching_concept__remains_candidate_not_event_fact() -> None:
     intent = cast(RequestIntentV2, {
         "goal": "관련 자료를 찾아줘", "constraints": [
             {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},

@@ -51,7 +51,7 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
         ("ANY", "{프로젝트 일정}"),
     ],
 )
-def test_gmail_keyword_match_mode__lowers_to_distinct_provider_query(
+def test_gmail_keyword_lowering__different_match_modes__produces_distinct_queries(
     match_mode: str, expected: str
 ) -> None:
     plan = cast(
@@ -85,7 +85,7 @@ def test_gmail_keyword_match_mode__lowers_to_distinct_provider_query(
 
 
 @pytest.mark.parametrize("axis", ["MESSAGE_TIME", "EVENT_TIME"])
-def test_gmail_temporal_lowering_does_not_confuse_event_and_receipt_dates(axis: str) -> None:
+def test_gmail_temporal_lowering__event_and_receipt_dates__keeps_axes_distinct(axis: str) -> None:
     plan = cast(
         SourceFetchPlanV1,
         {

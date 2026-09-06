@@ -160,7 +160,7 @@ def test_recover_unknown_applied__false_is_never__reported_recovered_or_retried(
     assert completion_calls == 0
 
 
-def test_recovery_confirmed_not_executed_suspends_without_inherited_recovery_target() -> None:
+def test_recovery_suspend__confirmed_not_executed__does_not_inherit_recovery_target() -> None:
     action = _action(ActionStatusV1.UNKNOWN_RESULT)
     phase = _Phase(recover_response=_action_response(applied=True, status=ActionStatusV1.FAILED))
     coordinator = _coordinator(

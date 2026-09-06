@@ -11,7 +11,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_control_adapter import
 from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorTarget
 
 
-def test_lifecycle_control__projects_execution_disposition_without_legacy_target() -> None:
+def test_lifecycle_control__execution_disposition__projects_without_legacy_target() -> None:
     result = {
         "__target__": "verification",
         "__logical_target__": "verification",
@@ -33,7 +33,7 @@ def test_lifecycle_control__projects_execution_disposition_without_legacy_target
     assert update["execution_summary"] == {"routing_outcome": "EXECUTED"}
 
 
-def test_lifecycle_control__maps_reauth_suspend_to_explicit_boundary() -> None:
+def test_lifecycle_control__reauth_suspend__maps_to_explicit_boundary() -> None:
     decision = lifecycle_control_decision(
         source_phase=WorkflowPhase.PREFLIGHT,
         control_result={
@@ -45,7 +45,7 @@ def test_lifecycle_control__maps_reauth_suspend_to_explicit_boundary() -> None:
     assert decision["target"] == SupervisorTarget.REAUTH.value
 
 
-def test_lifecycle_control__uses_changed_physical_target_over_stale_logical_state() -> None:
+def test_lifecycle_control__changed_physical_target__overrides_stale_logical_state() -> None:
     state = {"__target__": "recovery", "__logical_target__": "recovery"}
     returned = {**state, "__target__": "end"}
     patch = {key: value for key, value in returned.items() if state.get(key) != value}
@@ -58,7 +58,7 @@ def test_lifecycle_control__uses_changed_physical_target_over_stale_logical_stat
     assert decision["target"] == SupervisorTarget.SUSPEND.value
 
 
-def test_lifecycle_projection__preserves_unchanged_reason_for_new_terminal_target() -> None:
+def test_lifecycle_projection__new_terminal_target__preserves_unchanged_reason() -> None:
     prior = {
         "__target__": "cancel_resolution",
         "__logical_target__": "cancel_resolution",
@@ -81,7 +81,7 @@ def test_lifecycle_projection__preserves_unchanged_reason_for_new_terminal_targe
     assert "__workflow_control__" not in update
 
 
-def test_lifecycle_control__rejects_unregistered_main_target() -> None:
+def test_lifecycle_control__unregistered_main_target__rejects() -> None:
     with pytest.raises(ValueError, match="unregistered target"):
         lifecycle_control_decision(
             source_phase=WorkflowPhase.RECOVERY,

@@ -94,7 +94,7 @@ def finalize_supervisor_result(
 def request_intent_from_state(state: GraphState) -> RequestIntentV2:
     return cast(
         RequestIntentV2,
-        require_mapping(state.get("request_intent"), "request_intent"),
+        require_supervisor_result_mapping(state.get("request_intent"), "request_intent"),
     )
 
 
@@ -179,7 +179,7 @@ def mapping_or_none(value: object) -> JsonObject | None:
     return cast(JsonObject, value)
 
 
-def require_mapping(value: object, name: str) -> JsonObject:
+def require_supervisor_result_mapping(value: object, name: str) -> JsonObject:
     mapping = mapping_or_none(value)
     if mapping is None:
         raise ValueError(f"{name} is required")
@@ -223,6 +223,6 @@ __all__ = [
     "preflight_safe_error_code",
     "request_intent_from_state",
     "request_invalid_reason_code",
-    "require_mapping",
+    "require_supervisor_result_mapping",
     "review_target_from_state",
 ]

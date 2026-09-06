@@ -64,7 +64,7 @@ def _tool_route_plan(*, allowed_read_tool_ids: list[str]) -> ToolRoutePlanV2:
     )
 
 
-def test_retrieval_followup_path__rejects_exhausted_direct_selected_read() -> None:
+def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
     assert not has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
         tool_route_plan=_tool_route_plan(allowed_read_tool_ids=["gmail_get_thread"]),
@@ -75,7 +75,7 @@ def test_retrieval_followup_path__rejects_exhausted_direct_selected_read() -> No
     )
 
 
-def test_retrieval_followup_path__allows_search_or_unread_page() -> None:
+def test_retrieval_followup_path__search_or_unread_page__allows() -> None:
     assert has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
         tool_route_plan=_tool_route_plan(
@@ -112,7 +112,7 @@ def test_retrieval_followup_path__allows_search_or_unread_page() -> None:
     )
 
 
-def test_retrieval_followup_path__does_not_expand_selected_detail_into_search() -> None:
+def test_retrieval_followup_path__selected_detail__does_not_expand_to_search() -> None:
     assert not has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
         tool_route_plan=_tool_route_plan(
@@ -130,7 +130,7 @@ def test_retrieval_followup_path__does_not_expand_selected_detail_into_search() 
     )
 
 
-def test_retrieval_followup_path__rejects_exhausted_identity_only_search() -> None:
+def test_retrieval_followup_path__exhausted_identity_search__rejects() -> None:
     assert not has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
         tool_route_plan=_tool_route_plan(allowed_read_tool_ids=["tasks_list_tasks"]),
@@ -152,7 +152,7 @@ def test_retrieval_followup_path__rejects_exhausted_identity_only_search() -> No
         ([], 2),
     ],
 )
-def test_retrieval_followup_path__does_not_broaden_exact_subject_or_repeat_expansion(
+def test_retrieval_followup_path__exact_subject_or_repeated_expansion__does_not_broaden(
     constraints: list[dict[str, str]], search_attempt_count: int
 ) -> None:
     attempts = [
@@ -322,7 +322,7 @@ def test_followup_with_ranked_candidate__materializes_detail_fetch__without_llm(
     ]
 
 
-def test_followup_without_required_google_issue__keeps_query_planning_llm() -> None:
+def test_retrieval_followup__no_required_google_issue__keeps_query_planning_llm() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
@@ -470,7 +470,7 @@ def test_no_result_vague_phrase__relaxes_once__without_llm() -> None:
     ]
 
 
-def test_no_result_project_schedule__drops_generic_schedule_term_when_relaxing() -> None:
+def test_project_schedule_search__no_result__relaxes_generic_schedule_term() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(
         prompt_bundle_version="test",
@@ -603,7 +603,7 @@ def test_general_search__with_semantic_choice__keeps_query_planning_llm() -> Non
     assert projected_routes[0]["required_constraint_kinds"] == []
 
 
-def test_initial_next_page__repairs_before_query_materialization() -> None:
+def test_initial_query__invalid_next_page__repairs_before_materialization() -> None:
     invalid_initial = {
         "schema_version": 2,
         "route_queries": [
@@ -1098,7 +1098,7 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
     ]
 
 
-def test_general_gmail_search__uses_preserved_person_and_search_terms() -> None:
+def test_general_gmail_search__preserved_person_and_terms__uses_constraints() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
@@ -1182,7 +1182,7 @@ def test_general_gmail_search__uses_preserved_person_and_search_terms() -> None:
     ]
 
 
-def test_general_gmail_search__resolves_last_week_from_injected_clock() -> None:
+def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [

@@ -82,7 +82,7 @@ def test_release_gate__receives_only__observed_facts(monkeypatch: pytest.MonkeyP
     assert profile.local_runtime_eligible is True
 
 
-def test_default_gpu_probe_timeout__allows_normal_nvidia_smi_startup(
+def test_default_gpu_probe_timeout__normal_nvidia_smi_startup__allows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed_timeouts: list[float] = []

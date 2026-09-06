@@ -201,7 +201,7 @@ def test_local_request__uses_profile__model_for_prompt() -> None:
     assert local.calls == 1
 
 
-def test_local_inference_trace_includes_class_profile_and_actual_provider_model() -> None:
+def test_local_inference_trace__actual_provider_result__includes_class_profile_and_model() -> None:
     router = _router(checkpoint=ExternalScopeCheckpoint(scope=_scope()), api=_Provider())
     router.runtime_selection = replace(
         router.runtime_selection,
@@ -264,7 +264,7 @@ def test_runtime_circuit_callbacks__guard_and_record__the_selected_leaf() -> Non
     ]
 
 
-def test_malformed_json__uses_the_bounded_schema_repair_path() -> None:
+def test_json_validation__malformed_response__uses_bounded_schema_repair() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     malformed = '{"answer":"unterminated'
     provider = _Provider(runtime=ActualRuntime.LOCAL_GPU, content=malformed)

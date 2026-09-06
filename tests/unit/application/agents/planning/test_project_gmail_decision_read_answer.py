@@ -3,7 +3,7 @@ from google_work_agent.application.agents.planning.project_gmail_decision_read_a
 )
 
 
-def test_gmail_decision_read__projects_only_explicitly_decided_source_clauses() -> None:
+def test_gmail_decision_read__source_clauses__projects_only_explicit_decisions() -> None:
     result = project_gmail_decision_read_answer(
         user_request="KAN-93 관련 메일이 여러 개일 때 최신 결정이 무엇인지 알려줘.",
         request_intent={
@@ -51,7 +51,7 @@ def test_gmail_decision_read__projects_only_explicitly_decided_source_clauses() 
     assert result.draft["evidence_refs"] == ["e-profile", "e-navigation"]
 
 
-def test_non_decision_gmail_read__keeps_general_answer_composition() -> None:
+def test_gmail_read__non_decision_request__keeps_general_composition() -> None:
     assert (
         project_gmail_decision_read_answer(
             user_request="회의 메일을 요약해줘.",

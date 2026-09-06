@@ -36,10 +36,10 @@ from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject i
     has_explicit_gmail_subject,
 )
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
-    deterministic_candidate_detail_plan,
+    plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query_expansion import (
-    deterministic_followup_query_plan,
+    plan_query_expansion,
 )
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     preserve_gmail_search_semantics,
@@ -171,7 +171,7 @@ def deterministic_query_plan(
 ) -> RetrievalQueryPlanV2 | None:
     """Project deterministic initial and candidate-detail continuations."""
 
-    candidate_detail = deterministic_candidate_detail_plan(
+    candidate_detail = plan_candidate_detail(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
         detail_candidate_refs=detail_candidate_refs,
@@ -179,7 +179,7 @@ def deterministic_query_plan(
     )
     if candidate_detail is not None:
         return candidate_detail
-    followup = deterministic_followup_query_plan(
+    followup = plan_query_expansion(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
         person_candidates=person_candidates,

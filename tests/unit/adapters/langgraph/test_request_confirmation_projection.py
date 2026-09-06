@@ -22,7 +22,7 @@ def test_repository_missing__korean_confirmation__names_required_repository() ->
     assert question["affected_field_paths"] == ["repository"]
 
 
-def test_korean_request_confirmation__uses_user_language_and_hides_reason_code() -> None:
+def test_request_confirmation__korean_request__uses_user_language_and_hides_reason_code() -> None:
     question = request_confirmation_projection.build_request_clarification_question(
         request_text="회의 일정을 만들어줘",
         ambiguity={
@@ -45,7 +45,7 @@ def test_korean_request_confirmation__uses_user_language_and_hides_reason_code()
     assert question["reason_code"] == "MISSING_START_TIME"
 
 
-def test_korean_request_confirmation__does_not_expose_unknown_internal_field() -> None:
+def test_request_confirmation__unknown_internal_field__does_not_expose() -> None:
     question = request_confirmation_projection.build_request_clarification_question(
         request_text="업무를 처리해줘",
         ambiguity={

@@ -111,7 +111,7 @@ def test_outline__does_not_replace__invalid_evidence_identity() -> None:
         )
 
 
-def test_outline_task_read__selects_concrete_task_without_llm() -> None:
+def test_outline_task_read__concrete_task__selects_without_llm() -> None:
     invoked = False
 
     def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
@@ -149,7 +149,7 @@ def test_outline_task_read__selects_concrete_task_without_llm() -> None:
     }
 
 
-def test_outline_empty_gmail_read__returns_no_result_without_llm() -> None:
+def test_outline_gmail_read__empty_evidence__returns_no_result_without_llm() -> None:
     invoked = False
 
     def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
@@ -185,7 +185,7 @@ def test_outline_empty_gmail_read__returns_no_result_without_llm() -> None:
     assert result == {"sections": ["검색 결과 없음"], "evidence_refs": []}
 
 
-def test_outline_analysis_read__keeps_all_current_work_facts_for_composition() -> None:
+def test_outline_analysis_read__current_work_facts__preserves_for_composition() -> None:
     result = outline_answer(
         user_request="회의 메일을 분석해 일정과 후속 작업을 정리해줘.",
         request_intent={"goal": "회의 분석", "analysis_requirement": "REQUIRED"},
@@ -264,7 +264,7 @@ def test_gmail_read__with_required_information__uses_evidence_without_llm() -> N
     }
 
 
-def test_gmail_lookup__does_not_require_unrequested_timeline_analysis() -> None:
+def test_gmail_lookup__unrequested_timeline__does_not_require_analysis() -> None:
     result = outline_answer(
         user_request="김대리 일정 관련 메일 찾아줘.",
         request_intent={

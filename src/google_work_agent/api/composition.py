@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import secrets
 import sqlite3
@@ -1091,6 +1090,8 @@ class ProductionRuntimeConfig:
         runtime_root: Path,
         working_directory: Path,
         mcp_manifest_version: str,
+        github_oauth_client_id: str | None = None,
+        github_oauth_scope: str = "",
         mcp_module_name: str | None = None,
         keyring_store: SecretStorePort | None = None,
     ) -> ProductionRuntimeConfig:
@@ -1104,8 +1105,8 @@ class ProductionRuntimeConfig:
             deployment_profile="LOCAL_CAPABLE",
             oauth_environment=OAuthEnvironment.DEVELOPMENT,
             oauth_client_id="development-client-id",
-            github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID", "").strip() or None,
-            github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", "").strip(),
+            github_oauth_client_id=(github_oauth_client_id or "").strip() or None,
+            github_oauth_scope=github_oauth_scope.strip(),
             api_contract_version=API_CONTRACT_VERSION,
             mcp_manifest_version=mcp_manifest_version,
             policy_version="2026-08-06.p0",

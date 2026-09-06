@@ -58,7 +58,7 @@ _GENERIC_SEARCH_TERMS = frozenset(
 )
 
 
-def deterministic_followup_query_plan(
+def plan_query_expansion(
     *,
     prompt_input: Mapping[str, object],
     frozen_routes: Sequence[InputToolRouteV1],
@@ -276,4 +276,4 @@ def _has_exact_subject_constraint(prompt_input: Mapping[str, object]) -> bool:
     return has_explicit_gmail_subject(constraints)
 
 
-__all__ = ["deterministic_followup_query_plan"]
+__all__ = ["plan_query_expansion"]

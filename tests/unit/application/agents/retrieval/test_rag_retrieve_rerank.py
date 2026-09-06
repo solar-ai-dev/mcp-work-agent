@@ -30,7 +30,7 @@ def test_rag_ranking__is_deterministic__and_prompt_free() -> None:
     ] == ["seg_a", "seg_b"]
 
 
-def test_rag_ranking__does_not_score_the_whole_preserved_user_request() -> None:
+def test_rag_ranking__preserved_original_request__does_not_score_whole_text() -> None:
     intent = cast(
         RequestIntentV2,
         {

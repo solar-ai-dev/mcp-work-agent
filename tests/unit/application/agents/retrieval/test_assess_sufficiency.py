@@ -122,7 +122,7 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
     }
 
 
-def test_retrieval_followup__charges_one_additional_round_before_reentry() -> None:
+def test_retrieval_followup__reentry__charges_one_additional_round() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
         _sufficiency_output("NEEDS_MORE_DATA"),
         request_intent=_intent(),
@@ -136,7 +136,7 @@ def test_retrieval_followup__charges_one_additional_round_before_reentry() -> No
     assert should_retrieve_more is True
 
 
-def test_retrieval_followup__normalizes_exhausted_read_with_evidence_to_partial() -> None:
+def test_retrieval_followup__exhausted_read_with_evidence__normalizes_to_partial() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
         _sufficiency_output("NEEDS_MORE_DATA"),
         request_intent=_intent(),
@@ -150,7 +150,7 @@ def test_retrieval_followup__normalizes_exhausted_read_with_evidence_to_partial(
     assert should_retrieve_more is False
 
 
-def test_retrieval_followup__closes_selected_direct_read_without_new_path() -> None:
+def test_retrieval_followup__selected_direct_read_without_new_path__closes() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
         _sufficiency_output("NEEDS_MORE_DATA"),
         request_intent=_intent(),
@@ -164,7 +164,7 @@ def test_retrieval_followup__closes_selected_direct_read_without_new_path() -> N
     assert should_retrieve_more is False
 
 
-def test_retrieval_followup__closes_empty_read_without_user_confirmation() -> None:
+def test_retrieval_followup__empty_read__closes_without_confirmation() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
         _sufficiency_output("NEEDS_MORE_DATA"),
         request_intent=_intent(),
@@ -356,7 +356,7 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
 
 
 @pytest.mark.parametrize("mail_count", [0, 1])
-def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence(
+def test_mail_to_task__empty_mail__does_not_substitute_task_policy_evidence(
     mail_count: int,
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
@@ -404,7 +404,7 @@ def test_mail_to_task__does_not_replace_empty_mail_with_task_policy_evidence(
         ("NONE", "MESSAGE_TIME", 0, False, True),
     ],
 )
-def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_analysis(
+def test_assess_sufficiency__analysis_request__requires_each_selected_thread_detail(
     analysis: str, axis: str, used: int, person: bool, concept: bool
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
@@ -466,7 +466,9 @@ def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_anal
 
 
 @pytest.mark.parametrize("detail_used,allowed", [(0, True), (12, False)])
-def test_detail_followup__does_not_charge_search_rounds(detail_used: int, allowed: bool) -> None:
+def test_detail_followup__hydration_only__does_not_charge_search_rounds(
+    detail_used: int, allowed: bool
+) -> None:
     budget = _run_budget(used=2)
     budget["detail_fetches_used"] = detail_used
     result, updated, followup = authorize_retrieval_followup(
@@ -542,7 +544,7 @@ def test_assess_sufficiency__safety_critical_gap__blocks_before_candidate_detail
     assert result["issues"][-1]["reason_codes"] == ["CANDIDATE_DETAIL_REQUIRED"]
 
 
-def test_assess_sufficiency__accepts_analysis_after_all_candidate_details() -> None:
+def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
     intent["analysis_requirement"] = "REQUIRED"

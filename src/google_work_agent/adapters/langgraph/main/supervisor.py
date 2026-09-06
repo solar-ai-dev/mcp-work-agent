@@ -39,7 +39,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_retrieval_rules import
 )
 from google_work_agent.adapters.langgraph.main.supervisor_terminal_projection import (
     claim_result_mapping,
-    require_mapping,
+    require_supervisor_result_mapping,
 )
 from google_work_agent.application.agents.planning.contracts.domain_validation import (
     DomainValidationOutputV1,
@@ -65,7 +65,7 @@ def route_supervisor(
 
     current_phase = WorkflowPhase(phase)
     if current_phase is WorkflowPhase.INITIALIZE:
-        return route_initialize(require_mapping(result, "result"))
+        return route_initialize(require_supervisor_result_mapping(result, "result"))
     freshness_reason = artifact_freshness_violation(current_phase, state)
     if freshness_reason is not None:
         return make_supervisor_decision(
@@ -82,41 +82,45 @@ def route_supervisor(
             state=state,
             output=cast(
                 request_understanding_output.RequestUnderstandingOutputV1,
-                require_mapping(result, "result"),
+                require_supervisor_result_mapping(result, "result"),
             ),
         )
     if current_phase is WorkflowPhase.TOOL_ROUTING:
         return route_tool_routing(
             state=state,
-            result=cast(ToolRouteResultV1, require_mapping(result, "result")),
+            result=cast(ToolRouteResultV1, require_supervisor_result_mapping(result, "result")),
         )
     if current_phase is WorkflowPhase.CONTEXT_RETRIEVAL:
         return route_retrieval(
             state=state,
             retrieval_return=cast(
                 RetrievalRouteResultV1,
-                require_mapping(result, "result"),
+                require_supervisor_result_mapping(result, "result"),
             ),
         )
     if current_phase is WorkflowPhase.WORK_ANALYSIS:
         return route_work_analysis(
             state=state,
-            result=cast(WorkAnalysisRouteResultV1, require_mapping(result, "result")),
+            result=cast(
+                WorkAnalysisRouteResultV1, require_supervisor_result_mapping(result, "result")
+            ),
         )
     if current_phase is WorkflowPhase.SOLUTION_PLANNING:
         return route_planning(
             state=state,
-            result=cast(PlanningRouteResultV1, require_mapping(result, "result")),
+            result=cast(PlanningRouteResultV1, require_supervisor_result_mapping(result, "result")),
         )
     if current_phase is WorkflowPhase.PLAN_REVIEW:
         return route_plan_review(
             state=state,
-            result=cast(PlanReviewResultV2, require_mapping(result, "result")),
+            result=cast(PlanReviewResultV2, require_supervisor_result_mapping(result, "result")),
         )
     if current_phase is WorkflowPhase.DOMAIN_VALIDATION:
         return route_domain_validation(
             state=state,
-            result=cast(DomainValidationOutputV1, require_mapping(result, "result")),
+            result=cast(
+                DomainValidationOutputV1, require_supervisor_result_mapping(result, "result")
+            ),
         )
     if current_phase is WorkflowPhase.PREFLIGHT:
         return route_preflight(

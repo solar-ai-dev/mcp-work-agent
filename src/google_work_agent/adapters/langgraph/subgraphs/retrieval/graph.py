@@ -124,7 +124,7 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
     project_person_candidates,
 )
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
-    deterministic_candidate_detail_plan,
+    plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
     DEFAULT_RETRIEVAL_BUDGET,
@@ -891,7 +891,7 @@ class RetrievalSubgraph:
             state, confirmation_response=None
         )
         tool_route_plan = _require_state_value(state["tool_route_plan"], "tool_route_plan")
-        detail_followup = deterministic_candidate_detail_plan(
+        detail_followup = plan_candidate_detail(
             prompt_input={
                 "current_round_no": state[CONTEXT_CURRENT_ROUND_NO_KEY],
                 "unresolved_sufficiency_issues": sufficiency_result["issues"],

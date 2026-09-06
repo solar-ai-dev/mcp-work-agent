@@ -10,7 +10,7 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query_expansion import (
-    deterministic_followup_query_plan,
+    plan_query_expansion,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 
@@ -139,7 +139,7 @@ def test_resolved_identity__changes_query_without_losing_anchor__and_deduplicate
         "read_result_summaries": [],
         "unresolved_sufficiency_issues": _guard(candidates)["issues"],
     }
-    plan = deterministic_followup_query_plan(
+    plan = plan_query_expansion(
         prompt_input=projection, frozen_routes=[route], person_candidates=candidates
     )
     assert plan is not None
@@ -156,7 +156,7 @@ def test_resolved_identity__changes_query_without_losing_anchor__and_deduplicate
         {**initial, "normalized_intent_constraints": delta["upsert_constraints"]}
     )
     assert (
-        deterministic_followup_query_plan(
+        plan_query_expansion(
             prompt_input=projection, frozen_routes=[route], person_candidates=candidates
         )
         is None

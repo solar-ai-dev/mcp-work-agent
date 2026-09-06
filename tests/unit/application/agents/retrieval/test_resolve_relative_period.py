@@ -12,7 +12,7 @@ def _now_ms() -> int:
     return int(datetime(2026, 9, 5, 14, 30, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1_000)
 
 
-def test_relative_periods__resolve_against_user_local_calendar() -> None:
+def test_relative_periods__user_local_calendar__resolves_bounds() -> None:
     constraints = [
         {"kind": "DATE", "field": "period", "value": ["지난 주"]},
         {"kind": "TIME", "field": "temporal_axis", "value": "MESSAGE_TIME"},
@@ -33,7 +33,7 @@ def test_relative_periods__resolve_against_user_local_calendar() -> None:
     }
 
 
-def test_recent__uses_bounded_thirty_day_window_including_today() -> None:
+def test_recent_period__implicit_window__includes_today_within_thirty_days() -> None:
     result = resolve_relative_period(
         [
             {"kind": "DATE", "field": "period", "value": "최근"},
@@ -48,7 +48,7 @@ def test_recent__uses_bounded_thirty_day_window_including_today() -> None:
     assert result["end_local"] == "2026-09-06T00:00:00"
 
 
-def test_conflicting_relative_periods__do_not_guess_a_range() -> None:
+def test_relative_periods__conflicting_values__does_not_guess() -> None:
     assert (
         resolve_relative_period(
             [{"kind": "DATE", "field": "period", "value": ["지난주", "최근"]}],
@@ -75,7 +75,7 @@ def test_conflicting_relative_periods__do_not_guess_a_range() -> None:
     ],
 )
 @pytest.mark.parametrize("axis", ["MESSAGE_TIME", "EVENT_TIME"])
-def test_calendar_bounds_preserve_the_requested_axis(
+def test_calendar_bounds__requested_axis__preserves(
     period: str, start: str, end: str, axis: str
 ) -> None:
     result = resolve_relative_period(
@@ -92,7 +92,7 @@ def test_calendar_bounds_preserve_the_requested_axis(
     assert result["end_local"] == end + "T00:00:00"
 
 
-def test_legacy_period_without_axis_is_not_silently_treated_as_message_time() -> None:
+def test_legacy_period__missing_axis__does_not_assume_message_time() -> None:
     assert (
         resolve_relative_period(
             [

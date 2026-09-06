@@ -20,6 +20,31 @@ from launcher.development_entrypoint import main
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_development_config__ambient_github_values__requires_explicit_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    monkeypatch.setenv("GITHUB_APP_CLIENT_ID", "ambient-client")
+    monkeypatch.setenv("GITHUB_APP_SCOPE", "ambient-scope")
+    base = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path, working_directory=ROOT, mcp_manifest_version="test",
+    )
+    assert base.github_oauth_client_id is None
+    assert base.github_oauth_scope == ""
+    explicit = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path, working_directory=ROOT, mcp_manifest_version="test",
+        github_oauth_client_id=" explicit-client ", github_oauth_scope=" explicit-scope ",
+    )
+    assert explicit.github_oauth_client_id == "explicit-client"
+    assert explicit.github_oauth_scope == "explicit-scope"
+    from scripts.run_development import development_runtime_config
+
+    handed_off = development_runtime_config(runtime_root=tmp_path)
+    assert handed_off.github_oauth_client_id == "ambient-client"
+    assert handed_off.github_oauth_scope == "ambient-scope"
+
+
 def test_development_entrypoint__imports_and_rejects__non_loopback_bind() -> None:
     module = importlib.import_module("launcher.development_entrypoint")
 

@@ -3,7 +3,7 @@ from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject i
 )
 
 
-def test_vague_topic__does_not_promote_inferred_subject_to_exact() -> None:
+def test_gmail_subject__vague_topic__does_not_promote_inferred_subject() -> None:
     assert not has_explicit_gmail_subject(
         [
             {"kind": "RESOURCE", "field": "subject", "value": "project_schedule"},
@@ -16,7 +16,7 @@ def test_vague_topic__does_not_promote_inferred_subject_to_exact() -> None:
     )
 
 
-def test_user_named_subject__retains_exact_subject_semantics() -> None:
+def test_gmail_subject__user_named_literal__retains_exact_semantics() -> None:
     assert has_explicit_gmail_subject(
         [
             {"kind": "SCOPE", "field": "search_criteria_subject", "value": "보안 알림"},

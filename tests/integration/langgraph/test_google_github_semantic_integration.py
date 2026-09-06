@@ -33,11 +33,11 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 )
 from google_work_agent.application.agents.retrieval.execute_read import execute_read
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
-    deterministic_candidate_detail_plan,
+    plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
 from google_work_agent.application.agents.retrieval.plan_query_expansion import (
-    deterministic_followup_query_plan,
+    plan_query_expansion,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
@@ -128,8 +128,8 @@ def _followup() -> dict[str, object]:
 
 def test_connector_followup__page_and_detail__select_only_deficient_route() -> None:
     prompt = _followup()
-    page = deterministic_followup_query_plan(prompt_input=prompt, frozen_routes=[GOOGLE, GITHUB])
-    detail = deterministic_candidate_detail_plan(
+    page = plan_query_expansion(prompt_input=prompt, frozen_routes=[GOOGLE, GITHUB])
+    detail = plan_candidate_detail(
         prompt_input=prompt, frozen_routes=[GOOGLE, GITHUB],
         detail_candidate_refs=["gmail_thread:known", "github_issue:acme/repo#7"],
     )
@@ -137,7 +137,7 @@ def test_connector_followup__page_and_detail__select_only_deficient_route() -> N
     assert page["retrieval_order"] == detail["retrieval_order"] == ["github"]
     assert page["route_queries"][0]["operation"] == "NEXT_PAGE"
     assert detail["route_queries"][0]["detail_candidate_ref"] == "github_issue:acme/repo#7"
-    assert deterministic_candidate_detail_plan(
+    assert plan_candidate_detail(
         prompt_input=prompt, frozen_routes=[GOOGLE, GITHUB],
         detail_candidate_refs=["github_issue:acme/repo#7"],
         attempted_detail_candidate_refs=["github_issue:acme/repo#7"],

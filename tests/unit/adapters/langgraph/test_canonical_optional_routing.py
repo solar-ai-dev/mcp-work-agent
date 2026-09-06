@@ -12,6 +12,10 @@ from google_work_agent.application.use_cases.run.guard_run_budget import build_d
 
 def test_work_analysis__complete_disposition__routes_to_planning() -> None:
     state = _state(analysis_requirement="REQUIRED", with_retrieval=True)
+    state["workflow_signal"] = {
+        "kind": "RETRIEVAL_REQUIRED", "reason_codes": ["EVIDENCE_GAP"],
+        "needs": [{"required_information": "source detail", "reason_codes": ["EVIDENCE_GAP"]}],
+    }
     analysis = {
         "schema_version": 2,
         "meta": {
@@ -42,6 +46,7 @@ def test_work_analysis__complete_disposition__routes_to_planning() -> None:
 
     assert decision["target"] == SupervisorTarget.SOLUTION_PLANNING.value
     assert decision["state_update"]["work_analysis_result"] == analysis
+    assert decision["state_update"]["workflow_signal"] is None
 
 
 def test_retrieval_answer__with_no_analysis__routes_to_planning() -> None:

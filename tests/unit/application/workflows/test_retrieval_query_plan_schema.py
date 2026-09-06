@@ -10,7 +10,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
-def test_run_relative_period_is_fixed_only_on_its_own_route() -> None:
+def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     temporal: TemporalRangeConstraintV1 = {
         "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
         "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
@@ -118,7 +118,7 @@ def test_v2_output__schema_accepts__v2_root_shape() -> None:
     assert errors == []
 
 
-def test_v2_output__schema_rejects_empty_initial_constraints() -> None:
+def test_v2_output_schema__empty_initial_constraints__rejects() -> None:
     candidate = {
         "schema_version": 2,
         "route_queries": [
@@ -139,7 +139,7 @@ def test_v2_output__schema_rejects_empty_initial_constraints() -> None:
     )
 
 
-def test_followup_runtime_schema__requires_a_non_empty_changed_search() -> None:
+def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["route-1"],
         supported_constraint_kinds={"route-1": ["KEYWORD"]},

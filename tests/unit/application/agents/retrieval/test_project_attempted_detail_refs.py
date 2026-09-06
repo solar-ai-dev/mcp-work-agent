@@ -8,7 +8,7 @@ from google_work_agent.application.agents.retrieval.project_attempted_detail_ref
 )
 
 
-def test_project_attempted_detail_refs__keeps_all_completed_detail_rounds() -> None:
+def test_project_attempted_detail_refs__completed_rounds__keeps_all_details() -> None:
     attempts = [
         _attempt("SEARCH", "gmail_search_threads", {"query": "KAN-93"}, "COMPLETE"),
         _attempt("DETAIL_FETCH", "gmail_get_thread", {"thread_id": "first"}, "COMPLETE"),
