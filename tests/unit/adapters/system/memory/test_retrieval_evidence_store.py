@@ -1,3 +1,5 @@
+"""Run-scoped retrieval evidence adapter scenarios."""
+
 import pytest
 
 from google_work_agent.adapters.system.memory.retrieval_evidence_store import (

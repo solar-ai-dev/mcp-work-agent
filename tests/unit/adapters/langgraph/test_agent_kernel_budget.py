@@ -4,7 +4,7 @@ These are the shared helpers every native SIX_ROLE_BASELINE subgraph node
 calls immediately before/after its one real Provider LLM call (see
 adapters/langgraph/agent_kernel.py). The deterministic policy itself
 (profile caps, absolute cap, accounting) is already exhaustively unit-tested
-in isolation by tests/unit/application/workflows/test_run_budget.py; this
+in isolation by tests/unit/application/use_cases/run/test_guard_run_budget_policy.py; this
 file proves the *wiring* -- that these helpers read/write
 state["retry_budget"] correctly and that denial raises before any Provider
 call can happen.

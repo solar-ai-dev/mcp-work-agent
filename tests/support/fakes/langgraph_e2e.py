@@ -53,7 +53,7 @@ class LangGraphE2EGeminiTransport:
         instruction_text: str,
         sampling_temperature: float | None = None,
     ) -> ProviderResponsePayload:
-        del output_schema, instruction_text, sampling_temperature
+        del instruction_text, sampling_temperature
         prompt_id = prompt_ref.prompt_id
         scenario = _scenario(prompt_input)
         key = (scenario, prompt_id)
@@ -156,6 +156,8 @@ class LangGraphE2EGeminiTransport:
                 output["arguments"] = dict(self.github_arguments)
             if prompt_id == "tool_routing.select_tool_if_needed":
                 output["selected_tool_id"] = self.github_tool_id
+        if prompt_id == "request_understanding.identify_goal":
+            _match_goal_constraints_to_schema(output, output_schema)
         return ProviderResponsePayload(
             content=json.dumps(output, sort_keys=True),
             model=model_id,
@@ -164,6 +166,36 @@ class LangGraphE2EGeminiTransport:
             output_tokens=1,
             latency_ms=1,
         )
+
+
+def _match_goal_constraints_to_schema(
+    output: dict[str, object], output_schema: OutputSchemaDefinition
+) -> None:
+    properties = output_schema.json_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return
+    constraints_schema = properties.get("constraints")
+    if not isinstance(constraints_schema, Mapping) or constraints_schema.get("type") != "object":
+        return
+    allowed_slots = constraints_schema.get("properties")
+    if not isinstance(allowed_slots, Mapping):
+        return
+    constraints = output.get("constraints")
+    if not isinstance(constraints, list):
+        return
+    slots: dict[str, list[str]] = {str(field): [] for field in allowed_slots}
+    for constraint in constraints:
+        if not isinstance(constraint, Mapping):
+            continue
+        field = constraint.get("field")
+        value = constraint.get("value")
+        if not isinstance(field, str) or field not in allowed_slots:
+            continue
+        values = value if isinstance(value, list) else [value]
+        normalized = [item for item in values if isinstance(item, str) and item]
+        if normalized:
+            slots[field] = normalized
+    output["constraints"] = slots
 
 
 def _respond(

@@ -82,8 +82,8 @@ def bootstrap(
                 "schema_version": 1,
                 "preferred_llm_mode": "API_LLM",
                 "external_llm_consent": True,
-                "default_tasklist_id": task_list_id,
-                "default_calendar_id": "calendar-e2e",
+                "selected_tasklist_ids": [task_list_id],
+                "selected_calendar_ids": ["calendar-e2e"],
             },
         },
     )

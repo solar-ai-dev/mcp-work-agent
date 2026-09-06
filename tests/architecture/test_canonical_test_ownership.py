@@ -170,6 +170,25 @@ def test_required_agent__manifest_has__exact_production_and_test_owners() -> Non
             )
 
 
+def test_required_agent__manifest_matches__exact_operation_files() -> None:
+    for owner, operations in _agent_manifest_from_source().items():
+        owner_path = SRC / "application" / "agents" / owner
+        actual = {path.stem for path in owner_path.glob("*.py") if path.name != "__init__.py"}
+        assert actual == set(operations), (
+            f"canonical Agent operation mismatch for {owner}: "
+            f"missing={sorted(set(operations) - actual)}, "
+            f"extra={sorted(actual - set(operations))}"
+        )
+
+
+def test_legacy_application_workflow__has_no__test_owner() -> None:
+    legacy_owner = ROOT / "tests" / "unit" / "application" / "workflows"
+    legacy_tests = sorted(legacy_owner.rglob("test_*.py")) if legacy_owner.exists() else []
+    assert not legacy_tests, "legacy test ownership remains: " + ", ".join(
+        str(path.relative_to(ROOT)) for path in legacy_tests
+    )
+
+
 def test_launcher_runtime__manifest_has__exact_production_and_test_owners() -> None:
     for filename, symbols, test_path in _launcher_manifest_from_source():
         _assert_mapping(ROOT / "launcher" / filename, symbols, ROOT / test_path)

@@ -1,3 +1,5 @@
+"""Round-accounting scenarios owned by retrieval.finalize_retrieval."""
+
 from typing import cast
 
 import pytest

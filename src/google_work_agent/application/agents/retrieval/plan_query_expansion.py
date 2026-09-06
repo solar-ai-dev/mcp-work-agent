@@ -5,9 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from google_work_agent.application.agents.retrieval.assess_sufficiency import (
-    select_followup_routes,
-)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
     QueryAttemptV1,
 )
@@ -23,6 +20,9 @@ from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject i
 )
 from google_work_agent.application.agents.retrieval.match_person_mention import (
     person_discovery_term,
+)
+from google_work_agent.application.agents.retrieval.select_followup_routes import (
+    select_followup_routes,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,

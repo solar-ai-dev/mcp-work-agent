@@ -1,3 +1,5 @@
+"""Cross-layer task write contract from Planning to the Google provider adapter."""
+
 from __future__ import annotations
 
 import pytest

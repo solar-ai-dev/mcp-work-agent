@@ -6,16 +6,16 @@ from typing import Any, cast
 import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema as goal_schema,
+)
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     detect_ambiguity,
 )
 from google_work_agent.application.agents.request_understanding.finalize_intent import (
     finalize_intent,
 )
-from google_work_agent.application.agents.request_understanding.identify_goal import (
-    IDENTIFY_GOAL_OUTPUT_SCHEMA,
-    identify_goal,
-)
+from google_work_agent.application.agents.request_understanding.identify_goal import identify_goal
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -46,7 +46,12 @@ def test_search_semantic_fields__wrong_kind__fails_output_contract(kind, valid) 
         "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "NONE",
     }
-    assert (not validate_output_schema(candidate, IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema)) is valid
+    assert (
+        not validate_output_schema(
+            candidate,
+            goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema,
+        )
+    ) is valid
 
 
 def test_gmail_goal__unconsumed_search_field__rejects_before_routing() -> None:

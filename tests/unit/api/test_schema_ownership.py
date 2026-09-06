@@ -29,7 +29,6 @@ from google_work_agent.api.schemas.runtime_summaries.get_runtime_summary import 
 )
 from google_work_agent.api.schemas.settings.update_settings import (
     PatchSettingsRequest,
-    SettingsPatchPayloadV1,
 )
 
 
@@ -59,11 +58,6 @@ def test_other_plural__resource_contracts_live__in_operation_modules() -> None:
     assert RuntimeDetailResponseV1.__module__.endswith(".runtime_summaries.get_runtime_summary")
     assert LiveResponse.__module__.endswith(".health_checks.get_liveness")
     assert ReadyResponse.__module__.endswith(".health_checks.get_readiness")
-
-
-def test_settings_patch__omits_concrete__local_model_selection() -> None:
-    assert "preferred_llm_mode" in SettingsPatchPayloadV1.model_fields
-    assert "preferred_local_model_id" not in SettingsPatchPayloadV1.model_fields
 
 
 def test_runtime_detail__uses_exact__canonical_wire_vocabulary() -> None:

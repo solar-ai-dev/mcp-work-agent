@@ -422,7 +422,9 @@ def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
         acquisition_result=acquisition, evidence_drafts=[], retry_budget=_run_budget(used=0),
     )
     reasons = {code for issue in result["issues"] for code in issue["reason_codes"]}
-    expected_reason = "SOURCE_PERMISSION_DENIED" if failed else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
+    expected_reason = (
+        "SOURCE_PERMISSION_DENIED" if failed else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
+    )
     assert expected_reason in reasons
     assert ("REQUIRED_SOURCE_RETURNED_NO_RESOURCES" in reasons) is not failed
     assert runtime.calls == []

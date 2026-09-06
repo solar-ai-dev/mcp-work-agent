@@ -230,6 +230,7 @@ request_understanding/
   detect_ambiguity
   finalize_intent
   validate_intent
+  resolve_request_scope
   preserve_vague_read_semantics
 
 tool_routing/
@@ -259,6 +260,7 @@ retrieval/
   match_temporal_evidence
   plan_candidate_detail
   plan_query_expansion
+  select_followup_routes
   preserve_gmail_search_semantics
   prioritize_material_gmail_evidence
   project_attempted_detail_refs
@@ -334,12 +336,14 @@ No supporting operation introduces a new LLM responsibility, Runtime Node or res
 
 | Concern contract | Existing runtime consumer | Supporting operations |
 | --- | --- | --- |
+| 01-A/06 Request Understanding: quoted payload, explicit write, and answer-only scope resolution before inference | `request.identify_goal`, `request.detect_ambiguity` | `request_understanding.resolve_request_scope` |
 | 01-A/06 Request Understanding: preserve current user constraints without resolving search-time identities | `request.identify_goal` | `request_understanding.preserve_vague_read_semantics` |
 | 02 user-facing wording + 06 Tool Route/Policy scope Confirmation; no new permission decision | Tool Route Confirmation projection | `tool_routing.format_route_confirmation` |
 | 05 Calendar availability and SourceSegment representation | `retrieval.normalize_segments` | `retrieval.format_calendar_freebusy_evidence` |
 | 05 QueryAttempt no-repeat and separate search/detail budgets | `retrieval.execute_read` | `retrieval.guard_retrieval_read_repeat` |
 | 05 exact Gmail anchor, deterministic Create policy pre-read completeness | query planning / sufficiency | `retrieval.has_explicit_gmail_subject`, `retrieval.is_complete_create_policy_read` |
 | 05 bounded metadata/detail acquisition, same-route expansion and inherited search constraints | `retrieval.plan_query` | `retrieval.plan_candidate_detail`, `retrieval.plan_query_expansion`, `retrieval.project_attempted_detail_refs`, `retrieval.project_query_temporal_constraints` |
+| 05 unresolved sufficiency issue binding to existing frozen routes | query planning / candidate detail planning | `retrieval.select_followup_routes` |
 | 05 current Evidence relevance, source lineage, unchanged-source preservation | `retrieval.select_evidence` | `retrieval.prioritize_material_gmail_evidence`, `retrieval.retain_unchanged_evidence` |
 | 05 date/identity provenance and exact-anchor semantics | query planning / selection / sufficiency | Remaining resolution support is detailed immediately below |
 | 06 Planning: complete outlines from existing typed Analysis/Evidence without adding facts | `planning.outline_answer` | `planning.complete_analysis_answer_outline` |

@@ -138,7 +138,7 @@ def test_google_reads_reach__terminal_through_actual__retrieval_and_mcp(
     assert final_messages == [
         {
             "GMAIL_READ": "선택한 메일의 핵심 내용은 deterministic Gmail evidence입니다.",
-            "TASKS_READ": "확인한 태스크의 핵심 내용은 E2E task입니다.",
+            "TASKS_READ": "I found 1 current item(s) in Google Tasks.\n\n- E2E task",
             "CALENDAR_READ": "확인한 일정의 핵심 내용은 E2E event입니다.",
         }[scenario]
     ]
@@ -213,7 +213,6 @@ def test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_ll
     assert not any(prompt_id.startswith("work_analysis.") for prompt_id in invoked)
     assert invoked == [
         "request_understanding.identify_goal",
-        "planning.outline_answer",
         "planning.compose_answer",
     ]
 

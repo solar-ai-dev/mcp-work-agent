@@ -1,4 +1,4 @@
-"""C2-B: ScopeExpansionResolver + PolicyConfirmationReceiptV1 unit tests.
+"""Scope-expansion and receipt scenarios owned by resolve_policy_preconditions.
 
 Covers the deterministic scope-comparison and receipt-provenance logic in
 isolation from LangGraph/Registry/LLM machinery -- see

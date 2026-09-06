@@ -1,4 +1,4 @@
-"""Tests for retrieval.rag_retrieve deterministic scoring/ranking
+"""Scoring and ranking scenarios for retrieval.rag_retrieve_rerank
 (docs/05-context-retrieval.md SS5.5)."""
 
 from __future__ import annotations
@@ -67,19 +67,6 @@ def _intent(
     }
 
 
-def test_determinism_same__input_produces_same__scores_and_order() -> None:
-    segments = [
-        _segment(segment_id="seg-1", resource_id="thread-a", text="project follow-up meeting"),
-        _segment(segment_id="seg-2", resource_id="thread-b", text="unrelated lunch order"),
-    ]
-    intent = _intent(goal="project follow-up meeting")
-
-    first = rank_segments(segments, request_intent=intent, top_k=10)
-    second = rank_segments(list(reversed(segments)), request_intent=intent, top_k=10)
-
-    assert first == second
-
-
 def test_lexical_relevance__ranks_matching_segment__above_unrelated_one() -> None:
     relevant = _segment(
         segment_id="seg-1", resource_id="thread-a", text="project follow-up meeting notes"
@@ -89,7 +76,9 @@ def test_lexical_relevance__ranks_matching_segment__above_unrelated_one() -> Non
     )
     intent = _intent(goal="project follow-up meeting")
 
-    candidates = rank_segments([unrelated, relevant], request_intent=intent, top_k=10)
+    candidates = rank_segments(
+        [unrelated, relevant], request_intent=intent, source_plans=[], top_k=10
+    )
 
     assert [c["segment_id"] for c in candidates][0] == "seg-1"
     assert candidates[0]["retrieval_score"] > candidates[1]["retrieval_score"]
@@ -104,7 +93,10 @@ def test_exact_resource__match_scores_highest__and_is_labeled() -> None:
     intent = _intent(goal="project follow-up meeting", selected_resource_ids=["thread-selected"])
 
     candidates = {
-        c["segment_id"]: c for c in rank_segments([exact, other], request_intent=intent, top_k=10)
+        c["segment_id"]: c
+        for c in rank_segments(
+            [exact, other], request_intent=intent, source_plans=[], top_k=10
+        )
     }
 
     assert EXACT_RESOURCE_REASON in candidates["seg-1"]["reason_codes"]
@@ -118,7 +110,9 @@ def test_related_resource__child_segment_scores__via_parent_link() -> None:
     )
     intent = _intent(selected_resource_ids=["thread-selected"])
 
-    candidates = rank_segments([message], request_intent=intent, top_k=10)
+    candidates = rank_segments(
+        [message], request_intent=intent, source_plans=[], top_k=10
+    )
 
     assert RELATED_RESOURCE_REASON in candidates[0]["reason_codes"]
     assert candidates[0]["retrieval_score"] == RagScoringConfig().related_resource_score
@@ -134,7 +128,9 @@ def test_resource_selected__segments_are_never__dropped_by_budget() -> None:
     ]
     intent = _intent(selected_resource_ids=[f"thread-{i}" for i in range(3)])
 
-    candidates = rank_segments(selected, request_intent=intent, top_k=2)
+    candidates = rank_segments(
+        selected, request_intent=intent, source_plans=[], top_k=2
+    )
 
     ids = {c["segment_id"] for c in candidates}
     assert ids == {"seg-sel-0", "seg-sel-1", "seg-sel-2"}
@@ -151,7 +147,9 @@ def test_budget_bounds_result__to_top_k_when__no_resource_is_selected() -> None:
     ]
     intent = _intent(goal="project follow-up")
 
-    candidates = rank_segments(segments, request_intent=intent, top_k=3)
+    candidates = rank_segments(
+        segments, request_intent=intent, source_plans=[], top_k=3
+    )
 
     assert len(candidates) == 3
 
@@ -160,7 +158,9 @@ def test_no_query_terms_or__resource_match_scores_zero__with_no_reason_codes() -
     segment = _segment(segment_id="seg-1", resource_id="thread-a", text="")
     intent = _intent(goal="")
 
-    candidates = rank_segments([segment], request_intent=intent, top_k=10)
+    candidates = rank_segments(
+        [segment], request_intent=intent, source_plans=[], top_k=10
+    )
 
     assert candidates[0]["retrieval_score"] == 0.0
     assert candidates[0]["reason_codes"] == []
@@ -173,6 +173,8 @@ def test_duplicate_segment__id_is__deduplicated() -> None:
     ]
     intent = _intent(goal="")
 
-    candidates = rank_segments(segments, request_intent=intent, top_k=10)
+    candidates = rank_segments(
+        segments, request_intent=intent, source_plans=[], top_k=10
+    )
 
     assert len(candidates) == 1

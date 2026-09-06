@@ -387,21 +387,17 @@ def test_search_gmail_message__returns_full_snapshot__for_a_single_match(
     assert cast(dict[str, object], items[0]["payload"])["sent"] is True
 
 
-def test_search_tasks_scans__all_task_lists__and_filters_by_marker(
+def test_search_tasks__uses_bound_list__and_filters_by_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     marker = server._recovery_marker("fp-task-1")
     responses: dict[str, dict[str, object]] = {
-        "https://tasks.googleapis.com/tasks/v1/users/@me/lists": {
-            "items": [{"id": "list-1"}, {"id": "list-2"}]
-        },
         "https://tasks.googleapis.com/tasks/v1/lists/list-1/tasks": {
             "items": [
                 {"id": "task-1", "title": "Match", "notes": f"context\n\n{marker}"},
                 {"id": "task-2", "title": "No match", "notes": "unrelated"},
             ]
         },
-        "https://tasks.googleapis.com/tasks/v1/lists/list-2/tasks": {"items": []},
     }
 
     def google_api(
@@ -415,7 +411,11 @@ def test_search_tasks_scans__all_task_lists__and_filters_by_marker(
     result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
-        arguments={"resource_type": "task", "recovery_fingerprint": "fp-task-1"},
+        arguments={
+            "resource_type": "task",
+            "recovery_fingerprint": "fp-task-1",
+            "task_list_id": "list-1",
+        },
     )
     items = cast(list[dict[str, object]], result["items"])
     assert len(items) == 1
@@ -423,17 +423,13 @@ def test_search_tasks_scans__all_task_lists__and_filters_by_marker(
     assert items[0]["parent_id"] == "list-1"
 
 
-def test_search_calendar__events_scans_all__calendars_with_query(
+def test_search_calendar_events__uses_bound_calendar__with_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses: dict[str, dict[str, object]] = {
-        "https://www.googleapis.com/calendar/v3/users/me/calendarList": {
-            "items": [{"id": "primary"}, {"id": "team"}]
-        },
         "https://www.googleapis.com/calendar/v3/calendars/primary/events": {
             "items": [{"id": "event-1", "summary": "Review"}]
         },
-        "https://www.googleapis.com/calendar/v3/calendars/team/events": {"items": []},
     }
 
     def google_api(
@@ -449,7 +445,11 @@ def test_search_calendar__events_scans_all__calendars_with_query(
     result = verified_server._tool_call(
         _state(),
         tool_name="search_by_recovery_fingerprint",
-        arguments={"resource_type": "calendar_event", "recovery_fingerprint": "fp-event-1"},
+        arguments={
+            "resource_type": "calendar_event",
+            "recovery_fingerprint": "fp-event-1",
+            "calendar_id": "primary",
+        },
     )
     items = cast(list[dict[str, object]], result["items"])
     assert len(items) == 1

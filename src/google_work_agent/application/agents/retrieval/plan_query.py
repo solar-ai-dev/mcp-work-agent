@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
-from google_work_agent.application.agents.retrieval.assess_sufficiency import select_followup_routes
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     bind_required_container_constraints,
@@ -41,9 +40,7 @@ from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject i
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
     plan_candidate_detail,
 )
-from google_work_agent.application.agents.retrieval.plan_query_expansion import (
-    plan_query_expansion,
-)
+from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
@@ -51,6 +48,9 @@ from google_work_agent.application.agents.retrieval.preserve_gmail_search_semant
     requested_participant_identities,
     resolve_gmail_query_periods,
     validate_requested_concepts,
+)
+from google_work_agent.application.agents.retrieval.select_followup_routes import (
+    select_followup_routes,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,

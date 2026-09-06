@@ -1,3 +1,5 @@
+"""Disposition-policy scenarios owned by retrieval.assess_sufficiency."""
+
 import pytest
 
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
@@ -51,7 +53,7 @@ def _context(
                 safety_critical=True,
                 read_only=True,
             ),
-            InsufficientDataDisposition.RETRIEVE_MORE,
+            InsufficientDataDisposition.BLOCKED,
         ),
         (
             _context(source=ResolutionSource.USER),

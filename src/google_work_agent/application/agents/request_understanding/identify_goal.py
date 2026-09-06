@@ -8,11 +8,13 @@ from typing import cast
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
 )
+from google_work_agent.application.agents.request_understanding.resolve_request_scope import (
+    resolve_request_scope,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
     load_prompt_reference,
 )
-from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
@@ -23,146 +25,12 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
-from .preserve_vague_read_semantics import preserve_vague_read_semantics
-
-IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v2",
-    json_schema={
-        "type": "object",
-        "required": [
-            "goal",
-            "completion_conditions",
-            "constraints",
-            "requested_effect_hints",
-            "requested_resource_hints",
-            "analysis_requirement",
-        ],
-        "additionalProperties": False,
-        "allOf": [
-            {
-                "if": {
-                    "properties": {"requested_effect_hints": {"type": "array", "minItems": 1}},
-                    "required": ["requested_effect_hints"],
-                },
-                "then": {
-                    "properties": {"requested_resource_hints": {"type": "array", "minItems": 1}}
-                },
-            },
-            {
-                "if": {
-                    "properties": {"requested_resource_hints": {"type": "array", "minItems": 1}},
-                    "required": ["requested_resource_hints"],
-                },
-                "then": {
-                    "properties": {"requested_effect_hints": {"type": "array", "minItems": 1}}
-                },
-            },
-        ],
-        "properties": {
-            "goal": {"type": "string"},
-            "completion_conditions": {"type": "array", "items": {"type": "string"}},
-            "constraints": {
-                "type": "array",
-                "description": (
-                    "검색 의미를 분리한다: 고유 프로젝트/이름의 원문 anchor는 "
-                    "USER_REQUIREMENT.search_terms, 추상 업무는 "
-                    "USER_REQUIREMENT.business_concepts, 사람은 PERSON.person, "
-                    "기간은 DATE.period, 수신/행사 구분은 TIME.temporal_axis. "
-                    "한 문장에 사람·프로젝트·업무·답변 지시를 합쳐 검색어로 만들지 않는다. "
-                    "요청에 없는 빈 날짜/상태/시간 필드는 생략한다."
-                ),
-                "items": {
-                    "type": "object",
-                    "required": ["kind", "field", "value"],
-                    "additionalProperties": False,
-                    "allOf": [
-                        {
-                            "if": {"properties": {"field": {"enum": [
-                                "search_terms", "business_concepts", "required_information",
-                            ]}}},
-                            "then": {"properties": {"kind": {"const": "USER_REQUIREMENT"}}},
-                        },
-                    ],
-                    "properties": {
-                        "kind": {
-                            "enum": [
-                                "PERSON",
-                                "EMAIL",
-                                "DATE",
-                                "TIME",
-                                "RESOURCE",
-                                "SCOPE",
-                                "USER_REQUIREMENT",
-                            ]
-                        },
-                        "field": {"type": "string", "minLength": 1},
-                        "value": {
-                            "oneOf": [
-                                {"type": "string"},
-                                {"type": "array", "items": {"type": "string"}},
-                            ]
-                        },
-                    },
-                },
-            },
-            "requested_effect_hints": {
-                "type": "array",
-                "items": {"enum": ["READ", "CREATE", "UPDATE", "SEND", "DELETE"]},
-                "description": (
-                    "Effects on the requested external resources only. Retrieving, summarizing, "
-                    "or analyzing an existing resource is READ; producing an assistant "
-                    "answer or summary is never CREATE. CREATE, UPDATE, SEND, and DELETE "
-                    "apply only when the user requests that external effect, and an "
-                    "explicitly forbidden effect must not appear. Identifying or analyzing "
-                    "follow-up actions from existing material is READ unless the user also "
-                    "explicitly asks to apply a write to that resource."
-                ),
-            },
-            "requested_resource_hints": {
-                "type": "array",
-                "items": {
-                    "enum": [
-                        "GMAIL_THREAD",
-                        "GMAIL_MESSAGE",
-                        "GMAIL_DRAFT",
-                        "GMAIL_ATTACHMENT",
-                        "TASK_LIST",
-                        "TASK",
-                        "CALENDAR",
-                        "CALENDAR_EVENT",
-                        "CALENDAR_FREEBUSY",
-                        "GITHUB_ISSUE",
-                    ]
-                },
-                "uniqueItems": True,
-                "description": (
-                    "Semantic resource concepts explicitly named or necessarily targeted. "
-                    "Gmail or email lookup uses GMAIL_THREAD, Google Tasks work uses TASK, "
-                    "and Google Calendar event work uses CALENDAR_EVENT. Empty only when "
-                    "the request needs no Google Workspace resource."
-                ),
-            },
-            "analysis_requirement": {
-                "enum": ["NONE", "REQUIRED"],
-                "description": (
-                    "REQUIRED only for downstream business analysis such as relationships, "
-                    "dependencies, conflicts, duplicates, follow-up actions, or operational "
-                    "risk. A simple list, lookup, direct fact extraction, read, or summary is "
-                    "NONE whether the resource is selected or retrieved. REQUIRED needs an "
-                    "explicit request to analyze implications, comparisons, or next actions."
-                ),
-            },
-        },
-    },
+from .contracts.request_goal_candidate_schema import (
+    IDENTIFY_GOAL_OUTPUT_SCHEMA,
+    REQUEST_GOAL_SLOT_KINDS,
+    validate_request_goal_candidate,
 )
-
-
-_GMAIL_GOAL_SLOT_KINDS = {
-    "search_terms": "USER_REQUIREMENT", "business_concepts": "USER_REQUIREMENT",
-    "required_information": "USER_REQUIREMENT", "person": "PERSON",
-    "sender": "PERSON", "recipient": "PERSON", "subject": "RESOURCE",
-    "period": "DATE", "temporal_axis": "TIME", "status": "SCOPE",
-}
+from .preserve_vague_read_semantics import preserve_vague_read_semantics
 
 
 def identify_goal(
@@ -200,7 +68,7 @@ def identify_goal(
         output_schema,
     )
     candidate = _apply_quoted_literal_authority(
-        _validate_goal_candidate(result.structured_output, schema=output_schema),
+        validate_request_goal_candidate(result.structured_output, schema=output_schema),
         request_text=request.request_text,
     )
     candidate = _apply_explicit_read_authority(candidate, request_text=request.request_text)
@@ -211,7 +79,7 @@ def identify_goal(
     )
     candidate = _apply_general_answer_only_authority(candidate, request=request)
     candidate = _apply_selected_resource_authority(candidate, request=request)
-    return _validate_goal_candidate(candidate)
+    return validate_request_goal_candidate(candidate)
 
 
 _EXPLICIT_READ_RESOURCE_PATTERNS = (
@@ -236,23 +104,6 @@ _EXPLICIT_READ_MARKERS = (
     "analyse",
     "analyze",
 )
-_EXPLICIT_WRITE_MARKERS = (
-    "만들",
-    "생성",
-    "추가",
-    "수정",
-    "변경",
-    "삭제",
-    "보내",
-    "전송",
-    "등록",
-    "create",
-    "add",
-    "update",
-    "modify",
-    "delete",
-    "send",
-)
 _EXPLICIT_ANALYSIS_MARKERS = (
     "분석",
     "비교",
@@ -268,57 +119,6 @@ _EXPLICIT_ANALYSIS_MARKERS = (
     "conclusion",
     "impact",
     "risk",
-)
-_GENERAL_ANSWER_ONLY_CONTENT_MARKERS = (
-    "원칙",
-    "방법",
-    "팁",
-    "조언",
-    "개념",
-    "기준",
-    "principle",
-    "guideline",
-    "best practice",
-    "advice",
-    "tip",
-    "concept",
-)
-_GENERAL_ANSWER_ONLY_RESPONSE_MARKERS = (
-    "알려",
-    "설명",
-    "말해",
-    "답해",
-    "explain",
-    "tell",
-    "answer",
-)
-_CURRENT_WORKSPACE_FACT_MARKERS = (
-    "내 ",
-    "나의",
-    "현재",
-    "최근",
-    "선택한",
-    "찾아",
-    "읽어",
-    "목록",
-    "요약",
-    "분석",
-    "my ",
-    "current",
-    "recent",
-    "selected",
-    "find",
-    "read",
-    "list",
-    "summarize",
-    "analyse",
-    "analyze",
-)
-_QUOTED_LITERAL_PATTERNS = (
-    re.compile(r"'[^']*'"),
-    re.compile(r'"[^"]*"'),
-    re.compile(r"‘[^’]*’"),
-    re.compile(r"“[^”]*”"),
 )
 _EXPLICIT_DATE_SIGNAL = re.compile(
     r"(?i)(?:"
@@ -338,11 +138,9 @@ def _apply_quoted_literal_authority(
 ) -> RequestGoalCandidateV1:
     """Do not reinterpret a quoted resource literal as an unstated date."""
 
-    outside_literals = request_text
-    quoted_literals: list[str] = []
-    for pattern in _QUOTED_LITERAL_PATTERNS:
-        quoted_literals.extend(pattern.findall(request_text))
-        outside_literals = pattern.sub(" ", outside_literals)
+    scope = resolve_request_scope(request_text)
+    outside_literals = scope.outside_quoted_literals
+    quoted_literals = scope.quoted_literals
     if not quoted_literals:
         return candidate
     literal_values: dict[str, set[str]] = {}
@@ -396,11 +194,9 @@ def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDef
     gmail_search = (
         request.entry_mode == "AGENT_SEARCH"
         and _explicit_read_resource_hints(request.request_text) == ["GMAIL_THREAD"]
-        and not _has_explicit_write_marker(request.request_text)
+        and not resolve_request_scope(request.request_text).has_explicit_write_marker
     )
-    outside_literals = request.request_text
-    for pattern in _QUOTED_LITERAL_PATTERNS:
-        outside_literals = pattern.sub(" ", outside_literals)
+    outside_literals = resolve_request_scope(request.request_text).outside_quoted_literals
     has_explicit_create = (
         re.search(
             r"(?is)(?:Google\s+Tasks|태스크|Google\s+Calendar|캘린더)"
@@ -436,7 +232,7 @@ def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDef
                             "type": "string", "minLength": 1, "pattern": r".*[^\s\[\]{}].*",
                         },
                         "maxItems": 8}
-                for field in _GMAIL_GOAL_SLOT_KINDS
+                for field in REQUEST_GOAL_SLOT_KINDS
             }
             slot_properties["temporal_axis"] = {
                 "type": "array", "maxItems": 1,
@@ -506,26 +302,13 @@ def _has_explicit_read_authority(request_text: str) -> bool:
     return (
         bool(_explicit_read_resource_hints(request_text))
         and any(marker in normalized for marker in _EXPLICIT_READ_MARKERS)
-        and not _has_explicit_write_marker(request_text)
-    )
-
-
-def _has_explicit_write_marker(request_text: str) -> bool:
-    outside_literals = request_text.casefold()
-    for pattern in _QUOTED_LITERAL_PATTERNS:
-        outside_literals = pattern.sub(" ", outside_literals)
-    outside_literals = re.sub(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", " ", outside_literals)
-    return any(
-        re.search(rf"\b{marker}\b", outside_literals) is not None
-        if marker.isascii() else marker in outside_literals
-        for marker in _EXPLICIT_WRITE_MARKERS
+        and not resolve_request_scope(request_text).has_explicit_write_marker
     )
 
 
 def _explicit_read_resource_hints(request_text: str) -> list[str]:
     # Payload literals and email domains are values, not resource requests.
-    for pattern in _QUOTED_LITERAL_PATTERNS:
-        request_text = pattern.sub(" ", request_text)
+    request_text = resolve_request_scope(request_text).outside_quoted_literals
     request_text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", " ", request_text)
     return list(
         dict.fromkeys(
@@ -533,18 +316,6 @@ def _explicit_read_resource_hints(request_text: str) -> list[str]:
             for pattern, resource_type in _EXPLICIT_READ_RESOURCE_PATTERNS
             if pattern.search(request_text)
         )
-    )
-
-
-def is_general_answer_only_request(request_text: str) -> bool:
-    """Recognize explicit advice/explanation requests that need no Workspace fact."""
-
-    normalized = request_text.casefold()
-    return (
-        any(marker in normalized for marker in _GENERAL_ANSWER_ONLY_CONTENT_MARKERS)
-        and any(marker in normalized for marker in _GENERAL_ANSWER_ONLY_RESPONSE_MARKERS)
-        and not any(marker in normalized for marker in _CURRENT_WORKSPACE_FACT_MARKERS)
-        and not _has_explicit_write_marker(request_text)
     )
 
 
@@ -557,7 +328,7 @@ def _apply_general_answer_only_authority(
 
     if (
         request.selected_resources
-        or not is_general_answer_only_request(request.request_text)
+        or not resolve_request_scope(request.request_text).is_general_answer_only
         or any(effect != "READ" for effect in candidate["requested_effect_hints"])
     ):
         return candidate
@@ -675,21 +446,3 @@ def _selected_resource_hints(request: WorkflowStartRequest) -> list[str]:
             if hint is not None
         )
     )
-
-
-def _validate_goal_candidate(
-    value: object,
-    *,
-    schema: OutputSchemaDefinition = IDENTIFY_GOAL_OUTPUT_SCHEMA,
-) -> RequestGoalCandidateV1:
-    errors = validate_output_schema(value, schema.json_schema)
-    if errors:
-        raise ValueError(f"request goal candidate is invalid: {'; '.join(errors)}")
-    root = cast(dict[str, object], value)
-    if isinstance(root["constraints"], dict):
-        slots = cast(dict[str, list[str]], root["constraints"])
-        value = {**root, "constraints": [
-            {"kind": _GMAIL_GOAL_SLOT_KINDS[field], "field": field, "value": values}
-            for field, values in slots.items() if values
-        ]}
-    return cast(RequestGoalCandidateV1, value)

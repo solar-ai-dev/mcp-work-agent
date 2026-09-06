@@ -632,9 +632,7 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
 @pytest.mark.parametrize("cancel_after, expected_reads, expected_prompts", [
     ("retrieval.plan_query", 0, ["retrieval.plan_query"]),
     ("connector", 1, ["retrieval.plan_query"]),
-    ("retrieval.select_evidence", 1, ["retrieval.plan_query", "retrieval.select_evidence"]),
-    ("retrieval.assess_sufficiency", 1, ["retrieval.plan_query", "retrieval.select_evidence",
-                                        "retrieval.assess_sufficiency"]),
+    ("retrieval.assess_sufficiency", 1, ["retrieval.plan_query", "retrieval.assess_sufficiency"]),
 ])
 def test_retrieval_cancellation__requested__returns_to_main_without_external_call(
     cancel_after: str, expected_reads: int, expected_prompts: list[str],
@@ -693,7 +691,7 @@ def test_retrieval_cancellation__requested__returns_to_main_without_external_cal
 @pytest.mark.parametrize("cancel_after_update, expected_reads, expected_prompts", [
     ("build_query", 0, ["retrieval.plan_query"]),
     ("rag_retrieve", 1, ["retrieval.plan_query"]),
-    ("select_evidence", 1, ["retrieval.plan_query", "retrieval.select_evidence"]),
+    ("select_evidence", 1, ["retrieval.plan_query"]),
 ])
 def test_retrieval_cancellation__between_scheduled_nodes__prevents_new_io(
     cancel_after_update: str, expected_reads: int, expected_prompts: list[str],

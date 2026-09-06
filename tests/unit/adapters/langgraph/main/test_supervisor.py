@@ -1,3 +1,5 @@
+"""Main LangGraph supervisor routing and lifecycle matrix."""
+
 import json
 from typing import Literal, cast
 

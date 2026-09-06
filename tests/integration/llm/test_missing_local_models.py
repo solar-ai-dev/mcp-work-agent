@@ -8,8 +8,8 @@ from tests.support.production_runtime import build_test_production_container
 
 from google_work_agent.adapters.llm.runtime.llm_credential_router import SessionMemorySecretStore
 from google_work_agent.api import composition
-from google_work_agent.application.agents.request_understanding.identify_goal import (
-    IDENTIFY_GOAL_OUTPUT_SCHEMA,
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema as goal_schema,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     DEVELOPMENT_SMOKE,
@@ -46,7 +46,7 @@ def test_no_local_models__preserves_core_readiness__and_blocks_inference_before_
                     "request_understanding.identify_goal", execution_scope=DEVELOPMENT_SMOKE
                 ),
                 {"user_request": "회의 준비 방법을 설명해 줘", "selected_resource_refs": []},
-                IDENTIFY_GOAL_OUTPUT_SCHEMA,
+                goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA,
             )
         assert failure.value.code in {
             LLMErrorCode.LOCAL_UNAVAILABLE,

@@ -1,3 +1,5 @@
+"""Owner-local Retrieval query-plan schema scenarios."""
+
 import pytest
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (

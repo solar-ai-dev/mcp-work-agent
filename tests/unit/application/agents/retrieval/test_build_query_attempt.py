@@ -1,3 +1,5 @@
+"""Query-attempt materialization scenarios owned by retrieval.build_query."""
+
 from google_work_agent.application.agents.retrieval.build_query import (
     build_query_attempt,
     followup_planner_projection,
