@@ -71,7 +71,7 @@ def test_dataset_to_real_product__to_grader_to_result__uses_public_http_boundary
         write_result(output, result)
         saved = json.loads(output.read_text(encoding="utf-8"))
         assert saved["metrics"] == {"hard_gate_passed": True, "passed": True}
-        assert saved["observed"]["final_answer"] == "E2E completed: ANSWER_ONLY"
+        assert saved["observed"]["final_answer"] == "현재 요청을 처리할 준비가 되어 있습니다."
         assert saved["observed"]["terminal_state"] == "COMPLETED"
     finally:
         server.should_exit = True

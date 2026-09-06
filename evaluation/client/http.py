@@ -128,6 +128,7 @@ class ProductApiClient:
         if timeout_seconds <= 0 or poll_interval_seconds <= 0:
             raise ValueError("poll timing must be positive")
         observable = {
+            "BLOCKED",
             "COMPLETED",
             "CANCELLED",
             "FAILED",

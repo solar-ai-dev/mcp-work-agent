@@ -99,6 +99,7 @@ def normalize_snapshot(snapshot: Mapping[str, object]) -> dict[str, object]:
         "unknown_result_events": [],
         "interactions": _interaction_projection(snapshot),
         "terminal_state": terminal_state,
+        "terminal_result_kind": snapshot.get("terminal_result_kind"),
         "durable_effects": [],
     }
 
@@ -166,20 +167,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--requested-mode", choices=("AUTO", "LOCAL_GPU", "API_LLM"), default="AUTO"
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--observation",
+        type=Path,
+        help="Grade an external diagnostic observation; does not execute Product",
+    )
     arguments = parser.parse_args(argv)
 
-    client = ProductApiClient(arguments.base_url)
-    client.bootstrap(getpass("Product bootstrap secret: "))
     case = load_case(arguments.case_id, arguments.dataset)
-    result = run_case(
-        client,
-        case=case,
-        dataset_path=arguments.dataset,
-        product_sha=arguments.product_sha,
-        experiment_name=arguments.experiment_name,
-        candidate_id=arguments.candidate_id,
-        requested_mode=arguments.requested_mode,
-    )
+    if arguments.observation is not None:
+        observed = json.loads(arguments.observation.read_text(encoding="utf-8"))
+        result = build_result(
+            case_id=arguments.case_id,
+            dataset_path=arguments.dataset,
+            product_sha=arguments.product_sha,
+            experiment_name=arguments.experiment_name,
+            candidate_id=arguments.candidate_id,
+            requested_mode=arguments.requested_mode,
+            observed=observed,
+            grade=grade_case(case, observed),
+        )
+        result["execution_kind"] = "EXTERNAL_OBSERVATION_ONLY"
+        result["observation_sha256"] = file_sha256(arguments.observation)
+    else:
+        client = ProductApiClient(arguments.base_url)
+        client.bootstrap(getpass("Product bootstrap secret: "))
+        result = run_case(
+            client,
+            case=case,
+            dataset_path=arguments.dataset,
+            product_sha=arguments.product_sha,
+            experiment_name=arguments.experiment_name,
+            candidate_id=arguments.candidate_id,
+            requested_mode=arguments.requested_mode,
+        )
     write_result(arguments.output, result)
     metrics = _mapping(result.get("metrics"), "metrics")
     return 0 if metrics.get("passed") is True else 2

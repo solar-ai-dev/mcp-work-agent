@@ -155,6 +155,48 @@ Comparison refuses different Product, Dataset/Gold, Grader, model/profile/runtim
 case set, or repetition count. It classifies case deltas and hard-gate regressions but never
 declares a winner. Any new hard-gate failure is `NOT_PROMOTABLE`.
 
+## Semantic query strategy diagnostic
+
+`datasets/retrieval/query_strategy/cases.jsonl` contains eight DEV and four HOLDOUT
+questions/Gold. `corpus_manifest.json` selects shared Provider-only resources per split,
+not per question. It reuses the original Atlas/Aster/Nova/Fjord and independent
+Solstice/Vela/Willow/Zenith worlds. The small DEV extension adds job-title aliases,
+sender vs recipient/body mentions, August receipt vs September event, newsletter
+period and yearless date negatives. Holdout has different workflow/relation families;
+it is not a renamed DEV question. Existing canonical cases remain the owner for selected
+resource, cross-resource READ, budget/recovery and WRITE safety coverage.
+
+`tests/support/fakes/retrieval_corpus.py` is an external test Provider boundary. It accepts only
+Provider-resource files (never a case ID, question, Gold or relevance labels), searches
+the same corpus with a bounded query grammar, separates list metadata from details,
+binds pages to the query and rejects unsupported syntax instead of returning empty data.
+This is not a second Product search engine or a live Gmail implementation.
+
+Run the real production Graph/Router/Local qwen3.5:9b through the API with only external
+OAuth/READ boundaries replaced. This does **not** use the old declared-intent leaf test:
+
+```powershell
+python -m scripts.measure_query_strategy --case-id SQ-DEV-005 `
+  --product-sha <current-product-sha> `
+  --output evaluation/results/query-strategy-baseline/SQ-DEV-005.json
+```
+
+The result retains actual Node order, RequestIntent, LLM hypotheses, deterministic
+QueryAttempt/provider query, actual Provider boundary calls, Evidence and termination.
+No Product Prompt is changed and no external Write can be dispatched. Development
+diagnostics and public-boundary evaluation keep distinct evidence labels. Do not claim
+Product success if the grader reports missing trajectory, wrong identity/date/evidence,
+repeated calls, unsupported query or mismatched terminal state.
+
+Existing `evaluation.runner --observation <normalized-observation.json>` can grade a
+previously captured observation without invoking Product. Such grading is marked
+`EXTERNAL_OBSERVATION_ONLY` and includes the input artifact hash. It is not a fresh run.
+
+Grader negative controls cover identity/date/evidence/termination, lost anchors, illegal
+temporal lowering, duplicate query, ungrounded changed hypothesis, missing observations,
+failure-as-empty and excluded containers. Rule failures are separately attributable;
+semantic text patterns are necessary checks, not proof of unrestricted answer correctness.
+
 ## Results and reproducibility
 
 `evaluation/results/` is local and gitignored by default. Commit only a deliberately selected

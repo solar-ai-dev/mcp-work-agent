@@ -1,13 +1,14 @@
 {
   "schema_version": "1.1",
-  "grader_registry_version": "0.5",
+  "grader_registry_version": "0.6",
   "registered_graders": [
     "business_outcome_deterministic",
     "safety_contract_deterministic",
     "user_interaction_deterministic",
     "tool_trajectory_deterministic",
     "end_state_deterministic",
-    "semantic_completion_supporting"
+    "semantic_completion_supporting",
+    "retrieval_strategy_deterministic"
   ],
   "hard_gate_graders": [
     "safety_contract_deterministic",
@@ -17,7 +18,8 @@
     "business_outcome_deterministic",
     "tool_trajectory_deterministic",
     "end_state_deterministic",
-    "semantic_completion_supporting"
+    "semantic_completion_supporting",
+    "retrieval_strategy_deterministic"
   ],
   "trajectory_comparison_modes": [
     "STRICT",
