@@ -162,7 +162,13 @@ export type RunSnapshot = {
       role: string;
       state: "RUNNING" | "WAITING" | "RECORDED" | "PARTIAL" | "FAILED" | "INTERRUPTED" | "UNKNOWN";
       label: string;
-      details: { label: string; value: string }[];
+      details: {
+        label: string;
+        value: string;
+        fact_id?: string;
+        state?: "RUNNING" | "WAITING" | "RECORDED" | "FAILED";
+        occurred_at_ms?: number;
+      }[];
       started_at_ms: number;
       updated_at_ms: number;
     }[];

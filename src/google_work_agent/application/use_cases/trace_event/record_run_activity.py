@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Literal, cast
+from typing import Literal
 
 from google_work_agent.application.use_cases.trace_event.emit_trace_event import (
     EmitTraceEventCommand,
@@ -66,9 +66,19 @@ class RecordRunActivityCommand:
     run_id: str
     task_namespace: str
     responsibility: str
-    observation: Literal["START", "END", "WAIT", "ERROR"]
+    observation: Literal[
+        "START",
+        "END",
+        "WAIT",
+        "ERROR",
+        "STEP_START",
+        "STEP_END",
+        "STEP_WAIT",
+        "STEP_ERROR",
+    ]
     output: Mapping[str, object]
     plan_id: str | None = None
+    detail: tuple[str, str, str] | None = None
 
 
 class RecordRunActivityHandler:
@@ -88,25 +98,58 @@ class RecordRunActivityHandler:
         if role is None or not command.run_id or not command.task_namespace:
             return
         details: list[dict[str, str]] = []
-        state = {"START": "RUNNING", "END": "RECORDED", "WAIT": "WAITING", "ERROR": "FAILED"}[
-            command.observation
-        ]
+        detail_updates: list[dict[str, object]] = []
+        state = {
+            "START": "RUNNING",
+            "END": "RECORDED",
+            "WAIT": "WAITING",
+            "ERROR": "FAILED",
+            "STEP_START": "RUNNING",
+            "STEP_END": "RUNNING",
+            "STEP_WAIT": "RUNNING",
+            "STEP_ERROR": "RUNNING",
+        }[command.observation]
         label = {
             "START": "처리하고 있습니다.",
-            "END": "이 단계의 처리가 종료되었습니다.",
+            "END": "이 단계 실행을 마쳤습니다. 업무 결과는 Run 상태에서 별도로 확인합니다.",
             "WAIT": "사용자 응답을 기다리고 있습니다.",
             "ERROR": "이 단계를 마치지 못했습니다.",
+            "STEP_START": "처리하고 있습니다.",
+            "STEP_END": "처리하고 있습니다.",
+            "STEP_WAIT": "처리하고 있습니다.",
+            "STEP_ERROR": "처리하고 있습니다.",
         }[command.observation]
+        if command.observation.startswith("STEP_"):
+            if command.detail is None:
+                return
+            step_key, detail_label, detail_value = command.detail
+            if not step_key or not detail_label.strip() or not detail_value.strip():
+                return
+            execution_id = sha256(f"{command.run_id}:{command.task_namespace}".encode()).hexdigest()
+            detail_updates.append(
+                {
+                    "fact_id": sha256(f"{execution_id}:{step_key}".encode()).hexdigest(),
+                    "state": {
+                        "STEP_START": "RUNNING",
+                        "STEP_END": "RECORDED",
+                        "STEP_WAIT": "WAITING",
+                        "STEP_ERROR": "FAILED",
+                    }[command.observation],
+                    "label": detail_label[:512],
+                    "value": detail_value[:512],
+                    "occurred_at_ms": self._now_ms(),
+                }
+            )
         if command.observation == "END":
             for field in _ARTIFACTS.get(command.responsibility, ()):
                 artifact = command.output.get(field)
-                if not isinstance(artifact, Mapping) or not isinstance(
-                    artifact.get("meta"), Mapping
-                ):
+                if not isinstance(artifact, Mapping) or not _is_validated_artifact(field, artifact):
                     continue
+                state = "RECORDED"
                 details.extend(_artifact_details(field, artifact))
                 label = {
                     "request_intent": "요청의 목적을 분석했습니다.",
+                    "tool_route_plan": "허용된 자료와 실행 경로를 확인했습니다.",
                     "retrieval_result": "자료 조회 결과를 정리했습니다.",
                     "work_analysis_result": "근거의 관계와 부족한 정보를 분석했습니다.",
                     "planning_result": "답변 또는 실행안을 작성했습니다.",
@@ -146,6 +189,7 @@ class RecordRunActivityHandler:
                     "state": state,
                     "label": label,
                     "details": details[:40],
+                    "detail_updates": detail_updates,
                     "plan_id": command.plan_id,
                 },
             )
@@ -161,19 +205,10 @@ def _artifact_details(field: str, artifact: Mapping[str, object]) -> list[dict[s
         elif type(value) is int:
             details.append({"label": label, "value": str(value)})
 
-    meta = artifact.get("meta")
-    if isinstance(meta, Mapping):
-        add("결과 revision", meta.get("revision"))
-    if field == "request_intent":
-        add("확인한 요청 목적", artifact.get("goal"))
-    elif field == "retrieval_result":
-        for key, label in (
-            ("evidence_refs", "선택 근거 수"),
-            ("source_resource_refs", "근거 Source 수"),
-        ):
-            values = artifact.get(key)
-            if isinstance(values, list):
-                add(label, len(set(str(item) for item in values)))
+    if field == "retrieval_result":
+        evidence_refs = artifact.get("evidence_refs")
+        if isinstance(evidence_refs, list) and not evidence_refs:
+            add("조회 결과", "조건에 맞는 자료를 찾지 못했습니다.")
         for gap in _objects(artifact.get("missing_information")):
             add("부족한 정보", gap.get("description"))
         for source in _objects(artifact.get("source_statuses")):
@@ -189,10 +224,6 @@ def _artifact_details(field: str, artifact: Mapping[str, object]) -> list[dict[s
                 }.get(str(source.get("failure_kind")), "일부 자료 미확인")
                 add("자료 조회 한계", reason)
     elif field == "work_analysis_result":
-        for key, label in (("relations", "확인한 관계 수"), ("work_facts", "분석한 사실 수")):
-            values = artifact.get(key)
-            if isinstance(values, list):
-                add(label, len(values))
         for key, label in (("ambiguities", "부족한 정보"), ("risks", "주의 사항")):
             for item in _objects(artifact.get(key)):
                 add(label, item.get("description"))
@@ -230,6 +261,18 @@ def _artifact_details(field: str, artifact: Mapping[str, object]) -> list[dict[s
     return details
 
 
+def _is_validated_artifact(field: str, artifact: Mapping[str, object]) -> bool:
+    if field != "tool_route_plan":
+        return isinstance(artifact.get("meta"), Mapping)
+    input_plan, output_plan = artifact.get("input_plan"), artifact.get("output_plan")
+    return (
+        isinstance(input_plan, Mapping)
+        and isinstance(input_plan.get("meta"), Mapping)
+        and isinstance(output_plan, Mapping)
+        and isinstance(output_plan.get("meta"), Mapping)
+    )
+
+
 def _objects(value: object) -> list[Mapping[str, object]]:
     return [item for item in value if isinstance(item, Mapping)] if isinstance(value, list) else []
 
@@ -238,25 +281,13 @@ def _retrieval_history_details(output: Mapping[str, object]) -> list[dict[str, s
     attempts = _objects(output.get("__context_query_attempts__"))
     details: list[dict[str, str]] = []
     if attempts:
-        search = [
-            item for item in attempts if item.get("operation_kind") in {"SEARCH", "NEXT_PAGE"}
-        ]
-        counts = [
-            cast(int, item["candidate_count"])
-            for item in search
-            if type(item.get("candidate_count")) is int
-        ]
-        if counts:
+        operations = {str(item.get("operation_kind")) for item in attempts}
+        if "NEXT_PAGE" in operations:
             details.append(
-                {"label": "현재까지 검색 반환 후보 합계 (중복 포함)", "value": str(sum(counts))}
+                {"label": "조회 범위", "value": "첫 결과 이후 다음 페이지까지 확인했습니다."}
             )
-        detail_reads = [
-            item
-            for item in attempts
-            if item.get("operation_kind") == "DETAIL_FETCH"
-            and item.get("candidate_count") is not None
-        ]
-        details.append({"label": "현재까지 완료한 상세 조회 수", "value": str(len(detail_reads))})
+        if "DETAIL_FETCH" in operations:
+            details.append({"label": "조회 범위", "value": "후보의 상세 내용을 확인했습니다."})
     acquisition, retrieval = output.get("acquisition_result"), output.get("retrieval_result")
     if isinstance(acquisition, Mapping) and isinstance(retrieval, Mapping):
         selected = retrieval.get("source_resource_refs")

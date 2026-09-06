@@ -50,7 +50,7 @@ def test_record_activity__selects_plan_fields__without_raw_body_or_authority() -
     assert emit.call_count == 1
 
 
-def test_record_activity__distinguishes_partial__and_query_counts() -> None:
+def test_record_activity__distinguishes_partial__without_debug_counts() -> None:
     emit = Mock()
     handler = RecordRunActivityHandler(
         emit_trace=emit, now_ms=lambda: 1, service_instance_id="test"
@@ -80,10 +80,41 @@ def test_record_activity__distinguishes_partial__and_query_counts() -> None:
     attrs = emit.call_args.args[0].attributes
     assert attrs["state"] == "PARTIAL"
     details = {item["label"]: item["value"] for item in attrs["details"]}
-    assert details["선택 근거 수"] == "1"
-    assert details["현재까지 검색 반환 후보 합계 (중복 포함)"] == "4"
-    assert details["현재까지 완료한 상세 조회 수"] == "1"
+    assert details["조회 범위"] == "후보의 상세 내용을 확인했습니다."
+    assert "결과 revision" not in details
+    assert "선택 근거 수" not in details
+    assert "검색 반환 후보 합계" not in str(details)
     assert "취소" not in str(attrs)
+
+
+def test_record_activity__records_observed_step__before_parent_completion() -> None:
+    emit = Mock()
+    handler = RecordRunActivityHandler(
+        emit_trace=emit, now_ms=lambda: 7, service_instance_id="test"
+    )
+    handler(
+        RecordRunActivityCommand(
+            "run",
+            "retrieval:task",
+            "context_retriever",
+            "STEP_START",
+            {},
+            detail=("execute_read", "자료 조회", "자료를 확인 중입니다."),
+        )
+    )
+    attrs = emit.call_args.args[0].attributes
+    assert attrs["state"] == "RUNNING"
+    assert attrs["details"] == []
+    assert attrs["detail_updates"] == [
+        {
+            "fact_id": attrs["detail_updates"][0]["fact_id"],
+            "state": "RUNNING",
+            "label": "자료 조회",
+            "value": "자료를 확인 중입니다.",
+            "occurred_at_ms": 7,
+        }
+    ]
+    assert len(attrs["detail_updates"][0]["fact_id"]) == 64
 
 
 def test_record_activity__ignores_unvalidated_and_unknown__artifacts() -> None:
@@ -102,6 +133,9 @@ def test_record_activity__ignores_unvalidated_and_unknown__artifacts() -> None:
             },
         )
     )
-    assert emit.call_args.args[0].attributes["details"] == []
+    attrs = emit.call_args.args[0].attributes
+    assert attrs["details"] == []
+    assert attrs["state"] == "RECORDED"
+    assert "업무 결과는 Run 상태에서 별도로 확인합니다" in attrs["label"]
     handler(RecordRunActivityCommand("run", "tool:task", "provider_tool", "END", {}))
     assert emit.call_count == 1

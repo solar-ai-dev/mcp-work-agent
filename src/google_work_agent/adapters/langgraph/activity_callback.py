@@ -49,11 +49,7 @@ class RunActivityCallback(BaseCallbackHandler):
         with self._lock:
             if parent_run_id is not None:
                 self._parents[run_id] = parent_run_id
-        if (
-            node in ACTIVITY_ROLES
-            and kwargs.get("name") == node
-            and isinstance(namespace, str)
-        ):
+        if node in ACTIVITY_ROLES and kwargs.get("name") == node and isinstance(namespace, str):
             if not isinstance(inputs, Mapping) or not isinstance(inputs.get("run_id"), str):
                 return
             plan_id = inputs.get("approved_plan_id")
@@ -67,17 +63,23 @@ class RunActivityCallback(BaseCallbackHandler):
                 self._active[run_id] = identity
             self._emit(identity, "START", {})
             return
-        if kwargs.get("name") != node or not isinstance(node, str) or not isinstance(namespace, str):
+        if (
+            kwargs.get("name") != node
+            or not isinstance(node, str)
+            or not isinstance(namespace, str)
+        ):
             return
         with self._lock:
-            identity = self._semantic_ancestor(parent_run_id)
+            parent_identity = self._semantic_ancestor(parent_run_id)
             presentation = (
-                resolve_activity_step(identity[2], node) if identity is not None else None
+                resolve_activity_step(parent_identity[2], node)
+                if parent_identity is not None
+                else None
             )
-            if identity is not None and presentation is not None:
-                self._steps[run_id] = (identity, namespace, presentation)
-        if identity is not None and presentation is not None:
-            self._emit_step(identity, namespace, presentation, "STEP_START")
+            if parent_identity is not None and presentation is not None:
+                self._steps[run_id] = (parent_identity, node, presentation)
+        if parent_identity is not None and presentation is not None:
+            self._emit_step(parent_identity, node, presentation, "STEP_START")
 
     def on_chain_end(self, outputs: Any, *, run_id: UUID, **kwargs: Any) -> None:
         with self._lock:
@@ -114,7 +116,7 @@ class RunActivityCallback(BaseCallbackHandler):
     def _emit_step(
         self,
         identity: _ActivityIdentity,
-        namespace: str,
+        step_key: str,
         presentation: ActivityStepPresentation,
         observation: Any,
     ) -> None:
@@ -128,7 +130,7 @@ class RunActivityCallback(BaseCallbackHandler):
             identity,
             observation,
             {},
-            detail=(namespace, presentation.label, value),
+            detail=(step_key, presentation.label, value),
         )
 
     def _emit(

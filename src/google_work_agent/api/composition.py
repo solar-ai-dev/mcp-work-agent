@@ -2571,6 +2571,10 @@ def build_production_runtime(
     structured_inference_router.record_runtime_result = _record_llm_circuit_result
     event_publisher = InMemorySseEventBuffer(service_instance_id=service_instance_id)
     retrieval_cache = InMemoryRunRetrievalCache()
+    workflow_execution: BackgroundRunExecutorAdapter | None = None
+
+    def _is_run_active(run_id: str) -> bool:
+        return workflow_execution is not None and workflow_execution.is_run_active(run_id)
 
     project_external_llm_transfer_scope = ProjectExternalLlmTransferScopeHandler(
         checkpoint,
@@ -2599,6 +2603,7 @@ def build_production_runtime(
         resolve_pending_confirmation=lambda run_id: workflow_runtime.resolve_pending_confirmation(
             run_id
         ),
+        is_run_active=_is_run_active,
         tool_registry=connector_bundle.tool_registry,
     )
     get_supervisor_observation_handler = GetSupervisorObservationHandler(read_unit_of_work_factory)
@@ -2938,6 +2943,7 @@ def build_production_runtime(
         ),
         now_ms=clock.now_ms,
     )
+    workflow_execution = production_runtime.workflow_execution
 
     async def _reconcile_inflight_executions() -> None:
         await asyncio.to_thread(

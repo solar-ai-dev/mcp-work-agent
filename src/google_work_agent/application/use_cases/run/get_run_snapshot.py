@@ -181,6 +181,7 @@ class GetRunSnapshotHandler:
         project_error_actions: ProjectErrorActionsHandler | None = None,
         project_external_llm_transfer_scope: ProjectExternalLlmTransferScopeHandler | None = None,
         resolve_pending_confirmation: Callable[[str], Mapping[str, object] | None] | None = None,
+        is_run_active: Callable[[str], bool] = lambda _run_id: False,
         tool_registry: SignedToolRegistry | None = None,
         message_limit: int = 200,
     ) -> None:
@@ -190,6 +191,7 @@ class GetRunSnapshotHandler:
         self._project_error_actions = project_error_actions
         self._project_external_llm_transfer_scope = project_external_llm_transfer_scope
         self._resolve_pending_confirmation = resolve_pending_confirmation
+        self._is_run_active = is_run_active
         self._tool_registry = tool_registry
         self._message_limit = message_limit
 
@@ -200,11 +202,17 @@ class GetRunSnapshotHandler:
                 return None
             observed_runtimes = unit_of_work.traces.list_observed_runtimes(run.id)
             activity = ProjectRunActivityHandler()(
-                unit_of_work, run.id, run_status=run.status.value
+                unit_of_work,
+                run.id,
+                run_status=run.status.value,
+                is_run_active=self._is_run_active(run.id),
             )
             actual_runtime = (
-                "MIXED" if len(observed_runtimes) > 1 else
-                observed_runtimes[0] if observed_runtimes else run.actual_runtime
+                "MIXED"
+                if len(observed_runtimes) > 1
+                else observed_runtimes[0]
+                if observed_runtimes
+                else run.actual_runtime
             )
             message_records = _messages_for_run(
                 unit_of_work,

@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from json import JSONDecodeError, loads
-from typing import Literal, TypedDict, cast
+from typing import Literal, NotRequired, TypedDict, cast
 
 from google_work_agent.ports.persistence.audit_event_repository import AuditEventCursor
 from google_work_agent.ports.persistence.trace_event_repository import TraceEventCursor
@@ -13,11 +13,16 @@ ActivityState = Literal[
     "RUNNING", "WAITING", "RECORDED", "PARTIAL", "FAILED", "INTERRUPTED", "UNKNOWN"
 ]
 _STATES = {"RUNNING", "WAITING", "RECORDED", "PARTIAL", "FAILED", "INTERRUPTED", "UNKNOWN"}
+ActivityDetailState = Literal["RUNNING", "WAITING", "RECORDED", "FAILED"]
+_DETAIL_STATES = {"RUNNING", "WAITING", "RECORDED", "FAILED"}
 
 
 class RunActivityDetailV1(TypedDict):
     label: str
     value: str
+    fact_id: NotRequired[str]
+    state: NotRequired[ActivityDetailState]
+    occurred_at_ms: NotRequired[int]
 
 
 class RunActivityRowV1(TypedDict):
@@ -69,7 +74,14 @@ _AUDIT_LABELS: dict[str, tuple[str, ActivityState, str]] = {
 
 
 class ProjectRunActivityHandler:
-    def __call__(self, unit_of_work: UnitOfWork, run_id: str, *, run_status: str) -> RunActivityV1:
+    def __call__(
+        self,
+        unit_of_work: UnitOfWork,
+        run_id: str,
+        *,
+        run_status: str,
+        is_run_active: bool = False,
+    ) -> RunActivityV1:
         """Read every retained page. Trace is never used as approval/effect authority."""
         rows: dict[str, RunActivityRowV1] = {}
         waiting_plans: dict[str, str] = {}
@@ -125,7 +137,11 @@ class ProjectRunActivityHandler:
                 if previous and previous["state"] not in {"RUNNING", "WAITING"}:
                     continue
                 started = previous["started_at_ms"] if previous else event.created_at_ms
-                details = _details(attrs.get("details"))
+                details = _merge_details(
+                    list(previous["details"]) if previous else [],
+                    _detail_updates(attrs.get("detail_updates")),
+                    _details(attrs.get("details")),
+                )
                 rows[key] = RunActivityRowV1(
                     execution_id=key,
                     sequence=0,
@@ -259,6 +275,11 @@ class ProjectRunActivityHandler:
             }:
                 row["state"] = "INTERRUPTED"
                 row["label"] = "Run이 종료되었습니다. 이 단계의 완료 결과는 기록되지 않았습니다."
+            elif row["state"] == "RUNNING" and not is_run_active:
+                row["state"] = "UNKNOWN"
+                row["label"] = (
+                    "현재 실행 중임을 확인할 수 없습니다. Run 상태와 복구 안내를 확인해 주세요."
+                )
         return RunActivityV1(
             schema_version=1, trace_cursor=trace_cursor, audit_cursor=audit_cursor, rows=result
         )
@@ -286,7 +307,67 @@ def _details(value: object) -> list[RunActivityDetailV1]:
         if isinstance(item, dict)
         and isinstance(item.get("label"), str)
         and isinstance(item.get("value"), str)
+        and item["label"].strip()
+        and item["value"].strip()
     ][:40]
+
+
+def _detail_updates(value: object) -> list[RunActivityDetailV1]:
+    if not isinstance(value, list):
+        return []
+    result: list[RunActivityDetailV1] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        fact_id, state = item.get("fact_id"), item.get("state")
+        label, detail_value = item.get("label"), item.get("value")
+        occurred_at_ms = item.get("occurred_at_ms")
+        if (
+            not isinstance(fact_id, str)
+            or len(fact_id) != 64
+            or not isinstance(state, str)
+            or state not in _DETAIL_STATES
+            or not isinstance(label, str)
+            or not isinstance(detail_value, str)
+            or type(occurred_at_ms) is not int
+            or occurred_at_ms < 0
+        ):
+            continue
+        result.append(
+            RunActivityDetailV1(
+                fact_id=fact_id,
+                state=cast(ActivityDetailState, state),
+                label=label[:512],
+                value=detail_value[:512],
+                occurred_at_ms=occurred_at_ms,
+            )
+        )
+    return result[:40]
+
+
+def _merge_details(
+    existing: list[RunActivityDetailV1],
+    updates: list[RunActivityDetailV1],
+    completed: list[RunActivityDetailV1],
+) -> list[RunActivityDetailV1]:
+    positions = {
+        detail["fact_id"]: index for index, detail in enumerate(existing) if "fact_id" in detail
+    }
+    for update in updates:
+        fact_id = update["fact_id"]
+        position = positions.get(fact_id)
+        if position is None:
+            positions[fact_id] = len(existing)
+            existing.append(update)
+        else:
+            existing[position] = update
+    for detail in completed:
+        if not any(
+            current["label"] == detail["label"] and current["value"] == detail["value"]
+            for current in existing
+        ):
+            existing.append(detail)
+    return existing[:40]
 
 
 def _domain_fields(prefix: str, raw: str) -> list[RunActivityDetailV1]:

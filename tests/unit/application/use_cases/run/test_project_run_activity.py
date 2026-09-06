@@ -91,6 +91,135 @@ def test_activity__ignores_replay_regression__and_cross_run_events() -> None:
     assert result["rows"][0]["details"][0]["value"] == "old revision"
 
 
+def test_activity__accumulates_observed_facts__and_updates_same_step_in_place() -> None:
+    fact_a, fact_b = "a" * 64, "b" * 64
+    events = []
+    for event_id, updates in enumerate(
+        [
+            [
+                {
+                    "fact_id": fact_a,
+                    "state": "RUNNING",
+                    "label": "자료 조회",
+                    "value": "자료를 확인하고 있습니다.",
+                    "occurred_at_ms": 2,
+                }
+            ],
+            [
+                {
+                    "fact_id": fact_a,
+                    "state": "RECORDED",
+                    "label": "자료 조회",
+                    "value": "자료 확인을 마쳤습니다.",
+                    "occurred_at_ms": 3,
+                }
+            ],
+            [
+                {
+                    "fact_id": fact_b,
+                    "state": "RECORDED",
+                    "label": "자료 조회",
+                    "value": "자료 확인을 마쳤습니다.",
+                    "occurred_at_ms": 4,
+                }
+            ],
+        ],
+        start=1,
+    ):
+        events.append(
+            PersistedTraceEventRecord(
+                event_id,
+                "r",
+                None,
+                "RUN_ACTIVITY_OBSERVED",
+                None,
+                None,
+                dumps(
+                    {
+                        "schema_version": 1,
+                        "execution_id": "c" * 64,
+                        "role": "자료 검색",
+                        "state": "RUNNING",
+                        "label": "처리하고 있습니다.",
+                        "details": [],
+                        "detail_updates": updates,
+                    }
+                ),
+                event_id,
+            )
+        )
+    events.append(
+        PersistedTraceEventRecord(
+            4,
+            "r",
+            None,
+            "RUN_ACTIVITY_OBSERVED",
+            None,
+            None,
+            dumps(
+                {
+                    "schema_version": 1,
+                    "execution_id": "c" * 64,
+                    "role": "자료 검색",
+                    "state": "RECORDED",
+                    "label": "자료 조회 결과를 정리했습니다.",
+                    "details": [{"label": "조회 결과", "value": "관련 자료를 확인했습니다."}],
+                    "detail_updates": [],
+                }
+            ),
+            5,
+        )
+    )
+    uow = Mock()
+    uow.traces.list_page.return_value = tuple(events)
+    uow.audits.list_page.return_value = ()
+
+    row = ProjectRunActivityHandler()(uow, "r", run_status="COMPLETED")["rows"][0]
+
+    assert row["state"] == "RECORDED"
+    assert [detail.get("fact_id") for detail in row["details"]] == [fact_a, fact_b, None]
+    assert row["details"][0]["state"] == "RECORDED"
+    assert row["details"][0]["occurred_at_ms"] == 3
+    assert row["details"][1]["occurred_at_ms"] == 4
+    assert row["details"][2] == {"label": "조회 결과", "value": "관련 자료를 확인했습니다."}
+
+
+def test_activity__does_not_present_unconfirmed_running_row__after_worker_stops() -> None:
+    event = PersistedTraceEventRecord(
+        1,
+        "r",
+        None,
+        "RUN_ACTIVITY_OBSERVED",
+        None,
+        None,
+        dumps(
+            {
+                "schema_version": 1,
+                "execution_id": "a" * 64,
+                "role": "자료 검색",
+                "state": "RUNNING",
+                "label": "처리하고 있습니다.",
+                "details": [],
+            }
+        ),
+        1,
+    )
+    uow = Mock()
+    uow.traces.list_page.return_value = (event,)
+    uow.audits.list_page.return_value = ()
+
+    active = ProjectRunActivityHandler()(uow, "r", run_status="RETRIEVING", is_run_active=True)[
+        "rows"
+    ][0]
+    stale = ProjectRunActivityHandler()(uow, "r", run_status="RETRIEVING", is_run_active=False)[
+        "rows"
+    ][0]
+
+    assert active["state"] == "RUNNING"
+    assert stale["state"] == "UNKNOWN"
+    assert "현재 실행 중임을 확인할 수 없습니다" in stale["label"]
+
+
 def test_activity__uses_committed_audit__for_unknown_and_verification() -> None:
     uow = Mock()
     uow.traces.list_page.return_value = ()

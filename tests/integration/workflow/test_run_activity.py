@@ -1,10 +1,13 @@
 """Observe real LangGraph task identities across interrupt/resume and a back-edge."""
 
+import sqlite3
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 from unittest.mock import Mock
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -17,6 +20,98 @@ from google_work_agent.application.use_cases.trace_event.record_run_activity imp
 class ActivityGraphState(TypedDict):
     run_id: str
     round: int
+
+
+def test_graph_activity__records_real_subgraph_steps__before_agent_end() -> None:
+    emit = Mock()
+    callback = RunActivityCallback(
+        RecordRunActivityHandler(emit_trace=emit, now_ms=lambda: 1, service_instance_id="test")
+    )
+    subgraph = StateGraph(ActivityGraphState)
+    subgraph.add_node("plan_query", lambda state: {"round": state["round"] + 1})
+    subgraph.add_node("execute_read", lambda state: {"round": state["round"] + 1})
+    subgraph.add_edge(START, "plan_query")
+    subgraph.add_edge("plan_query", "execute_read")
+    subgraph.add_edge("execute_read", END)
+    graph = StateGraph(ActivityGraphState)
+    graph.add_node("context_retriever", subgraph.compile())
+    graph.add_edge(START, "context_retriever")
+    graph.add_edge("context_retriever", END)
+
+    graph.compile().invoke({"run_id": "r", "round": 0}, config={"callbacks": [callback]})
+
+    observed = [call.args[0].attributes for call in emit.call_args_list]
+    assert [item["state"] for item in observed] == [
+        "RUNNING",
+        "RUNNING",
+        "RUNNING",
+        "RUNNING",
+        "RUNNING",
+        "RECORDED",
+    ]
+    assert len({item["execution_id"] for item in observed}) == 1
+    assert [item["detail_updates"][0]["state"] for item in observed if item["detail_updates"]] == [
+        "RUNNING",
+        "RECORDED",
+        "RUNNING",
+        "RECORDED",
+    ]
+    assert [item["detail_updates"][0]["label"] for item in observed if item["detail_updates"]] == [
+        "검색 계획",
+        "검색 계획",
+        "자료 조회",
+        "자료 조회",
+    ]
+
+
+def test_graph_activity__deduplicates_same_step__across_restart_and_resume(
+    tmp_path: Path,
+) -> None:
+    emit = Mock()
+
+    def determine_io_resources(state: ActivityGraphState) -> dict[str, int]:
+        interrupt("continue")
+        return {"round": state["round"] + 1}
+
+    def build(connection: sqlite3.Connection) -> tuple[Any, RunActivityCallback]:
+        callback = RunActivityCallback(
+            RecordRunActivityHandler(
+                emit_trace=emit,
+                now_ms=lambda: 1,
+                service_instance_id="test",
+            )
+        )
+        subgraph = StateGraph(ActivityGraphState)
+        subgraph.add_node("determine_io_resources", determine_io_resources)
+        subgraph.add_edge(START, "determine_io_resources")
+        subgraph.add_edge("determine_io_resources", END)
+        graph = StateGraph(ActivityGraphState)
+        graph.add_node("tool_route", subgraph.compile())
+        graph.add_edge(START, "tool_route")
+        graph.add_edge("tool_route", END)
+        return graph.compile(checkpointer=SqliteSaver(connection)), callback
+
+    config: RunnableConfig = {"configurable": {"thread_id": "r"}}
+    checkpoint_path = tmp_path / "activity-checkpoint.db"
+    with sqlite3.connect(checkpoint_path, check_same_thread=False) as connection:
+        compiled, callback = build(connection)
+        config["callbacks"] = [callback]
+        compiled.invoke({"run_id": "r", "round": 0}, config=config)
+    with sqlite3.connect(checkpoint_path, check_same_thread=False) as connection:
+        restarted, callback = build(connection)
+        config["callbacks"] = [callback]
+        restarted.invoke(Command(resume="yes"), config=config)
+
+    observed = [call.args[0].attributes for call in emit.call_args_list]
+    detail_updates = [item["detail_updates"][0] for item in observed if item["detail_updates"]]
+    assert [item["state"] for item in detail_updates] == [
+        "RUNNING",
+        "WAITING",
+        "RUNNING",
+        "RECORDED",
+    ]
+    assert len({item["fact_id"] for item in detail_updates}) == 1
+    assert len({item["execution_id"] for item in observed}) == 1
 
 
 def test_graph_activity__preserves_task_identity__through_resume_and_back_edge() -> None:
@@ -36,7 +131,7 @@ def test_graph_activity__preserves_task_identity__through_resume_and_back_edge()
         "context_retriever", lambda state: END if state["round"] == 2 else "context_retriever"
     )
     graph = builder.compile(checkpointer=InMemorySaver())
-    config = {"configurable": {"thread_id": "r"}, "callbacks": [callback]}
+    config: RunnableConfig = {"configurable": {"thread_id": "r"}, "callbacks": [callback]}
     graph.invoke({"run_id": "r", "round": 0}, config=config)
     before = [call.args[0].attributes for call in emit.call_args_list]
     assert [item["state"] for item in before] == ["RUNNING", "WAITING"]
