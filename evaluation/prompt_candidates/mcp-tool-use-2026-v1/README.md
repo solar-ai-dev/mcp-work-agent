@@ -1,6 +1,6 @@
 # MCP tool-use research prompt candidate v1
 
-This directory is an **offline DRAFT candidate bundle** for the Google Work Agent's existing
+This directory is an **offline DRAFT candidate bundle** for the mcp-work-agent's existing
 21-slot Prompt Runtime contract. It does not replace the current Product prompt bundle and must
 not be loaded by installed or production runtime before the normal activation gates pass.
 

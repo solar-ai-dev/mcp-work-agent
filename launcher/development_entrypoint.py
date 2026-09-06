@@ -43,7 +43,7 @@ class _ThreadServiceProbe:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Start Google Work Agent development Product")
+    parser = argparse.ArgumentParser(description="Start mcp-work-agent development Product")
     parser.add_argument("--runtime-root", type=Path, default=PROJECT_ROOT / "runtime/development")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=0)
@@ -154,7 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 service_instance_id=service_instance_id,
             )
         bootstrap_secret = ""
-        print(f"Google Work Agent development Product ready: http://127.0.0.1:{port}/")
+        print(f"mcp-work-agent development Product ready: http://127.0.0.1:{port}/")
         if descriptor_path is not None:
             print(f"Launch descriptor: {descriptor_path}")
         while thread.is_alive():

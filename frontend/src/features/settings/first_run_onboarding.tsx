@@ -116,7 +116,7 @@ export function FirstRunOnboardingScreen({
   return (
     <main className="startup">
       <section className="startup-card" aria-label="최초 설정">
-        <h1>Google Work Agent 시작하기</h1>
+        <h1>mcp-work-agent 시작하기</h1>
         <p>필수 항목을 순서대로 확인합니다. 완료된 항목은 다시 입력하지 않습니다.</p>
         <p role="status" aria-live="polite">{statusLine}</p>
         {loading ? <p role="status">설정 상태를 확인하고 있습니다.</p> : null}

@@ -27,7 +27,7 @@ from launcher.verify_installation import verify_installation
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one installed Launcher instance and coordinate the child lifecycle."""
 
-    parser = argparse.ArgumentParser(description="Start Google Work Agent")
+    parser = argparse.ArgumentParser(description="Start mcp-work-agent")
     parser.add_argument("--install-root", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
     parser.add_argument("--shutdown-timeout", type=float, default=30.0)

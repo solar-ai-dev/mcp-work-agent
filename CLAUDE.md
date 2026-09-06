@@ -1,4 +1,4 @@
-# Google Work Agent — Claude Code Instructions
+# mcp-work-agent — Claude Code Instructions
 
 이 `CLAUDE.md`는 Claude Code가 저장소에서 작업할 때 항상 적용하는 공통 규칙이다.
 특정 작업용 임시 계획이나 장문 보고서를 이 파일에 누적하지 않는다.

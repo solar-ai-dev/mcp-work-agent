@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -186,7 +186,7 @@ test("captures the bootstrap fragment before asynchronous startup checks", async
 
   render(<App />);
 
-  await screen.findByText(/Google/);
+  await screen.findByRole("heading", { name: "mcp-work-agent", exact: true });
   expect(window.location.hash).toBe("");
   expect(bootstrapRequested).toBe(true);
   expect(document.body.textContent).not.toContain("secret-1");
@@ -1192,7 +1192,7 @@ test("disconnects Google and refreshes the runtime summary", async () => {
   await user.click(screen.getByRole("button", { name: "설정" }));
   await user.click(screen.getByRole("button", { name: "연결 해제" }));
 
-  await screen.findByText("Google 미연결");
+  await within(screen.getByRole("region", { name: "Google 연결", exact: true })).findByText("연결되지 않음");
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: /Project sync follow-up 선택/ })).not.toBeInTheDocument());
 });
 
@@ -1480,7 +1480,7 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
   );
 
   await user.selectOptions(screen.getByLabelText("저장 방식"), "SESSION_ONLY");
-  await user.type(screen.getByPlaceholderText("sk-..."), "sk-phase-m");
+  await user.type(screen.getByLabelText("API 키", { exact: true }), "sk-phase-m");
   await user.click(screen.getByRole("button", { name: "API 키 저장" }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -1506,18 +1506,24 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
   );
 });
 
-test("TST-UI-201 header shows product, connection, account, help, settings, and safe status", async () => {
+test("TST-UI-201 header keeps account details in settings and shows product controls", async () => {
   installUiContractFetch();
   render(<App />);
 
-  await waitFor(() => expect(document.querySelector(".topbar-connection .connection-connected")).not.toBeNull());
+  await screen.findByText("mcp-work-agent");
+  const header = within(screen.getByRole("banner"));
 
   await screen.findByText("메인 에이전트 · 실행 전 승인을 기다리고 있습니다.");
-  expect(screen.getByText("user@example.com")).toBeInTheDocument();
+  expect(header.queryByText("user@example.com")).not.toBeInTheDocument();
+  expect(header.queryByText("Google 연결됨")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "도움말" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "설정" })).toBeInTheDocument();
   expect(screen.getByText("메인 에이전트 · 실행 전 승인을 기다리고 있습니다.")).toBeInTheDocument();
   expect(screen.queryByText("WAITING_APPROVAL")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "설정" }));
+  const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
+  expect(await googleSettings.findByText("user@example.com")).toBeInTheDocument();
+  expect(googleSettings.getByRole("button", { name: "연결 해제" })).toBeInTheDocument();
 });
 
 test("TST-UI-202 renders the left, center, and right workspace panels", async () => {
@@ -2984,7 +2990,7 @@ test("routes an incomplete first-run configuration to the onboarding checklist",
   installUiContractFetch({ setupCompleted: false, run: false });
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Google Work Agent 시작하기" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "mcp-work-agent 시작하기" })).toBeInTheDocument();
   expect(screen.getByText("필요 · LLM 자동 연결")).toBeInTheDocument();
   expect(screen.queryByRole("radio", { name: "API LLM" })).not.toBeInTheDocument();
   expect(screen.queryByRole("radio", { name: "Local LLM (Ollama)" })).not.toBeInTheDocument();

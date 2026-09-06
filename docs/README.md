@@ -1,4 +1,4 @@
-# Google Work Agent Documentation
+# mcp-work-agent Documentation
 
 This `/docs` tree is optimized for coding and review agents.
 

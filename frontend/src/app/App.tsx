@@ -299,7 +299,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
   return (
     <MainShell
       google={google}
-      currentAccount={currentAccount}
       statusLine={statusLine}
       googleConnectPending={googleConnectPending}
       theme={theme}

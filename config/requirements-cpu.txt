@@ -1,4 +1,4 @@
-# Google Work Agent - API_ONLY / CPU developer environment
+# mcp-work-agent - API_ONLY / CPU developer environment
 # Target: Windows 11 x64, CPython 3.12
 #
 # This profile is used for:

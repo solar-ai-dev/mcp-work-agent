@@ -35,7 +35,7 @@ class InnoSetupBackend:
         )
         if result.returncode != 0:
             raise RuntimeError("Windows installer backend failed")
-        installers = tuple(output_dir.glob("GoogleWorkAgent-*-Setup.exe"))
+        installers = tuple(output_dir.glob("mcp-work-agent-*-Setup.exe"))
         if len(installers) != 1:
             raise RuntimeError("Windows installer backend produced an unexpected artifact set")
         return installers[0]
@@ -89,7 +89,7 @@ def build_windows_installer(
     destination.mkdir(parents=True, exist_ok=True)
     definition = installer_definition or WindowsInstallerDefinition()
     with tempfile.TemporaryDirectory(prefix="gwa-installer-") as temporary:
-        definition_path = Path(temporary) / "GoogleWorkAgent.iss"
+        definition_path = Path(temporary) / "mcp-work-agent.iss"
         definition_path.write_text(
             definition.render_inno_setup_script(
                 bundle_root=installation.install_root,

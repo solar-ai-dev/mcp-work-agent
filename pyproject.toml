@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "google-work-agent"
+name = "mcp-work-agent"
 version = "0.1.0"
-description = "Local single-user Google work agent skeleton."
+description = "Local single-user mcp-work-agent skeleton."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

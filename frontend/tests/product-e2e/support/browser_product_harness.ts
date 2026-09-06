@@ -103,7 +103,7 @@ export class BrowserProductHarness {
     await this.page.goto(entryPath);
     const onboarding = this.page
       .getByRole("main")
-      .getByRole("heading", { name: "Google Work Agent 시작하기" });
+      .getByRole("heading", { name: "mcp-work-agent 시작하기" });
     const composer = this.page.getByRole("textbox", {
       name: /선택한 .*업무를 요청하세요/,
     });

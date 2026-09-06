@@ -17,7 +17,7 @@ export function StartupCheckScreen({ state, onRetry }: Props): JSX.Element {
   return (
     <main className="startup">
       <section className="startup-card" aria-live="polite" aria-busy={state.status === "loading"}>
-        <h1>Google Work Agent</h1>
+        <h1>mcp-work-agent</h1>
         <p>{state.message}</p>
         {state.error ? <p className="status-bad" role="alert">{state.error}</p> : null}
         <ul className="card-list">

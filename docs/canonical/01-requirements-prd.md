@@ -15,7 +15,7 @@
 
 ## 1. 문서 목적
 
-이 문서는 Google Work Agent가 해결할 문제, 사용자, 제품 범위, 기능·비기능 요구사항과 완료 조건을 정의한다. 세부 기능 동작은 `01-A 기능 정의서`, 허용·승인·차단 규칙은 `01-B 정책 정의서`에서 관리한다.
+이 문서는 mcp-work-agent가 해결할 문제, 사용자, 제품 범위, 기능·비기능 요구사항과 완료 조건을 정의한다. 세부 기능 동작은 `01-A 기능 정의서`, 허용·승인·차단 규칙은 `01-B 정책 정의서`에서 관리한다.
 
 ### 1.1 문서 권위·책임 소유 규칙
 
@@ -25,7 +25,7 @@ Concern ownership의 **단일 coordination authority는 `00 Project Source Guide
 
 ## 2. 제품 개요
 
-Google Work Agent는 **Connector 확장 가능한 Work Agent Core** 위에 Google Workspace Connector를 P0 첫 구현으로 제공한다. Core는 Connector·Resource·Tool·Effect·Evidence 같은 일반 계약으로 외부 업무 시스템을 다루며, P0에서는 Gmail, Google Tasks, Google Calendar의 업무 정보를 조회하고 연결해 사용자의 목표를 달성할 실행 계획을 만든다. 결정적 LangGraph Supervisor가 최대 6개의 전문 **Agent Subgraph**를 조정한다. 각 Agent Subgraph는 자신의 호출 단위 Local State, Prompt 계약, bounded validation·repair/revision loop를 가지며 완료 시 Versioned Typed Result만 Main Graph에 반환한다. Agent별 장기 Memory는 두지 않는다. semantic responsibility와 안전 경계는 Graph Profile과 무관하게 동일하며, physical Subgraph 구성은 `06 Workflow`의 current Graph Profile 계약을 따른다. 모든 외부 Write는 사용자 승인 후 공통 결정적 실행·검증 책임이 수행하고 Connector별 Verification Read로 검증한다. P0 Google Workspace Connector에서는 Google Provider 재조회가 이 Verification을 구현한다.
+mcp-work-agent는 **Connector 확장 가능한 Work Agent Core** 위에 Google Workspace Connector를 P0 첫 구현으로 제공한다. Core는 Connector·Resource·Tool·Effect·Evidence 같은 일반 계약으로 외부 업무 시스템을 다루며, P0에서는 Gmail, Google Tasks, Google Calendar의 업무 정보를 조회하고 연결해 사용자의 목표를 달성할 실행 계획을 만든다. 결정적 LangGraph Supervisor가 최대 6개의 전문 **Agent Subgraph**를 조정한다. 각 Agent Subgraph는 자신의 호출 단위 Local State, Prompt 계약, bounded validation·repair/revision loop를 가지며 완료 시 Versioned Typed Result만 Main Graph에 반환한다. Agent별 장기 Memory는 두지 않는다. semantic responsibility와 안전 경계는 Graph Profile과 무관하게 동일하며, physical Subgraph 구성은 `06 Workflow`의 current Graph Profile 계약을 따른다. 모든 외부 Write는 사용자 승인 후 공통 결정적 실행·검증 책임이 수행하고 Connector별 Verification Read로 검증한다. P0 Google Workspace Connector에서는 Google Provider 재조회가 이 Verification을 구현한다.
 
 ### 2.1 Agent · Role · LLM Call · Subgraph 정의
 

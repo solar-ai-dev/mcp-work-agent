@@ -1,6 +1,8 @@
-# Google Work Agent
+# mcp-work-agent
 
-Google Work Agent는 로컬 PC에서 실행되는 단일 사용자 Google Workspace 업무 Agent입니다. FastAPI API, React UI, LangGraph workflow, SQLite Domain Store, 로컬 MCP Connector, API/Local LLM runtime을 하나의 제품 composition으로 연결합니다. 승인·Claim·Write·검증·복구는 결정적 Application/Domain 경계가 소유하며 Agent/LLM이 최종 판정하지 않습니다.
+제품 표시·배포 이름은 `mcp-work-agent`입니다. 기존 설치와 데이터의 호환성을 위해 내부 Python 패키지 `google_work_agent`, Windows 설치·데이터 경로와 credential namespace는 유지합니다. GitHub 저장소 주소는 별도 변경 전까지 기존 주소를 사용합니다.
+
+mcp-work-agent는 로컬 PC에서 실행되는 단일 사용자 Google Workspace 업무 Agent입니다. FastAPI API, React UI, LangGraph workflow, SQLite Domain Store, 로컬 MCP Connector, API/Local LLM runtime을 하나의 제품 composition으로 연결합니다. 승인·Claim·Write·검증·복구는 결정적 Application/Domain 경계가 소유하며 Agent/LLM이 최종 판정하지 않습니다.
 
 ## 요구 환경
 

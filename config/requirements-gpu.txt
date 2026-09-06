@@ -1,4 +1,4 @@
-# Google Work Agent - LOCAL_CAPABLE / GPU developer environment
+# mcp-work-agent - LOCAL_CAPABLE / GPU developer environment
 # Target: Windows 11 x64, CPython 3.12
 # Runtime modes: API_LLM, LOCAL_GPU, AUTO
 #

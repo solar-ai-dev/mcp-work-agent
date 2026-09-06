@@ -168,7 +168,7 @@ def _run_installed_service(
     """Consume one Launcher handoff and run the installed uvicorn service."""
 
     try:
-        parser = argparse.ArgumentParser(description="Run Google Work Agent service")
+        parser = argparse.ArgumentParser(description="Run mcp-work-agent service")
         parser.add_argument("--host", required=True)
         parser.add_argument("--port", required=True, type=int)
         parser.add_argument("--data-dir", required=True, type=Path)

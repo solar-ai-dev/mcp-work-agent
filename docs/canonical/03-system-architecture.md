@@ -6,7 +6,7 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 문서명 | 03. Google Work Agent 시스템 아키텍처 설계서 |
+| 문서명 | 03. mcp-work-agent 시스템 아키텍처 설계서 |
 | 상태 | Draft v3.14 |
 | 기준일 | 2026-09-03 |
 | 대상 릴리스 | P0 MVP |
@@ -41,7 +41,7 @@ Write 실행 후에는 Application의 결정적 verification use case가
 
 ## 1. 문서 목적
 
-이 문서는 Google Work Agent의 전체 실행 구조, 프로세스 경계, 논리 컴포넌트, 책임 분리, 통신 방식, 상태 소유권, 안전 경계와 배포 프로필을 정의한다.
+이 문서는 mcp-work-agent의 전체 실행 구조, 프로세스 경계, 논리 컴포넌트, 책임 분리, 통신 방식, 상태 소유권, 안전 경계와 배포 프로필을 정의한다.
 
 이 문서가 답해야 하는 핵심 질문은 다음과 같다.
 
@@ -80,7 +80,7 @@ Write 실행 후에는 Application의 결정적 verification use case가
 
 ## 2. 아키텍처 요약
 
-Google Work Agent는 **로컬 Frontend와 Python Modular Monolith를 분리한 단일 사용자 애플리케이션**으로 구성한다.
+mcp-work-agent는 **로컬 Frontend와 Python Modular Monolith를 분리한 단일 사용자 애플리케이션**으로 구성한다.
 
 > **React Frontend가 사용자 화면을 담당하고, FastAPI Local Agent Service가 Application·LangGraph·Domain·Persistence의 단일 진입 경계를 제공한다. 외부 업무 시스템 접근은 Connector Runtime/MCP boundary를 공통 경계로 사용하고, 각 Provider API/SDK·Credential 적용·raw 응답 해석은 해당 Connector MCP Server 내부 Adapter가 소유한다. P0에서는 Google Workspace Connector가 Gmail·Tasks·Calendar를 제공한다. 모든 제품 프로세스는 사용자 PC에서 실행된다.**
 주요 실행 단위는 다음 네 가지다.
@@ -403,7 +403,7 @@ React
 
 ## 8. 제어형 Agent 실행 모델
 
-Google Work Agent는 자유 대화형 Agent 군집이나 Peer-to-Peer A2A를 사용하지 않는다. 하나의 결정적 LangGraph Supervisor가 **6개 `SemanticAgentOwnerIdV1` 책임**과 일반 코드 검증, 사용자 Interrupt, 결정적 실행·검증 책임을 조정한다. 이 6개 semantic responsibility는 selected Graph Profile에 따라 **1개 / 3개 / 6개의 physical compiled Agent Subgraph**로 배치되며, semantic owner 수와 physical Subgraph 수를 같은 개념으로 취급하지 않는다.
+mcp-work-agent는 자유 대화형 Agent 군집이나 Peer-to-Peer A2A를 사용하지 않는다. 하나의 결정적 LangGraph Supervisor가 **6개 `SemanticAgentOwnerIdV1` 책임**과 일반 코드 검증, 사용자 Interrupt, 결정적 실행·검증 책임을 조정한다. 이 6개 semantic responsibility는 selected Graph Profile에 따라 **1개 / 3개 / 6개의 physical compiled Agent Subgraph**로 배치되며, semantic owner 수와 physical Subgraph 수를 같은 개념으로 취급하지 않는다.
 
 ```mermaid
 flowchart TB

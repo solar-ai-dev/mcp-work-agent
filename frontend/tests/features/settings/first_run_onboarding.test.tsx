@@ -31,6 +31,6 @@ test("renders the canonical single-screen first-run checklist", async () => {
     onRefreshConnections={vi.fn()}
     onComplete={vi.fn()}
   />);
-  expect(await screen.findByRole("heading", { name: "Google Work Agent 시작하기" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "mcp-work-agent 시작하기" })).toBeInTheDocument();
   expect(document.querySelector("main") ?? document.body).toBeInTheDocument();
 });

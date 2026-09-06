@@ -1,8 +1,7 @@
-import type { CurrentGoogleAccount, GoogleConnection } from "../features/settings";
+import type { GoogleConnection } from "../features/settings";
 
 type Props = {
   google: GoogleConnection | null;
-  currentAccount: CurrentGoogleAccount["account"];
   statusLine: string;
   googleConnectPending: boolean;
   onConnectGoogle: () => void;
@@ -18,7 +17,6 @@ type Props = {
 
 export function TopBar({
   google,
-  currentAccount,
   statusLine,
   googleConnectPending,
   onConnectGoogle,
@@ -44,17 +42,11 @@ export function TopBar({
         >
           ☰
         </button>
-        <span className="brand-mark" aria-hidden="true">G</span>
-        <strong>Google Work Agent</strong>
+        <span className="brand-mark" aria-hidden="true">m</span>
+        <strong>mcp-work-agent</strong>
         <span className="sr-only" aria-live="polite">{statusLine}</span>
       </div>
-      <div className="topbar-connection" aria-live="polite">
-        <span className={`pill ${connected ? "connection-connected" : "connection-disconnected"}`}>
-          {connected ? "Google 연결됨" : "Google 미연결"}
-        </span>
-      </div>
       <div className="topbar-actions">
-        {currentAccount ? <span className="muted">{currentAccount.email}</span> : null}
         <button className="icon-button topbar-icon-button" type="button" aria-label="도움말" title="도움말" onClick={onShowHelp}>?</button>
         {!connected ? (
           <button className="button-primary" type="button" disabled={googleConnectPending} onClick={onConnectGoogle}>
