@@ -11,8 +11,10 @@ import type {
   TaskListContainer,
 } from "../../../api/contract";
 
-export function listTaskLists(): Promise<{ schema_version: 1; items: TaskListContainer[]; next_page_token: string | null }> {
-  return requestJson("/api/v1/resources/task-lists?page_size=100");
+export function listTaskLists(continuation: string | null = null): Promise<{ schema_version: 1; items: TaskListContainer[]; next_page_token: string | null }> {
+  const search = new URLSearchParams({ page_size: "100" });
+  if (continuation) search.set("page_token", continuation);
+  return requestJson(`/api/v1/resources/task-lists?${search.toString()}`);
 }
 
 export function listCalendars(): Promise<{ schema_version: 1; items: CalendarContainer[]; next_page_token: string | null }> {

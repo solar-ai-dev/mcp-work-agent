@@ -243,6 +243,7 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 ### 9.4 목록 조회와 Pagination
 
+- Tasks Sidebar는 기존 Task List 조회 API의 목록 선택·새로고침·추가 페이지 조회를 제공한다. 기본 조회는 설정된 목록(미설정 시 Provider 첫 목록)이며, 다른 목록을 선택하면 그 목록의 미래 예정일을 포함한 미완료 Task를 조회한다. Browse 선택은 생성용 기본 Task List 설정을 변경하지 않는다. 계정·목록 전환 시 완료 항목과 preload까지 이전 조회 상태를 폐기한다.
 - Gmail·Tasks Sidebar의 visible page size는 configured `SIDEBAR_PAGE_SIZE`이며 Agent Retrieval의 configured `RETRIEVAL_PAGE_SIZE`와는 별도 계약이다. Local API continuation은 opaque 값으로 취급하고 Frontend가 Provider token이나 page number로 해석하지 않는다.
 - Gmail은 아직 방문하지 않은 intermediate page에서 metadata hydration을 생략해 다음 continuation만 확보하고 visible target page만 metadata를 hydrate한다. token-known과 metadata-loaded 상태를 React Client Session Cache에서 구분하며 이미 받은 page 재방문은 API를 호출하지 않는다.
 - Tasks는 Provider가 허용하는 metadata batch를 받고 UI에서 configured `SIDEBAR_PAGE_SIZE`로 slice한다. continuation이 있으면 현재 materialized batch에서 계산되는 page 범위만 표시하고 알려진 마지막 page에서만 다음 batch를 가져온다. terminal batch 뒤 누적 수로 exact total과 마지막 page를 확정한다.
