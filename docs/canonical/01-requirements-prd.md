@@ -6,7 +6,7 @@
 
 ## 0. 한눈에 보기
 
-mcp-work-agent는 개인 PC에서 Gmail·Google Tasks·Google Calendar와 GitHub Issue의 업무 정보를 연결하는 Work Agent다. 사용자는 자연어로 목표를 제시하고, 제품은 필요한 자료를 찾아 결과 또는 실행안을 준비한다. 사용자는 필요한 확인과 최종 승인에 집중한다. 큰 입력 Form을 채우는 도구나 무승인 자동 실행 도구가 아니다. Google Workspace는 P0 핵심 Connector로 유지하지만 Google 또는 GitHub의 로그인은 앱 실행·메인 화면 진입의 전역 선행조건이 아니다.
+mcp-work-agent는 개인 PC에서 Gmail·Google Tasks·Google Calendar와 GitHub Issue의 업무 정보를 연결하는 Work Agent다. 사용자는 자연어로 목표를 제시하고, 제품은 필요한 자료를 찾아 결과 또는 실행안을 준비한다. 사용자는 필요한 확인과 최종 승인에 집중한다. 큰 입력 Form을 채우는 도구나 무승인 자동 실행 도구가 아니다. Google Workspace는 P0 핵심 Connector로 유지하지만 Google·GitHub 로그인, Model Provider 연결·준비, 외부 LLM 전송 동의는 앱 실행·메인 화면 진입의 전역 선행조건이 아니다. Core가 정상이면 저장된 이력과 설정에 접근할 수 있고, 추론에 필요한 모델과 업무 연결은 해당 요청의 사용 가능 조건으로 확인한다.
 
 기본 Local profile의 제품 결정은 Ollama `qwen3.5:9b`다. WORKER와 REASONING은 책임 구분을 유지하지만 같은 모델을 사용한다. 개발 앱의 실제 추론 확인과 서명된 설치 제품의 출시 승인은 구분한다.
 
@@ -79,7 +79,7 @@ LOCAL_CAPABLE은 기존 호환 Ollama를 재사용하거나 승인된 runtime과
 
 | ID | 제품 완료 기준 |
 | --- | --- |
-| FR-001 | Google·GitHub가 모두 미연결이어도 Core가 준비되면 메인 화면에 진입한다. 최초 온보딩의 Google 로그인을 건너뛸 수 있다. |
+| FR-001 | 업무 Connector와 Model Provider가 모두 미연결이어도 Core가 준비되면 메인 화면에 진입한다. 연결 설정을 건너뛸 수 있고, 외부 LLM 전송 동의를 앱 진입 조건으로 요구하지 않는다. |
 | FR-002 | 제품 소유 OAuth 구성으로 Google 로그인과 필요한 동의를 진행한다. |
 | FR-003 | Google 계정 변경 시 기존 계정 문맥과 새 계정 문맥이 섞이지 않는다. |
 | FR-004 | Credential이 일반 저장·로그·표시 경로에 노출되지 않는다. |
@@ -108,7 +108,7 @@ LOCAL_CAPABLE은 기존 호환 Ollama를 재사용하거나 승인된 runtime과
 | --- | --- |
 | FR-020 | 자연어의 목표·완료 조건·의미 제약을 손실 없이 보존한다. |
 | FR-021 | 현재 요청에 필요한 Connector를 판단한다. 초기 미연결·App 미설치·저장소 접근 불가·permission 부족은 필요한 조치 안내 후 요청을 종료하고 연결 후 새 요청으로 처리한다. |
-| FR-022 | 각 Source의 검색·조회 기능을 사용하고 제한된 검색 이력을 추적한다. |
+| FR-022 | 사람·시간·업무 개념과 명시 제약에 맞는 첫 검색을 선택하고, 실제 결과와 미해결 조건에 따라 제한된 후속 검색을 선택해 필요한 근거에 도달한다. |
 | FR-023 | 결과에 출처·Resource identity·근거 위치가 유지된다. |
 | FR-024 | 새 정보 가능성이 있을 때만 제한된 재검색을 하며, 예산 소진 시 확보한 근거의 범위에서 종료한다. |
 | FR-025 | 조회로 해소할 수 있는 모호성은 먼저 탐색하고, 남은 실질적 선택만 사용자에게 묻는다. |
@@ -155,7 +155,7 @@ LOCAL_CAPABLE은 기존 호환 Ollama를 재사용하거나 승인된 runtime과
 | ID | 제품 완료 기준 |
 | --- | --- |
 | FR-060 | 현재 runtime/model과 요청·조회·실행·검증 결과를 민감정보 없이 진단할 수 있다. |
-| FR-061 | 실제 실행 회차가 누적되는 Activity Timeline과 행별 상세를 제공하고, 표시를 위한 추가 LLM·외부 Tool 호출을 하지 않는다. |
+| FR-061 | Agent 실행별로 실제 확인·생성·검증·복구한 작업 사실을 실행 중 누적하고, 같은 Conversation의 다음 요청 후에도 각 Run의 내역을 보존·복원한다. 표시를 위한 추가 LLM·외부 Tool 호출은 하지 않는다. |
 
 ## 10. 비기능 요구사항
 
@@ -239,7 +239,7 @@ API_ONLY는 외부 API credential과 동의를 사용하며 Ollama 준비 부작
 
 ## 20. Agent Workflow 제품 요구사항
 
-상태 기반 Supervisor는 필요한 책임만 실행하고 skip·bounded back-edge·suspend·종료를 구분한다. upstream 의미가 바뀌면 stale downstream 결과를 현재 결과처럼 사용하지 않는다. 안전·실행·검증 책임은 Agent 구성이나 Connector에 따라 완화되지 않는다. 정확한 topology·schema·revision 규칙은 Workflow 계약에서 정의한다.
+상태 기반 Supervisor는 필요한 책임만 실행하고 skip·bounded back-edge·suspend·종료를 구분한다. upstream 의미가 바뀌면 stale downstream 결과를 현재 결과처럼 사용하지 않는다. 안전·실행·검증 책임은 Agent 구성이나 Connector에 따라 완화되지 않는다. 목표는 상태에 필요한 책임으로 이동하는 것이지 모든 Node 간 무제한 이동이나 모든 Edge 삭제가 아니다. 정확한 topology·schema·revision 규칙은 Workflow 계약에서 정의한다.
 
 ## 21. 구현 전제
 
