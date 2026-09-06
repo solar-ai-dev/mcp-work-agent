@@ -63,7 +63,7 @@
       "runtime_node_id": "route.select_tool",
       "input_schema_version": 1,
       "required_root_fields": ["route_candidate", "registered_candidates"],
-      "optional_root_fields": ["confirmation_response"],
+      "optional_root_fields": ["confirmation_response", "user_request"],
       "output_schema_version": 1
     },
     {

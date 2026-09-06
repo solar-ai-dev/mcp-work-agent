@@ -6,16 +6,22 @@ from collections.abc import Sequence
 def format_route_confirmation(*, goal: str) -> str:
     return (
         f"요청하신 목표는 ‘{goal}’입니다. 어떤 자료에 어떤 작업을 적용할지 "
-        "확정하지 못했습니다. 메일·태스크·일정 중 대상과 원하는 작업을 알려주세요. "
+        "확정하지 못했습니다. 메일·태스크·일정·GitHub Issue 중 대상과 원하는 작업을 알려주세요. "
         "아직 생성하거나 변경한 내용은 없습니다."
     )
 
 
 def format_scope_confirmation(resource_types: Sequence[str]) -> str:
     labels = dict.fromkeys(
-        "메일" if resource.startswith("GMAIL") else
-        "태스크" if resource.startswith("TASK") else
-        "캘린더" if resource.startswith("CALENDAR") else "추가 업무 자료"
+        "메일"
+        if resource.startswith("GMAIL")
+        else "태스크"
+        if resource.startswith("TASK")
+        else "캘린더"
+        if resource.startswith("CALENDAR")
+        else "GitHub Issue"
+        if resource == "GITHUB_ISSUE"
+        else "추가 업무 자료"
         for resource in resource_types
     )
     return (

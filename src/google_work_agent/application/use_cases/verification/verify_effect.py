@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from json import loads
 from typing import Literal, cast
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    is_fully_qualified_repository,
+)
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.write_persistence import (
     require_execution_binding,
@@ -118,10 +121,19 @@ class VerifyEffectHandler:
                 dict[str, object],
                 loads(
                     approval.arguments_snapshot_json
-                    if action.tool_name in {
-                        "tasks_create_task", "tasks_update_task",
-                        "calendar_create_event", "calendar_update_event",
-                        "gmail_create_draft", "gmail_update_draft", "gmail_send",
+                    if action.tool_name
+                    in {
+                        "tasks_create_task",
+                        "tasks_update_task",
+                        "calendar_create_event",
+                        "calendar_update_event",
+                        "gmail_create_draft",
+                        "gmail_update_draft",
+                        "gmail_send",
+                        "github_create_issue",
+                        "github_update_issue",
+                        "github_close_issue",
+                        "github_reopen_issue",
                     }
                     else action.arguments_json
                 ),
@@ -236,10 +248,18 @@ class VerifyEffectHandler:
             query.expected_effect,
             normalizer_tool_name=normalizer_tool_name,
         )
-        if normalizer_tool_name in {
-            "tasks_update_task", "calendar_update_event",
-        } and query.target_resource_ref is not None:
+        if (
+            normalizer_tool_name
+            in {
+                "tasks_update_task",
+                "calendar_update_event",
+                "github_update_issue",
+            }
+            and query.target_resource_ref is not None
+        ):
             expected = {**expected, "resource_id": query.target_resource_ref.resource_id}
+            if normalizer_tool_name == "github_update_issue":
+                expected["parent_id"] = query.target_resource_ref.parent_resource_id
         diffs = calculate_verification_subset_diff(expected, actual)
         return VerificationResultV1(
             "VERIFIED" if not diffs else "MISMATCH",
@@ -269,10 +289,19 @@ class VerifyEffectHandler:
                     dict[str, object],
                     loads(
                         binding.approval.arguments_snapshot_json
-                        if action.tool_name in {
-                            "tasks_create_task", "tasks_update_task",
-                            "calendar_create_event", "calendar_update_event",
-                            "gmail_create_draft", "gmail_update_draft", "gmail_send",
+                        if action.tool_name
+                        in {
+                            "tasks_create_task",
+                            "tasks_update_task",
+                            "calendar_create_event",
+                            "calendar_update_event",
+                            "gmail_create_draft",
+                            "gmail_update_draft",
+                            "gmail_send",
+                            "github_create_issue",
+                            "github_update_issue",
+                            "github_close_issue",
+                            "github_reopen_issue",
                         }
                         else action.arguments_json
                     ),
@@ -336,12 +365,21 @@ class VerifyEffectHandler:
         if resource_type == "GMAIL_DRAFT":
             return "gmail_get_draft", {"draft_id": target.resource_id}
         if resource_type == "GITHUB_ISSUE":
-            if target.parent_resource_id is None:
+            if (
+                target.connector_id != "github"
+                or target.parent_resource_id is None
+                or not is_fully_qualified_repository(target.parent_resource_id)
+            ):
                 raise ValueError("GitHub verification requires repository identity")
             try:
                 issue_number = int(target.resource_id.rsplit("#", 1)[1])
             except (IndexError, ValueError) as error:
                 raise ValueError("GitHub issue identity is invalid") from error
+            if (
+                issue_number < 1
+                or target.resource_id != f"{target.parent_resource_id}#{issue_number}"
+            ):
+                raise ValueError("GitHub verification identity binding mismatch")
             return "github_get_issue", {
                 "repository": target.parent_resource_id,
                 "issue_number": issue_number,
@@ -393,6 +431,8 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
                 "title": business.get("title"),
                 "body": description,
                 "state": business.get("state"),
+                "resource_id": business.get("resource_id"),
+                "parent_id": business.get("parent_id"),
             }.items()
             if value is not None
         }
@@ -427,16 +467,19 @@ def _persisted_expected_effect(
     fallback: dict[str, object],
 ) -> dict[str, object]:
     if tool_name in {
-        "tasks_create_task", "tasks_update_task", "calendar_create_event", "calendar_update_event",
-        "gmail_create_draft", "gmail_update_draft", "gmail_send",
+        "tasks_create_task",
+        "tasks_update_task",
+        "calendar_create_event",
+        "calendar_update_event",
+        "gmail_create_draft",
+        "gmail_update_draft",
+        "gmail_send",
+        "github_create_issue",
+        "github_update_issue",
+        "github_close_issue",
+        "github_reopen_issue",
     }:
         return build_expected_verification_projection(tool_name=tool_name, arguments=arguments)
-    if tool_name in {"github_create_issue", "github_update_issue"}:
-        return {key: arguments[key] for key in ("title", "body") if key in arguments}
-    if tool_name == "github_close_issue":
-        return {"state": "CLOSED"}
-    if tool_name == "github_reopen_issue":
-        return {"state": "OPEN"}
     return fallback
 
 

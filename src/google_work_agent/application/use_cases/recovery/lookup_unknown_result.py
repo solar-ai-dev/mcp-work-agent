@@ -5,6 +5,9 @@ from dataclasses import asdict, dataclass, replace
 from json import dumps, loads
 from typing import Literal, cast
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    is_fully_qualified_repository,
+)
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.write_persistence import (
     require_execution_binding,
@@ -81,9 +84,7 @@ class LookupUnknownResultHandler:
         connector_read: ConnectorReadPort,
         tool_registry: SignedToolRegistry,
         recovery_search_binding: ValidatedConnectorToolBindingV1,
-        recovery_search_bindings: Mapping[
-            str, ValidatedConnectorToolBindingV1
-        ] | None = None,
+        recovery_search_bindings: Mapping[str, ValidatedConnectorToolBindingV1] | None = None,
         connector_id: str = "google_workspace",
         unit_of_work_factory: Callable[[], UnitOfWork] | None = None,
         now_ms: Callable[[], int] = lambda: 0,
@@ -231,7 +232,8 @@ class LookupUnknownResultHandler:
             result.output,
             recovery_fingerprint=(
                 query.recovery_fingerprint
-                if strategy in {"RESOURCE_SEARCH", "MESSAGE_SEARCH"} else None
+                if strategy in {"RESOURCE_SEARCH", "MESSAGE_SEARCH"}
+                else None
             ),
         )
         if strategy == "GET_TARGET" and query.effect == "UPDATE":
@@ -292,11 +294,14 @@ class LookupUnknownResultHandler:
                     ["NO_MATCH" if not candidates else "AMBIGUOUS_MATCHES"],
                 )
             repository, issue_number = _github_resource_identity(candidates[0])
+            target = query.target_resource_ref
+            if target is None or repository != target.parent_resource_id:
+                return UnknownResultLookupResultV1(
+                    "UNRESOLVED", strategy, [], evidence, ["TARGET_STATE_AMBIGUOUS"]
+                )
             try:
                 get_result = self._connector_read.execute_read(
-                    self._tool_registry.bind_required(
-                        "github", "github_get_issue", "READ"
-                    ),
+                    self._tool_registry.bind_required("github", "github_get_issue", "READ"),
                     {"repository": repository, "issue_number": issue_number},
                 )
             except ConnectorOperationFailure as error:
@@ -354,6 +359,18 @@ class LookupUnknownResultHandler:
         item = output.get("item", output)
         if not isinstance(item, dict):
             return False
+        target = query.target_resource_ref
+        resource_id = item.get("resource_id")
+        if target is None or not isinstance(resource_id, str):
+            return False
+        try:
+            repository, _ = _github_resource_identity(resource_id)
+        except ValueError:
+            return False
+        if repository != target.parent_resource_id or (
+            query.effect != "CREATE" and resource_id != target.resource_id
+        ):
+            return False
         payload = item.get("payload", item)
         if not isinstance(payload, dict):
             return False
@@ -362,13 +379,8 @@ class LookupUnknownResultHandler:
                 return False
             if "body" in arguments:
                 actual_body = payload.get("description")
-                if tool_name == "github_create_issue" and isinstance(
-                    actual_body, str
-                ):
-                    marker = (
-                        "<!-- gwa-recovery-fingerprint:"
-                        f"{query.recovery_fingerprint} -->"
-                    )
+                if tool_name == "github_create_issue" and isinstance(actual_body, str):
+                    marker = f"<!-- gwa-recovery-fingerprint:{query.recovery_fingerprint} -->"
                     actual_body = actual_body.removesuffix(f"\n\n{marker}")
                 if actual_body != arguments["body"]:
                     return False
@@ -486,16 +498,25 @@ class LookupUnknownResultHandler:
         if not query.recovery_fingerprint:
             raise ValueError("recovery_fingerprint is required")
         if query.effect == "SEND":
-            return "MESSAGE_SEARCH", "search_by_recovery_fingerprint", {
-                "resource_type": "gmail_message",
-                "recovery_fingerprint": query.recovery_fingerprint,
-            }
+            return (
+                "MESSAGE_SEARCH",
+                "search_by_recovery_fingerprint",
+                {
+                    "resource_type": "gmail_message",
+                    "recovery_fingerprint": query.recovery_fingerprint,
+                },
+            )
         target = query.target_resource_ref
         if query.effect == "CREATE":
             if target is None:
                 raise ValueError("create recovery requires a resource type")
-            if target.connector_id == "github":
-                if target.parent_resource_id is None:
+            if target.connector_id == "github" or target.resource_type.upper() == "GITHUB_ISSUE":
+                if (
+                    target.connector_id != "github"
+                    or target.resource_type.upper() != "GITHUB_ISSUE"
+                    or target.parent_resource_id is None
+                    or not is_fully_qualified_repository(target.parent_resource_id)
+                ):
                     raise ValueError("GitHub create recovery requires repository identity")
                 return (
                     "RESOURCE_SEARCH",
@@ -518,7 +539,9 @@ class LookupUnknownResultHandler:
                 raise ValueError("targeted recovery requires a resource reference")
             resource_type = target.resource_type.upper()
             if resource_type == "GITHUB_ISSUE" and target.parent_resource_id is not None:
-                _, issue_number = _github_resource_identity(target.resource_id)
+                repository, issue_number = _github_resource_identity(target.resource_id)
+                if target.connector_id != "github" or repository != target.parent_resource_id:
+                    raise ValueError("GitHub issue resource identity is invalid")
                 return (
                     "GET_TARGET",
                     "github_get_issue",
@@ -650,7 +673,11 @@ def _github_resource_identity(resource_id: str) -> tuple[str, int]:
         issue_number = int(raw_number)
     except (ValueError, TypeError) as error:
         raise ValueError("GitHub issue resource identity is invalid") from error
-    if len(repository.split("/")) != 2 or issue_number < 1:
+    if (
+        not is_fully_qualified_repository(repository)
+        or issue_number < 1
+        or raw_number != str(issue_number)
+    ):
         raise ValueError("GitHub issue resource identity is invalid")
     return repository, issue_number
 

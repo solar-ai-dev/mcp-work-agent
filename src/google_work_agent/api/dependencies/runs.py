@@ -48,8 +48,7 @@ class RunRouteDependencies:
     graph_version: str
     schedule_run_execution: Callable[[ScheduleRunExecutionCommand], RunExecutionAcceptedV1]
     resolve_selection_handle: ResolveSelectionHandle
-    resource_connector_id: str
-    current_account_id: Callable[[], str | None]
+    account_id_for_connector: Callable[[str], str | None]
     project_context_preview_handler: object | None
     adjust_context_handler: object | None
     request_cancel_handler: RequestCancelHandler | None
@@ -88,8 +87,14 @@ def get_run_route_dependencies(request: Request) -> RunRouteDependencies:
             container.schedule_run_execution,
         ),
         resolve_selection_handle=resolve_selection_handle,
-        resource_connector_id=container.resource_connector_id,
-        current_account_id=container.current_account_id_provider,
+        account_id_for_connector=lambda connector_id: (
+            container.current_account_id_providers_by_connector.get(
+                connector_id,
+                container.current_account_id_provider
+                if connector_id == container.resource_connector_id
+                else lambda: None,
+            )()
+        ),
         project_context_preview_handler=getattr(container, "project_context_preview_handler", None),
         adjust_context_handler=getattr(container, "adjust_context_handler", None),
         request_cancel_handler=cast(

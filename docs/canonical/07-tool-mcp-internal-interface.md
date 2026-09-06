@@ -490,6 +490,8 @@ class ResourceSelectionHandlePayloadV1:
 
 Resource Browse Application operation은 이 payload를 authenticated envelope로 encode해 `selection_handle`을 발급한다. Browser는 envelope를 decode/수정하지 않는다. Application `resource.resolve_selection_handle`만 현재 Service instance, Local Session, account, expiry, signature를 검증하고 내부 identity를 반환한다. Service restart/session/account 변경/expiry/signature mismatch는 fail closed하며 Provider cross-source probing으로 handle을 복구하지 않는다.
 
+Run 시작의 다중 Connector 선택 검증은 서명·Service·Session·expiry 검증 후 signed `connector_id`에 해당하는 기존 current-account provider만 사용한다. 내부 `ResolveSelectionHandleQuery`는 기존 단일 `account_id` 검증 또는 서버가 주입한 `account_id_for_connector`를 받으며, 후자는 Browser 입력이 아니다. Google 계정을 GitHub handle에 대입하거나 미연결 Connector로 교차 조회하지 않는다. Wire payload와 기존 단일 Resource 상세 API의 exact binding은 유지한다.
+
 ```python
 class SelectedResourceRefV1:
     schema_version: Literal[1]

@@ -14,7 +14,7 @@ def format_blocked_terminal_message(
     if "CONTEXT_BLOCKED" in reasons:
         return (
             "요청을 뒷받침할 충분한 근거를 확보하지 못해 작업을 완료하지 못했습니다. "
-            "Google 변경은 실행하지 않았습니다. 검색 조건을 바꾸거나 확인할 자료를 "
+            "외부 변경은 실행하지 않았습니다. 검색 조건을 바꾸거나 확인할 자료를 "
             "지정해 다시 요청해 주세요."
         )
     if source_kind == "INVALID_REQUEST":
@@ -24,7 +24,7 @@ def format_blocked_terminal_message(
         )
     return (
         "안전 정책 또는 필수 조건 때문에 요청하신 작업을 실행하지 않았습니다. "
-        "Google 변경은 실행하지 않았습니다."
+        "외부 변경은 실행하지 않았습니다."
     )
 
 

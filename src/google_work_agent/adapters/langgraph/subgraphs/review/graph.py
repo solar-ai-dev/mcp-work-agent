@@ -14,6 +14,9 @@ from google_work_agent.adapters.langgraph.agent_kernel import (
     ensure_llm_call_budget,
     merge_trace_context,
 )
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    project_current_action_evidence,
+)
 from google_work_agent.adapters.langgraph.main.confirmation_projection import (
     build_user_interrupt_v1,
 )
@@ -470,6 +473,10 @@ class ReviewSubgraph:
         direct = state.get("evidence")
         if isinstance(direct, list):
             return list(direct)
+        planning = state.get("planning_result")
+        if isinstance(planning, Mapping) and "actions" in planning:
+            assert self._evidence_store is not None
+            return project_current_action_evidence(state=state, evidence_store=self._evidence_store)
         retrieval = state.get("retrieval_result")
         if retrieval is None:
             return []

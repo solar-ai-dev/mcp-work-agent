@@ -185,10 +185,29 @@ def _deterministic_candidate(
 def _exact_intent_candidate(
     *, request_intent: RequestIntentV2, request: WorkflowStartRequest
 ) -> SemanticRouteCandidate | None:
-    if request.selected_resources or request_intent["ambiguity"]["requires_confirmation"]:
+    if request_intent["ambiguity"]["requires_confirmation"]:
         return None
     resource_types = tuple(dict.fromkeys(request_intent["requested_resource_hints"]))
     effect_values = tuple(dict.fromkeys(request_intent["requested_effect_hints"]))
+    selected_types = _selected_input_resource_types(request)
+    if selected_types:
+        writes = tuple(effect for effect in effect_values if effect != "READ")
+        if (
+            len(resource_types) != 1
+            or selected_types != resource_types
+            or len(writes) != 1
+            or writes[0] not in {"UPDATE", "DELETE"}
+        ):
+            return None
+        return SemanticRouteCandidate(
+            input_resource_types=selected_types,
+            output_pairs=((resource_types[0], EffectType(writes[0])),),
+            output_mode="ACTION",
+            analysis_requirement=request_intent["analysis_requirement"],
+            input_reason_codes=((resource_types[0], "RESOURCE_SELECTED"),),
+        )
+    if request.selected_resources:
+        return None
     if len(resource_types) != 1 or len(effect_values) != 1:
         return None
     effect = EffectType(effect_values[0])
@@ -202,10 +221,12 @@ def _exact_intent_candidate(
         )
     return SemanticRouteCandidate(
         input_resource_types=(resource_type,) if resource_type == "GMAIL_THREAD" else (),
-        output_pairs=((
-            _normalize_output_resource_type(coarse_resource_category(resource_type), effect),
-            effect,
-        ),),
+        output_pairs=(
+            (
+                _normalize_output_resource_type(coarse_resource_category(resource_type), effect),
+                effect,
+            ),
+        ),
         output_mode="ACTION",
         analysis_requirement=request_intent["analysis_requirement"],
     )

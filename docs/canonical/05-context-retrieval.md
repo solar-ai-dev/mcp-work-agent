@@ -467,6 +467,14 @@ class SufficiencyResultV2:
 
 새 Resource/Connector가 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`를 반환한다. 같은 Route 안에서 Query/Page/Detail을 늘리면 Local Retrieval Round로 처리한다.
 
+분석이나 사용자 모호성이 없는 단일 selected GitHub Issue의 UPDATE/CLOSE/REOPEN은,
+exact 대상의 required READ가 COMPLETE이고 같은 identity의 Evidence가 확보됐을 때
+기존 `assess_sufficiency`가 source 충분성을 결정적으로 확정할 수 있다.
+요청한 변경 후 title/body/state가 현재 Issue와 다르다는 사실은 source 누락이나 충돌이 아니다.
+다른 Source/Output, 부분 조회, 미해결 slot에는 이 단축을 적용하지 않는다.
+이는 Planning 진입을 위한 source 판정이며, 변경 인자의 완전성·target Evidence binding·Review·
+Approval·실행 admission·재조회 Verification을 대체하지 않는다.
+
 ### 5.9 `retrieval.finalize_retrieval`
 
 결정적 finalization 책임이다.

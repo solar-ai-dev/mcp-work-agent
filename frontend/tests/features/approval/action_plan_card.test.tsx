@@ -6,6 +6,20 @@ import { ActionPlanCard } from "../../../src/features/approval/action_plan_card"
 
 afterEach(() => vi.restoreAllMocks());
 
+test.each([
+  ["github_close_issue", "GitHub 이슈 닫기"],
+  ["github_reopen_issue", "GitHub 이슈 다시 열기"],
+])("%s preview distinguishes its state change before approval", (tool, label) => {
+  const action = { ...taskAction(), tool_name: tool, effect_type: "UPDATE", arguments: { repository: "acme/repo", issue_number: 7 }, editable_fields: [] };
+  const props = propsFor(action);
+  render(<ActionPlanCard {...props} />);
+  expect(screen.getByText(label)).toBeVisible();
+  expect(document.body.textContent).toContain("acme/repo");
+  expect(props.onApprove).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "네, 실행해 주세요" }));
+  expect(props.onApprove).toHaveBeenCalledWith(action, expect.anything());
+});
+
 test("Task preview resolves the actual Task List name across continuation pages", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ tasklist_id: "other", title: "다른 목록" }], next_page_token: "next" }), { status: 200, headers: { "content-type": "application/json" } }))

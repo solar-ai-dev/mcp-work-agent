@@ -57,5 +57,6 @@ class UpdateIssueOperation:
             raw,
             repository=update.repository,
             delivery_certainty=DeliveryCertainty.SENT_RESPONSE_LOST,
+            expected_issue_number=update.issue_number,
         )
         return {"item": project_issue_snapshot(snapshot)}

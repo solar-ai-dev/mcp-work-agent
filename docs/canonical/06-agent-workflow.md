@@ -1344,6 +1344,8 @@ class PlanningStateV2:
 - `OutputPlanV1`은 사용자가 요구한 **출력 capability와 허용 Tool 경로**를 고정하지만 실제 Action 생성이 항상 필요하다는 보장은 아니다. Retrieval/Analysis에서 현재 상태가 이미 목표를 충족함이 확인되면 Planning은 Route를 변경하지 않고 Evidence 기반 Answer로 종료할 수 있다.
 - `draft_action_objective_per_output_route`는 frozen Output Route 하나에 대해 `ActionObjectiveCandidateV1`을 만들고 해당 `route_id`의 `action_objective_candidates`만 갱신한다. 사용자 목표·target semantics·scope constraint만 작성하며 Tool identity/effect/arguments를 바꾸지 않는다.
 - `compose_arguments_per_output_route`는 같은 `route_id`의 검증된 `ActionObjectiveCandidateV1` + 현재 Route의 `selected_tool_id` + 해당 Tool Schema + 현재 검증된 Request Intent 제약만 보고 `ToolArgumentCandidateV1`의 business arguments를 직렬화한다. objective가 없거나 route_id가 맞지 않으면 fail closed한다.
+- selected GitHub Issue UPDATE/CLOSE/REOPEN에서는 immutable repository, finalized selected identity, 검증된 인자의 issue number와 exact match하는 이미 확보된 target Evidence reference를 같은 argument composition에서 보존한다. LLM이 사용자 요청 reference만 반환해도 대상 identity provenance를 소실시키지 않는다. 다른 Issue의 Evidence를 붙이거나 없는 Evidence를 만들지 않으며, 사업 값과 선택 대상의 충돌은 보정하지 않는다. 후속 Domain target binding 검증과 Approval 권위는 그대로 유지한다.
+- ACTION Review에는 Planning과 동일한 current-Run Action Evidence projection(확보된 Retrieval Evidence + persisted USER Message origin)을 제공한다. Review에서 사용자 요청 Evidence를 누락시키거나 이를 외부 Resource로 위조하지 않는다. 기존 `project_current_action_evidence`를 재사용하며 별도 Evidence producer를 만들지 않는다.
 - 제목만 지정된 정확한 Task CREATE와 제목·날짜·시작·종료·Timezone이 모두 지정된 정확한 Calendar CREATE는 frozen Output Route와 검증된 Request Intent가 각각 하나로 일치할 때 동일 candidate schema를 결정적으로 materialize할 수 있다. 필드가 부족하거나 복수 제약·추가 의미 판단이 남아 있으면 기존 LLM Node를 유지하며, 결정적 결과도 기존 assemble/validate 경계를 우회하지 않는다.
 - current registered Tool catalog 전체를 Planning Node에 다시 노출해 Tool을 재선택하게 하지 않는다. Tool 수는 Registry closed set에서 파생되며 Planning 문서가 별도 numeric authority를 갖지 않는다.
 - Tool Candidate shortlisting을 Planning에서 수행하지 않는다. Tool 선택 책임은 Tool Route가 이미 소유한다.
@@ -1827,3 +1829,4 @@ Main State의 `RunInputV1.requested_mode`와 `WorkflowBindingV1.requested_mode`�
 - 필요한 artifact가 이미 결정적으로 산출 가능하면 LLM 호출만 생략하고 owner의 deterministic builder/validator가 canonical artifact를 만든다. artifact contract 자체를 생략하지 않는다.
 - Validation, Policy, Approval, Domain transition, Write safety, Verification, Recovery와 unknown-contract fail-closed Node는 비용 절감을 이유로 건너뛰지 않는다.
 - `RESOURCE_SELECTED`처럼 exact resource identity가 이미 있으면 Retrieval query-planning LLM은 생략할 수 있지만 canonical detail read, Evidence/RAG와 sufficiency contract는 유지한다.
+- 선택된 단일 resource type과 validated RequestIntent의 단일 output type이 같고 UPDATE/DELETE effect가 하나로 확정되면 기존 Tool Routing builder가 input/output candidate를 결정적으로 만든다. 다른 resource로의 변환·복수 effect·미해결 ambiguity에는 적용하지 않는다. 같은 effect 내 concrete tool 선택, Registry validation, Policy, Approval은 그대로 수행한다.

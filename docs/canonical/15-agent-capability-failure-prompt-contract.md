@@ -779,6 +779,8 @@ review.recheck                                  → review.recheck_affected_dime
 
 `prompt-runtime-input-contract-v1`은 위 21개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다. Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
+`tool_routing.select_tool_if_needed`의 현재 producer는 같은 Run의 `user_request`를 전달하여 동일 effect의 등록 후보 간 업무 의도(내용 수정/닫기/다시 열기 등)를 구분한다. v1 input allowlist의 optional field로 추가하여 기존 projection과 호환하며, route/eligible candidate authority를 변경하지 않는다. Tool Routing은 Google 이외의 eligible Connector도 동일하게 취급하고, WRITE 선행 Retrieval은 요청된 미래 상태가 아니라 현재 대상의 근거 충분성을 평가한다.
+
 Current input-contract artifact의 logical schema는 다음으로 닫는다.
 
 ```yaml

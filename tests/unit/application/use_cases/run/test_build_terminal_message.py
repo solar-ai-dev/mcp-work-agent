@@ -11,6 +11,34 @@ from google_work_agent.application.use_cases.run.build_terminal_message import (
 )
 
 
+@pytest.mark.parametrize("kind", ["create", "update", "close", "reopen"])
+def test_github_verified_write__names_correct_provider__and_repository(kind: str) -> None:
+    result = BuildTerminalMessageHandler()(
+        BuildTerminalMessageQueryV1(
+            1,
+            "run-1",
+            3,
+            "WRITE_VERIFICATION_SUMMARY",
+            "SUCCESS",
+            None,
+            ["WRITE_VERIFIED"],
+            "이슈를 처리해 줘",
+            (
+                TerminalActionOutcomeV1(
+                    f"github_{kind}_issue",
+                    "CREATE" if kind == "create" else "UPDATE",
+                    "VERIFIED",
+                    {"repository": "acme/repo", "issue_number": 7, "title": "검증 대상"},
+                ),
+            ),
+        )
+    )
+    assert "GitHub" in result.content and "Google" not in result.content
+    assert "acme/repo#7" in result.content and "검증 대상" in result.content
+    if kind in {"close", "reopen"}:
+        assert ("닫았고" if kind == "close" else "다시 열었고") in result.content
+
+
 def test_answer_draft_is__preserved_by_the__exact_v1_contract() -> None:
     result = BuildTerminalMessageHandler()(
         BuildTerminalMessageQueryV1(
@@ -150,7 +178,7 @@ def test_context_block__does_not_claim_zero_resources__without_that_fact() -> No
     assert "충분한 근거를 확보하지 못해" in result.content
     assert "자료를 찾지 못해" not in result.content
     assert "검색 조건을 바꾸거나" in result.content
-    assert "Google 변경은 실행하지 않았습니다" in result.content
+    assert "외부 변경은 실행하지 않았습니다" in result.content
     assert "CONTEXT_BLOCKED" not in result.content
 
 

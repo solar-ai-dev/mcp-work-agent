@@ -72,6 +72,49 @@ def test_fails_closed__on_tamper_expiry__and_service_restart() -> None:
         _resolver(service_instance_id="service-2")(query)
 
 
+def test_selection_resolver__uses_signed_connector_account__without_cross_connector_probe() -> None:
+    calls: list[str] = []
+
+    def account(connector: str) -> str | None:
+        calls.append(connector)
+        return "account-1" if connector == "google_workspace" else None
+
+    query = ResolveSelectionHandleQuery(
+        _handle(),
+        "a" * 64,
+        "unrelated-conversation-actor",
+        account_id_for_connector=account,
+    )
+    assert _resolver()(query).account_id == "account-1"
+    assert calls == ["google_workspace"]
+    calls.clear()
+    with pytest.raises(SelectionHandleValidationError):
+        _resolver()(
+            ResolveSelectionHandleQuery(
+                _handle() + "x",
+                "a" * 64,
+                "",
+                account_id_for_connector=account,
+            )
+        )
+    assert calls == []
+
+
+@pytest.mark.parametrize("account_id", [None, "different-account"])
+def test_selection_resolver__disconnected_or_changed_account__rejects_old_handle(
+    account_id: str | None,
+) -> None:
+    with pytest.raises(SelectionHandleValidationError):
+        _resolver()(
+            ResolveSelectionHandleQuery(
+                _handle(),
+                "a" * 64,
+                "account-1",
+                account_id_for_connector=lambda _: account_id,
+            )
+        )
+
+
 def _handle() -> str:
     return IssueSelectionHandle(
         signing_secret=b"s" * 32,

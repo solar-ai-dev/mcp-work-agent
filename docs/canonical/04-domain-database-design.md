@@ -103,6 +103,7 @@
 불변 조건:
 
 - Conversation의 `account_id`는 로컬 세션으로 인증된 사용자 attribution이다. 기존 Google account ID는 보존하며, Google 미연결 시 예약된 `local-workspace` identity를 사용한다. 이는 Provider 계정이나 Credential을 생성하거나 위조하지 않는다.
+- 선택 Resource의 Provider account는 해당 Connector의 서명된 handle 검증이 소유한다. Conversation에 기존 Google actor가 남아 있어도 이를 GitHub account와 동일해야 한다는 전역 접근 조건으로 사용하지 않는다.
 - `0022_local_conversation_actor` forward Migration은 Conversation·Approval의 Google Account 필수 FK만 제거한다. Approval의 non-null actor, Action FK, snapshot/hash, version, Claim·Attempt 경계는 유지한다. Connector 접근 권한은 Conversation actor가 아니라 기존 credential/resource identity 검증이 소유한다.
 - 대화 목록은 현재 계정의 기존 대화와 로컬 대화를 함께 조회한다. 계정 연결 후에도 로컬 대화는 유지하며 다른 Google 계정의 목록을 자동 합치지 않는다. 선택 리소스는 API의 session-bound handle/current Connector account 검증을 통과해야 하며, 로컬 Conversation actor를 Provider account로 비교하지 않는다.
 - Conversation당 `finished_at_ms IS NULL`인 Run은 최대 1개다.

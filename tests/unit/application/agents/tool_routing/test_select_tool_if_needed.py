@@ -128,6 +128,7 @@ def test_select_tool__uses_exact__canonical_prompt_projection() -> None:
     assert selected == "tasks_create_task"
     assert runtime.calls[0]["prompt_ref"] == _prompt_ref()
     assert runtime.calls[0]["prompt_input"] == {
+        "user_request": "create task",
         "route_candidate": {
             "route_id": "route-1",
             "connector_id": "google_workspace",
@@ -173,6 +174,7 @@ def test_select_semantic__revision_reuses__base_slot() -> None:
     revision_input = cast(Mapping[str, object], runtime.calls[1]["prompt_input"])
     assert set(revision_input) == {"base_projection", "candidate_output", "failure_record"}
     assert set(cast(Mapping[str, object], revision_input["base_projection"])) == {
+        "user_request",
         "route_candidate",
         "registered_candidates",
     }

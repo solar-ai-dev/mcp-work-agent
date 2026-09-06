@@ -26,6 +26,8 @@ class LangGraphE2EGeminiTransport:
     task_payload: dict[str, object] | None = None
     calendar_payload: dict[str, object] | None = None
     gmail_arguments: dict[str, object] | None = None
+    github_arguments: dict[str, object] | None = None
+    github_tool_id: str = "github_create_issue"
     task_modification_patch: dict[str, object] | None = None
     _scenario_prompt_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
@@ -137,9 +139,23 @@ class LangGraphE2EGeminiTransport:
                     queries.append(query)
                 output["route_queries"] = queries
                 output["retrieval_order"] = [q["route_id"] for q in queries]
-        if (self.gmail_arguments is not None
-                and prompt_id == "planning.compose_arguments_per_output_route"):
+        if (
+            self.gmail_arguments is not None
+            and prompt_id == "planning.compose_arguments_per_output_route"
+        ):
             output["arguments"] = dict(self.gmail_arguments)
+        if self.github_arguments is not None:
+            if prompt_id == "request_understanding.identify_goal":
+                repository = self.github_arguments.get("repository")
+                output["constraints"] = (
+                    [{"kind": "RESOURCE", "field": "repository", "value": repository}]
+                    if repository
+                    else []
+                )
+            if prompt_id == "planning.compose_arguments_per_output_route":
+                output["arguments"] = dict(self.github_arguments)
+            if prompt_id == "tool_routing.select_tool_if_needed":
+                output["selected_tool_id"] = self.github_tool_id
         return ProviderResponsePayload(
             content=json.dumps(output, sort_keys=True),
             model=model_id,
@@ -164,9 +180,13 @@ def _respond(
             "goal": request_text,
             "completion_conditions": ["E2E terminal outcome"],
             "constraints": [],
-            "requested_effect_hints": ([] if scenario == "ANSWER_ONLY" else
-                                       ["READ", "SEND"] if scenario == "GMAIL_REPLY" else
-                                       [_effect_for(scenario)]),
+            "requested_effect_hints": (
+                []
+                if scenario == "ANSWER_ONLY"
+                else ["READ", "SEND"]
+                if scenario == "GMAIL_REPLY"
+                else [_effect_for(scenario)]
+            ),
             "requested_resource_hints": _resource_hints(scenario),
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
@@ -351,7 +371,15 @@ def _base_projection(prompt_input: Mapping[str, object]) -> Mapping[str, object]
 def _scenario(value: object) -> str:
     serialized = json.dumps(value, sort_keys=True, default=str).upper()
     for scenario in (
-        "GMAIL_DRAFT_CREATE", "GMAIL_DRAFT_UPDATE", "GMAIL_SEND", "GMAIL_REPLY",
+        "GITHUB_CREATE",
+        "GITHUB_UPDATE",
+        "GITHUB_CLOSE",
+        "GITHUB_REOPEN",
+        "GITHUB_READ",
+        "GMAIL_DRAFT_CREATE",
+        "GMAIL_DRAFT_UPDATE",
+        "GMAIL_SEND",
+        "GMAIL_REPLY",
         "GMAIL_CONFIRMATION",
         "MAIL_CALENDAR_CREATE",
         "CALENDAR_CONFIRMATION",
@@ -396,6 +424,8 @@ def _answer_for(scenario: str) -> str:
 
 
 def _effect_for(scenario: str) -> str:
+    if scenario in {"GITHUB_UPDATE", "GITHUB_CLOSE", "GITHUB_REOPEN"}:
+        return "UPDATE"
     if scenario in {"GMAIL_SEND", "GMAIL_REPLY", "GMAIL_CONFIRMATION"}:
         return "SEND"
     if scenario == "GMAIL_DRAFT_UPDATE":
@@ -408,6 +438,8 @@ def _effect_for(scenario: str) -> str:
 
 
 def _resource_hints(scenario: str) -> list[str]:
+    if scenario.startswith("GITHUB_"):
+        return ["GITHUB_ISSUE"]
     if scenario in {"GMAIL_SEND", "GMAIL_CONFIRMATION"}:
         return ["GMAIL_MESSAGE"]
     if scenario == "GMAIL_DRAFT_CREATE":
@@ -422,8 +454,21 @@ def _resource_hints(scenario: str) -> list[str]:
 
 
 def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:
+    if scenario.startswith("GITHUB_"):
+        return (
+            (["ISSUE"], [], [])
+            if scenario == "GITHUB_READ"
+            else (
+                [] if scenario == "GITHUB_CREATE" else ["ISSUE"],
+                ["ISSUE"],
+                [_effect_for(scenario)],
+            )
+        )
     if scenario in {
-        "GMAIL_DRAFT_CREATE", "GMAIL_DRAFT_UPDATE", "GMAIL_SEND", "GMAIL_REPLY",
+        "GMAIL_DRAFT_CREATE",
+        "GMAIL_DRAFT_UPDATE",
+        "GMAIL_SEND",
+        "GMAIL_REPLY",
         "GMAIL_CONFIRMATION",
     }:
         return ["EMAIL"], ["EMAIL"], [_effect_for(scenario)]

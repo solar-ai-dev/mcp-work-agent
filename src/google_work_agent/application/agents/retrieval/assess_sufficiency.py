@@ -179,7 +179,53 @@ def _deterministic_source_sufficiency(
         confirmation_response=confirmation_response,
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if _is_complete_selected_github_update(
+        request_intent, tool_route_plan, acquisition_result, evidence_drafts,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     return None
+
+
+def _is_complete_selected_github_update(
+    intent: RequestIntentV2, plan: ToolRoutePlanV2 | None,
+    acquisition: AcquisitionResultV1, evidence: list[EvidenceDraftV1],
+) -> bool:
+    if (
+        plan is None or plan["output_plan"]["output_mode"] != "ACTION"
+        or intent["analysis_requirement"] != "NONE"
+        or intent["ambiguity"]["requires_confirmation"]
+        or set(intent["requested_effect_hints"]) - {"READ"} != {"UPDATE"}
+        or acquisition["status"] != "COMPLETE" or acquisition["missing_slots"]
+    ):
+        return False
+    inputs, outputs = plan["input_plan"]["input_routes"], plan["output_plan"]["output_routes"]
+    if len(inputs) != 1 or len(outputs) != 1:
+        return False
+    route, output = inputs[0], outputs[0]
+    if (
+        route["connector_id"] != "github" or route["resource_type"] != "GITHUB_ISSUE"
+        or "RESOURCE_SELECTED" not in route["reason_codes"] or not route["required"]
+        or output["connector_id"] != "github" or output["resource_type"] != "GITHUB_ISSUE"
+        or output["effect"] != "UPDATE" or output["selected_tool_id"] not in {
+            "github_update_issue", "github_close_issue", "github_reopen_issue",
+        }
+    ):
+        return False
+    selected = {
+        f"github_issue:{identity}"
+        for constraint in intent["constraints"] if constraint["field"] == "selected_resource_id"
+        and isinstance(constraint["value"], list)
+        for identity in constraint["value"] if isinstance(identity, str)
+    }
+    summaries = _route_summaries(route, inputs, acquisition)
+    return (
+        len(selected) == 1 and bool(summaries)
+        and all(item.get("status") == "COMPLETE" for item in summaries)
+        and selected == {item["resource_handle"] for item in evidence}
+        and selected.issubset({handle for item in summaries for handle in cast(
+            list[str], item.get("resource_handles", [])
+        )})
+    )
 
 
 def assess_sufficiency(

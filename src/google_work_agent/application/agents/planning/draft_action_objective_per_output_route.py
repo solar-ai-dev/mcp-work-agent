@@ -138,13 +138,57 @@ def requires_objective_inference(
 def _deterministic_create_objective(
     *, route: Mapping[str, object], request_intent: Mapping[str, object]
 ) -> ActionObjectiveCandidateV1 | None:
-    return _deterministic_calendar_create_objective(
-        route=route,
-        request_intent=request_intent,
-    ) or _deterministic_task_create_objective(
-        route=route,
-        request_intent=request_intent,
+    return (
+        _deterministic_github_create_objective(
+            route=route,
+            request_intent=request_intent,
+        )
+        or _deterministic_calendar_create_objective(
+            route=route,
+            request_intent=request_intent,
+        )
+        or _deterministic_task_create_objective(
+            route=route,
+            request_intent=request_intent,
+        )
     )
+
+
+def _deterministic_github_create_objective(
+    *, route: Mapping[str, object], request_intent: Mapping[str, object]
+) -> ActionObjectiveCandidateV1 | None:
+    route_id, goal = route.get("route_id"), request_intent.get("goal")
+    ambiguity, constraints = request_intent.get("ambiguity"), request_intent.get("constraints")
+    if (
+        route.get("resource_type") != "GITHUB_ISSUE"
+        or route.get("effect") != "CREATE"
+        or route.get("selected_tool_id") != "github_create_issue"
+        or request_intent.get("requested_resource_hints") != ["GITHUB_ISSUE"]
+        or request_intent.get("requested_effect_hints") != ["CREATE"]
+        or not isinstance(ambiguity, Mapping)
+        or ambiguity.get("requires_confirmation") is not False
+        or not isinstance(route_id, str)
+        or not isinstance(goal, str)
+        or not goal
+        or not isinstance(constraints, list)
+    ):
+        return None
+    scope: list[str] = []
+    for item in constraints:
+        if not isinstance(item, Mapping):
+            return None
+        field, value = item.get("field"), item.get("value")
+        if not isinstance(field, str) or not isinstance(value, str):
+            return None
+        scope.append(f"{field}: {value}")
+    return {
+        "schema_version": 1,
+        "route_id": route_id,
+        "objective": goal,
+        "target_semantics": "GITHUB_ISSUE",
+        "scope_constraints": scope,
+        "evidence_refs": [],
+    }
 
 
 def _deterministic_calendar_create_objective(

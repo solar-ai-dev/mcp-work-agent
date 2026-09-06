@@ -71,6 +71,7 @@ def select_tool_if_needed(
         manifest_path or default_prompt_manifest_path(),
     )
     base_projection: dict[str, object] = {
+        "user_request": request.request_text,
         "route_candidate": {
             "route_id": route_id,
             "connector_id": connector_id,

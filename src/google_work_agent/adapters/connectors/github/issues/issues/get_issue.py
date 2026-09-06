@@ -27,9 +27,7 @@ TOOL_ID = "github_get_issue"
 def build_issue_get_request(*, repository: str, issue_number: int) -> GitHubIssueRequest:
     validate_repository(repository)
     validate_issue_number(issue_number)
-    return GitHubIssueRequest(
-        url=f"{GITHUB_API_BASE}/repos/{repository}/issues/{issue_number}"
-    )
+    return GitHubIssueRequest(url=f"{GITHUB_API_BASE}/repos/{repository}/issues/{issue_number}")
 
 
 def observe_issue(
@@ -39,12 +37,14 @@ def observe_issue(
     body = api.get(request.url)
     if not isinstance(body, dict):
         raise GitHubProviderError("MALFORMED_RESPONSE")
-    return normalize_github_issue(body, repository=repository)
+    return normalize_github_issue(
+        body,
+        repository=repository,
+        expected_issue_number=issue_number,
+    )
 
 
-def ensure_target_is_issue(
-    api: GitHubApiClient, *, repository: str, issue_number: int
-) -> None:
+def ensure_target_is_issue(api: GitHubApiClient, *, repository: str, issue_number: int) -> None:
     try:
         observe_issue(api, repository=repository, issue_number=issue_number)
     except GitHubProviderError as error:

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
+    is_fully_qualified_repository,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
@@ -85,9 +86,14 @@ def project_connector_call(
         if detail_resource is None:
             raise ValueError("detail read requires a validated resource")
         tool_id, arguments = _detail_call(resource, detail_resource)
-        if resource == "GITHUB_ISSUE" and any(
-            constraint["kind"] == "CONTAINER_REF" for constraint in plan["effective_constraints"]
-        ) and arguments["repository"] != _single_container(plan):
+        if (
+            resource == "GITHUB_ISSUE"
+            and any(
+                constraint["kind"] == "CONTAINER_REF"
+                for constraint in plan["effective_constraints"]
+            )
+            and arguments["repository"] != _single_container(plan)
+        ):
             raise ValueError("GitHub Issue detail differs from validated repository")
     elif resource.startswith("GMAIL_") or resource == "EMAIL":
         tool_id = "gmail_search_threads"
@@ -178,18 +184,20 @@ def project_acquisition_result(
     for plan, failure_code in failed_reads:
         if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED"}:
             raise ValueError("unsupported terminal READ failure projection")
-        summaries.append({
-            "schema_version": 1,
-            "route_id": plan["route_id"],
-            "source": _source(plan["resource_type"]),
-            "connector_id": plan["connector_id"],
-            "status": "FAILED",
-            "required": True,
-            "error_code": failure_code,
-            "resource_count": 0,
-            "resource_handles": [],
-            "resources": [],
-        })
+        summaries.append(
+            {
+                "schema_version": 1,
+                "route_id": plan["route_id"],
+                "source": _source(plan["resource_type"]),
+                "connector_id": plan["connector_id"],
+                "status": "FAILED",
+                "required": True,
+                "error_code": failure_code,
+                "resource_count": 0,
+                "resource_handles": [],
+                "resources": [],
+            }
+        )
     failed = any(summary["status"] == "FAILED" for summary in summaries)
     return {
         "schema_version": 1,
@@ -391,18 +399,27 @@ def _detail_call(
         return "tasks_get_task", {"task_list_id": parent_id, "task_id": resource_id}
     if resource_type == "GITHUB_ISSUE":
         payload = resource.get("payload")
-        if not isinstance(payload, Mapping):
-            raise ValueError("GitHub Issue detail requires a normalized payload")
-        repository = payload.get("repository")
-        issue_number = payload.get("issue_number")
+        repository = parent_id
+        try:
+            issue_number = int(resource_id.rsplit("#", 1)[1])
+        except (IndexError, ValueError) as error:
+            raise ValueError("GitHub Issue detail identity is invalid") from error
         if (
             not isinstance(repository, str)
-            or not repository
+            or not is_fully_qualified_repository(repository)
             or not isinstance(issue_number, int)
             or isinstance(issue_number, bool)
             or issue_number < 1
             or parent_id != repository
             or resource_id != f"{repository}#{issue_number}"
+            or resource.get("connector_id", "github") != "github"
+            or (
+                isinstance(payload, Mapping)
+                and (
+                    payload.get("repository", repository) != repository
+                    or payload.get("issue_number", issue_number) != issue_number
+                )
+            )
         ):
             raise ValueError("GitHub Issue detail identity is invalid")
         return "github_get_issue", {
@@ -487,9 +504,13 @@ def _gmail_participant_query(constraint: ParticipantConstraintV1) -> str:
         role = person["role"]
         if role == "ATTENDEE":
             raise ValueError("Gmail cannot enforce Calendar attendee membership")
-        prefixes = ["from:", "to:"] if role == "ANY" else [
-            "from:" if role == "SENDER" else "to:",
-        ]
+        prefixes = (
+            ["from:", "to:"]
+            if role == "ANY"
+            else [
+                "from:" if role == "SENDER" else "to:",
+            ]
+        )
         groups.append([prefix + identity for prefix in prefixes])
     if constraint["match_mode"] == "ANY":
         return "{" + " ".join(term for group in groups for term in group) + "}"

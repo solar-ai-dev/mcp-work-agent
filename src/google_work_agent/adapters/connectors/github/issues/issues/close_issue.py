@@ -49,5 +49,6 @@ class CloseIssueOperation:
             raw,
             repository=change.repository,
             delivery_certainty=DeliveryCertainty.SENT_RESPONSE_LOST,
+            expected_issue_number=change.issue_number,
         )
         return {"item": project_issue_snapshot(snapshot)}

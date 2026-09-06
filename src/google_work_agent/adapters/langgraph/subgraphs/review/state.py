@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import Literal, NotRequired
 
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    ActionEvidenceDraftV1,
+)
 from google_work_agent.adapters.langgraph.main.nodes.response_synthesis_node import (
     TerminalCommitIntentV1,
 )
@@ -24,7 +27,6 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
-    EvidenceDraftV1,
     RetrievalResultV1,
 )
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
@@ -90,7 +92,7 @@ class ReviewState(GraphState, total=False):
     """Typed local state for the five canonical Review runtime nodes."""
 
     work_analysis: NotRequired[WorkAnalysisResultV2]
-    evidence: NotRequired[list[EvidenceDraftV1]]
+    evidence: NotRequired[list[ActionEvidenceDraftV1]]
     policy_summary: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[ConfirmationResponseProjectionV1]
     review_phase: NotRequired[Literal["INITIAL", "RECHECK"]]

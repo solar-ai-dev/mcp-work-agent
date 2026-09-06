@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
+import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -34,6 +35,59 @@ def _valid_output() -> dict[str, object]:
         "output_effects": ["CREATE"],
         "disposition": "ROUTE_READY",
     }
+
+
+@pytest.mark.parametrize(
+    "resource_type,connector,selected_type",
+    [
+        ("GITHUB_ISSUE", "github", "github_issue"),
+        ("TASK", "google_workspace", "task"),
+        ("CALENDAR_EVENT", "google_workspace", "calendar_event"),
+    ],
+)
+def test_selected_mutation__preserves_exact_typed_scope__without_inventing_routes(
+    resource_type: str,
+    connector: str,
+    selected_type: str,
+) -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},
+            "goal": "modify selected resource",
+            "completion_conditions": ["modified"],
+            "constraints": [],
+            "requested_effect_hints": ["READ", "UPDATE"],
+            "requested_resource_hints": [resource_type],
+            "analysis_requirement": "NONE",
+            "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run",
+        conversation_id="conversation",
+        workflow_key="thread",
+        entry_mode="RESOURCE_SELECTED",
+        requested_mode="LOCAL_GPU",
+        request_text="modify this",
+        selected_resource_ids=("resource",),
+        selected_resources=(SelectedResourceRef("ref", connector, selected_type, "resource"),),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[])
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+    )
+    assert candidate.input_resource_types == (resource_type,)
+    assert candidate.output_pairs == ((resource_type, EffectType.UPDATE),)
+    assert candidate.input_reason_codes == ((resource_type, "RESOURCE_SELECTED"),)
+    assert runtime.calls == []
 
 
 def test_task_create__produces_semantic_candidate__without_tool_identity() -> None:
@@ -217,9 +271,9 @@ def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
         requested_mode="LOCAL_GPU",
         request_text="read this mail",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef(
-            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
-        ),),
+        selected_resources=(
+            SelectedResourceRef("ref-thread-42", "google_workspace", "gmail_thread", "thread-42"),
+        ),
         run_budget=dict(build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -277,9 +331,9 @@ def test_selected_simple_read__materializes_exact_route__without_llm() -> None:
         requested_mode="LOCAL_GPU",
         request_text="read this mail",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef(
-            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
-        ),),
+        selected_resources=(
+            SelectedResourceRef("ref-thread-42", "google_workspace", "gmail_thread", "thread-42"),
+        ),
         run_budget=dict(build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )

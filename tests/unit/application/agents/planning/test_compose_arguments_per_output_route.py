@@ -41,6 +41,63 @@ OBJECTIVE = {
 }
 
 
+@pytest.mark.parametrize(
+    "tool", ["github_update_issue", "github_close_issue", "github_reopen_issue"]
+)
+@pytest.mark.parametrize("binding", ["exact", "no_selection", "wrong_selection", "wrong_evidence"])
+def test_github_arguments__selected_identity_binding__preserves_only_exact_target_evidence(
+    tool, binding
+):
+    route = {
+        **ROUTE,
+        "connector_id": "github",
+        "resource_type": "GITHUB_ISSUE",
+        "effect": "UPDATE",
+        "selected_tool_id": tool,
+    }
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {
+            **route,
+            "schema_version": 1,
+            "argument_schema": planning_tool_argument_schema(tool),
+            "immutable_arguments": {"repository": "owner/repo"},
+        },
+    )
+    arguments = {"repository": "owner/repo", "issue_number": 7}
+    if tool == "github_update_issue":
+        arguments["title"] = "New title"
+    target = "owner/repo#8" if binding == "wrong_selection" else "owner/repo#7"
+    evidence_handle = (
+        "github_issue:owner/repo#8" if binding == "wrong_evidence" else "github_issue:owner/repo#7"
+    )
+    intent = {
+        "constraints": []
+        if binding == "no_selection"
+        else [
+            {"kind": "RESOURCE", "field": "selected_resource_id", "value": [target]},
+        ]
+    }
+    result = compose_arguments_per_output_route(
+        [route],
+        objectives=[OBJECTIVE],
+        bound_tool_schemas=[bound],
+        request_intent=intent,
+        evidence=[
+            {"evidence_id": "user", "origin_type": "USER_MESSAGE"},
+            {"evidence_id": "target", "resource_handle": evidence_handle},
+        ],
+        invoke=lambda *_: {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": arguments,
+            "evidence_refs": ["user"],
+        },
+    )[0]
+    assert result["arguments"] == arguments
+    assert result["evidence_refs"] == (["user", "target"] if binding == "exact" else ["user"])
+
+
 @pytest.mark.parametrize("patch", [{"notes": ""}, {"due": None}, {"due": "2026-09-08"}])
 def test_compose_modification__explicit_changes__preserve_partial_shape(
     patch: dict[str, object],

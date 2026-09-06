@@ -2,7 +2,40 @@ from collections.abc import Mapping
 
 from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
     draft_action_objective_per_output_route,
+    requires_objective_inference,
 )
+
+
+def test_exact_github_create__reuses_validated_goal__without_fabricated_evidence() -> None:
+    route = {
+        "route_id": "r",
+        "resource_type": "GITHUB_ISSUE",
+        "effect": "CREATE",
+        "selected_tool_id": "github_create_issue",
+    }
+    intent: dict[str, object] = {
+        "goal": "Create requested Issue",
+        "requested_resource_hints": ["GITHUB_ISSUE"],
+        "requested_effect_hints": ["CREATE"],
+        "ambiguity": {"requires_confirmation": False},
+        "constraints": [{"field": "repository", "value": "acme/repo"}],
+    }
+    assert not requires_objective_inference(route, request_intent=intent)
+    result = draft_action_objective_per_output_route(
+        [route],
+        user_request="create issue",
+        request_intent=intent,
+        work_analysis=None,
+        evidence=[],
+        invoke=lambda *_: (_ for _ in ()).throw(AssertionError("LLM must be skipped")),
+    )
+    assert result[0]["objective"] == intent["goal"]
+    assert result[0]["evidence_refs"] == []
+    assert result[0]["scope_constraints"] == ["repository: acme/repo"]
+    assert requires_objective_inference(
+        route,
+        request_intent={**intent, "requested_resource_hints": ["GMAIL_THREAD", "GITHUB_ISSUE"]},
+    )
 
 
 def test_objective_prompt_is__route_bounded_and__receives_no_tool_schema() -> None:
@@ -88,9 +121,7 @@ def test_exact_task_create__materializes_objective__without_llm() -> None:
             "requested_resource_hints": ["TASK"],
             "requested_effect_hints": ["CREATE"],
             "ambiguity": {"requires_confirmation": False},
-            "constraints": [
-                {"kind": "RESOURCE", "field": "title", "value": "Submit report"}
-            ],
+            "constraints": [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
         },
         work_analysis=None,
         evidence=[{"evidence_id": "user-message-1"}],

@@ -142,14 +142,10 @@ def _validate_query(query: BuildTerminalMessageQueryV1) -> None:
 
 def _format_terminal_content(query: BuildTerminalMessageQueryV1) -> str:
     has_verified_action = any(outcome.status == "VERIFIED" for outcome in query.action_outcomes)
-    action_lines = tuple(
-        _format_action_outcome(outcome) for outcome in query.action_outcomes[:8]
-    )
+    action_lines = tuple(_format_action_outcome(outcome) for outcome in query.action_outcomes[:8])
     if len(query.action_outcomes) > 8:
         remaining = len(query.action_outcomes) - 8
-        action_lines += (
-            f"- 그 밖의 {remaining}개 작업도 같은 실행 결과에 포함됩니다.",
-        )
+        action_lines += (f"- 그 밖의 {remaining}개 작업도 같은 실행 결과에 포함됩니다.",)
 
     heading = {
         "SUCCESS": "요청하신 작업을 완료했습니다.",
@@ -176,15 +172,20 @@ def _format_terminal_content(query: BuildTerminalMessageQueryV1) -> str:
     ending = {
         "SUCCESS": "확인 가능한 결과를 반영했습니다.",
         "PARTIAL": "완료된 변경과 완료되지 않은 항목을 구분해 반영했습니다.",
-        "BLOCKED": "Google 변경은 실행하지 않았습니다.",
+        "BLOCKED": "외부 변경은 실행하지 않았습니다.",
         "FAILED": "완료되지 않은 상태이며 성공으로 처리하지 않았습니다.",
-        "CANCELLED": "확인된 Google 변경 없이 종료했습니다.",
+        "CANCELLED": "확인된 외부 변경 없이 종료했습니다.",
     }[query.result_kind]
     return f"{heading} {ending}"
 
 
 def _format_action_outcome(outcome: TerminalActionOutcomeV1) -> str:
     label = _action_label(outcome)
+    provider = "GitHub" if outcome.tool_name.startswith("github_") else "Google"
+    update_verb = {
+        "github_close_issue": "닫았고",
+        "github_reopen_issue": "다시 열었고",
+    }.get(outcome.tool_name, "변경했고")
     read_evidence = _read_evidence_summary(outcome.evidence_excerpts)
     detail = {
         "VERIFIED": {
@@ -193,13 +194,13 @@ def _format_action_outcome(outcome: TerminalActionOutcomeV1) -> str:
                 if read_evidence is not None
                 else "자료를 읽었지만 표시할 수 있는 내용은 확인되지 않았습니다."
             ),
-            "CREATE": "생성했고 Google에서 결과를 다시 확인했습니다.",
-            "UPDATE": "변경했고 Google에서 결과를 다시 확인했습니다.",
+            "CREATE": f"생성했고 {provider}에서 결과를 다시 확인했습니다.",
+            "UPDATE": f"{update_verb} {provider}에서 결과를 다시 확인했습니다.",
             "SEND": (
                 "전송했고 Google 전송함에서 내용을 다시 확인했습니다. "
                 "수신자의 수신·열람 여부는 확인하지 않았습니다."
             ),
-            "DELETE": "삭제했고 Google에서 결과를 다시 확인했습니다.",
+            "DELETE": f"삭제했고 {provider}에서 결과를 다시 확인했습니다.",
         }[outcome.effect_type],
         "REJECTED": "사용자 선택에 따라 실행하지 않았습니다.",
         "FAILED": "완료하지 못했습니다.",
@@ -221,8 +222,12 @@ def _action_label(outcome: TerminalActionOutcomeV1) -> str:
         noun = "메일 초안"
     elif tool_name.startswith("gmail_"):
         noun = "메일"
+    elif tool_name.startswith("github_"):
+        repository = _display_value(outcome.arguments.get("repository"))
+        number = outcome.arguments.get("issue_number")
+        noun = f"GitHub Issue {repository or ''}{f'#{number}' if number else ''}".strip()
     else:
-        noun = "Google 작업"
+        noun = "외부 작업"
     title = _display_value(_argument_value(outcome.arguments, "title", "subject"))
     return noun if title is None else f"{noun} ‘{title}’"
 
@@ -252,7 +257,6 @@ def _read_evidence_summary(excerpts: tuple[str, ...]) -> str | None:
         return None
     summary = "; ".join(values)
     return summary if len(summary) <= 1_000 else f"{summary[:997]}..."
-
 
 
 __all__ = [

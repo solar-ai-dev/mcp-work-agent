@@ -207,6 +207,20 @@ def compose_arguments_per_output_route(
             raise ValueError("argument candidate evidence_refs must be strings")
         if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
             raise PlanningArgumentBindingError("argument candidate references unavailable evidence")
+        refs = list(
+            dict.fromkeys(
+                [
+                    *refs,
+                    *_selected_github_target_evidence_refs(
+                        route,
+                        request_intent,
+                        bound_schema,
+                        arguments,
+                        evidence,
+                    ),
+                ]
+            )
+        )
         candidates.append(
             {
                 "schema_version": 1,
@@ -222,6 +236,42 @@ def requires_argument_inference(
     route: Mapping[str, object], *, request_intent: Mapping[str, object] | None
 ) -> bool:
     return _deterministic_create_payload(route=route, request_intent=request_intent) is None
+
+
+def _selected_github_target_evidence_refs(
+    route: Mapping[str, object], intent: Mapping[str, object] | None,
+    bound_schema: BoundSelectedToolSchemaV1, arguments: Mapping[str, object],
+    evidence: Sequence[Mapping[str, object]],
+) -> list[str]:
+    if (
+        intent is None or route.get("connector_id") != "github"
+        or route.get("resource_type") != "GITHUB_ISSUE" or route.get("effect") != "UPDATE"
+        or route.get("selected_tool_id") not in {
+            "github_update_issue", "github_close_issue", "github_reopen_issue",
+        }
+    ):
+        return []
+    repository, number = arguments.get("repository"), arguments.get("issue_number")
+    if (
+        not isinstance(repository, str) or type(number) is not int or number < 1
+        or bound_schema["immutable_arguments"].get("repository") != repository
+    ):
+        return []
+    constraints = intent.get("constraints")
+    if not isinstance(constraints, list):
+        return []
+    selected = [
+        item.get("value") for item in constraints if isinstance(item, Mapping)
+        and item.get("field") == "selected_resource_id"
+    ]
+    identity = f"{repository}#{number}"
+    if selected != [[identity]]:
+        return []
+    return [
+        ref for item in evidence if item.get("resource_handle") == f"github_issue:{identity}"
+        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+        if isinstance(ref, str) and ref
+    ]
 
 
 def _deterministic_argument_candidate(

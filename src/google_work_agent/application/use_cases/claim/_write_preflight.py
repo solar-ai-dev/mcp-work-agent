@@ -7,6 +7,9 @@ from collections.abc import Callable
 from json import loads
 from typing import Literal, Protocol, cast
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    is_fully_qualified_repository,
+)
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.approval_source_snapshot import (
     build_approval_source_snapshot,
@@ -215,9 +218,7 @@ class _WritePreflight:
 
         if action.tool_name == "github_create_issue":
             repository = _required_argument_string(arguments, "repository")
-            if len(repository.split("/")) != 2 or any(
-                not part.strip() for part in repository.split("/")
-            ):
+            if not is_fully_qualified_repository(repository):
                 raise PolicyViolationError("GitHub repository identity is invalid")
             if not approval.recovery_fingerprint.strip():
                 raise PolicyViolationError("GitHub create recovery fingerprint is missing")
@@ -239,8 +240,7 @@ class _WritePreflight:
             )
             if (
                 approved_target_snapshot != approval_snapshot
-                or calculate_canonical_json_hash(approval_snapshot)
-                != approval.source_snapshot_hash
+                or calculate_canonical_json_hash(approval_snapshot) != approval.source_snapshot_hash
             ):
                 raise PolicyViolationError("GitHub preflight approval target binding is stale")
             repository = _required_argument_string(arguments, "repository")

@@ -124,6 +124,8 @@ function approvalLabel(duplicate: ReturnType<typeof taskDuplicateDecision>, conf
 }
 
 function actionLabel(toolName: string): string {
+  if (toolName === "github_close_issue") return "GitHub 이슈 닫기";
+  if (toolName === "github_reopen_issue") return "GitHub 이슈 다시 열기";
   if (toolName.startsWith("github_")) return toolName.includes("create") ? "이슈 만들기" : "이슈 변경";
   if (toolName.startsWith("gmail_")) return toolName.includes("send") ? "메일 보내기" : toolName.includes("draft") ? "메일 초안 만들기" : "메일 작업";
   if (toolName.startsWith("tasks_")) return toolName.includes("create") ? "태스크 만들기" : "태스크 변경";

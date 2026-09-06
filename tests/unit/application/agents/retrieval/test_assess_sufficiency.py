@@ -22,11 +22,13 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     SUFFICIENCY_OUTPUT_SCHEMA,
     assess_sufficiency,
     authorize_retrieval_followup,
+    deterministic_sufficiency,
     missing_information_projection,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
+    EvidenceDraftV1,
 )
 
 
@@ -712,3 +714,108 @@ def test_google_insufficiency__with_existing_source__retains_google() -> None:
 
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][0]["resolution_source"] == "GOOGLE"
+@pytest.mark.parametrize(
+    "tool", ["github_update_issue", "github_close_issue", "github_reopen_issue"]
+)
+@pytest.mark.parametrize(
+    "gap",
+    [
+        None,
+        "no_evidence",
+        "wrong_issue",
+        "partial",
+        "ambiguous",
+        "analysis",
+        "other_source",
+        "other_output",
+        "missing_slot",
+    ],
+)
+def test_selected_github_mutation__complete_target_read__does_not_require_future_values(tool, gap):
+    intent = _intent()
+    intent.update(
+        analysis_requirement="NONE",
+        requested_effect_hints=["UPDATE"],
+        constraints=[
+            {"kind": "RESOURCE", "field": "selected_resource_id", "value": ["owner/repo#7"]}
+        ],
+    )
+    route = {
+        "route_id": "route-github",
+        "resource_type": "GITHUB_ISSUE",
+        "connector_id": "github",
+        "allowed_read_tool_ids": ["github_get_issue"],
+        "required": True,
+        "reason_codes": ["RESOURCE_SELECTED"],
+    }
+    plan = _tool_route_plan([route])
+    plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": plan["input_plan"]["meta"],
+        "output_mode": "ACTION",
+        "output_routes": [
+            {
+                "route_id": "out-github",
+                "resource_type": "GITHUB_ISSUE",
+                "connector_id": "github",
+                "effect": "UPDATE",
+                "selected_tool_id": tool,
+                "reason_codes": [],
+            }
+        ],
+    }
+    acquisition = _acquisition_result()
+    acquisition["resource_handles"] = ["github_issue:owner/repo#7"]
+    acquisition["source_summaries"] = [
+        {
+            "route_id": "route-github",
+            "connector_id": "github",
+            "source": "GITHUB",
+            "status": "COMPLETE",
+            "resource_handles": ["github_issue:owner/repo#7"],
+            "resource_count": 1,
+        }
+    ]
+    evidence: list[EvidenceDraftV1] = [
+        {
+            "schema_version": 1,
+            "evidence_id": "e1",
+            "resource_handle": "github_issue:owner/repo#7",
+            "segment_id": "s1",
+            "kind": "excerpt",
+            "excerpt": "Current title, body and open state",
+            "locator": {},
+            "reason_codes": ["SUPPORTS"],
+        }
+    ]
+    if gap == "no_evidence":
+        evidence.clear()
+    elif gap == "wrong_issue":
+        evidence[0]["resource_handle"] = "github_issue:owner/repo#8"
+    elif gap == "partial":
+        acquisition["status"] = "PARTIAL"
+    elif gap == "ambiguous":
+        intent["ambiguity"]["requires_confirmation"] = True
+    elif gap == "analysis":
+        intent["analysis_requirement"] = "REQUIRED"
+    elif gap == "other_source":
+        plan["input_plan"]["input_routes"].append(
+            {**plan["input_plan"]["input_routes"][0], "route_id": "other"}
+        )
+    elif gap == "other_output":
+        plan["output_plan"]["output_routes"].append(
+            {**plan["output_plan"]["output_routes"][0], "route_id": "other"}
+        )
+    elif gap == "missing_slot":
+        acquisition["missing_slots"] = ["target"]
+    result = deterministic_sufficiency(
+        request_intent=intent,
+        tool_route_plan=plan,
+        acquisition_result=acquisition,
+        evidence_drafts=evidence,
+        retry_budget=_run_budget(used=0),
+    )
+    if gap is not None:
+        assert result is None
+    else:
+        assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}

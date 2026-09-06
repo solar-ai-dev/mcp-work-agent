@@ -86,7 +86,8 @@ def test_github_issue_search__projects_repository__and_state() -> None:
     assert arguments == {"repository": "acme/repo", "state": "OPEN"}
 
 
-def test_github_issue_detail__uses_normalized__composite_identity() -> None:
+@pytest.mark.parametrize("has_payload", [False, True])
+def test_github_issue_detail__uses_normalized__composite_identity(has_payload: bool) -> None:
     plan = cast(
         SourceFetchPlanV1,
         {
@@ -112,11 +113,13 @@ def test_github_issue_detail__uses_normalized__composite_identity() -> None:
             "reason_codes": ["REQUESTED_INPUT"],
         },
     )
-    resource = {
+    resource: dict[str, Any] = {
         "resource_id": "acme/repo#7",
         "parent_id": "acme/repo",
-        "payload": {"repository": "acme/repo", "issue_number": 7},
+        "connector_id": "github",
     }
+    if has_payload:
+        resource["payload"] = {"repository": "acme/repo", "issue_number": 7}
 
     tool_id, arguments = execute_read_projection.project_connector_call(
         plan,
@@ -127,6 +130,18 @@ def test_github_issue_detail__uses_normalized__composite_identity() -> None:
 
     assert tool_id == "github_get_issue"
     assert arguments == {"repository": "acme/repo", "issue_number": 7}
+
+    for change in (
+        {"connector_id": "google"},
+        {"parent_id": "other/repo"},
+        {"resource_id": "acme/repo#07"},
+        {"payload": {"repository": "other/repo", "issue_number": 7}},
+        {"payload": {"repository": "acme/repo", "issue_number": 8}},
+    ):
+        with pytest.raises(ValueError, match="identity"):
+            execute_read_projection.project_connector_call(
+                plan, route=route, page_size=1, detail_resource={**resource, **change}
+            )
 
 
 def test_github_issue_search__materializes_validated_repository__without_route_change() -> None:

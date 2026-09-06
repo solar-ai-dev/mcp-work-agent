@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import pytest
 
@@ -68,9 +68,7 @@ def _handler(read: _ReadPort) -> LookupUnknownResultHandler:
     return LookupUnknownResultHandler(
         connector_read=read,  # type: ignore[arg-type]
         tool_registry=load_signed_tool_registry(),
-        recovery_search_binding=github_internal_read_binding(
-            "search_by_recovery_fingerprint"
-        ),
+        recovery_search_binding=github_internal_read_binding("search_by_recovery_fingerprint"),
     )
 
 
@@ -83,6 +81,69 @@ def _target() -> SelectedResourceRefV1:
         "acme/repo#7",
         "acme/repo",
     )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"connector_id": "google_workspace"},
+        {"parent_resource_id": "other/repo"},
+        {"resource_id": "acme/repo#07"},
+        {"resource_id": "acme/r?x=1#7", "parent_resource_id": "acme/r?x=1"},
+    ],
+)
+def test_github_recovery__invalid_binding__prevents_read(changes: dict[str, str]) -> None:
+    read = _ReadPort([])
+    with pytest.raises(ValueError, match="identity"):
+        _handler(read)(
+            LookupUnknownResultQueryV1(
+                "run",
+                "action",
+                "attempt",
+                "UPDATE",
+                "fingerprint",
+                replace(
+                    _target(),
+                    connector_id=changes.get("connector_id", "github"),
+                    parent_resource_id=changes.get("parent_resource_id", "acme/repo"),
+                    resource_id=changes.get("resource_id", "acme/repo#7"),
+                ),
+            )
+        )
+    assert read.calls == []
+
+
+def test_github_recovery__same_content_wrong_issue__is_not_proof() -> None:
+    read = _ReadPort([{"item": {"resource_id": "acme/repo#8", "payload": {"state": "CLOSED"}}}])
+    result = _handler(read)(
+        LookupUnknownResultQueryV1(
+            "run",
+            "action",
+            "attempt",
+            "UPDATE",
+            "fingerprint",
+            _target(),
+            "github_close_issue",
+            {"repository": "acme/repo", "issue_number": 7},
+        )
+    )
+    assert result.disposition == "UNRESOLVED"
+
+
+def test_github_create_recovery__wrong_connector__prevents_search() -> None:
+    read = _ReadPort([])
+    with pytest.raises(ValueError, match="identity"):
+        _handler(read)(
+            LookupUnknownResultQueryV1(
+                "run",
+                "action",
+                "attempt",
+                "CREATE",
+                "fingerprint",
+                replace(_target(), connector_id="google_workspace"),
+            )
+        )
+    assert read.calls == []
 
 
 def test_lookup_unknown_result__has_exact__application_owner() -> None:
@@ -153,7 +214,7 @@ def test_github_create_unknown__requires_unique_complete_search__then_get_compar
     ],
 )
 def test_github_create_zero_ambiguous_or_incomplete_search__stays__unresolved(
-    search_output: dict[str, object]
+    search_output: dict[str, object],
 ) -> None:
     read = _ReadPort([search_output])
     query = LookupUnknownResultQueryV1(
@@ -186,9 +247,7 @@ def test_github_create_get_compare_error__stays__unresolved() -> None:
                     {
                         "resource_id": "acme/repo#7",
                         "payload": {
-                            "description": (
-                                "<!-- gwa-recovery-fingerprint:fingerprint-1 -->"
-                            )
+                            "description": ("<!-- gwa-recovery-fingerprint:fingerprint-1 -->")
                         },
                     }
                 ],
@@ -247,9 +306,7 @@ def test_github_targeted_unknown__uses_get__compare(
     arguments: dict[str, object],
     payload: dict[str, object],
 ) -> None:
-    read = _ReadPort(
-        [{"item": {"resource_id": "acme/repo#7", "payload": payload}}]
-    )
+    read = _ReadPort([{"item": {"resource_id": "acme/repo#7", "payload": payload}}])
 
     result = _handler(read)(
         LookupUnknownResultQueryV1(

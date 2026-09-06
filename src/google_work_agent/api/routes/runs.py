@@ -129,8 +129,7 @@ def _resolve_start_run_selections(
     if not selection_handles:
         return ()
     session_token = request.cookies.get(local_session_cookie_name(dependencies.service_instance_id))
-    account_id = dependencies.current_account_id()
-    if session_token is None or account_id is None:
+    if session_token is None:
         raise ApiRequestError(
             error_code="LOCAL_SESSION_INVALID",
             user_message="Resource selection requires an active account and local session.",
@@ -145,8 +144,8 @@ def _resolve_start_run_selections(
                 ResolveSelectionHandleQuery(
                     selection_handle=handle,
                     session_digest=session_digest,
-                    account_id=account_id,
-                    expected_connector_id=dependencies.resource_connector_id,
+                    account_id="",
+                    account_id_for_connector=dependencies.account_id_for_connector,
                 )
             )
             for handle in selection_handles
