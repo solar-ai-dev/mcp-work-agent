@@ -104,6 +104,16 @@ class SqliteTraceEventRepository:
         ).fetchall()
         return tuple(self._record(r) for r in rows)
 
+    def list_observed_runtimes(self, run_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT json_extract(payload_json, '$.attributes.actual_runtime') AS runtime "
+            "FROM trace_events WHERE run_id=? AND event_type='LLM_CALL_COMPLETED' "
+            "AND json_valid(payload_json) AND "
+            "json_extract(payload_json, '$.attributes.actual_runtime') IN ('LOCAL_GPU','API_LLM') "
+            "ORDER BY runtime LIMIT 2;", (run_id,),
+        ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def purge_before(self, timestamp_ms: int) -> int:
         return int(
             self._connection.execute(

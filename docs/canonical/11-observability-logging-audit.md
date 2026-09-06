@@ -132,6 +132,7 @@ mcp-*.jsonl
 - Agent invocation·repair·handoff
 - Retrieval page·candidate·detail·budget
 - LLM runtime·token·latency·fallback
+- Run Snapshot의 actual runtime은 해당 Run의 persisted `LLM_CALL_COMPLETED` 관측값으로 복원한다. LOCAL_GPU와 API_LLM이 모두 관측되면 MIXED이며, 호출이 없으면 기존 nullable 관측값을 유지한다. 요청 모드나 현재 Settings로 실행 이력을 추측하지 않고, 이 조회는 Domain 상태/버전을 변경하지 않는다. 모델·inference class·Prompt 연결은 기존 LLM Trace를 유지한다.
 - MCP process·handshake·tool
 - Connector·Provider read·write·verification. P0 Google Workspace는 `connector_id=google_workspace`로 기록
 - SQLite transaction·busy·migration·backup

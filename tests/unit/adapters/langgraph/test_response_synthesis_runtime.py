@@ -26,6 +26,26 @@ def _answer() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("status", ["CANCEL_REQUESTED", "VERIFYING"])
+def test_cancelled_verified_effect__keeps_cancel_intent__and_partial_message(status):
+    result = response_synthesis_node(
+        {"run_id": "run-1"},
+        read_terminal_facts=lambda _: {
+            "status": status, "version": 4, "cancel_intent_active": True,
+            "terminal_result_kind": None, "action_statuses": ["VERIFIED"],
+            "action_effect_types": ["CREATE"], "actions": [{
+                "tool_name": "github_create_issue", "effect_type": "CREATE",
+                "status": "VERIFIED", "arguments": {"repository": "owner/repo", "title": "Test"},
+            }],
+        },
+        build_terminal_message=BuildTerminalMessageHandler(),
+    )
+    intent = result["terminal_commit_intent"]
+    assert intent["kind"] == "FINALIZE_CANCEL"
+    assert intent["terminal_message"].result_kind == "PARTIAL"
+    assert "생성했고" in intent["terminal_message"].content
+
+
 @pytest.mark.parametrize("status", ["ANALYZING", "RETRIEVING", "PLANNING"])
 def test_initial_connection_failure__closes_partial_answer__without_auth_wait(status):
     message = "GitHub 연결 후 요청을 다시 보내주세요."

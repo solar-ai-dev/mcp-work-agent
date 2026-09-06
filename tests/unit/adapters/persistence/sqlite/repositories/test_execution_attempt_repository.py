@@ -36,6 +36,7 @@ def _reconciliation_connection() -> sqlite3.Connection:
             run_id TEXT, reason TEXT, action_id TEXT, execution_attempt_id TEXT
         );
         CREATE TABLE verifications (execution_attempt_id TEXT);
+        CREATE TABLE workflow_handoffs (trigger_command_id TEXT);
         CREATE TABLE action_dependencies (
             action_id TEXT, depends_on_action_id TEXT
         );
@@ -220,6 +221,17 @@ def test_reconciliation_candidates__use_exact__phase_markers() -> None:
         ("attempt-unknown", "UNKNOWN_RESULT_UNRESOLVED"),
         ("attempt-verification", "EXECUTED_AWAITING_VERIFICATION"),
     ]
+
+    # Already staged continuations must not occupy a bounded startup batch forever.
+    connection.execute("INSERT INTO workflow_handoffs VALUES (?)", (
+        "system:execution-attempt-reconcile:attempt-verification:verification",
+    ))
+    connection.execute(
+        "UPDATE execution_attempts SET started_at_ms=0 WHERE id='attempt-verification'"
+    )
+    assert (
+        repository.list_reconciliation_candidates(1)[0].execution_attempt_id == "attempt-pre-begin"
+    )
 
 
 def test_reconciliation_candidates_exclude__stale_parent_authority__and_are_sql_bounded() -> None:

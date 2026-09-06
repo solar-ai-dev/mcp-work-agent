@@ -17,7 +17,6 @@ from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from tests.support.fakes.langgraph_e2e import LangGraphE2EGeminiTransport
 from tests.support.graph_path_recorder import GraphPathRecorder
 from tests.support.langgraph_product_driver import (
@@ -34,6 +33,7 @@ from tests.support.langgraph_product_driver import (
 
 from google_work_agent.adapters.langgraph.main.graph import WorkflowGraphComposition
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+from google_work_agent.adapters.system.sqlite_checkpoint import SqliteCheckpointAdapter
 from google_work_agent.api.app import create_app
 
 SCENARIOS = (
@@ -67,9 +67,15 @@ def checkpoint_budget(runtime_root: Path, run_id: str) -> dict[str, Any]:
             "ORDER BY e.checkpoint_generation DESC LIMIT 1",
             (run_id,),
         ).fetchone()
-    return dict(
-        JsonPlusSerializer().loads_typed((row[0], row[1]))["channel_values"]["retry_budget"]
+    checkpoint = SqliteCheckpointAdapter(
+        runtime_root / "data/google_work_agent.db", now_ms=lambda: 0,
     )
+    try:
+        return dict(
+            checkpoint.serde.loads_typed((row[0], row[1]))["channel_values"]["retry_budget"]
+        )
+    finally:
+        checkpoint.close()
 
 
 def load_google_seed() -> dict[str, Any]:

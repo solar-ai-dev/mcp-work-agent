@@ -149,6 +149,7 @@ React
 - Refresh Token은 OS Keyring에 저장한다.
 - Access Token은 MCP Credential Provider Process Memory에서만 사용한다.
 - Token을 SQLite, Checkpoint, Trace, Audit, 환경 변수와 Process Argument에 저장하지 않는다.
+- Checkpoint 역직렬화는 현재 typed workflow contract의 exact module/class만 허용한다. wildcard module 허용·pickle fallback으로 경고를 숨기지 않으며, 알 수 없는 타입/구 계약을 임의 복원하여 Write 재개하지 않는다. 허용 타입의 storage wire 형식은 유지하고 graph/resume binding 검증은 별도로 유지한다.
 - Signed P0 Google Installed/Desktop OAuth는 **non-secret `oauth_client_id` + PKCE S256 + `state` + ephemeral loopback callback**만 사용하며 `client_secret`을 build artifact, signed runtime configuration 또는 credential storage로 요구하지 않는다.
 - `EXPLICIT_DEVELOPMENT`의 MCP Credential Provider는 Google token endpoint 호환을 위해 `.env.local`의 optional `GOOGLE_OAUTH_CLIENT_SECRET`을 authorization-code/refresh grant input으로만 사용할 수 있다. 이 값은 `repr`과 오류 진단에서 redaction하며 React/Vite, FastAPI wire, MCP child environment, OS Keyring, SQLite, Trace, Audit, Diagnostic Payload로 전달·저장하지 않는다.
 - Production은 `.env.local` 또는 ambient 사용자 환경 변수에서 Desktop OAuth Client identity를 읽지 않는다. non-secret `OAUTH_ENV/OAUTH_CLIENT_ID`는 10의 verified `release-manifest.json → SignedBuildConfigV1`이 유일한 build authority이며 Service가 그 값만 MCP child allowlist에 주입한다. 별도 `client_secret` provisioning boundary는 P0에 두지 않는다.

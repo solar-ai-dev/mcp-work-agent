@@ -123,6 +123,29 @@ class WorkflowInvocationCoordinator:
                 target_node = request.normal_handoff_target_node
                 if not target_node:
                     raise ValueError("NORMAL_HANDOFF requires a materialized target node")
+                if (
+                    target_node == "verification"
+                    and "action_execution" in snapshot.next
+                    and self._has_executed_action(request.run_id)
+                    and self._latest_unknown_action(request.run_id) is None
+                ):
+                    # Startup already settled the external effect. Replace the crashed
+                    # execution task instead of scheduling Verification beside it.
+                    self._graph.update_state(
+                        config,
+                        {
+                            "workflow_phase": "VERIFICATION",
+                            "__logical_target__": "verification",
+                            "__target__": "verification",
+                            "user_interrupt": None,
+                        },
+                        as_node="action_execution",
+                    )
+                    self._graph.invoke(None, config=config)
+                    return self.result_from_thread(
+                        workflow_key=request.workflow_key,
+                        run_id=request.run_id,
+                    )
                 if target_node == "cancel_resolution":
                     # Cancellation preempts any user interrupt already pending
                     # at this root checkpoint (most commonly approval). Fork

@@ -306,7 +306,7 @@ adapters/persistence/sqlite/repositories/audit_event_repository.py → SqliteAud
 
 Callable contract:
 
-- `TraceEventRepository.append(event)`, `list_page(cursor, limit)`, `purge_before(timestamp_ms)`; Trace writes may use an independent short UoW and never become Domain truth.
+- `TraceEventRepository.append(event)`, `list_page(cursor, limit)`, `list_observed_runtimes(run_id)`, `purge_before(timestamp_ms)`; observed runtimes are a bounded distinct read projection of completed LLM call traces, not Domain truth. Trace writes may use an independent short UoW and never become Domain truth.
 - `AuditEventRepository.append(event)`, `list_page(cursor, limit)`, `purge_before(timestamp_ms)`; required lifecycle Audit append occurs only inside the same `UnitOfWork` as CommandReceipt + Domain mutation.
 - `UnitOfWork.commit()` is allowed only after all deterministic guards and repository writes succeed. `rollback()` removes Receipt reservation, Domain mutation, and required Audit together.
 - Connector/Provider/MCP/LLM external I/O is forbidden while a `SqliteUnitOfWork` transaction is open. Execution dispatch, Verification reread, Recovery lookup occur outside transaction; their results are persisted by a later short UoW.

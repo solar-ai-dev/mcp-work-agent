@@ -32,6 +32,7 @@ from google_work_agent.domain.plan.model import Plan as PlanRecord
 from google_work_agent.domain.plan.model import PlanStatusV1
 from google_work_agent.domain.results import CommandResult
 from google_work_agent.domain.run.model import RunCommand, RunStatusV1
+from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceGatewayError,
 )
@@ -188,7 +189,7 @@ class WriteRecoveryCoordinator:
                     attempt_id=attempt_id,
                     request_kind="verify_after_restart",
                 )
-            except GoogleWorkspaceGatewayError as error:
+            except (GoogleWorkspaceGatewayError, ConnectorOperationFailure) as error:
                 failure = self._execution_phase.handle_verification_error(
                     request=WriteExecutionPhaseRequest(run_id, action.id, action.version),
                     error=error,

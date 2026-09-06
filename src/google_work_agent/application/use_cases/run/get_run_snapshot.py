@@ -193,6 +193,11 @@ class GetRunSnapshotHandler:
             run = unit_of_work.runs.get_snapshot(query.run_id)
             if run is None:
                 return None
+            observed_runtimes = unit_of_work.traces.list_observed_runtimes(run.id)
+            actual_runtime = (
+                "MIXED" if len(observed_runtimes) > 1 else
+                observed_runtimes[0] if observed_runtimes else run.actual_runtime
+            )
             message_records = _messages_for_run(
                 unit_of_work,
                 conversation_id=run.conversation_id,
@@ -257,7 +262,7 @@ class GetRunSnapshotHandler:
                 version=run.version,
                 entry_mode=run.entry_mode,
                 requested_mode=run.requested_mode,
-                actual_runtime=run.actual_runtime,
+                actual_runtime=actual_runtime,
                 started_at_ms=run.started_at_ms,
                 finished_at_ms=run.finished_at_ms,
                 next_allowed_commands=tuple(

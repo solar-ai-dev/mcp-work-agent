@@ -64,7 +64,10 @@ def test_current_plan__joins_frozen_route__and_builds_expected() -> None:
         "action-1": "google_workspace"
     }
     assert expected_for_action(action) == {
-        "payload": {"title": "Prepare report", "due": "2026-08-20"}
+        "payload": {
+            "title": "Prepare report", "due": "2026-08-20", "notes": "",
+            "status": "needsAction", "parent_id": "list-1",
+        }
     }
 
 

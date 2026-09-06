@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from google_work_agent.adapters.connectors.github.github.mcp_server import entrypoint
 from google_work_agent.adapters.connectors.github.github.mcp_server.composition import (
@@ -49,7 +49,12 @@ class GitHubWriteFixtureCredentials:
 class GitHubWriteFixtureRest:
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.issues: dict[int, dict[str, Any]] = {}
+        state_path = root / "github-fixture-issues.json"
+        self.issues: dict[int, dict[str, Any]] = (
+            {int(k): v for k, v in json.loads(state_path.read_text(encoding="utf-8")).items()}
+            if state_path.exists()
+            else {}
+        )
         self.serial = 0
 
     def request(
@@ -65,6 +70,15 @@ class GitHubWriteFixtureRest:
         with (self.root / "github-provider-events.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"method": method, "url": url, "body": body}) + "\n")
         path = urlsplit(url).path
+        if path == "/search/issues":
+            if (self.root / "github-lookup-unavailable").exists():
+                return GitHubRestResponse(503, {"message": "Controlled lookup failure"})
+            query = parse_qs(urlsplit(url).query)["q"][0]
+            marker = query.split('"')[1]
+            matches = [i for i in self.issues.values() if marker in i.get("body", "")]
+            return GitHubRestResponse(
+                200, {"items": matches, "total_count": len(matches), "incomplete_results": False}
+            )
         if path == "/user":
             return GitHubRestResponse(200, {"id": 161282085, "login": "bonggyulim"})
         if path == "/user/installations":
@@ -108,6 +122,9 @@ class GitHubWriteFixtureRest:
         if method != "GET":
             self.issues[number].update(body or {})
             self.issues[number]["updated_at"] = f"2026-09-06T01:00:{self.serial % 60:02d}Z"
+            (self.root / "github-fixture-issues.json").write_text(
+                json.dumps(self.issues), encoding="utf-8"
+            )
         return GitHubRestResponse(201 if method == "POST" else 200, dict(self.issues[number]))
 
 

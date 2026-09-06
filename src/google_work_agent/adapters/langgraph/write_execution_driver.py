@@ -861,11 +861,11 @@ class WriteExecutionStructuralDriver:
         self,
         *,
         request: WriteExecutionPhaseRequest,
-        error: GoogleWorkspaceGatewayError,
+        error: GoogleWorkspaceGatewayError | ConnectorOperationFailure,
     ) -> WriteExecutionPhaseResult:
         """Apply only the canonical auth pause for a technical verification failure."""
 
-        return self._handle_verification_error(request=request, error=error)
+        return self._handle_verification_error(request=request, error=self._as_gateway_error(error))
 
     def _verify_and_store(
         self,

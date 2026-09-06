@@ -80,6 +80,7 @@ def response_synthesis_node(
     kind, source_kind, result_kind, answer_text, reason_codes = _classify(
         state=state,
         status=status,
+        cancel_intent_active=facts.get("cancel_intent_active") is True,
         terminal_result_kind=facts.get("terminal_result_kind"),
         action_statuses=action_statuses,
         action_effect_types=action_effect_types,
@@ -144,6 +145,7 @@ def _classify(
     *,
     state: Mapping[str, object],
     status: str,
+    cancel_intent_active: bool,
     terminal_result_kind: object,
     action_statuses: tuple[str, ...],
     action_effect_types: tuple[str, ...],
@@ -161,10 +163,14 @@ def _classify(
 
     if intent_name == "BLOCKED" or status == "BLOCKED":
         return "BLOCK_RUN", "POLICY_BLOCK", "BLOCKED", None, [intent_reason or "BLOCKED"]
-    if status == "CANCELLED" or status == "CANCEL_REQUESTED":
+    if status in {"CANCELLED", "CANCEL_REQUESTED"} or (
+        status == "VERIFYING" and cancel_intent_active
+    ):
         result: TerminalResultKindV1 = (
             cast(TerminalResultKindV1, durable_result)
             if durable_result in {"PARTIAL", "CANCELLED"}
+            else "PARTIAL"
+            if any(value in {"EXECUTED", "VERIFIED", "MISMATCH"} for value in action_statuses)
             else "CANCELLED"
         )
         return "FINALIZE_CANCEL", "CANCEL_RESULT", result, None, ["CANCEL_REQUESTED"]

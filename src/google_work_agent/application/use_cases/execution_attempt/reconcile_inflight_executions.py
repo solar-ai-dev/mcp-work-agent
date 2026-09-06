@@ -348,7 +348,9 @@ def drain_inflight_executions_to_quiescence(
 ) -> int:
     for pass_index in range(1, max_passes + 1):
         result = handler(ReconcileInflightExecutionsCommand(schema_version=1, limit=batch_limit))
-        if not result.has_more or result.progressed_count == 0:
+        # A short batch can produce its next durable stage (unknown -> lookup -> verification).
+        # Pagination exhaustion is not lifecycle quiescence.
+        if result.progressed_count == 0:
             return pass_index
     raise RuntimeError("inflight execution startup drain did not reach quiescence")
 

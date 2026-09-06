@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver, get_checkpoint_metadata
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from google_work_agent.domain.run.model import RunStatusV1
@@ -55,6 +56,29 @@ class _WriteContext:
 
 _WRITE_CONTEXT: ContextVar[_WriteContext | None] = ContextVar(
     "workflow_checkpoint_write_context", default=None
+)
+
+# Exact stored value types; this is not a graph/resume target registry.
+_CHECKPOINT_VALUE_TYPES = (
+    ("google_work_agent.ports.system.contracts.workflow_execution", "WorkflowStartRequest"),
+    ("google_work_agent.ports.system.contracts.workflow_execution", "WorkflowCorrelationContext"),
+    ("google_work_agent.ports.system.contracts.workflow_execution", "SelectedResourceRef"),
+    ("google_work_agent.ports.system.contracts.workflow_handoff", "AgentNodeResumeTargetV2"),
+    ("google_work_agent.ports.system.contracts.workflow_handoff", "MainControlResumeTargetV2"),
+    ("google_work_agent.ports.system.settings_port", "GitHubRepositoryDefaultV1"),
+    ("google_work_agent.domain.action.model", "EffectType"),
+    (
+        "google_work_agent.application.agents.tool_routing.contracts.semantic_route_candidate",
+        "SemanticRouteCandidate",
+    ),
+    (
+        "google_work_agent.application.agents.tool_routing.contracts.route_binding_candidate",
+        "BoundOutputRouteCandidateV1",
+    ),
+    (
+        "google_work_agent.application.use_cases.run.build_terminal_message",
+        "TerminalAssistantMessageInputV1",
+    ),
 )
 
 
@@ -109,7 +133,14 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
     ) -> None:
         self._connection = connection
         self._connection.row_factory = sqlite3.Row
-        self._delegate = SqliteSaver(self._connection)
+        self._delegate = SqliteSaver(
+            self._connection,
+            serde=JsonPlusSerializer(
+                allowed_json_modules=_CHECKPOINT_VALUE_TYPES,
+                allowed_msgpack_modules=_CHECKPOINT_VALUE_TYPES,
+                pickle_fallback=False,
+            ),
+        )
         super().__init__(serde=self._delegate.serde)
         self._now_ms = now_ms
         self._owns_connection = owns_connection

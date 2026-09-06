@@ -944,6 +944,9 @@ class _WorkflowRuntimeComposition:
         return {
             "run_id": run_id,
             "conversation_id": snapshot.run.conversation_id,
+            "cancel_intent_active": (
+                self._read_durable_supervisor_facts(run_id).cancel_intent_active
+            ),
             "status": snapshot.run.status,
             "version": snapshot.run.version,
             "terminal_result_kind": (

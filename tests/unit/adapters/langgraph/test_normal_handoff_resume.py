@@ -82,6 +82,24 @@ def test_normal_handoff__consumes_its_durably__materialized_target_once() -> Non
     assert graph.calls[0] is None
 
 
+@pytest.mark.parametrize("settled", [True, False])
+def test_verification_handoff__replaces_crashed_execution__only_with_durable_effect(settled):
+    graph = _Graph()
+    graph.snapshot.next = ("action_execution", "verification")
+    coordinator = _coordinator(graph)
+    coordinator._has_executed_action = lambda _: settled
+    coordinator.resume(WorkflowResumeRequest(
+        run_id="run-1", workflow_key="thread-1", resume_kind="NORMAL_HANDOFF",
+        resume_payload={}, correlation=WorkflowCorrelationContext("r", "c", "1"),
+        normal_handoff_target_node="verification",
+    ))
+    assert graph.calls == [None]
+    assert len(graph.updates) == int(settled)
+    if settled:
+        assert graph.updates[0][1] == "action_execution"
+        assert graph.updates[0][0]["__target__"] == "verification"
+
+
 def test_cache_restart__replaces_stale__pending_retrieval_task() -> None:
     graph = _Graph()
     coordinator = _coordinator(graph)

@@ -31,6 +31,9 @@ class PostCommitTraceEventRepository:
     def append(self, event: TraceEvent) -> None:
         self._pending.append(event)
 
+    def list_observed_runtimes(self, run_id: str) -> tuple[str, ...]:
+        return self._repository.list_observed_runtimes(run_id)
+
     def list_page(
         self, cursor: TraceEventCursor | None, limit: int
     ) -> tuple[PersistedTraceEventRecord, ...]:
