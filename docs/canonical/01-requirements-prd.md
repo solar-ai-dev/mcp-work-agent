@@ -1,550 +1,258 @@
 # 01. 요구사항 정의서 · PRD
 
-> **Authority:** 제품 목표·범위와 완료 조건. 상세 기능은 `01-A`, 정책은 `01-B`, 전문 runtime/domain/repository 의미는 `00 Project Source Guide`의 Concern Owner를 따른다.  
-> **상태:** Draft v2.14 · **기준일:** 2026-09-03 · **대상:** P0 MVP
+수정일: 2026-09-06  
+상태: 제품 요구사항 — 구현·검증 완료 여부는 별도 기록  
+목적: 제품 목표·범위·출시 완료 조건
 
 ## 0. 한눈에 보기
 
-- **사용자 문제:** 서로 다른 업무 시스템에 흩어진 Context를 한 요청으로 연결하고 실행 가능한 계획으로 만든다.
-- **P0 Connector:** Google Workspace를 첫 번째 Connector로 제공하며 Gmail·Google Tasks·Google Calendar를 지원한다.
-- **확장 방향:** Core는 Connector·Resource·Tool·Effect 계약에 의존하고 특정 Provider API에 직접 결합하지 않는다. 이후 GitHub 같은 Connector를 같은 경계로 추가할 수 있어야 한다.
-- **Agent 역할:** 이해·근거 수집·분석·계획.
-- **결정적 코드 역할:** Policy·승인·상태전이·Write·검증.
-- **Graph 구성:** semantic responsibility와 physical Subgraph 구성은 `06 Workflow`의 current Graph Profile 계약을 따른다.
-- **비목표:** SaaS, 무승인 자동 Write, 자유형 Peer-to-Peer Agent 군집.
+mcp-work-agent는 개인 PC에서 Gmail·Google Tasks·Google Calendar와 GitHub Issue의 업무 정보를 연결하는 Work Agent다. 사용자는 자연어로 목표를 제시하고, 제품은 필요한 자료를 찾아 결과 또는 실행안을 준비한다. 사용자는 필요한 확인과 최종 승인에 집중한다. 큰 입력 Form을 채우는 도구나 무승인 자동 실행 도구가 아니다. Google Workspace는 P0 핵심 Connector로 유지하지만 Google 또는 GitHub의 로그인은 앱 실행·메인 화면 진입의 전역 선행조건이 아니다.
+
+기본 Local profile의 제품 결정은 Ollama `qwen3.5:9b`다. WORKER와 REASONING은 책임 구분을 유지하지만 같은 모델을 사용한다. 개발 앱의 실제 추론 확인과 서명된 설치 제품의 출시 승인은 구분한다.
 
 ## 1. 문서 목적
 
-이 문서는 Google Work Agent가 해결할 문제, 사용자, 제품 범위, 기능·비기능 요구사항과 완료 조건을 정의한다. 세부 기능 동작은 `01-A 기능 정의서`, 허용·승인·차단 규칙은 `01-B 정책 정의서`에서 관리한다.
+이 문서는 대상 사용자, 해결할 문제, 출시 범위와 성공 기준만 정의한다. 기능의 상세 동작은 기능 정의, 허용·차단 기준은 정책 정의, 표시·조작은 UI·UX가 각각 소유한다. 문서 간 버전 또는 기능 번호를 연쇄 의존성으로 사용하지 않는다.
 
 ### 1.1 문서 권위·책임 소유 규칙
 
-Concern ownership의 **단일 coordination authority는 `00 Project Source Guide`**다. 이 PRD는 제품 목표·범위·완료 조건만 소유한다.
-
-다른 Concern의 계약을 언급하는 경우는 제품 요구사항의 traceability를 위한 reference다. Domain lifecycle, Retrieval, Workflow, Interface, Security, Infrastructure, Repository placement 같은 전문 의미를 이 문서에서 다시 정의하지 않는다. Concern owner map 자체가 바뀌면 `00`을 수정하고, 제품 목표·범위가 실제로 달라질 때만 PRD를 함께 수정한다.
+전문 계약의 권위는 Project Source Guide를 따른다. 이 PRD로 코드 위치, 새 Domain 전이, API schema, Prompt slot 또는 Repository 예외를 만들지 않는다. 보호 계약과 새 제품 요구 사이의 구현 간극은 작업 현황에 기록하고, 요구사항 작성만으로 해소됐다고 판단하지 않는다.
 
 ## 2. 제품 개요
 
-Google Work Agent는 **Connector 확장 가능한 Work Agent Core** 위에 Google Workspace Connector를 P0 첫 구현으로 제공한다. Core는 Connector·Resource·Tool·Effect·Evidence 같은 일반 계약으로 외부 업무 시스템을 다루며, P0에서는 Gmail, Google Tasks, Google Calendar의 업무 정보를 조회하고 연결해 사용자의 목표를 달성할 실행 계획을 만든다. 결정적 LangGraph Supervisor가 최대 6개의 전문 **Agent Subgraph**를 조정한다. 각 Agent Subgraph는 자신의 호출 단위 Local State, Prompt 계약, bounded validation·repair/revision loop를 가지며 완료 시 Versioned Typed Result만 Main Graph에 반환한다. Agent별 장기 Memory는 두지 않는다. semantic responsibility와 안전 경계는 Graph Profile과 무관하게 동일하며, physical Subgraph 구성은 `06 Workflow`의 current Graph Profile 계약을 따른다. 모든 외부 Write는 사용자 승인 후 공통 결정적 실행·검증 책임이 수행하고 Connector별 Verification Read로 검증한다. P0 Google Workspace Connector에서는 Google Provider 재조회가 이 Verification을 구현한다.
+제품은 단일 사용자용 로컬 UI와 Agent Runtime으로 구성된다. Google Workspace와 GitHub는 공통 Connector 경계와 승인·실행·검증 흐름을 사용하되, 각 서비스의 identity와 효과는 구분한다.
+
+Agent는 요청 의미·자료·관계·계획을 다룬다. 결정적 코드는 현재 상태와 검증된 결과를 사용해 다음 책임, 권한, 승인, 외부 실행과 검증을 통제한다. 제품 UI는 그 결과를 표현하며 독립 실행 권한을 만들지 않는다.
 
 ### 2.1 Agent · Role · LLM Call · Subgraph 정의
 
-- **Agent:** Main Supervisor Graph가 호출하는 전문 LangGraph Subgraph다. 자기 책임 범위의 Local State와 Prompt 계약을 가지며 bounded loop를 수행하고 Typed Result를 반환한다.
-- **Agent Local State:** 한 Agent 호출 안에서만 유지되는 단편 상태다. candidate output, validation error, repair/revision attempt, local disposition 등을 포함할 수 있으나 장기 Memory가 아니다.
-- **Role:** Agent가 담당하는 안정적인 업무 책임 계약이다. 같은 Agent 안에서 `INITIAL`, `CLARIFY`, `SCHEMA_REPAIR`, `SEMANTIC_REVISION`, `RECHECK` PromptRef가 달라도 Agent 수가 늘어나는 것은 아니다.
-- **LLM Call:** 모델 추론 1회다. Agent 하나가 내부 bounded loop 때문에 둘 이상의 LLM Call을 사용할 수 있으므로 Agent 수와 LLM Call 수는 같은 개념이 아니다.
-- **Main Graph State:** Agent 간 공식 Handoff와 Run 재개에 필요한 Versioned Typed State다. Agent 내부 임시 상태를 모두 복제하지 않는다.
-- **Multi-Agent:** P0에서는 자유 대화형 Peer-to-Peer 군집이 아니라, 결정적 Supervisor가 2개 이상의 전문 Agent Subgraph를 조정하는 계층형 구조를 뜻한다.
+Agent는 전문 책임을 수행하는 workflow 구성이고, Role은 그 책임의 의미다. LLM call은 모델 추론 한 번이므로 Agent 수와 같지 않다. 물리 Subgraph 구성과 semantic owner의 수는 별개이며, 지원 Graph Profile의 상세는 Workflow 계약에 둔다. 자유형 Agent 군집으로 설명하지 않는다.
 
 ### 2.2 Conversation · Run 의미 경계
 
-- `Conversation`은 여러 USER/ASSISTANT Message와 여러 Run을 시간순으로 묶어 보여 주는 **UI·영속 이력 컨테이너**다. Conversation 자체를 Agent의 장기 Semantic Memory로 사용하지 않는다.
-- 이전 Run이 Terminal이면 같은 Conversation에서 다음 USER 요청으로 **새 Run과 새 `langgraph_thread_id`**를 시작할 수 있다. 요청이 이전 업무와 관련 있는지 여부로 새 Conversation 생성을 강제하지 않는다.
-- 새 Run의 의미 입력은 **현재 USER 요청 + 사용자가 이번 Run에 명시적으로 선택·첨부한 Resource/Entry Context + 현재 Runtime 설정**으로 한정한다. 이전 Run의 Message, RequestIntent, Tool Route, Retrieval/Evidence, Work Analysis, Plan/Review, Confirmation Receipt, Checkpoint를 새 Run 입력으로 자동 승계하지 않는다.
-- 따라서 `관련 메일 찾아줘`처럼 이전 Run을 알아야만 해석 가능한 표현이 새 Run에 단독 제출되고 이번 Run의 명시적 Resource가 없으면, 과거 Conversation 이력을 암묵적으로 읽어 보완하지 않고 현재 Run에서 필요한 확인 질문 또는 명시적 Resource 선택으로 해결한다.
-- 같은 Run의 `NEEDS_CONFIRMATION`, 재인증, 안전 재개는 예외다. 이는 새 Run이 아니라 기존 Run의 동일 `langgraph_thread_id`/Checkpoint를 계속하는 **Run 내부 resume**다.
-- 동일 Conversation에는 동시에 Open/Active Run을 최대 1개만 허용한다.
-
-### 외부 설명 용어
-
-내부 구현에서는 위 operational definition에 따라 `Agent Subgraph`라는 용어를 사용한다. 다만 외부 문서·면접에서는 SIX를 곧바로 **“6 autonomous agents”**라고 과장하지 않고, **“deterministic Supervisor가 전문 Agent Subgraph를 조정하는 hierarchical multi-agent workflow”**라고 설명한다. Agent의 학술·산업 정의가 제품마다 다르므로, 자율성 수준·Local State·Tool 권한·Handoff 방식을 함께 명시한다.
-
-Graph Profile의 독립변수는 **Agent Subgraph 분해 수준**이다. `SINGLE_BASELINE=1`, `THREE_STAGE=3`, `SIX_ROLE_BASELINE=6` Agent Subgraph를 사용한다. 실제 LLM Call·Token·Latency는 결과 지표로 측정한다.
-
-제품은 사용자 PC에서만 실행된다. React Frontend와 Python Agent Runtime은 FastAPI Local Agent Service의 same-origin HTTP 경계로 연결한다. 운영 빌드에서는 FastAPI가 React 정적 산출물과 `/api/v1` REST Command, SSE Event Stream을 함께 제공하며 외부 공개 서버나 원격 제품 Backend를 두지 않는다.
+Conversation은 메시지와 Run의 표시·영속 이력이다. 종료된 Run 다음에는 같은 대화 안에서도 새 Run으로 요청할 수 있다. 이전 대화의 모든 원문·근거·승인·checkpoint가 새 요청의 숨은 기억으로 넘어가지 않는다. 이번 요청에서 명시적으로 선택한 자료와 현재 설정만 시작 문맥에 사용한다. 같은 Run의 확인 질문·재인증·복구는 기존 작업을 안전하게 이어간다. 한 Conversation에는 동시에 하나의 열린 Run만 둔다. 기본 Conversation·Run 생성이 Google Credential 존재 여부에 전역 결합되면 안 된다. 필요한 Connector가 처음부터 미연결인 요청은 안내 후 종료하고, 연결 후 사용자가 다시 보내는 요청은 새 Run이다.
 
 ## 3. 목표 사용자
 
-### 3.1 1차 사용자
-
-- 본인의 Google 계정으로 Gmail·Tasks·Calendar를 사용하는 개인 사용자
-- 하나의 로컬 PC에서 개인 업무를 관리하는 사용자
-- 자연어로 업무 정리와 실행 계획을 요청하고 싶은 사용자
-
-### 3.2 사용자 환경
-
-| 항목 | 기준 |
-| --- | --- |
-| 운영체제 | Windows 11 x64 우선 |
-| UI 실행 | 최신 Chrome·Microsoft Edge에서 로컬 React UI 실행 |
-| 실행 위치 | 사용자 로컬 PC |
-| 사용자 수 | 앱 인스턴스당 1명 |
-| Google 계정 | 동시에 1개 활성 계정 |
-| Frontend | React + TypeScript + Vite |
-| Local Agent API | FastAPI · `127.0.0.1` · REST Command + SSE Event |
-| 제품 실행 | Launcher가 Local Agent Service를 시작하고 브라우저를 연다 |
-| Agent | LangGraph |
-| Google 연동 | 로컬 MCP Server, `stdio` |
-| 저장 | SQLite + OS Keyring |
+본인에게 필요한 Google 업무 또는 접근 권한이 있는 GitHub repository를 사용하며, 개인 PC에서 자연어로 업무를 찾고 정리하고 실행하려는 사용자다. 기본 지원 환경은 Windows 11 x64와 Chrome·Edge의 로컬 UI다. Python·Node·포트 설정은 일반 사용자 준비물이 아니다. Google은 동시에 하나의 활성 계정이라는 기존 범위를 유지한다.
 
 ## 4. 해결할 문제
 
-1. 메일 요청이 Task로 전환되지 않아 업무가 누락된다.
-2. Task 예정일, Gmail·사용자 요청의 업무 마감, Calendar 가용 시간이 분리되어 실제 수행 가능성을 판단하기 어렵다.
-3. 같은 업무가 메일, Task, 일정에 중복 생성된다.
-4. 일정 충돌을 확인하지 않고 회신 Draft나 작업 Event를 만들 수 있다.
-5. 일반 LLM은 사용자가 승인하지 않은 쓰기 동작을 수행하거나 근거 없이 계획을 만들 수 있다.
+업무가 메일·Task·일정·Issue에 흩어져 후속 작업이 누락된다. 사용자 표현과 자료의 표현이 달라 literal 검색만으로는 놓치는 자료가 생긴다. 수신일·행사일·예정일·실제 업무 마감이 혼동되며, 중복·충돌이나 잘못된 상대에게 실행될 위험이 있다. 실행 응답 유실과 UI 재접속 이후에도 실제 변경 사실을 이해할 수 있어야 한다.
 
 ## 5. 제품 목표
 
-- 자연어 요청에서 목표와 완료 조건을 추출한다.
-- 요청에 필요한 Connector·Resource Source를 Tool Route에서 확정한다. P0에서는 Gmail·Tasks·Calendar를 지원한다.
-- Connector-native 검색으로 근거를 수집하고 Evidence를 구성한다.
-- 업무 간 관계, 중복, 충돌, Evidence 기반 업무 마감 위험을 판단한다.
-- 사용자가 검토할 수 있는 Action Plan을 생성한다.
-- 승인된 Action만 MCP Tool로 실행한다.
-- 모든 쓰기 결과를 재조회하여 검증한다.
-- P0에서 API LLM과 GPU Local LLM 모드를 모두 제공한다.
-- Local LLM 제품 Runtime은 Ollama로 고정한다.
-- CPU-only 또는 GPU 기준 미달 PC에서는 API LLM으로 고정한다.
-- GPU가 없는 팀원도 API 배포 프로필로 전체 Agent 기능을 개발·검증할 수 있어야 한다.
-- 안전·승인·실행·검증 계약은 Graph Profile과 무관하게 동일한 결정적 코드로 유지한다.
-- React UI와 Python Agent Core를 명시적 계약으로 분리한다.
-- 사용자 Command는 REST로 제출하고 Run 진행 상태는 SSE로 전달한다.
-- Launcher가 Local Agent Service 시작, Health Check, 브라우저 열기와 종료를 조정한다.
-- Frontend 새로고침·중복 Command·이벤트 재연결이 외부 Connector의 중복 Write로 이어지지 않게 한다.
+요청에 필요한 Source만 조회하고, 확인된 근거로 답변 또는 실행안을 만든다. 제목에 검색어가 없거나 사람 이름이 별칭·이메일로 표현된 경우에도 제한된 검색으로 의미를 해소한다. 결정 가능한 값은 제품이 완성하고, 실제 선택이나 권한 확인이 필요할 때만 질문한다.
+
+다음 단계는 고정 순서가 아니라 상태·규칙·검증된 artifact와 freshness로 결정한다. 불필요한 책임은 생략하고 필요한 추가 검색·재검토만 제한적으로 수행한다. 완료·부분 결과·검색 실패·승인 대기·불확실한 외부 결과를 구분해 설명한다.
 
 ### 5.1 Local Runtime provisioning 제품 결정
 
-- `LOCAL_CAPABLE` 사용자는 Ollama 또는 승인 모델을 별도로 설치하지 않는다.
-- 제품 설치·최초 설정 흐름이 외부 Ollama Runtime의 설치·준비를 조정하지만 Ollama는 Product Core에 내장되지 않은 별도 Loopback Process로 유지한다.
-- 모델 weight는 Windows Installer에 포함하지 않고, verified Release Manifest가 허용한 source·identity·digest로 다운로드 후 검증한다.
-- 기존 호환 Ollama 설치는 `PREEXISTING`으로 재사용하며 사용자의 다른 Ollama 사용을 훼손하지 않는다. 제품이 준비한 Runtime/Model은 `PRODUCT_PROVISIONED` origin으로 구분한다.
-- Agent·Prompt·사용자는 concrete 모델을 고르지 않는다. `StructuredInferenceRuntimeRouter`만 Signed Local Model Profile을 통해 `WORKER | REASONING` tier를 실제 모델에 resolve한다.
-- 현재 제품 방향 후보는 모든 Product Prompt를 `qwen3.5:9b` 하나로 실행한다. `WORKER | REASONING` metadata가 존재해도 둘 다 같은 model identity로 resolve하며 실제 Release 활성화는 Safety·Contract·BTS·자원 Gate를 통과한 13의 Product Decision Record가 결정한다.
+LOCAL_CAPABLE은 기존 호환 Ollama를 재사용하거나 승인된 runtime과 모델을 준비한다. 사용자가 별도 CLI에서 설치·model pull을 할 필요가 없어야 한다. 대형 모델 weight는 Installer에 내장하지 않고 검증된 배포 경계로 준비한다. 기존 공유 runtime과 다른 모델을 훼손하지 않는다.
+
+이번 기본 모델은 `qwen3.5:9b` 하나다. 4B는 향후 profile option일 수 있으나 현재 필수 설치·활성 모델이 아니다. WORKER/REASONING 추상화는 유지하고 같은 Run의 임의 model switching은 추가하지 않는다. 서명·digest·품질·하드웨어·설치 검증 전에는 공개 Release 준비 완료를 선언하지 않는다.
 
 ## 6. 비목표
 
-- SaaS 또는 원격 멀티 사용자 서비스
-- 원격 Backend·외부 공개 REST API·멀티 사용자 API 서비스
-- 원격 MCP Server
-- CPU 기반 로컬 LLM 추론
-- Gmail Message·Thread 원문 삭제
-- 승인 없이 외부로 영향을 주는 Google Write
-- 반복 Event 전체 일괄 수정
-- 실시간 메일 감시 및 백그라운드 자동 실행
-- 자유 대화형 Agent 군집·Peer-to-Peer A2A·Agent별 독립 장기 Memory
-- 범용 웹 브라우징 Agent
+원격 SaaS·멀티 사용자 Backend, CPU Local 추론, 무승인 외부 WRITE, Gmail Message/Thread 원문 삭제, 반복 Event 전체 일괄 수정, 전체 mailbox 상시 복제, 실시간 감시 기반 자율 업무 실행, 범용 웹 브라우징, Agent별 장기 기억은 현재 범위가 아니다. GitHub PR·코드 수정은 Issue 지원에 자동 포함하지 않는다. 첨부파일의 내용 분석은 향후 범위다.
 
 ## 7. 제품 원칙
 
-1. **사용자 승인 우선:** 쓰기는 항상 승인 후 실행한다.
-2. **근거 우선:** Action은 최소 하나 이상의 Evidence를 가져야 한다.
-3. **결정적 안전성:** 권한·차단·검증은 LLM이 아닌 일반 코드가 담당한다.
-4. **최소 권한:** 활성 Connector에 필요한 Credential Scope와 Tool만 노출한다. P0 Google Workspace Connector는 필요한 Google OAuth Scope만 요청한다.
-5. **부분 성공 보존:** 독립 Action은 계속 실행하고 성공 결과를 롤백하지 않는다.
-6. **제품 Runtime 격리:** 제품 UI와 배포에는 승인된 Runtime 설정만 노출하며 평가·실험 도구를 섞지 않는다.
-7. **로컬 우선:** 상태·로그·Credential은 가능한 한 사용자 PC에 둔다.
+사용자 통제, 근거 기반 결과, 결정적 안전성, 최소 데이터, 부분 성공 보존, 로컬 우선을 유지한다. 원문 Source는 실행 지시가 아니며, UI 진행 정보는 새로운 업무 판단이 아니다. 설명을 위해 별도의 LLM 호출을 추가하지 않고 이미 생성된 상태·결과를 사용한다.
 
 ## 8. 대표 사용자 시나리오
 
-### UC-01 메일 요청을 업무로 전환
-
-사용자가 특정 메일이나 기간을 지정하면 Agent가 관련 Thread를 읽고 기존 Task와 Calendar를 확인한다. 중복이 없고 시간이 가능하면 Task, 작업 Event, 회신 Draft를 제안한다.
-
-### UC-02 회의 후 후속 업무 정리
-
-사용자가 회의 또는 후속 메일을 기준으로 해야 할 일을 요청하면 Agent가 관련 Event와 Thread를 연결하고 누락된 Task와 후속 Draft를 제안한다.
-
-### UC-03 이번 주 업무 마감 위험 분석
-
-Agent가 미완료 Task의 예정일, 관련 메일·사용자 요청의 실제 업무 마감, Calendar 가용 시간을 구분해 수행 가능·위험·불가능으로 분석하고 재배치 또는 조정 Draft를 제안한다. Google Task의 예정일만으로 실제 업무 마감을 추정하지 않는다.
-
-### UC-04 읽기 전용 탐색
-
-사용자가 아직 Task나 Event로 연결되지 않은 요청을 찾으면 Agent는 조회와 분석만 수행하고 쓰기 Action 없이 결과를 보여준다.
-
-### UC-05 일부 승인
-
-사용자가 여러 Action 중 일부만 승인하면 승인된 Action과 독립된 Action만 실행하고 종속 Action은 차단하거나 계획을 다시 계산한다.
+| 시나리오 | 사용자 목표 |
+| --- | --- |
+| UC-01 메일 요청을 업무로 전환 | 관련 메일에서 확인한 내용으로 Task·Event·회신안을 준비하고 승인한다. |
+| UC-02 회의 후 후속 업무 정리 | 관련 자료를 연결해 누락된 후속 작업을 찾는다. |
+| UC-03 이번 주 업무 마감 위험 분석 | Task 예정일과 실제 마감, 소요시간과 Calendar 가용성을 구분해 판단한다. |
+| UC-04 읽기 전용 탐색 | 사람·기간·업무 개념으로 자료를 찾고 외부 변경 없이 답변받는다. |
+| UC-05 일부 승인 | 여러 Action 중 필요한 것만 승인하고 결과와 미실행 범위를 확인한다. |
+| UC-06 GitHub Issue 업무 | 연결된 계정의 작업 repository에서 Issue를 읽고 승인된 변경을 수행한다. |
 
 ## 9. 기능 요구사항
 
+기존 요구 ID는 유지한다. 아래 표는 제품 완료 기준이며 상세 기능의 복제본이나 다른 문서의 번호 연결표가 아니다.
+
 ### 9.1 초기 설정·인증
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-001 | 앱은 최초 실행 시 설정 Wizard를 제공해야 한다. | 사용자는 OAuth Client JSON을 입력하지 않고 Google 로그인, LLM 모드, API Key, 기본 Calendar·Task List만 설정한다. |
-| FR-002 | 앱은 개발팀이 소유한 Desktop OAuth Client로 Google 계정을 연결해야 한다. | 사용자는 `Google로 로그인` 버튼을 누르고 Google 동의 화면에서 필요한 Scope를 승인한다. |
-| FR-003 | 앱은 동시에 하나의 Google 계정만 활성화해야 한다. | 계정 변경 시 기존 Credential을 해제하고 재인증한다. |
-| FR-004 | Google Refresh Token·Access Token·LLM API Key를 SQLite나 로그에 저장하지 않아야 한다. | Refresh Token은 OS Keyring, Access Token은 Connector MCP Process Memory, LLM API Key는 `KEYRING | SESSION_ONLY` 계약에 따라 OS Keyring 또는 Local Agent Process Memory에만 존재한다. |
-| FR-005 | 개발·스테이징·운영 OAuth 프로젝트를 분리해야 한다. | 팀 테스트 계정과 운영 사용자가 서로 다른 Google Cloud 프로젝트와 동의 화면을 사용한다. |
-| FR-006 | Launcher는 사용 가능한 동적 포트에서 Local Agent Service를 시작하고 Health Check를 완료한 뒤 React UI를 열어야 한다. | 사용자가 Python·포트·명령어를 직접 설정하지 않고 앱을 시작한다. |
-| FR-007 | React Frontend와 Local Agent Service는 호환 가능한 API Contract Version을 확인해야 한다. | Version 불일치 시 Agent 실행을 차단하고 재설치·업데이트 안내를 표시한다. |
-| FR-008 | 운영 빌드는 React 정적 파일과 Local API를 같은 `127.0.0.1` Origin에서 제공해야 한다. | 일반 웹사이트가 Local Agent Command를 임의 호출하지 못하도록 Host·Origin·Session 검증을 적용한다. |
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-001 | Google·GitHub가 모두 미연결이어도 Core가 준비되면 메인 화면에 진입한다. 최초 온보딩의 Google 로그인을 건너뛸 수 있다. |
+| FR-002 | 제품 소유 OAuth 구성으로 Google 로그인과 필요한 동의를 진행한다. |
+| FR-003 | Google 계정 변경 시 기존 계정 문맥과 새 계정 문맥이 섞이지 않는다. |
+| FR-004 | Credential이 일반 저장·로그·표시 경로에 노출되지 않는다. |
+| FR-005 | 개발·스테이징·운영 인증 환경을 구분한다. |
+| FR-006 | Launcher로 시작하며 개발용 명령이 필요하지 않다. |
+| FR-007 | UI/API 비호환을 안전하게 안내하고 잘못된 실행을 막는다. |
+| FR-008 | 로컬 same-origin 제품 경계를 사용한다. |
+| FR-009 | Settings에서 Google Workspace, GitHub, Gemini API를 구분하고 GitHub 인증·repository 선택에서 실제 READ까지 이어진다. 연결 완료가 종료된 요청의 자동 재개를 유발하지 않는다. |
 
 ### 9.2 추론 Runtime
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-010 | `LOCAL_CAPABLE` 앱은 최초 설정에서 Ollama 기반 Local LLM을 자동 준비해야 한다. | GPU·디스크·네트워크를 사전 검사하고, Release Manifest가 승인한 Ollama 설치 Artifact와 Signed Local Model Profile만 다운로드·검증·설치한다. 사용자는 터미널이나 `ollama pull`을 직접 실행하지 않는다. |
-| FR-011 | CPU-only 또는 GPU 기준 미달 PC는 API LLM으로 고정해야 한다. | Local 옵션과 Ollama·Model 설정·진단 UI가 노출되지 않는다. |
-| FR-012 | P0의 검증된 GPU 환경에서는 AUTO, LOCAL_GPU, API_LLM을 제공해야 한다. | 사용자가 모드를 선택하고 현재 실제 실행 모드를 확인할 수 있다. |
-| FR-013 | AUTO는 기술적 Local 실패 시 API로 최대 1회 fallback할 수 있어야 한다. | 외부 LLM 전송 동의가 있을 때만 fallback하며 이유와 사용된 Provider가 Trace에 기록된다. |
-| FR-014 | 명시적 LOCAL_GPU 선택 시 자동 API 전환을 금지해야 한다. | 오류 화면에서 사용자가 전환을 직접 승인한다. |
-| FR-015 | Local LLM 제품 Runtime은 Ollama로 고정해야 한다. | 제품 코드에 Ollama Adapter가 기본 Local Provider로 등록되고 다른 Runtime은 제품 설정에 노출되지 않는다. |
-| FR-016 | API 전용 배포와 Local 지원 배포를 분리해야 한다. | `API_ONLY`는 Ollama provisioning을 포함하지 않는다. `LOCAL_CAPABLE`은 provisioning capability와 Signed Local Model Profile을 포함하되, Windows Installer 본체에는 Ollama 실행 파일과 모델 weight를 내장하지 않고 최초 설정에서 검증된 Artifact를 준비한다. |
-| FR-017 | Local LLM 호출은 Release-approved single-model profile을 사용해야 한다. | Product LLM caller와 사용자는 concrete model name을 선택하지 않고 Runtime Router가 verified profile의 단일 모델을 결정한다. 현재 후보는 `qwen3.5:9b`이며 `WORKER | REASONING` metadata는 동일 model identity로 resolve한다. 13 Evaluation Gate 통과 전에는 활성 signed 기본값으로 간주하지 않는다. |
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-010 | LOCAL_CAPABLE에서 승인된 Ollama와 모델을 수동 CLI 없이 준비한다. |
+| FR-011 | CPU-only·GPU 기준 미달 환경은 API 경로를 사용한다. |
+| FR-012 | 지원 환경에서 사용자 요청 모드와 실제 사용 모드를 확인할 수 있다. |
+| FR-013 | AUTO의 허용된 기술적 실패에 한해 동의를 갖춘 API fallback을 제한적으로 수행한다. |
+| FR-014 | 명시적 Local 선택을 조용히 외부 모델로 바꾸지 않는다. |
+| FR-015 | Local runtime은 Ollama다. |
+| FR-016 | API_ONLY와 LOCAL_CAPABLE의 준비 항목·설치 부작용을 구분한다. |
+| FR-017 | WORKER/REASONING 모두 기본 9B profile을 소비하며 모델 선택 권한이 여러 곳에 생기지 않는다. |
 
 ### 9.3 요청·Context·Retrieval
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-020 | 앱은 자연어 요청에서 목표와 완료 조건을 구조화해야 한다. | 구조화 결과가 Schema Validation을 통과한다. |
-| FR-021 | Agent는 요청별 필요한 Source를 선택해야 한다. | Gmail·Tasks·Calendar 전체를 무조건 조회하지 않는다. |
-| FR-022 | 각 Source는 공식 Source-native 검색과 조회를 사용해야 한다. | 검색 Query와 조회 범위가 Trace에 남는다. |
-| FR-023 | 검색 결과는 공통 WorkItem·Evidence 형태로 정규화해야 한다. | 원본 Resource ID와 Source가 보존된다. |
-| FR-024 | Context가 부족하면 최대 2회까지 재검색해야 한다. | 재검색 이유와 Query 변경이 기록된다. |
-| FR-025 | 모호한 인물·기간·업무가 있으면 사용자 확인을 요청해야 한다. | 임의 선택 없이 후보와 차이를 제시한다. |
-| FR-026 | 긴 Gmail Thread는 인용·서명 제거와 Chunking을 지원해야 한다. | 핵심 본문과 원본 링크를 함께 유지한다. |
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-020 | 자연어의 목표·완료 조건·의미 제약을 손실 없이 보존한다. |
+| FR-021 | 현재 요청에 필요한 Connector를 판단한다. 초기 미연결·App 미설치·저장소 접근 불가·permission 부족은 필요한 조치 안내 후 요청을 종료하고 연결 후 새 요청으로 처리한다. |
+| FR-022 | 각 Source의 검색·조회 기능을 사용하고 제한된 검색 이력을 추적한다. |
+| FR-023 | 결과에 출처·Resource identity·근거 위치가 유지된다. |
+| FR-024 | 새 정보 가능성이 있을 때만 제한된 재검색을 하며, 예산 소진 시 확보한 근거의 범위에서 종료한다. |
+| FR-025 | 조회로 해소할 수 있는 모호성은 먼저 탐색하고, 남은 실질적 선택만 사용자에게 묻는다. |
+| FR-026 | 긴 Thread의 Message·항목·날짜 관계를 보존해 필요한 내용을 찾는다. |
+| FR-027 | literal 단어와 의미 검색, 수신일과 행사일, 후보 인물과 해소된 identity를 구분한다. |
 
 ### 9.4 분석·계획
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-030 | Agent는 메일·Task·Event의 관계를 Evidence 기반으로 연결해야 한다. | 각 연결에 근거 Resource가 포함된다. |
-| FR-031 | Agent는 Task 중복과 Calendar 충돌을 검사해야 한다. | 차단 또는 경고 사유가 사용자에게 표시된다. |
-| FR-032 | Agent는 업무 가능성을 가능·위험·불가능으로 분류해야 한다. | 실제 업무 마감은 Gmail·사용자 요청·Evidence에서, 수행 예정일은 Google Task 예정일에서 구분해 예상 시간·가용 Slot 근거와 함께 제시한다. |
-| FR-033 | Agent는 Action을 DAG로 생성해야 한다. | 종속·독립 Action이 구분된다. |
-| FR-034 | Action은 Tool, Arguments, Evidence, Risk, Expected Result를 포함해야 한다. | 승인 화면에서 모든 필드를 검토할 수 있다. |
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-030 | 자료 간 업무 관계를 근거와 함께 제시한다. |
+| FR-031 | Task 중복·Calendar 충돌과 필요한 확인을 제시한다. |
+| FR-032 | 예정일·실제 마감·가용성·소요시간을 구분해 업무 가능성을 판단한다. |
+| FR-033 | 독립·종속 Action을 구분한다. |
+| FR-034 | 사용자가 대상·변경 내용·근거·위험·기대 결과를 확인할 수 있는 계획을 제시한다. |
 
 ### 9.5 승인·수정
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-040 | 모든 쓰기 Action은 실행 전에 사용자 승인을 받아야 한다. | 승인 기록이 없으면 Tool 호출이 차단된다. |
-| FR-041 | 사용자는 전체 승인, 일부 승인, 수정, 거절을 할 수 있어야 한다. | Action별 결정 상태가 저장된다. |
-| FR-042 | 사용자가 Arguments를 수정하면 Schema·Policy·중복·충돌을 다시 검사해야 한다. | 재검증 완료 전 실행 버튼이 비활성화된다. |
-| FR-043 | 승인된 Arguments는 Canonical JSON Hash로 고정해야 한다. | 실행 직전 Hash 불일치 시 차단된다. |
-| FR-044 | 승인은 일정 시간 경과 또는 원본 Resource 변경 시 만료되어야 한다. | 만료 시 재조회와 재승인을 요구한다. |
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-040 | 외부 WRITE 전에 해당 변경의 사용자 승인을 받는다. |
+| FR-041 | 전체·일부 승인, 수정, 거절을 지원한다. |
+| FR-042 | 수정은 재검토와 새 승인으로 연결되며 Task는 자연어 수정과 compact preview를 우선한다. |
+| FR-043 | 승인한 내용과 실제 실행 내용이 일치한다. |
+| FR-044 | 승인 만료·근거 변경을 감지하고 재확인이 필요한 상태를 설명한다. |
 
 ### 9.6 실행·검증·복구
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-050 | 승인된 Action만 MCP Write Tool로 실행해야 한다. | `ClaimExecution` Commit은 Attempt `CLAIMED`를 예약할 뿐이며, ClaimContext 구성 후 `BeginExecutionAttempt`가 `applied=true`로 Commit되어 current Attempt가 `EXECUTING`인 경우에만 MCP Write를 호출한다. MCP Server는 1회용 `claim_token`과 승인된 Arguments Hash·Attempt·Service Instance binding을 다시 검증하며 Approval/Approval Snapshot 자체를 실행 Token으로 사용하지 않는다. |
-| FR-051 | Gmail Draft, Task, Calendar Event 생성·수정을 지원해야 한다. | 정책상 허용된 필드만 변경된다. |
-| FR-052 | 모든 쓰기 Action은 실행 후 Effect별 결정적 검증을 수행해야 한다. | CREATE·UPDATE는 Connector Verification Read의 normalized field comparison, DELETE는 대상 부재/삭제 상태 확인, SEND는 Sent 결과 확인으로 검증하며 검증 결과를 저장한다. |
-| FR-053 | 정상화 가능한 차이와 실제 불일치를 구분해야 한다. | 공백·Timezone 등은 정규화하고 핵심 필드 차이는 MISMATCH로 처리한다. |
-| FR-054 | 부분 실패 시 성공 Action을 보존하고 실패 Action만 재시도해야 한다. | 실행 결과와 종속 Action 차단 상태가 표시된다. |
-| FR-055 | 브라우저 새로고침, SSE 재연결 또는 앱 재시작 후 Checkpoint와 Domain Store에서 재개해야 한다. | 동일 `langgraph_thread_id`로 승인·실행 상태를 복원하며 Client State만으로 실행 사실을 판단하지 않는다. |
-| FR-056 | Run 진행 상태는 재연결 가능한 SSE Event Stream으로 전달해야 한다. | 연결이 끊기면 마지막 Event Cursor 이후 재구독하거나 현재 Run Snapshot을 다시 조회한다. |
-| FR-057 | 모든 변경 Command는 Command ID와 대상 Version을 포함해야 한다. | 네트워크 재시도와 중복 클릭이 같은 Domain Transition을 두 번 적용하지 않는다. |
-| FR-058 | 상태 변경 Command는 영속 Command Receipt로 중복 적용을 방지해야 한다. | 같은 `command_id`·같은 요청은 기존 결과를 반환하고, 같은 ID·다른 요청은 차단한다. |
-| FR-059 | Google Write는 실행 Claim과 결합된 1회용 실행 증명을 MCP가 검증해야 한다. | Claim/ClaimContext는 필요조건이며 `BeginExecutionAttempt(applied=true)` + current Attempt=`EXECUTING`이 Core pre-dispatch gate다. 이후 MCP가 승인·Hash·Attempt·Service Instance binding을 재검증하고 불일치면 Provider 호출을 차단한다. |
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-050 | 현재 승인과 실행 admission을 통과한 Action만 외부에 실행한다. |
+| FR-051 | 출시 범위의 Gmail·Task·Calendar·GitHub Issue 변경을 공통 lifecycle로 처리한다. |
+| FR-052 | 외부 변경 결과를 해당 서비스에서 재확인한다. |
+| FR-053 | 정상화 차이와 실제 불일치를 구분한다. |
+| FR-054 | 부분 성공을 보존하고 실패·미실행·종속 차단을 구분한다. |
+| FR-055 | refresh·reconnect·재시작과 정상 실행 중 Credential 만료 후 같은 작업의 사실을 안전하게 복원한다. 초기 미연결로 종료한 요청은 복원 대상의 인증 대기 Run이 아니다. |
+| FR-056 | 실시간 진행과 저장된 상태 복원이 같은 결과를 보여준다. |
+| FR-057 | 변경 요청의 중복·동시 실행을 안전하게 구별한다. |
+| FR-058 | 같은 요청의 재전송은 변경을 다시 만들지 않는다. |
+| FR-059 | 다른 Connector·대상·승인의 실행 증명을 재사용할 수 없다. |
 
 ### 9.7 관측성
 
-| ID | 요구사항 | 완료 조건 |
-| --- | --- | --- |
-| FR-060 | Run·Node·Tool·Action Trace를 로컬에 기록해야 한다. | 민감정보를 제외한 상태·지연·오류·모델 정보가 조회된다. |
-
+| ID | 제품 완료 기준 |
+| --- | --- |
+| FR-060 | 현재 runtime/model과 요청·조회·실행·검증 결과를 민감정보 없이 진단할 수 있다. |
+| FR-061 | 실제 실행 회차가 누적되는 Activity Timeline과 행별 상세를 제공하고, 표시를 위한 추가 LLM·외부 Tool 호출을 하지 않는다. |
 
 ## 10. 비기능 요구사항
 
-| ID | 분류 | 요구사항 |
-| --- | --- | --- |
-| NFR-001 | 보안 | Local Agent Service는 `127.0.0.1`에만 바인딩하고 LAN·Public Interface에 노출하지 않는다. |
-| NFR-002 | 보안 | OAuth Token·API Key·원문 Credential은 로그와 SQLite에 기록하지 않는다. |
-| NFR-003 | 개인정보 | API LLM 전송 전 선택된 Context Source와 범위를 사용자에게 고지한다. |
-| NFR-004 | 신뢰성 | 쓰기 Action의 승인 준수율, 금지 작업 차단률, 검증 수행률은 100%여야 한다. |
-| NFR-005 | 복구성 | Connector Write 재시도·복구 과정에서 동일 외부 Resource가 중복 생성되지 않아야 한다. P0 Google Workspace에서도 Provider API 재시도는 Connector MCP 경계 내부에서 이 불변조건을 지켜야 한다. |
-| NFR-006 | 성능 | 일반 Run은 사용자에게 단계별 진행 상태와 취소 기능을 제공한다. |
-| NFR-007 | 호환성 | P0는 Windows 11 x64와 최신 Chrome·Microsoft Edge를 공식 지원한다. React UI는 FastAPI가 제공하는 로컬 Origin에서 동작한다. |
-| NFR-008 | 유지보수 | Tool 입력·출력과 LLM Structured Output은 Pydantic Schema로 관리한다. |
-| NFR-009 | 테스트성 | Connector MCP Client/Transport와 LLM Provider는 Mock 가능한 인터페이스를 제공한다. Provider API Client/Adapter는 해당 Connector MCP Server 내부 테스트 경계에서만 Mock하며 제품 Core에 Provider Client 우회 경로를 두지 않는다. |
-| NFR-010 | 감사 | 승인·실행·검증 이벤트는 append-only Audit Log에 기록한다. |
-| NFR-012 | 배포성 | GPU가 없는 PC는 Ollama 없이 API_ONLY 프로필을 설치·실행할 수 있어야 한다. |
+| ID | 요구사항 |
+| --- | --- |
+| NFR-001 | 서비스는 loopback에만 노출한다. |
+| NFR-002 | Token·API Key를 로그·SQLite에 기록하지 않는다. |
+| NFR-003 | 외부 LLM 전송 동의와 실제 전송 범위를 구분해 알린다. |
+| NFR-004 | 승인 준수·금지 작업 차단·필수 검증은 안전 Gate다. |
+| NFR-005 | 재시도·복구로 동일한 외부 효과를 중복 생성하지 않는다. |
+| NFR-006 | 진행 중 실제 작업 상태와 중단 수단을 제공한다. |
+| NFR-007 | Windows 11 x64와 로컬 Chrome·Edge 제품을 검증한다. |
+| NFR-008 | 입출력 계약은 검증 가능한 typed schema를 사용한다. |
+| NFR-009 | 실제 제품 경계를 유지한 test double과 통합검증이 가능하다. |
+| NFR-010 | 승인·실행·검증의 안전 기록을 보존한다. |
+| NFR-012 | API_ONLY는 Ollama 없이 설치·실행 가능하다. |
+| NFR-013 | 모든 외부·사용자·모델 입력을 경계에서 검증한다. |
+| NFR-014 | 원문과 Markdown을 안전하게 렌더링한다. |
+| NFR-015 | 사용자 오류 설명과 민감한 기술 진단을 분리한다. |
+| NFR-016 | Host·Origin·Local Session을 검증한다. |
+| NFR-017 | 조건부 상태 변경과 중복 방지로 경쟁을 처리한다. |
+| NFR-018 | 외부 호출 동안 DB transaction과 Write lock을 유지하지 않는다. |
+| NFR-019 | 필수 영속 무결성을 DB·Repository에서도 강제한다. |
+| NFR-020 | 호환성을 확인한 migration·backup·복구 경계를 제공한다. |
+| NFR-021 | 증가하는 이력은 bounded 조회와 안정적인 pagination을 사용한다. |
+| NFR-022 | 조회·추론·재시도·Context·실행 시간은 제한한다. |
+| NFR-023 | dependency·서명·artifact·모델 무결성을 Release에서 확인한다. |
+| NFR-024 | 실제 Restore와 데이터 무결성을 검증한다. |
+| NFR-025 | 일회성 bootstrap을 안전한 Local Session으로 교환한다. |
+| NFR-026 | 운영 UI와 Local API는 same-origin이다. |
+| NFR-027 | 진행 Event에 비밀·불필요한 원문을 담지 않는다. |
+| NFR-028 | REST 경계의 입력과 허용값을 검증한다. |
 
 ## 11. 데이터 요구사항
 
-- SQLite에는 Conversation, Message, Run, Checkpoint, 실제 Run에서 사용된 Google Resource 참조, Evidence excerpt, Action, 승인 상태, 실행·검증 결과, Audit을 저장한다.
-- Gmail·Tasks·Calendar의 사이드바 목록과 Local API opaque continuation token은 SQLite에 영구 저장하지 않고 React Client Session Cache에만 유지한다. Frontend는 이를 Provider page token으로 해석하지 않는다.
-- 이미 조회한 페이지는 동일 UI 세션에서 재사용하며 UI 세션 종료, Google 계정 변경, 명시적 새로고침 시 폐기한다.
-- Gmail 전체 원문, Task·Event 상세 원문, Agent 검색 중간 후보는 기본적으로 현재 Run 메모리에서만 사용한다.
-- 실제 판단·승인에 사용된 Resource ID, 원본 링크, 최소 Metadata와 Evidence excerpt만 Run 보존 기간 동안 저장할 수 있다.
-- Google Workspace 원본 데이터는 Connector MCP가 Provider에서 조회한 현재 외부 상태를 기준으로 사용하며 로컬 DB를 원본 시스템으로 취급하지 않는다.
-- 쓰기 계획 확정 전, 승인 후 실행 직전, 실행 직후에는 관련 Resource를 Connector Read/Verification Read로 다시 조회한다. P0 Google Provider API 호출은 Google Workspace MCP Server 내부 Adapter가 수행한다.
-- Secret은 OS Keyring 또는 현재 프로세스 메모리에서만 다룬다.
-- 보존 기간과 삭제 기능은 정책 정의서에 따른다.
+전체 mailbox·repository 내용을 제품 DB에 상시 복제하지 않는다. 사용한 Resource 참조·최소 Evidence·사용자 메시지·계획·승인·실행·검증·복구·필수 감사 기록을 목적에 맞게 보존한다. Sidebar cache와 검색 중간 후보는 제품 사실 저장과 구분한다. Activity는 기존 결과·실행 이력을 소비하며 별도 장기 업무 기억이 아니다. 보존과 credential의 허용 범위는 정책이 정한다.
 
 ## 12. Product Runtime configuration boundary
 
-제품 Runtime에 노출되는 configuration은 `06 Workflow`, `07 Interface`, `10 Infrastructure`, `15 Prompt·Failure`의 current contract를 만족한 승인된 설정만 사용한다.
-
-- 제품 UI에 Experiment Runner, candidate selector, Gold/Grader control을 노출하지 않는다.
-- API_LLM / LOCAL_GPU / AUTO의 제품 의미와 fallback boundary는 current runtime contract를 따른다.
+제품 화면에 평가용 Gold·Grader·후보 selector를 노출하지 않는다. Google/GitHub 연결 설정과 Gemini API credential, Local AI 준비를 구분한다. 기본 repository는 사용자 편의 설정이며 접근 권한이나 진행 중 Run의 대상을 바꾸는 권한이 아니다.
 
 ## 13. 출시 기준
 
-### 안전 Gate
+안전 Gate는 승인 준수·금지 작업 차단·필수 Write Verification·승인 인자 무결성 100%, Credential 노출 0이다. 응답 유실에 따른 중복 외부 실행은 허용 오차로 보지 않는다.
 
-| 지표 | 기준 |
-| --- | --- |
-| Approval Compliance | 100% |
-| Forbidden Action Block | 100% |
-| Write Verification | 100% |
-| Approval Argument Integrity | 100% |
-| Credential Leakage | 0건 |
+기존 모델 품질 목표인 Source/Tool/argument 정확도 90% 이상, Core BTS 80% 이상을 유지한다. 중복 업무 제안·생성 5% 이하와 충돌 3% 이하라는 품질 지표는 사용자 업무 판단의 평가 지표다. 멱등성 위반, 승인 우회 또는 확인 없이 충돌을 허용하는 안전 실패를 그 비율로 상쇄하지 않는다. 평가 denominator와 scorer는 Evaluation이 소유한다.
 
-### 품질 Gate
-
-| 지표 | 목표 |
-| --- | --- |
-| Source Selection | 90% 이상 |
-| Tool Selection | 90% 이상 |
-| Tool Argument Accuracy | 90% 이상 |
-| Business Task Success (BTS) | Core 기준 80% 이상 |
-| Duplicate Creation | 5% 이하 |
-| Calendar Conflict | 3% 이하 |
+출시 기능마다 자동 회귀, 실제 Frontend·Local 모델·Connector 경로, 실제 외부 결과, 설치본 검증을 구분해 증거를 남긴다. 미검증 필수 항목은 PENDING/BLOCKED다. 문서 수정, Run COMPLETED, 테스트 수 합계 또는 Issue 종료만으로 Release GREEN을 선언하지 않는다.
 
 ## 14. 단계별 범위
 
-### P0 MVP
+현재 폐쇄 대상은 Google 업무 READ/WRITE, GitHub Issue READ/WRITE, 의미 검색, 상태 기반 Supervisor, 승인·자연어 수정, Recovery, 연결 Settings, 누적 Activity, Local 준비, 설치 제품이다. 범위 결정과 완료 상태는 다르다.
 
-- React + TypeScript + Vite 기반 3열 Agent UI
-- FastAPI Local Agent Service와 same-origin 정적 UI 제공
-- REST Command API + SSE Event Stream
-- Launcher 기반 시작·Health Check·브라우저 열기·정상 종료
-- 개발팀 소유 OAuth Client와 팀 Test User를 통한 Google 로그인·통합 검증
-- Gmail·Tasks·Calendar 읽기
-- LangGraph 요청 분석·검색·계획
-- Action 승인·수정·거절
-- Draft·Task·Event 생성과 수정
-- 실행 후 검증
-- API LLM Runtime
-- Ollama 기반 LOCAL_GPU Runtime
-- AUTO fallback
-- API_ONLY·LOCAL_CAPABLE 두 배포 프로필
-- SQLite Checkpoint·Audit
-
-### P1
-
-- 필요 시 동일 React UI와 Python Core를 Tauri Desktop Shell로 패키징
-- 일반 사용자 공개 배포용 OAuth 검증·브랜드·개인정보 정책 정비
-- Release Gate를 통과한 API·Local 기본 Runtime/Model 구성 채택
-- 채택 Gate를 통과한 Embedding·Reranking 기능 적용
-- 설치·업데이트 개선
-- 추가 OS 지원
-
-### P2
-
-- 첨부파일 본문 처리
-- 고급 일정 최적화
-- 선택적 추가 Provider
-- 사용성·성능 개선
+P1에는 대화 이름 변경·삭제, 공개 OAuth 운영 승격과 추가 사용성 개선을 둔다. P2에는 첨부파일 내용 처리, 고급 일정 최적화, 별도 승인된 Provider 확장을 둔다. 공개 배포를 선택하는 경우 해당 인증·보안 Gate는 선행해야 하며 단계 이름으로 면제되지 않는다.
 
 ## 15. OAuth 사용자 경험과 배포 단계
 
-### 사용자 경험
+제품 개발자가 Google Desktop OAuth Client와 GitHub App Client ID를 구성한다. 일반 사용자는 로그인·동의·GitHub Device code 인증만 수행한다. GitHub 로그인과 App 설치·repository 접근 허용은 별개로 안내한다. 개발 환경 준비 부족을 사용자에게 PAT·secret 입력으로 우회시키지 않는다. 실제 scope·protocol·token 저장과 공개 배포 요건은 보안·인프라 계약에서 관리한다.
 
-사용자는 OAuth Client JSON을 만들거나 입력하지 않는다. 앱의 `Google로 로그인` 버튼을 누르고 Google 계정 선택과 권한 동의만 수행한다. 계정 인증만으로 Gmail·Tasks·Calendar 접근이 허용되는 것은 아니므로 Google 동의 화면에서 필요한 Scope 승인이 반드시 포함된다.
+### 15.1 요청별 Connector 사용 전제
 
-### 개발·팀 테스트
+Core readiness는 앱의 정상 실행 경계이고 Connector availability는 해당 업무에 사용할 계정·권한의 상태다. Google Credential이 없다는 이유로 startup·readiness·메인 UI·기본 요청 생성이 실패하면 안 된다. 기존 Connector/runtime/connection status 경계를 재사용하며 Google·GitHub 특수 규칙을 Core에 계속 추가하지 않는다.
 
-- 개발팀이 Google Cloud OAuth 프로젝트와 Desktop Client를 소유한다.
-- Desktop App OAuth와 `127.0.0.1` loopback redirect를 사용한다.
-- 개발·스테이징·운영 프로젝트를 분리한다.
-- Testing 상태에서는 팀 계정을 Test User로 등록한다.
-- External + Testing 상태에서 Workspace Scope를 요청한 Refresh Token은 7일 후 만료되므로 재로그인 UX를 P0에서 처리한다.
-
-### 공개 배포 · P1 Release Gate
-
-- Gmail 읽기와 Draft 관리에 필요한 Scope는 Google의 제한 Scope 검증 대상이다.
-- 공개 배포 전 OAuth 브랜드·데이터 액세스 검증을 완료해야 한다.
-- API LLM 모드에서 Gmail Context를 외부 Provider로 전송하므로 보안 평가와 Limited Use 준수 가능성을 운영 준비 조건으로 관리한다.
+요청에 필요한 Connector가 처음부터 준비되지 않았으면 필요한 연결·App 설치·repository 접근·permission 조치를 안내하고 현재 요청을 종료한다. 인증 대기용 durable Run이나 checkpoint를 유지하지 않으며, 연결 완료 후 사용자가 같은 요청을 다시 보내야 한다. 정상 실행 중 Credential이 만료된 Run은 기존 REAUTH_REQUIRED·safe resume와 in-flight 결과 처리 계약을 유지한다. 이 둘을 새 AUTH_WAITING 상태나 callback 자동 resume로 합치지 않는다.
 
 ## 16. 배포 프로필
 
-### API_ONLY
-
-- GPU·Ollama·모델 파일이 필요 없다.
-- CPU-only 또는 GPU 기준 미달 PC의 기본 배포다.
-- GPU가 없는 팀원은 이 프로필로 Agent·Tool·Policy·UI·API 평가를 수행한다.
-
-### LOCAL_CAPABLE
-
-- Ollama가 제품 고정 Local Runtime이다.
-- 검증된 GPU에서 LOCAL_GPU와 AUTO를 활성화한다.
-- 실험용 모델 파일과 실험 Runner는 사용자 배포 패키지에 포함하지 않는다.
+API_ONLY는 외부 API credential과 동의를 사용하며 Ollama 준비 부작용이 없다. LOCAL_CAPABLE은 지원 GPU와 승인된 Local profile을 준비한다. 두 프로필의 업무 의미·승인·실행·검증은 같아야 한다.
 
 ## 17. Frontend · Release 경계
 
-### 17.1 Frontend · Local Agent Service 경계
-
-### 운영 실행 구조
-
-```
-Launcher
-→ FastAPI Local Agent Service 시작
-→ GET /health/live
-→ Manifest·Asset·API Contract·SQLite·Migration·Domain·Connector Runtime Registry/MCP/Credential Provider Readiness
-→ GET /health/ready
-→ React 정적 UI와 `/api/v1` 제공
-→ Chrome 또는 Microsoft Edge에서 `127.0.0.1:<dynamic-port>` 열기
-→ Local Session 수립
-→ GET /api/v1/runtime로 Google·API LLM·Ollama·Model 사용 가능 상태 진단
-```
-
-### 통신 원칙
-
-- 조회와 Command는 Versioned REST API를 사용한다.
-- Run 진행 상태는 Server-Sent Events를 사용한다.
-- Frontend는 LangGraph, SQLite, Keyring, MCP를 직접 호출하지 않는다.
-- FastAPI Route는 Domain 상태를 직접 수정하지 않고 Application Command를 호출한다.
-- Domain Store가 승인·실행 사실의 기준점이며 React Client State는 화면 상태만 소유한다.
-- 운영 빌드에서 외부 공개 API, LAN 접속, Reverse Proxy를 지원하지 않는다.
-
-### 17.2 Release implementation handoff
-
-PRD는 repository/build dependency order를 중복 소유하지 않는다. **구현 의존 순서와 production placement는 `16 Repository Architecture`의 Dependency-safe implementation order**, 설치·배포·Runtime 준비 순서는 `10 Infrastructure`를 따른다. 이 절은 제품 Release 범위와 외부 검증 기준만 남긴다.
-
-- P0 OAuth 완료 기준은 개발·스테이징 프로젝트의 팀 Test User를 사용한 실제 Gmail·Tasks·Calendar 통합 데모다.
-- 일반 사용자 공개 OAuth 검증과 제한 Scope 운영 승격은 P1 Release Gate다.
-- Local 기능은 P0에 유지하되 API 수직 흐름이 통과한 후 구현한다.
-
+설치본에서 source checkout, 개발 가상환경, node_modules, 개발 서버 없이 시작·재실행·인증·대표 READ/WRITE가 가능해야 한다. 실제 제품·빌드·최종 문서의 commit을 연결해 보고한다. 설치·migration·process의 상세 절차를 PRD에 복제하지 않는다.
 
 ## 18. Google Source 탐색·목록 요구사항
 
-### 18.1 두 가지 요청 진입 방식
-
-1. **Agent 검색형:** 사용자가 Query, 날짜, 사람·이메일, 기간 또는 복합 요구사항을 자연어로 입력하면 Agent가 필요한 Source와 검색 조건을 구조화하고, 확정된 IN Route 안에서 Connector-native Read를 수행한다. P0 Google Workspace의 Provider-native API 호출은 Google Workspace MCP Server 내부 Adapter가 수행한다.
-2. **사용자 선택형:** 사용자가 왼쪽 Gmail·Tasks·Calendar 목록에서 하나 이상의 Resource를 선택하고 요청하면 선택된 Resource를 Context 시작점으로 사용한다.
-
-### 18.2 사이드바 목록
-
-- Gmail은 최근 수신 순, Tasks는 미완료·예정일 임박 우선, Calendar는 가까운 예정 일정 순으로 표시한다.
-- Sidebar의 페이지 단위와 Source별 기본 조회 범위는 `01-A 기능 정의서`와 `07 Interface`의 Canonical Query 계약을 따른다.
-- 다음 페이지 이동 시 Local API가 Connector MCP Browse/Read 경계를 통해 새 목록을 조회한다. Frontend는 Provider API나 raw Provider page token을 직접 다루지 않는다.
-- 이미 조회한 페이지는 React Client Session Cache에서 재사용하고 SQLite에는 영구 저장하지 않는다.
-- 페이지 이동 자체는 이미 조회한 페이지에 대한 반복 API 호출을 발생시키지 않아야 한다.
-
-### 18.3 사용자 선택형 처리
-
-- 하나 또는 여러 Resource를 선택할 수 있어야 한다.
-- 선택된 Resource ID를 기준으로 최신 상세 내용을 조회한 뒤 요청을 수행한다.
-- 선택된 대상을 다시 검색해 찾도록 요구하지 않는다.
-- 관련 Gmail·Task·Calendar 추가 검색은 사용자 요청을 수행하는 데 필요한 경우에만 확장한다.
-
-### 18.4 Agent 검색형 처리
-
-- Agent는 사용자 요청에서 기간, 사람·이메일, Keyword, 대상 Source와 Resource 조건을 추출한다.
-- 목록 검색으로 후보를 확보한 뒤 필요한 후보만 상세 조회한다.
-- 검색 결과 전체를 LLM에 전달하지 않고 일반 코드와 Metadata로 후보를 줄인 뒤 필요한 Context만 전달한다.
-- Context가 부족할 때만 최대 2회 재검색한다.
-
-### 18.5 완료 조건
-
-- 사용자는 사이드바에서 최신 목록을 탐색하고 현재 항목에서 바로 Agent 요청을 시작할 수 있다.
-- 동일 세션에서 이미 본 페이지로 돌아갈 때 추가 API 호출 없이 즉시 표시된다.
-- 선택형 요청과 Agent 검색형 요청이 동일한 Action Plan·승인·검증 흐름으로 연결된다.
-- Google 목록 전체를 SQLite에 복제하지 않고도 대화 재개와 승인 근거를 복구할 수 있다.
-
+사용자 선택형과 Agent 검색형을 지원한다. Focus는 상세 미리보기, 명시적 선택은 새 요청의 Context로 구분한다. 이미 받은 UI 범위는 세션에서 재사용하고 계정·범위가 달라지면 섞지 않는다. Tasks 기본 순서·Calendar Month View·count 정확성과 상세 표현은 UI·UX가 소유한다. GitHub는 설정된 repository 또는 요청에 명시한 범위에서 탐색한다. Google Sidebar와 Gmail·Tasks·Calendar 기능은 미연결일 때도 유지하며 연결 CTA를 표시한다. 미연결을 빈 자료 목록이나 제품 기능 제거로 표현하지 않는다.
 
 ## 19. Secure & Resilient 비기능 요구사항
 
-이 절은 일반 SaaS 체크리스트 전체를 적용하는 것이 아니라, 로컬 단일 사용자·React·FastAPI Local Agent Service·SQLite·MCP `stdio` 구조에 실제로 필요한 안전성과 복구성 기준을 정의한다.
-
-| ID | 분류 | 요구사항 |
-| --- | --- | --- |
-| NFR-013 | 입력 검증 | 사용자 입력, Connector/MCP 및 Provider 응답, LLM 출력, Resource ID·opaque continuation token은 비신뢰 데이터로 취급하고 타입·길이·개수·날짜 범위·허용값을 중앙 Schema에서 검증해야 한다. |
-| NFR-014 | 출력 안전성 | Google·사용자·LLM 문자열을 Raw HTML로 렌더링하지 않고 안전한 Text·Markdown으로 표시해야 한다. 외부 링크는 허용 Scheme과 목적지를 검증해야 한다. |
-| NFR-015 | 오류 격리 | 사용자 오류 메시지와 기술 진단 정보를 분리하고 Stack Trace, SQL, 로컬 경로, Credential 상태 원문을 일반 화면에 노출하지 않아야 한다. |
-| NFR-016 | 로컬 노출면 | FastAPI Local Agent Service는 `127.0.0.1`의 동적 포트에만 바인딩한다. Host·Origin·Local Session 검증을 적용하고 원격 접속·Public Bind를 금지한다. |
-| NFR-017 | DB 동시성 | SQLite 쓰기는 Application의 단일 Write Coordination 경계를 통과하고, 조건부 상태 전이·UNIQUE Constraint·Idempotency로 중복 실행과 Race Condition을 차단해야 한다. |
-| NFR-018 | 트랜잭션 | DB Transaction은 짧게 유지하며 Connector/MCP·Provider·LLM 외부 호출 중 Transaction과 Write Lock을 유지하지 않아야 한다. |
-| NFR-019 | 데이터 무결성 | Foreign Key, UNIQUE, NOT NULL, CHECK Constraint와 허용된 상태 전이를 DB·Repository에서 강제해야 한다. 애플리케이션 검증만으로 무결성을 보장하지 않는다. |
-| NFR-020 | Migration·복구 | Schema Version, 순차 Migration, Migration 전 안전한 Backup, 실패 시 Rollback·Write 차단, 시작 시 DB 무결성 검사를 지원해야 한다. |
-| NFR-021 | 조회 성능 | 대화·메시지·Run·Audit처럼 증가하는 목록은 안정된 정렬키와 Cursor 기반 Pagination을 지원하고, Repository는 화면·Use Case 단위 Batch 조회로 N+1 호출을 방지해야 한다. |
-| NFR-022 | 외부 장애 격리 | Run별 Google·LLM 호출 수, 재검색, Retry, Context 크기, 실행 시간을 제한하고 연속 장애 시 새 호출을 일시 중단하는 Circuit 상태를 지원해야 한다. |
-| NFR-023 | 공급망 보안 | Dependency Lock, 취약점·Secret Scan, 배포 Artifact Hash, 지원 Runtime Version과 Ollama·제품 모델 Version 고정을 Release Gate로 관리해야 한다. |
-| NFR-024 | Backup 검증 | Backup 생성 성공만 확인하지 않고 테스트 환경에서 실제 Restore와 무결성 검사를 반복 검증해야 한다. |
-| NFR-025 | Local API 인증 | Launcher가 생성한 일회성 Bootstrap Secret으로 Local Session을 수립하고 Secret을 URL Query·로그·SQLite에 남기지 않아야 한다. |
-| NFR-026 | Same-origin UI | 운영 빌드는 React UI와 Local API를 같은 Origin에서 제공하며 임의 Origin 허용을 금지해야 한다. |
-| NFR-027 | Event 전달 | SSE는 UI 진행 상태와 식별자 중심으로 전달하고 OAuth Token·API Key·불필요한 원문을 포함하지 않아야 한다. |
-| NFR-028 | API 입력 검증 | REST Path·Body·Header·Cursor·Command ID를 중앙 Schema와 Allowlist로 검증해야 한다. |
-
-### 19.1 P0 적용 범위
-
-- P0 필수: NFR-013~NFR-028
-- 복원 자동화와 정기 Restore 훈련 고도화: P1에서 운영 절차 확장
-- WAF, VPC, Redis 분산 Lock, Kubernetes, ALB, DDoS 방어는 원격 SaaS 전환 전까지 범위에서 제외
-
-### 19.2 DB 설계 문서로 위임할 상세
-
-다음 항목의 정확한 값과 Schema는 `04. 도메인·데이터베이스 설계서`에서 확정한다.
-
-- Transaction 경계와 상태 전이 SQL
-- WAL·`synchronous`·`busy_timeout` 설정
-- Table 정규화와 JSON Snapshot 경계
-- Foreign Key·UNIQUE·CHECK Constraint
-- Index와 Query Plan
-- Cursor 구성
-- Migration·Backup·Restore 절차
-- 보존 기간과 물리 삭제
-
+입력·출력·동시성·DB 무결성·외부 장애·공급망 검증을 로컬 제품 규모에 맞게 적용한다. 원격 SaaS용 WAF·Kubernetes·분산 Lock을 이번 범위에 도입하지 않는다. 설계에 없는 예외를 편의상 허용하지 않는다.
 
 ## 20. Agent Workflow 제품 요구사항
 
-- P0 Agent Runtime은 결정적 Supervisor가 Agent Subgraph를 제어하는 평가 가능 계층형 Workflow를 사용한다.
-- semantic responsibility owner는 Request Understanding, Tool Route, Retrieval, Work Analysis, Planning, Review의 6개를 항상 유지한다. `SIX_ROLE_BASELINE`은 이 6개 owner를 각각 1개 physical compiled Agent Subgraph에 배치하는 profile이다.
-- physical compiled Agent Subgraph 배치는 `SINGLE_BASELINE(1)`, `THREE_STAGE(3)`, `SIX_ROLE_BASELINE(6)` 중 선택되며, semantic owner identity와 physical subgraph identity를 동일 개념으로 취급하지 않는다.
-- Supervisor는 현재 Workflow Phase, Agent Result, Domain Command Result와 호출 예산으로 다음 경로를 결정한다.
-- Agent 간 전달은 Versioned Structured Output과 Resource·Evidence ID Reference를 사용한다.
-- 자유 대화형 Agent 군집, Peer-to-Peer A2A, Agent별 독립 DB·Credential·장기 Memory는 범위에서 제외한다. Agent Subgraph는 호출 단위 Local State만 가진다.
-- 승인 이후 Google Write, 상태 전이, 검증과 복구는 Agent Profile과 독립된 결정적 실행·검증 책임과 Domain Command가 담당한다.
-- 요청별 LLM 호출은 필요한 Agent만 실행하며 호출 수·Token·지연 예산을 강제한다.
-
-
-### 20.1 Agent Workflow Baseline 계약
-
-- 결정적 Supervisor는 항상 6개 `SemanticAgentOwnerIdV1` 책임을 조정하고, selected Graph Profile에 따라 이를 1/3/6개의 physical compiled Agent Subgraph에 배치한다.
-- `SIX_ROLE_BASELINE`은 Request Understanding / Tool Route / Retrieval / Work Analysis / Planning / Review를 각각 별도 physical subgraph에 배치하는 profile이다.
-- Main State는 `RunInput → RequestIntent → ToolRoutePlan → RetrievalResult → WorkAnalysisResult → PlanningResult → PlanReviewResult`의 공식 Typed Artifact만 단계적으로 축적한다.
-- Tool Route Subgraph가 IN Resource/Read Tool 범위와 OUT Resource/Effect/Tool을 한 번 확정하며 Retrieval·Planning은 이를 read-only로 소비한다.
-- Retrieval Subgraph는 고정 IN Route에서 Query 계획·결정적 Read·Normalize/Segment·Run-scoped RAG·Evidence·Sufficiency를 수행한다. Retrieval LLM Node는 MCP를 직접 호출하지 않는다.
-- 각 Subgraph와 내부 Node는 필요한 Main/Local State 필드만 Typed Projection으로 받으며 Query candidate·RAG score·LLM candidate는 Main State에 승격하지 않는다.
-- 일반 Retrieval 호출은 Domain Action Row를 만들지 않는다.
-- Answer-only Run은 명시적 완료 Command로 종료하고, 일반 Retrieval READ와 그 실패 처리는 Retrieval Subgraph의 결정적 Read 경계가 소유한다. 일반 Retrieval은 Domain Action/Plan/Approval Row를 만들지 않는다. Write Retry와 실행 lifecycle의 command·허용 source state·guard·transition semantics는 Domain State Transition Contract를 따르고, 04 Domain·DB는 그 영속 사실·persistence realization을 소유한다. 06 Workflow는 해당 Domain Command Result에 따른 routing·suspend/resume 순서만 소유한다.
-- 승인 이후 LLM이 Tool·Arguments·대상 Resource를 변경할 수 없다.
-
+상태 기반 Supervisor는 필요한 책임만 실행하고 skip·bounded back-edge·suspend·종료를 구분한다. upstream 의미가 바뀌면 stale downstream 결과를 현재 결과처럼 사용하지 않는다. 안전·실행·검증 책임은 Agent 구성이나 Connector에 따라 완화되지 않는다. 정확한 topology·schema·revision 규칙은 Workflow 계약에서 정의한다.
 
 ## 21. 구현 전제
 
-- `command_id`는 Trace 전용 값이 아니라 영속 Command Receipt의 식별자다.
-- OAuth 시작·Callback·Token 교환·Refresh Token 저장은 MCP Credential Provider가 소유한다.
-- FastAPI는 Token 원문이 아닌 계정·Scope·연결 상태 Metadata만 취급한다.
-- 대화 이름 변경과 대화 삭제는 P1이며 P0 API·UI 범위에서 제외한다.
-
+기존 구현과 의미 통합 결과를 재사용한다. 문서 정리는 제품 코드 수정이나 보호된 기술 계약의 암묵적 변경을 포함하지 않는다. 필요한 schema 변경은 이후 구현 작업에서 producer·consumer·호환성·검증을 함께 닫아야 한다.
 
 ## 22. 승인형 Write·Clarification 계약
 
-- Gmail 실제 전송은 승인 필수 `SEND` Effect로 지원한다.
-- 정확한 Task 완료 상태 변경은 승인 필수 `UPDATE`다.
-- 정확한 Google Task 삭제와 Calendar Event 삭제는 승인 필수 `DELETE`다.
-- Calendar 참석자 추가·수정은 승인 필수 `UPDATE`다.
-- 사용자가 중복 사실을 인지하고 동일 Resource 추가 생성을 명시적으로 요구한 경우 재확인·승인 후 허용할 수 있다.
-- 모호성은 차단이 아니라 `NEEDS_CONFIRMATION → clarify → same Run/`langgraph_thread_id` resume`를 기본으로 한다.
-- 전체 Gmail Mailbox·장기간 무제한 원문·모든 Workspace Source 전체 조회는 데이터 최소화 정책에 따라 BLOCK한다.
-
+등록된 범위의 Draft/SEND/Reply, Task/Calendar 변경, GitHub Issue 변경을 구분한다. 확인 질문은 실제 선택이 필요한 시점에 요청한다. 원문에 없는 사람·repository·날짜를 추측해 WRITE 대상으로 확정하지 않는다. 자세한 허용·금지·Override 조건은 정책에만 정의한다.
 
 ## 23. Claim V2·Gmail 첨부파일 범위
 
-### 23.1 제품 범위
-
-- Gmail Message 상세에서 첨부파일 Metadata를 확인하고 사용자가 선택한 첨부파일을 다운로드할 수 있어야 한다.
-- Gmail Draft 생성·수정 및 Gmail SEND에서 사용자가 선택한 로컬 파일을 첨부할 수 있어야 한다.
-- P0는 첨부파일의 **전달·다운로드**를 지원하며 첨부파일 내용을 LLM이 읽거나 요약·분석하는 기능은 범위에 포함하지 않는다.
-
-### 23.2 Write 무결성 완료 조건
-
-- 승인된 Business Arguments는 `approval_arguments_hash`로 고정한다.
-- Application이 서버 생성 실행 Metadata까지 포함한 실제 MCP Dispatch Payload를 `execution_arguments_hash`로 고정한다.
-- MCP Write는 `ClaimContextV2`의 서명·TTL·Process Instance·Action·Approval·Attempt·Tool·두 Hash·Nonce를 검증한 뒤 실제 수신 인자를 재해시하여 `execution_arguments_hash`와 일치할 때만 수행한다.
-- 첨부파일이 포함된 Write는 승인 Snapshot에 raw bytes나 Local Path 대신 파일 Descriptor와 SHA-256을 고정하고 실제 bytes를 실행 직전에 재검증한다.
+첨부파일은 선택한 파일의 다운로드·전달만 지원하며 자동 내용 분석을 하지 않는다. 승인 당시 파일과 실제 전송 파일이 일치해야 한다. Claim wire 버전·hash·서명 항목은 이 제품 요구를 구현하는 기술 계약이며 이 문서의 수정일과 연동하지 않는다.
 
 ## 24. 문서 관계
 
-- 본 문서: 제품 목표·범위·요구사항·완료 조건
-- `01-A 기능 정의서`: 사용자 기능과 시스템 동작의 상세 사양
-- `01-B 정책 정의서`: 허용·승인·차단·데이터·추론·오류 정책
+PRD는 목표와 범위, 기능 정의는 사용자 동작, 정책은 허용 조건, UI·UX는 표현과 조작을 소유한다. 각 문서의 상세를 다른 문서에 다시 복사하지 않는다. 구현·실제품 검증 현황은 별도 작업 현황에서 관리한다.
