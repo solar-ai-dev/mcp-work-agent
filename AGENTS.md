@@ -147,7 +147,8 @@ Capability는 다음을 만족해야 완료다.
 
 ## Git / Scope
 
-* 사용자가 명시하지 않으면 commit, push, merge, rebase, branch switch, destructive Git operation을 하지 않는다.
+* 사용자의 상시 승인에 따라 각 프롬프트 작업 완료 시 해당 범위의 검증된 변경을 coherent commit으로 커밋하고 현재 작업 브랜치에 push한다. 완료 보고 전에 local/remote HEAD 일치와 untracked를 포함한 working tree를 확인한다.
+* 미완료 작업이나 다른 작업자의 변경을 완료 범위에 섞어 커밋하지 않는다. push 실패·remote 충돌은 보고하고, 별도 승인 없이 force push, merge, rebase, branch switch, destructive Git operation을 하지 않는다.
 * 관련 없는 cleanup, formatting-only 대형 diff, dependency-wide upgrade를 만들지 않는다.
 * 다른 작업자의 변경을 임의로 되돌리지 않는다.
 * 저장소에서 확인 가능한 내용을 사용자에게 다시 묻지 않는다.
