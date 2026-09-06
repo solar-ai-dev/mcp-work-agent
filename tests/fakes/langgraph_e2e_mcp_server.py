@@ -7,6 +7,8 @@ import os
 import sqlite3
 import sys
 from collections.abc import Mapping
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -19,6 +21,7 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
     validate_claim_context as claim_context_validation,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    _build_gmail_mime,
     _event_snapshot,
     _task_snapshot,
     _task_write_body,
@@ -116,8 +119,9 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
             },
         )
     event: dict[str, object] = {"tool_name": tool_name, "arguments": arguments}
-    if tool_name in {"tasks_create_task", "calendar_create_event"} and (
+    if tool_name in _write_tools() and (
         _load_state().get("task_fixture_mode") or _load_state().get("calendar_fixture_mode")
+        or _load_state().get("gmail_fixture_mode")
     ):
         claim = cast(dict[str, object], arguments["claim_context"])
         database = _state_root().parent / "data/google_work_agent.db"
@@ -331,9 +335,10 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         )
         mutation_key = (
             "calendar_verification_mutation" if tool_name == "calendar_get_event"
+            else "gmail_verification_mutation" if tool_name.startswith("gmail_")
             else "task_verification_mutation"
         )
-        if tool_name in {"tasks_get_task", "calendar_get_event"} and state.get(mutation_key):
+        if state.get(mutation_key):
             mutation = cast(dict[str, object], state[mutation_key])
             read_item = {
                 **read_item,
@@ -404,6 +409,19 @@ def _write_fixture(
 ) -> dict[str, object]:
     payload = dict(cast(dict[str, object], arguments.get("payload") or {}))
     fingerprint = arguments.get("recovery_fingerprint") or payload.get("recovery_fingerprint")
+    if tool_name.startswith("gmail_"):
+        parsed = BytesParser(policy=policy.default).parsebytes(_build_gmail_mime(payload))
+        body_part = parsed.get_body(preferencelist=("plain",))
+        payload = {
+            "subject": str(parsed["Subject"]),
+            "to": str(parsed["To"]), "cc": str(parsed["Cc"] or ""),
+            "bcc": str(parsed["Bcc"] or ""),
+            "body": body_part.get_content() if body_part else "",
+            "thread_id": payload.get("thread_id") or "gmail-thread-created",
+            "in_reply_to": str(parsed["In-Reply-To"]) if parsed["In-Reply-To"] else None,
+            "references": str(parsed["References"]) if parsed["References"] else None,
+            "attachments": [], "sent": tool_name == "gmail_send",
+        }
     if tool_name.startswith("tasks"):
         resource_type = "task"
         resource_id = str(arguments.get("task_id") or f"task-write-{count}")
@@ -504,7 +522,7 @@ def _resource_matches_list_tool(item: Mapping[str, object], *, tool_name: str) -
 
 def _failure_mode(arguments: dict[str, object]) -> str | None:
     payload = arguments.get("payload")
-    title = payload.get("title") if isinstance(payload, dict) else None
+    title = (payload.get("title") or payload.get("subject")) if isinstance(payload, dict) else None
     normalized = title.upper() if isinstance(title, str) else ""
     for value in (
         "UNKNOWN_RESULT_RECOVERY",

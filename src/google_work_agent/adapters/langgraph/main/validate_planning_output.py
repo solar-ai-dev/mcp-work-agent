@@ -399,7 +399,13 @@ def _validate_action(
     if len(dependencies) != len(set(dependencies)):
         raise CanonicalDomainValidationError(f"{path}.depends_on_action_ids contains duplicates")
 
-    if effect in {EffectType.UPDATE.value, EffectType.DELETE.value} or tool_id == "gmail_send":
+    if effect in {EffectType.UPDATE.value, EffectType.DELETE.value} or (
+        tool_id == "gmail_send" and "draft_id" in arguments
+    ) or (
+        tool_id in {"gmail_create_draft", "gmail_send"}
+        and isinstance(arguments.get("payload"), Mapping)
+        and cast(Mapping[str, object], arguments["payload"]).get("thread_id") is not None
+    ):
         resolve_exact_target_evidence_handle(
             tool_id=tool_id,
             arguments=arguments,
@@ -436,7 +442,7 @@ def resolve_exact_target_evidence_handle(
         arguments=arguments,
         path=path,
     )
-    parent_field = _TARGET_BINDINGS[tool_id][2]
+    parent_field = _TARGET_BINDINGS.get(tool_id, ("", "", None))[2]
 
     target_handles: set[str] = set()
     for evidence_ref in evidence_refs:
@@ -473,6 +479,10 @@ def required_target_identity(
     arguments: Mapping[str, object],
     path: str,
 ) -> tuple[str, str, str | None]:
+    payload = arguments.get("payload")
+    if (tool_id in {"gmail_create_draft", "gmail_send"} and "draft_id" not in arguments
+            and isinstance(payload, Mapping) and payload.get("thread_id") is not None):
+        return "gmail_thread", _text(payload["thread_id"], f"{path}.payload.thread_id"), None
     binding = _TARGET_BINDINGS.get(tool_id)
     if binding is None:
         raise CanonicalDomainValidationError(

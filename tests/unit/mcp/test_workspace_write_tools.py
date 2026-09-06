@@ -163,6 +163,7 @@ def test_gmail_update__draft_dispatches__with_valid_claim(monkeypatch: pytest.Mo
     monkeypatch.setattr(server, "_google_api_call", google_api_call)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Updated", "body": "New body"}
+    payload.update(cc=[], bcc=[], attachments=[], thread_id=None, in_reply_to=None, references=None)
     claim = _build_claim(
         state=state,
         tool_name="gmail_update_draft",
@@ -195,16 +196,17 @@ def test_gmail_send__dispatches_with__valid_claim(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(server, "_google_api_post", google_api_post)
     state = _state()
+    payload = {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}
     claim = _build_claim(
         state=state,
         tool_name="gmail_send",
-        execution_arguments={"draft_id": "draft-1", "recovery_fingerprint": None},
+        execution_arguments={"draft_id": "draft-1", "payload": payload},
     )
 
     result = verified_server._tool_call(
         state,
         tool_name="gmail_send",
-        arguments={"draft_id": "draft-1", "recovery_fingerprint": None, "claim_context": claim},
+        arguments={"draft_id": "draft-1", "payload": payload, "claim_context": claim},
     )
 
     item = cast(dict[str, object], result["item"])
@@ -212,7 +214,71 @@ def test_gmail_send__dispatches_with__valid_claim(monkeypatch: pytest.MonkeyPatc
     assert item["resource_type"] == "gmail_message"
     assert len(calls) == 1
     assert calls[0][0] == "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send"
-    assert calls[0][1] == {"id": "draft-1"}
+    assert calls[0][1]["id"] == "draft-1"
+    assert "raw" in cast(dict[str, object], calls[0][1]["message"])
+
+
+@pytest.mark.parametrize("wrong", [None, "thread", "message", "subject", "references"])
+def test_gmail_reply__binds_original_headers__before_one_send(
+    monkeypatch: pytest.MonkeyPatch, wrong: str | None,
+) -> None:
+    from email import policy
+    from email.parser import BytesParser
+
+    writes: list[dict[str, object]] = []
+    payload: dict[str, object] = {
+        "to": ["person@example.com"], "cc": [], "bcc": [],
+        "subject": "회의 결과", "body": "검토했습니다.", "thread_id": "thread-1",
+        "in_reply_to": "<original@example.com>", "references": "<original@example.com>",
+    }
+    if wrong == "references":
+        payload["references"] = "<different@example.com>"
+
+    def read(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "id": "wrong" if wrong == "thread" else "thread-1",
+            "messages": [{"payload": {"headers": [
+                {"name": "Message-ID", "value": "<wrong@example.com>" if wrong == "message"
+                 else "<original@example.com>"},
+                {"name": "Subject", "value": "다른 제목" if wrong == "subject" else "회의 결과"},
+            ]}}],
+        }
+
+    def write(state: object, url: str, body: dict[str, object]) -> dict[str, object]:
+        writes.append(body)
+        assert url.endswith("/messages/send")
+        assert body["threadId"] == "thread-1"
+        parsed = BytesParser(policy=policy.default).parsebytes(
+            server._b64url_decode(cast(str, body["raw"]))
+        )
+        assert parsed["Subject"] == "회의 결과"
+        assert parsed["In-Reply-To"] == parsed["References"] == "<original@example.com>"
+        return {"id": "sent-1", "threadId": "thread-1"}
+
+    monkeypatch.setattr(server, "_google_api", read)
+    monkeypatch.setattr(server, "_google_api_post", write)
+    state = _state()
+    arguments: dict[str, object] = {"payload": payload}
+    claim = _build_claim(state=state, tool_name="gmail_send", execution_arguments=arguments)
+    if wrong:
+        with pytest.raises(server._WorkspaceToolError, match="INVALID_ARGUMENT"):
+            verified_server._tool_call(state, tool_name="gmail_send",
+                                       arguments={**arguments, "claim_context": claim})
+        assert writes == []
+    else:
+        verified_server._tool_call(state, tool_name="gmail_send",
+                                   arguments={**arguments, "claim_context": claim})
+        assert len(writes) == 1
+
+
+def test_gmail_send__legacy_id_only__cannot_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server, "_google_api_post", _reject_google_calls)
+    state = _state()
+    args: dict[str, object] = {"draft_id": "draft-1"}
+    claim = _build_claim(state=state, tool_name="gmail_send", execution_arguments=args)
+    with pytest.raises(verified_server._VerifiedToolContractError, match="INVALID_ARGUMENT"):
+        verified_server._tool_call(state, tool_name="gmail_send",
+                                   arguments={**args, "claim_context": claim})
 
 
 def test_gmail_get__draft_reads__without_a_claim(monkeypatch: pytest.MonkeyPatch) -> None:

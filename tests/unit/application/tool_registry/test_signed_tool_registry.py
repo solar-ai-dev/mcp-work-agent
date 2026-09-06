@@ -19,7 +19,7 @@ def test_signed_registry__loads_exact__installed_connector_tool_set() -> None:
         "google_workspace",
     }
     assert registry.entries_hash == (
-        "115b4f3a159ba955023aeb858dec569257138c373dac050eefd931a896058666"
+        "5e30e912a8a318b04d92fcd8f47d1d19453361b3df71d3f420ee76f38173e0b5"
     )
 
     github = [entry for entry in registry.entries if entry.connector_id == "github"]

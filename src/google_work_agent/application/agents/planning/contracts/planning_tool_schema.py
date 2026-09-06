@@ -53,13 +53,13 @@ _GMAIL_DRAFT_PAYLOAD = {
     "required": ["to", "subject", "body"],
     "properties": {
         "to": _EMAIL_LIST,
-        # MCP rejects an explicitly-present empty cc/bcc list.  Omitting the
-        # field is the representation for "no cc/bcc".
-        "cc": _EMAIL_LIST,
-        "bcc": _EMAIL_LIST,
+        "cc": {**_EMAIL_LIST, "minItems": 0},
+        "bcc": {**_EMAIL_LIST, "minItems": 0},
         "subject": _STRING,
         "body": _STRING,
-        "thread_id": _NON_EMPTY_STRING,
+        "thread_id": {"type": ["string", "null"], "minLength": 1},
+        "in_reply_to": {"type": ["string", "null"], "minLength": 1},
+        "references": {"type": ["string", "null"], "minLength": 1},
         "attachments": {
             "type": "array",
             "items": _ATTACHMENT_DESCRIPTOR,
@@ -127,12 +127,15 @@ _PLANNING_TOOL_SCHEMAS: dict[str, JsonObject] = {
         required=["draft_id", "payload"],
         properties={
             "draft_id": _NON_EMPTY_STRING,
-            "payload": {**_GMAIL_DRAFT_PAYLOAD, "required": [], "minProperties": 1},
+            "payload": {
+                **_GMAIL_DRAFT_PAYLOAD,
+                "required": list(cast(JsonObject, _GMAIL_DRAFT_PAYLOAD["properties"])),
+            },
         },
     ),
     "gmail_send": _object_schema(
-        required=["draft_id"],
-        properties={"draft_id": _NON_EMPTY_STRING},
+        required=["payload"],
+        properties={"draft_id": _NON_EMPTY_STRING, "payload": _GMAIL_DRAFT_PAYLOAD},
     ),
     "tasks_create_task": _object_schema(
         required=["task_list_id", "payload"],

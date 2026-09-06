@@ -1264,7 +1264,9 @@ class _WorkflowRuntimeComposition:
             and isinstance(planning_result.get("meta"), Mapping)
         ):
             run_id = self._required_string(typed_state.get("run_id"), "run_id")
-            _require_state_value(typed_state.get("retrieval_result"), "retrieval_result")
+            routes = typed_state.get("tool_route_plan")
+            if routes is not None and routes["input_plan"]["input_routes"]:
+                _require_state_value(typed_state.get("retrieval_result"), "retrieval_result")
             evidence_drafts = project_current_action_evidence(
                 state=typed_state,
                 evidence_store=self._evidence_store,

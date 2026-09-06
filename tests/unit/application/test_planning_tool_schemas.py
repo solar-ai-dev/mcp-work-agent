@@ -47,7 +47,7 @@ def test_container_bound__tools_expose__required_container_fields() -> None:
         assert field in required
 
 
-def test_gmail_optional_recipient__fields_cannot_be__explicit_empty_lists() -> None:
+def test_gmail_optional_recipients__allow_removal__but_to_remains_required() -> None:
     schema = planning_tool_argument_schema("gmail_create_draft")
     properties = schema["properties"]
     assert isinstance(properties, dict)
@@ -59,7 +59,7 @@ def test_gmail_optional_recipient__fields_cannot_be__explicit_empty_lists() -> N
     for field in ("to", "cc", "bcc"):
         field_schema = payload_properties[field]
         assert isinstance(field_schema, dict)
-        assert field_schema["minItems"] == 1
+        assert field_schema["minItems"] == (1 if field == "to" else 0)
 
 
 def test_planning_schemas__never_expose__dispatch_only_metadata() -> None:

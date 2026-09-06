@@ -26,7 +26,7 @@ def _gmail_get_thread(
         dict.fromkeys(
             value
             for item in message_headers
-            for value in (item.get("from"), item.get("to"))
+            for value in (item.get("from"), item.get("to"), item.get("cc"))
             if value
         )
     )
@@ -66,6 +66,9 @@ def _thread_body(messages: list[dict[str, object]]) -> str | None:
             f"To: {headers['to']}" if headers.get("to") else None,
             f"Date: {headers['date']}" if headers.get("date") else None,
             f"Subject: {headers['subject']}" if headers.get("subject") else None,
+            f"Message-ID: {headers['message-id']}" if headers.get("message-id") else None,
+            f"References: {headers['references']}" if headers.get("references") else None,
+            f"Cc: {headers['cc']}" if headers.get("cc") else None,
         ]
         body = workspace_support._gmail_message_body(message)
         if body is None:

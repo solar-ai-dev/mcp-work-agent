@@ -66,6 +66,7 @@ def _build_claim(
         "approval_id": "approval-1",
         "execution_attempt_id": "attempt-1",
         "tool_name": tool_name,
+        "connector_id": "google_workspace",
         "approval_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "execution_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "service_instance_id": state.service_instance_id,

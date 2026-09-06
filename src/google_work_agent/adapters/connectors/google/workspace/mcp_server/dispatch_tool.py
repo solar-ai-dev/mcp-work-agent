@@ -198,7 +198,7 @@ def _search_gmail_drafts_by_marker(
     detail = credential_provider._google_api(
         state,
         f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_path}",
-        {"format": "metadata"},
+        {"format": "full"},
     )
     return [credential_provider._gmail_draft_snapshot(detail)]
 
@@ -209,7 +209,7 @@ def _search_gmail_messages_by_marker(
     payload = credential_provider._google_api(
         state,
         "https://gmail.googleapis.com/gmail/v1/users/me/messages",
-        {"q": marker, "maxResults": "10"},
+        {"q": f"in:sent {marker}", "maxResults": "10"},
     )
     message_ids = [
         credential_provider._required_response_text(item, "id")
@@ -224,9 +224,11 @@ def _search_gmail_messages_by_marker(
     detail = credential_provider._google_api(
         state,
         f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_path}",
-        {"format": "metadata"},
+        {"format": "full"},
     )
-    headers = credential_provider._headers(detail)
+    content = credential_provider._gmail_message_content(detail)
+    if content.get("sent") is not True or marker not in str(content.get("body", "")):
+        return []
     return [
         credential_provider._snapshot(
             "gmail_message",
@@ -234,7 +236,7 @@ def _search_gmail_messages_by_marker(
             credential_provider._optional_text(detail.get("threadId")),
             (),
             detail.get("historyId"),
-            {"subject": headers.get("subject", message_ids[0]), "sent": True},
+            content,
         )
     ]
 

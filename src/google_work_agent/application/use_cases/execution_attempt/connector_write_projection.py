@@ -177,9 +177,12 @@ def _final_arguments(
     }:
         return dict(arguments)
     if tool_name == "gmail_send":
+        payload = arguments.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("SEND requires approved message content; reapproval is required")
         return {
-            "draft_id": _required(arguments, "draft_id"),
-            "recovery_fingerprint": recovery_fingerprint,
+            **({"draft_id": _required(arguments, "draft_id")} if "draft_id" in arguments else {}),
+            "payload": {**payload, "recovery_fingerprint": recovery_fingerprint},
         }
     if tool_name == "calendar_delete_event":
         return {

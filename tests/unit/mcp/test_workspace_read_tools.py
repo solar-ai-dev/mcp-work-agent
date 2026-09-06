@@ -276,6 +276,7 @@ def test_gmail_thread__detail_tool__includes_full_thread_content(
         "participants": [
             "Kim Daeri <kim.daeri@example.com>",
             "User <user@example.com>",
+            "team@example.com",
         ],
         "message_ids": ["message-1"],
         "message_count": 1,
@@ -290,6 +291,8 @@ def test_gmail_thread__detail_tool__includes_full_thread_content(
                 "subject": "Project update",
                 "body": "Please reply with an available date.",
                 "body_truncated": False,
+                "rfc822_message_id": "<msg-id@example.com>",
+                "references": None,
             }
         ],
         "body": (
@@ -297,9 +300,36 @@ def test_gmail_thread__detail_tool__includes_full_thread_content(
             "To: User <user@example.com>\n"
             "Date: Mon, 10 Aug 2026 09:15:00 +0900\n"
             "Subject: Project update\n"
+            "Message-ID: <msg-id@example.com>\n"
+            "Cc: team@example.com\n"
             "Please reply with an available date."
         ),
     }
+
+
+@pytest.mark.parametrize("empty_body", [False, True])
+def test_gmail_message_detail__decodes_subject__and_preserves_absent_reply_headers(
+    monkeypatch: pytest.MonkeyPatch, empty_body: bool,
+) -> None:
+    message: dict[str, object] = {
+        "id": "message-1", "threadId": "thread-1", "labelIds": ["SENT"],
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "Subject", "value": "=?utf-8?b?7ZqM7Iug?="},
+                {"name": "To", "value": "to@example.com"},
+            ],
+            "body": {"size": 0, "data": ""} if empty_body else {"data": _gmail_b64("본문")},
+        },
+    }
+    monkeypatch.setattr(server, "_google_api", lambda *_args, **_kwargs: message)
+    result = GetMessageOperation().execute(_state(), {"message_id": "message-1"})
+    payload = cast(dict[str, object], cast(dict[str, object], result["item"])["payload"])
+    assert payload["subject"] == "회신"
+    assert payload["body"] == ("" if empty_body else "본문")
+    assert payload["sent"] is True
+    assert payload["cc"] == payload["bcc"] == payload["attachments"] == []
+    assert "in_reply_to" not in payload and "references" not in payload
 
 
 def test_gmail_message_detail__fetches_full_format__and_includes_body(
@@ -340,7 +370,9 @@ def test_gmail_message_detail__fetches_full_format__and_includes_body(
         "subject": "Project update",
         "snippet": "Message preview",
         "from": "Kim Daeri <kim.daeri@example.com>",
-        "to": "User <user@example.com>",
+        "to": ["User <user@example.com>"],
+        "cc": ["team@example.com"], "bcc": [], "sent": False,
+        "thread_id": "thread-1", "rfc822_message_id": "<msg-id@example.com>",
         "received_at": "Mon, 10 Aug 2026 09:15:00 +0900",
         "body": "Actual message body",
         "attachments": [
@@ -387,7 +419,8 @@ def test_gmail_message_detail__omits_body_and__attachments_when_absent(
         "subject": "Project sync",
         "snippet": "Message preview",
         "from": "pm@example.com",
-        "to": "user@example.com",
+        "to": ["user@example.com"],
+        "cc": [], "bcc": [], "sent": False, "thread_id": "thread-1",
         "received_at": "Sat, 24 May 2025 09:15:00 +0900",
         "attachments": [],
     }

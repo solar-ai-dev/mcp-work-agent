@@ -1792,6 +1792,7 @@ OR deterministic_policy_precondition_requires_analysis
 - `TASK + CREATE` duplicate check와 `CALENDAR + CREATE` conflict check는 Request Understanding이 아니라 `PolicyPreconditionResolver`가 effective analysis를 추가한다.
 - 따라서 `analysis_requirement=NONE`인 Calendar CREATE도 conflict evidence가 필요하면 Retrieval → Work Analysis를 거친다.
 - 반대로 직접 SEND/Task UPDATE처럼 별도 relation/risk 해석이 필요 없고 정책 precondition도 없으면 Work Analysis를 skip할 수 있다.
+- 직접 Gmail Draft CREATE/SEND가 외부 자료를 요구하지 않으면 Retrieval도 skip하고 current-Run USER_MESSAGE Evidence로 Planning/Review/Approval을 진행할 수 있다. Domain Validation·Plan persistence는 이때 존재하지 않는 Retrieval/Acquisition 결과를 요구하거나 가짜 외부 Evidence를 만들지 않는다. 기존 Draft UPDATE/SEND와 Reply에 필요한 원본 identity는 기존 Retrieval·target binding 계약을 유지한다.
 - SIX reference route도 이 effective analysis guard를 사용하며 `output_mode=ACTION` 자체를 Work Analysis 호출 조건으로 사용하지 않는다.
 
 Planning Argument Writer 전에 07 Interface current contract의 `DefaultContainerResolver`가 required system/container fields를 결정적으로 바인딩한다. Planning LLM은 `tasklist_id`/`calendar_id`를 추측·재선택하지 않으며, 해석 불가 시 Argument Writer를 호출하지 않는다.

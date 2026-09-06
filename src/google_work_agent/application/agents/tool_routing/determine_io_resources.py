@@ -201,8 +201,11 @@ def _exact_intent_candidate(
             analysis_requirement=request_intent["analysis_requirement"],
         )
     return SemanticRouteCandidate(
-        input_resource_types=(),
-        output_pairs=((resource_type, effect),),
+        input_resource_types=(resource_type,) if resource_type == "GMAIL_THREAD" else (),
+        output_pairs=((
+            _normalize_output_resource_type(coarse_resource_category(resource_type), effect),
+            effect,
+        ),),
         output_mode="ACTION",
         analysis_requirement=request_intent["analysis_requirement"],
     )

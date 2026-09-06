@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 
@@ -12,7 +13,7 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
     VerifyEffectHandler,
     VerifyEffectQueryV1,
 )
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
+from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
@@ -22,6 +23,7 @@ from google_work_agent.ports.connector.contracts.validated_connector_tool_bindin
 class _ReadPort:
     payload: dict[str, object]
     binding: ValidatedConnectorToolBindingV1 | None = None
+    resource_id: str | None = None
 
     def execute_read(
         self,
@@ -33,10 +35,36 @@ class _ReadPort:
             1,
             binding.tool_id,
             "request-1",
-            {"item": {"payload": self.payload}},
+            {"item": {
+                "payload": cast(dict[str, JsonValue], self.payload),
+                **({"resource_id": self.resource_id} if self.resource_id is not None else {}),
+            }},
             None,
             None,
         )
+
+
+@pytest.mark.parametrize("body_present", [True, False])
+def test_gmail_verification__absent_reply_headers_are_optional__body_is_required(
+    body_present: bool,
+) -> None:
+    expected: dict[str, object] = {
+        "to": ["to@example.com"], "cc": [], "bcc": [], "subject": "회신",
+        "body": "", "attachments": [], "in_reply_to": None, "references": None, "sent": True,
+    }
+    actual = {k: v for k, v in expected.items() if k not in {"in_reply_to", "references"}}
+    if not body_present:
+        actual.pop("body")
+    read = _ReadPort(actual, resource_id="message-1")
+    result = VerifyEffectHandler(
+        connector_read=read,  # type: ignore[arg-type]
+        tool_registry=load_signed_tool_registry(),
+    )(VerifyEffectQueryV1(
+        "run-1", "action-1", "attempt-1", "SEND", {"payload": expected},
+        SelectedResourceRefV1(1, "ref-1", "google_workspace", "gmail_message", "message-1", None),
+    ))
+    assert result.status == ("VERIFIED" if body_present else "MISMATCH")
+    assert read.binding is not None and read.binding.tool_id == "gmail_get_message"
 
 
 def test_verify_effect__has_exact__application_owner() -> None:

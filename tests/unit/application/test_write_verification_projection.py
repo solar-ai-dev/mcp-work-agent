@@ -108,10 +108,13 @@ def test_expected_never__contains_provider__generated_identity() -> None:
 
 
 def test_gmail_send_expected__matches_fresh_sent__message_lookup_surface() -> None:
-    assert build_expected_verification_projection(
+    expected = build_expected_verification_projection(
         tool_name="gmail_send",
-        arguments={"draft_id": "draft-1"},
-    ) == {"resource_type": "gmail_message"}
+        arguments={"payload": {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}},
+    )["payload"]
+    assert expected == {"to": ["a@example.com"], "cc": [], "bcc": [], "subject": "Hi",
+                        "body": "Body", "in_reply_to": None, "references": None,
+                        "attachments": [], "sent": True}
 
 
 def test_gmail_draft_actual__normalizes_recipient_list__to_metadata_header() -> None:
@@ -120,7 +123,7 @@ def test_gmail_draft_actual__normalizes_recipient_list__to_metadata_header() -> 
         actual={"payload": {"to": ["a@example.com", "b@example.com"]}},
     )
 
-    assert actual == {"payload": {"to": "a@example.com, b@example.com"}}
+    assert actual == {"payload": {"to": ["a@example.com", "b@example.com"]}}
 
 
 def test_calendar_expected_preserves__approved_description__and_attendees() -> None:

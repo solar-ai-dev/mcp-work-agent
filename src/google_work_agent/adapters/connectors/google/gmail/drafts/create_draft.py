@@ -15,6 +15,7 @@ def _gmail_create_draft(
         claim_context=arguments.get("claim_context"),
         execution_arguments=workspace_support._execution_arguments(arguments),
     )
+    workspace_support._validate_gmail_reply(state, payload)
     mime_bytes = workspace_support._build_gmail_mime(payload)
     body: dict[str, object] = {"message": {"raw": workspace_support._b64url_encode(mime_bytes)}}
     thread_id = workspace_support._optional_text(payload.get("thread_id"))

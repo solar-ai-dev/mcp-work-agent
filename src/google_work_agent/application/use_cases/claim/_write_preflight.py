@@ -531,13 +531,18 @@ class _WritePreflight:
             return update_source_snapshot
 
         if action.tool_name == "gmail_send":
+            _dict_argument(arguments.get("payload"))
+            if "draft_id" not in arguments:
+                return {}
             draft_id = _required_argument_string(arguments, "draft_id")
             draft = self._gateway.get_gmail_draft(draft_id=draft_id)
             validate_preflight_target(
                 snapshot=draft,
-                target_ref=None,
+                target_ref=target_ref,
                 expected_resource_type=ResourceType.GMAIL_DRAFT,
                 expected_parent_id=None,
+                require_target_ref=True,
+                require_version_token=True,
             )
             return {}
         if action.tool_name == "calendar_delete_event":

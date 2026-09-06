@@ -230,7 +230,8 @@ class LookupUnknownResultHandler:
         candidates = self._candidate_ids(
             result.output,
             recovery_fingerprint=(
-                query.recovery_fingerprint if strategy == "RESOURCE_SEARCH" else None
+                query.recovery_fingerprint
+                if strategy in {"RESOURCE_SEARCH", "MESSAGE_SEARCH"} else None
             ),
         )
         if strategy == "GET_TARGET" and query.effect == "UPDATE":
@@ -485,7 +486,10 @@ class LookupUnknownResultHandler:
         if not query.recovery_fingerprint:
             raise ValueError("recovery_fingerprint is required")
         if query.effect == "SEND":
-            return "MESSAGE_SEARCH", "gmail_search_threads", {"query": query.recovery_fingerprint}
+            return "MESSAGE_SEARCH", "search_by_recovery_fingerprint", {
+                "resource_type": "gmail_message",
+                "recovery_fingerprint": query.recovery_fingerprint,
+            }
         target = query.target_resource_ref
         if query.effect == "CREATE":
             if target is None:

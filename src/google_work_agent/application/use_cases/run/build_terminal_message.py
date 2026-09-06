@@ -195,7 +195,10 @@ def _format_action_outcome(outcome: TerminalActionOutcomeV1) -> str:
             ),
             "CREATE": "생성했고 Google에서 결과를 다시 확인했습니다.",
             "UPDATE": "변경했고 Google에서 결과를 다시 확인했습니다.",
-            "SEND": "전송했고 Google에서 결과를 다시 확인했습니다.",
+            "SEND": (
+                "전송했고 Google 전송함에서 내용을 다시 확인했습니다. "
+                "수신자의 수신·열람 여부는 확인하지 않았습니다."
+            ),
             "DELETE": "삭제했고 Google에서 결과를 다시 확인했습니다.",
         }[outcome.effect_type],
         "REJECTED": "사용자 선택에 따라 실행하지 않았습니다.",

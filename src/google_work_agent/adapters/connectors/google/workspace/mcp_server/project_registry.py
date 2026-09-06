@@ -264,8 +264,13 @@ def _contract(
 ) -> GoogleWorkspaceToolContract:
     return GoogleWorkspaceToolContract(
         tool_name=tool_name,
-        input_schema_version="v1",
-        output_schema_version="v1",
+        input_schema_version=("v2" if tool_name in {
+            "gmail_create_draft", "gmail_update_draft", "gmail_send",
+        } else "v1"),
+        output_schema_version=("v2" if tool_name in {
+            "gmail_create_draft", "gmail_update_draft", "gmail_send",
+            "gmail_get_draft", "gmail_get_message",
+        } else "v1"),
         input_schema=input_schema,
         output_schema=output_schema,
     )
@@ -368,12 +373,10 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
     )
     add(
         "gmail_send",
-        _id_input(
-            "draft_id",
-            optional={
-                "recovery_fingerprint": _NULLABLE_STRING,
-                "claim_context": _NULLABLE_OBJECT,
-            },
+        _object_schema(
+            {"draft_id": _NONEMPTY_STRING, "payload": {"type": "object"},
+             "claim_context": _NULLABLE_OBJECT},
+            required=("payload",),
         ),
         _SNAPSHOT_ENVELOPE,
     )

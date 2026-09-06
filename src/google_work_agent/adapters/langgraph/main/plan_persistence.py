@@ -140,7 +140,9 @@ def target_handle_for_action(
     evidence_by_id: Mapping[str, Mapping[str, object]],
     resource_identity_reader: RunScopedResourceIdentityReader,
 ) -> str | None:
-    if action["effect"] == "CREATE":
+    if action["effect"] == "CREATE" or (
+        action["tool_id"] == "gmail_send" and "draft_id" not in action["arguments"]
+    ):
         return None
     return resolve_exact_target_evidence_handle(
         tool_id=action["tool_id"],
@@ -258,7 +260,7 @@ class PlanPersistenceMixin:
         revision_no = next_plan_revision_no(plans)
         plan_id = self._required_string(plan["meta"].get("artifact_id"), "plan artifact_id")
         action_id_map = {action["action_id"]: action["action_id"] for action in plan["actions"]}
-        retrieval_result = _require_state_value(state["retrieval_result"], "retrieval_result")
+        retrieval_result = state.get("retrieval_result")
         evidence_ids = evidence_ids_from_plan(plan)
         # Planning evidence ids are logical, run-scoped references. Persisted
         # Evidence ids are repository-wide identities and must stay unique.
@@ -289,7 +291,7 @@ class PlanPersistenceMixin:
             raise LookupError(
                 "Planning evidence projection is unavailable: " + ",".join(sorted(missing_evidence))
             )
-        acquisition = _require_state_value(state["acquisition_result"], "acquisition_result")
+        acquisition = state.get("acquisition_result")
         mapped_evidence = tuple(
             self._materialize_write_evidence(
                 state=state,
@@ -332,7 +334,9 @@ class PlanPersistenceMixin:
                     risk=(
                         evidence_duplicate_risk(
                             arguments=action["arguments"],
-                            acquisition_result=acquisition,
+                            acquisition_result=_require_state_value(
+                                acquisition, "acquisition_result",
+                            ),
                             checked_at_ms=self._now_ms(),
                         )
                         if action["tool_id"] == TASK_CREATE_TOOL
@@ -385,8 +389,8 @@ class PlanPersistenceMixin:
         self,
         *,
         state: GraphState,
-        retrieval_result: RetrievalResultV1,
-        acquisition_result: AcquisitionResultV1,
+        retrieval_result: RetrievalResultV1 | None,
+        acquisition_result: AcquisitionResultV1 | None,
         logical_evidence_id: str,
         persisted_evidence_id: str,
         draft: Mapping[str, object],
@@ -410,6 +414,8 @@ class PlanPersistenceMixin:
                 message_id=message_id,
             )
 
+        if retrieval_result is None or acquisition_result is None:
+            raise ValueError("external evidence requires a Retrieval result")
         kind = draft.get("kind")
         excerpt = draft.get("excerpt")
         resource_handle = draft.get("resource_handle")
@@ -529,10 +535,12 @@ class PlanPersistenceMixin:
         run_id: str,
         connector_id: str,
         resource_handle: str | None,
-        acquisition_result: AcquisitionResultV1,
+        acquisition_result: AcquisitionResultV1 | None,
     ) -> str | None:
         if resource_handle is None:
             return None
+        if acquisition_result is None:
+            raise ValueError("existing target requires Acquisition evidence")
         with self._unit_of_work_factory() as unit_of_work:
             existing = unit_of_work.resource_refs.get(resource_handle)
             if existing is not None:

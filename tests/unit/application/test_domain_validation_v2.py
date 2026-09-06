@@ -226,6 +226,30 @@ def test_create_accepts__current_run_user_message__as_evidence() -> None:
     assert result["result"] == "REQUIRE_APPROVAL"
 
 
+@pytest.mark.parametrize("tool_name", ["gmail_create_draft", "gmail_send"])
+@pytest.mark.parametrize("matched", [True, False])
+def test_gmail_reply__requires_current_run_thread_evidence__before_approval(
+    tool_name: str, matched: bool,
+) -> None:
+    plan = _task_create_plan()
+    plan["actions"][0].update(
+        tool_id=tool_name, effect="SEND" if tool_name == "gmail_send" else "CREATE",
+        arguments={"payload": {
+            "to": ["to@example.com"], "subject": "회신", "body": "본문",
+            "thread_id": "thread-1", "in_reply_to": "<source@example.com>",
+            "references": "<source@example.com>",
+        }},
+    )
+    result = _call(
+        plan, evidence=_evidence("thread-handle"),
+        reader=_ResourceReader({"thread-handle": {
+            "resource_handle": "thread-handle", "resource_type": "gmail_thread",
+            "resource_id": "thread-1" if matched else "other-thread", "parent_id": None,
+        }}),
+    )
+    assert result["result"] == ("REQUIRE_APPROVAL" if matched else "BLOCK")
+
+
 def test_invalid_tool__effect_pair__blocks() -> None:
     plan = _task_create_plan()
     plan["actions"][0]["effect"] = "DELETE"

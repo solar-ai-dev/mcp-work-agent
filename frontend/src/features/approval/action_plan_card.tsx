@@ -163,11 +163,13 @@ const ARGUMENT_LABELS: Record<string, string> = {
   notes: "메모",
   description: "설명",
   attendees: "참석자",
+  thread_id: "답장 대화",
+  in_reply_to: "답장 대상 메일",
 };
 
 function approvalArgumentSummary(action: RunAction): Array<{ field: string; label: string; value: string }> {
   const preferredFields = action.tool_name.startsWith("gmail_")
-    ? ["to", "cc", "bcc", "subject", "body"]
+    ? ["to", "cc", "bcc", "subject", "body", "thread_id", "in_reply_to"]
     : action.tool_name.startsWith("tasks_")
       ? ["task_list_id", "title", "due", "notes"]
       : action.tool_name.startsWith("calendar_")

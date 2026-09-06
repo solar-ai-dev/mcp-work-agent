@@ -57,6 +57,7 @@ def _build_claim(
         "approval_id": "approval-1",
         "execution_attempt_id": "attempt-1",
         "tool_name": tool_name,
+        "connector_id": "google_workspace",
         "approval_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "execution_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "service_instance_id": state.service_instance_id,
@@ -133,6 +134,7 @@ def test_gmail_update__draft_never__embeds_a_marker(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(server, "_google_api_call", google_api_call)
     state = _state()
     payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Hi", "body": "Body text"}
+    payload.update(cc=[], bcc=[], attachments=[], thread_id=None, in_reply_to=None, references=None)
     claim = _build_claim(
         state=state,
         tool_name="gmail_update_draft",
@@ -232,92 +234,54 @@ def test_calendar_create__event_embeds_recovery__marker_in_description(
     assert server._recovery_marker("fp-event-1") in cast(str, body["description"])
 
 
-def test_gmail_send__rewrites_draft_with__marker_before_sending(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("draft_id", [None, "draft-1"])
+@pytest.mark.parametrize("fingerprint", [None, "fp-send-1"])
+def test_gmail_send__dispatches_approved_mime__without_hidden_draft_write(
+    monkeypatch: pytest.MonkeyPatch, draft_id: str | None, fingerprint: str | None,
 ) -> None:
-    calls: list[tuple[str, str]] = []
-    original_mime = server.EmailMessage()
-    original_mime["To"] = "a@example.com"
-    original_mime["Subject"] = "Hi"
-    original_mime.set_content("Original body")
-    encoded_raw = server._b64url_encode(original_mime.as_bytes())
+    from email import policy
+    from email.parser import BytesParser
 
-    def google_api_call(
-        _state: server.GoogleWorkspaceCredentialProvider,
-        method: str,
-        url: str,
-        *,
-        params: dict[str, str] | None = None,
-        body: dict[str, object] | None = None,
+    calls: list[str] = []
+    payload: dict[str, object] = {
+        "to": ["a@example.com"], "cc": ["c@example.com"], "bcc": ["b@example.com"],
+        "subject": "Hi", "body": "Original body",
+        "recovery_fingerprint": fingerprint,
+    }
+
+    def unexpected(*args: object, **kwargs: object) -> dict[str, object]:
+        pytest.fail("SEND must not perform a separate Draft UPDATE")
+
+    def send(
+        state: server.GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object],
     ) -> dict[str, object]:
-        calls.append((method, url))
-        if method == "GET":
-            return {"message": {"raw": encoded_raw}}
-        assert method == "PUT"
-        message = cast(dict[str, object], cast(dict[str, object], body)["message"])
-        raw_bytes = server._b64url_decode(cast(str, message["raw"]))
-        assert b"Original body" in raw_bytes
-        assert server._recovery_marker("fp-send-1").encode("utf-8") in raw_bytes
-        return {"id": "draft-1", "message": {"id": "msg-1"}}
+        calls.append(url)
+        message = body if draft_id is None else cast(dict[str, object], body["message"])
+        parsed = BytesParser(policy=policy.default).parsebytes(
+            server._b64url_decode(cast(str, message["raw"]))
+        )
+        assert parsed["To"] == "a@example.com"
+        assert parsed["Cc"] == "c@example.com"
+        assert parsed["Bcc"] == "b@example.com"
+        assert parsed["Subject"] == "Hi"
+        assert "Original body" in parsed.get_content()
+        if fingerprint:
+            assert server._recovery_marker(fingerprint) in parsed.get_content()
+        else:
+            assert server.RECOVERY_MARKER_PREFIX not in parsed.get_content()
+        return {"id": "sent-1", "threadId": "thread-1"}
 
-    def google_api_post(
-        _state: server.GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object]
-    ) -> dict[str, object]:
-        calls.append(("POST", url))
-        assert body == {"id": "draft-1"}
-        return {"id": "msg-sent-1", "threadId": "thread-1"}
-
-    monkeypatch.setattr(server, "_google_api_call", google_api_call)
-    monkeypatch.setattr(server, "_google_api_post", google_api_post)
+    monkeypatch.setattr(server, "_google_api_call", unexpected)
+    monkeypatch.setattr(server, "_google_api_post", send)
     state = _state()
-    claim = _build_claim(
-        state=state,
-        tool_name="gmail_send",
-        execution_arguments={"draft_id": "draft-1", "recovery_fingerprint": "fp-send-1"},
-    )
-
-    result = verified_server._tool_call(
-        state,
-        tool_name="gmail_send",
-        arguments={
-            "draft_id": "draft-1",
-            "recovery_fingerprint": "fp-send-1",
-            "claim_context": claim,
-        },
-    )
-
-    assert cast(dict[str, object], result["item"])["resource_id"] == "msg-sent-1"
-    assert [call[0] for call in calls] == ["GET", "PUT", "POST"]
-
-
-def test_gmail_send__without_fingerprint_never__touches_the_draft(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail_on_any_call(*_args: object, **_kwargs: object) -> dict[str, object]:
-        pytest.fail("draft must not be re-read or rewritten when no fingerprint is supplied")
-
-    def google_api_post(
-        _state: server.GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object]
-    ) -> dict[str, object]:
-        assert body == {"id": "draft-1"}
-        return {"id": "msg-sent-1", "threadId": "thread-1"}
-
-    monkeypatch.setattr(server, "_google_api_call", fail_on_any_call)
-    monkeypatch.setattr(server, "_google_api_post", google_api_post)
-    state = _state()
-    claim = _build_claim(
-        state=state,
-        tool_name="gmail_send",
-        execution_arguments={"draft_id": "draft-1", "recovery_fingerprint": None},
-    )
-
-    result = verified_server._tool_call(
-        state,
-        tool_name="gmail_send",
-        arguments={"draft_id": "draft-1", "recovery_fingerprint": None, "claim_context": claim},
-    )
-
-    assert cast(dict[str, object], result["item"])["resource_id"] == "msg-sent-1"
+    arguments: dict[str, object] = {"payload": payload}
+    if draft_id:
+        arguments["draft_id"] = draft_id
+    claim = _build_claim(state=state, tool_name="gmail_send", execution_arguments=arguments)
+    verified_server._tool_call(state, tool_name="gmail_send",
+                               arguments={**arguments, "claim_context": claim})
+    endpoint = "drafts/send" if draft_id else "messages/send"
+    assert calls == [f"https://gmail.googleapis.com/gmail/v1/users/me/{endpoint}"]
 
 
 # --------------------------------------------------------------------------
@@ -394,7 +358,13 @@ def test_search_gmail_message__returns_full_snapshot__for_a_single_match(
             "id": "msg-1",
             "threadId": "thread-1",
             "historyId": "5",
-            "payload": {"headers": [{"name": "Subject", "value": "Sent"}]},
+            "labelIds": ["SENT"],
+            "payload": {
+                "headers": [{"name": "Subject", "value": "Sent"}], "mimeType": "text/plain",
+                "body": {"data": server._b64url_encode(
+                    server._recovery_marker("fp-send-1").encode()
+                )},
+            },
         },
     ]
 
@@ -413,7 +383,8 @@ def test_search_gmail_message__returns_full_snapshot__for_a_single_match(
     )
     items = cast(list[dict[str, object]], result["items"])
     assert items[0]["resource_id"] == "msg-1"
-    assert items[0]["payload"] == {"subject": "Sent", "sent": True}
+    assert cast(dict[str, object], items[0]["payload"])["subject"] == "Sent"
+    assert cast(dict[str, object], items[0]["payload"])["sent"] is True
 
 
 def test_search_tasks_scans__all_task_lists__and_filters_by_marker(

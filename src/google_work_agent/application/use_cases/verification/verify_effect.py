@@ -121,6 +121,7 @@ class VerifyEffectHandler:
                     if action.tool_name in {
                         "tasks_create_task", "tasks_update_task",
                         "calendar_create_event", "calendar_update_event",
+                        "gmail_create_draft", "gmail_update_draft", "gmail_send",
                     }
                     else action.arguments_json
                 ),
@@ -186,7 +187,7 @@ class VerifyEffectHandler:
                 )
             raise
         if strategy == "SENT_LOOKUP":
-            candidates = result.output.get("items", [])
+            candidates = [result.output["item"]] if "item" in result.output else []
             if not isinstance(candidates, list) or len(candidates) != 1:
                 return VerificationResultV1(
                     "MISMATCH",
@@ -202,7 +203,9 @@ class VerifyEffectHandler:
             actual = _business_actual(
                 cast(dict[str, object], candidate), normalizer_tool_name="gmail_send"
             )
-            expected = _business_expected(query.expected_effect)
+            expected = _business_expected(query.expected_effect, normalizer_tool_name="gmail_send")
+            if query.target_resource_ref is not None:
+                expected["resource_id"] = query.target_resource_ref.resource_id
             diffs = calculate_verification_subset_diff(expected, actual)
             return VerificationResultV1(
                 "VERIFIED" if not diffs else "MISMATCH",
@@ -269,6 +272,7 @@ class VerifyEffectHandler:
                         if action.tool_name in {
                             "tasks_create_task", "tasks_update_task",
                             "calendar_create_event", "calendar_update_event",
+                            "gmail_create_draft", "gmail_update_draft", "gmail_send",
                         }
                         else action.arguments_json
                     ),
@@ -309,10 +313,9 @@ class VerifyEffectHandler:
     ) -> tuple[str, dict[str, JsonValue]]:
         target = query.target_resource_ref
         if strategy == "SENT_LOOKUP":
-            fingerprint = query.expected_effect.get("recovery_fingerprint")
-            if not isinstance(fingerprint, str) or not fingerprint:
-                raise ValueError("SENT_LOOKUP requires recovery_fingerprint")
-            return "gmail_search_threads", {"query": fingerprint}
+            if target is None or target.resource_type.upper() != "GMAIL_MESSAGE":
+                raise ValueError("SENT_LOOKUP requires the exact sent Message resource")
+            return "gmail_get_message", {"message_id": target.resource_id}
         if target is None:
             raise ValueError("verification requires a target resource")
         resource_type = target.resource_type.upper()
@@ -374,6 +377,8 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
         business = {"notes": "", "due": None, **business}
     if normalizer_tool_name == "calendar_update_event" and "resource_id" in actual:
         business = {"description": "", "attendees": [], **business}
+    if normalizer_tool_name in {"gmail_update_draft", "gmail_send"} and "resource_id" in actual:
+        business = {"in_reply_to": None, "references": None, **business}
     if normalizer_tool_name == "github_update_issue":
         description = business.get("description")
         if isinstance(description, str):
@@ -423,6 +428,7 @@ def _persisted_expected_effect(
 ) -> dict[str, object]:
     if tool_name in {
         "tasks_create_task", "tasks_update_task", "calendar_create_event", "calendar_update_event",
+        "gmail_create_draft", "gmail_update_draft", "gmail_send",
     }:
         return build_expected_verification_projection(tool_name=tool_name, arguments=arguments)
     if tool_name in {"github_create_issue", "github_update_issue"}:

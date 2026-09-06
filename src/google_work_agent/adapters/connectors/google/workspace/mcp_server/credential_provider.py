@@ -16,10 +16,8 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date
-from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
-from email.parser import BytesParser
 from email.utils import getaddresses, parseaddr
 from enum import StrEnum
 from html.parser import HTMLParser
@@ -392,7 +390,6 @@ def _gmail_thread_list_metadata(
 def _gmail_draft_snapshot(payload: dict[str, object]) -> dict[str, object]:
     draft_id = _required_response_text(payload, "id")
     message = cast(dict[str, object], payload.get("message") or {})
-    headers = _headers(message)
     return _snapshot(
         "gmail_draft",
         draft_id,
@@ -400,58 +397,77 @@ def _gmail_draft_snapshot(payload: dict[str, object]) -> dict[str, object]:
         (),
         message.get("historyId"),
         {
-            "subject": headers.get("subject", draft_id),
-            "to": headers.get("to"),
+            **_gmail_message_content(message),
             "message_id": _optional_text(message.get("id")),
-            "thread_id": _optional_text(message.get("threadId")),
         },
     )
 
 
-def _embed_send_recovery_marker(
-    state: GoogleWorkspaceCredentialProvider, *, draft_id: str, recovery_fingerprint: str
+def _gmail_message_content(message: dict[str, object]) -> dict[str, object]:
+    headers = _headers(message)
+    body = _gmail_message_body(message)
+    mime_payload = message.get("payload")
+    mime_body = mime_payload.get("body") if isinstance(mime_payload, dict) else None
+    if (body is None and isinstance(mime_payload, dict)
+            and mime_payload.get("mimeType") == "text/plain"
+            and isinstance(mime_body, dict) and mime_body.get("size") == 0
+            and mime_body.get("data") in (None, "")):
+        body = ""
+    return {
+        "subject": (
+            (_decoded_header(headers.get("subject")) or "") if "subject" in headers else None
+        ),
+        "to": list(_email_addresses(headers.get("to"))),
+        "cc": list(_email_addresses(headers.get("cc"))),
+        "bcc": list(_email_addresses(headers.get("bcc"))),
+        "body": body,
+        "thread_id": _optional_text(message.get("threadId")),
+        "in_reply_to": headers.get("in-reply-to"),
+        "references": headers.get("references"),
+        "rfc822_message_id": headers.get("message-id"),
+        "sent": "SENT" in cast(list[str], message.get("labelIds") or []),
+        "attachments": _gmail_attachment_metadata(message),
+    }
+
+
+def _validate_gmail_reply(
+    state: GoogleWorkspaceCredentialProvider, payload: dict[str, object],
+    *, existing_draft_id: str | None = None,
 ) -> None:
-    """Append a SEND-time recovery marker to the draft body before sending.
-
-    A SEND's own recovery fingerprint differs from the CREATE draft's, and
-    Gmail's send call cannot carry extra metadata, so the only way to make
-    an uncertain SEND recoverable by content search is to fold the marker
-    into the draft immediately before send -- an operational, server-generated
-    edit ClaimContextV2's execution_arguments_hash already accounts for, not
-    a change to any approved business content.
-    """
-
-    existing = _google_api(
-        state,
-        f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{quote(draft_id, safe='')}",
-        {"format": "raw"},
-    )
-    raw_message = cast(dict[str, object], existing.get("message") or {})
-    raw_value = _optional_text(raw_message.get("raw"))
-    if raw_value is None:
-        raise _WorkspaceToolError(
-            "INVALID_MCP_OUTPUT",
-            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+    thread_id = _optional_text(payload.get("thread_id"))
+    reply_id = _optional_text(payload.get("in_reply_to"))
+    references = _optional_text(payload.get("references"))
+    if not thread_id:
+        if reply_id or references:
+            raise _WorkspaceToolError("INVALID_ARGUMENT")
+        return
+    if existing_draft_id and not reply_id and not references:
+        draft_path = quote(existing_draft_id, safe="")
+        draft = _google_api(
+            state,
+            f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_path}",
+            {"format": "metadata"},
         )
-    parsed = BytesParser(policy=policy.default).parsebytes(_b64url_decode(raw_value))
-    body_text = ""
-    if not parsed.is_multipart():
-        content = parsed.get_content()
-        if isinstance(content, str):
-            body_text = content
-    rebuilt = EmailMessage()
-    for header in ("To", "Cc", "Bcc", "Subject"):
-        value = parsed.get(header)
-        if value is not None:
-            rebuilt[header] = str(value)
-    marker = _recovery_marker(recovery_fingerprint)
-    rebuilt.set_content(f"{body_text}\n\n{marker}" if body_text else marker)
-    _google_api_call(
+        message = draft.get("message")
+        if (draft.get("id") == existing_draft_id and isinstance(message, dict)
+                and message.get("threadId") == thread_id):
+            return
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    if not reply_id or not references or reply_id not in references.split():
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    thread = _google_api(
         state,
-        "PUT",
-        f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{quote(draft_id, safe='')}",
-        body={"message": {"raw": _b64url_encode(rebuilt.as_bytes())}},
+        f"https://gmail.googleapis.com/gmail/v1/users/me/threads/{quote(thread_id, safe='')}",
+        {"format": "metadata"},
     )
+    matching = [
+        _headers(message) for message in _object_list(thread.get("messages"))
+        if _headers(message).get("message-id") == reply_id
+    ]
+    if thread.get("id") != thread_id or len(matching) != 1:
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    if _decoded_header(matching[0].get("subject")) != payload.get("subject"):
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
 
 
 def _gmail_recipients(payload: dict[str, object], name: str, *, required: bool) -> list[str]:
@@ -460,9 +476,14 @@ def _gmail_recipients(payload: dict[str, object], name: str, *, required: bool) 
         if required:
             raise _WorkspaceToolError("INVALID_ARGUMENT")
         return []
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list) or (required and not value):
         raise _WorkspaceToolError("INVALID_ARGUMENT")
-    return [_text_value(item, maximum=320) for item in cast(list[object], value)]
+    recipients = [_text_value(item, maximum=320) for item in cast(list[object], value)]
+    for recipient in recipients:
+        addresses = _email_addresses(recipient)
+        if len(addresses) != 1 or "@" not in addresses[0] or any(c in recipient for c in "\r\n"):
+            raise _WorkspaceToolError("INVALID_ARGUMENT")
+    return recipients
 
 
 def _build_gmail_mime(payload: dict[str, object]) -> bytes:
@@ -480,7 +501,10 @@ def _build_gmail_mime(payload: dict[str, object]) -> bytes:
     if bcc:
         message["Bcc"] = ", ".join(bcc)
     message["Subject"] = subject
-    # Only CREATE dispatch injects recovery_fingerprint into the payload
+    for field_name, header in (("in_reply_to", "In-Reply-To"), ("references", "References")):
+        if payload.get(field_name) is not None:
+            message[header] = _text_argument(payload, field_name, maximum=2048)
+    # CREATE/SEND dispatch injects recovery_fingerprint into the payload
     # (see _build_final_dispatch_arguments); gmail_update_draft payloads
     # never carry it, so updates never gain or lose the marker.
     recovery_fingerprint = _optional_text(payload.get("recovery_fingerprint"))
@@ -514,6 +538,8 @@ def _attach_staged_files(message: EmailMessage, payload: dict[str, object]) -> N
     attachments = payload.get("attachments")
     if not isinstance(attachments, list) or len(attachments) > 10:
         raise _WorkspaceToolError("INVALID_ARGUMENT")
+    if not attachments:
+        return
     staging = _attachment_staging()
     for item in cast(list[object], attachments):
         if not isinstance(item, dict):
@@ -846,7 +872,7 @@ def _headers(message: dict[str, object]) -> dict[str, str]:
     return {
         str(item.get("name", "")).lower(): str(item.get("value", ""))
         for item in _object_list(payload.get("headers"))
-        if item.get("name") and item.get("value")
+        if item.get("name") and item.get("value") is not None
     }
 
 

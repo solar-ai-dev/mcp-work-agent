@@ -179,7 +179,8 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
         if not isinstance(messages, list) or len(messages) > MAX_THREAD_EVIDENCE_MESSAGES:
             raise ValueError("Gmail message evidence must be a bounded list")
         for message in messages:
-            if not isinstance(message, dict) or set(message) != {
+            optional_fields = {"rfc822_message_id", "references"}
+            if not isinstance(message, dict) or set(message) - optional_fields != {
                 "message_id",
                 "thread_id",
                 "sender_name",
@@ -221,6 +222,12 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
                 f"To: {', '.join(message['recipients'])}",
                 f"Received: {message['received_at'] or 'unknown'}",
             ]
+            for name in ("rfc822_message_id", "references"):
+                value = message.get(name)
+                if value is not None:
+                    if not isinstance(value, str):
+                        raise ValueError("invalid Gmail reply metadata")
+                    headers.append(f"{name}: {value}")
             body = _strip_email_quote_and_signature(message["body"] or "")
             if message["body_truncated"]:
                 body += "\n[본문 일부만 수집됨]"

@@ -16,6 +16,10 @@ def _gmail_update_draft(
         claim_context=arguments.get("claim_context"),
         execution_arguments=workspace_support._execution_arguments(arguments),
     )
+    if not {"to", "cc", "bcc", "subject", "body", "thread_id", "in_reply_to",
+            "references", "attachments"}.issubset(payload):
+        raise workspace_support._WorkspaceToolError("INVALID_ARGUMENT")
+    workspace_support._validate_gmail_reply(state, payload, existing_draft_id=draft_id)
     mime_bytes = workspace_support._build_gmail_mime(payload)
     body: dict[str, object] = {"message": {"raw": workspace_support._b64url_encode(mime_bytes)}}
     thread_id = workspace_support._optional_text(payload.get("thread_id"))

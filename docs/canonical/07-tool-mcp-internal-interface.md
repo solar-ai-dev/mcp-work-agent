@@ -2398,6 +2398,12 @@ metadata
 - DELETE: `GET_ABSENT` 정책으로 대상 GET에서 NOT_FOUND/삭제 상태를 확인한다.
 - SEND: `SENT_LOOKUP` 정책으로 반환된 Message/Thread 식별자 또는 결정적 전송 식별자를 조회한다.
 - SEND 전달 여부가 불명확하면 `UNKNOWN_RESULT`로 전환하고 자동 재전송하지 않는다.
+- Gmail WRITE의 승인 업무 인자는 `payload.to/cc/bcc/subject/body/thread_id/in_reply_to/references/attachments`다. 새 SEND는 이 payload를 직접 전송하며 중간 Draft CREATE를 만들지 않는다. 기존 Draft SEND는 `draft_id`와 동일한 승인 payload를 함께 전달한다. `draft_id`만 있는 과거 승인은 실행하지 않고 새 Preview·승인이 필요하다.
+- Draft UPDATE는 MIME 전체 교체다. Planning은 먼저 조회한 Draft에서 유지할 값과 명시적 제거를 반영한 전체 payload를 제안한다. UPDATE payload는 `to/cc/bcc/subject/body/thread_id/in_reply_to/references/attachments`를 모두 포함한다. 빈 cc/bcc/attachments 배열과 null Thread/reply 값은 제거를 뜻하며 누락을 제거로 해석하지 않는다.
+- Reply는 조회한 Thread의 원본 RFC Message-ID와 일치하는 `in_reply_to`, `references`, 원본 subject 및 `thread_id`를 승인한다. Provider adapter는 해당 Thread를 READ해 결합을 검증하며 다른 Thread나 추측한 reply identity로 전송하지 않는다.
+- Thread의 typed message evidence는 `rfc822_message_id`와 `references`를 선택적 필드로 전달한다. 기존 evidence와 호환되지만 해당 값이 없는 경우 Reply identity를 추측하거나 내부 Gmail Message ID로 대체하지 않는다. Gmail WRITE input 및 Draft/Message detail output은 v2 계약으로 registry·descriptor projection을 함께 전환한다.
+- Gmail 재조회는 수신 범위·제목·본문·Thread/reply identity를 비교한다. SEND는 반환된 Message를 직접 GET하고 SENT label을 확인한다. 이는 Google 전송함 확인이며 수신자의 수신·열람 확인이 아니다. UNKNOWN SEND 검색은 전송함의 정확한 복구 표식 Message만 후보로 반환하며 Thread 존재를 전송 증거로 삼지 않는다.
+- 전송 시 복구 표식은 승인 payload의 MIME에 포함해 단일 SEND 호출로 전달한다. SEND 준비를 위한 별도 Draft UPDATE는 금지한다. 기존 schema의 부분 UPDATE·draft-id-only SEND는 새 계약으로 재계획·재승인해야 하며 기존 승인을 자동 보강하지 않는다.
 - 모든 외부 MCP/Google 호출은 SQLite Write Transaction 밖에서 수행한다.
 
 ## 28. Agent Subgraph 내부 인터페이스

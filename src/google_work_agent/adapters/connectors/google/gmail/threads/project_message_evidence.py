@@ -34,6 +34,8 @@ def project_message_evidence(
             {
                 "message_id": credential_provider._required_response_text(message, "id"),
                 "thread_id": thread_id,
+                "rfc822_message_id": headers.get("message-id"),
+                "references": headers.get("references"),
                 "sender_name": sender_name,
                 "sender_email": sender_email,
                 "recipients": list(
