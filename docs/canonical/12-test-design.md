@@ -1,7 +1,7 @@
 # 12. 테스트 설계서
 
 > **Authority:** current owner contract와 State Transition Test Matrix의 product regression verification. Expected assertion은 검증 oracle이며 새 behavioral authority가 아니다.  
-> **상태:** Draft v3.53 · **기준일:** 2026-09-07 · **OS:** Windows 11 x64 · **Browser:** Chrome·Edge
+> **상태:** Draft v3.54 · **기준일:** 2026-09-07 · **OS:** Windows 11 x64 · **Browser:** Chrome·Edge
 
 ## 1. 목적과 계층
 
@@ -17,9 +17,9 @@ Unit → Contract → Integration → Component → E2E → Failure Injection �
 
 ```
 TST-<AREA>-<NNN>
-AREA = DOM DB API SSE UI WF AGT RET LLM MCP CON GGL SEC INF OBS E2E PERF REL EVAL
+AREA = DOM DB API SSE UI WF AGT RET LLM MCP CON GGL GH SEC INF OBS E2E PERF REL EVAL
 
-`CON`은 Connector-independent Registry/MCP/Provider boundary 계약, `GGL`은 P0 Google Workspace Connector 고유 계약에 사용한다.
+`CON`은 Connector-independent Registry/MCP/Provider boundary 계약, `GGL`은 Google Workspace Connector 고유 계약, `GH`는 GitHub Connector 고유 계약에 사용한다.
 ```
 
 Case 필드:
@@ -57,12 +57,21 @@ execution_lane
 - WINDOWS_COMPONENT: Main Merge
 - E2E_MOCK: Main·Release
 - LIVE_GOOGLE: 명시적 Release 전
+- LIVE_GITHUB: GitHub capability promotion 전
 - LOCAL_GPU: Local Profile 후보
 - CLEAN_VM: Release Candidate
 - EXPERIMENT_RUNNER: 합성 Fixture·후보 Config·Grader 검증
 - EXPERIMENT_MULTI_CONNECTOR: `13 Evaluation`의 Synthetic Multi-Connector Harness로 서로 다른 `connector_id`의 MCP Simulator 또는 등록 Connector 2개 이상을 검증한다. P0 제품 설치 범위를 자동 확장하지 않는다.
 
 일반 CI에 Refresh Token·API Key·Signing Private Key를 넣지 않는다.
+
+### 3.1 검증 증거 경계
+
+- 개발·회귀용 script는 **실제 production compiled LangGraph와 production Node/Router/Application 경로**를 실행할 수 있다. 실제 선택 Local LLM과 필요한 Connector READ를 사용한 결과는 해당 실행 범위의 유효한 제품형 측정이며 fake workflow 성공으로 대체하지 않는다.
+- Fake/Stub과 controlled fault는 결정적 계약·실패 격리·write-safety 검증 증거다. 실제 LLM 의미 품질, Live Provider 접근, 설치 제품 또는 Release 승격 증거로 보고하지 않는다.
+- Browser E2E는 UI 상호작용·Local API·SSE·승인/복구 Projection을 검증한다. Browser 없이 실행한 production Graph 측정을 무효화하지 않지만 UI 검증 완료를 대신하지도 않는다.
+- Live Provider lane은 실제 credential·permission·Provider end-state를 검증하며 synthetic fixture 결과와 구분한다. Installed/Clean VM lane은 signed 설치 Artifact·startup·upgrade·복구까지 별도로 검증한다.
+- 공식 evaluation/promotion evidence의 runner·hash·Dataset/Gold/Grader·public boundary는 13 Evaluation이 소유한다. 위 개발 측정을 자동으로 공식 승격 증거로 간주하지 않는다.
 
 ## 4. Test Double
 
@@ -71,6 +80,7 @@ FakeClock
 DeterministicUUID
 FakeKeyring
 FakeGoogleProviderAdapter   # Google Workspace MCP Server 내부 Adapter 테스트 전용
+FakeGitHubProviderAdapter   # GitHub MCP Server 내부 Adapter 테스트 전용
 FakeMCPTransport
 SyntheticConnectorMCPServer # 13의 synthetic multi-connector harness용 결정적 Simulator. Provider direct port가 아니다.
 FakeLLMProvider
@@ -84,7 +94,7 @@ DeterministicGrader
 
 ## 5. Fixture
 
-P0 일반 Fixture는 합성 Gmail·Tasks·Calendar만 사용한다. Snapshot은 `fixture_snapshot_id`와 Relation Manifest를 가진다. 13의 synthetic multi-connector harness는 제품 지원 범위를 바꾸지 않는 별도 Fixture를 사용한다.
+일반 회귀 Fixture는 실제 사용자 데이터를 복사하지 않고 합성 Gmail·Tasks·Calendar·GitHub Issue를 사용한다. Snapshot은 `fixture_snapshot_id`와 Relation Manifest를 가진다. 13의 synthetic multi-connector harness는 현재 제품 Connector fixture와 구분하며 제품 지원 범위를 바꾸지 않는다.
 
 Checked-in provider/resource static fixture는 16/09의 exact grammar `tests/fixtures/data/<provider>/<resource>/<scenario>.json`과 UTF-8 strict JSON serialization을 사용한다. 12가 소유하는 것은 required fixture **semantic family/boundary**이며 concrete `<scenario>` filename의 closed set은 architecture authority가 아니다. 따라서 새 verification case가 같은 grammar 아래 scenario data file을 추가하는 것은 Canonical owner/path를 늘리는 일이 아니다. Evaluation dataset은 `tests/fixtures/data/**`에 두지 않는다.
 
@@ -93,6 +103,7 @@ Checked-in provider/resource static fixture는 16/09의 exact grammar `tests/fix
 - Gmail 긴 Thread·외부 주소·Prompt Injection
 - Task 중복·유사·예정일 없음·예정일 임박·업무 마감 분리
 - Calendar Busy·Tentative·Free·OOO·Focus·DST
+- GitHub Repository access·Issue OPEN/CLOSED·missing/partial permission
 - Write 정상·정규화 차이·Mismatch
 - 401·403·404·409·429·5xx·Timeout·응답 유실
 
@@ -141,7 +152,7 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 ### Constraint
 
-Open Run 1, Active Approval 1, Active Attempt 1, Version Conflict, DAG Cycle, Unique Position·Revision·ResourceRef. `0004` Plan Review Gate, `0005` NFR-019 cross-aggregate Trigger, `0006` Plan Aggregate cross-run/conversation/plan guards, `0007` Action/ResourceRef `connector_id` backfill·persistence identity, `0008` connector-aware ResourceRef uniqueness, **`0009` workflow_handoffs durable outbox/lookup indexes/constraints**를 각각 Migration·Contract Test로 검증한다. New implementation target의 Startup discovery는 package의 `0001~0009`을 version-sort하여 적용하고 checksum mismatch를 fail-close해야 한다.
+Open Run 1, Active Approval 1, Active Attempt 1, Version Conflict, DAG Cycle, Unique Position·Revision·ResourceRef를 Migration·Contract Test로 검증한다. Startup은 migration package에서 filename grammar를 통과한 전체 set을 discovery하고 version-sort하여 pending migration을 적용해야 한다. 적용된 name/version/checksum 불일치, 중복 version, invalid filename, 적용 후 `quick_check`·`foreign_key_check` 실패는 fail-close한다. 테스트는 특정 과거 번호 구간을 current set으로 고정하지 않으며 fresh DB와 supported upgrade path 모두에서 discovered set 전체가 적용되는지 검증한다.
 
 ## 7. Contract
 
@@ -216,8 +227,8 @@ Open Run 1, Active Approval 1, Active Attempt 1, Version Conflict, DAG Cycle, Un
 - `InputRoutePlanV1`과 `OutputPlanV1` 독립 revision 검증: OUT-only 변경은 기존 Retrieval을 stale 처리하지 않고 Planning·Review만 재생성
 - Artifact stale 판정은 하드코딩 단계 목록이 아니라 `meta.based_on`의 active revision 비교로 검증
 - Retrieval LLM의 MCP 직접 호출 금지, deterministic Read Node만 `input_routes[].allowed_read_tool_ids` 범위에서 `ConnectorReadPort`를 호출하도록 허용
-- Connector 접근 공통 경계 검증: React·FastAPI Route·Application·LangGraph·Agent·Domain에서 외부 Provider API/SDK 직접 호출·직접 Provider Client 구성 0건. **Application의 외부 I/O dependency는 `ConnectorReadPort | ConnectorWritePort | OAuthCredentialPort` 같은 abstract Connector Application Port로만 제한**하되, Application 내부 semantic binding은 structural `SignedToolRegistry`에서 `ValidatedConnectorToolBindingV1`으로 먼저 확정한다. `ConnectorRuntimeRegistry`, `MCPClientPort`, concrete Connector Adapter/Transport의 direct production caller는 Core-side Connector Adapter/transport implementation뿐이며 FastAPI Route·Application·LangGraph adapter/Agent·Domain direct call은 0건이어야 한다. 모든 Connector Browse/Count/Detail, Retrieval Read, Write, Verification, Recovery 조회는 `Application operation → SignedToolRegistry binding → Connector Application Port → Core-side Connector Adapter → ConnectorRuntimeRegistry/FakeMCPTransport(MCPClientPort) → MCP Tool` 경계를 통과한다. Connector Adapter의 `application/tool_registry/**` import는 0건이어야 한다. Provider Adapter 단위 테스트는 해당 Connector MCP Server 내부에서만 수행한다. P0 Google Workspace는 Gmail·Tasks·Calendar를 이 공통 계약으로 검증한다.
-- **Tool catalog summary equality:** 07의 Gmail/Tasks/Calendar resource별 Tool 목록(§7~9)의 합집합은 07 current Signed Tool Registry exact set(§27) 및 16 provider-operation manifest와 exact set-equality여야 한다. `gmail_get_attachment`를 포함해 missing/extra Tool ID가 1개라도 있으면 실패다.
+- Connector 접근 공통 경계 검증: React·FastAPI Route·Application·LangGraph·Agent·Domain에서 외부 Provider API/SDK 직접 호출·직접 Provider Client 구성 0건. **Application의 외부 I/O dependency는 `ConnectorReadPort | ConnectorWritePort | OAuthCredentialPort` 같은 abstract Connector Application Port로만 제한**하되, Application 내부 semantic binding은 structural `SignedToolRegistry`에서 `ValidatedConnectorToolBindingV1`으로 먼저 확정한다. `ConnectorRuntimeRegistry`, `MCPClientPort`, concrete Connector Adapter/Transport의 direct production caller는 Core-side Connector Adapter/transport implementation뿐이며 FastAPI Route·Application·LangGraph adapter/Agent·Domain direct call은 0건이어야 한다. 모든 Connector Browse/Count/Detail, Retrieval Read, Write, Verification, Recovery 조회는 `Application operation → SignedToolRegistry binding → Connector Application Port → Core-side Connector Adapter → ConnectorRuntimeRegistry/FakeMCPTransport(MCPClientPort) → MCP Tool` 경계를 통과한다. Connector Adapter의 `application/tool_registry/**` import는 0건이어야 한다. Provider Adapter 단위 테스트는 해당 Connector MCP Server 내부에서만 수행한다. 현재 Google Workspace와 GitHub를 모두 이 공통 계약으로 검증한다.
+- **Tool catalog summary equality:** 07의 current Google Workspace·GitHub Tool 목록 합집합은 current Signed Tool Registry와 installed Connector projection/manifest의 exact set과 일치해야 한다. missing/extra Tool ID가 1개라도 있으면 실패다.
 - 특정 Connector MCP unavailable/Tool Schema invalid 상황에서 제품 Core가 해당 Provider API 직접 호출로 fallback하지 않고 Connector 단위 NOT_READY/Recovery로 전환함을 검증
 - Run 시작 뒤 Request Understanding 호출 전에 `StartAnalysis`가 정확히 한 번 적용되어 `CREATED → ANALYZING`이 되어야 한다. `StartAnalysis.applied=false`인데 Agent를 호출하면 실패다.
 - Request Understanding의 정상 `COMPLETE` disposition은 반드시 Tool Route Subgraph로 정확히 한 번 연결되어야 한다. Release Graph의 Mermaid/Router 중 어느 한쪽에서 이 Edge가 누락되거나 Retrieval·Planning으로 직접 건너뛰면 실패다.
@@ -387,7 +398,7 @@ Operational artifact replay tests inject crash after side-effect success/before 
 - **Evidence exclusion identity/restart regression:** identical Provider source version/content normalized with the same chunk schema must regenerate the exact same deterministic `segment_id` across fresh Retrieval/cache restart; random UUID/retrieval-revision-scoped IDs fail. `EXCLUDE_EVIDENCE` must checkpoint `RetrievalState.exclusion_obligation_segment_ids` before one-shot handoff payload clear, survive crash/cache loss, and appear in finalized `RetrievalResultV1.excluded_segment_ids`. Provider content/version or chunk-schema change must issue a new segment ID and must not fuzzy-match/auto-exclude changed evidence.
 - **Non-Domain reconcile surface completeness:** OAuth start/revoke, LLM credential store/delete, Settings update, Runtime Mode update, Backup/Restore, Diagnostics, Shutdown, Attachment staging must each call the exact 07 operation-specific reconcile callable on `RECOVER_RESERVED`; no handler may invent raw filesystem/keyring/process inspection. `SAFE_TO_RETRY` is required before retry.
 - **RuntimeModePort authority:** `POST /runtime/mode` mutates only `RuntimeModePort` process-local state after Active Run guard and operational replay; Settings `preferred_llm_mode` and existing Run.requested_mode remain unchanged. Service restart + unresolved reservation is reconciled deterministically.
-- **OAuth completion observation:** loopback callback code/state/token stay MCP-internal. UI completes onboarding/reauth by bounded `GET /connections/google/status` polling/refresh and observes `CONNECTING → CONNECTED|...`; no MCP→Application reverse completion event or FastAPI OAuth callback endpoint is required/allowed. Success navigation may return only to a validated exact `http://127.0.0.1:{app_port}/`; external host, user-info, missing port, non-root path, query, or fragment must fail closed, and the redirected app still reads connection truth through the status route.
+- **OAuth completion observation:** loopback callback code/state/token stay MCP-internal. UI completes Google connection setup/reauth by bounded `GET /connections/google/status` polling/refresh and observes `CONNECTING → CONNECTED|...`; no MCP→Application reverse completion event or FastAPI OAuth callback endpoint is required/allowed. Success navigation may return only to a validated exact `http://127.0.0.1:{app_port}/`; external host, user-info, missing port, non-root path, query, or fragment must fail closed, and the redirected app still reads connection truth through the status route.
 
 ### 10.2 Non-Domain operational crash replay gate
 
@@ -525,7 +536,7 @@ Final Product Validation과 Synthetic Multi-Connector 평가 설계는 `13 Evalu
 - `UNKNOWN_RESULT` fault injection에서 blind resend 0, 기존 결과 Recovery 후 End-state가 Gold와 일치하는지 검증한다.
 - Trajectory는 안전상 순서가 필수인 milestone과 순서가 자유로운 Read set을 분리해 채점할 수 있어야 한다.
 
-두 번째 Connector를 실제 제품 지원 범위로 Release하려면 등록된 Connector 2개 이상의 product-style lane을 통과해야 한다. P0 Google-only Release의 Synthetic Harness 결과는 Connector-neutral Core 확장성 증거일 뿐 두 번째 Connector 제품 지원 완료를 뜻하지 않는다.
+현재 Google Workspace와 GitHub는 각각 product-style regression과 필요한 Live/Release evidence를 통과해야 한다. Synthetic Multi-Connector Harness 결과만으로 GitHub 제품 지원이나 실제 Provider 검증 완료를 선언하지 않는다.
 
 ### 15.2 Evaluation Scoring·Grader Harness 계약
 
@@ -614,7 +625,7 @@ Gate는 고정 Sampling 조건에서 Item당 1회 평가한다. Temperature는 G
 
 ## 19. 정합성 회귀 Gate
 
-- Google/MCP/LLM Stub 호출 순간 SQLite Write Transaction이 열려 있지 않아야 한다.
+- Connector MCP/LLM Stub 호출 순간 SQLite Write Transaction이 열려 있지 않아야 한다.
 - 외부 호출 전후 두 Transaction 사이 Version 변경 시 결과 저장을 차단한다.
 - Recovery는 `RequireRecovery`·`ResolveRecovery` 외 직접 상태 변경 0건이어야 한다.
 - SEND: Approval Hash 일치 + Sent Lookup + UNKNOWN_RESULT 자동 재전송 0.
@@ -706,7 +717,7 @@ Gate는 고정 Sampling 조건에서 Item당 1회 평가한다. Temperature는 G
 - 같은 `command_id + 다른 canonical hash`는 `409`, Domain mutation 0.
 - Browser 제공 `request_hash`, `approval_id`, idempotency key, source snapshot, actor identity를 authority로 사용하지 않음.
 - confirm/cancel/resume/prepare-retry/resolve-recovery의 Versioned Request Schema와 state precondition Contract Test.
-- **Settings schema equality:** 10 §10.3 logical field set == 07 `SettingsPatchV1/SettingsViewV1` exact field set이어야 한다. timezone/working-day/weekend/calendar-buffer가 UI에는 있는데 wire에서 사라지거나 unknown key를 silently ignore하면 실패다. P0 `retention_days`는 `1, 30` accept / `<=0, >=31` reject이고, Conversation·Message·terminal Run subtree(**Trace 포함**)/owning Checkpoint에 적용되며 Audit 90일·Secret·Session Cache에는 적용되지 않아야 한다. `preferred_llm_mode`와 `/api/v1/runtime/mode`를 같은 persistence authority로 합치거나 undocumented `/runtime/mode` alias가 생기면 실패다. P0 Settings UI/API에 log-delete/full-app-reset Command가 생기면 실패다.
+- **Settings schema equality:** 10 Infrastructure의 Settings configuration contract와 07 `SettingsPatchV1/SettingsViewV1` field set이 일치해야 한다. timezone/working-day/weekend/calendar-buffer가 UI에는 있는데 wire에서 사라지거나 unknown key를 silently ignore하면 실패다. P0 `retention_days`는 `1, 30` accept / `<=0, >=31` reject이고, Conversation·Message·terminal Run subtree(**Trace 포함**)/owning Checkpoint에 적용되며 Audit 90일·Secret·Session Cache에는 적용되지 않아야 한다. `preferred_llm_mode`와 `/api/v1/runtime/mode`를 같은 persistence authority로 합치거나 undocumented `/runtime/mode` alias가 생기면 실패다. P0 Settings UI/API에 log-delete/full-app-reset Command가 생기면 실패다.
 - arbitrary resume payload 차단.
 
 ### 21.3 Insufficient Data Guard
@@ -768,9 +779,9 @@ Conversation UI 추가 회귀:
 
 | Test ID | 계층 | 검증 계약 |
 | --- | --- | --- |
-| `TST-UI-201` | Component | Header는 제품명·정중앙의 비대화형 Google 연결 chip·현재 계정·Settings를 표시하고 개발 Runtime/Node/Profile 문자열을 Main에 노출하지 않는다. |
+| `TST-UI-201` | Component | Header는 제품명·Resource/Conversation panel control·Settings를 compact하게 표시하고 Google/GitHub 계정·정상 상태를 중복 노출하거나 개발 Runtime/Node/Profile 문자열을 Main에 노출하지 않는다. |
 | `TST-UI-202` | Component | Desktop 3 panel: Left Resource, Center Viewer+Chat, Right Conversation+Recent Execution의 정보 구조와 collapse 순서를 검증한다. |
-| `TST-UI-203` | Component | Gmail/Tasks/Calendar 탭, 검색/필터, compact resource row, selected/hover/focus/disabled, 긴 문자열 ellipsis와 keyboard navigation을 검증한다. |
+| `TST-UI-203` | Component | 연결 상태에 따른 Gmail/Tasks/Calendar/GitHub Issues 탭, 검색/필터, compact resource row, selected/hover/focus/disabled, 긴 문자열 ellipsis와 keyboard navigation을 검증한다. |
 | `TST-UI-204` | Integration | configured `SIDEBAR_PAGE_SIZE`와 configured `RETRIEVAL_PAGE_SIZE`의 독립 계약을 검증한다. Gmail은 intermediate token-only traversal과 visible target metadata hydration, 이미 hydrate한 page 재방문 Provider 호출 0을 검증한다. Tasks는 Provider metadata batch를 configured `SIDEBAR_PAGE_SIZE`로 slice하고 continuation이 있으면 현재 materialized batch에서 계산되는 page 범위만 노출하며 알려진 마지막 page에서만 다음 batch를 append한다. Local API continuation을 UI page number나 Provider token으로 해석하지 않고 조건 변경·수동 Refresh에서 cache를 무효화한다. Calendar Month View는 visible grid terminal materialization을 사용하고 numeric pagination을 생성하지 않는다. |
 | `TST-UI-205` | Integration | Gmail은 기본 `INBOX + PRIMARY` scope에서 `GET /api/v1/resources/gmail/count`의 exact count만 badge로 표시하고 추정값을 exact로 표시하지 않는다. Tasks는 incomplete browse의 terminal/continuation 상태에 따라 알려진 count를 표시하고 terminal materialization 뒤 exact total을 확정한다. Calendar tab에는 numeric badge가 없고 startup·Calendar refresh에서 별도 Calendar Count Read를 호출하지 않는다. Frontend count 생성을 위한 임의 전체 Page 순회·hard code가 없음을 검증한다. |
 | `TST-UI-206` | Integration | Resource row click은 Focus Viewer만 갱신하고 checkbox는 다중 선택 Context 집합만 변경함을 검증한다. 선택 집합이 있으면 Composer Context Summary에 사용자 의미 label과 선택 수를 표시하고, 중복 없는 authenticated `selection_handle` 전체로 `RESOURCE_SELECTED`가 current identity resolve 후 최신 상세 조회를 시작함을 검증한다. 선택 집합이 없으면 `AGENT_SEARCH`를 검증한다. |
@@ -789,7 +800,7 @@ Conversation UI 추가 회귀:
 - 같은 날 시간 Event에는 연도·월·일·요일·시작/종료 시간이 있고 `시작`·`종료` label은 없으며, All-day Event에는 연도·월·일·요일과 `하루 종일`이 있다.
 - Calendar 중앙 Viewer에는 실제 Projection의 `시작`, `종료` 필드가 남아 있음을 검증한다.
 - Tasks Sidebar는 실제 Google Task Projection의 제목·예정일을 렌더링하고, Projection에 없는 priority·category·가짜 Task List를 표시하지 않음을 검증한다.
-- Viewer Empty State는 Gmail·Tasks·Calendar 각각의 안내 문구를 검증하며, Source 전환 뒤 이전 Source 상세가 남지 않음을 검증한다.
+- Viewer Empty State는 Gmail·Tasks·Calendar·GitHub Issue 각각의 안내 문구를 검증하며, Source 전환 뒤 이전 Source 상세가 남지 않음을 검증한다.
 
 ### Google Tasks 날짜·상태 의미 회귀
 
@@ -806,6 +817,7 @@ Conversation UI 추가 회귀:
 - Projection fixture는 제공 필드와 누락 필드를 모두 포함한다. 누락 필드에는 placeholder 사실, 가짜 실행 이력, count를 만들지 않는다.
 - Page Token fixture는 최소 3페이지를 제공하며, 2/3페이지 재방문에서 API 호출이 없는 경우와 검색 조건 변경 후 1페이지 재조회 경우를 모두 검증한다.
 - 접근성 검증은 Chrome·Edge에서 keyboard path와 focus visible을 포함한다. 단위/Component 검증만으로 REST Command, SSE, Approval 안전 회귀를 대체하지 않는다.
+- AI 실행 방식은 Settings의 단일 선택으로 `Local AI | Gemini`만 노출한다. legacy `AUTO | MIXED`나 Composer의 별도 mode selector가 사용자 선택지로 나타나면 실패다.
 
 ## 23. Claim V2·Attachment 필수 회귀
 
@@ -888,7 +900,7 @@ Attachment:
 - Component Circuit: technical failure threshold → OPEN/retry_at → retry_at 이전 outbound 0회 → 이후 serialized probe 1회 → 성공 close/reset 또는 failure reopen. Policy/Approval/schema rejection은 circuit failure가 아니다.
 - Local API contract: Conversation list keyset cursor/search, Runtime Detail, Session Bootstrap, Resource List가 07 versioned wire schema와 일치한다.
 - Port contract: 07 canonical callable method가 Port별로 존재하며 Application은 abstract Port만 import한다.
-- P0 MCP Write Catalog: `gmail_send`, `tasks_delete_task`, `calendar_delete_event`가 Input/Output/Scope/Timeout/Retry row를 가진다.
+- Current MCP Write Catalog: Google Workspace와 GitHub의 등록 WRITE Tool이 모두 Input/Output/Scope/Timeout/Retry/Verification row를 가지며 installed projection과 일치한다.
 
 
 Structural refactor completion is tested independently from whether canonical files merely exist.

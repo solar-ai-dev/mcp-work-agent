@@ -279,7 +279,7 @@ Google Workspace는 P0 핵심 Connector지만 Google·GitHub Credential의 존�
 
 P0 OAuth permission은 **구현된 기능에 필요한 최소 집합만 요청**하고, required permission 일부가 거절되면 연결을 완료 처리하지 않는다.
 
-Exact provider Scope 문자열과 Credential/Auth realization은 `09 Security §P0 Scope`가 소유하고, Tool별 required Scope mapping은 `07 Interface`가 소비한다. Policy 문서에서 같은 Scope 목록을 별도 유지하지 않는다. Gmail Send를 포함한 모든 Write는 Scope 보유 여부와 무관하게 본 문서의 승인·Tool Allowlist·실행 무결성 정책을 그대로 통과해야 한다.
+Exact provider Scope 문자열과 Credential/Auth realization은 `09 Security`의 Connector credential·resource authorization contract가 소유하고, Tool별 required Scope mapping은 `07 Interface`가 소비한다. Policy 문서에서 같은 Scope 목록을 별도 유지하지 않는다. Gmail Send를 포함한 모든 Write는 Scope 보유 여부와 무관하게 본 문서의 승인·Tool Allowlist·실행 무결성 정책을 그대로 통과해야 한다.
 
 ### POL-OAUTH-007 Gmail 데이터 외부 처리
 

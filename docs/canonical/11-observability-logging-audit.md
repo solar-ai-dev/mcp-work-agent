@@ -1,7 +1,7 @@
 # 11. 관측성 · 로그 · 감사 설계서
 
 > **Authority:** observability/log/trace/audit projection, sanitization과 retention. Domain/Workflow lifecycle 의미는 관측 event로 재정의하지 않는다.  
-> **상태:** Draft v2.24 · **기준일:** 2026-09-07 · **외부 Telemetry:** Production 기본 OFF
+> **상태:** Draft v2.25 · **기준일:** 2026-09-07 · **외부 Telemetry:** Production 기본 OFF
 
 ## 0. 사람이 먼저 볼 것
 
@@ -134,7 +134,7 @@ mcp-*.jsonl
 - LLM runtime·token·latency·fallback
 - Run Snapshot의 actual runtime은 해당 Run의 persisted `LLM_CALL_COMPLETED` 관측값으로 복원한다. 현재 새 Run은 Local/Gemini 자동 전환이 없으므로 하나의 runtime만 관측되어야 한다. 과거 Run에서 LOCAL_GPU와 API_LLM이 모두 관측된 경우에는 history를 다시 쓰지 않고 legacy `MIXED`로 표시한다. 호출이 없으면 nullable 관측값을 유지하며 현재 Settings로 과거 실행을 추측하지 않는다.
 - MCP process·handshake·tool
-- Connector·Provider read·write·verification. P0 Google Workspace는 `connector_id=google_workspace`로 기록
+- Connector·Provider read·write·verification. 현재 Google Workspace와 GitHub는 각각 `connector_id=google_workspace`, `connector_id=github`로 구분해 기록
 - SQLite transaction·busy·migration·backup
 - Evaluation item·candidate·trial·grader·budget stop
 
@@ -540,7 +540,7 @@ coordination_wait_ms?
 ```
 
 - `agent_invocation_count`와 `llm_call_count`를 별도 집계한다.
-- 제품 Core의 외부 Connector 호출량은 `connector_id`로 구분한 `mcp_tool_call_count`/`mcp_read_tool_call_count`를 기준으로 본다. `provider_api_call_count`는 각 Connector MCP Server 내부 Adapter가 실제 Provider API를 호출한 횟수로, MCP 내부 효율·pagination/N+1 진단용 보조 지표다. Core에서 Provider API 직접 호출을 허용한다는 의미가 아니다. P0 Google Workspace는 `connector_id=google_workspace`로 집계한다.
+- 제품 Core의 외부 Connector 호출량은 `connector_id`로 구분한 `mcp_tool_call_count`/`mcp_read_tool_call_count`를 기준으로 본다. `provider_api_call_count`는 각 Connector MCP Server 내부 Adapter가 실제 Provider API를 호출한 횟수로, MCP 내부 효율·pagination/N+1 진단용 보조 지표다. Core에서 Provider API 직접 호출을 허용한다는 의미가 아니다. 현재 Google Workspace와 GitHub 호출은 각자의 `connector_id`로 독립 집계한다.
 - Local State 원문, Prompt 원문, Completion 원문, Connector 원문 전체는 Trace에 저장하지 않는다.
 - Handoff는 Agent 간 자유 대화가 아니라 Parent Graph의 Typed Result 이동으로 기록한다.
 - Experiment D가 SINGLE/THREE/SIX Architecture 비교의 제품 결정을 소유한다. Architecture diagnostic은 Profile native cost와 동일 `ContextReadySnapshotV1.context_snapshot_id` 기반 post-retrieval decomposition을 분리해 측정하며, controlled post-retrieval diagnostic의 Connector Read 호출은 0이어야 한다.

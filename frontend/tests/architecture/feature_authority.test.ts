@@ -1,19 +1,12 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, extname, join, relative } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 const FRONTEND_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const REPOSITORY_ROOT = join(FRONTEND_ROOT, "..");
 const SOURCE_ROOT = join(FRONTEND_ROOT, "src");
 const FEATURE_ROOT = join(SOURCE_ROOT, "features");
-const DIRECTORY_OWNERSHIP_SOURCE = join(
-  REPOSITORY_ROOT,
-  "docs",
-  "canonical",
-  "16-repository-architecture",
-  "02-directory-ownership.md",
-);
+const FEATURE_TEST_ROOT = join(FRONTEND_ROOT, "tests", "features");
 
 const FEATURE_OWNERS = [
   "approval",
@@ -33,22 +26,11 @@ function sourceFiles(root: string): string[] {
   }).filter((path) => [".ts", ".tsx"].includes(extname(path)) && !path.endsWith(".test.ts") && !path.endsWith(".test.tsx"));
 }
 
-function canonicalResponsibilityManifest(): readonly (readonly [string, string, string])[] {
-  const markdown = readFileSync(DIRECTORY_OWNERSHIP_SOURCE, "utf8");
-  const section = markdown
-    .split("### Frontend exact responsibility manifest", 2)[1]
-    ?.split("Frontend naming is deterministic", 1)[0];
-  expect(section, "canonical Frontend responsibility manifest").toBeDefined();
-  return section!.split("\n")
-    .filter((line) => line.startsWith("|") && !line.includes("---") && !line.includes("UI / Functional surface"))
-    .map((line) => {
-      const cells = line.slice(1, -1).split("|").map((cell) => cell.trim());
-      return [
-        cells[2].replaceAll("`", "").replace(/^frontend\//, ""),
-        cells[3].replaceAll("`", "").replace(/\(\)$/, ""),
-        cells[4].replaceAll("`", "").replace(/^frontend\//, ""),
-      ] as const;
-    });
+function testFiles(root: string): string[] {
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(root, entry.name);
+    return entry.isDirectory() ? testFiles(path) : [path];
+  }).filter((path) => path.endsWith(".test.ts") || path.endsWith(".test.tsx"));
 }
 
 describe("frontend canonical authority", () => {
@@ -62,27 +44,30 @@ describe("frontend canonical authority", () => {
     expect(actual).not.toEqual(expect.arrayContaining(["gmail", "tasks", "calendar"]));
   });
 
-  test("the canonical P0 responsibility manifest fixes exact paths, symbols, and test owners", () => {
-    const responsibilityManifest = canonicalResponsibilityManifest();
-    expect(responsibilityManifest.length).toBeGreaterThan(0);
-    const modules = sourceFiles(SOURCE_ROOT).map((path) => relative(SOURCE_ROOT, path).replace(/\\/g, "/").replace(/\.[^.]+$/, ""));
-    for (const [productionPath, primarySymbol, testOwnerPath] of responsibilityManifest) {
-      const production = join(FRONTEND_ROOT, productionPath);
-      const testOwner = join(FRONTEND_ROOT, testOwnerPath);
-      expect(existsSync(production), productionPath).toBe(true);
-      expect(existsSync(testOwner), testOwnerPath).toBe(true);
-
-      const productionSource = readFileSync(production, "utf8");
-      const escapedSymbol = primarySymbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      expect(productionSource, `${productionPath}::${primarySymbol}`).toMatch(
-        new RegExp(`\\bexport\\s+(?:default\\s+)?(?:async\\s+)?(?:function|class|const|let|var)\\s+${escapedSymbol}\\b`),
-      );
-      expect(readFileSync(testOwner, "utf8"), testOwnerPath).toContain("expect(");
-
-      const responsibility = productionPath.split("/").at(-1)?.replace(/\.[^.]+$/, "");
-      const owners = modules.filter((module) => module.split("/").at(-1) === responsibility);
-      expect(owners, responsibility).toHaveLength(1);
+  test("feature ownership is enforced from source and public entries without a documentation inventory", () => {
+    for (const owner of FEATURE_OWNERS) {
+      const publicEntry = join(FEATURE_ROOT, owner, "index.ts");
+      const ownerTests = join(FEATURE_TEST_ROOT, owner);
+      expect(existsSync(publicEntry), `${owner} public entry`).toBe(true);
+      expect(existsSync(ownerTests), `${owner} test owner`).toBe(true);
+      expect(testFiles(ownerTests).length, `${owner} test owner`).toBeGreaterThan(0);
+      expect(readFileSync(publicEntry, "utf8"), `${owner} public entry`).not.toMatch(/from\s+["']\.\.\//);
     }
+
+    const appSources = sourceFiles(join(SOURCE_ROOT, "app"));
+    for (const path of appSources) {
+      const imports = readFileSync(path, "utf8").matchAll(/from\s+["']\.\.\/features\/([^"']+)["']/g);
+      for (const match of imports) {
+        expect(match[1], `${path} imports a feature through its public entry`).not.toContain("/");
+        expect(FEATURE_OWNERS, `${path} imports a registered feature owner`).toContain(match[1]);
+      }
+    }
+
+    const forbiddenOwnerBuckets = new Set(["common", "manager", "managers", "service", "services", "utils"]);
+    const directories = readdirSync(FEATURE_ROOT, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(directories.filter((name) => forbiddenOwnerBuckets.has(name))).toEqual([]);
   });
 
   test("browser transport remains local and has no provider SDK or secret persistence authority", () => {

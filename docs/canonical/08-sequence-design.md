@@ -1,7 +1,7 @@
 # 08. 시퀀스 설계서
 
 > **Authority:** cross-layer participant interaction order와 crash/replay cut. State/Workflow/API/Infrastructure semantics는 해당 owner를 따른다.  
-> **상태:** Draft v3.29 · **기준일:** 2026-09-07 · **대상:** P0 MVP
+> **상태:** Draft v3.30 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적과 범위
 
@@ -47,16 +47,16 @@
 | DOM | Domain | Aggregate guard, lifecycle 상태 전이, version/freshness invariant 판정. Product Policy를 재정의하지 않음 |
 | DB | SQLite Domain Store | 영속 Domain 사실·Receipt·Audit·Read Model 저장 |
 | CP | CheckpointPort | Graph 재개 위치·checkpoint 저장/조회 추상 경계. concrete LangGraph Checkpointer Adapter는 이 Port 뒤에 있으며 Domain Store transaction과 별도다. |
-| MCP | Connector Application Ports · Registry · MCP Runtime | Application에는 ConnectorReadPort / ConnectorWritePort / OAuthCredentialPort를 노출하고, 그 뒤에서 MCP Client/Server를 조정한다. P0 concrete Server는 Google Workspace MCP Server다. |
-| G | Google Provider APIs | Gmail·Tasks·Calendar 원본 시스템. 시퀀스에서 G에 직접 연결할 수 있는 참여자는 Google Workspace MCP Server 내부 Provider Adapter뿐이다. |
+| MCP | Connector Application Ports · Registry · MCP Runtime | Application에는 ConnectorReadPort / ConnectorWritePort / OAuthCredentialPort를 노출하고, 그 뒤에서 Google Workspace와 GitHub MCP Client/Server를 조정한다. |
+| P | Provider APIs | Google Workspace 또는 GitHub 원본 시스템. 시퀀스에서 P에 직접 연결할 수 있는 참여자는 해당 Connector MCP Server 내부 Provider Adapter뿐이다. |
 
 ## 3. 공통 순서 원칙
 
-1. React는 Google API, MCP, SQLite를 직접 호출하지 않는다.
+1. React는 Provider API, MCP, SQLite를 직접 호출하지 않는다.
 2. FastAPI Route는 SQL과 Domain 상태 전이를 직접 수행하지 않는다.
 3. Agent는 다른 Agent를 직접 호출하지 않고 Supervisor로 결과를 반환한다.
 4. LLM Agent는 MCP Tool을 직접 호출하지 않는다. 검증된 Application Node가 Port를 호출한다.
-5. Google API·LLM·MCP 외부 호출 중 SQLite Transaction을 유지하지 않는다.
+5. Provider API·LLM·MCP 외부 호출 중 SQLite Transaction을 유지하지 않는다.
 6. 상태 변경은 Domain Command Result가 `applied=true`일 때만 다음 단계로 진행한다.
 7. SSE 전송 실패는 Domain 실패가 아니다.
 8. 승인 이후 LLM은 Tool·Arguments·대상 Resource·Dependency를 변경하지 않는다.
@@ -66,7 +66,7 @@
 12. Repair·Revision은 원 호출 Prompt를 묵시적으로 재사용하지 않고 등록된 별도 PromptRef를 사용할 수 있다.
 13. Confirmation은 공통 재시작이 아니라 LangGraph interrupt다. `interrupt_id`가 `semantic_owner_id + AgentNodeResumeTargetV2`를 보존하며 응답 후 selected Graph Profile의 exact compiled Subgraph checkpoint에서 재개한다. `resume_target`은 LLM 자유 문자열이 아니라 `ResumeTargetRegistry`가 NodeRegistry + semantic-owner/profile→compiled-subgraph binding으로 발급·검증한다. 응답이 upstream 의미를 변경할 때만 Supervisor가 State Owner로 Back-edge한다.
 14. 모든 공식 Subgraph disposition은 정확히 하나의 Supervisor Edge·Interrupt·Terminal 경로를 가진다. 알 수 없는 Enum·Version·disposition은 bounded repair 뒤에도 유효하지 않으면 다음 Agent/Tool로 추측 Routing하지 않고 `RequireRecovery(CONTRACT_VIOLATION) → RECOVERY_REQUIRED`로 suspend한다. 복구 불가가 확정된 경우에만 `ResolveRecovery(FAIL) → FAILED`로 닫는다.
-15. 외부 Connector 호출의 직접 제품 caller는 Application의 결정적 use-case/Application operation이다. 순서는 `Workflow/FastAPI Route → Application canonical operation → Application SignedToolRegistry binding → Connector Application Port → Core-side Connector Adapter → ConnectorRuntimeRegistry + MCPClientPort → Connector MCP Server → Provider API`이며 Workflow/LangGraph는 Application operation을 통해서만 Connector I/O를 요청한다. Application operation은 adapter-level `ConnectorRuntimeRegistry`/`MCPClientPort`를 직접 import/call하지 않는다. React·FastAPI Route·Application·LangGraph·Agent·Domain이 Provider API를 직접 호출하는 시퀀스는 금지한다. Local `/api/v1`은 Frontend용 제품 API이며 Provider API 우회 경로가 아니다. P0 Google Workspace는 이 공통 순서를 따른다.
+15. 외부 Connector 호출의 직접 제품 caller는 Application의 결정적 use-case/Application operation이다. 순서는 `Workflow/FastAPI Route → Application canonical operation → Application SignedToolRegistry binding → Connector Application Port → Core-side Connector Adapter → ConnectorRuntimeRegistry + MCPClientPort → Connector MCP Server → Provider API`이며 Workflow/LangGraph는 Application operation을 통해서만 Connector I/O를 요청한다. Application operation은 adapter-level `ConnectorRuntimeRegistry`/`MCPClientPort`를 직접 import/call하지 않는다. React·FastAPI Route·Application·LangGraph·Agent·Domain이 Provider API를 직접 호출하는 시퀀스는 금지한다. Local `/api/v1`은 Frontend용 제품 API이며 Provider API 우회 경로가 아니다. Google Workspace와 GitHub 모두 이 공통 순서를 따른다.
 16. Preflight/Claim 결과가 `applied=false`이면 MCP Write로 fall-through하거나 즉시 FINALIZE하지 않는다. Domain Result의 `current_status + next_allowed_commands`를 재조회해 재승인·Recovery·Reauth·Cancel/in-flight resolution·이미 Terminal 중 하나로 결정적으로 조정한다. Policy Block은 Claim 전 `BlockRun`이 실제 적용된 경우에만 Terminal이며 같은 Claim의 무조건 자동 재시도는 금지한다.
 17. Recovery는 기존 결과 회수·재검증이 필요한 경우에만 Verification으로 돌아간다. Domain이 `RECOVERY_REQUIRED`이면 같은 상태에서 명시적 resolve/re-auth를 기다리고, 실패가 확정되면 terminal result를 반환한다. 무조건 `Recovery → Verification` 반복은 금지한다.
 18. `FINALIZE`는 Run 상태를 임의 변경하지 않는다. Answer-only는 `CompleteAnswerOnlyRun`, Policy 차단은 `BlockRun`, 정상 Write 완료는 `CompleteWriteRun`, 취소는 `FinalizeCancel`, Recovery 종료는 terminal `ResolveRecovery(...)` Application handler가 **Run terminal mutation + final ASSISTANT Message + required Audit**를 같은 UoW로 commit한다. 그 뒤 FINALIZE는 diagnostic Trace와 SSE Projection만 publish한다. 비Terminal Run을 FINALIZE가 직접 덮어쓰거나 Message를 재삽입하지 않는다.
@@ -306,9 +306,9 @@ sequenceDiagram
     end
     FE->>API: GET /api/v1/runtime
     API->>APP: Runtime Status Query
-    APP->>MCP: Google 계정·Scope·재인증 상태 조회
-    MCP->>K: Refresh Token 존재·사용 가능 상태 확인
-    MCP-->>APP: Google Runtime Metadata
+    APP->>MCP: Connector별 계정·Scope/Permission·재인증 상태 조회
+    MCP->>K: Connector credential 존재·사용 가능 상태 확인
+    MCP-->>APP: Connector별 Runtime Metadata
     APP->>LLM: API Provider·Ollama 사용 가능 상태 조회
     LLM->>K: API Key 존재 여부 확인
     LLM-->>APP: LLM Runtime Metadata
@@ -317,7 +317,7 @@ sequenceDiagram
     APP->>CP: 해당 Run checkpoint availability 조회
     CP-->>APP: bounded checkpoint availability
     APP-->>API: Runtime Status Projection
-    API-->>FE: Runtime·Google·MCP·LLM·복구 가능 Run
+    API-->>FE: Runtime·Connector별 상태·MCP·LLM·복구 가능 Run
     opt 중단된 Run 존재
         FE->>API: GET /api/v1/runs/{run_id}
         API->>APP: Run Snapshot Query
@@ -331,7 +331,7 @@ sequenceDiagram
 ```
 
 - `/health/ready`는 DB·Migration·정적 Asset·API Contract·Keyring Adapter·MCP Executable·Tool Schema 같은 Core Readiness를 판정한다.
-- Google Credential, API LLM Key, Ollama와 Model 사용 가능 여부는 `/api/v1/runtime` 진단 결과이며 누락 자체가 Core Service 시작 실패를 의미하지 않는다.
+- Google/GitHub credential, Gemini API Key, Ollama와 Model 사용 가능 여부는 `/api/v1/runtime` 진단 결과이며 누락 자체가 Core Service 시작 실패를 의미하지 않는다.
 - Bootstrap Secret은 한 번 교환한 뒤 폐기한다.
 - Checkpoint와 Domain 상태가 충돌하면 자동 추정하지 않고 `RECOVERY_REQUIRED`로 표시한다.
 
@@ -398,7 +398,7 @@ sequenceDiagram
     participant REV as Review Subgraph
     participant LLM as Prompt Registry·LLM Router
     participant MCP as ConnectorReadPort
-    participant G as Google APIs
+    participant G as 대상 Provider API
     participant REP as Domain Repository Ports
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant CP as CheckpointPort
@@ -571,9 +571,9 @@ sequenceDiagram
     participant RET as Retrieval Subgraph
     participant LLM as Prompt Registry·LLM Router
     participant MCP as ConnectorReadPort
-    participant G as Google APIs
+    participant G as 대상 Provider API
 
-    U->>FE: Gmail·Task·Event 선택 후 요청
+    U->>FE: Gmail·Task·Event·GitHub Issue 선택 후 요청
     FE->>API: POST /api/v1/runs<br>selected_resource_handles·command_id
     API->>APP: start_run(command)<br>selected_resource_handles signature/session/account 검증·resolve
     APP->>APP: §5의 server-owned ID preallocation + WorkflowBinding materialization 재사용
@@ -755,7 +755,7 @@ sequenceDiagram
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant SUP as Supervisor
     participant MCP as ConnectorWritePort · ConnectorReadPort
-    participant G as Google APIs
+    participant G as 대상 Provider API
 
     SUP->>APP: publish_plan(command)
     APP->>APP: Schema Validator · Tool/Argument/Output Schema validation
@@ -781,7 +781,7 @@ sequenceDiagram
 
     SUP->>APP: 실행 전 최신 Source 조회
     APP->>MCP: GET 대상·중복·충돌 자료
-    MCP->>G: Google GET
+    MCP->>G: 대상 Resource 최신 Read
     G-->>MCP: 최신 Resource
     MCP-->>APP: Current Snapshot
     APP->>APP: validate_action_arguments · final server dispatch args schema 검증
@@ -800,7 +800,7 @@ sequenceDiagram
         APP->>DB: UoW commit · Attempt CLAIMED → EXECUTING · Audit
         DB-->>APP: COMMIT · applied=true
         APP->>MCP: 승인된 Write Tool·고정 Arguments
-        MCP->>G: CREATE 또는 UPDATE
+        MCP->>G: 승인된 CREATE·UPDATE·SEND·DELETE
         G-->>MCP: Resource ID·Metadata
         MCP-->>APP: Write Result
         APP->>DOM: store_success
@@ -917,7 +917,7 @@ sequenceDiagram
 
 모든 Action mutation/Approval/Claim은 State Contract의 **Plan supersession child-authority fence**를 소비한다. owning Plan이 `SUPERSEDED`이면 old Action은 history projection일 뿐이며 approve/modify/reject/cancel/expire/refresh/retry/claim mutation은 effect 0이다. published Plan back-edge가 supersession을 commit할 때 old ACTIVE Approval revoke가 같은 UoW에 포함되므로 늦게 도착한 old HTTP command가 실행권을 되살릴 수 없다.
 
-Action Reject는 `PROPOSED·MODIFIED·APPROVED → REJECTED`만 허용한다. APPROVED Reject는 기존 ACTIVE Approval을 삭제하지 않고 `REVOKED`로 보존한다. Reject와 `ACTION_REJECTED` Audit, 미실행 transitive dependent의 `DEPENDENCY_BLOCKED`, dependent ACTIVE Approval revoke는 하나의 UoW에서 commit한다. 모든 Action이 final fact로 닫히고 unresolved가 0이면 Application이 `CompleteWriteRun`을 적용해 Plan/Run을 `COMPLETED`로 확정하고, 독립적인 미완료 Action이 있으면 계속 진행한다. 외부 Write가 한 건도 시작되지 않은 all-rejected/all-cancelled Plan은 State Contract에 따라 `WAITING_APPROVAL → COMPLETED`로 닫을 수 있다. 외부 Google/MCP Write와 새 ExecutionAttempt는 생성하지 않는다.
+Action Reject는 `PROPOSED·MODIFIED·APPROVED → REJECTED`만 허용한다. APPROVED Reject는 기존 ACTIVE Approval을 삭제하지 않고 `REVOKED`로 보존한다. Reject와 `ACTION_REJECTED` Audit, 미실행 transitive dependent의 `DEPENDENCY_BLOCKED`, dependent ACTIVE Approval revoke는 하나의 UoW에서 commit한다. 모든 Action이 final fact로 닫히고 unresolved가 0이면 Application이 `CompleteWriteRun`을 적용해 Plan/Run을 `COMPLETED`로 확정하고, 독립적인 미완료 Action이 있으면 계속 진행한다. 외부 Write가 한 건도 시작되지 않은 all-rejected/all-cancelled Plan은 State Contract에 따라 `WAITING_APPROVAL → COMPLETED`로 닫을 수 있다. 외부 Connector/MCP Write와 새 ExecutionAttempt는 생성하지 않는다.
 
 ### 13.1 사용자 수정
 
@@ -979,7 +979,7 @@ sequenceDiagram
     actor U as 사용자
     participant SUP as Supervisor
 
-    APP->>DOM: mark_failed<br>Google 미변경이 확실한 오류
+    APP->>DOM: mark_failed<br>Provider 미변경이 확실한 오류
     APP->>DB: UoW commit · Attempt FAILED·Action FAILED
     DOM-->>APP: retry_eligible·reason
     API-->>FE: 실패 결과·재시도 준비 가능
@@ -1013,7 +1013,7 @@ sequenceDiagram
     autonumber
     participant APP as Application
     participant MCP as ConnectorWritePort
-    participant G as Google APIs
+    participant G as 대상 Provider API
     participant DOM as Domain
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant API as FastAPI
@@ -1082,6 +1082,8 @@ sequenceDiagram
 `NOT_FOUND` 한 번만으로 CREATE 미실행을 확정하지 않는다. 검색 범위·일관성 지연·권한 오류를 함께 판단한다.
 
 ## 16. OAuth 만료와 재인증 후 재개
+
+이 계약은 credential이 만료된 현재 Connector별로 적용한다. 아래는 Google OAuth의 concrete 예이며 GitHub도 자신의 credential·Device Flow를 사용하되 같은 Run binding과 no-resend 경계를 바꾸지 않는다.
 
 ```mermaid
 sequenceDiagram
@@ -1153,7 +1155,7 @@ sequenceDiagram
     participant DOM as Domain
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant MCP as ConnectorReadPort · Connector runtime
-    participant G as Google APIs
+    participant G as 대상 Provider API
 
     U->>FE: 실행 중단
     FE->>API: POST /api/v1/runs/{run_id}/cancel
@@ -1270,7 +1272,7 @@ sequenceDiagram
     end
 ```
 
-취소는 성공한 Google 변경을 롤백하지 않는다.
+취소는 성공한 외부 Connector 변경을 롤백하지 않는다.
 
 ## 18. SSE 단절·브라우저 새로고침
 
@@ -1388,7 +1390,7 @@ sequenceDiagram
     autonumber
     participant APP as Application
     participant MCP as MCPClientPort · Connector Runtime
-    participant G as Google APIs
+    participant G as 대상 Provider API
     participant DOM as Domain
 
     MCP--xAPP: 프로세스 종료 감지
@@ -1476,7 +1478,7 @@ Launcher 종료 요청
 | --- | --- | --- |
 | Run 시작 | Run·User Message 원자 저장 | 없음 |
 | Agent LLM 호출 | 없음 | API LLM 또는 Ollama |
-| Google Read | 없음 | MCP·Google API |
+| Connector Read | 없음 | MCP·Provider API |
 | Plan 저장 | Plan·Action·Evidence Batch | 없음 |
 | 승인 | Approval·Action·Audit | 없음 |
 | 실행 Claim | Action·Approval·Attempt(`CLAIMED`) + Receipt/Audit | 외부 호출 없음; Claim Commit은 dispatch authority가 아님 |
@@ -1536,7 +1538,7 @@ ClaimExecution Commit
 → Connector Write
 ```
 
-검증 실패 시 Google API를 호출하지 않고 `APPROVAL_INVALID` 또는 Claim Token 오류를 반환한다.
+검증 실패 시 Provider API를 호출하지 않고 `APPROVAL_INVALID` 또는 Claim Token 오류를 반환한다.
 
 
 ## 28. Transaction · Recovery · SEND/DELETE 시퀀스
@@ -1603,7 +1605,7 @@ sequenceDiagram
 
 - Subgraph 내부 Node마다 필요한 State가 다르며 전체 Parent State를 일괄 전달하지 않는다.
 - Local State는 invocation 범위에서만 유지하고 Parent에는 공식 Typed Result만 병합한다.
-- Release Graph의 일반 Google READ는 Retrieval Subgraph의 결정적 Read Node가 소유한다. 아래 READ Action 흐름은 기존 Domain `READ` Effect와 회귀 테스트를 위한 Legacy/호환 경계이며 새 SIX Release Planning이 생성하는 정상 경로가 아니다.
+- Release Graph의 일반 Connector READ는 Retrieval Subgraph의 결정적 Read Node가 소유한다. 아래 READ Action 흐름은 기존 Domain `READ` Effect와 회귀 테스트를 위한 Legacy/호환 경계이며 새 SIX Release Planning이 생성하는 정상 경로가 아니다.
 
 Retrieval Subgraph의 결정적 Read Node는 `ToolRoutePlanV2.input_plan.input_routes[].allowed_read_tool_ids`만 사용할 수 있다.
 
@@ -1641,7 +1643,7 @@ Repair·Revision은 별도 PromptRef를 사용할 수 있으며 Prompt 선택 �
 → 이미 성공한 Write가 있으면 result_kind PARTIAL
 ```
 
-취소는 성공한 Google 변경을 rollback하지 않는다.
+취소는 성공한 외부 Connector 변경을 rollback하지 않는다.
 
 ### 30.2 Insufficient Data
 
@@ -1678,7 +1680,7 @@ Verification MISMATCH
    → Run COMPLETED + result_kind PARTIAL
 또는
 → CREATE_CORRECTIVE_PLAN
-   → 실제 Google 상태 재조회
+   → 실제 Provider 상태 재조회
    → Run PLANNING
    → 새 Plan Revision
    → 새 Approval·Claim·Attempt·Verification

@@ -4,7 +4,7 @@
 
 ## 0. 문서 정보
 
-- **상태:** Draft v2.34
+- **상태:** Draft v2.35
 - **기준일:** 2026-09-07
 - **대상:** P0 MVP
 - **배포 형태:** Windows 설치 파일 기반 로컬 애플리케이션
@@ -44,7 +44,7 @@ Conversation create/list API는 로컬 세션·version·runtime access 검사를
 - 각 Provider API/SDK, Credential 적용, raw token/response 해석은 해당 Connector MCP Server 내부 Adapter가 소유한다.
 - Retrieval Read, Connector Browse/Count/Detail, Credential 상태 확인, Write dispatch, Verification/Recovery 조회까지 외부 업무 시스템에 닿는 모든 제품 경로는 Connector MCP Tool/Port를 통과해야 한다.
 - 테스트에서는 Connector MCP Client/Transport를 Fake로 대체할 수 있다. 제품 Core에 별도 Provider Client를 주입해 MCP를 우회하는 대체 실행 경로를 두지 않는다.
-- P0의 첫 Connector는 `google_workspace`이며 Google Workspace MCP Server가 Gmail·Tasks·Calendar와 Google OAuth/Provider Adapter를 소유한다.
+- 현재 `google_workspace`와 `github`가 독립 등록 Connector다. Google Workspace MCP Server는 Gmail·Tasks·Calendar와 Google OAuth/Provider Adapter를, GitHub MCP Server는 Repository access·Issue와 Device Flow/Provider Adapter를 소유한다.
 - MCP Server 내부 Provider API 호출은 Connector 구현 세부사항이며 관측 지표는 `connector_id`와 Provider request count를 함께 기록한다.
 
 ### 1.2 Retrieval Read Continuation 경계
@@ -102,14 +102,15 @@ Windows Installer
    ├─ REST·SSE 제공
    ├─ Application·LangGraph 실행
    └─ Connector MCP Runtime
-      └─ Google Workspace MCP Server (P0 registered Connector)
+      ├─ Google Workspace MCP Server
+      └─ GitHub MCP Server
 ```
 
 - 사용자는 Python, Node.js, npm, Vite를 별도로 설치하지 않는다.
 - 운영 Runtime에서 Vite 개발 서버를 실행하지 않는다.
 - Local Service는 `127.0.0.1`의 동적 포트에만 바인딩한다.
 - Launcher가 Local Service 시작·Health Check·브라우저 열기·종료를 관리한다.
-- Connector MCP Runtime 계약은 여러 `connector_id` 등록을 허용하지만 P0 설치 Artifact에 포함되는 Connector MCP Server는 Google Workspace 하나다.
+- 설치 Artifact와 installed Connector manifest는 Google Workspace와 GitHub MCP Server를 각각 등록한다. Runtime은 두 child의 executable/projection/schema/hash를 독립 검증하고 한 Connector의 credential이나 readiness를 다른 Connector로 대체하지 않는다.
 
 ## 3. Local Agent API
 
@@ -148,7 +149,8 @@ Windows Installer
 | Cancel | `POST /api/v1/runs/{run_id}/cancel` | 취소 요청 |
 | Resume | `POST /api/v1/runs/{run_id}/resume` | REAUTH/Safe Checkpoint/Recovery RECHECK의 discriminated resume |
 | Recovery Resolution | `POST /api/v1/runs/{run_id}/resolve-recovery` | 명시적 Recovery resolution |
-| Resource | `GET /api/v1/resources/{source}` where `source ∈ {gmail,tasks,calendar}` | Sidebar 목록·검색·opaque Local API continuation 조회 |
+| Resource | `GET /api/v1/resources/{source}` where `source ∈ {gmail,tasks,calendar}` | Google Workspace Sidebar 목록·검색·opaque Local API continuation 조회 |
+| GitHub Issue Resource | `GET /api/v1/resources/github?repository={owner/repository}&state={OPEN|CLOSED|ALL}` | 허용 Repository의 Issue 목록·상태 필터·selection handle 조회 |
 | Task List Containers | `GET /api/v1/resources/task-lists` | Settings allowlist 선택용 bounded container inventory |
 | Calendar Containers | `GET /api/v1/resources/calendars` | Settings allowlist 선택용 bounded container inventory |
 | Gmail Exact Count | `GET /api/v1/resources/gmail/count` | Sidebar용 exact Gmail count. Browse continuation과 독립된 read-only Query |
@@ -190,7 +192,7 @@ class LocalModelOptionV1:
     approved: bool
     selected: bool
 
-# ComponentCircuitKeyV1 shape owner: 10 Infrastructure §8.21
+# ComponentCircuitKeyV1 semantics owner: 10 Infrastructure의 readiness/circuit contract
 class ComponentCircuitStatusV1:
     schema_version: Literal[1]
     key: ComponentCircuitKeyV1
@@ -247,7 +249,20 @@ class CalendarListItemV1:
     calendar_id: str
     location: str | None
 
-ResourceListItemV1 = GmailListItemV1 | TaskListItemV1 | CalendarListItemV1
+class GitHubIssueListItemV1:
+    schema_version: Literal[1]
+    selection_handle: str
+    resource_id: str               # owner/repository#issue_number
+    repository: str                # owner/repository
+    issue_number: int
+    title: str
+    description: str
+    issue_state: Literal["OPEN", "CLOSED"]
+    url: str
+    labels: list[str]
+    assignees: list[str]
+
+ResourceListItemV1 = GmailListItemV1 | TaskListItemV1 | CalendarListItemV1 | GitHubIssueListItemV1
 
 class GmailResourceListFilterV1:
     schema_version: Literal[1]
@@ -266,7 +281,12 @@ class CalendarResourceListFilterV1:
     time_max: str | None
     timezone: str
 
-ResourceListFilterV1 = GmailResourceListFilterV1 | TaskResourceListFilterV1 | CalendarResourceListFilterV1
+class GitHubIssueResourceListFilterV1:
+    schema_version: Literal[1]
+    repository: str
+    state: Literal["OPEN", "CLOSED", "ALL"] = "OPEN"
+
+ResourceListFilterV1 = GmailResourceListFilterV1 | TaskResourceListFilterV1 | CalendarResourceListFilterV1 | GitHubIssueResourceListFilterV1
 
 class AttachmentMetadataV1:
     schema_version: Literal[1]
@@ -337,7 +357,7 @@ class CreateConversationRequestV1:
 
 class ResourceListRequestV1:
     schema_version: Literal[1]
-    source: Literal["gmail", "tasks", "calendar"]
+    source: Literal["gmail", "tasks", "calendar", "github"]
     query: str | None
     next_page_token: str | None
     page_size: int | None
@@ -396,7 +416,7 @@ class CalendarResourceDetailResponseV1:
 - `GET /api/v1/conversations`는 `ConversationListRequestV1 → ConversationListResponseV1`이며 04의 `(timestamp_ms,id)` keyset cursor를 opaque `cursor`로 노출한다. `search`는 title/message-index read projection의 bounded query이며 Agent Prompt 입력이 아니다.
 - `POST /api/v1/conversations`는 `CreateConversationRequestV1 → ConversationItemV1`이다.
 - `GET /api/v1/runtime`은 `RuntimeDetailResponseV2`, `POST /api/v1/session/bootstrap`은 `SessionBootstrapRequestV1 → SessionBootstrapResponseV1`이다. bootstrap secret은 성공/실패와 무관하게 응답·Log·DB에 저장하지 않는다.
-- `GET /api/v1/resources/{source}`는 `ResourceListRequestV1 → ResourceListResponseV1`이며 Provider raw page token을 Browser contract로 노출하지 않는다. Local API continuation은 opaque다. `source`와 filter union variant가 일치하지 않으면 `INVALID_RESOURCE_FILTER`로 fail closed한다. Gmail/Tasks Browser page size는 configured `SIDEBAR_PAGE_SIZE`의 bounded value를 사용하고 Calendar는 explicit time window/grid contract를 사용한다.
+- `GET /api/v1/resources/{source}`는 `ResourceListRequestV1 → ResourceListResponseV1`이며 Provider raw page token을 Browser contract로 노출하지 않는다. Local API continuation은 opaque다. `source`와 filter union variant가 일치하지 않으면 `INVALID_RESOURCE_FILTER`로 fail closed한다. Gmail/Tasks Browser page size는 configured `SIDEBAR_PAGE_SIZE`의 bounded value를 사용하고 Calendar는 explicit time window/grid contract를 사용한다. GitHub는 required `repository`와 `OPEN | CLOSED | ALL` state를 사용하며 현재 응답은 한 bounded 목록으로 `next_page_token=null`, `total_count=len(items)`를 반환한다.
 - `ComponentCircuitStatusV1`은 connector-neutral `key`, `state`, `retry_at_ms?`만 노출한다. `key.kind=CONNECTOR`이면 `connector_id`가 필수이고 `llm_runtime=None`; `key.kind=LLM_RUNTIME`이면 `llm_runtime=API_LLM|LOCAL_GPU`가 필수이고 `connector_id=None`이다. Provider 이름을 Core circuit enum으로 추가하지 않는다. `RunBudgetSummaryV1`은 limit/used/remaining 및 `max_execution_ms`의 bounded operational projection이다. raw secret/Prompt/Provider payload는 Runtime Detail에 포함하지 않는다.
 
 ### 3.2-A Conversation History Query
@@ -533,10 +553,11 @@ GitHub Issue selection은 기존 shape를 그대로 사용해 `connector_id="git
 - Gmail 기본 Sidebar scope는 `INBOX + PRIMARY` Thread이며 exact badge count도 같은 scope다. Sidebar 검색은 Primary 제한 없이 일반 mailbox를 검색하되 Spam·Trash를 제외하고 기본 Gmail badge count는 유지한다. Count traversal은 body/attachment/detail N+1 없이 필요한 최소 list metadata만 사용한다.
 - Tasks Browse는 사용자가 선택한 allowlist 안의 명시적 Task List에 `show_completed=false`, `show_hidden=false`, `show_deleted=false`, Provider `page_size<=100`을 사용한다. 빈 allowlist나 미결정 목록을 Provider 첫 목록으로 보정하지 않는다. Application은 Task metadata batch와 opaque continuation을 반환하고 React Client Session Cache가 이를 configured `SIDEBAR_PAGE_SIZE` page로 slice한다. `tasks.get`은 focus/선택 detail에만 사용한다.
 - Tasks `status_scope=incomplete|completed`를 지원하고 기본은 `incomplete`다. completed materialization은 `show_completed=true`, `show_hidden=true`, `show_deleted=false`, `page_size<=100`으로 terminal까지 읽은 뒤 mixed Provider 결과에서 `task_status=completed`만 `resource_id` 기준 dedupe한다. raw Google `completed` timestamp는 존재할 때 `completed_at` metadata로 보존한다.
-- Calendar Month Browse는 `monthAnchor`에서 계산한 configured timezone의 explicit `[gridStart, gridEnd)`와 `singleEvents=true`를 사용하며 Provider `page_size<=100`을 terminal까지 순회한다. `time_min/time_max`가 생략된 일반 Upcoming Browse는 configured timezone 기준 현재 시각부터 90일 후까지의 bounded default window를 사용한다.
+- Calendar Month Browse는 `monthAnchor`에서 계산한 제품 고정 `Asia/Seoul` timezone의 explicit `[gridStart, gridEnd)`와 `singleEvents=true`를 사용하며 Provider `page_size<=100`을 terminal까지 순회한다. `time_min/time_max`가 생략된 일반 Upcoming Browse는 같은 고정 timezone 기준 현재 시각부터 90일 후까지의 bounded default window를 사용한다.
+- GitHub Issue Browse는 `GET /api/v1/resources/github`에서 current GitHub account/session과 required `repository`를 결합하고 `state=OPEN|CLOSED|ALL`을 적용한다. Repository는 Provider/App permission과 Settings 복수 allowlist의 교집합 안에 있어야 하며 빈 allowlist, 첫 항목, legacy default를 Browse나 WRITE target으로 자동 선택하지 않는다. 각 Row의 handle은 `connector_id=github`, `resource_type=github_issue`, `resource_id=owner/repository#issue_number`, `parent_resource_id=owner/repository`를 보존한다.
 - `ResourceCountResponseV1.source`는 Sidebar/API projection의 source-family vocabulary(`gmail|tasks|calendar`)이며, `SignedToolRegistryEntryV1.resource_type`과 다른 개념이다. Connector resource identity가 필요한 내부 Route/Retrieval/Persistence에서는 canonical Registry `resource_type`을 exact-copy하며, Count projection에서 `resource_type`이라는 이름으로 source family를 재사용하지 않는다.
 - Exact Count Read는 Browse와 독립된 Local API Query다. P0 Gmail Sidebar count는 `GET /api/v1/resources/gmail/count → resource.get_resource_count → ConnectorReadPort`로 수행하고 `ResourceCountResponseV1(source="gmail", exact_count, as_of_ms)`만 반환한다. Frontend가 Provider page를 순회해 exact count를 계산하지 않는다. P0 Sidebar startup은 Gmail exact count와 Tasks incomplete 첫 batch만 준비하며 Tasks badge는 그 batch의 terminal/continuation 상태에서 계산한다. Calendar tab에는 numeric badge가 없고 startup·Calendar refresh에서 Calendar Count Read를 호출하지 않는다. Count 실패·timeout은 Browse를 실패시키지 않고 numeric badge만 생략한다.
-- React Client Session Cache identity는 active Google `account_id`, source, container(Task List/Calendar), 검색/filter/sort/status scope, continuation/batch generation으로 구성한다. raw Local Session Cookie/token과 OAuth token은 Application snapshot이나 cache key로 전달하지 않는다. Refresh·계정/container/scope/검색/filter/sort 변경·session 종료는 관련 cache를 무효화한다.
+- React Client Session Cache identity는 active Connector `account_id`, source, container(Task List/Calendar/Repository), 검색/filter/sort/status scope, continuation/batch generation으로 구성한다. raw Local Session Cookie/token과 OAuth token은 Application snapshot이나 cache key로 전달하지 않는다. Refresh·Connector 계정/container/scope/검색/filter/sort 변경·session 종료는 관련 cache를 무효화한다.
 
 ### 3.3 상태 변경 API 입력 소유권
 
@@ -720,6 +741,7 @@ class ReauthRequiredSsePayloadV1:
 ErrorUiActionKindV1 = Literal[
     "PREPARE_RETRY",
     "REAUTHENTICATE_GOOGLE",
+    "REAUTHENTICATE_CONNECTOR",
     "RESUME_SAFE_CHECKPOINT",
     "OPEN_SETTINGS",
     "OPEN_DIAGNOSTICS"
@@ -729,6 +751,7 @@ class ErrorUiActionV1:
     kind: ErrorUiActionKindV1
     action_id: str | None
     resume_kind: Literal["SAFE_CHECKPOINT_RESUME"] | None
+    connector_id: str | None
 
 class ErrorUiProjectionV1:
     schema_version: Literal[1]
@@ -939,7 +962,7 @@ resolve_recovery
 
 `SignedToolRegistryEntryV1.resource_type`은 Connector resource identity의 canonical vocabulary source다. 별도 Core-wide `EMAIL|TASK|CALENDAR` enum을 두지 않는다. P0 값은 아래 current Registry rows로 닫히며, 신규 Connector/resource는 concern-owned Tool contract와 Signed Tool Registry row를 추가해 확장한다. Route/Retrieval/Persistence projection은 이 문자열을 exact-copy하며 Tool 이름에서 추론하거나 별도 mapper authority를 만들지 않는다.
 
-Current P0 registry rows are exactly the 21 Tool IDs in §27, all with `connector_id=google_workspace`. Canonical resource binding is:
+Current Registry rows는 §26 Tool Schema Catalog의 Google Workspace 21개와 GitHub 6개 Tool이다. Canonical resource binding은 다음과 같다.
 
 ```text
 gmail_search_threads→gmail_thread; gmail_get_thread→gmail_thread; gmail_get_message→gmail_message; gmail_get_attachment→gmail_attachment
@@ -949,9 +972,11 @@ calendar_list_calendars→calendar; calendar_list_events→calendar_event; calen
 
 FreeBusy의 Run-local acquisition projection은 조회 Calendar를 `parent_id`로 보존한다. `busy_intervals`와 조회 범위는 동일 Calendar의 conflict/feasibility consumer가 함께 소비하며 durable Event identity로 승격하지 않는다. Provider 응답의 Calendar별 오류·대상 누락·잘못된 busy 목록은 성공한 빈 목록이 아니라 조회 실패다.
 calendar_create_event→calendar_event; calendar_update_event→calendar_event; calendar_delete_event→calendar_event
+github_list_issues→github_issue; github_get_issue→github_issue; github_create_issue→github_issue
+github_update_issue→github_issue; github_close_issue→github_issue; github_reopen_issue→github_issue
 ```
 
-`required_scopes`, input/output schema refs는 §27 row와 exact match하고 effect profile은 위 table과 exact match한다. Tool Routing은 `(connector_id, resource_type, effect)`로 candidate를 만들며 Tool 이름 parsing으로 connector/resource/effect를 추론하지 않는다. Verification/Recovery도 별도 switch/registry authority를 만들지 않고 selected Registry entry의 strategy identifier를 소비한다.
+`required_scopes`, input/output schema refs는 §26 row와 exact match하고 effect profile은 위 table과 exact match한다. Tool Routing은 `(connector_id, resource_type, effect)`로 candidate를 만들며 Tool 이름 parsing으로 connector/resource/effect를 추론하지 않는다. Verification/Recovery도 별도 switch/registry authority를 만들지 않고 selected Registry entry의 strategy identifier를 소비한다.
 
 Runtime artifact chain은 다음 하나로 닫는다.
 
@@ -1208,9 +1233,9 @@ Port 이름만 선언하고 callable shape를 Adapter 구현에 맡기지 않는
 | `AttachmentStagingPort` | `stage(operation_ref, file_bytes, filename, mime_type) -> StagedAttachmentDescriptorV1`; `reconcile_stage(operation_ref) -> OperationalReconcileResultV1`; `open_bytes(staged_attachment_id) -> bytes`; `delete(staged_attachment_id)` |
 | `ClockPort` | `now_ms() -> int` |
 | `UUIDPort` | `new_uuid() -> str` |
-| `HardwareProbePort` | `probe() -> HardwareProfileV1` — shape owner: 10 Infrastructure §8.20-A |
+| `HardwareProbePort` | `probe() -> HardwareProfileV1` — shape owner: 10 Infrastructure의 Local AI inspection contract |
 | `BrowserLauncherPort` | `open_url(url: str) -> None` |
-| `ComponentCircuitStatePort` | `get_state(key: ComponentCircuitKeyV1) -> ComponentCircuitStateV1`; `record_technical_failure(key, failure_code, now_ms) -> ComponentCircuitStateV1`; `record_success(key, now_ms) -> ComponentCircuitStateV1` — key/shape owner: 10 Infrastructure §8.21 |
+| `ComponentCircuitStatePort` | `get_state(key: ComponentCircuitKeyV1) -> ComponentCircuitStateV1`; `record_technical_failure(key, failure_code, now_ms) -> ComponentCircuitStateV1`; `record_success(key, now_ms) -> ComponentCircuitStateV1` — key/shape owner: 10 Infrastructure의 readiness/circuit contract |
 | `SseEventBufferPort` | `append(event: RunSseEventV1) -> None`; `list_after(run_id, last_event_id, limit) -> SseEventPageV1`; `clear_run(run_id) -> None` — bounded process-local replay only |
 
 For `StartRun`, `CheckpointPort.create_workflow_binding(...)` is used through the SQLite transaction-scoped adapter bound to the **same `SqliteUnitOfWork` connection** as Run/Message persistence and `WorkflowHandoffRepository.stage_pending(...)`; it MUST NOT perform an independent commit. This is the only place where initial WorkflowBinding creation is coupled to Domain-row creation. Later LangGraph checkpoint writes remain checkpointer-owned transactions.
@@ -1260,7 +1285,7 @@ WorkflowSignalV1
 - MCP 종료 시 Local Service가 최대 1회 재시작하고 Tool 목록·Schema Version을 다시 검증한다.
 - Write 전달 가능성이 있으면 자동 재전송하지 않고 `UNKNOWN_RESULT`로 전환한다.
 - MCP Client Adapter는 실패를 단순 Timeout/Error Name이 아니라 `delivery_certainty`와 함께 반환한다. `NOT_SENT | MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST`를 사용하며 `NOT_SENT`만 Google 변경이 없다고 확정할 수 있다.
-- 제품 Runtime은 **registered connector_id당 하나의 active stdio MCP child process**를 가진다. P0에는 `google_workspace` 하나만 있으므로 process가 하나다. `MCPClientPort`의 list/call/restart와 ConnectorRead/Write/OAuthCredential Port는 connector_id를 잃지 않으며 concrete runtime registry가 해당 connector의 process handle로 resolve한다. target 없는 `restart_once()`는 금지한다.
+- 제품 Runtime은 **registered connector_id당 하나의 active stdio MCP child process**를 가진다. 현재 `google_workspace`와 `github`가 각각 하나의 child를 가진다. `MCPClientPort`의 list/call/restart와 ConnectorRead/Write/OAuthCredential Port는 connector_id를 잃지 않으며 concrete runtime registry가 해당 connector의 process handle로 resolve한다. target 없는 `restart_once()`는 금지한다.
 
 ## 7. Gmail Tool
 
@@ -1404,7 +1429,7 @@ Core가 `BeginExecutionAttempt(applied=true)`를 통과한 뒤 MCP는 실제 수
 
 ## 12. 읽기 Port 계약
 
-`ConnectorReadPort`는 Provider별 메서드를 증식시키지 않고 **registered READ Tool invocation 하나**만 소유한다. Application의 Retrieval/Browse/Verification/Recovery operation이 §27 Registry에서 Tool을 선택하고 입력 Schema를 검증한 뒤 호출한다.
+`ConnectorReadPort`는 Provider별 메서드를 증식시키지 않고 **registered READ Tool invocation 하나**만 소유한다. Application의 Retrieval/Browse/Verification/Recovery operation이 §26 Registry catalog에서 Tool을 선택하고 입력 Schema를 검증한 뒤 호출한다.
 
 `ConnectorReadResultV1`의 exact field shape는 §17.1이 한 번만 정의한다. Port callable은 다음 하나다.
 
@@ -1418,9 +1443,9 @@ class ConnectorReadPort(Protocol):
 ```
 
 - Application은 Port 호출 전에 `SignedToolRegistry.bind_required(connector_id, tool_id, expected_effect=READ)`를 수행하며, `execute_read`는 그 결과인 `ValidatedConnectorToolBindingV1`을 Port boundary에서 끝까지 보존한다. `tool_id`만 전달하거나 Adapter가 `application/tool_registry/**`를 재조회하는 경로는 금지한다.
-- `tool_arguments`는 `binding`이 가리키는 §27 Tool Input Schema를 통과한 값만 허용하고, output도 같은 binding의 Tool Output Schema 검증을 통과한 뒤 `ConnectorReadResultV1`으로 반환한다.
+- `tool_arguments`는 `binding`이 가리키는 §26 Tool Input Schema를 통과한 값만 허용하고, output도 같은 binding의 Tool Output Schema 검증을 통과한 뒤 `ConnectorReadResultV1`으로 반환한다.
 - Provider raw response/token은 Connector MCP Server 내부 Adapter에만 존재한다.
-- Gmail/Tasks/Calendar별 capability 이름은 §27의 MCP Tool ID가 canonical name이며 Core Port에 별도 `list_gmail` 같은 두 번째 API vocabulary를 만들지 않는다.
+- Gmail/Tasks/Calendar/GitHub Issue별 capability 이름은 §26의 MCP Tool ID가 canonical name이며 Core Port에 별도 Provider별 read Port vocabulary를 만들지 않는다.
 - 일반 Retrieval 호출은 Action Row를 만들지 않는다.
 - Connector READ는 Retrieval 내부에서만 실행하며 Action Row를 만들지 않는다.
 - READ Output Schema 실패는 Retrieval failure/disposition으로 닫고 별도 READ Action lifecycle로 투영하지 않는다.
@@ -1610,7 +1635,7 @@ class RecordComponentCallResultResultV1:
 
 - `guard_run_budget`는 허용 여부만 계산하며 counter mutation은 owning Workflow/Application state update에서 한 번만 반영한다. 거절된 delta는 사용량에 더하지 않는다.
 - outbound LLM/Connector call 직전에는 `guard_run_budget`와 해당 `check_component_circuit`를 모두 통과해야 한다.
-- Connector call의 circuit key는 항상 `ComponentCircuitKeyV1(kind=CONNECTOR, connector_id=<route connector_id>)`이다. 두 번째 Connector 추가 시 Core enum을 수정하지 않는다. LLM call은 `kind=LLM_RUNTIME, llm_runtime=API_LLM|LOCAL_GPU`를 사용한다. MCP Server 내부 Provider별 더 세밀한 circuit이 필요하면 Connector 내부 구현 세부사항이며 Core `ComponentCircuitStatePort`의 competing authority가 아니다.
+- Connector call의 circuit key는 항상 `ComponentCircuitKeyV1(kind=CONNECTOR, connector_id=<route connector_id>)`이다. 등록 Connector가 추가되어도 Core enum을 수정하지 않는다. LLM call은 `kind=LLM_RUNTIME, llm_runtime=API_LLM|LOCAL_GPU`를 사용한다. MCP Server 내부 Provider별 더 세밀한 circuit이 필요하면 Connector 내부 구현 세부사항이며 Core `ComponentCircuitStatePort`의 competing authority가 아니다.
 - Circuit에는 **technical failure만** 기록한다. Policy deny, schema invalid, user cancel, semantic mismatch를 component failure로 세지 않는다.
 - `TECHNICAL_FAILURE`이면 `failure_code`는 필수, `SUCCESS`이면 `failure_code=None`이다. `record_component_call_result`는 process-local `ComponentCircuitStatePort`만 변경하고 Domain/Run status를 변경하지 않는다.
 
@@ -1946,7 +1971,7 @@ Run Snapshot의 additive optional `activity`는 `RunActivityV1`이다. 이전 �
 
 - `PREPARE_RETRY`는 current Action=`FAILED`이고 latest dispatch `delivery_certainty=NOT_SENT`인 경우에만 `action_id`와 함께 포함한다.
 - `UNKNOWN_RESULT | MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST`에는 `PREPARE_RETRY`를 절대 포함하지 않는다. 해당 경우는 `recovery` projection/Recovery flow만 사용한다.
-- `REAUTHENTICATE_GOOGLE`은 durable Run=`REAUTH_REQUIRED`인 P0 Google connector flow에서만 포함한다.
+- `REAUTHENTICATE_GOOGLE`은 durable Run=`REAUTH_REQUIRED`인 Google compatibility projection에, `REAUTHENTICATE_CONNECTOR(connector_id)`는 GitHub를 포함한 다른 현재 Connector의 same-Run reauth에만 포함한다. 초기 미연결 요청에는 어느 reauth action도 만들지 않는다.
 - `RESUME_SAFE_CHECKPOINT`는 State Contract startup matrix가 현재 durable Run에 `SAFE_CHECKPOINT_RESUME`를 허용하고 binding/target/version 검증이 가능한 경우에만 포함한다.
 - `OPEN_SETTINGS | OPEN_DIAGNOSTICS`는 navigation-only action이며 Domain mutation이 없다.
 - generic `계획 다시 생성`, blind `다시 시도`, arbitrary `/resume` action은 current Error projection에 존재하지 않는다.
@@ -2019,6 +2044,9 @@ PrepareRetryRequestV2
 | `POST /api/v1/connections/google/start` | MCP Credential Provider OAuth 시작 |
 | `GET /api/v1/connections/google/status` | 계정·Scope·연결 상태 |
 | `POST /api/v1/connections/google/disconnect` | Revoke 시도·Keyring 삭제 |
+| `POST /api/v1/connections/github/start` | GitHub Device Flow 시작 |
+| `GET /api/v1/connections/github/status` | GitHub 계정·permission·인증 상태 |
+| `POST /api/v1/connections/github/disconnect` | GitHub credential 로컬 폐기·연결 해제 |
 | `PUT /api/v1/credentials/llm/{provider}` | API Key 저장·세션 사용 |
 | `DELETE /api/v1/credentials/llm/{provider}` | API Key 삭제 |
 | `GET /api/v1/credentials/llm/{provider}` | 비밀을 노출하지 않는 configured/storage_mode/validation_status 조회 |
@@ -2041,6 +2069,9 @@ PrepareRetryRequestV2
 | `POST /api/v1/connections/google/start` | `StartAuthorizationRequestV1(command_id)` | `AuthorizationStartV1(authorization_url, callback_id)` | `connection.start_authorization(connector_id=google_workspace)` |
 | `GET /api/v1/connections/google/status` | 없음 | `ConnectionMetadataV1` bounded account/scope/status metadata | `connection.get_connection_status` |
 | `POST /api/v1/connections/google/disconnect` | `RevokeConnectionRequestV1(command_id)` | `RevokeResultV1` | `connection.revoke_connection` |
+| `POST /api/v1/connections/github/start` | `StartAuthorizationRequestV1(command_id)` | `AuthorizationStartV1(authorization_url, callback_id, flow_kind=DEVICE_CODE, verification_uri, user_code, expires_at_ms, poll_interval_seconds)` | `connection.start_authorization(connector_id=github)` |
+| `GET /api/v1/connections/github/status` | 없음 | `ConnectionMetadataV1` bounded account/permission/device-authorization metadata | `connection.get_connection_status` |
+| `POST /api/v1/connections/github/disconnect` | `RevokeConnectionRequestV1(command_id)` | `RevokeResultV1` | `connection.revoke_connection` |
 | `PUT /api/v1/credentials/llm/{provider}` | `StoreLlmCredentialRequestV1(command_id, api_key, storage_mode)` where `storage_mode = KEYRING | SESSION_ONLY` | `LlmCredentialStatusV1(provider, configured, storage_mode, validation_status)` | `llm_credential.store_llm_credential` |
 | `DELETE /api/v1/credentials/llm/{provider}` | `DeleteLlmCredentialRequestV1(command_id)` | `LlmCredentialStatusV1` | `llm_credential.delete_llm_credential` |
 | `GET /api/v1/credentials/llm/{provider}` | 없음 | `LlmCredentialStatusV1` | `llm_credential.get_llm_credential_status` |
@@ -2315,11 +2346,26 @@ GET /api/v1/connections/google/status
 POST /api/v1/connections/google/disconnect
 → connection.revoke_connection(connector_id=google_workspace)
 → OAuthCredentialPort.revoke_connection(connector_id=google_workspace, ...)
+
+POST /api/v1/connections/github/start
+→ connection.start_authorization(connector_id=github)
+→ OperationalCommandReplayPort.reserve_or_replay(...) → operation_ref
+→ OAuthCredentialPort.start_authorization(connector_id=github, ..., operation_ref)
+
+GET /api/v1/connections/github/status
+→ connection.get_connection_status(connector_id=github)
+→ OAuthCredentialPort.get_connection_status(connector_id=github)
+
+POST /api/v1/connections/github/disconnect
+→ connection.revoke_connection(connector_id=github)
+→ OAuthCredentialPort.revoke_connection(connector_id=github, ...)
 ```
 
-The P0 `google` path segment fixes the registered Connector identity; it does not create `application/use_cases/google/**` or authorize FastAPI Route to call the MCP Credential Provider directly.
+현재 `google | github` path segment는 각각 등록된 Connector identity를 고정할 뿐 Provider별 Application use-case authority를 만들거나 FastAPI Route의 MCP Credential Provider 직접 호출을 허용하지 않는다.
 
 Loopback callback의 `code/state` 수신, PKCE/state 검증, Token 교환, Refresh Token Keyring I/O는 MCP Credential Provider Process 내부 operation이 수행한다. Core-facing `OAuthCredentialPort`에는 raw callback payload를 노출하지 않는다. `start_authorization` 후 UI/Application의 완료 관측 authority는 기존 `GET /api/v1/connections/google/status → connection.get_connection_status → OAuthCredentialPort.get_connection_status` 하나다. UI는 returned `callback_id`를 화면-local correlation으로만 보존하고 bounded polling/refresh로 `CONNECTING → CONNECTED | DISCONNECTED | REAUTH_REQUIRED | UNAVAILABLE`을 관측한다. UI가 loopback authorization 시작 URL에 `return_to`를 보낼 때 MCP는 query/fragment/user-info가 없는 exact `http://127.0.0.1:{app_port}/`만 허용하고, 성공 callback 뒤 그 주소로 `303` 이동할 수 있다. 이 이동은 status 조회를 대신하거나 새 completion authority를 만들지 않는다. P0는 connector별 active authorization session을 최대 1개만 허용하며 새 safe-to-retry start는 이전 incomplete callback state를 invalidate한 뒤 교체한다. 별도 MCP→Application reverse notification/event Port는 P0에 없다.
+
+GitHub Device Flow도 raw device/access token을 Core/Browser에 노출하지 않는다. UI에는 `verification_uri`, `user_code`, 만료·polling metadata만 전달하고 완료 여부는 `GET /api/v1/connections/github/status`의 bounded polling/refresh로 관측한다. Device Flow 승인만으로 Repository 접근이나 종료된 업무 Run의 자동 resume를 확정하지 않는다.
 
 ## 25. Claim Token 계약
 
@@ -2386,12 +2432,18 @@ metadata
 | `calendar_create_event` | calendar_id, title, start, end, description? + claim context | EventMetadata | `calendar.events` | configured connector timeout | 전달 불명 시 금지 |
 | `calendar_update_event` | calendar_id, event_id, 허용 필드 + claim context | EventMetadata | `calendar.events` | configured connector timeout | 전달 불명 시 금지 |
 | `calendar_delete_event` | calendar_id, event_id + claim context | DeleteResult(resource_id) | `calendar.events` | configured connector timeout | 전달 불명 시 자동 retry 금지 |
+| `github_list_issues` | repository, state?, assignee?, label? | GitHubIssueMetadata[] | `issues.read` | configured connector timeout | Read 1회 |
+| `github_get_issue` | repository, issue_number | GitHubIssueDetail | `issues.read` | configured connector timeout | Read 1회 |
+| `github_create_issue` | repository, title, body?, recovery_fingerprint? + claim context | GitHubIssueMetadata | `issues.write` | configured connector timeout | 전달 불명 시 금지 |
+| `github_update_issue` | repository, issue_number, title 또는 body + claim context | GitHubIssueMetadata | `issues.write` | configured connector timeout | 전달 불명 시 금지 |
+| `github_close_issue` | repository, issue_number + claim context | GitHubIssueMetadata | `issues.write` | configured connector timeout | 전달 불명 시 자동 retry 금지 |
+| `github_reopen_issue` | repository, issue_number + claim context | GitHubIssueMetadata | `issues.write` | configured connector timeout | 전달 불명 시 자동 retry 금지 |
 - 모든 ID·Page Token은 길이 1..2048, 제어문자 금지.
 - 날짜·시간은 RFC3339와 명시 Timezone을 사용한다.
 - Write Tool의 `claim context`는 Action·Approval·Attempt·Hash·Token을 포함한다.
 - `tasks_create_task`의 raw `due?`는 Google Adapter 경계에서만 `scheduled_date`와 대응한다. `business_deadline`·작업 시간은 새 Task Tool Argument로 추가하지 않으며, 업무 마감 의미 보존은 승인된 `notes`와 Evidence·Approval Projection을 따른다.
 
-### 27.1 Sidebar Query Projection 계약
+### 26.1 Sidebar Query Projection 계약
 
 이 절의 Google Tool 표는 §3.2.1의 **단일 Sidebar Browse·Count 계약**을 소비하며 같은 목록을 다시 정의하지 않는다. Calendar Sidebar 호출은 selected `monthAnchor`에서 계산한 explicit `[gridStart, gridEnd)`를 사용하고, `time_min/time_max` 생략 시 90일 기본값은 Sidebar가 아닌 generic Upcoming Browse에만 적용한다. Count·continuation·cache lifetime은 §3.2.1을 그대로 따른다.
 
@@ -2683,18 +2735,18 @@ OAuth connection success 자체는 특정 Run continuation payload가 아니며 
 
 ## 34. Runtime projections · external LLM disclosure contract
 
-### 35.1 Runtime/read-model projection invariants
+### 34.1 Runtime/read-model projection invariants
 
 - `RuntimeModePort` is the sole process-local mutable authority for the current Service requested mode. `runtime_mode.update_runtime_mode` uses `OperationalCommandReplayPort` then `RuntimeModePort.set_requested_mode`; `runtime_status.get_runtime_status` reads `RuntimeModePort.get_requested_mode` and combines it with LLM runtime status to project `RuntimeModeStatusV1`. No Application module global, Settings field, or `StructuredInferenceRuntimeRouter` private mutable field is a second authority.
 - StartRun persists exact `requested_mode` on Run and projects it into `RunInputV1`, `WorkflowBindingV1`, `RunExecutionRefV1`; same-Run resume never substitutes `preferred_llm_mode` or process runtime mode.
 - `external_llm_consent` is the only prior-consent fact. `ExternalLlmTransferScopeV1` is a display projection, not authority.
-- Task List/Calendar allowlist choosers use `GET /api/v1/resources/task-lists` and `/calendars`; React never calls MCP directly and empty containers remain discoverable. 이 inventory read는 선택된 업무 데이터 access authority가 아니다.
+- Task List/Calendar allowlist choosers use `GET /api/v1/resources/task-lists` and `/calendars`; GitHub Repository chooser uses `GET /api/v1/connections/github/repositories`. React never calls MCP directly and empty containers remain discoverable. 이 inventory read는 선택된 업무 데이터 access authority나 단일 WRITE target이 아니다.
 - Safe Mode Restore uses `GET /api/v1/backups` to obtain opaque `backup_ref`; raw path/latest-backup guessing is forbidden.
 - Settings re-entry reads LLM credential status through `GET /api/v1/credentials/llm/{provider}`.
 - Google account UI uses `ConnectionMetadataV1.display_email`; `account_id` remains opaque.
 - P0 diagnostics UI consumes expanded protected `GET /api/v1/runtime` bounded projection; Launcher-only health endpoint is not a Browser substitute.
 
-### 35.2 `ExternalLlmTransferScopeV1`
+### 34.2 `ExternalLlmTransferScopeV1`
 
 ```python
 class ExternalLlmTransferScopeV1:
@@ -2708,7 +2760,7 @@ class ExternalLlmTransferScopeV1:
 
 `RunSnapshotResponseV1`/Run UI projection may include this bounded object when external LLM use is possible. It never contains source body, secret, token, or raw credential.
 
-### 35.3 Pre-call disclosure ordering
+### 34.3 Pre-call disclosure ordering
 
 P0는 별도 Browser ACK를 consent로 요구하지 않는다. 01-B의 “external call 전에 표시”의 enforceable 의미는 **exact input projection에서 계산한 current `ExternalLlmTransferScopeV1`을 server-side Run projection/checkpoint metadata에 먼저 저장하고 `EXTERNAL_LLM_SCOPE_PUBLISHED` SSE를 append한 뒤에만 external provider adapter를 호출**하는 것이다. 실제 Browser paint/network timing은 security authority가 아니다.
 

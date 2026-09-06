@@ -5,7 +5,7 @@
 ## 0. 문서 정보
 
 - **문서명:** 14. mcp-work-agent · 예외 처리 · 운영 · 트러블슈팅 가이드
-- **상태:** Draft v2.27
+- **상태:** Draft v2.28
 - **기준일:** 2026-09-07
 - **대상:** P0 MVP
 - **운영 형태:** Windows 11 x64 로컬 단일 사용자 애플리케이션
@@ -16,7 +16,7 @@
 
 ## 1. 목적과 범위
 
-이 문서는 제품에서 오류가 발생했을 때 owning contract가 이미 정한 안전 경계를 **운영 절차로 소비·투영**하여 데이터와 외부 Connector Write의 무결성을 보존하고 사용자 조치·지원 Escalation 순서를 제공한다. P0 구체 Runbook은 Google Workspace Connector를 기준으로 한다.
+이 문서는 제품에서 오류가 발생했을 때 owning contract가 이미 정한 안전 경계를 **운영 절차로 소비·투영**하여 데이터와 외부 Connector Write의 무결성을 보존하고 사용자 조치·지원 Escalation 순서를 제공한다. 공통 MCP·인증·Write/Verification/Recovery 절차는 현재 Google Workspace와 GitHub Connector에 각각 적용한다. Google OAuth·Workspace API처럼 Provider 고유 절은 concrete 예로 유지하며 GitHub Device Flow·Repository 접근의 exact interface/security 계약은 07·09를 따른다.
 
 이 문서가 소유하는 것은 **운영 절차와 진단 presentation**뿐이다:
 
@@ -232,7 +232,7 @@ SSE 재연결
 
 SSE 단절은 Agent·Write 실패가 아니다. 화면에 Event가 보이지 않았다는 이유로 Action을 다시 실행하지 않는다.
 
-## 11. Google OAuth·Keyring Runbook
+## 11. Connector 인증·Keyring Runbook
 
 ### 11.1 로그인 실패
 
@@ -274,6 +274,13 @@ Checkpoint/registered target/active graph version가 stale·missing이면 같은
 ### 11.5 Reauth completion runbook authority
 
 OAuth 성공은 credential 연결만 완료하며 Run을 자동 resume하지 않는다. UI가 해결 중인 `REAUTH_REQUIRED` Run에 대해 `/resume(REAUTH_COMPLETED)`를 보내고, `ResumeAfterReauth(applied=true)` + durable handoff가 성공해야 workflow가 계속된다. OAuth 성공 뒤 crash해도 Run은 REAUTH_REQUIRED로 남아 안전하며 동일 Run command를 재시도할 수 있다.
+
+### 11.6 GitHub Device Flow·Repository 접근
+
+- Device Flow 완료와 GitHub account 연결, 실제 Repository 접근 가능 상태를 구분한다.
+- GitHub App permission과 Settings Repository allowlist의 교집합 밖 Repository를 다른 계정·첫 allowlist 항목·Google credential로 대체하지 않는다.
+- 초기 미연결 요청은 안내 후 종료하며 Device Flow 완료로 종료된 요청을 자동 resume하지 않는다. 실행 중 credential 만료만 11.5의 same-Run reauth 경계를 사용한다.
+- 연결 해제·접근 철회는 GitHub credential과 해당 Connector cache만 무효화하고 Google 연결이나 이미 dispatch된 effect를 변경하지 않는다.
 
 ## 12. API_ONLY·LOCAL_CAPABLE·Ollama Runbook
 
@@ -353,7 +360,7 @@ LLM Output을 직접 MCP Arguments로 전달하지 않는다.
 
 Checkpoint는 유효하지만 memory-only `read_result_handle`이 사라졌다면 raw provider token을 복원/추측하지 않는다. frozen current RequestIntent/InputRoute를 검증한 뒤 `RETRIEVAL_CACHE_RESTART → MAIN_CONTROL:RETRIEVAL_ENTRY`로 fresh Retrieval을 수행하고 새 revision을 발급한다. 기존 RunBudget 사용량은 유지한다. checkpoint/binding 자체가 invalid이면 이 restart를 쓰지 않고 Recovery로 전환한다.
 
-## 14. MCP·Google API Runbook
+## 14. MCP·Provider API Runbook
 
 ### 14.1 MCP 시작 실패
 
@@ -381,7 +388,7 @@ Process Exit 감지
 
 Write 도중 종료했으면 자동 재시작 후 같은 Write를 보내지 않는다.
 
-### 14.3 Google Read 오류
+### 14.3 Provider Read 오류
 
 - 401: Connector Error `AUTH_EXPIRED`로 정규화 → Domain/Workflow `REAUTH_REQUIRED` 전환
 - 403: `POLICY_BLOCKED` 또는 Scope·Resource 접근 실패 원인을 구분하고 정책/권한 상태 확인
@@ -390,9 +397,9 @@ Write 도중 종료했으면 자동 재시작 후 같은 Write를 보내지 않�
 - 5xx: `UPSTREAM_5XX`; 제한된 Retry 후 Partial/Recovery 경계 적용
 - Timeout: `TIMEOUT`; 전달 여부가 불명확한 Write와 혼동하지 않고 Read retry budget만 적용
 
-위 Connector Error 이름은 `07 Interface`가 소유하며, 이 Runbook은 P0 Google 응답을 해당 공통 Enum과 운영 조치로 매핑할 뿐 새 오류 taxonomy를 만들지 않는다.
+위 Connector Error 이름은 `07 Interface`가 소유하며, 이 Runbook은 현재 Google Workspace·GitHub 응답을 해당 공통 Enum과 운영 조치로 매핑할 뿐 새 오류 taxonomy를 만들지 않는다.
 
-### 14.4 Google Write 오류
+### 14.4 Provider Write 오류
 
 오류를 다음 두 종류로 먼저 분류한다.
 
@@ -791,7 +798,7 @@ migration-summary.json
 SQLite 원본 DB
 Backup 원본
 Keyring 내용
-Google 원문
+Connector 원문
 LLM Prompt·Completion
 Approval Snapshot
 전체 MCP Request·Response

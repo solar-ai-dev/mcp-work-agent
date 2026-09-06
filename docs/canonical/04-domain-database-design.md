@@ -7,7 +7,7 @@
 | 항목 | 내용 |
 | --- | --- |
 | 문서명 | 04. mcp-work-agent 도메인 · 데이터베이스 설계서 |
-| 상태 | Draft v1.27 |
+| 상태 | Draft v1.28 |
 | 기준일 | 2026-09-07 |
 | 대상 | P0 MVP |
 | Database | SQLite |
@@ -20,7 +20,7 @@
 ### 1.1 범위
 
 - Conversation·Run·Plan·Action Domain
-- Connector Resource 참조와 Evidence. DB Schema v1.9은 `actions.connector_id`와 `resource_refs.connector_id`를 영속하고 `ResourceRef`의 canonical connector identity를 `(run_id, connector_id, resource_type, resource_id)`로 고정한다. 여기서 `resource_id`는 Connector Provider가 부여한 external resource identifier를 저장하는 canonical persistence field다. current `ResourceRef.resource_type`은 해당 Resource를 만든/선택한 `SignedToolRegistryEntryV1.resource_type`을 exact-copy한다. P0 허용값은 current Signed Tool Registry의 Google Workspace resource vocabulary에 닫혀 있으며 새 Resource Type 추가 시에는 Registry 계약과 새 Migration을 함께 확장한다. 별도 `THREAD|MESSAGE|EVENT` 또는 `EMAIL|TASK|CALENDAR` 변환 vocabulary를 current persistence authority로 두지 않는다.
+- Connector Resource 참조와 Evidence. `actions.connector_id`와 `resource_refs.connector_id`를 영속하고 `ResourceRef`의 canonical connector identity를 `(run_id, connector_id, resource_type, resource_id)`로 고정한다. 여기서 `resource_id`는 Connector Provider가 부여한 external resource identifier를 저장하는 canonical persistence field다. `ResourceRef.resource_type`은 해당 Resource를 만든/선택한 current `SignedToolRegistryEntryV1.resource_type`을 exact-copy하며 Google Workspace와 GitHub를 포함한 현재 등록 Connector 범위에 닫혀 있다. 별도 `THREAD|MESSAGE|EVENT` 또는 `EMAIL|TASK|CALENDAR` 변환 vocabulary를 current persistence authority로 두지 않는다. 영속 constraint 확장이 필요하면 적용 Migration을 고치지 않고 새 forward migration을 추가한다.
 - Approval·Execution·Verification
 - Trace·Audit
 - SQLite DDL과 Connection 설정
@@ -80,7 +80,7 @@
 | Command Receipt | SQLite Domain Table (`command_receipts` durable idempotency/replay authority) |
 | Workflow Handoff | SQLite Application-control Table (`workflow_handoffs`; Domain lifecycle authority가 아닌 crash-safe outbox) |
 | LangGraph State·Interrupt | 같은 SQLite 파일의 Library 관리 Table |
-| Google Sidebar 목록·Local API continuation·Tasks/Calendar materialized browse cache | React Client Session Cache |
+| Connector Sidebar 목록·Local API continuation·Gmail/Tasks/Calendar/GitHub Issue materialized browse cache | React Client Session Cache |
 | Agent 검색 중간 후보·전체 원문 | 현재 Run 메모리 |
 | Gmail 첨부파일 bytes | SQLite 비저장. 사용자 다운로드는 Stream, 발신은 짧은 TTL의 Local Attachment Staging |
 | 실제 사용 Resource·Evidence excerpt | SQLite Domain Table |
@@ -152,7 +152,7 @@
 
 `ResourceRef`는 Connector 원본의 복제본이 아니라 Run에서 실제로 사용한 최소 참조다. `Evidence`는 Action 판단과 승인 설명에 필요한 최소 excerpt만 저장한다.
 
-**Connector 일반화 경계:** Core와 DB Schema v1.9의 ResourceRef identity는 `connector_id + resource_type + resource_id` 조합이며, `resource_id`가 Connector Provider의 external resource identifier를 담는 canonical persistence field다. `0007`이 `connector_id`를 Action/ResourceRef에 추가하고 기존 Google row를 `google_workspace`로 backfill했으며, `0008`이 pre-connector uniqueness를 제거해 connector-aware identity를 단일 권위로 만들었다. current persistence 의미에서 `resource_type`은 `SignedToolRegistryEntryV1.resource_type`의 exact Connector resource identifier다. 모든 Registry resource가 반드시 ResourceRef row를 요구하는 것은 아니지만, 저장되는 ResourceRef는 별도 family enum으로 변환하지 않는다. 신규 Connector/Resource Type 지원 시에는 concern-owned Tool/Registry 계약과 새 Schema Migration으로 허용값을 확장하며 기존 Migration을 소급 수정하지 않는다.
+**Connector 일반화 경계:** ResourceRef identity는 `connector_id + resource_type + resource_id` 조합이며, `resource_id`가 Connector Provider의 external resource identifier를 담는 canonical persistence field다. `resource_type`은 current `SignedToolRegistryEntryV1.resource_type`의 exact Connector resource identifier다. 모든 Registry resource가 반드시 ResourceRef row를 요구하는 것은 아니지만, 저장되는 ResourceRef는 별도 family enum으로 변환하지 않는다. 신규 Connector/Resource Type의 영속 constraint 확장이 필요하면 concern-owned Tool/Registry 계약과 새 forward migration으로 보강하며 기존 Migration을 소급 수정하지 않는다.
 
 ### 4.5 Observability
 
@@ -165,7 +165,7 @@ Audit는 더 긴 보존을 위해 Domain Foreign Key를 사용하지 않고 최�
 
 | 분류 | 구성 |
 | --- | --- |
-| Entity | Conversation, Message, Run, Plan, Action, ResourceRef, Evidence, Approval, ExecutionAttempt, Verification, CommandReceipt. `GoogleAccount`는 현재 DB Schema v1.9에서도 P0 Connector-specific 계정 Entity이며 Connector-neutral account model은 후속 Migration 설계 대상이다. |
+| Entity | Conversation, Message, Run, Plan, Action, ResourceRef, Evidence, Approval, ExecutionAttempt, Verification, CommandReceipt. `GoogleAccount`는 Google Connector connection record이며 Conversation actor의 필수 parent나 다른 Connector account authority가 아니다. |
 | Join Entity | ActionDependency, ActionEvidence |
 | Append Event | TraceEvent, AuditEvent |
 | Value Object | CanonicalArguments, ArgumentsHash, SourceSnapshot, PolicyConfirmationReceiptV1, IdempotencyKey, RecoveryContextV1, RecoveryFingerprint, Cursor, RunBudget, VerificationDiff |
@@ -181,7 +181,6 @@ Audit는 더 긴 보존을 위해 Domain Foreign Key를 사용하지 않고 최�
 
 ```mermaid
 erDiagram
-    GOOGLE_ACCOUNTS ||--o{ CONVERSATIONS : "계정의 대화"
     CONVERSATIONS ||--o{ MESSAGES : "대화의 메시지"
     CONVERSATIONS ||--o{ RUNS : "대화에서 실행"
     RUNS ||--o{ PLANS : "계획 개정"
@@ -200,6 +199,8 @@ erDiagram
     MESSAGES o|--o{ EVIDENCE : "사용자 메시지 근거"
 ```
 
+`conversations.account_id`와 `approvals.approved_by_account_id`는 non-null local actor attribution이지만 `google_accounts` Foreign Key가 아니다. `local-workspace`와 기존 Google actor identity를 보존하며 Connector 접근은 별도의 current credential·signed Resource identity 검증을 따른다.
+
 ## 7. P0 Table 목록
 
 | 영역 | Table | 역할 |
@@ -212,7 +213,7 @@ erDiagram
 | Planning | plans | Plan Revision |
 | Planning | actions | Tool Action 현재 상태 |
 | Planning | action_dependencies | Action DAG Edge |
-| Context | resource_refs | 사용된 Google Resource 최소 참조 |
+| Context | resource_refs | 사용된 Connector Resource 최소 참조 |
 | Context | evidence | 최소 근거 excerpt |
 | Context | action_evidence | Action·Evidence 다대다 관계 |
 | Approval | approvals | 승인 Revision·Snapshot·Hash |
@@ -624,7 +625,7 @@ Tool 유형 / Effect
 canonical_arguments_hash
 ```
 
-CREATE처럼 사전 `resource_id`가 없는 Effect는 해당 항목을 생략하고 Effect별 business fingerprint로 후보를 좁힌다. 두 번째 Connector에서 별도 connector-account persistence가 필요해지면 기존 Google-specific account binding을 일반화하는 **새 forward migration**을 추가하며 적용 Migration을 소급 수정하지 않는다.
+CREATE처럼 사전 `resource_id`가 없는 Effect는 해당 항목을 생략하고 Effect별 business fingerprint로 후보를 좁힌다. Google 외 Connector에 별도 connector-account persistence가 필요해지면 기존 Google-specific account binding을 일반화하는 **새 forward migration**을 추가하며 적용 Migration을 소급 수정하지 않는다.
 
 ### 12.3 보장 범위
 
@@ -751,7 +752,7 @@ busy_timeout = 5000ms
 
 SQLAlchemy·Alembic은 P0 고정 기술로 강제하지 않는다. 명시적 SQL Migration과 Checksum을 기준으로 하며 Adapter 선택은 구현 단계에서 결정한다.
 
-**Command Receipt migration realization requirement:** 모든 **Domain Aggregate 상태 변경 lifecycle Command**는 durable `command_receipts`를 요구한다. non-Domain operational command는 07의 별도 replay authority를 사용한다. 구현 시 migration set에서 relation과 필수 uniqueness/request-hash/result persistence가 존재하는지 확인하고, 없으면 다음 사용 가능한 numeric 순번의 **새 forward migration**을 추가한다. 적용된 `0001~0008`을 소급 수정하지 않는다. 의미 권위는 이 문서와 State Transition Contract이며 migration 번호는 implementation history다.
+**Command Receipt migration realization requirement:** 모든 **Domain Aggregate 상태 변경 lifecycle Command**는 durable `command_receipts`를 요구한다. non-Domain operational command는 07의 별도 replay authority를 사용한다. 구현 시 discovered migration set에서 relation과 필수 uniqueness/request-hash/result persistence가 존재하는지 확인하고, 없으면 다음 사용 가능한 numeric 순번의 **새 forward migration**을 추가한다. 이미 적용된 migration은 번호와 무관하게 소급 수정하지 않는다. 의미 권위는 이 문서와 State Transition Contract이며 migration 번호는 implementation history다.
 
 ### 19.2 Backup
 
@@ -782,7 +783,7 @@ SQLAlchemy·Alembic은 P0 고정 기술로 강제하지 않는다. 명시적 SQL
 | Message | `created_at_ms` | 적용 | 연결된 retained/open Run의 재구성에 필요한 Message는 보호 |
 | Conversation | `updated_at_ms` | 적용 | open Run=0이고 retained Message/Run child=0일 때만 parent 삭제 |
 | Audit | Audit timestamp | **고정 90일** | `retention_days` 영향 없음; 업무 원문 없이 최소 식별·상태만 보존 |
-| Google Sidebar Cache | UI session | 미적용 | 세션 종료 시 폐기 |
+| Connector Sidebar Cache | UI session | 미적용 | 세션 종료 시 폐기 |
 | Secret | 09/10 credential lifecycle | 미적용 | Domain/SQLite에 저장하지 않음 |
 
 `RetentionRepository.purge_batch(cutoffs, batch_limit)`의 `cutoffs`는 Application `PurgeRetentionHandler`가 persisted `retention_days`와 위 category rules로 계산한 typed cutoff set만 받는다. 구현자가 임의 target list를 만들지 않는다. Purge 순서는 **Run child/Checkpoint/Receipt eligibility 확정 → Run → eligible Message → child가 0인 Conversation**이며 Foreign Key/replay invariant를 깨지 않는다. nonterminal Run과 그 owning Conversation, unresolved Recovery/Reauth, current replay에 필요한 Receipt는 항상 보호한다.
@@ -818,7 +819,7 @@ SQL migration은 위 semantic authority를 구현하는 downstream artifact이�
 
 이 절은 current persistence authority와 migration implementation boundary만 정의한다.
 
-- DB Schema v1.9의 설계 수준 invariant는 이 문서의 current sections가 소유한다.
+- 현재 Domain DB의 설계 수준 invariant는 이 문서의 current sections가 소유한다. Migration version/checksum은 이 문서 버전과 별개의 실행 계약이다.
 - required `CHECK/UNIQUE/FK/partial UNIQUE/trigger/conditional-update` 의미는 이 문서의 current invariant contract가 소유한다. SQL syntax와 migration ordering은 implementation realization이며 10/12/16이 검증한다.
 - 적용된 migration이 아래 invariant를 구현하지 않으면 applied migration을 다시 쓰지 않고 `FORWARD_NUMERIC_MIGRATION_REQUIRED`로 처리한다.
 - Domain DB와 LangGraph Checkpointer는 같은 SQLite 파일을 공유할 수 있지만 logical ownership은 분리한다. Domain Repository가 Checkpoint row를 aggregate persistence로 노출하지 않는다.

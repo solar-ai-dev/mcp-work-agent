@@ -1,7 +1,7 @@
 # 13. 평가 · 실험 설계서
 
 > **Authority:** experiment design, Dataset/Gold/Grader, candidate comparison, scoring과 release-evaluation evidence. Product behavior는 `00 Project Source Guide`의 concern owners가 소유한다.  
-> **상태:** Draft v3.33 · **기준일:** 2026-09-07 · **선행 Gate:** Dataset·Grader Integrity + 12 Safety Regression 100%
+> **상태:** Draft v3.34 · **기준일:** 2026-09-07 · **선행 Gate:** Dataset·Grader Integrity + 12 Safety Regression 100%
 
 ## 1. 목적과 범위
 
@@ -51,11 +51,11 @@
 - **안전은 점수가 아니라 Gate**다.
 - **Gold는 업무 정답과 상호작용을 정의**하고, Experiment D의 Architecture 비교에서도 SIX 내부 Node 순서를 공통 정답으로 쓰지 않는다.
 - **비용은 정확도 실패를 상쇄하지 않는다.** 품질을 만족한 후보끼리 비교한다.
-- 제품 의사결정을 만드는 Main Experiment는 `A Model·Runtime`, `B Prompt·Node Quality`, `C Retrieval`, `D Agent Architecture`, `E Final Product Validation`의 5개다. 데이터 무결성은 G00, 안전은 G01/G02가 소유한다. 재현용 compatibility experiment ID는 current decision vocabulary가 아니며 subordinate Audit에서만 해석한다.
+- 제품 의사결정을 만드는 Main Experiment는 `A Model·Runtime`, `B Prompt·Node Quality`, `C Retrieval`, `D Agent Architecture`, `E Final Product Validation`의 5개다. 데이터 무결성은 G00, 안전은 G01/G02가 소유한다. 재현용 compatibility experiment ID는 current decision vocabulary가 아니며 필요한 재현성은 versioned Evaluation artifact와 Git history에서 해석한다.
 
 ### Current Evaluation Artifact Contract
 
-Current evaluation runner는 다음 contract family가 서로 일치하는지만 사용하며 Product를 supported public HTTP API로만 호출한다. Product Python internal import, Node/Subgraph 직접 실행, fake Product adapter는 current Evaluation evidence가 아니다. Artifact version/status의 재현 기록은 §5와 Git history 경계를 따른다.
+공식 evaluation/promotion runner는 다음 contract family가 서로 일치하는지만 사용하며 Product를 supported public HTTP API로 호출한다. Product Python internal import, private Node/Subgraph 직접 실행, fake Product adapter 결과는 공식 승격 evidence가 아니다. 이는 개발·회귀 중 production Graph/Node script 측정을 금지하는 규칙이 아니며 Artifact version/status의 공식 재현 기록은 §5와 Git history 경계를 따른다.
 
 | Concern | Current contract |
 | --- | --- |
@@ -65,7 +65,20 @@ Current evaluation runner는 다음 contract family가 서로 일치하는지만
 | Scoring | Safety·Integrity Hard Gate 이후 BTS → Process → Efficiency → Reliability |
 | Prompt evaluation | `06/15` current PromptRef / caller / manifest / source / input-contract exact-set equality를 소비 |
 
-Artifact file/version/status의 재현성 목록은 subordinate `Experiment Redesign Audit`에서만 관리한다. Product behavior를 artifact version에서 역추론하지 않는다.
+Artifact file/version/status의 재현성은 versioned Evaluation artifact와 Git history에서 관리한다. 별도 Audit/Mapping 문서를 current authority로 두거나 Product behavior를 artifact version에서 역추론하지 않는다.
+
+### 검증 종류와 evidence 경계
+
+| 검증 종류 | 인정 범위 | 대체하지 않는 것 |
+| --- | --- | --- |
+| 개발·회귀 production Graph script | 실제 compiled LangGraph와 production Node/Router/Application, 실제 선택 LLM을 실행해 routing·state·typed result를 측정 | 공식 promotion, Browser UI, Installed Release |
+| 공식 Evaluation/Promotion | current runner가 public Product boundary와 고정 Dataset/Gold/Grader/hash로 생성한 후보 비교·승격 evidence | Live Provider와 설치 제품 검증 |
+| Browser UI validation | 실제 UI의 Local API/SSE/확인·승인·복구 상호작용 | 모델 의미 품질과 Provider end-state 단독 증명 |
+| Live Provider validation | 테스트 계정의 실제 permission·READ/WRITE·reread end-state | signed installer/startup/upgrade 검증 |
+| Installed Product/Release validation | signed bundle의 Clean VM startup·runtime artifact·migration·E2E | 개발 checkout 단독 결과 |
+| Fake/Stub/controlled fault | 계약·오류·중복 방지·Recovery를 결정적으로 재현 | 실제 LLM, Live Provider, 제품 Release 성공 |
+
+개발 측정도 fake LangGraph가 아니라 production compiled Graph를 사용한다. synthetic READ 또는 fault injection을 사용했다면 실제 Provider 검증과 명확히 구분하며, 어느 한 종류의 증거가 다른 종류의 미수행을 PASS로 바꾸지 않는다.
 
 ### Current Main Experiment Case Budget
 
@@ -158,7 +171,7 @@ Parameter count나 model tag만으로 지원을 승인하지 않는다. exact re
 - Retrieval 실험에서는 `ToolRoutePlanV2.input_plan`을 고정하고 Retrieval Query·Read·RAG만 비교한다. `OutputPlanV1` 변경만으로 Retrieval 조건을 바꾸지 않는다.
 - Node 단독 실험은 Gold Upstream 입력을 사용하고, Handoff 실험은 실제 Upstream 출력을 사용한다.
 - LLM Judge는 의미 품질의 보조 지표이며 Safety·Tool·Argument·End-state 판정의 기준점이 아니다.
-- 실제 사용자 Connector 데이터는 평가셋에 포함하지 않는다. P0 Google Workspace의 Gmail·Tasks·Calendar도 합성 Fixture만 사용한다.
+- 실제 사용자 Connector 데이터는 평가셋에 포함하지 않는다. Google Workspace의 Gmail·Tasks·Calendar와 GitHub Issue 모두 합성 Fixture만 checked-in Dataset에 사용한다. Live Provider validation의 테스트 계정 데이터는 Dataset artifact와 분리한다.
 - 평균뿐 아니라 Case별 실패, 반복 안정성, 비용, p50·p95 Latency를 함께 본다.
 - Agent E2E는 최종 문장만 채점하지 않는다. **Transcript/Trajectory와 실제 Environment End-state를 분리해 기록하고, 최종 성공은 Domain·Fixture의 실제 상태로 판정한다.**
 - Tool·Connector 선택은 단일 Exact Route만 강제하지 않는다. 안전상 순서가 필수인 단계는 STRICT, 순서가 자유로운 Read는 SET/SUBSET/CONSTRAINT 방식으로 채점해 여러 정상 경로를 허용한다.
@@ -189,13 +202,13 @@ Parameter count나 model tag만으로 지원을 승인하지 않는다. exact re
 
 이 원칙은 외부 프레임워크를 그대로 복제하는 것이 아니라 현재 Domain과 deterministic Policy·MCP 경계에 맞춰 적용한다.
 
-### 2.2 Product Runtime isolation
+### 2.2 공식 Evaluation Runtime isolation
 
 Evaluation Harness는 Product Runtime 계약을 관측·비교할 뿐 권한을 넓히지 않는다.
 
-- Evaluation code는 Product Domain/Application/Agent/LangGraph/internal DTO·Repository·Adapter를 import하지 않는다. 실행 경계는 Public Product API, supported CLI, 또는 supported entrypoint subprocess뿐이다.
+- 공식 Evaluation code는 Product Domain/Application/Agent/LangGraph/internal DTO·Repository·Adapter를 import하지 않는다. 실행 경계는 Public Product API, supported CLI, 또는 supported entrypoint subprocess뿐이다. 12의 개발·회귀 production Graph script는 Product test/diagnostic lane이며 이 공식 runner boundary와 구분한다.
 - Product runtime도 `evaluation/**`를 import하지 않는다. Dataset/Gold/Grader는 release package와 Product process 밖에 남는다.
-- Node·Subgraph·Graph Profile 비교는 후보 Product deployment/config를 고정한 뒤 같은 public API scenario를 실행해 비교한다. private callable 직접 호출 결과는 Product 결과가 아니다.
+- 공식 Node·Subgraph·Graph Profile 비교는 후보 Product deployment/config를 고정한 뒤 같은 public API scenario를 실행해 비교한다. private callable 직접 호출 결과만으로 공식 Product promotion을 판정하지 않는다.
 
 - Product Agent에는 current Registry eligibility를 통과한 Connector/Resource/Effect/Tool projection과 owner Source가 허용한 Runtime input만 전달한다. Gold, grader rubric, hidden user goal, expected route/action, end-state answer는 전달하지 않는다.
 - User Simulator와 hidden decision script는 Evaluator 전용 artifact다. Simulator가 Confirmation/Approval/Reject/Cancel 자연어 응답을 만들 수는 있지만 `PolicyConfirmationReceiptV1`, Approval, Claim Token을 직접 생성하지 않는다. 실제 Application/Domain Controller가 검증한 뒤 생성한다.
@@ -213,7 +226,8 @@ Canonical Case
 ├─ Connector Fixture Snapshot
 │  ├─ google_workspace / Gmail
 │  ├─ google_workspace / Tasks
-│  └─ google_workspace / Calendar
+│  ├─ google_workspace / Calendar
+│  └─ github / Issues
 ├─ Canonical User Prompt
 ├─ Structured Gold
 ├─ Node Input·Gold
@@ -240,7 +254,7 @@ Experiment Projection
 
 ## 4. 제품 평가 Suite — Main 5
 
-제품 의사결정은 `A Model·Runtime`, `B Prompt·Node Quality`, `C Retrieval`, `D Agent Architecture`, `E Final Product Validation`의 5개 Main Experiment만 소유한다. 현재 P0 제품 검증은 Google Workspace 범위에서 수행하고, Synthetic Multi-Connector Harness는 Connector 확장 경계 검증으로만 해석한다. Non-current reproduction ID는 subordinate Audit/compat reader에서만 해석한다.
+제품 의사결정은 `A Model·Runtime`, `B Prompt·Node Quality`, `C Retrieval`, `D Agent Architecture`, `E Final Product Validation`의 5개 Main Experiment만 소유한다. 현재 제품의 Connector 검증 범위는 Google Workspace와 GitHub이며, Synthetic Multi-Connector Harness는 공통 경계 진단일 뿐 두 Connector의 product-style/Live evidence를 대체하지 않는다. Non-current reproduction ID는 versioned Evaluation artifact와 Git history에서만 해석한다.
 
 ### 4.1 Main Experiment
 
@@ -275,7 +289,7 @@ Review Gold               → PlanReviewResultV2
 
 ## 5. Current · Reproduction Artifact 경계
 
-Current Evaluation Runner와 release decision은 이 문서의 current contract family만 사용한다. Non-current reproduction artifact는 Git history와 subordinate Audit에서만 해석하며 current Dataset·Gold·Grader에 자동 승격하거나 같은 aggregate에 혼합하지 않는다.
+Current Evaluation Runner와 release decision은 이 문서의 current contract family만 사용한다. Non-current reproduction artifact는 Git history와 해당 versioned artifact에서만 해석하며 current Dataset·Gold·Grader에 자동 승격하거나 같은 aggregate에 혼합하지 않는다.
 
 
 ## 6. 실험 순서
@@ -292,7 +306,7 @@ Baseline Config 고정
 → 통합 Finalist Config 고정
 → G02 Fault·Recovery·Write Integrity
 → E Final Product Validation
-   - P0 Google Workspace E2E
+   - Google Workspace와 GitHub product-style E2E
    - Multi-Connector/HITL diagnostic lane
    - Holdout·Stress·Human Review finalist lane
 → Local Model·GPU Finalist Lane
@@ -515,7 +529,7 @@ Current non-Python artifact family는 다음과 같다.
 | Product API observation | public Run/API response의 semantic projection | result JSON 내부 normalized observation |
 | Product Episode Projection | `ProductEpisodeE2EProjectionV1` | UTF-8 JSON Lines; line마다 `ProductEpisodeE2EProjectionV1` 1개 |
 | Agent evaluation input | preserved semantic responsibility input; private callable target 아님 | UTF-8 JSON Lines |
-| Current Fixture Snapshot | `CurrentFixtureSnapshotV1` + provider-neutral Gmail/Tasks/Calendar source files | UTF-8 strict JSON; snapshot directory마다 manifest와 네 source file |
+| Current Fixture Snapshot | `CurrentFixtureSnapshotV1` + scenario에 필요한 provider-specific Gmail/Tasks/Calendar/GitHub Issue source files | UTF-8 strict JSON; snapshot manifest가 포함 source와 relation을 고정 |
 | Experiment Config | candidate/config metadata | UTF-8 strict JSON |
 | Result | dataset/grader/Product hash + public observation + metrics | UTF-8 strict JSON; case/run마다 하나 |
 | Scoring contract | `scoring-contract-v1.1` | UTF-8 strict JSON |
@@ -776,7 +790,7 @@ Agent 평가 결과는 단일 점수로 끝내지 않고 다음 네 층을 함�
 
 1. **Outcome** — Business Task Success, Answer/Plan Accuracy, Write Final State Correctness.
 2. **Process** — Stage Milestone, Handoff required-field preservation, Evidence ID/Constraint loss, contradiction introduction, Error Propagation Depth, duplicate/unnecessary Tool Call.
-3. **Efficiency** — `agent_invocation_count`, `llm_call_count`, input/output/communication token, Google API/Tool Call, Cost, p50/p95 Latency, Cost per Successful Run.
+3. **Efficiency** — `agent_invocation_count`, `llm_call_count`, input/output/communication token, Connector Provider API/Tool Call, Cost, p50/p95 Latency, Cost per Successful Run.
 4. **Reliability** — 반복 Trial 평균·분산, Case Win/Loss/Tie, paired difference, bootstrap confidence interval, finalist consistency.
 
 Product architecture comparison은 **후보 패키지의 native 성능·비용 비교**이며 `agent_count` 단독 인과효과로 보고하지 않는다. controlled post-retrieval decomposition diagnostic이 원인 분석을 보조한다.
@@ -850,7 +864,7 @@ Required Source·Resource·Evidence, Tool Route, Interaction, Verification, 금�
 
 ### 13.4 비용·속도
 
-Cost·Token·Agent Invocation·LLM Call·Google API Call·p95 Latency는 **정확도를 보상하는 점수 항목이 아니다.** Safety Gate와 품질 하한을 통과한 후보 사이에서 Pareto 비교·동률 판단에 사용한다.
+Cost·Token·Agent Invocation·LLM Call·Connector Provider API Call·p95 Latency는 **정확도를 보상하는 점수 항목이 아니다.** Safety Gate와 품질 하한을 통과한 후보 사이에서 Pareto 비교·동률 판단에 사용한다.
 
 따라서 `0.7×품질 + 0.3×비용` 같은 임의 종합 점수를 만들지 않는다.
 
@@ -882,15 +896,15 @@ Cost·Token·Agent Invocation·LLM Call·Google API Call·p95 Latency는 **정�
 Resource allowlist를 함께 검사하며, allowlist 위반은 기존 Safety hard gate에도 반영한다.
 고정 Node 순서를 정답으로 삼거나 normal no-result와 Provider 실패를 합치지 않는다.
 외부 진단 observation을 기존 runner로 재채점한 결과는 `EXTERNAL_OBSERVATION_ONLY`로 표시한다.
-스크립트의 production Graph/Local LLM + synthetic READ 검증은 명시적인 개발 진단이며,
-public Product E2E·Live Provider·release Prompt activation evidence로 승격하지 않는다.
+스크립트의 production Graph/선택 Local LLM + synthetic 또는 명시적 Live READ 검증은 실행한 경계에 대한 유효한 개발·회귀 측정이다.
+다만 공식 runner의 public Product E2E, 별도 Browser UI, Live Provider WRITE/end-state, Installed Release, release Prompt activation evidence로 자동 승격하지 않는다.
 
 - `Safety Contract Deterministic`: Policy·승인 전 Write 금지·Claim/Argument binding·`BeginExecutionAttempt` pre-dispatch gate·UNKNOWN_RESULT no-resend·금지 Side Effect·Connector/MCP 경계를 평가한다.
 - `User Interaction Deterministic`: Confirmation·Approval·Reject·Cancel의 필요 여부와 순서를 소유한다. Safety에 직접 연결되는 위반은 Hard Gate에도 반영한다.
 - `Tool Trajectory Deterministic`: `STRICT | SET | SUBSET | CONSTRAINT_ENVELOPE` 방식으로 필요한 Tool/Phase·금지 Tool·Argument Constraint를 채점한다. 정상 Read 순서를 하나로 고정하지 않는다.
 - `End-state Deterministic`: 실제 Environment의 최종 Resource 상태를 소유한다. current `E2EProjectionV5`와 applicable `ProductEpisodeE2EProjectionV1`의 구조화 `end_state_gold`만 정답으로 사용하며, required Gold가 없는 Case에서는 End-state 판정을 생성하지 않는다.
 - `Semantic Completion`: 사용자 목표·완료 의미를 보조 채점한다. Human-reviewed calibration을 통과해야 Candidate 선택에 사용할 수 있고 Deterministic 실패를 뒤집을 수 없다.
-- compatibility-only grader는 current scoring 집계에 포함하지 않는다. 재현이 필요할 때만 Audit tooling에서 별도로 사용한다.
+- compatibility-only grader는 current scoring 집계에 포함하지 않는다. 재현이 필요할 때만 해당 versioned Evaluation artifact와 Git history에서 별도로 사용한다.
 1. Holdout·Stress·반복성·Human Review 후 Product Decision Record 작성.
 
 세부 기계 계약은 current `scoring-contract-v1.1` artifact와 Grader Registry v0.4을 기준으로 한다. Exact repository path/file은 `16 Repository Architecture`가 소유한다.

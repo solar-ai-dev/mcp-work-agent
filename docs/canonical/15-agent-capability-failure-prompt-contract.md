@@ -1,7 +1,7 @@
 # 15. Agent Capability · Failure · Prompt 공통 계약
 
 > **Authority:** Agent capability·normalized failure·Prompt runtime contract. 승인/Claim/Write/Verification/Domain lifecycle의 최종 판정은 해당 owner를 따른다.  
-> **상태:** Approved v1.32 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
+> **상태:** Approved v1.33 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
 
 ## 0. 문서 목적
 
@@ -67,7 +67,7 @@ Task Preview의 자연어 수정 준비는 기존 `planning.compose_arguments_pe
 
 ### 1.2 Concern Authority 적용
 
-문서 번호를 하나의 global priority chain으로 해석하지 않는다. 충돌은 `01 PRD §1.1` / Project Source Guide의 **Concern Owner 규칙**으로 해소한다.
+문서 번호를 하나의 global priority chain으로 해석하지 않는다. 충돌은 `01 PRD`의 현재 제품 범위와 `00 Project Source Guide`의 **Concern Owner 규칙**으로 해소한다.
 
 ```
 제품 목표·범위            → 01 PRD

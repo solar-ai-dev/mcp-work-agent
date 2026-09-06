@@ -22,7 +22,7 @@
 ### 2.2 화면 이동 최소화
 
 - 승인, 수정, 취소, 재검증, 실행 결과, Recovery는 모두 중앙 채팅 안에서 처리한다.
-- Gmail·Tasks·Calendar는 왼쪽 패널에서 탐색하고 현재 채팅 Context로 바로 연결한다.
+- Gmail·Tasks·Calendar·GitHub Issue는 왼쪽 Resource 패널에서 탐색하고 현재 채팅 Context로 바로 연결한다.
 - 과거 대화는 오른쪽 패널에서 열고 이어서 작업한다.
 - 설정과 진단은 상단 버튼에서 Drawer 또는 Dialog로 연다.
 
@@ -53,9 +53,8 @@ Launcher 실행
 제품의 독립 화면은 최소화한다.
 
 1. 시작 검사 화면
-2. 최초 설정 온보딩 화면
-3. 메인 화면
-4. 설정·진단 Drawer 또는 Dialog
+2. 메인 화면
+3. 설정·진단 Drawer 또는 Dialog
 
 Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 아니라 메인 화면의 채팅 메시지와 Inline Card로 표시한다.
 
@@ -108,11 +107,11 @@ Core가 준비되면 메인 화면에 진입하고 저장된 이력·Settings를
 
 명시적 Local 모드의 실패를 동의 없는 API 전환으로 숨기지 않는다. 중단 Run은 이전 작업 안내와 서버가 허용한 재개·복구 행동을 표시한다. 마지막 저장 상태를 현재 실행 성공으로 추측하지 않는다.
 
-## 6. UI-002 최초 설정 온보딩
+## 6. UI-002 최초 Settings 안내
 
 ### 6.1 형태
 
-첫 실행도 일반 Settings와 같은 compact 화면을 사용한다. 큰 카드나 순차 체크리스트를 메인 구조로 만들지 않고 현재 상태와 필요한 다음 행동만 보여준다.
+첫 실행도 독립 온보딩 화면을 만들지 않고 일반 Settings와 같은 compact Drawer/Dialog를 사용한다. 큰 카드나 순차 체크리스트를 메인 구조로 만들지 않고 현재 상태와 필요한 다음 행동만 보여준다.
 
 ### 6.2 진행 순서
 
@@ -152,7 +151,7 @@ Google 연결 카드의 CTA는 `Google로 로그인`이며 앱 전체의 필수 
 │ 업무 자료    │ Agent 채팅                 │ 대화 내역     │
 │ Calendar     │ 누적 작업 내역             │ Conversation 목록 │
 │ Tasks        │ 메시지·Inline Action Card  │ 상태·검색     │
-│ Gmail        │ 입력창·AI 모드             │               │
+│ Gmail/GitHub │ 입력창                     │               │
 └──────────────┴────────────────────────────┴───────────────┘
 ```
 
@@ -167,7 +166,7 @@ Google 연결 카드의 CTA는 `Google로 로그인`이며 앱 전체의 필수 
 
 ### 8.1 항상 표시할 항목
 
-- 왼쪽 Google 패널 Toggle
+- 왼쪽 Resource 패널 Toggle
 - 제품명 `mcp-work-agent`
 - 오른쪽 대화 내역 Toggle
 - 설정
@@ -179,26 +178,27 @@ Google 연결 카드의 CTA는 `Google로 로그인`이며 앱 전체의 필수 
 
 - Local Agent API
 - Event Stream
-- Google
-- MCP
-- API LLM
+- Google Workspace
+- GitHub
+- Connector MCP
+- Gemini
 - Ollama
 - Local 모델
 - 마지막 검사 시간
 
 Google 연결 상태와 현재 계정 이메일은 설정의 Google 영역에서 확인한다. Header에는 정상 연결 chip과 계정 이메일을 중복 표시하지 않는다. 미연결 시 연결 Action과 업무 진행을 막는 오류의 기존 복구 안내는 유지한다.
 
-## 9. UI-005 왼쪽 Google 서비스 패널
+## 9. UI-005 왼쪽 Resource 패널
 
-Google 미연결이어도 Gmail·Tasks·Calendar 탐색 진입점은 유지한다. 각 영역은 `Google Workspace 연결이 필요합니다`와 Settings 연결 CTA를 표시하며 데이터 0건으로 표시하지 않는다. 연결되면 기존 목록·검색·상세 기능을 같은 경로에서 사용할 수 있다.
+왼쪽 패널은 연결된 Connector의 Resource를 한 경로에서 탐색한다. Google 미연결 상태는 Gmail·Tasks·Calendar에, GitHub 미연결 또는 허용 Repository 미선택 상태는 GitHub Issue에 각각 Settings CTA를 표시하며 정상 0건과 구분한다. 한 Connector의 미연결이 다른 Connector 탭을 막지 않는다.
 
 ### 9.1 목적
 
-Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agent 행동을 시작한다.
+Gmail·Tasks·Calendar·GitHub Issue를 확인하는 동시에 현재 항목에서 바로 Agent 행동을 시작한다.
 
 ### 9.2 공통 구성
 
-- `Calendar`, `Tasks`, `Gmail` 탭
+- 연결된 Connector 범위의 `Calendar`, `Tasks`, `Gmail`, `GitHub Issues` 탭
 - 검색·필터
 - 마지막 갱신 시간
 - 수동 새로고침
@@ -236,6 +236,14 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 이 Action들은 즉시 Google 쓰기를 수행하지 않는다. 선택한 Resource와 의도를 중앙 채팅에 전달해 Agent 분석을 시작하며, 쓰기 결과는 채팅 안에서 승인받는다.
 
+#### GitHub Issue 상호작용
+
+- `OPEN | CLOSED | ALL` 상태 목록 선택
+- Issue focus·상세 확인·`GitHub에서 열기`
+- checkbox로 현재 요청 Context에 포함
+
+Sidebar는 GitHub Write를 직접 수행하지 않는다. 선택한 Issue identity를 Agent 요청에 전달하며 CREATE/UPDATE/CLOSE/REOPEN은 공통 Preview·Approval·Write·Verification 경계를 따른다.
+
 ### 9.4 목록 조회와 Pagination
 
 - Tasks Sidebar는 allowlist 안의 Task List 선택·새로고침·추가 페이지 조회를 제공한다. allowlist가 비었거나 목록이 미결정이면 Provider 첫 목록을 임의 선택하지 않는다. 다른 허용 목록을 선택하면 그 목록의 미래 예정일을 포함한 미완료 Task를 조회한다. Browse 선택은 Settings allowlist나 WRITE target을 변경하지 않는다. 계정·목록 전환 시 완료 항목과 preload까지 이전 조회 상태를 폐기한다.
@@ -255,15 +263,15 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 ### 9.6 React Client Session Cache
 
-- Cache identity는 Google 계정, Source/container, 검색·필터·정렬·scope와 opaque continuation/batch generation으로 구성한다.
-- 목록 Metadata, opaque Local API continuation과 Calendar Month cache는 React Client Session Cache에만 유지한다. Provider raw continuation을 저장·해석하지 않는다.
-- UI 세션 종료, Google 계정 변경, 해당 Source 수동 새로고침 시 관련 Cache를 삭제한다.
+- Cache identity는 Connector 계정, Source/container, 검색·필터·정렬·scope와 opaque continuation/batch generation으로 구성한다.
+- 목록 Metadata, opaque Local API continuation, Calendar Month cache와 GitHub Issue 목록은 React Client Session Cache에만 유지한다. Provider raw continuation을 저장·해석하지 않는다.
+- UI 세션 종료, 해당 Connector 계정·container 변경, 접근 상실, 해당 Source 수동 새로고침 시 관련 Cache를 삭제한다.
 - 사이드바 목록과 사용되지 않은 검색 결과를 SQLite에 영구 저장하지 않는다.
 - 수동 새로고침을 누르면 해당 Source Cache를 비우고 첫 페이지를 최신 데이터로 다시 조회한다.
 
 ### 9.7 Resource 선택
 
-- 사용자는 하나 또는 여러 개의 Gmail·Task·Event를 선택할 수 있다.
+- 사용자는 하나 또는 여러 개의 Gmail·Task·Event·GitHub Issue를 선택할 수 있다.
 - 한 개를 클릭하면 Preview와 해당 Resource에서 수행할 수 있는 빠른 Agent Action을 표시한다.
 - Row click은 Focus Resource와 Preview만 갱신하고, checkbox는 별도의 다중 선택 Context 집합만 변경한다. Focus 변경은 기존 선택 집합을 변경하지 않는다.
 - 선택 Resource가 하나 이상이면 Composer 가까이에 선택 수와 사용자 의미 label을 compact하게 표시한다. 별도의 `선택 항목으로 요청`, `채팅에 추가`, `선택 해제` Action Bar는 표시하지 않는다.
@@ -279,7 +287,7 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 #### Agent 검색형
 
-사용자가 Query, 날짜·기간, 사람·이메일, Keyword 또는 복합 요구사항을 채팅에 입력하면 Agent가 Source와 검색 조건을 구조화하고 Google Source-native 검색을 수행한다. 목록 후보를 축소한 뒤 필요한 후보만 상세 조회한다.
+사용자가 Query, 날짜·기간, 사람·이메일, 프로젝트·Repository, Keyword 또는 복합 요구사항을 채팅에 입력하면 Agent가 허용된 Connector Source와 검색 조건을 구조화하고 Source-native 검색을 수행한다. 목록 후보를 축소한 뒤 필요한 후보만 상세 조회한다.
 
 ## 10. UI-006 중앙 Agent 채팅
 
@@ -290,24 +298,19 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 ### 10.2 채팅 Header
 
 - 대화 제목
-- 현재 선택 AI 방식의 사용자용 표시
 - 새 대화
 
 계정 이메일·정상 연결 chip은 Settings에 둔다. 실제 model/runtime 기술 정보는 진단 상세에 두고, 실행 방식이 바뀌거나 사용자 조치가 필요한 경우만 채팅에 알린다.
 
-### 10.3 AI 모드 설정
+### 10.3 AI 실행 방식 표시
 
-입력창 가까이에 Compact Selector로 표시한다.
-
-- 사용자 선택은 `Local AI`, `Gemini`만 표시
-- Active Run 중에는 모드 변경을 잠근다.
-- 선택한 runtime 미준비 시 다른 runtime으로 자동 전환하지 않고 현재 요청을 종료한 뒤 설정 안내를 표시한다.
+AI 실행 방식 선택은 Settings의 단일 설정에서만 변경한다. Composer나 채팅 Header에 별도 Selector를 두지 않는다. 사용자 조치가 필요할 때는 현재 `Local AI | Gemini` 선택과 준비 상태만 안내하고, 선택한 runtime 미준비를 다른 runtime 자동 전환으로 숨기지 않는다. 진행 중 Run의 binding은 Settings 변경으로 바꾸지 않는다.
 
 ### 10.4 입력창
 
 - 자연어 입력
 - 전송
-- 현재 첨부된 Gmail·Task·Event 수
+- 현재 첨부된 Gmail·Task·Event·GitHub Issue 수
 - 실행 중일 때 중단
 - Enter 전송, Shift+Enter 줄바꿈
 - 기본 상태는 1줄 높이의 compact 입력창이며 입력 내용에 따라 높이가 자동으로 늘어난다. 최대 높이에 도달하면 Composer 전체가 계속 커지지 않고 입력창 내부 scroll로 전환한다. 전송 후 입력값이 비워지면 다시 1줄 높이로 돌아온다.
@@ -754,7 +757,7 @@ App shell과 Composer는 고정하고 좌·우 패널 및 중앙 이력은 독�
 
 ### 29.2 Left Resource Panel
 
-기존 Gmail·Tasks·Calendar 탐색을 보존한다. GitHub 연결/저장소 설정을 위해 두 번째 자료 탐색 앱이나 미요구된 repository dashboard를 만들지 않는다. 현재 제공되는 Issue 탐색·선택 UI가 있으면 기존 Resource 경로와 일치하게 사용한다.
+기존 Gmail·Tasks·Calendar 탐색과 현재 GitHub Issue 탐색·선택을 같은 Resource 경로에 보존한다. GitHub 연결/저장소 설정을 위해 두 번째 자료 탐색 앱이나 미요구된 repository dashboard를 만들지 않는다.
 
 Focus는 중앙 Preview, checkbox 집합은 요청 Context다. 서로를 임의 초기화하지 않는다. Preview는 compact하고 전체 내용은 bounded 영역의 펼침·스크롤로 접근한다. 제공되지 않은 제목·metadata는 추정하지 않는다.
 
@@ -774,10 +777,10 @@ Loading, Empty, Error, Selected, Focus, Disabled, Submitting, 사용자 대기�
 
 ### 30.1 Calendar Sidebar
 
-- Calendar Sidebar는 Month View만 제공한다. 월력은 일요일 시작이며 실제 필요한 5/6주 grid를 계산하고 configured user timezone의 `[gridStart, gridEnd)`를 사용한다. `gridStart`는 월 1일 이전/당일의 가장 가까운 일요일 00:00, `gridEnd`는 마지막 렌더 주 다음 일요일 00:00이다.
+- Calendar Sidebar는 Month View만 제공한다. 월력은 일요일 시작이며 실제 필요한 5/6주 grid를 계산하고 제품 고정 `Asia/Seoul` timezone의 `[gridStart, gridEnd)`를 사용한다. `gridStart`는 월 1일 이전/당일의 가장 가까운 일요일 00:00, `gridEnd`는 마지막 렌더 주 다음 일요일 00:00이다.
 - visible grid 범위의 Event instance는 `singleEvents=true`, Provider page size 최대 100으로 terminal까지 materialize하며 UI pagination을 만들지 않는다. 현재 월 complete 뒤 이전/다음 월 background prefetch는 한 단계까지만 허용하고 chain prefetch하지 않는다.
 - 날짜 cell은 Event 0개면 marker 없음, 1개면 dot 하나, 2개 이상이면 dot+count를 표시한다. 날짜 클릭은 API 호출 없이 selected-date 목록만 변경한다. Month 검색은 완전히 materialize한 cache를 client-side filter하며 marker/count와 selected-date 목록에 함께 적용한다.
-- All-day Event는 `[start.date, end.date)`, timed Event는 configured timezone에서 `[start, end)`와 실제로 겹치는 날짜 cell에 표시한다. 정확히 다음 날 00:00에 끝나는 Event는 다음 날 cell에 표시하지 않는다. 반복 Event는 occurrence 단위다.
+- All-day Event는 `[start.date, end.date)`, timed Event는 제품 고정 `Asia/Seoul` timezone에서 `[start, end)`와 실제로 겹치는 날짜 cell에 표시한다. 정확히 다음 날 00:00에 끝나는 Event는 다음 날 cell에 표시하지 않는다. 반복 Event는 occurrence 단위다.
 - Event row는 제목 아래에 시간 범위를 표시한다. 같은 날 시간 Event는 `YYYY년 M월 D일 (요일) 오전/오후 h:mm - 오전/오후 h:mm`, All-day Event는 `YYYY년 M월 D일 (요일) · 하루 종일`로 표시한다. Sidebar에는 `시작`, `종료` label을 표시하지 않고 중앙 Resource Viewer의 상세 필드는 유지한다.
 - Calendar tab에는 numeric badge를 표시하지 않는다. 일반 Upcoming Browse는 `Asia/Seoul` 기준 현재부터 **향후 90일** 기본 범위를 유지하지만 Month View range와 혼용하지 않는다.
 - Refresh는 현재 monthAnchor·selected date를 유지하고 현재 visible grid cache만 fresh materialize한다.
@@ -788,14 +791,14 @@ Loading, Empty, Error, Selected, Focus, Disabled, Submitting, 사용자 대기�
 - 기본 미완료 Browse는 Provider 반환 순을 유지한다. 별도 정렬 row를 두지 않고 `⋮` 메뉴의 `기본 순서 | 날짜순`만 제공하며 날짜순은 전체 materialization 후 `scheduled_date` 오름차순·날짜 없는 Task 후순위로 정렬한다.
 - 목록은 `tasks.list` metadata를 사용하고 `tasks.get`은 focus/선택 상세 조회에만 사용한다. Provider metadata batch를 Session Cache에 받고 UI는 configured `SIDEBAR_PAGE_SIZE`로 표시한다.
 - 미완료 목록 하단의 `완료됨(N)` section은 기본 접힘이다. completed scope를 background terminal materialization해 실제 `task_status=completed`만 `resource_id`로 dedupe하고 exact `N`과 row cache를 함께 만든다. section 펼침과 `더 보기`는 cache를 configured `SIDEBAR_PAGE_SIZE` 단위로 보여주는 presentation이며 Provider 추가 호출을 만들지 않는다.
-- Provider raw `completed` RFC3339은 `completed_at`으로 보존한 경우에만 configured `SettingsViewV1.timezone` 기준 `완료일: M월 D일 (요일)` 보조 텍스트로 표시한다. 값이 없거나 유효하지 않으면 완료일 줄을 생략하고 `scheduled_date`·`due`·`updated`·현재 시각을 fallback으로 사용하지 않는다.
+- Provider raw `completed` RFC3339은 `completed_at`으로 보존한 경우에만 `SettingsViewV1.timezone=Asia/Seoul` 기준 `완료일: M월 D일 (요일)` 보조 텍스트로 표시한다. 값이 없거나 유효하지 않으면 완료일 줄을 생략하고 `scheduled_date`·`due`·`updated`·현재 시각을 fallback으로 사용하지 않는다.
 - Refresh는 incomplete와 completed cache를 모두 fresh generation으로 갱신하며 completed 결과는 terminal 성공 시 atomic replace한다.
 - Local API Projection은 Provider `needsAction`을 `미완료`, `completed`를 `완료`로 정규화한다. Google `due`는 UI에서 `예정일`로만 표시하고 예정일 경과는 상태 전이가 아니라 `예정일 지남` 보조 문구만 허용한다.
 - Task List는 실제 반환 값일 때만 보조 표시하고 priority, 가짜 category·Task List 이름·색상 dot·raw Provider enum/token은 표시하지 않는다.
 
 ### 30.3 Resource Viewer Empty State
 
-- 중앙 Viewer 제목은 `자료 상세`로 Source 공통이다. Focus가 없을 때 메일은 `왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다.`, Tasks는 `왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다.`, Calendar는 `왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다.`를 표시한다.
+- 중앙 Viewer 제목은 `자료 상세`로 Source 공통이다. Focus가 없을 때 메일은 `왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다.`, Tasks는 `왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다.`, Calendar는 `왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다.`, GitHub는 `왼쪽 목록에서 GitHub Issue를 선택하면 상세 내용을 확인할 수 있습니다.`를 표시한다.
 - Source 전환 시 이전 Source의 Focus 및 상세 정보는 남지 않는다. 새 Source의 Empty State를 먼저 표시하고, 행 Focus 후 해당 Source의 실제 Projection 상세만 표시한다.
 
 ## 31. Gmail 첨부파일 UX

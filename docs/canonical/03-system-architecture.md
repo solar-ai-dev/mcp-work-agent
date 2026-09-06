@@ -7,7 +7,7 @@
 | 항목 | 내용 |
 | --- | --- |
 | 문서명 | 03. mcp-work-agent 시스템 아키텍처 설계서 |
-| 상태 | Draft v3.14 |
+| 상태 | Draft v3.15 |
 | 기준일 | 2026-09-07 |
 | 대상 릴리스 | P0 MVP |
 | 공식 환경 | Windows 11 x64 · 최신 Chrome·Microsoft Edge |
@@ -26,9 +26,9 @@ React UI
       → Connector Application Port
       → Core-side Connector Adapter
       → Connector Runtime Registry + MCPClientPort
-      → Connector MCP Server
-         ├─ Google Workspace MCP (P0)
-         └─ future Connector MCP
+       → Connector MCP Server
+          ├─ Google Workspace MCP
+          └─ GitHub MCP
       → Provider-specific Adapter → Provider API
 
 Write 실행 후에는 Application의 결정적 verification use case가
@@ -36,7 +36,7 @@ Write 실행 후에는 Application의 결정적 verification use case가
 ```
 
 - **판단은 Agent**, **허용·실행 사실은 Domain**, **외부 효과는 Connector MCP 경계**, **재개 위치는 Checkpoint**가 소유한다.
-- Google Workspace는 P0의 첫 번째 Connector이며 Core의 유일한 개념 경계가 아니다.
+- Google Workspace와 GitHub는 독립 Connector이며 같은 Core 경계와 safety lifecycle을 사용한다.
 - 원격 제품 Backend 없이 사용자 PC에서 동작한다.
 
 ## 1. 문서 목적
@@ -82,13 +82,13 @@ Write 실행 후에는 Application의 결정적 verification use case가
 
 mcp-work-agent는 **로컬 Frontend와 Python Modular Monolith를 분리한 단일 사용자 애플리케이션**으로 구성한다.
 
-> **React Frontend가 사용자 화면을 담당하고, FastAPI Local Agent Service가 Application·LangGraph·Domain·Persistence의 단일 진입 경계를 제공한다. 외부 업무 시스템 접근은 Connector Runtime/MCP boundary를 공통 경계로 사용하고, 각 Provider API/SDK·Credential 적용·raw 응답 해석은 해당 Connector MCP Server 내부 Adapter가 소유한다. P0에서는 Google Workspace Connector가 Gmail·Tasks·Calendar를 제공한다. 모든 제품 프로세스는 사용자 PC에서 실행된다.**
+> **React Frontend가 사용자 화면을 담당하고, FastAPI Local Agent Service가 Application·LangGraph·Domain·Persistence의 단일 진입 경계를 제공한다. 외부 업무 시스템 접근은 Connector Runtime/MCP boundary를 공통 경계로 사용하고, 각 Provider API/SDK·Credential 적용·raw 응답 해석은 해당 Connector MCP Server 내부 Adapter가 소유한다. 현재 Google Workspace Connector는 Gmail·Tasks·Calendar를, GitHub Connector는 Issue를 제공한다. 모든 제품 프로세스는 사용자 PC에서 실행된다.**
 주요 실행 단위는 다음 네 가지다.
 
 1. **Launcher** — Local Service 시작, 동적 포트 선택, Health Check, 브라우저 열기와 종료 조정
 2. **React Frontend** — React + TypeScript + Vite 기반 UI; 운영에서는 FastAPI가 정적 산출물을 제공
 3. **FastAPI Local Agent Service** — REST Command·Query, SSE Event, Application, LangGraph, Policy, LLM Router, Persistence
-4. **Connector MCP Runtime** — Connector별 MCP Server 수명주기·`SignedToolRegistry` signed projection/descriptor binding·Transport를 관리한다. MCP Runtime은 독립 Tool semantic Registry를 소유하지 않는다. P0에는 **Google Workspace MCP Server**가 포함되어 Gmail·Tasks·Calendar Tool과 Google OAuth·Provider Adapter를 제공한다.
+4. **Connector MCP Runtime** — Connector별 MCP Server 수명주기·`SignedToolRegistry` signed projection/descriptor binding·Transport를 관리한다. MCP Runtime은 독립 Tool semantic Registry를 소유하지 않는다. 설치 Artifact에는 **Google Workspace MCP Server**와 **GitHub MCP Server**가 포함되며 각 Connector가 자신의 Tool·Credential·Provider Adapter를 제공한다.
 
 검증된 GPU 환경에서는 **Ollama Runtime**이 선택적으로 추가된다. 별도 원격 Backend, SaaS API, Queue, 원격 MCP Server는 두지 않는다.
 
@@ -163,7 +163,7 @@ FastAPI Route
 | ARC-014 | Versioned Prompt Registry | Supervisor는 Node만 Routing하고 선택된 Agent·Application Node가 Node·상태·목적별 PromptRef를 확정한다. 각 LLM Node에는 deterministic Typed Input Projection을 거쳐 Prompt Runtime Input Contract가 허용한 필드만 전달한다. |
 | ARC-004 | 결정적 LangGraph Supervisor 기반 평가 가능 Workflow | `SINGLE_BASELINE`, `THREE_STAGE`, `SIX_ROLE_BASELINE`을 같은 안전·Tool·Policy 계약으로 비교한다. Main Graph는 Versioned Typed State의 공식 결과와 Edge를 소유하고 Agent는 Subgraph별 Typed Local State와 Node별 최소 Projection을 사용한다. Tool Route가 IN/OUT Route를 한 번 확정하되 `InputRoutePlanV1`과 `OutputPlanV1`을 독립 revision Artifact로 유지하고, Output-only 변경은 기존 Retrieval을 무효화하지 않는다. Release Graph에서 READ는 IN Route·Retrieval이 단독 소유하고 OUT Action은 CREATE·UPDATE·SEND·DELETE만 허용한다. 각 Main State Artifact는 단일 Owner만 새 revision을 만들며 Subgraph는 owner field와 허용 workflow signal만 patch merge한다. 또한 Confirmation은 발생 Subgraph의 checkpoint로 resume하고 모든 공식 disposition은 결정적 Supervisor Edge로 닫힌다. 이후 Retrieval의 결정적 Read Node만 고정 IN Route에서 Connector Read를 수행한다. Planning은 고정 OUT Tool을 소비한다. 승인·실행·검증·복구는 Graph 후보와 독립된 결정적 Application/Domain responsibility이 통제한다. |
 | ARC-005 | Agent / deterministic Policy / Domain 분리 | LLM은 semantic candidate를 제안하고 deterministic Policy는 허용·확인 requirement를, Domain은 lifecycle guard·transition을 결정한다. |
-| ARC-006 | 외부 Connector 연동은 MCP `stdio` 공통 경계 | 제품 Core는 Connector ID·Resource Type·MCP Tool/Port 계약에만 의존하고 Provider API·SDK·Credential Adapter는 Connector MCP Server 내부에 격리한다. P0 Google Workspace는 이 일반 경계의 첫 구현이며 Local API는 Provider API의 대체 경로가 아니다. |
+| ARC-006 | 외부 Connector 연동은 MCP `stdio` 공통 경계 | 제품 Core는 Connector ID·Resource Type·MCP Tool/Port 계약에만 의존하고 Provider API·SDK·Credential Adapter는 Connector MCP Server 내부에 격리한다. 현재 Google Workspace와 GitHub가 이 경계를 사용하며 Local API는 Provider API의 대체 경로가 아니다. |
 | ARC-007 | Checkpoint와 Domain Store 분리 | Graph 재개 상태와 제품의 승인·실행 사실을 별도로 보존한다. |
 | ARC-008 | 모든 쓰기 후 Effect별 결정적 검증 | Tool 응답만 신뢰하지 않는다. CREATE·UPDATE는 GET 비교, DELETE는 대상 부재/삭제 상태, SEND는 Sent 결과 조회를 사용한다. |
 | ARC-009 | Local Runtime은 Ollama로 고정 | 별도 Loopback process의 상태와 설치된 지원 모델만 검사하며 제품이 설치·pull·provisioning하지 않는다. |
@@ -215,8 +215,10 @@ flowchart LR
     CAP --> CA["Core-side Connector Adapter"]
     CA --> CR["Connector Runtime Registry"]
     CR --> MC["MCPClientPort"]
-    MC -->|"JSON-RPC over stdio"| MCP["Google Workspace MCP Server"]
-    MCP -->|"Gmail·Tasks·Calendar API"| GOOGLE["Google Provider APIs"]
+    MC -->|"JSON-RPC over stdio"| GMCP["Google Workspace MCP Server"]
+    MC -->|"JSON-RPC over stdio"| HMCP["GitHub MCP Server"]
+    GMCP -->|"Gmail·Tasks·Calendar API"| GOOGLE["Google Provider APIs"]
+    HMCP -->|"Issue API"| GITHUB["GitHub API"]
     APP --> LLM["LLM Router / Port"]
     LLM -->|"허용된 Typed Projection"| EXT["API LLM 제공자"]
     LLM -->|"로컬 추론"| OLLAMA["Ollama<br>선택적 GPU 실행 환경"]
@@ -224,7 +226,8 @@ flowchart LR
     APP --> PER["Persistence Port / Adapter"]
     PER -->|"Domain Store·Checkpoint"| DB["SQLite"]
     LLM -->|"LLM API Key · KEYRING mode"| KEYRING["운영체제 키 저장소"]
-    MCP -->|"Google Refresh Token 상태·사용"| KEYRING
+    GMCP -->|"Google credential 상태·사용"| KEYRING
+    HMCP -->|"GitHub credential 상태·사용"| KEYRING
 ```
 
 ### 5.1 외부 Actor와 시스템
@@ -233,9 +236,10 @@ flowchart LR
 | --- | --- | --- |
 | 사용자 | 자연어 요청, 확인 질문 응답, 쓰기 승인·수정·거절 | 인증된 로컬 사용자이나 입력은 Schema 검증 필요 |
 | Google APIs | Gmail·Tasks·Calendar 조회·허용된 쓰기·결과 재조회 | 외부 시스템 응답으로 정상화·검증 필요 |
+| GitHub API | Repository 접근 확인, Issue 조회·허용된 쓰기·결과 재조회 | 외부 시스템 응답으로 정상화·검증 필요 |
 | API LLM Provider | API_LLM 추론 | 외부 처리자, 최소 Context만 전송 |
 | Ollama | LOCAL_GPU 추론 | 로컬 프로세스이나 출력은 비신뢰 LLM 결과 |
-| OS Keyring | Google Refresh Token은 MCP Credential Provider, LLM API Key는 LLM Adapter가 분리된 Entry로 사용 | Secret 저장의 기준점 |
+| OS Keyring | Google/GitHub credential은 각 MCP Credential Provider, LLM API Key는 LLM Adapter가 분리된 Entry로 사용 | Secret 저장의 기준점 |
 
 ## 6. 전체 실행 환경·프로세스 구조
 
@@ -282,14 +286,17 @@ flowchart TB
         B --> FE
         CLIENT --> HTTP
         SSE --> CLIENT
-        MC -->|"JSON-RPC over stdio"| MCP["Google Workspace MCP Server"]
-        MCP --> KR2["운영체제 키 저장소<br>Google Token Entry"]
+        MC -->|"JSON-RPC over stdio"| GMCP["Google Workspace MCP Server"]
+        MC -->|"JSON-RPC over stdio"| HMCP["GitHub MCP Server"]
+        GMCP --> KR2["운영체제 키 저장소<br>Google Credential Entry"]
+        HMCP --> KR3["운영체제 키 저장소<br>GitHub Credential Entry"]
         PER --> DB["SQLite"]
         PER --> KR["운영체제 키 저장소"]
         LLM --> O["선택적 Ollama"]
     end
 
-    MCP -->|"HTTPS"| GOOGLE["Gmail·할 일·캘린더"]
+    GMCP -->|"HTTPS"| GOOGLE["Gmail·할 일·캘린더"]
+    HMCP -->|"HTTPS"| GITHUB["GitHub Issues"]
     LLM -->|"HTTPS"| EXT["API LLM 제공자"]
 ```
 
@@ -301,8 +308,10 @@ flowchart TB
 | Chrome·Edge + React Frontend | 로컬 UI Client | 탭이 닫히거나 새로고침되어도 영구 Run 상태는 SQLite에 남는다. |
 | FastAPI Local Agent Service | 제품의 중심 Python 프로세스 | REST·SSE·Application·Agent가 중단되며 Checkpoint와 Domain 상태로 복구한다. |
 | Google Workspace MCP Server | Local Agent Service가 관리하는 단일 자식 프로세스 | Google 읽기·쓰기 Tool이 중단된다. 쓰기 중 장애는 결과 재조회 후 상태를 확정한다. |
+| GitHub MCP Server | Local Agent Service가 관리하는 단일 자식 프로세스 | GitHub 읽기·쓰기 Tool이 중단된다. 쓰기 중 장애는 결과 재조회 후 상태를 확정한다. |
 | Ollama | 선택적 로컬 외부 프로세스 | Local AI 요청만 중단하고 Gemini로 자동 전환하지 않는다. |
 | Google Workspace APIs | 외부 시스템 | 일시 오류·인증 만료·Quota 오류를 공통 오류로 변환한다. |
+| GitHub API | 외부 시스템 | 일시 오류·인증 만료·권한·Rate Limit 오류를 공통 오류로 변환한다. |
 | API LLM Provider | 선택적 외부 추론 시스템 | Gemini 요청만 실패 처리하고 Local로 자동 전환하지 않는다. |
 
 ## 7. 프런트엔드와 로컬 에이전트 서비스 논리 구조
@@ -324,15 +333,15 @@ flowchart LR
 
 책임:
 
-- 시작 검사, 온보딩, 메인 3열 레이아웃, 설정·진단 렌더링
-- Gmail·Tasks의 materialized page/batch와 opaque Local API continuation, Calendar Month cache를 UI Session Cache에서 관리
+- 시작 검사, 메인 3열 레이아웃, compact 설정·진단 렌더링
+- Gmail·Tasks의 materialized page/batch와 opaque Local API continuation, Calendar Month cache, GitHub Issue 목록을 UI Session Cache에서 관리
 - 사용자 메시지, 확인 질문, 승인, 수정, 거절, 취소 Command 수집
 - REST Response, Run Snapshot과 SSE Event를 View State로 반영
 - Event Cursor·Aggregate Version으로 중복·오래된 화면 Event 제거
 
 제한:
 
-- Google API·MCP·SQLite·OS Keyring 직접 호출 금지
+- Provider API·MCP·SQLite·OS Keyring 직접 호출 금지
 - 승인 Button에서 Write Tool 직접 실행 금지
 - Browser Storage와 Client State를 승인·실행 사실의 기준점으로 사용 금지
 - API Error·SSE Disconnect만으로 Domain 실패를 추정 금지
@@ -387,7 +396,7 @@ React
 ### 7.5 Domain·Safety Core
 
 - Tool Allowlist, 상태 전이, Schema·Policy, Evidence, 중복·충돌, Approval Hash, Idempotency, Verification 판정을 소유한다.
-- React, FastAPI, LangGraph Runtime, Google SDK에 직접 의존하지 않는다.
+- React, FastAPI, LangGraph Runtime, Provider SDK에 직접 의존하지 않는다.
 
 ### 7.6 Integration Layer
 
@@ -397,7 +406,7 @@ React
 - SQLite Repository Adapter
 - LangGraph Checkpointer Adapter
 - LLM API Key용 Credential Adapter — `KEYRING`은 OS Keyring, `SESSION_ONLY`은 Local Agent Process Memory
-- MCP 내부 Google Credential Provider
+- Connector MCP 내부의 Provider별 Credential Provider
 - Hardware·Process Diagnostics Adapter
 - Clock·UUID Adapter
 
@@ -426,7 +435,7 @@ flowchart TB
     POLICY --> APPROVAL["사용자 승인 대기<br>Interrupt"]
     APPROVAL --> PRE["승인·해시·원본·멱등성 재검증"]
     PRE --> TOOL["MCP 쓰기 도구"]
-    TOOL --> GET["Google 자원 재조회"]
+    TOOL --> GET["대상 Connector 자원 재조회"]
     GET --> VER{"예상값과 실제값이 일치하는가?"}
     VER -->|"일치"| DONE(["완료"])
     VER -->|"불일치"| REC["복구 선택 대기<br>Interrupt"]
@@ -451,14 +460,14 @@ flowchart TB
 - Approval Hash와 만료
 - Idempotency
 - MCP Write 실행 허용
-- Google 재조회 결과 정상화·비교
+- Connector 재조회 결과 정상화·비교
 - Secret 접근과 로그 마스킹
 
 ### 8.3 요청 진입 방식과 Source 조회
 
 - `RESOURCE_SELECTED`: Browser의 authenticated opaque `selection_handle`을 Application이 current account/session/connector/resource identity로 resolve한 결과를 시작점으로 사용하고, 요청 수행에 필요할 때만 다른 Source를 확장한다.
-- `AGENT_SEARCH`: Query·기간·사람·이메일·Keyword를 구조화해 Google Source-native 목록 검색을 수행하고, Metadata로 후보를 축소한 뒤 필요한 후보만 상세 조회한다.
-- Gmail·Tasks Sidebar의 materialized page/batch와 opaque Local API continuation, Calendar Month cache는 React Client Session Cache에만 유지하며 SQLite에 영구 저장하지 않는다.
+- `AGENT_SEARCH`: Query·기간·사람·이메일·프로젝트·Repository·Keyword를 구조화해 frozen Route가 허용한 Connector의 Source-native 검색을 수행하고, Metadata로 후보를 축소한 뒤 필요한 후보만 상세 조회한다.
+- Gmail·Tasks Sidebar의 materialized page/batch와 opaque Local API continuation, Calendar Month cache, GitHub Issue 목록은 React Client Session Cache에만 유지하며 SQLite에 영구 저장하지 않는다.
 - 두 진입 방식은 Context 구성 이후 동일한 분석·계획·승인·실행·검증 Workflow를 사용한다.
 
 ## 9. 컴포넌트 책임
@@ -467,16 +476,17 @@ flowchart TB
 | --- | --- | --- |
 | React Frontend | 사용자 입력, View State, REST·SSE 렌더링 | Connector Write 실행, 정책 결정, Secret 접근 |
 | Typed API Client | Versioned REST·SSE 통신, Cursor·Request ID | Domain 상태 결정 |
-| Frontend Session Cache | Gmail·Tasks page/batch·opaque Local API continuation과 Calendar Month cache의 UI 세션 재사용 | 영구 승인·실행 상태 |
+| Frontend Session Cache | Gmail·Tasks page/batch·opaque Local API continuation, Calendar Month cache와 GitHub Issue 목록의 UI 세션 재사용 | 영구 승인·실행 상태 |
 | FastAPI Adapter | Local Session·Schema·Command·Event 경계 | Policy·Domain 규칙 복제 |
-| Application use cases | Run 명령, 상태 전이, 승인·실행·복구 조정 | LLM 의미 판단, Google SDK 세부사항 |
+| Application use cases | Run 명령, 상태 전이, 승인·실행·복구 조정 | LLM 의미 판단, Provider SDK 세부사항 |
 | LangGraph Runtime | Workflow, Interrupt, Checkpoint 재개 | 승인·실행 사실의 유일한 저장 |
 | deterministic Policy | allow/deny/confirmation requirement, Tool/effect allowlist | UI, DB mutation, Provider SDK |
 | Domain | aggregate guard, lifecycle transition, version/freshness invariant | UI, Product Policy definition, Provider SDK |
 | LLM Runtime Router | 요청 모드와 실제 Runtime 선택, fallback 기록 | 정책 우회, Tool 허용 |
-| MCP Client | Tool 계약 호출과 Transport 관리 | Google Credential 원문 관리 |
+| MCP Client | Tool 계약 호출과 Transport 관리 | Connector Credential 원문 관리 |
 | Connector Runtime Registry | `connector_id → active MCP child process/handshake handle`의 process-local binding | Tool semantic metadata, Policy, Provider Credential |
 | Google Workspace MCP Server | Google OAuth·API Adapter, 등록 Tool Handler·Schema exposure, `SignedToolRegistry` signed projection 검증, 실행 경계 검증 | Agent 계획과 사용자 UX, Core Tool semantic Registry |
+| GitHub MCP Server | GitHub Device Flow·API Adapter, 등록 Tool Handler·Schema exposure, signed projection 검증, 실행 경계 검증 | Agent 계획과 사용자 UX, 별도 Graph·Port·Core Tool Registry |
 | Domain Repositories | Conversation·Run·Action·Approval·Execution·Verification 저장 | Graph 중간 Channel 상태 |
 | LangGraph Checkpointer | Graph State와 Interrupt 재개 정보 | 감사 사실의 기준점 |
 | Audit Writer | 승인·수정·차단·실행·검증 append-only 기록 | 전체 Gmail 원문 저장 |
@@ -486,7 +496,7 @@ flowchart TB
 | 데이터 | 기준 저장소 | 설명 |
 | --- | --- | --- |
 | 패널 열림·너비, 현재 탭, 임시 선택 | React Client State 또는 비밀이 아닌 로컬 설정 | UX 상태이며 실행 사실이 아님 |
-| Sidebar page/batch·opaque Local API continuation·Calendar Month cache | React Client Session Cache | UI 세션 종료·계정/container/scope 변경·수동 새로고침 시 폐기 |
+| Sidebar page/batch·opaque Local API continuation·Calendar Month cache·GitHub Issue 목록 | React Client Session Cache | UI 세션 종료·Connector 계정/container/scope 변경·수동 새로고침 시 폐기 |
 | Agent 검색 중간 후보와 상세 원문 | 현재 Run 메모리 | 사용되지 않은 후보와 전체 원문은 영구 저장하지 않음 |
 | Conversation·Message | SQLite Domain Store | 대화 내역 복원 |
 | Run·Action·Approval | SQLite Domain Store | 제품의 제안·승인 사실 기준점 |
@@ -494,6 +504,7 @@ flowchart TB
 | Audit | SQLite append-only 저장 | 안전·책임 추적 |
 | Graph State·Interrupt | LangGraph Checkpointer | Workflow 재개 지점 |
 | Gmail·Tasks·Calendar 원본 | Google Workspace APIs | 원본 Resource의 기준점 |
+| GitHub Repository·Issue 원본 | GitHub API | 원본 Resource와 실제 접근 상태의 기준점 |
 | 실제 사용 Resource ID·Evidence excerpt | SQLite Domain Store | Run 보존 기간 동안 최소 근거 보존 |
 | Google Refresh Token | OS Keyring | MCP Credential Provider만 읽음. SQLite·Checkpoint·일반 로그 저장 금지 |
 | Google Access Token | Connector MCP Credential Provider Process Memory | persistent storage 금지 |
@@ -509,11 +520,11 @@ Domain Store          = 무엇이 제안·승인·실행·검증되었는가
 
 Graph Node 구성이 변경되거나 Checkpoint가 정리돼도 승인·실행·Audit 사실은 Domain Store에 남아야 한다. 반대로 Domain Row만으로 LLM 호출 중간 상태를 복원하려 하지 않는다.
 
-### 10.2 Google Source Cache 소유권
+### 10.2 Connector Sidebar Cache 소유권
 
 03은 Cache의 **위치·수명·비권위성**만 소유한다. exact UI cache identity/invalidation은 02가, opaque Local API continuation과 Provider raw continuation 경계는 07이 소유한다.
 
-- Gmail·Tasks의 materialized page/batch와 opaque Local API continuation, Calendar Month cache는 UI 세션 데이터다.
+- Gmail·Tasks의 materialized page/batch와 opaque Local API continuation, Calendar Month cache, GitHub Issue 목록은 UI 세션 데이터다.
 - Cache는 승인·중복·충돌·검증 판단의 기준점이 아니며 SQLite·Checkpoint에 승격하지 않는다.
 - 선택형 요청 시작, 계획 확정, 승인 후 실행 직전, 실행 직후에는 Connector를 통한 최신 Provider Read를 우선한다.
 
@@ -637,7 +648,7 @@ FastAPI Local Agent Service의 Application·Domain에서 승인과 Policy를 검
 - 허용된 필드만 포함하는지
 - `ClaimContextV2`의 Action·Approval·Attempt·Tool binding과 Signature·TTL·Nonce가 유효한지
 - Canonical Arguments Hash가 일치하는지
-- 현재 Google 계정과 대상 Resource가 일치하는지
+- 현재 Connector 계정과 대상 Resource가 일치하는지
 
 금지 Tool은 MCP Server에 등록하지 않는다.
 
@@ -646,7 +657,7 @@ FastAPI Local Agent Service의 Application·Domain에서 승인과 Policy를 검
 ```
 Write Tool 실행
 → Resource ID와 실행 Metadata 저장
-→ Google GET 재조회
+→ 대상 Connector의 독립 Read로 재조회
 → 공통 Resource Schema로 정상화
 → expected와 actual 필드 비교
 → VERIFIED 또는 MISMATCH 저장
@@ -670,7 +681,7 @@ flowchart LR
 - 일부 승인 시 승인된 Action과 독립 Action만 실행한다.
 - Action 수정으로 종속 Arguments가 바뀌면 관련 Action을 재계획·재검증한다.
 
-SQLite와 Google API를 하나의 ACID Transaction으로 묶을 수 없으므로 Plan 전체가 아닌 Action 단위 상태 전이를 사용하는 Saga형 실행으로 처리한다.
+SQLite와 외부 Provider API를 하나의 ACID Transaction으로 묶을 수 없으므로 Plan 전체가 아닌 Action 단위 상태 전이를 사용하는 Saga형 실행으로 처리한다.
 
 ## 14. Idempotency와 결과 불명확 처리
 
@@ -682,19 +693,19 @@ SQLite와 Google API를 하나의 ACID Transaction으로 묶을 수 없으므로
 - SSE Event 중복 수신
 - 앱 재시작 후 Run 재개
 - MCP 응답 유실
-- Google API Timeout 후 Retry
+- Provider API Timeout 후 Retry
 
 ### 14.2 기본 원칙
 
 ```
-React UI는 Google 쓰기를 직접 호출하지 않는다.
+React UI는 Connector 쓰기를 직접 호출하지 않는다.
 REST Command는 Application use-case boundary를 통해 Approval·Command를 DB에 저장한다.
 Application execution use case는 영구 Action 상태와 Idempotency 정보를 확인한 뒤 허용된 실행만 한 번 시작한다.
 ```
 
 ### 14.3 결과 불명확 상태
 
-Google API 요청을 전달한 뒤 MCP 연결이 끊기면 실패로 단정하지 않는다.
+Provider API 요청을 전달한 뒤 MCP 연결이 끊기면 실패로 단정하지 않는다.
 
 ```
 EXECUTING
@@ -726,6 +737,8 @@ Replay store는 Domain SQLite와 독립되어 Safe Mode Restore가 복원 대상
 
 ## 15. MCP Server 아키텍처
 
+아래 그림은 Google Workspace MCP Server의 concrete 내부 구조다. GitHub MCP Server도 별도 child process에서 같은 등록 Tool·Claim·Credential·Provider Adapter 경계를 사용하며 Core에 GitHub 전용 Graph·Port·State authority를 만들지 않는다.
+
 ```mermaid
 flowchart TB
     STD["MCP 표준 입출력 전송"] --> TOOL["등록 MCP Tool Handler · Schema"]
@@ -756,11 +769,11 @@ flowchart TB
 ### 15.2 프로세스 수명주기
 
 - Launcher와 Local Agent Service 시작 검사에서 MCP 실행 가능 여부를 확인한다.
-- Connector Runtime은 **registered `connector_id`당 하나의 active `stdio` MCP 자식 프로세스**를 소유한다. P0 registered Connector가 `google_workspace` 하나이므로 P0 process tree에는 MCP child가 하나만 존재한다. Connector별 health/restart/handshake는 해당 connector_id에 target된다.
+- Connector Runtime은 **registered `connector_id`당 하나의 active `stdio` MCP 자식 프로세스**를 소유한다. 현재 process tree에는 `google_workspace`와 `github` child가 각각 하나씩 존재하며 Connector별 health/restart/handshake는 해당 `connector_id`에 target된다.
 - REST 요청·SSE 재연결·브라우저 새로고침마다 새 MCP 프로세스를 만들지 않는다.
 - `stdout`은 MCP Protocol 전용으로 사용하고 기술 로그는 `stderr` 또는 로컬 로그 Sink로 보낸다.
 - 비정상 종료 시 제한된 횟수로 재시작한다.
-- Write Tool 중 종료되면 Google 재조회로 결과를 확정하기 전 새 쓰기를 실행하지 않는다.
+- Write Tool 중 종료되면 대상 Connector의 기존 결과를 재조회해 확정하기 전 새 쓰기를 실행하지 않는다.
 - 앱 정상 종료 시 자식 프로세스를 정리한다.
 
 재시작 횟수·Backoff 값은 10·14 문서에서 결정한다.
@@ -1024,9 +1037,10 @@ Repository placement/symbol 이름은 16 Repository Architecture의 `ports/<boun
 1. Unit — Domain과 deterministic Policy·Normalizer·Hash·Comparator
 2. Contract — FastAPI Pydantic, SSE Event, MCP Tool, LLM Structured Output
 3. Integration — SQLite·Checkpointer·Application·MCP Fake
-4. E2E — React→FastAPI→Agent→Fake Google 전체 경로
-5. Live Integration — Test User·실제 Google·API LLM·Ollama
-6. Installer — Clean Windows VM·업데이트·복구·삭제
+4. Product Graph regression — production Graph·Node·Router·Application 경로와 선택 Runtime의 script measurement
+5. Browser E2E — React→FastAPI→production Graph의 사용자 상호작용과 Projection
+6. Live Integration — Test User·실제 Google/GitHub·Gemini 또는 Ollama
+7. Installer — Clean Windows VM·업데이트·복구·삭제
 
 ## 25. 명시적으로 도입하지 않는 구성
 
@@ -1089,7 +1103,7 @@ API와 Local 모델을 동시에 디버깅하지 않는다. API_LLM vertical flo
 - 운영 UI와 API가 `127.0.0.1` same-origin으로 제공된다.
 - FastAPI Route와 React가 Domain 상태를 직접 수정하지 않는다.
 - 결정적 Supervisor가 평가 가능한 Agent Subgraph Profile을 Routing하고 Agent가 Connector Write·승인·상태 전이를 직접 결정하지 않는다.
-- MCP가 허용 Tool과 Google Credential 경계를 소유한다.
+- 각 Connector MCP Server가 등록 Tool 실행과 자신의 Provider Credential 경계를 소유한다.
 - SQLite Domain Store와 LangGraph Checkpoint 책임이 분리된다.
 - 모든 Write가 승인 → 실행권 확보 → MCP → Effect별 검증 순서를 따른다.
 - REST Retry, 브라우저 새로고침, SSE 재연결, 앱 재시작이 중복 Write를 만들지 않는다.
