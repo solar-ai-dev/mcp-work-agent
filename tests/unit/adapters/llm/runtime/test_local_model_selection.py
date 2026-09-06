@@ -1,5 +1,7 @@
 from dataclasses import dataclass, replace
 
+import pytest
+
 from google_work_agent.adapters.llm.runtime.local_model_selection import (
     LocalModelSelectionResolver,
 )
@@ -22,6 +24,31 @@ class _Catalog:
 
     def list_installed_models(self) -> tuple[InstalledLocalModelV1, ...]:
         return self.models
+
+
+@pytest.mark.parametrize(
+    "installed_ids", [(), ("qwen3.5:9b",), ("qwen3.5:4b",), ("qwen3.5:9b", "qwen3.5:4b")]
+)
+@pytest.mark.parametrize("preferred", ["qwen3.5:9b", "qwen3.5:4b"])
+def test_model_catalog_matrix__preserves_explicit_choice__without_fallback(
+    installed_ids: tuple[str, ...], preferred: str
+) -> None:
+    resolver = LocalModelSelectionResolver(
+        _selection(),
+        _Catalog(tuple(InstalledLocalModelV1(model, "a" * 64) for model in installed_ids)),
+        allow_development_models=True,
+        preferred_model_id=lambda: preferred,
+    )
+    options = resolver.list_options()
+    assert {option.model_id for option in options if option.installed and option.approved} == set(
+        installed_ids
+    )
+    for prompt in ("request_understanding.identify_goal", "planning.compose_answer"):
+        selected = resolver.get_model_for_prompt(prompt)
+        if preferred in installed_ids:
+            assert selected is not None and selected.model_id == preferred
+        else:
+            assert selected is None
 
 
 def test_user_choice__uses_ready_4b_without_9b__for_both_inference_classes() -> None:
