@@ -1,7 +1,5 @@
 # 02. UI · UX 설계서
 
-SettingsDrawer의 **계정 및 연결**은 기존 Google Workspace / GitHub / Gemini API 영역을 재사용한다. Google 계정·권한·기본 Calendar/Task List·재연결/해제를 보존한다. GitHub는 실제 Device user code·복사·인증 페이지·대기/만료/거부/재시도, 연결 계정, 접근 가능한 Repository 목록과 새로고침, 기본값 0/1 선택·저장·해제, GitHub App 접근 관리 링크를 제공한다. Repository 목록 실패를 빈 목록으로 표시하지 않는다. Gemini 이름은 기존 provider-neutral credential API의 gemini 설정에 대한 UX label이며 새 credential authority가 아니다. API Key 원문 재표시는 금지한다.
-
 > **Authority:** 사용자 화면·상호작용과 UX 상태 표현. Domain/Workflow/API semantics는 해당 전문 owner를 따른다.  
 > **수정일:** 2026-09-06 · **상태:** 제품 UX 요구사항 — 구현·E2E 완료 여부는 별도 작업 현황에서 관리
 
@@ -563,7 +561,7 @@ GitHub 예: `이 저장소의 Issue를 확인하려면 GitHub 연결과 저장�
 
 ## 18. UI-008 설정·진단 Drawer
 
-설정은 메인 화면에서 Drawer/Dialog로 연다. 기존 UI·API가 있으면 재사용하고 render/composition/contract가 끊긴 부분만 연결한다. 같은 기능의 두 번째 설정 화면을 만들지 않는다.
+설정은 메인 화면에서 Drawer/Dialog로 연다. 사용자는 한 설정 진입점에서 Google Workspace·GitHub·Gemini API의 상태와 해당 관리 동작에 접근한다. 같은 설정의 서로 다른 화면에서 값이나 상태가 모순되지 않아야 한다.
 
 ### 18.1 일반
 

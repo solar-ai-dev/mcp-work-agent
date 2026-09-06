@@ -38,4 +38,6 @@
 
 기능 ID·정책 ID는 각 문서 안의 안정적인 식별자다. 기능 문장을 정책에 복사하거나 기능 ID와 정책 ID를 일대일로 연결하지 않는다. 필요할 때만 문서의 책임 또는 안정적인 개념을 참조한다. 다른 문서의 표현만 바뀌고 자기 책임의 의미가 같으면 수정하지 않는다.
 
+[전체본 재검수 보정 기록](product-decisions/2026-09-06-document-audit-corrections.md)은 이전 판정의 정정, 자료 출처와 Notion 게시 범위를 구분한다.
+
 `product-decisions/`는 결정 배경과 검증 시점의 기록이다. 과거 보고의 PASS를 최신 제품의 PASS로 재사용하지 않는다. `artifacts/product-closure/`의 매핑표·검증 기록은 이력으로 보존한다. `database/migrations/`는 실행 migration의 문서 미러이며 [Database 안내](database/README.md)의 규칙을 따른다. 문서 작업만으로 SQL을 추가·재번호·수정하지 않는다.

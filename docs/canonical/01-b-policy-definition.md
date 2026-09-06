@@ -620,7 +620,7 @@ React Client State, Browser Storage, URL Parameter와 SSE Payload는 Domain 사�
 
 #### POL-DB-002 짧은 Transaction
 
-DB Transaction 안에서 Google API, LLM, MCP 호출을 기다리지 않는다. `ClaimExecution` Commit, ClaimContext 구성, `BeginExecutionAttempt` Commit, 외부 호출, 결과 저장, GET 검증, 최종 상태 저장을 각각 명시된 경계로 분리한다. 외부 Write는 `BeginExecutionAttempt` Transaction이 종료되고 `applied=true`인 뒤에만 수행한다.
+DB Transaction 안에서 외부 Provider API, LLM 또는 MCP 호출을 기다리지 않는다. 실행권 예약만으로 외부 Write를 허용하지 않으며, 현재 승인·무결성·취소 조건을 확인한 실행 admission이 성공으로 영속 확정된 뒤에만 호출한다. 외부 효과와 결과 저장·검증을 하나의 원자 Transaction으로 간주하지 않는다. 구체 Command·transaction 순서는 Domain·Interface의 실행 계약이 소유한다.
 
 #### POL-DB-003 실행권 Claim
 
@@ -660,9 +660,9 @@ SQLite와 외부 Connector Provider API를 하나의 Transaction으로 취급하
 
 Browser는 opaque Local API continuation만 보존·재전송한다. Provider raw continuation은 Connector/MCP Adapter 내부 구현 세부사항이며 SQLite local keyset cursor와 혼용하지 않는다.
 
-#### POL-QRY-004 Index 근거
+#### POL-QRY-004 조회 최적화의 안전 경계
 
-Index는 실제 `WHERE`, `JOIN`, `ORDER BY` Query와 Query Plan을 근거로 추가한다. 추적 편의를 이유로 사용되지 않는 Column과 Index를 미리 대량 생성하지 않는다.
+조회 최적화나 추적 편의를 이유로 승인·참조 무결성·보존 정책을 완화하거나 불필요한 데이터를 추가 수집·저장하지 않는다. Column·Index·Query Plan의 선택과 검증은 persistence 구현의 책임이며 정책 규칙으로 중복 정의하지 않는다.
 
 ### 23.5 Migration·Backup·복구 정책
 
@@ -757,7 +757,7 @@ Write는 현재 승인과 실행 admission에 결합된 유효한 single-use Cla
 
 ## 26. Clarification·조회 범위·일정 관계 정책
 
-전체 Mailbox·장기간 무제한 원문·모든 Source 일괄 조회처럼 허용 범위를 벗어난 요청은 차단한다. 자동 축소해 실행한 뒤 원래 요구를 완료했다고 표시하지 않는다. 새 bounded 범위 확대에는 이유와 범위를 제시하고 기존 사용자 확인을 받는다.
+전체 Mailbox·장기간 무제한 원문·모든 Source 일괄 조회처럼 허용 범위를 벗어난 요청은 차단한다. 사용자 확인 없이 요청을 허용 범위로 자동 축소해 실행하지 않는다. 승인된 제한 범위만 수행한 경우에도 원래 요구 전체를 완료했다고 표시하지 않는다. 새 bounded 범위 확대에는 이유와 범위를 제시하고 기존 사용자 확인을 받는다.
 
 허용된 검색으로 해소할 수 있는 별칭·기간·업무 개념은 먼저 확인할 수 있다. 검색 후에도 여러 유효 후보가 남거나 안전한 판단을 막는 모순이 있으면 실제 차이를 제시해 확인한다. 근거 없는 identity·연도·시간대·요일을 생성하지 않는다.
 
