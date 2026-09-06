@@ -179,12 +179,15 @@ OAuth/READ boundaries replaced. This does **not** use the old declared-intent le
 
 ```powershell
 python -m scripts.measure_query_strategy --case-id SQ-DEV-005 `
+  --model-id qwen3.5:9b `
   --product-sha <current-product-sha> `
   --output evaluation/results/query-strategy-baseline/SQ-DEV-005.json
 ```
 
 The result retains actual Node order, RequestIntent, LLM hypotheses, deterministic
 QueryAttempt/provider query, actual Provider boundary calls, Evidence and termination.
+Repeat the same command with `--model-id qwen3.5:4b`; the option accepts only the two
+supported Local model IDs and applies the choice through the production Settings path.
 No Product Prompt is changed and no external Write can be dispatched. Development
 diagnostics and public-boundary evaluation keep distinct evidence labels. Do not claim
 Product success if the grader reports missing trajectory, wrong identity/date/evidence,

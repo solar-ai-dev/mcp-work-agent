@@ -11,7 +11,7 @@ from google_work_agent.adapters.langgraph.subgraphs.retrieval.projections import
     execute_read_projection,
 )
 from google_work_agent.application.agents.request_understanding import (
-    preserve_vague_read_semantics,
+    preserve_explicit_search_anchors,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
@@ -134,7 +134,7 @@ def test_temporal_schema__missing_both_boundaries__matches_domain_validation(sta
 
 
 def test_gmail_constraints__empty_values__do_not_authorize_temporal_or_status_filters() -> None:
-    intent = preserve_vague_read_semantics.preserve_vague_read_semantics(
+    intent = preserve_explicit_search_anchors.preserve_explicit_search_anchors(
         {
             "goal": "메일 조회", "completion_conditions": ["자료 확인"], "constraints": [
                 {"kind": "DATE", "field": "period", "value": ""},
@@ -159,10 +159,11 @@ def _concept() -> dict[str, object]:
 
 def test_mail_request__period_only__reaches_provider_without_schedule_filter() -> None:
     request = "9월 첫째주에 온 메일 찾아줘."
-    intent = preserve_vague_read_semantics.preserve_vague_read_semantics(
+    intent = preserve_explicit_search_anchors.preserve_explicit_search_anchors(
         {
             "goal": request, "completion_conditions": ["메일 조회"], "constraints": [
-                {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},
+                {"kind": "DATE", "field": "period", "value": ["9월 첫째주"]},
+                {"kind": "TIME", "field": "temporal_axis", "value": ["MESSAGE_TIME"]},
             ],
             "requested_resource_hints": ["GMAIL_THREAD"], "requested_effect_hints": ["READ"],
             "analysis_requirement": "NONE",
@@ -205,7 +206,7 @@ def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
         "제목이 'KAN-93 일정'인 메일 찾아줘"
         if exact_subject else "KAN-93 일정 얘기한 메일 찾아줘"
     )
-    candidate = preserve_vague_read_semantics.preserve_vague_read_semantics(
+    candidate = preserve_explicit_search_anchors.preserve_explicit_search_anchors(
         {
             "goal": request, "completion_conditions": ["관련 메일 확인"], "constraints": [
                 {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["KAN-93"]},
@@ -262,9 +263,9 @@ def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
 
 @pytest.mark.parametrize("concept,terms,valid", [
     ("납품", ["출하"], True), ("정산", ["차액"], True),
-    ("납품", ["납품"], False), ("요청에 없는 업무", ["자료"], False),
+    ("납품", ["납품"], True), ("요청에 없는 업무", ["자료"], False),
 ])
-def test_compound_concepts__one_discovery_hypothesis__keeps_full_intent(concept, terms, valid):
+def test_compound_concepts__planner_hypothesis__keeps_user_owned_concept(concept, terms, valid):
     intent = {"constraints": [
         {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["납품", "정산"]},
         {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["ORB-17"]},
@@ -279,14 +280,10 @@ def test_compound_concepts__one_discovery_hypothesis__keeps_full_intent(concept,
     assert intent["constraints"][1]["value"] == ["ORB-17"]
 
 
-@pytest.mark.parametrize("initial_constraints,reason", [
-    ([], "QUERY_USER_CONSTRAINT_MISSING"),
-    ([{"kind": "CONCEPT", "concept": "일정", "manifestations": ["일정"]}],
-     "QUERY_TOO_NARROW"),
-])
 def test_concept_revision__specific_failure_and_raw_candidate__rebinds_exact_anchor(
-    initial_constraints, reason,
 ) -> None:
+    initial_constraints: list[object] = []
+    reason = "QUERY_USER_CONSTRAINT_MISSING"
     initial = _plan(initial_constraints)
     runtime = FakeStructuredInferencePort(outputs=[initial, _plan([_concept()])])
     reference = PromptReference(

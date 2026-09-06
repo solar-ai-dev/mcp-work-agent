@@ -6,9 +6,6 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     AmbiguityV1,
     RequestGoalCandidateV1,
 )
-from google_work_agent.application.agents.request_understanding.resolve_request_scope import (
-    resolve_request_scope,
-)
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     repository_authority_requires_confirmation,
 )
@@ -214,5 +211,4 @@ def _is_general_answer_only(
         not request.selected_resources
         and not goal_candidate["requested_effect_hints"]
         and not goal_candidate["requested_resource_hints"]
-        and resolve_request_scope(request.request_text).is_general_answer_only
     )

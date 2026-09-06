@@ -502,7 +502,6 @@ RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID
 QUERY_OPERATION_FIELD_MISMATCH
 QUERY_USER_CONSTRAINT_MISSING
 QUERY_TOO_BROAD
-QUERY_TOO_NARROW
 QUERY_UNCHANGED_AFTER_FAILURE
 QUERY_SCOPE_EXPANSION_REQUIRES_CONFIRMATION
 QUERY_LOW_CONFIDENCE_RESULTS
@@ -735,10 +734,11 @@ RECHECK
 
 Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identity key로 사용**한다. `prompt_version`, `content_hash`, `activation_status`, per-invocation `failure_reason_code`는 같은 slot의 release/runtime metadata이며 별도 PromptRef set cardinality를 만들지 않는다. `SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
 
-Current required Product-LLM Prompt Slot set은 정확히 아래 21개다. 각 current slot에서 `prompt_id == prompt_slot_id`이며 broad predecessor ID를 alias로 유지하지 않는다.
+Current required Product-LLM Prompt Slot set은 정확히 아래 22개다. 각 current slot에서 `prompt_id == prompt_slot_id`이며 broad predecessor ID를 alias로 유지하지 않는다.
 
 ```text
 request_understanding.identify_goal
+request_understanding.identify_temporal_scope
 request_understanding.detect_ambiguity
 tool_routing.determine_io_resources
 tool_routing.select_tool_if_needed
@@ -765,6 +765,7 @@ Current runtime caller mapping은 06의 Node Registry를 그대로 소비한다.
 
 ```text
 request.identify_goal                           → request_understanding.identify_goal
+request.identify_temporal_scope                 → request_understanding.identify_temporal_scope
 request.detect_ambiguity                        → request_understanding.detect_ambiguity
 route.determine_resources                       → tool_routing.determine_io_resources
 route.select_tool                               → tool_routing.select_tool_if_needed
@@ -789,7 +790,7 @@ review.recheck                                  → review.recheck_affected_dime
 
 `prompt_version`은 current manifest가 slot별로 선택하는 version identity이고, `content_hash`는 9.4 조립 규칙으로 materialize된 immutable prompt artifact의 SHA-256이다. `activation_status`는 9.5/13 Evaluation Gate가 승격한다. 이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
 
-`prompt-runtime-input-contract-v1`은 위 21개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다. Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
+`prompt-runtime-input-contract-v1`은 위 22개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다. Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
 `tool_routing.select_tool_if_needed`의 현재 producer는 같은 Run의 `user_request`를 전달하여 동일 effect의 등록 후보 간 업무 의도(내용 수정/닫기/다시 열기 등)를 구분한다. v1 input allowlist의 optional field로 추가하여 기존 projection과 호환하며, route/eligible candidate authority를 변경하지 않는다. Tool Routing은 Google 이외의 eligible Connector도 동일하게 취급하고, WRITE 선행 Retrieval은 요청된 미래 상태가 아니라 현재 대상의 근거 충분성을 평가한다.
 
@@ -807,7 +808,7 @@ prompt_runtime_input_contract:
       output_schema_version: integer
 ```
 
-`entries[].prompt_slot_id`는 위 21개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+`entries[].prompt_slot_id`는 위 22개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
 
 ### 9.4 조립 규칙
 
@@ -844,7 +845,7 @@ Prompt 실행 Scope는 다음 closed vocabulary만 사용한다.
 - `DEVELOPMENT_SMOKE`: `EXPLICIT_DEVELOPMENT` composition만 선택한다. 실험 전 `DRAFT` baseline의 실제 Product workflow smoke를 허용하지만 release activation이나 Prompt 품질 통과를 뜻하지 않는다. Readiness는 `UNVALIDATED_BASELINE`을 명시한다. `RETIRED`는 신규 실행할 수 없다.
 - `EVALUATION`: offline candidate evaluation 전용이다. Product user runtime과 분리하고 Gold·Grader·expected output·evaluation identity를 Product Prompt input에 넣지 않는다.
 
-`RUNTIME_ACTIVE`/`RETIRED` entry의 activation evidence metadata는 target model identity와 artifact hash, Prompt source hash, input/output schema version, Dataset artifact path/hash, Grader artifact path/hash/version, 실행 UTC timestamp, Node DEV/HOLDOUT/Safety 결과 artifact path/hash, Manifest Approval artifact path/hash를 포함한다. 모든 path는 Prompt bundle 내부 상대 경로이며 manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 21개 exact Slot의 source hash와 이 evidence chain을 packaging 전에 검증한다.
+`RUNTIME_ACTIVE`/`RETIRED` entry의 activation evidence metadata는 target model identity와 artifact hash, Prompt source hash, input/output schema version, Dataset artifact path/hash, Grader artifact path/hash/version, 실행 UTC timestamp, Node DEV/HOLDOUT/Safety 결과 artifact path/hash, Manifest Approval artifact path/hash를 포함한다. 모든 path는 Prompt bundle 내부 상대 경로이며 manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 22개 exact Slot의 source hash와 이 evidence chain을 packaging 전에 검증한다.
 
 Node DEV·Node HOLDOUT·Safety Gate는 고정 Sampling 조건에서 Item당 1회 평가한다(`12` 18.2). Temperature는 Gate Configuration에서 명시적으로 고정하고, Seed는 Provider가 지원함이 확인된 경우에만 고정한다 — 완전한 bit-identical Determinism을 보장하는 것은 아니며 best-effort 재현성이다. 반복 Trial Consistency·평균·분산·Bootstrap Confidence Interval 평가는 `13` Evaluation 소관이며 Gate로 옮기지 않는다.
 

@@ -17,15 +17,6 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.planning.project_empty_read_answer import (
     project_empty_read_answer,
 )
-from google_work_agent.application.agents.planning.project_gmail_decision_read_answer import (
-    project_gmail_decision_read_answer,
-)
-from google_work_agent.application.agents.planning.project_gmail_read_planning import (
-    project_gmail_read_planning,
-)
-from google_work_agent.application.agents.planning.project_gmail_security_read_answer import (
-    project_gmail_security_read_answer,
-)
 from google_work_agent.application.agents.planning.project_task_read_answer import (
     project_task_read_answer,
 )
@@ -133,20 +124,6 @@ def outline_answer(
     )
     if task_projection is not None:
         return task_projection.outline
-    decision_projection = project_gmail_decision_read_answer(
-        user_request=user_request,
-        request_intent=request_intent,
-        evidence=evidence,
-    )
-    if decision_projection is not None:
-        return decision_projection.outline
-    security_projection = project_gmail_security_read_answer(
-        user_request=user_request,
-        request_intent=request_intent,
-        evidence=evidence,
-    )
-    if security_projection is not None:
-        return security_projection.outline
     empty_projection = project_empty_read_answer(
         user_request=user_request,
         request_intent=request_intent,
@@ -155,13 +132,6 @@ def outline_answer(
     )
     if empty_projection is not None:
         return empty_projection.outline
-    gmail_projection = project_gmail_read_planning(
-        user_request=user_request,
-        request_intent=request_intent,
-        evidence=evidence,
-    )
-    if gmail_projection is not None:
-        return gmail_projection.outline
     candidate = invoke(PROMPT_ID, prompt_input)
     if candidate.get("disposition") == "NEEDS_CONFIRMATION":
         ambiguity = request_intent.get("ambiguity")

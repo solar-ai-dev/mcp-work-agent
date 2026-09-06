@@ -29,6 +29,9 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
     RequestUnderstandingParentOutputState,
     RequestUnderstandingStateV2,
 )
+from google_work_agent.application.agents.request_understanding.identify_temporal_scope import (
+    needs_temporal_scope,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
     PromptExecutionScope,
@@ -53,6 +56,7 @@ from .nodes.finalize_intent_node import (
 from .nodes.identify_goal_node import (
     identify_goal_node,
 )
+from .nodes.identify_temporal_scope_node import identify_temporal_scope_node
 from .projections.request_confirmation_projection import (
     build_request_clarification_question,
 )
@@ -65,6 +69,9 @@ from .routing.route_after_finalize_intent import (
 from .routing.route_after_identify_goal import (
     route_after_identify_goal,
 )
+from .routing.route_after_identify_temporal_scope import (
+    route_after_identify_temporal_scope,
+)
 
 MergeDecision = Callable[[Any, GraphStateUpdateV1, SupervisorDecisionV1], Any]
 TransitionRun = Callable[[str, str], None]
@@ -75,7 +82,7 @@ ConfirmInline = Callable[
 
 
 class RequestUnderstandingSubgraph:
-    """Compile the exact three runtime nodes for four canonical operations."""
+    """Compile the owner-local Request Understanding operations."""
 
     def __init__(
         self,
@@ -94,6 +101,11 @@ class RequestUnderstandingSubgraph:
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
         self._identify_goal_prompt_ref = load_prompt_reference(
             "request_understanding.identify_goal",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_temporal_scope_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_temporal_scope",
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
@@ -116,12 +128,18 @@ class RequestUnderstandingSubgraph:
             output_schema=RequestUnderstandingParentOutputState,
         )
         graph.add_node("identify_goal", self._identify_goal_node)
+        graph.add_node("identify_temporal_scope", self._identify_temporal_scope_node)
         graph.add_node("detect_ambiguity", self._detect_ambiguity_node)
         graph.add_node("finalize_intent", self._finalize_intent_node)
         graph.add_edge(START, "identify_goal")
         graph.add_conditional_edges(
             "identify_goal",
             route_after_identify_goal,
+            {"identify_temporal_scope": "identify_temporal_scope"},
+        )
+        graph.add_conditional_edges(
+            "identify_temporal_scope",
+            route_after_identify_temporal_scope,
             {"detect_ambiguity": "detect_ambiguity"},
         )
         graph.add_conditional_edges(
@@ -173,6 +191,35 @@ class RequestUnderstandingSubgraph:
                 llm_call_increment=1,
                 invocation_id=invocation_id,
                 agent_invocation_increment=1 if is_first_node else 0,
+            ),
+        }
+
+    def _identify_temporal_scope_node(
+        self, state: RequestUnderstandingStateV2
+    ) -> RequestUnderstandingStateV2:
+        candidate = state.get("goal_candidate")
+        if candidate is None:
+            raise ValueError("request-understanding goal candidate is required")
+        invokes_llm = needs_temporal_scope(candidate)
+        patch = identify_temporal_scope_node(
+            state,
+            llm_runtime=self._llm_runtime,
+            prompt_ref=self._identify_temporal_scope_prompt_ref,
+        )
+        return {
+            **patch,
+            "trace_context": self._trace(
+                state,
+                node_name="identify_temporal_scope",
+                llm_call_id=(
+                    f"{request_from_run_input_state(cast(Any, state)).run_id}:"
+                    "request.identify_temporal_scope"
+                    if invokes_llm
+                    else None
+                ),
+                prompt_ref=self._identify_temporal_scope_prompt_ref if invokes_llm else None,
+                llm_call_increment=int(invokes_llm),
+                invocation_id=self._invocation_id(state),
             ),
         }
 

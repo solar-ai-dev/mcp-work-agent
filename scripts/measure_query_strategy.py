@@ -57,12 +57,15 @@ from google_work_agent.ports.llm.structured_inference_contracts import LLMInvoca
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "evaluation/datasets/retrieval/query_strategy"
+SUPPORTED_LOCAL_MODELS = ("qwen3.5:9b", "qwen3.5:4b")
 
 
 def measure(
     case_id: str, product_sha: str, output: Path, *, fixed_sampling: bool = False,
-    enable_thinking: bool = False,
+    enable_thinking: bool = False, model_id: str = "qwen3.5:9b",
 ) -> dict[str, Any]:
+    if model_id not in SUPPORTED_LOCAL_MODELS:
+        raise ValueError(f"unsupported local model: {model_id}")
     current_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if current_sha != product_sha:
         raise ValueError("product-sha must identify the current checkout")
@@ -199,6 +202,9 @@ def measure(
             runtime.runtime_policy = replace(
                 runtime.runtime_policy, sampling_temperature=0.0, sampling_seed=0,
             )
+        local_model_profile = runtime.runtime_selection.local_model_profile
+        if local_model_profile is None:
+            raise RuntimeError("Local model profile is required for query strategy measurement")
         infer = runtime.infer
 
         def observed_infer(*args: Any, **kwargs: Any) -> Any:
@@ -223,8 +229,9 @@ def measure(
                     "prompt_hash": args[1].content_hash,
                     "model": result.model,
                     "actual_runtime": result.actual_runtime,
-                    "inference_class": runtime.runtime_selection.local_model_profile
-                        .inference_class_for_prompt(args[1].prompt_id),
+                    "inference_class": local_model_profile.inference_class_for_prompt(
+                        args[1].prompt_id
+                    ),
                     "input_tokens": result.input_tokens,
                     "output_tokens": result.output_tokens,
                     "latency_ms": result.latency_ms,
@@ -256,7 +263,7 @@ def measure(
                     "command_id": uuid4().hex,
                     "settings_patch": {
                         "schema_version": 1,
-                        "preferred_local_model_id": "qwen3.5:9b",
+                        "preferred_local_model_id": model_id,
                         "preferred_llm_mode": "LOCAL_GPU",
                         "external_llm_consent": False,
                     },
@@ -375,6 +382,7 @@ def measure(
             "kind": "EVALUATION_ENABLED" if enable_thinking else "PRODUCT_DEFAULT",
             "enabled": enable_thinking,
         },
+        selected_local_model_id=model_id,
         run_id=run_id,
         runtime_root=str(runtime_root),
         graph_path=recorder.path,
@@ -412,10 +420,16 @@ if __name__ == "__main__":
                         help="Evaluation-only temperature=0/seed=0; not a Product default change")
     parser.add_argument("--enable-thinking", action="store_true",
                         help="Evaluation-only Ollama think=true; reasoning text is not recorded")
+    parser.add_argument(
+        "--model-id",
+        choices=SUPPORTED_LOCAL_MODELS,
+        default="qwen3.5:9b",
+        help="Installed supported Local model selected through the production Settings path",
+    )
     args = parser.parse_args()
     report = measure(
         args.case_id, args.product_sha, args.output, fixed_sampling=args.fixed_sampling,
-        enable_thinking=args.enable_thinking,
+        enable_thinking=args.enable_thinking, model_id=args.model_id,
     )
     print(json.dumps({"run_id": report["run_id"], "grade": report["grade"]}), flush=True)
     raise SystemExit(0 if report["metrics"]["passed"] else 2)

@@ -83,6 +83,6 @@ npm --prefix frontend run build
 
 ## Prompt/Model 현재 상태
 
-Canonical Prompt source 21개는 실험 전 baseline이며 manifest 상태는 모두 `DRAFT`입니다. `EXPLICIT_DEVELOPMENT`의 `DEVELOPMENT_SMOKE`에서만 실행할 수 있고, signed Release는 실제 DEV/HOLDOUT/Safety/승인 evidence artifact가 완전한 `RUNTIME_ACTIVE` Prompt만 패키징·실행합니다. 최종 Provider/Model/Prompt bundle 선택은 실험 완료 전까지 유보됩니다.
+Canonical Prompt source 22개는 실험 전 baseline이며 manifest 상태는 모두 `DRAFT`입니다. `EXPLICIT_DEVELOPMENT`의 `DEVELOPMENT_SMOKE`에서만 실행할 수 있고, signed Release는 실제 DEV/HOLDOUT/Safety/승인 evidence artifact가 완전한 `RUNTIME_ACTIVE` Prompt만 패키징·실행합니다. 최종 Provider/Model/Prompt bundle 선택은 실험 완료 전까지 유보됩니다.
 
 설계 Authority와 읽기 순서는 `docs/canonical/00-project-source-guide.md`에서 시작합니다.

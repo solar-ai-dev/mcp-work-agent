@@ -227,13 +227,12 @@ def test_outline_analysis_read__current_work_facts__preserves_for_composition() 
     }
 
 
-def test_gmail_read__with_required_information__uses_evidence_without_llm() -> None:
-    invoked = False
+def test_gmail_read__with_required_information__uses_semantic_outline() -> None:
+    captured: dict[str, object] = {}
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
-        nonlocal invoked
-        invoked = True
-        return {}
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {"sections": ["명시된 결정과 정정"], "evidence_refs": ["e-decision"]}
 
     result = outline_answer(
         user_request="KAN-93 관련 메일 중 최신 결정을 알려줘.",
@@ -257,9 +256,9 @@ def test_gmail_read__with_required_information__uses_evidence_without_llm() -> N
         invoke=invoke,
     )
 
-    assert invoked is False
+    assert captured["prompt_id"] == "planning.outline_answer"
     assert result == {
-        "sections": ["Gmail 자료에 명시된 결정 사항"],
+        "sections": ["명시된 결정과 정정"],
         "evidence_refs": ["e-decision"],
     }
 
@@ -275,6 +274,6 @@ def test_gmail_lookup__unrequested_timeline__does_not_require_analysis() -> None
         },
         work_analysis=None,
         evidence=[{"evidence_id": "e-mail", "excerpt": "김철수 대리의 박람회 참석 안내"}],
-        invoke=lambda *_args: pytest.fail("Grounded Gmail outline does not need an LLM"),
+        invoke=lambda *_args: {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]},
     )
     assert result == {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]}

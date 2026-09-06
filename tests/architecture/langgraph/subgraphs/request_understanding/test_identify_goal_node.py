@@ -27,6 +27,16 @@ def test_identify_goal_node__uses_exact_operation__projection_and_router() -> No
     assert "route_after_identify_goal" in router.read_text(encoding="utf-8")
 
 
+def test_identify_temporal_scope_node__uses_exact_operation__projection_and_router() -> None:
+    node = OWNER / "nodes/identify_temporal_scope_node.py"
+    projection = OWNER / "projections/identify_temporal_scope_projection.py"
+    router = OWNER / "routing/route_after_identify_temporal_scope.py"
+
+    assert {"project_identify_temporal_scope_input", "identify_temporal_scope"} <= _calls(node)
+    assert "request_from_run_input_state" in _calls(projection)
+    assert "route_after_identify_temporal_scope" in router.read_text(encoding="utf-8")
+
+
 def test_identify_goal__prompt_boundary_is__current_run_only() -> None:
     operation = SRC / "application/agents/request_understanding/identify_goal.py"
     source = operation.read_text(encoding="utf-8")

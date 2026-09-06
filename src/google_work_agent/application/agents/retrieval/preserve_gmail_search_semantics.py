@@ -185,7 +185,7 @@ def preserve_gmail_search_semantics(
 def validate_requested_concepts(
     value: object, prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
 ) -> None:
-    """Require planner-owned discovery hypotheses, never a built-in synonym list."""
+    """Keep each user-owned concept represented without prescribing its hypotheses."""
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping) or not isinstance(value, Mapping):
         return
@@ -208,21 +208,6 @@ def validate_requested_concepts(
                 raise RetrievalV2ValidationError(
                     "discovery hypothesis must retain a requested business concept",
                     reason_code="QUERY_USER_CONSTRAINT_MISSING",
-                    affected_field_paths=("$.route_queries[].search_spec.constraints",),
-                )
-            if not any(
-                item.get("kind") == "CONCEPT"
-                and any(item["concept"] not in term for term in item.get("manifestations", []))
-                and not any(
-                    separator in term for term in item.get("manifestations", [])
-                    for separator in ",;，；"
-                )
-                for item in hypotheses
-            ):
-                raise RetrievalV2ValidationError(
-                    "business concept requires at least one discovery phrase "
-                    "without its literal label",
-                    reason_code="QUERY_TOO_NARROW",
                     affected_field_paths=("$.route_queries[].search_spec.constraints",),
                 )
 

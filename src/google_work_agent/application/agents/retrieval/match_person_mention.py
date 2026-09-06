@@ -1,7 +1,7 @@
 """Match an unresolved name/title against provider display-name metadata only."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -117,3 +117,28 @@ def project_person_candidates(
             or any(match_person_mention(mention, name) for name in names)
         ][:40],
     )
+
+
+def resolve_supported_person_identities(
+    candidates: Sequence[PersonCandidateV1],
+    evidence: Sequence[EvidenceDraftV1],
+    prior_selection: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Resolve only a uniquely supported observed identity; preserve user selection."""
+
+    selected = dict(prior_selection or {})
+    supporting_segments = {
+        item["segment_id"] for item in evidence if "SUPPORTS" in item["reason_codes"]
+    }
+    for mention in dict.fromkeys(item["mention"] for item in candidates):
+        if mention in selected:
+            continue
+        supported = {
+            item["identity"]
+            for item in candidates
+            if item["mention"] == mention
+            and supporting_segments.intersection(item["source_segment_ids"])
+        }
+        if len(supported) == 1:
+            selected[mention] = next(iter(supported))
+    return selected

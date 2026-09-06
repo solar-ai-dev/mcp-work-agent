@@ -1,4 +1,4 @@
-"""Closed registry for the canonical 35 Agent runtime nodes."""
+"""Closed registry for the canonical 36 Agent runtime nodes."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from google_work_agent.ports.system.contracts.workflow_handoff import (
 RUNTIME_NODE_OWNERS: Mapping[str, SemanticAgentOwnerIdV1] = MappingProxyType(
     {
         "request.identify_goal": "REQUEST_UNDERSTANDING",
+        "request.identify_temporal_scope": "REQUEST_UNDERSTANDING",
         "request.detect_ambiguity": "REQUEST_UNDERSTANDING",
         "request.finalize": "REQUEST_UNDERSTANDING",
         "route.determine_resources": "TOOL_ROUTE",

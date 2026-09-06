@@ -29,21 +29,41 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 )
 from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
+_GMAIL_CONSTRAINT_KINDS = {
+    "search_terms": "USER_REQUIREMENT",
+    "business_concepts": "USER_REQUIREMENT",
+    "required_information": "USER_REQUIREMENT",
+    "person": "PERSON",
+    "sender": "PERSON",
+    "recipient": "PERSON",
+    "subject": "RESOURCE",
+    "period": "DATE",
+    "status": "SCOPE",
+}
 
-def _gmail_constraints(**values: list[str]) -> dict[str, list[str]]:
-    return {**dict.fromkeys((
-        "search_terms", "business_concepts", "required_information", "person", "sender",
-        "recipient", "subject", "period", "temporal_axis", "status",
-    ), []), **values}
+
+def _goal_constraints(
+    *additional: dict[str, object], **values: list[str]
+) -> dict[str, object]:
+    return {
+        **dict.fromkeys(_GMAIL_CONSTRAINT_KINDS, []),
+        **values,
+        "additional_constraints": list(additional),
+    }
 
 
 @pytest.mark.parametrize("kind,valid", [("RESOURCE", False), ("SCOPE", False),
                                         ("USER_REQUIREMENT", True)])
-def test_search_semantic_fields__wrong_kind__fails_output_contract(kind, valid) -> None:
+def test_search_semantic_fields__wrong_kind__fails_output_contract(
+    kind: str, valid: bool
+) -> None:
     candidate = {
         "goal": "자료 확인", "completion_conditions": ["최종 기준 확인"],
-        "constraints": [{"kind": kind, "field": "business_concepts", "value": ["출하"]}],
-        "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
+        "constraints": _goal_constraints(
+            {"kind": kind, "field": "business_concepts", "value": ["출하"]}
+        ),
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
         "analysis_requirement": "NONE",
     }
     assert (
@@ -54,35 +74,16 @@ def test_search_semantic_fields__wrong_kind__fails_output_contract(kind, valid) 
     ) is valid
 
 
-def test_gmail_goal__unconsumed_search_field__rejects_before_routing() -> None:
+def test_gmail_goal__unknown_named_slot__rejects_before_routing() -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "프로젝트 자료 확인", "completion_conditions": ["확인"],
-        "constraints": _gmail_constraints(target_project=["ORB-17"]),
-        "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
-        "analysis_requirement": "NONE",
-    }])
-    with pytest.raises(ValueError, match="target_project"):
-        identify_goal(
-            llm_runtime=runtime, request=_request("ORB-17 메일 찾아줘"),
-            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-        )
-
-
-@pytest.mark.parametrize("missing", ["person", "period", "temporal_axis"])
-def test_gmail_goal__explicit_person_and_period__cannot_omit_required_meaning(missing):
-    constraints = _gmail_constraints(
-        person=["김대리"], period=["이번 주"], temporal_axis=["EVENT_TIME"],
-    )
-    constraints[missing] = []
-    runtime = FakeStructuredInferencePort(outputs=[{
-        "goal": "근거 조회", "completion_conditions": ["확인"],
-        "constraints": constraints,
+        "constraints": {"target_project": ["ORB-17"]},
         "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "NONE",
     }])
     with pytest.raises(ValueError, match="request goal candidate is invalid"):
         identify_goal(
-            llm_runtime=runtime, request=_request("김대리의 이번 주 일정 메일 찾아줘"),
+            llm_runtime=runtime, request=_request("ORB-17 메일 찾아줘"),
             prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
         )
 
@@ -90,10 +91,10 @@ def test_gmail_goal__explicit_person_and_period__cannot_omit_required_meaning(mi
 def test_gmail_goal__keyed_slots__preserves_distinct_semantic_roles() -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "근거 조회", "completion_conditions": ["사실 확인"],
-        "constraints": _gmail_constraints(
+        "constraints": _goal_constraints(
             search_terms=["ORB-17"], person=["박과장"],
             sender=["sender@example.test"], recipient=["recipient@example.test"],
-            business_concepts=["검수"], period=["이번 주"], temporal_axis=["EVENT_TIME"],
+            business_concepts=["검수"], period=["이번 주"],
             required_information=["최종 정정된 시각"],
         ),
         "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
@@ -112,30 +113,33 @@ def test_gmail_goal__keyed_slots__preserves_distinct_semantic_roles() -> None:
     assert fields["business_concepts"]["value"] == ["검수"]
     assert fields["sender"]["value"] == ["sender@example.test"]
     assert fields["recipient"]["value"] == ["recipient@example.test"]
-    assert fields["temporal_axis"]["value"] == ["EVENT_TIME"]
+    assert fields["period"]["value"] == ["이번 주"]
+    assert "temporal_axis" not in fields
     assert "subject" not in fields
 
 
-def test_gmail_goal__invented_exact_subject__is_rejected() -> None:
+def test_gmail_goal__invented_exact_subject__is_not_promoted_to_anchor() -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "근거 조회", "completion_conditions": ["확인"],
-        "constraints": _gmail_constraints(subject=["ORB-17 검수 일정"]),
+        "constraints": _goal_constraints(subject=["ORB-17 검수 일정"]),
         "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "NONE",
     }])
-    with pytest.raises(ValueError, match="subject"):
-        identify_goal(
-            llm_runtime=runtime, request=_request("ORB-17 검수 관련 메일 찾아줘"),
-            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-        )
+    result = identify_goal(
+        llm_runtime=runtime, request=_request("ORB-17 검수 관련 메일 찾아줘"),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+    assert not any(item["field"] == "subject" for item in result["constraints"])
 
 
 @pytest.mark.parametrize("value,valid", [("]", False), ("[]", False),
                                          ("東京", True), ("[검증]", True)])
-def test_gmail_goal__empty_array_text__cannot_become_a_person(value, valid):
+def test_gmail_goal__empty_array_text__cannot_become_a_person(
+    value: str, valid: bool
+) -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "근거 조회", "completion_conditions": ["확인"],
-        "constraints": _gmail_constraints(person=[value]),
+        "constraints": _goal_constraints(person=[value]),
         "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "NONE",
     }])
@@ -146,7 +150,7 @@ def test_gmail_goal__empty_array_text__cannot_become_a_person(value, valid):
         assert any(item["field"] == "person" and item["value"] == [value]
                    for item in result["constraints"])
     else:
-        with pytest.raises(ValueError, match="person"):
+        with pytest.raises(ValueError, match="request goal candidate is invalid"):
             identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
 
 
@@ -157,7 +161,7 @@ def test_default_repository__stays_system_owned__without_user_constraint_or_conf
     )
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "열린 이슈 조회", "completion_conditions": ["조회 결과를 보여준다"],
-        "constraints": [{"kind": "SCOPE", "field": "status", "value": "OPEN"}],
+        "constraints": _goal_constraints(status=["OPEN"]),
         "requested_effect_hints": ["READ"], "requested_resource_hints": ["GITHUB_ISSUE"],
         "analysis_requirement": "NONE",
     }])
@@ -195,9 +199,11 @@ def test_identify_goal__payload_literals_do_not__add_unrequested_resources(
 ) -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "일정 생성", "completion_conditions": ["일정을 생성한다"],
-        "constraints": [{"kind": "RESOURCE", "field": "title", "value": "검증"}],
+        "constraints": _goal_constraints(
+            {"kind": "RESOURCE", "field": "title", "value": "검증"}
+        ),
         "requested_effect_hints": ["CREATE"],
-        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "requested_resource_hints": expected_resources,
         "analysis_requirement": "NONE",
     }])
     candidate = identify_goal(
@@ -211,10 +217,10 @@ def test_identify_goal__payload_literals_do_not__add_unrequested_resources(
 def test_identify_goal__preserves_exact_quoted__description_spacing() -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "일정 생성", "completion_conditions": ["일정을 생성한다"],
-        "constraints": [{
+        "constraints": _goal_constraints({
             "kind": "RESOURCE", "field": "description",
             "value": "Task 와 Calendar 검증 결과를 확인합니다.",
-        }],
+        }),
         "requested_effect_hints": ["CREATE"],
         "requested_resource_hints": ["CALENDAR_EVENT"], "analysis_requirement": "NONE",
     }])
@@ -232,7 +238,7 @@ def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> Non
             {
                 "goal": "업무 메일 찾기",
                 "completion_conditions": ["관련 메일을 찾는다"],
-                "constraints": _gmail_constraints(required_information=["관련 자료"]),
+                "constraints": _goal_constraints(required_information=["관련 자료"]),
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["GMAIL_THREAD"],
                 "analysis_requirement": "REQUIRED",
@@ -253,9 +259,12 @@ def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> Non
     prompt = cast(PromptReference, runtime.calls[0]["prompt_ref"])
     assert prompt.prompt_id == "request_understanding.identify_goal"
     output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
-    assert cast(dict[str, Any], output_schema.json_schema["properties"])["constraints"][
-        "type"
-    ] == "object"
+    constraint_schema = cast(
+        dict[str, Any],
+        cast(dict[str, Any], output_schema.json_schema["properties"])["constraints"],
+    )
+    assert constraint_schema["type"] == "object"
+    assert "additional_constraints" in constraint_schema["required"]
 
 
 def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> None:
@@ -264,7 +273,7 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
             {
                 "goal": "선택한 메일 요약",
                 "completion_conditions": ["요약을 답한다"],
-                "constraints": [],
+                "constraints": _goal_constraints(),
                 "requested_effect_hints": [],
                 "requested_resource_hints": [],
                 "analysis_requirement": "NONE",
@@ -309,7 +318,7 @@ def test_identify_goal__workspace_effect_without_resource_hint__fails_contract()
             {
                 "goal": "캘린더 일정 생성",
                 "completion_conditions": ["일정이 생성된다"],
-                "constraints": [],
+                "constraints": _goal_constraints(),
                 "requested_effect_hints": ["CREATE"],
                 "requested_resource_hints": [],
                 "analysis_requirement": "NONE",
@@ -331,7 +340,7 @@ def test_identify_goal__answer_only__allows_empty_workspace_hints() -> None:
             {
                 "goal": "간단한 답변",
                 "completion_conditions": ["답을 표시한다"],
-                "constraints": [],
+                "constraints": _goal_constraints(),
                 "requested_effect_hints": [],
                 "requested_resource_hints": [],
                 "analysis_requirement": "NONE",
@@ -349,13 +358,13 @@ def test_identify_goal__answer_only__allows_empty_workspace_hints() -> None:
     assert candidate["requested_resource_hints"] == []
 
 
-def test_identify_goal__general_advice__removes_model_invented_workspace_reads() -> None:
+def test_identify_goal__with_advice_keywords__preserves_model_semantics() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "프로젝트 회의 준비 원칙 제공",
                 "completion_conditions": ["한 문장으로 원칙을 답한다"],
-                "constraints": [],
+                "constraints": _goal_constraints(),
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["GMAIL_THREAD", "TASK", "CALENDAR_EVENT"],
                 "analysis_requirement": "REQUIRED",
@@ -369,9 +378,9 @@ def test_identify_goal__general_advice__removes_model_invented_workspace_reads()
         prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
     )
 
-    assert candidate["requested_effect_hints"] == []
-    assert candidate["requested_resource_hints"] == []
-    assert candidate["analysis_requirement"] == "NONE"
+    assert candidate["requested_effect_hints"] == ["READ"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD", "TASK", "CALENDAR_EVENT"]
+    assert candidate["analysis_requirement"] == "REQUIRED"
 
 
 def test_identify_goal__current_workspace_read__is_not_rewritten_as_advice() -> None:
@@ -380,9 +389,7 @@ def test_identify_goal__current_workspace_read__is_not_rewritten_as_advice() -> 
             {
                 "goal": "현재 Google Tasks 원칙 확인",
                 "completion_conditions": ["현재 태스크를 읽어 답한다"],
-                "constraints": [
-                    {"kind": "SCOPE", "field": "status", "value": "현재"}
-                ],
+                "constraints": _goal_constraints(status=["현재"]),
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["TASK"],
                 "analysis_requirement": "NONE",
@@ -400,16 +407,14 @@ def test_identify_goal__current_workspace_read__is_not_rewritten_as_advice() -> 
     assert candidate["requested_resource_hints"] == ["TASK"]
 
 
-def test_identify_goal__explicit_google_tasks_read__preserves_deterministic_hints() -> None:
+def test_identify_goal__validated_google_tasks_read__preserves_model_semantics() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "현재 할 일 목록 제공",
                 "completion_conditions": ["할 일을 간단히 답한다"],
-                "constraints": [
-                    {"kind": "SCOPE", "field": "status", "value": "현재"}
-                ],
-                "requested_effect_hints": [],
+                "constraints": _goal_constraints(status=["현재"]),
+                "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["TASK"],
                 "analysis_requirement": "NONE",
             }
@@ -425,7 +430,7 @@ def test_identify_goal__explicit_google_tasks_read__preserves_deterministic_hint
     assert candidate["requested_effect_hints"] == ["READ"]
     assert candidate["requested_resource_hints"] == ["TASK"]
     output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
-    assert "allOf" not in output_schema.json_schema
+    assert "allOf" in output_schema.json_schema
 
 
 def test_identify_goal__vague_mail_read__requires_original_search_semantics() -> None:
@@ -434,7 +439,7 @@ def test_identify_goal__vague_mail_read__requires_original_search_semantics() ->
             {
                 "goal": "회의 관련 메일을 분석해 일정 정리",
                 "completion_conditions": ["회의 일정 근거를 정리한다"],
-                "constraints": _gmail_constraints(
+                "constraints": _goal_constraints(
                     business_concepts=["회의"], required_information=["일정", "후속 작업"],
                 ),
                 "requested_effect_hints": ["READ"],
@@ -456,18 +461,21 @@ def test_identify_goal__vague_mail_read__requires_original_search_semantics() ->
         "value": ["회의"],
     }
     output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
-    assert cast(dict[str, Any], output_schema.json_schema["properties"])["constraints"][
-        "type"
-    ] == "object"
+    constraint_schema = cast(
+        dict[str, Any],
+        cast(dict[str, Any], output_schema.json_schema["properties"])["constraints"],
+    )
+    assert constraint_schema["type"] == "object"
+    assert "additional_constraints" in constraint_schema["required"]
 
 
-def test_identify_goal__inference_omits_topic__preserves_request_without_dictionary() -> None:
+def test_identify_goal__inference_omits_topic__preserves_only_verbatim_request() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "Find and analyze meeting-related emails",
                 "completion_conditions": ["Summarize schedule information"],
-                "constraints": _gmail_constraints(),
+                "constraints": _goal_constraints(),
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["GMAIL_THREAD"],
                 "analysis_requirement": "NONE",
@@ -487,17 +495,17 @@ def test_identify_goal__inference_omits_topic__preserves_request_without_diction
     assert "end" not in by_field
     assert by_field["original_search_request"] == [request_text]
     assert "search_terms" not in by_field
-    assert by_field["required_information"] == ["일정"]
-    assert candidate["analysis_requirement"] == "REQUIRED"
+    assert "required_information" not in by_field
+    assert candidate["analysis_requirement"] == "NONE"
 
 
-def test_identify_goal__latest_decision_read__requires_analysis() -> None:
+def test_identify_goal__decision_word__does_not_override_analysis_semantics() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "KAN-93 관련 메일 찾기",
                 "completion_conditions": ["관련 메일을 찾는다"],
-                "constraints": _gmail_constraints(search_terms=["KAN-93"]),
+                "constraints": _goal_constraints(search_terms=["KAN-93"]),
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["GMAIL_THREAD"],
                 "analysis_requirement": "NONE",
@@ -511,16 +519,16 @@ def test_identify_goal__latest_decision_read__requires_analysis() -> None:
         prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
     )
 
-    assert candidate["analysis_requirement"] == "REQUIRED"
+    assert candidate["analysis_requirement"] == "NONE"
 
 
-def test_identify_goal__vague_mail_schedule_summary__rejects_invented_calendar_create() -> None:
+def test_identify_goal__schedule_words__do_not_rewrite_model_resource_or_effect() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "회의 메일을 분석하고 캘린더 일정을 만든다",
                 "completion_conditions": ["회의 일정을 생성한다"],
-                "constraints": _gmail_constraints(business_concepts=["회의"]),
+        "constraints": _goal_constraints(business_concepts=["회의"]),
                 "requested_effect_hints": ["READ", "CREATE"],
                 "requested_resource_hints": ["GMAIL_THREAD", "CALENDAR_EVENT"],
                 "analysis_requirement": "NONE",
@@ -534,62 +542,55 @@ def test_identify_goal__vague_mail_schedule_summary__rejects_invented_calendar_c
         prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
     )
 
-    assert candidate["requested_effect_hints"] == ["READ"]
-    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD"]
-    assert candidate["analysis_requirement"] == "REQUIRED"
+    assert candidate["requested_effect_hints"] == ["READ", "CREATE"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD", "CALENDAR_EVENT"]
+    assert candidate["analysis_requirement"] == "NONE"
 
 
-def test_identify_goal__explicit_google_tasks_write__does_not_infer_read() -> None:
+def test_identify_goal__validated_google_tasks_write__preserves_create() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "새 할 일 생성",
                 "completion_conditions": ["할 일을 생성한다"],
-                "constraints": [],
-                "requested_effect_hints": [],
-                "requested_resource_hints": [],
+                "constraints": _goal_constraints(),
+                "requested_effect_hints": ["CREATE"],
+                "requested_resource_hints": ["TASK"],
                 "analysis_requirement": "NONE",
             }
         ]
     )
 
-    with pytest.raises(ValueError, match="request goal candidate is invalid"):
-        identify_goal(
-            llm_runtime=runtime,
-            request=_request("Google Tasks 목록에 새 할 일을 만들어줘."),
-            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-        )
+    result = identify_goal(
+        llm_runtime=runtime,
+        request=_request("Google Tasks 목록에 새 할 일을 만들어줘."),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
 
-    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
-    assert "allOf" in output_schema.json_schema
+    assert result["requested_effect_hints"] == ["CREATE"]
+    assert result["requested_resource_hints"] == ["TASK"]
 
 
-@pytest.mark.parametrize("effects, valid", [(["READ"], False), (["READ", "CREATE"], True)])
-def test_identify_goal__mail_derived_task_registration__cannot_be_read_only(
-    effects: list[str], valid: bool,
-) -> None:
+def test_identify_goal__mail_derived_task_registration__preserves_inferred_effects() -> None:
+    effects = ["READ", "CREATE"]
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "메일 후속 업무 등록", "completion_conditions": ["태스크 등록"],
-        "constraints": [{"kind": "USER_REQUIREMENT", "field": "search_terms", "value": "회의"}],
+        "constraints": _goal_constraints(search_terms=["회의"]),
         "requested_effect_hints": effects,
         "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
         "analysis_requirement": "NONE",
     }])
     request = _request("회의 관련 메일을 찾아서 후속 업무를 내 기본 Google Tasks 목록에 등록해줘.")
     prompt_ref = _prompt_ref("request_understanding.identify_goal", "identify_goal")
-    if not valid:
-        with pytest.raises(ValueError, match=r"\$.requested_effect_hints.*CREATE"):
-            identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
-    else:
-        result = identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
-        assert result["requested_effect_hints"] == effects
+    result = identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
+    assert result["requested_effect_hints"] == effects
 
 
 @pytest.mark.parametrize("request_text,constraints", [
     ("Google Tasks에 등록하지 말고 회의 메일만 찾아줘.",
-     [{"kind": "USER_REQUIREMENT", "field": "search_terms", "value": "회의"}]),
+     _goal_constraints(search_terms=["회의"])),
     ("'Google Tasks에 등록해줘'라는 제목의 메일을 읽어줘.",
-     _gmail_constraints(subject=["Google Tasks에 등록해줘"])),
+     _goal_constraints(subject=["Google Tasks에 등록해줘"])),
 ])
 def test_identify_goal__forbidden_or_quoted_registration__does_not_require_create(
     request_text: str, constraints: object,
@@ -619,24 +620,24 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
     request_text: str,
     expected_dates: list[str],
 ) -> None:
+    additional_constraints: list[dict[str, object]] = [
+        {"kind": "DATE", "field": "date", "value": "2026-02-08"},
+        {
+            "kind": "RESOURCE",
+            "field": "title",
+            "value": "2/8 Supervisor 승인 테스트",
+        },
+    ]
+    if expected_dates:
+        additional_constraints.append(
+            {"kind": "DATE", "field": "due", "value": "2026-09-05"}
+        )
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "새 할 일 생성",
                 "completion_conditions": ["할 일을 생성한다"],
-                "constraints": [
-                    {"kind": "DATE", "field": "date", "value": "2026-02-08"},
-                    {
-                        "kind": "RESOURCE",
-                        "field": "title",
-                        "value": "2/8 Supervisor 승인 테스트",
-                    },
-                ]
-                + (
-                    [{"kind": "DATE", "field": "due", "value": "2026-09-05"}]
-                    if expected_dates
-                    else []
-                ),
+                "constraints": _goal_constraints(*additional_constraints),
                 "requested_effect_hints": ["CREATE"],
                 "requested_resource_hints": ["TASK"],
                 "analysis_requirement": "NONE",
@@ -663,18 +664,16 @@ def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> 
             {
                 "goal": "List issues",
                 "completion_conditions": ["Issues are listed"],
-                "constraints": [
-                    {
-                        "kind": "RESOURCE",
-                        "field": "repository",
-                        "value": "openai/codex",
-                        "provenance": {
-                            "source": "USER_REQUEST",
-                            "start_offset": 0,
-                            "end_offset": 12,
-                        },
-                    }
-                ],
+                "constraints": _goal_constraints({
+                    "kind": "RESOURCE",
+                    "field": "repository",
+                    "value": "openai/codex",
+                    "provenance": {
+                        "source": "USER_REQUEST",
+                        "start_offset": 0,
+                        "end_offset": 12,
+                    },
+                }),
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["GITHUB_ISSUE"],
                 "analysis_requirement": "REQUIRED",

@@ -22,11 +22,13 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     EvidenceDraftV1,
     EvidenceRoleDraftV2,
     EvidenceSelectionResultV2,
+    SufficiencyIssueV2,
 )
 from google_work_agent.application.agents.retrieval.match_person_mention import (
     project_person_candidates,
 )
 from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
+    EventDateCandidateV1,
     has_only_reporting_period_dates,
     match_temporal_evidence,
     project_event_date_candidates,
@@ -36,10 +38,6 @@ from google_work_agent.application.agents.retrieval.normalize_segments import (
     ContextBudget,
     SourceSegment,
     _truncate,
-)
-from google_work_agent.application.agents.retrieval.prioritize_material_gmail_evidence import (
-    prioritize_material_gmail_evidence,
-    select_explicit_lineage_gmail_evidence,
 )
 from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
     project_query_temporal_constraints,
@@ -79,9 +77,10 @@ def select_evidence(
     query_attempts: Sequence[QueryAttemptV1] = (),
     prior_selection: EvidenceSelectionResultV2 | None = None,
     source_fetch_plans: Sequence[SourceFetchPlanV1] = (),
+    evidence_reassessment_issues: Sequence[SufficiencyIssueV2] = (),
 ) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
     """Reassess hydrated sources without discarding unchanged acquired evidence."""
-    retained = retain_unchanged_evidence(
+    retained = None if evidence_reassessment_issues else retain_unchanged_evidence(
         prior_selection, source_fetch_plans=source_fetch_plans, segments=segments,
     )
     if retained is not None:
@@ -106,6 +105,7 @@ def select_evidence(
         context_budget=replace(context_budget, max_evidence=remaining),
         exclusion_obligation_segment_ids=exclusion_obligation_segment_ids,
         query_attempts=query_attempts,
+        evidence_reassessment_issues=evidence_reassessment_issues,
     )
     if retained is None:
         return _guard_temporal_roles(selected, segments, query_attempts), revised_budget
@@ -139,6 +139,7 @@ def _guard_temporal_roles(
         )
     }
     outside_ids: set[str] = set()
+    dates_by_resource: dict[str, list[EventDateCandidateV1]] = {}
     for segment in segments:
         dates = [
             date for constraint in project_query_temporal_constraints([
@@ -147,10 +148,22 @@ def _guard_temporal_roles(
             ]) if constraint["axis"] == "EVENT_TIME"
             for date in project_event_date_candidates(segment.text, constraint)
         ]
+        dates_by_resource.setdefault(segment.resource_handle, []).extend(dates)
         if dates and all(
             item["year_explicit"] and not item["date_intersects_window"] for item in dates
         ):
             outside_ids.add(segment.segment_id)
+    outside_resources = {
+        resource_handle
+        for resource_handle, dates in dates_by_resource.items()
+        if dates
+        and all(item["year_explicit"] and not item["date_intersects_window"] for item in dates)
+    }
+    outside_ids.update(
+        segment.segment_id
+        for segment in segments
+        if segment.resource_handle in outside_resources
+    )
     return {**selection, "evidence_drafts": [
         {**item, "role": "CONTEXT", "relevance_reason": "보고·집계 기간이며 확정 행사일이 아님"}
         if item["segment_id"] in reporting_ids else item
@@ -177,6 +190,7 @@ def _select_ranked_evidence(
     context_budget: ContextBudget,
     exclusion_obligation_segment_ids: Collection[str],
     query_attempts: Sequence[QueryAttemptV1],
+    evidence_reassessment_issues: Sequence[SufficiencyIssueV2],
 ) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
     """Select evidence only from the bounded ranked segments supplied by RAG."""
     obligations = _stable_unique(exclusion_obligation_segment_ids)
@@ -204,6 +218,19 @@ def _select_ranked_evidence(
         if segment.locator.get("message_id")
         or segment.locator.get("is_metadata_only") is False
     }
+    segment_by_id = {segment.segment_id: segment for segment in segments}
+    eligible_candidates = [
+        candidate
+        for candidate in eligible_candidates
+        if not (
+            (segment := segment_by_id.get(candidate["segment_id"])) is not None
+            and segment.resource_type == "gmail_thread"
+            and segment.locator.get("is_metadata_only") is True
+            and segment.resource_handle in detailed_handles
+        )
+    ]
+    if not eligible_candidates:
+        return _empty_selection(obligations), retry_budget
     metadata_ids = {
         segment.segment_id for segment in segments
         if segment.resource_type == "gmail_thread"
@@ -231,16 +258,6 @@ def _select_ranked_evidence(
     )
     if deterministic_selection is not None:
         return deterministic_selection, retry_budget
-    lineage_selection = select_explicit_lineage_gmail_evidence(
-        request_intent=request_intent,
-        rag_candidates=eligible_candidates,
-        segments=segments,
-        max_evidence=context_budget.max_evidence,
-    )
-    if lineage_selection is not None:
-        bounded_selection = _apply_exclusions(lineage_selection, obligations)
-        if bounded_selection["selected_segment_ids"]:
-            return bounded_selection, retry_budget
     temporal_constraints = project_query_temporal_constraints(query_attempts)
     projection = _ranked_segments_projection(eligible_candidates, segments, temporal_constraints)
     observed_people = project_person_candidates(request_intent, [], source_segments=segments)
@@ -259,29 +276,26 @@ def _select_ranked_evidence(
         max_evidence=context_budget.max_evidence,
         metadata_candidate_ids=metadata_ids,
     )
+    prompt_input: dict[str, object] = {
+        "request_intent": request_intent,
+        "ranked_segments": projection,
+        "temporal_constraints": temporal_constraints,
+    }
+    if evidence_reassessment_issues:
+        prompt_input["sufficiency_feedback"] = list(evidence_reassessment_issues)
     result = llm_runtime.infer(
         requested_mode,
         prompt_ref,
-        {
-            "request_intent": request_intent,
-            "ranked_segments": projection,
-            "temporal_constraints": temporal_constraints,
-        },
+        prompt_input,
         output_schema,
     )
     try:
         return (
             _apply_exclusions(
-                prioritize_material_gmail_evidence(
-                    _validate_selection(
-                        result.structured_output,
-                        candidate_segment_ids=candidate_ids,
-                        context_budget=context_budget,
-                    ),
-                    request_intent=request_intent,
-                    rag_candidates=eligible_candidates,
-                    segments=segments,
-                    max_evidence=context_budget.max_evidence,
+                _validate_selection(
+                    result.structured_output,
+                    candidate_segment_ids=candidate_ids,
+                    context_budget=context_budget,
                 ),
                 obligations,
             ),
@@ -294,24 +308,15 @@ def _select_ranked_evidence(
         )
         decision = approve_semantic_revision(retry_budget, signature=signature)
         if decision["decision"] == BudgetDecision.DENY.value:
-            return (
-                _material_fallback_selection(
-                    request_intent=request_intent,
-                    eligible_candidates=eligible_candidates,
-                    segments=segments,
-                    obligations=obligations,
-                    context_budget=context_budget,
-                ),
-                decision["run_budget"],
-            )
+            raise ValueError(
+                "evidence selection is invalid and revision budget is exhausted"
+            ) from error
         revision = llm_runtime.infer(
             requested_mode,
             revision_prompt_ref,
             {
                 "base_projection": {
-                    "request_intent": request_intent,
-                    "ranked_segments": projection,
-                    "temporal_constraints": temporal_constraints,
+                    **prompt_input,
                 },
                 "candidate_output": result.structured_output,
                 "failure_record": build_failure_record_v1(
@@ -331,52 +336,19 @@ def _select_ranked_evidence(
         try:
             return (
                 _apply_exclusions(
-                    prioritize_material_gmail_evidence(
-                        _validate_selection(
-                            revision.structured_output,
-                            candidate_segment_ids=candidate_ids,
-                            context_budget=context_budget,
-                        ),
-                        request_intent=request_intent,
-                        rag_candidates=eligible_candidates,
-                        segments=segments,
-                        max_evidence=context_budget.max_evidence,
+                    _validate_selection(
+                        revision.structured_output,
+                        candidate_segment_ids=candidate_ids,
+                        context_budget=context_budget,
                     ),
                     obligations,
                 ),
                 decision["run_budget"],
             )
-        except ValueError:
-            return (
-                _material_fallback_selection(
-                    request_intent=request_intent,
-                    eligible_candidates=eligible_candidates,
-                    segments=segments,
-                    obligations=obligations,
-                    context_budget=context_budget,
-                ),
-                decision["run_budget"],
-            )
-
-
-def _material_fallback_selection(
-    *,
-    request_intent: RequestIntentV2,
-    eligible_candidates: list[RagCandidateV1],
-    segments: list[SourceSegment],
-    obligations: Collection[str],
-    context_budget: ContextBudget,
-) -> EvidenceSelectionResultV2:
-    return _apply_exclusions(
-        prioritize_material_gmail_evidence(
-            _empty_selection(),
-            request_intent=request_intent,
-            rag_candidates=eligible_candidates,
-            segments=segments,
-            max_evidence=context_budget.max_evidence,
-        ),
-        obligations,
-    )
+        except ValueError as revision_error:
+            raise ValueError(
+                "evidence selection remained invalid after bounded revision"
+            ) from revision_error
 
 
 def _receipt_listing_selection(

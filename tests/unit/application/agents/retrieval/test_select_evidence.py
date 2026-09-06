@@ -442,7 +442,7 @@ def test_select_evidence__repairs_container_only_selection__for_task_read() -> N
     assert budget["semantic_revisions_used_by_failure"]
 
 
-def test_select_evidence__meeting_record_and_notification__prioritizes_record_detail() -> None:
+def test_select_evidence__with_keyword_hits__preserves_semantic_assessment() -> None:
     notification_only = {
         "schema_version": 2,
         "evidence_drafts": [
@@ -523,24 +523,21 @@ def test_select_evidence__meeting_record_and_notification__prioritizes_record_de
         retry_budget=_run_budget(used=0),
     )
 
-    assert result["selected_segment_ids"][:2] == ["minutes", "minutes-typo"]
-    assert result["evidence_drafts"][0] == {
-        "segment_id": "minutes",
-        "role": "SUPPORTS",
-        "relevance_reason": "CONTENT_BEARING_WORK_RECORD",
-    }
+    assert result == notification_only
 
 
-def test_select_evidence__explicit_work_lineages__preserves_each_candidate() -> None:
+def test_select_evidence__with_lineage_keywords__does_not_force_selection() -> None:
     empty_selection = {
         "schema_version": 2,
         "evidence_drafts": [],
         "selected_segment_ids": [],
         "excluded_segment_ids": [],
     }
+    empty_selection["excluded_segment_ids"] = [
+        "first-body-1", "first-body-2", "second-metadata",
+    ]
     runtime = FakeLLMRuntime(
-        deque([_llm_result(evidence_assessment_output(empty_selection)),
-               _llm_result(evidence_assessment_output(empty_selection))])
+        deque([_llm_result(evidence_assessment_output(empty_selection))])
     )
     intent = _intent()
     intent["analysis_requirement"] = "REQUIRED"
@@ -610,38 +607,88 @@ def test_select_evidence__explicit_work_lineages__preserves_each_candidate() -> 
         retry_budget=_run_budget(used=0),
     )
 
-    assert result["selected_segment_ids"] == ["second-metadata", "first-body-1"]
-    assert len(
-        {
-            next(
-                segment.resource_handle
-                for segment in segments
-                if segment.segment_id == segment_id
-            )
-            for segment_id in result["selected_segment_ids"]
-        }
-    ) == 2
+    assert result["selected_segment_ids"] == []
+    assert result["excluded_segment_ids"] == [
+        "first-body-1", "first-body-2", "second-metadata",
+    ]
+    assert len(runtime.calls) == 1
 
 
-def test_select_evidence__same_thread_preview_and_detail__prefers_detail() -> None:
-    preview_selection = {
+def test_event_time__resource_with_only_explicit_outside_dates__excludes_title_context() -> None:
+    output = {
+        "schema_version": 2,
+        "evidence_drafts": [
+            {"segment_id": "title", "role": "CONTEXT", "relevance_reason": "관련 제목"},
+            {"segment_id": "body", "role": "CONTRADICTS", "relevance_reason": "기간 밖"},
+        ],
+        "selected_segment_ids": ["title", "body"],
+        "excluded_segment_ids": [],
+    }
+    runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(output))]))
+    segments = [
+        SourceSegment(
+            "title", "gmail_thread:outside", "GMAIL", "gmail_thread", "outside",
+            None, None, {}, "오로라 이후 점검",
+        ),
+        SourceSegment(
+            "body", "gmail_thread:outside", "GMAIL", "gmail_thread", "outside",
+            None, None, {}, "점검 일정은 2026년 9월 15일입니다.",
+        ),
+    ]
+    intent = _intent()
+    intent["constraints"] = [
+        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["오로라"]},
+        {"kind": "DATE", "field": "period", "value": ["9월 첫째주"]},
+        {"kind": "TIME", "field": "temporal_axis", "value": ["EVENT_TIME"]},
+    ]
+    attempts = [cast(QueryAttemptV1, {
+        "route_id": "gmail", "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH",
+        "normalized_intent_constraints": [{
+            "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME", "timezone": "Asia/Seoul",
+            "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
+        }],
+    })]
+
+    result, _ = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=intent,
+        rag_candidates=[{
+            "segment_id": item.segment_id, "resource_ref": item.resource_handle,
+            "retrieval_score": 1.0, "reason_codes": [],
+        } for item in segments],
+        segments=segments, retry_budget=_run_budget(used=0), query_attempts=attempts,
+    )
+
+    assert result["selected_segment_ids"] == []
+    assert set(result["excluded_segment_ids"]) == {"title", "body"}
+
+
+def test_select_evidence__with_detail_assessment__selects_semantic_result() -> None:
+    detail_selection = {
         "schema_version": 2,
         "evidence_drafts": [
             {
-                "segment_id": "preview",
+                "segment_id": "detail",
                 "role": "SUPPORTS",
-                "relevance_reason": "matching subject",
+                "relevance_reason": "thread detail",
             },
             {
-                "segment_id": "second-preview",
+                "segment_id": "second-status",
                 "role": "SUPPORTS",
-                "relevance_reason": "matching subject",
+                "relevance_reason": "work status",
+            },
+            {
+                "segment_id": "decision-without-lineage-in-chunk",
+                "role": "SUPPORTS",
+                "relevance_reason": "explicit decision detail",
             },
         ],
-        "selected_segment_ids": ["preview", "second-preview"],
-        "excluded_segment_ids": [],
+        "selected_segment_ids": [
+            "detail", "second-status", "decision-without-lineage-in-chunk",
+        ],
+        "excluded_segment_ids": ["preview", "second-preview"],
     }
-    runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(preview_selection))]))
+    runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(detail_selection))]))
     intent = _intent()
     intent["analysis_requirement"] = "REQUIRED"
     intent["requested_effect_hints"] = ["READ"]
@@ -734,6 +781,6 @@ def test_select_evidence__same_thread_preview_and_detail__prefers_detail() -> No
         retry_budget=_run_budget(used=0),
     )
 
-    assert set(result["selected_segment_ids"][:2]) == {"detail", "second-status"}
+    assert result["selected_segment_ids"][:2] == ["detail", "second-status"]
     assert result["selected_segment_ids"][2] == "decision-without-lineage-in-chunk"
-    assert runtime.calls == []
+    assert len(runtime.calls) == 1

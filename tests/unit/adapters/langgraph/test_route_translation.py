@@ -120,7 +120,7 @@ def _resume_registry() -> ResumeTargetRegistry:
 
 
 def test_node_registry__contains_exact__canonical_runtime_nodes() -> None:
-    assert len(RUNTIME_NODE_OWNERS) == 35
+    assert len(RUNTIME_NODE_OWNERS) == 36
 
 
 def test_resume_target_registry__issues_profile_bound__same_owner_target() -> None:

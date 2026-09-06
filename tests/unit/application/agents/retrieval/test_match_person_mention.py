@@ -7,6 +7,7 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
 )
 from google_work_agent.application.agents.retrieval.match_person_mention import (
     project_person_candidates,
+    resolve_supported_person_identities,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query_expansion import (
@@ -35,12 +36,12 @@ def _evidence(name: str | None, email: str, key: str) -> Any:
     }
 
 
-def _guard(candidates: Any, **kwargs: Any) -> Any:
+def _guard(candidates: Any, evidence_drafts: Any = None, **kwargs: Any) -> Any:
     return deterministic_sufficiency(
         request_intent=_intent(),
         tool_route_plan=None,
         acquisition_result=cast(Any, {"source_summaries": []}),
-        evidence_drafts=[],
+        evidence_drafts=[] if evidence_drafts is None else evidence_drafts,
         retry_budget=build_default_run_budget(),
         person_candidates=candidates,
         **kwargs,
@@ -84,6 +85,43 @@ def test_shared_surname_title__retains_distinct_identities__and_requires_confirm
         _guard(candidates, selected_person_identities={"김대리": "second@example.test"})["status"]
         == "NEEDS_MORE_DATA"
     )
+
+
+def test_single_identity__with_supporting_evidence__resolves_without_confirmation() -> None:
+    evidence = [
+        _evidence("김하늘 대리", "first@example.test", "s1"),
+        _evidence("김바다 대리", "second@example.test", "s2"),
+    ]
+    evidence[0]["reason_codes"] = ["SUPPORTS"]
+    candidates = project_person_candidates(_intent(), evidence)
+
+    assert resolve_supported_person_identities(candidates, evidence) == {
+        "김대리": "first@example.test"
+    }
+    assert _guard(
+        candidates,
+        selected_person_identities=resolve_supported_person_identities(candidates, evidence),
+    )["status"] == "NEEDS_MORE_DATA"
+    assert _guard(
+        candidates,
+        evidence_drafts=evidence,
+        selected_person_identities=resolve_supported_person_identities(candidates, evidence),
+    ) is None
+
+
+def test_multiple_identities__with_supporting_evidence__remain_for_confirmation() -> None:
+    evidence = [
+        _evidence("김하늘 대리", "first@example.test", "s1"),
+        _evidence("김바다 대리", "second@example.test", "s2"),
+    ]
+    for item in evidence:
+        item["reason_codes"] = ["SUPPORTS"]
+    candidates = project_person_candidates(_intent(), evidence)
+
+    assert resolve_supported_person_identities(candidates, evidence) == {}
+    assert resolve_supported_person_identities(
+        candidates, evidence, {"김대리": "second@example.test"}
+    ) == {"김대리": "second@example.test"}
 
 
 def test_email_only__without_alias_provenance__does_not_resolve_mention() -> None:

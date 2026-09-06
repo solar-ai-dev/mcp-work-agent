@@ -30,7 +30,7 @@ def test_pre_experiment_manifest__has_zero_unsupported__activation_claims() -> N
     slots = cast(list[dict[str, object]], payload["slots"])
 
     assert {str(slot["prompt_slot_id"]) for slot in slots} == REQUIRED_PROMPT_SLOT_IDS
-    assert len(slots) == 21
+    assert len(slots) == 22
     assert all(slot["activation_status"] == "DRAFT" for slot in slots)
     assert all(
         slot[field] is False

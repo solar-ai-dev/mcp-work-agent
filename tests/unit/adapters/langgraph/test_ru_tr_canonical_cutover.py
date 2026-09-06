@@ -8,7 +8,13 @@ SRC = ROOT / "src/google_work_agent"
 RU = SRC / "adapters/langgraph/subgraphs/request_understanding"
 TR = SRC / "adapters/langgraph/subgraphs/tool_routing"
 TR_APP = SRC / "application/agents/tool_routing"
-RU_OPERATIONS = ("identify_goal", "detect_ambiguity", "finalize_intent", "validate_intent")
+RU_OPERATIONS = (
+    "identify_goal",
+    "identify_temporal_scope",
+    "detect_ambiguity",
+    "finalize_intent",
+    "validate_intent",
+)
 TR_OPERATIONS = (
     "determine_io_resources",
     "bind_registry_candidates",
@@ -47,8 +53,13 @@ def _called_names(path: Path) -> set[str]:
     return names
 
 
-def test_request_understanding_has__three_runtime_nodes__for_four_operations() -> None:
-    for operation in ("identify_goal", "detect_ambiguity", "finalize_intent"):
+def test_request_understanding_has__four_runtime_nodes__for_five_operations() -> None:
+    for operation in (
+        "identify_goal",
+        "identify_temporal_scope",
+        "detect_ambiguity",
+        "finalize_intent",
+    ):
         path = RU / "nodes" / f"{operation}_node.py"
         assert path.is_file()
         assert operation in _called_names(path)
@@ -209,6 +220,7 @@ def test_tool_routing_has__no_downstream_or__provider_execution_calls() -> None:
 def test_projection_allowlists__are_owner__local() -> None:
     assert {path.stem for path in (RU / "projections").glob("*_projection.py")} == {
         "identify_goal_projection",
+        "identify_temporal_scope_projection",
         "detect_ambiguity_projection",
         "finalize_intent_projection",
         "request_confirmation_projection",

@@ -147,10 +147,11 @@ discovery 단서로 선택할 수는 있다. 이는 원래 concept/window를 유
 인정하지 않고 detail의 실제 사건/날짜를 검증한다.
 같은 가설 반복과 기존 검색/detail budget 상한은 유지한다.
 
-Query semantic revision은 기존 FailureRecord의 `QUERY_USER_CONSTRAINT_MISSING`(요청 개념 누락),
-`QUERY_TOO_NARROW`(literal-only concept)로 수정 이유를 구분한다. 모델 재요청에는 원래의
-모델 출력 후보만 전달하고, Application이 복원한 exact anchor/기간/container를 모델 출력으로
-위조하지 않는다. 수정 후 같은 deterministic binding과 validator를 다시 적용한다.
+Query semantic revision은 `QUERY_USER_CONSTRAINT_MISSING`으로 사용자 요구 개념이 빠진 경우를
+구분한다. 개념의 원문 표현만 사용했다는 이유로 확장어를 강제하지 않는다. 확장 표현은
+Planner의 가설이며 실제 관측과 현재 요청에 근거해 선택한다. 모델 재요청에는 원래의 모델 출력
+후보만 전달하고, Application이 복원한 exact anchor/기간/container를 모델 출력으로 위조하지
+않는다. 수정 후 같은 deterministic binding과 validator를 다시 적용한다.
 
 Request Understanding의 의미 추론은 `search_terms`와 `business_concepts`를 생성한다.
 구조화된 검색 필드가 빠져도 원 요청이 남아 있으면 Planner의 bounded KEYWORD 발견을
@@ -161,14 +162,18 @@ Request Understanding의 의미 추론은 `search_terms`와 `business_concepts`�
 `USER_REQUIREMENT` kind로 검증한다. 기존 typed intent의 `SCOPE.search_terms` 소비는 유지한다.
 빈 날짜·상태 placeholder는 검색 제약으로 승격하지 않는다. Temporal 출력 스키마도
 기존 validator와 동일하게 적어도 한 개의 유효한 local boundary를 요구한다.
-Gmail-only AGENT_SEARCH의 Goal 추론 경계는 `constraints`의 이름이 고정된 슬롯 객체를
-사용한다: search_terms, business_concepts, required_information, person, sender, recipient,
-subject, period, temporal_axis, status. 모든 슬롯을 응답하되 미언급 값은 빈 배열로 둔다.
-새 Goal 추론 계약 v2의 슬롯 객체는 같은 identify_goal owner에서 기존 ConstraintV1 목록으로
-변환하며 `RequestIntentV2`와 checkpoint 구조를 바꾸지 않는다. 다른 Connector/WRITE의
-목록 표현은 유지한다. 기간과 인물의 명시적 표기는 기존 보존 연산의 값을 재사용한다.
-목록형 과거 Goal 출력을 새 Gmail 추론 경계에서 병렬로 허용하지 않는다.
-Gmail-only 검색의 period에는 temporal_axis를 함께 출력한다. Gmail 검색 상태는
+Goal 추론 출력은 의미 역할이 섞이지 않도록 이름 있는 검색 슬롯 객체를 사용한다. 원문 기간은
+`DATE.period`로 보존하고, 별도 Request Understanding 의미 연산이 현재 요청과 goal/context를
+바탕으로 `MESSAGE_TIME | EVENT_TIME`을 판단해 `TIME.temporal_axis`를 추가한다. Calendar
+이벤트 값이나 GitHub repository처럼 슬롯에 해당하지 않는 명시적 값은 같은 객체의
+`additional_constraints`에 둔다. Request Understanding owner가 모두 단일 `ConstraintV1`
+목록으로 정규화하며 downstream `RequestIntentV2` authority는 하나다.
+사용자 원문의 사람·기간·시간축·업무 개념·필요 정보는 Request Understanding이 판단하고,
+키워드·이름/직급·문장 패턴을 근거로 일반 코드가 그 결과를 추가·교체하지 않는다. 일반 코드는
+비어 있거나 placeholder인 값과 schema 형식을 검증하고, 명시적으로 `제목`/`subject`라고 표시한
+인용 문자열·명시된 상대 기간·원 요청처럼 형식으로 확정되는 사용자 anchor만 보존한다.
+Gmail-only 검색의 period에는 temporal_axis를 함께 출력한다. 시간축 의미를 키워드나 정규식으로
+덮어쓰지 않는다. Gmail 검색 상태는
 현재 지원하는 명시적 ANY/DRAFT/SENT 값만 고정하며, 다른 Resource의 OPEN 등의 값으로
 임의 메일 상태 필터를 생성하지 않는다.
 
@@ -834,8 +839,10 @@ metadata의 동일한 전체 이름에 직급이 붙은 경우에도 후보로 �
 성만으로 다른 전체 이름을 일치시키지 않으며, 동명이인의 email은 별도 후보로 유지한다. 이 bounded 후보는
 Retrieval local checkpoint 및 `RetrievalResultV1.person_candidates`에 보존한다. 이전 artifact에
 필드가 없으면 빈 후보로 취급하며, 후보의 source segment provenance가 제외된 경우 재사용하지 않는다.
-복수 후보는 기존 Retrieval Confirmation 옵션으로 노출하고 선택 email은 해당 후보 집합에서만
-수용한다. 유일 후보 또는 사용자 선택 후 같은 frozen Route에서 exact PARTICIPANT 후속 검색을
+fresh validated Evidence assessment가 요청 의미를 SUPPORTS하는 source provenance를 후보 하나에만
+결합하면 그 관측 identity를 선택할 수 있다. SUPPORTS provenance가 복수 후보에 남거나 유일 결합이
+없으면 기존 Retrieval Confirmation 옵션으로 노출하고 선택 email은 해당 후보 집합에서만 수용한다.
+유일하게 확인된 후보 또는 사용자 선택 후 같은 frozen Route에서 exact PARTICIPANT 후속 검색을
 수행한다. 이것은 RequestIntent의 사용자 원문을 바꾸거나 LLM에게 email 생성 권한을 주지 않는다.
 
 - 요청 자체에서 드러나는 모호성은 Request Understanding에서 확인한다.
@@ -851,8 +858,10 @@ MESSAGE_TIME으로 보강하며, 알려진 행사 단어 목록에 없다는 이
 MESSAGE_TIME으로 바꾸지 않는다. 역할이 미해결이면 received-time lowering을 하지 않는다.
 
 인물 후보는 수집된 SourceSegment의 metadata와 명시적인 이름·이메일 연결을 근거로 만든다.
-답변용 Evidence 선택이 다른 사람의 자료를 제외했더라도 실제 복수 후보를 단일 인물로
-축소하지 않는다. 사용자 exclusion만 해당 후보 provenance를 철회할 수 있다.
+Evidence EXCLUDED만으로 후보를 제거하지 않으며 candidate 목록은 보존한다. 다만 fresh validated
+Evidence assessment의 SUPPORTS source provenance가 요청의 인물 표현과 후보 하나만 결합하면
+그 identity를 `selected_person_identities`로 확인할 수 있다. 실제 복수 SUPPORTS 후보가 남으면
+단일 인물로 축소하지 않는다. 사용자 exclusion만 candidate provenance를 철회할 수 있다.
 확인된 선택은 `selected_person_identities`로 same-Run에서 보존하며 Planning의 답변
 projection은 선택되지 않은 인물만의 근거를 제외한다. 원래 Run Evidence는 삭제하지 않는다.
 분석이 필요하지 않은 날짜·인물 lookup도 선택된 근거의 의미를 Planning 답변으로 정리한다.

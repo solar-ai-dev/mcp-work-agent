@@ -26,6 +26,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     PersonCandidateV1,
     RetrievalResultV1,
     RetrievalSourceStatusV1,
+    SufficiencyIssueV2,
     SufficiencyResultV2,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
@@ -95,6 +96,7 @@ class ContextRetrievalLocalState(GraphState):
     __context_detail_candidates__: NotRequired[dict[str, str]]
     __context_round_preadvanced__: NotRequired[bool]
     __context_retrieval_retry_confirmation__: NotRequired[bool]
+    __context_evidence_reassessment_issues__: NotRequired[list[SufficiencyIssueV2] | None]
 
 
 class RetrievalState(TypedDict, total=False):
@@ -113,6 +115,7 @@ class RetrievalState(TypedDict, total=False):
     exclusion_obligation_segment_ids: list[str]
     pending_user_retrieval_need: RetrievalNeedV1 | None
     evidence_selection: EvidenceSelectionResultV2 | None
+    evidence_reassessment_issues: list[SufficiencyIssueV2]
     sufficiency: SufficiencyResultV2 | None
     final_result: RetrievalResultV1 | None
 

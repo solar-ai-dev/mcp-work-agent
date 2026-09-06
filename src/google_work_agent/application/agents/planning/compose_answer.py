@@ -18,15 +18,6 @@ from google_work_agent.application.agents.planning.normalize_generated_answer_pr
 from google_work_agent.application.agents.planning.project_empty_read_answer import (
     project_empty_read_answer,
 )
-from google_work_agent.application.agents.planning.project_gmail_decision_read_answer import (
-    project_gmail_decision_read_answer,
-)
-from google_work_agent.application.agents.planning.project_gmail_read_planning import (
-    project_gmail_read_planning,
-)
-from google_work_agent.application.agents.planning.project_gmail_security_read_answer import (
-    project_gmail_security_read_answer,
-)
 from google_work_agent.application.agents.planning.project_task_read_answer import (
     project_task_read_answer,
 )
@@ -138,12 +129,7 @@ def compose_answer(
         for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
             if key in retrieval_result:
                 prompt_input[key] = deepcopy(retrieval_result[key])
-    gmail_projection = project_gmail_read_planning(
-        user_request=user_request,
-        request_intent=request_intent,
-        evidence=evidence,
-    )
-    if work_analysis is not None and gmail_projection is None:
+    if work_analysis is not None:
         prompt_input["work_analysis"] = dict(work_analysis)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
@@ -156,24 +142,6 @@ def compose_answer(
         if not set(task_projection.draft["evidence_refs"]).issubset(approved_refs):
             raise ValueError("task read answer references evidence outside its approved outline")
         return _with_partial_scope(task_projection.draft, retrieval_result)
-    decision_projection = project_gmail_decision_read_answer(
-        user_request=user_request,
-        request_intent=request_intent,
-        evidence=evidence,
-    )
-    if decision_projection is not None:
-        if not set(decision_projection.draft["evidence_refs"]).issubset(approved_refs):
-            raise ValueError("Gmail decision answer references evidence outside its outline")
-        return _with_partial_scope(decision_projection.draft, retrieval_result)
-    security_projection = project_gmail_security_read_answer(
-        user_request=user_request,
-        request_intent=request_intent,
-        evidence=evidence,
-    )
-    if security_projection is not None:
-        if not set(security_projection.draft["evidence_refs"]).issubset(approved_refs):
-            raise ValueError("Gmail security answer references evidence outside its outline")
-        return _with_partial_scope(security_projection.draft, retrieval_result)
     empty_projection = project_empty_read_answer(
         user_request=user_request,
         request_intent=request_intent,
@@ -279,7 +247,10 @@ def _validate_unresolved_date_claims(
         month, day = (int(value) for value in date.groups())
         day_pattern = rf"0?{month}\s*(?:월|[-/.])\s*0?{day}(?!\d)(?:\s*일)?"
         explicit_year = rf"(?<!\d)\d{{4}}\s*(?:년|[-/.])\s*{day_pattern}"
-        weekday = rf"{day_pattern}\s*\**\s*\(?[월화수목금토일](?:요일|\))"
+        weekday = (
+            rf"{day_pattern}(?:\s+\**\s*[월화수목금토일]요일"
+            rf"|\s*\**\s*\([월화수목금토일]\))"
+        )
         if re.search(explicit_year, answer) or re.search(weekday, answer):
             raise ValueError("compose_answer promoted an unresolved event date into a dated fact")
 

@@ -1112,6 +1112,7 @@ Node는 자신의 Output Schema에 필요한 최소 State만 본다. Request Sub
 ```
 START
 → identify_goal
+→ identify_temporal_scope (Gmail period가 있을 때 LLM, 아니면 pass-through)
 → detect_ambiguity
 → finalize_intent
 → validate_intent
@@ -1138,9 +1139,14 @@ class RequestUnderstandingStateV2:
     final_intent: RequestIntentV2 | None
 ```
 
-각 LLM Node는 목표 파악 또는 모호성 판단 중 자기 책임만 수행한다. 구현에서 한 호출로 합치는 Profile이 존재해도 Output Contract의 의미 책임은 분리해 평가한다.
+각 LLM Node는 목표 파악, Gmail 기간의 시간축 판단, 모호성 판단 중 자기 책임만 수행한다.
+`identify_goal`은 원문 period를 보존하고 `identify_temporal_scope`만 `MESSAGE_TIME | EVENT_TIME`을
+판단한다. 일반 코드가 키워드·정규식으로 이 의미를 교체하지 않는다.
 
-Identity-bearing constraint도 이 기존 흐름 안에서만 처리한다. `identify_goal`과 `detect_ambiguity`는 후보를 만들고, `request.finalize`가 actual current-run source text와 대조하여 provenance를 부여한 뒤 `validate_intent`를 통과시킨다. 새 Request Understanding operation이나 Main Graph topology를 만들지 않는다.
+Identity-bearing constraint는 이 Request Understanding 흐름 안에서 처리한다. `identify_goal`과
+`detect_ambiguity`는 후보를 만들고, `request.finalize`가 actual current-run source text와 대조하여
+provenance를 부여한 뒤 `validate_intent`를 통과시킨다. 시간축 operation은 identity resolution이나
+Main Agent owner를 새로 만들지 않는다.
 
 ### 5.3 Tool Route Subgraph
 
@@ -1682,6 +1688,7 @@ registered node/resume target set이 변경되면 compiled Resume Target Registr
 | node_id | subgraph | type | 주요 입력 | 주요 출력 |
 | --- | --- | --- | --- | --- |
 | `request.identify_goal` | request_understanding | LLM | request | goal candidate |
+| `request.identify_temporal_scope` | request_understanding | LLM/conditional | request + goal period/context | temporal axis를 더한 goal candidate |
 | `request.detect_ambiguity` | request_understanding | LLM/conditional | request + goal | ambiguity |
 | `request.finalize` | request_understanding | deterministic | local candidates | `finalize_intent → validate_intent → RequestIntentV2` |
 | `route.determine_resources` | tool_route | LLM | `RequestIntentV2` | IN/OUT resource·effect candidate |

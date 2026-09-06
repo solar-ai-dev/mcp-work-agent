@@ -45,6 +45,9 @@ from google_work_agent.application.agents.retrieval.project_attempted_detail_ref
 from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
     project_query_temporal_constraints,
 )
+from google_work_agent.application.agents.retrieval.require_read_evidence_support import (
+    require_read_evidence_support,
+)
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
     normalize_resource_type,
@@ -106,7 +109,17 @@ def deterministic_sufficiency(
             for attempt in query_attempts if attempt["operation_kind"] == "SEARCH"
             for constraint in attempt["normalized_intent_constraints"]
         )
-        if not searched:
+        supported = any(
+            candidate["identity"] == chosen
+            and set(candidate["source_segment_ids"]).intersection(
+                draft["segment_id"]
+                for draft in evidence_drafts
+                if "SUPPORTS" in draft["reason_codes"]
+            )
+            for candidate in person_candidates
+            if candidate["mention"] == mention
+        )
+        if not searched and not supported:
             return {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": [{
                 "slot": "person_identity_search", "issue_type": "MISSING", "required": True,
                 "resolution_source": "GOOGLE", "safety_critical": False,
@@ -329,6 +342,12 @@ def assess_sufficiency(
                 "resolution_source": "GOOGLE" if route["connector_id"] == "google_workspace"
                 else "CONNECTOR", "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
             })
+    validated = require_read_evidence_support(
+        validated,
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        evidence_drafts=evidence_drafts,
+    )
     validated = _bind_issue_routes(validated, tool_route_plan=tool_route_plan)
     if (
         validated["status"] == "SUFFICIENT"

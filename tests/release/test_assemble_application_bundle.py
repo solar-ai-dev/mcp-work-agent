@@ -168,8 +168,8 @@ def test_signed_bundle__materializes_exact_validated__prompt_file_closure(
         inputs.prompt_manifest.read_bytes()
     )
     assert (prompt_root / "prompt_runtime_input_contract_v1.json").is_file()
-    assert len(tuple((prompt_root / "sources").glob("*.md"))) == 21
-    assert len(tuple((prompt_root / "activation-evidence").rglob("*.json"))) == 126
+    assert len(tuple((prompt_root / "sources").glob("*.md"))) == 22
+    assert len(tuple((prompt_root / "activation-evidence").rglob("*.json"))) == 132
     assert "manifests/prompt/unreferenced.txt" not in paths
 
 

@@ -7,9 +7,12 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
 )
 
 
-def route_after_identify_goal(
+def route_after_identify_temporal_scope(
     state: RequestUnderstandingStateV2,
-) -> Literal["identify_temporal_scope"]:
+) -> Literal["detect_ambiguity"]:
     if state.get("goal_candidate") is None:
         raise ValueError("request-understanding goal candidate is required")
-    return "identify_temporal_scope"
+    return "detect_ambiguity"
+
+
+__all__ = ["route_after_identify_temporal_scope"]

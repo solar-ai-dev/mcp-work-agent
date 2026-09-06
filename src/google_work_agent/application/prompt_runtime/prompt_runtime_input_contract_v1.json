@@ -40,7 +40,15 @@
       "input_schema_version": 1,
       "required_root_fields": ["user_request", "selected_resource_refs"],
       "optional_root_fields": ["confirmation_response"],
-      "output_schema_version": 2
+      "output_schema_version": 4
+    },
+    {
+      "prompt_slot_id": "request_understanding.identify_temporal_scope",
+      "runtime_node_id": "request.identify_temporal_scope",
+      "input_schema_version": 1,
+      "required_root_fields": ["user_request", "goal", "periods", "semantic_context"],
+      "optional_root_fields": [],
+      "output_schema_version": 1
     },
     {
       "prompt_slot_id": "request_understanding.detect_ambiguity",
@@ -77,9 +85,9 @@
     {
       "prompt_slot_id": "retrieval.select_evidence",
       "runtime_node_id": "retrieval.select_evidence",
-      "input_schema_version": 3,
+      "input_schema_version": 4,
       "required_root_fields": ["request_intent", "ranked_segments", "temporal_constraints"],
-      "optional_root_fields": ["confirmation_response"],
+      "optional_root_fields": ["confirmation_response", "sufficiency_feedback"],
       "output_schema_version": 3
     },
     {

@@ -128,6 +128,26 @@ def test_compose_answer__promoted_yearless_date__rejects_even_with_disclaimer(an
         )
 
 
+def test_compose_answer__yearless_date_in_parentheses__is_not_a_weekday_claim() -> None:
+    result = compose_answer(
+        user_request="9월 첫째주 연수 날짜",
+        request_intent={"requested_effect_hints": ["READ"]},
+        answer_outline={"sections": ["연수"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[{"evidence_id": "e1", "excerpt": "연수는 9월 5일입니다."}],
+        retrieval_result={
+            "unresolved_event_dates": [{"evidence_id": "e1", "source_text": "9월 5일"}]
+        },
+        invoke=lambda *_: {
+            "schema_version": 2,
+            "answer": "연수 일정(9월 5일)은 확인됐지만 연도는 미확정입니다.",
+            "evidence_refs": ["e1"],
+        },
+    )
+
+    assert "9월 5일" in result["answer"]
+
+
 def test_partial_answer__summarizes_long_sources__without_copying_them() -> None:
     answer = compose_answer(
         user_request="메일 목록",
@@ -333,13 +353,16 @@ def test_compose_reference_labels__english_request__preserves_language() -> None
     assert result["answer"] == "the reviewed material has an internal status."
 
 
-def test_gmail_read__with_intermediate_analysis__omits_it_from_final_prompt() -> None:
-    invoked = False
+def test_gmail_read__with_intermediate_analysis__uses_semantic_composition() -> None:
+    captured: dict[str, object] = {}
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
-        nonlocal invoked
-        invoked = True
-        return {}
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {
+            "schema_version": 2,
+            "answer": "근거에서 네비게이션바 확정을 확인했습니다.",
+            "evidence_refs": ["e-decision"],
+        }
 
     result = compose_answer(
         user_request="KAN-93 관련 메일 중 최신 결정을 알려줘.",
@@ -354,11 +377,11 @@ def test_gmail_read__with_intermediate_analysis__omits_it_from_final_prompt() ->
         invoke=invoke,
     )
 
-    assert invoked is False
-    assert result["answer"] == (
-        "관련 Gmail 자료에서 결정 또는 확정으로 명시된 내용은 다음과 같습니다.\n\n"
-        "- 네비게이션바로 확정"
-    )
+    assert captured["prompt_id"] == "planning.compose_answer"
+    assert captured["prompt_input"]["work_analysis"] == {
+        "work_facts": [{"fact_id": "fact-internal", "value": "근거 없는 마감일"}]
+    }
+    assert result["answer"] == "근거에서 네비게이션바 확정을 확인했습니다."
 
 
 def test_compose_answer__with_internal_fact_terms__removes_them_from_prose() -> None:

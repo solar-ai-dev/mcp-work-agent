@@ -1,24 +1,16 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from pathlib import Path
-from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
-)
-from google_work_agent.application.agents.request_understanding.resolve_request_scope import (
-    resolve_request_scope,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
     load_prompt_reference,
 )
-from google_work_agent.ports.llm.structured_inference_contracts import (
-    OutputSchemaDefinition,
-    PromptReference,
-)
+from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
@@ -27,10 +19,10 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
-    REQUEST_GOAL_SLOT_KINDS,
+    validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
 )
-from .preserve_vague_read_semantics import preserve_vague_read_semantics
+from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
 
 
 def identify_goal(
@@ -60,65 +52,30 @@ def identify_goal(
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
-    output_schema = _output_schema_for_request(request)
     result = llm_runtime.infer(
         request.requested_mode,
         resolved_prompt_ref,
         prompt_input,
-        output_schema,
+        IDENTIFY_GOAL_OUTPUT_SCHEMA,
     )
     candidate = _apply_quoted_literal_authority(
-        validate_request_goal_candidate(result.structured_output, schema=output_schema),
+        validate_request_goal_candidate(result.structured_output),
         request_text=request.request_text,
     )
-    candidate = _apply_explicit_read_authority(candidate, request_text=request.request_text)
-    candidate = preserve_vague_read_semantics(
+    candidate = preserve_explicit_search_anchors(
         candidate,
         request_text=request.request_text,
         entry_mode=request.entry_mode,
     )
-    candidate = _apply_general_answer_only_authority(candidate, request=request)
     candidate = _apply_selected_resource_authority(candidate, request=request)
-    return validate_request_goal_candidate(candidate)
+    return validate_normalized_request_goal_candidate(candidate)
 
 
-_EXPLICIT_READ_RESOURCE_PATTERNS = (
-    (re.compile(r"(?i)(?<![a-z])google\s+tasks?(?![a-z])"), "TASK"),
-    (re.compile(r"(?i)(?<![a-z])gmail(?![a-z])"), "GMAIL_THREAD"),
-    (re.compile(r"(?i)(?<![a-z])e-?mail(?![a-z])|메일"), "GMAIL_THREAD"),
-    (re.compile(r"(?i)(?<![a-z])google\s+calendar(?![a-z])"), "CALENDAR_EVENT"),
-)
-_EXPLICIT_READ_MARKERS = (
-    "알려",
-    "보여",
-    "목록",
-    "찾아",
-    "읽어",
-    "요약",
-    "분석",
-    "list",
-    "find",
-    "read",
-    "show",
-    "summarize",
-    "analyse",
-    "analyze",
-)
-_EXPLICIT_ANALYSIS_MARKERS = (
-    "분석",
-    "비교",
-    "결정",
-    "결론",
-    "영향",
-    "원인",
-    "리스크",
-    "관계",
-    "analy",
-    "compare",
-    "decision",
-    "conclusion",
-    "impact",
-    "risk",
+_QUOTED_LITERAL_PATTERNS = (
+    re.compile(r"'[^']*'"),
+    re.compile(r'"[^"]*"'),
+    re.compile(r"‘[^’]*’"),
+    re.compile(r"“[^”]*”"),
 )
 _EXPLICIT_DATE_SIGNAL = re.compile(
     r"(?i)(?:"
@@ -138,9 +95,11 @@ def _apply_quoted_literal_authority(
 ) -> RequestGoalCandidateV1:
     """Do not reinterpret a quoted resource literal as an unstated date."""
 
-    scope = resolve_request_scope(request_text)
-    outside_literals = scope.outside_quoted_literals
-    quoted_literals = scope.quoted_literals
+    outside_literals = request_text
+    quoted_literals: list[str] = []
+    for pattern in _QUOTED_LITERAL_PATTERNS:
+        quoted_literals.extend(pattern.findall(request_text))
+        outside_literals = pattern.sub(" ", outside_literals)
     if not quoted_literals:
         return candidate
     literal_values: dict[str, set[str]] = {}
@@ -185,192 +144,6 @@ def _date_value_appears_in_text(value: object, text: str) -> bool:
         if token.search(text):
             return True
     return False
-
-
-def _output_schema_for_request(request: WorkflowStartRequest) -> OutputSchemaDefinition:
-    """Constrain explicit effects without granting execution authority."""
-
-    has_explicit_read = _has_explicit_read_authority(request.request_text)
-    gmail_search = (
-        request.entry_mode == "AGENT_SEARCH"
-        and _explicit_read_resource_hints(request.request_text) == ["GMAIL_THREAD"]
-        and not resolve_request_scope(request.request_text).has_explicit_write_marker
-    )
-    outside_literals = resolve_request_scope(request.request_text).outside_quoted_literals
-    has_explicit_create = (
-        re.search(
-            r"(?is)(?:Google\s+Tasks|태스크|Google\s+Calendar|캘린더)"
-            r"[^.!?]{0,300}(?:등록|생성|추가|만들어)\s*해?\s*(?:줘|주세요)[.!?\s]*$",
-            outside_literals,
-        )
-        is not None
-    )
-    if not (
-        has_explicit_read or has_explicit_create or gmail_search
-        or _selected_resource_hints(request)
-    ):
-        return IDENTIFY_GOAL_OUTPUT_SCHEMA
-    schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
-    if has_explicit_read or _selected_resource_hints(request):
-        schema.pop("allOf", None)
-    if has_explicit_create:
-        effects = cast(dict[str, object], schema["properties"])["requested_effect_hints"]
-        cast(dict[str, object], effects)["contains"] = {"const": "CREATE"}
-    if request.entry_mode == "AGENT_SEARCH" and (has_explicit_read or gmail_search):
-        constraints = cast(dict[str, object], schema["properties"])["constraints"]
-        cast(dict[str, object], constraints)["minItems"] = 1
-        if gmail_search:
-            preserved = preserve_vague_read_semantics(
-                {"goal": "", "completion_conditions": [], "constraints": [],
-                 "requested_effect_hints": ["READ"], "requested_resource_hints": ["GMAIL_THREAD"],
-                 "analysis_requirement": "NONE"},
-                request_text=request.request_text, entry_mode=request.entry_mode,
-            )
-            explicit = {item["field"]: item["value"] for item in preserved["constraints"]}
-            slot_properties: dict[str, object] = {
-                field: {"type": "array", "items": {
-                            "type": "string", "minLength": 1, "pattern": r".*[^\s\[\]{}].*",
-                        },
-                        "maxItems": 8}
-                for field in REQUEST_GOAL_SLOT_KINDS
-            }
-            slot_properties["temporal_axis"] = {
-                "type": "array", "maxItems": 1,
-                "minItems": int("period" in explicit),
-                "items": {"enum": ["MESSAGE_TIME", "EVENT_TIME"]},
-                "description": (
-                    "기간이 메일 수신/발송을 제한할 때만 MESSAGE_TIME. "
-                    "메일에서 찾는 행사/일정의 기간이면 EVENT_TIME. 자료원이 메일인 것과 구별한다."
-                ),
-            }
-            slot_properties["search_terms"] = {
-                "type": "array", "maxItems": 8, "items": {
-                    "type": "string", "minLength": 1, "pattern": r".*[^\s\[\]{}].*",
-                },
-                "description": (
-                    "사용자 원문에 있는 프로젝트 고유명만 그대로 복사한다. "
-                    "일반 명사·업무 개념·인물·기간·답변 지시는 제외한다. "
-                    "고유명에 단어를 붙여 확장하지 않는다."
-                ),
-            }
-            cast(dict[str, object], slot_properties["business_concepts"])["description"] = (
-                "사용자가 찾는 원래 업무 개념만 짧게 보존한다. "
-                "동의어나 하위 업무를 생성하지 않는다. "
-                "날짜·담당·최종 여부는 required_information이다. "
-                "메일 조회·검색·확인·요약은 수행할 동작이지 업무 개념이 아니다."
-            )
-            for field, description in {
-                "person": "원문에 명시된 사람 이름·직급·별칭만. 프로젝트명을 붙이지 않는다.",
-                "sender": "누가 보냈는지 명시된 경우 그 사람 표현만. 프로젝트와 업무 수식어 제외.",
-                "recipient": "누가 받았는지 명시된 경우만. 본문에 등장하는 사람과 구분한다.",
-                "period": "날짜가 제한하는 대상의 기간 표현을 그대로 보존한다.",
-                "required_information": (
-                    "답변에서 확인할 사실. 검색 원문에 있어야 할 문구가 아니다."
-                ),
-                "status": "명시된 메일 상태만. 다른 자료원의 OPEN/INCOMPLETE 등을 만들지 않는다.",
-            }.items():
-                cast(dict[str, object], slot_properties[field])["description"] = description
-            for field in ("person", "period"):
-                if field in explicit:
-                    cast(dict[str, object], slot_properties[field])["minItems"] = 1
-            if (
-                "subject" not in explicit
-                and re.search(r"제목|subject", request.request_text, re.I) is None
-            ):
-                cast(dict[str, object], slot_properties["subject"])["maxItems"] = 0
-            cast(dict[str, object], schema["properties"])["constraints"] = {
-                "type": "object", "additionalProperties": False,
-                "required": list(slot_properties), "properties": slot_properties,
-                "description": (
-                    "모든 의미 슬롯을 각각 확인한다. 미언급은 []이며 값을 추측하지 않는다."
-                ),
-            }
-            properties = cast(dict[str, object], schema["properties"])
-            schema["properties"] = {
-                "constraints": properties["constraints"],
-                **{key: value for key, value in properties.items() if key != "constraints"},
-            }
-            schema["required"] = list(cast(dict[str, object], schema["properties"]))
-    return OutputSchemaDefinition(
-        schema_version=IDENTIFY_GOAL_OUTPUT_SCHEMA.schema_version,
-        json_schema=schema,
-    )
-
-
-def _has_explicit_read_authority(request_text: str) -> bool:
-    normalized = request_text.casefold()
-    return (
-        bool(_explicit_read_resource_hints(request_text))
-        and any(marker in normalized for marker in _EXPLICIT_READ_MARKERS)
-        and not resolve_request_scope(request_text).has_explicit_write_marker
-    )
-
-
-def _explicit_read_resource_hints(request_text: str) -> list[str]:
-    # Payload literals and email domains are values, not resource requests.
-    request_text = resolve_request_scope(request_text).outside_quoted_literals
-    request_text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", " ", request_text)
-    return list(
-        dict.fromkeys(
-            resource_type
-            for pattern, resource_type in _EXPLICIT_READ_RESOURCE_PATTERNS
-            if pattern.search(request_text)
-        )
-    )
-
-
-def _apply_general_answer_only_authority(
-    candidate: RequestGoalCandidateV1,
-    *,
-    request: WorkflowStartRequest,
-) -> RequestGoalCandidateV1:
-    """Remove model-invented Workspace reads from explicit advice requests."""
-
-    if (
-        request.selected_resources
-        or not resolve_request_scope(request.request_text).is_general_answer_only
-        or any(effect != "READ" for effect in candidate["requested_effect_hints"])
-    ):
-        return candidate
-    return {
-        **candidate,
-        "requested_effect_hints": [],
-        "requested_resource_hints": [],
-        "analysis_requirement": "NONE",
-    }
-
-
-def _apply_explicit_read_authority(
-    candidate: RequestGoalCandidateV1,
-    *,
-    request_text: str,
-) -> RequestGoalCandidateV1:
-    """Preserve explicit reads and reject model-invented Workspace effects."""
-    explicit_resources = _explicit_read_resource_hints(request_text)
-    if _has_explicit_read_authority(request_text):
-        return {
-            **candidate,
-            "requested_effect_hints": ["READ"],
-            "requested_resource_hints": explicit_resources,
-            "analysis_requirement": (
-                "REQUIRED"
-                if _has_explicit_analysis_request(request_text)
-                else candidate["analysis_requirement"]
-            ),
-        }
-    resources = list(candidate["requested_resource_hints"])
-    for resource_type in explicit_resources:
-        if resource_type not in resources:
-            resources.append(resource_type)
-    return {
-        **candidate,
-        "requested_resource_hints": resources,
-    }
-
-
-def _has_explicit_analysis_request(request_text: str) -> bool:
-    normalized = request_text.casefold()
-    return any(marker in normalized for marker in _EXPLICIT_ANALYSIS_MARKERS)
 
 
 def _apply_selected_resource_authority(

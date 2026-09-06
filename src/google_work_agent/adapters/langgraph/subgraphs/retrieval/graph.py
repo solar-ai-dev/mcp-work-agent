@@ -93,6 +93,9 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     authorize_retrieval_followup,
     deterministic_sufficiency,
 )
+from google_work_agent.application.agents.retrieval.authorize_evidence_reassessment import (
+    authorize_evidence_reassessment,
+)
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     build_query_attempt,
@@ -122,6 +125,7 @@ from google_work_agent.application.agents.retrieval.finalize_retrieval import (
 )
 from google_work_agent.application.agents.retrieval.match_person_mention import (
     project_person_candidates,
+    resolve_supported_person_identities,
 )
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
     plan_candidate_detail,
@@ -453,7 +457,11 @@ class RetrievalSubgraph:
             ("normalize_segments", route_after_normalize_segments, ("rag_retrieve",)),
             ("rag_retrieve", route_after_rag_retrieve_rerank, ("select_evidence",)),
             ("select_evidence", route_after_select_evidence, ("assess_sufficiency",)),
-            ("assess_sufficiency", route_after_assess_sufficiency, ("plan_query", "finalize")),
+            (
+                "assess_sufficiency",
+                route_after_assess_sufficiency,
+                ("select_evidence", "plan_query", "finalize"),
+            ),
             ("finalize", route_after_finalize_retrieval, ("finalize", "plan_query")),
         )
         for name, router, successors in boundaries:
@@ -620,6 +628,10 @@ class RetrievalSubgraph:
                     "exclusion_obligation_segment_ids": state.get(
                         "exclusion_obligation_segment_ids", []
                     ),
+                    "evidence_reassessment_issues": state.get(
+                        "__context_evidence_reassessment_issues__", []
+                    )
+                    or [],
                 },
             ),
             llm_runtime=self._llm_runtime,
@@ -652,6 +664,7 @@ class RetrievalSubgraph:
                 CONTEXT_SELECTION_OUTPUT_KEY: selection,
                 "rag_candidates": rag_candidates,
                 "evidence_selection": selection,
+                "__context_evidence_reassessment_issues__": None,
                 "retry_budget": revised_retry_budget,
                 "trace_context": merge_trace_context(
                     state,
@@ -802,15 +815,26 @@ class RetrievalSubgraph:
         updated_local["typed_result"] = cast(dict[str, object], selection)
         prior_result = state.get("retrieval_result")
         prior_candidates = [] if prior_result is None else prior_result.get("person_candidates", [])
+        person_candidates = project_person_candidates(
+            _require_state_value(state["request_intent"], "request_intent"), evidence_drafts,
+            state.get("person_candidates", prior_candidates),
+            state.get("exclusion_obligation_segment_ids", []),
+            source_segments=self._normalized_segments(state),
+        )
         return {
             **state,
             CONTEXT_AGENT_LOCAL_KEY: cast(AgentLocalStateV1, updated_local),
             "evidence_drafts": evidence_drafts,
-            "person_candidates": project_person_candidates(
-                _require_state_value(state["request_intent"], "request_intent"), evidence_drafts,
-                state.get("person_candidates", prior_candidates),
-                state.get("exclusion_obligation_segment_ids", []),
-                source_segments=self._normalized_segments(state),
+            "person_candidates": person_candidates,
+            "selected_person_identities": resolve_supported_person_identities(
+                person_candidates,
+                evidence_drafts,
+                state.get(
+                    "selected_person_identities",
+                    {} if prior_result is None else prior_result.get(
+                        "selected_person_identities", {}
+                    ),
+                ),
             ),
             "trace_context": merge_trace_context(
                 state,
@@ -926,6 +950,14 @@ class RetrievalSubgraph:
                 attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
             ),
         )
+        reassessment_issues, retry_budget = authorize_evidence_reassessment(
+            sufficiency=sufficiency_result,
+            selection=state[CONTEXT_SELECTION_OUTPUT_KEY],
+            candidates=state.get(CONTEXT_RAG_CANDIDATES_KEY, []),
+            segments=self._normalized_segments(state),
+            retry_budget=retry_budget,
+            can_acquire_new_information=should_plan_followup,
+        )
         updated_local = dict(local_state)
         updated_local["node_state"] = "SUFFICIENCY_COMPLETE"
         updated_local["typed_result"] = cast(dict[str, object], sufficiency_result)
@@ -936,6 +968,7 @@ class RetrievalSubgraph:
             "sufficiency": sufficiency_result,
             "llm_provider_result": llm_provider_result,
             "retry_budget": retry_budget,
+            "__context_evidence_reassessment_issues__": reassessment_issues or None,
             "trace_context": merge_trace_context(
                 state,
                 graph_profile=self._graph_profile.value,
@@ -1882,6 +1915,7 @@ class RetrievalSubgraph:
         merged.pop("availability_results", None)
         merged.pop("evidence_drafts", None)
         merged.pop("llm_provider_result", None)
+        merged.pop("__context_evidence_reassessment_issues__", None)
         merged.pop("source_fetch_plans", None)
         return cast(ContextRetrievalLocalState, merged)
 

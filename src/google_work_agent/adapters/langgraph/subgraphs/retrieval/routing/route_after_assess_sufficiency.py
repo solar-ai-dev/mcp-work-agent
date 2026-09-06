@@ -6,6 +6,9 @@ from collections.abc import Mapping
 
 
 def route_after_assess_sufficiency(state: Mapping[str, object]) -> str:
+    reassessment = state.get("__context_evidence_reassessment_issues__")
+    if isinstance(reassessment, list) and reassessment:
+        return "select_evidence"
     value = state.get("sufficiency")
     candidate = value[0] if isinstance(value, tuple) and value else value
     if isinstance(candidate, Mapping):
