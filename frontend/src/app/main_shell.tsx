@@ -1,12 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { GoogleConnection } from "../features/settings";
 import { TopBar } from "./top_bar";
 
 type Props = {
-  google: GoogleConnection | null;
   statusLine: string;
-  googleConnectPending: boolean;
-  onConnectGoogle: () => void;
   onOpenSettings: () => void;
   onShowHelp: () => void;
   theme: string;

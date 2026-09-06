@@ -1,10 +1,5 @@
-import type { GoogleConnection } from "../features/settings";
-
 type Props = {
-  google: GoogleConnection | null;
   statusLine: string;
-  googleConnectPending: boolean;
-  onConnectGoogle: () => void;
   onOpenSettings: () => void;
   onShowHelp: () => void;
   onToggleResourcePanel: () => void;
@@ -16,10 +11,7 @@ type Props = {
 };
 
 export function TopBar({
-  google,
   statusLine,
-  googleConnectPending,
-  onConnectGoogle,
   onOpenSettings,
   onShowHelp,
   onToggleResourcePanel,
@@ -29,14 +21,13 @@ export function TopBar({
   theme,
   onThemeChange,
 }: Props): JSX.Element {
-  const connected = google?.connection_status === "CONNECTED";
   return (
     <header className="topbar">
       <div className="topbar-brand">
         <button
           className="icon-button topbar-icon-button"
           type="button"
-          aria-label="Google 패널 전환"
+          aria-label="자료 패널 전환"
           aria-pressed={resourcePanelOpen}
           onClick={onToggleResourcePanel}
         >
@@ -48,11 +39,6 @@ export function TopBar({
       </div>
       <div className="topbar-actions">
         <button className="icon-button topbar-icon-button" type="button" aria-label="도움말" title="도움말" onClick={onShowHelp}>?</button>
-        {!connected ? (
-          <button className="button-primary" type="button" disabled={googleConnectPending} onClick={onConnectGoogle}>
-            {googleConnectPending ? "Google 연결 중..." : "Google 연결"}
-          </button>
-        ) : null}
         <button
           className="icon-button topbar-icon-button"
           type="button"

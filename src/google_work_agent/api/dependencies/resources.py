@@ -41,6 +41,7 @@ class ResourceRouteDependencies:
     service_instance_id: str
     resource_connector_id: str
     current_account_id: Callable[[], str | None]
+    current_account_ids: dict[str, Callable[[], str | None]]
     list_task_lists_handler: ListTaskListsHandler | None
     list_calendars_handler: ListCalendarsHandler | None
     list_resources_handler: ListResourcesHandler | None
@@ -64,6 +65,8 @@ def get_resource_route_dependencies(request: Request) -> ResourceRouteDependenci
         service_instance_id=container.service_instance_id,
         resource_connector_id=container.resource_connector_id,
         current_account_id=container.current_account_id_provider,
+        current_account_ids=container.current_account_id_providers_by_connector
+        or {container.resource_connector_id: container.current_account_id_provider},
         list_task_lists_handler=container.list_task_lists_handler,
         list_calendars_handler=container.list_calendars_handler,
         list_resources_handler=container.list_resources_handler,

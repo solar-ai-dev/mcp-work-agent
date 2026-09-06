@@ -3,16 +3,18 @@ import type { ResourceItem, TaskListContainer } from "../../api/contract";
 import { listTaskLists } from "./api/list_resources";
 import { CalendarPanel } from "./calendar_panel";
 import { GmailPanel } from "./gmail_panel";
+import { GitHubPanel } from "./github_panel";
 import { TasksPanel } from "./tasks_panel";
 import { useCalendar } from "./calendar_controller";
 import { useGmail } from "./gmail_controller";
+import { useGitHubIssues } from "./github_controller";
 import { useTasks } from "./tasks_controller";
 import { buildSelectedResourceContext, type SelectedResourceContext } from "./selected_resource_context";
 
-export type ResourceSource = "gmail" | "tasks" | "calendar";
+export type ResourceSource = "gmail" | "tasks" | "calendar" | "github";
 
 export type ResourceBrowserProjection = {
-  activeSource: ResourceSource;
+  activeSource: ResourceSource | null;
   focusedItem: ResourceItem | null;
   selectedContext: SelectedResourceContext;
   composerPrompt: string;
@@ -24,17 +26,24 @@ export type ResourceBrowserProjection = {
 
 type Props = {
   scopeKey: string;
-  accountId: string | null | undefined;
-  connected: boolean;
-  onConnect?: () => void;
+  googleAccountId: string | null | undefined;
+  githubAccountId: string | null | undefined;
+  googleConnected: boolean;
+  githubConnected: boolean;
+  githubRepository: string | null | undefined;
+  onOpenSettings?: () => void;
   timezone: string;
   onProjectionChange: (projection: ResourceBrowserProjection) => void;
 };
 
 const PAGE_SIZE = 20;
 
-export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onProjectionChange, onConnect }: Props): JSX.Element {
-  const [source, setSource] = useState<ResourceSource>("gmail");
+export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, googleConnected, githubConnected, githubRepository, timezone, onProjectionChange, onOpenSettings }: Props): JSX.Element {
+  const visibleSources = useMemo<ResourceSource[]>(() => [
+    ...(googleConnected ? ["gmail", "calendar", "tasks"] as ResourceSource[] : []),
+    ...(githubConnected ? ["github"] as ResourceSource[] : []),
+  ], [githubConnected, googleConnected]);
+  const [source, setSource] = useState<ResourceSource | null>(() => visibleSources[0] ?? null);
   const [filter, setFilter] = useState("");
   const [focusedItem, setFocusedItem] = useState<ResourceItem | null>(null);
   const [selectedItems, setSelectedItems] = useState<ResourceItem[]>([]);
@@ -44,12 +53,15 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
   const [taskListsLoading, setTaskListsLoading] = useState(false);
   const [taskListsError, setTaskListsError] = useState<string | null>(null);
   const taskListsGeneration = useRef(0);
-  const gmail = useGmail({ accountId, active: source === "gmail" });
-  const tasks = useTasks({ accountId, parentId, active: source === "tasks", filter });
-  const calendar = useCalendar({ accountId, calendarId: parentId, active: connected && source === "calendar", timezone });
+  const previousScopeKey = useRef(scopeKey);
+  const gmail = useGmail({ accountId: googleAccountId, active: source === "gmail" });
+  const tasks = useTasks({ accountId: googleAccountId, parentId, active: source === "tasks", filter });
+  const calendar = useCalendar({ accountId: googleAccountId, calendarId: parentId, active: googleConnected && source === "calendar", timezone });
+  const github = useGitHubIssues({ accountId: githubAccountId, repository: githubRepository, active: source === "github" });
   const { reset: resetGmail, loadCount: loadGmailCount, loadPage: loadGmailPage } = gmail;
   const { reset: resetTasks, preload: preloadTasks, loadCompleted: loadCompletedTasks, loadPage: loadTasksPage } = tasks;
   const { reset: resetCalendar } = calendar;
+  const { reset: resetGitHub } = github;
   const selectedContext = useMemo(
     () => buildSelectedResourceContext(selectedItems, (item) => presentResource(item).title ?? "제목 없음"),
     [selectedItems],
@@ -73,9 +85,9 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
 
   useEffect(() => {
     setTaskLists([]); setTaskListsNext(null); setTaskListsError(null);
-    if (connected && source === "tasks") void loadTaskLists();
+    if (googleConnected && source === "tasks") void loadTaskLists();
     return () => { taskListsGeneration.current += 1; };
-  }, [accountId, connected, loadTaskLists, scopeKey, source]);
+  }, [googleAccountId, googleConnected, loadTaskLists, scopeKey, source]);
 
   const toggleItem = useCallback((item: ResourceItem): void => {
     setSelectedItems((current) => current.some((selected) => selected.selection_handle === item.selection_handle)
@@ -94,31 +106,38 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
   }, [focusedItem]);
 
   useEffect(() => {
+    setSource((current) => current && visibleSources.includes(current) ? current : visibleSources[0] ?? null);
+  }, [visibleSources]);
+
+  useEffect(() => {
+    if (previousScopeKey.current === scopeKey) return;
+    previousScopeKey.current = scopeKey;
     resetGmail();
     resetTasks();
     resetCalendar();
+    resetGitHub();
     setSelectedItems([]);
     setFocusedItem(null);
     setParentId(null);
-  }, [accountId, resetCalendar, resetGmail, resetTasks, scopeKey]);
+  }, [resetCalendar, resetGitHub, resetGmail, resetTasks, scopeKey]);
 
   useEffect(() => {
-    if (!connected) return;
+    if (!googleConnected) return;
     void loadGmailCount();
     void preloadTasks();
     void loadCompletedTasks();
-  }, [connected, loadCompletedTasks, loadGmailCount, preloadTasks]);
+  }, [googleConnected, loadCompletedTasks, loadGmailCount, preloadTasks]);
 
   useEffect(() => {
-    if (!connected || source !== "gmail") return;
+    if (!googleConnected || source !== "gmail") return;
     if (!gmail.loaded && !gmail.loading && gmail.error === null) void loadGmailPage(gmail.pageIndex);
     else if (gmail.loaded && !gmail.countLoading) void loadGmailCount();
-  }, [connected, gmail.countLoading, gmail.error, gmail.loaded, gmail.loading, gmail.pageIndex, loadGmailCount, loadGmailPage, source]);
+  }, [googleConnected, gmail.countLoading, gmail.error, gmail.loaded, gmail.loading, gmail.pageIndex, loadGmailCount, loadGmailPage, source]);
 
   useEffect(() => {
-    if (!connected || source !== "tasks") return;
+    if (!googleConnected || source !== "tasks") return;
     if (!tasks.loaded && !tasks.loading && tasks.error === null) void loadTasksPage(tasks.pageIndex);
-  }, [connected, loadTasksPage, source, tasks.error, tasks.loaded, tasks.loading, tasks.pageIndex]);
+  }, [googleConnected, loadTasksPage, source, tasks.error, tasks.loaded, tasks.loading, tasks.pageIndex]);
 
   useEffect(() => {
     if (source === "gmail" && !gmail.loaded) return;
@@ -148,12 +167,12 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
       <div className="panel-body">
         <div className="resource-tabbar">
           <div className="resource-tabs" role="tablist" aria-label="자료 종류">
-            {(["gmail", "tasks", "calendar"] as ResourceSource[]).map((tab) => <button key={tab} className={`resource-tab ${source === tab ? "selected" : ""}`} type="button" role="tab" aria-selected={source === tab} onClick={() => { setFilter(""); setSource(tab); setParentId(null); setFocusedItem(null); }}><span className="resource-tab-icon" aria-hidden="true">{tabIcon(tab)}</span><span className="resource-tab-label">{tabLabel(tab)}</span>{tab !== "calendar" ? <span className="resource-tab-count">{formatCount(tab === "gmail" ? gmail.count : tasks.count)}</span> : null}</button>)}
+            {visibleSources.map((tab) => <button key={tab} className={`resource-tab ${source === tab ? "selected" : ""}`} type="button" role="tab" aria-selected={source === tab} onClick={() => { setFilter(""); setSource(tab); setParentId(null); setFocusedItem(null); setSelectedItems([]); }}><span className="resource-tab-icon" aria-hidden="true">{tabIcon(tab)}</span><span className="resource-tab-label">{tabLabel(tab)}</span>{tab !== "calendar" ? <span className="resource-tab-count">{formatCount(tab === "gmail" ? gmail.count : tab === "tasks" ? tasks.count : github.loaded ? { value: github.items.length, exact: github.items.length < 100 } : null)}</span> : null}</button>)}
           </div>
-          <button className="icon-button" type="button" disabled={!connected} aria-label="현재 목록 새로고침" title="새로고침" onClick={() => { if (source === "gmail") void gmail.refresh(); else if (source === "tasks") void tasks.refresh(); else void calendar.refresh(); }}>↻</button>
+          <button className="icon-button" type="button" disabled={source === null} aria-label="현재 목록 새로고침" title="새로고침" onClick={() => { if (source === "gmail") void gmail.refresh(); else if (source === "tasks") void tasks.refresh(); else if (source === "calendar") void calendar.refresh(); else if (source === "github") void github.refresh(); }}>↻</button>
         </div>
-        {!connected ? <div className="info-card"><p>Gmail·Tasks·Calendar를 사용하려면 Google Workspace를 연결하세요.</p><button className="button-primary" type="button" onClick={onConnect}>설정에서 Google 연결</button></div> : null}
-        {connected && source === "tasks" ? <div className="resource-search-row">
+        {source === null ? <div className="info-card"><p>연결된 Connector의 자료가 여기에 표시됩니다.</p><button className="button-primary" type="button" onClick={onOpenSettings}>Connector 설정 열기</button></div> : null}
+        {googleConnected && source === "tasks" ? <div className="resource-search-row">
           <label>태스크 목록<select aria-label="조회할 태스크 목록" value={parentId ?? ""} onChange={(event) => { setParentId(event.target.value || null); setFocusedItem(null); setFilter(""); }}>
             <option value="">기본 목록 (설정 또는 첫 목록)</option>
             {parentId && !taskLists.some((item) => item.tasklist_id === parentId) ? <option value={parentId}>선택한 목록 (접근 확인 필요)</option> : null}
@@ -165,9 +184,10 @@ export function ResourceSidebar({ scopeKey, accountId, connected, timezone, onPr
           {taskListsError ? <p role="alert">{taskListsError}</p> : null}
           {!taskListsLoading && !taskListsError && taskLists.length === 0 ? <p>사용 가능한 태스크 목록이 없습니다.</p> : null}
         </div> : null}
-        {connected && source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: setFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} /> : null}
-        {connected && source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: setFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} /> : null}
-        {connected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
+        {googleConnected && source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: setFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} /> : null}
+        {googleConnected && source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: setFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} /> : null}
+        {googleConnected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
+        {githubConnected && source === "github" ? <GitHubPanel github={github} repository={githubRepository} onOpenSettings={onOpenSettings} selectedResourceIds={selectedContext.resourceIds} focusedResourceId={focusedItem?.resource_id ?? null} onToggleResource={(resourceId) => toggleByResourceId(resourceId, github.items)} onFocusResource={setFocusedItem} /> : null}
       </div>
     </aside>
   );
@@ -178,6 +198,7 @@ export function presentResource(item: ResourceItem): { title: string | null; sec
   const title = item.title.trim() || null;
   if (item.source === "calendar") return { title, secondary: calendarRange(metadata.start ?? null, metadata.end ?? null), snippet: null, time: null };
   if (item.source === "tasks") return { title, secondary: null, snippet: null, time: formatTaskDate(metadata.scheduled_date ?? null) };
+  if (item.source === "github") return { title, secondary: metadata.repository ? `${metadata.repository} #${metadata.issue_number}` : item.subtitle ?? null, snippet: metadata.description ?? null, time: metadata.issue_state === "CLOSED" ? "닫힘" : "열림" };
   const sender = text(item.sender_name) ?? text(metadata.sender_name);
   const email = text(item.sender_email) ?? text(metadata.sender_email);
   return { title, secondary: mailbox(sender, email), snippet: text(item.snippet) ?? text(metadata.snippet), time: sidebarDate(text(item.received_at) ?? text(metadata.received_at)) };
@@ -186,10 +207,10 @@ export function presentResource(item: ResourceItem): { title: string | null; sec
 function pageCount(total: number | null, loaded: number): number { return Math.ceil((total ?? loaded) / PAGE_SIZE); }
 function pageIndexes(current: number, total: number | null, loaded: number): number[] { const count = pageCount(total, loaded); const first = Math.max(0, Math.min(current - 2, count - 5)); return Array.from({ length: Math.min(5, count) }, (_, index) => first + index); }
 function formatCount(count: { value: number; exact: boolean } | null): string { return count === null ? "" : `${count.value}${count.exact ? "" : "+"}`; }
-function tabLabel(source: ResourceSource): string { return { gmail: "메일", tasks: "태스크", calendar: "캘린더" }[source]; }
-function tabIcon(source: ResourceSource): string { return { gmail: "✉", tasks: "✓", calendar: "▦" }[source]; }
-function composerPrompt(source: ResourceSource): string { return source === "tasks" ? "선택한 태스크에 대해 질문하거나 업무를 요청하세요..." : source === "calendar" ? "선택한 일정에 대해 질문하거나 업무를 요청하세요..." : "선택한 메일에 대해 질문하거나 업무를 요청하세요..."; }
-function emptyMessage(source: ResourceSource): string { return source === "tasks" ? "왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다." : source === "calendar" ? "왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다." : "왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다."; }
+function tabLabel(source: ResourceSource): string { return { gmail: "메일", tasks: "태스크", calendar: "캘린더", github: "GitHub Issues" }[source]; }
+function tabIcon(source: ResourceSource): string { return { gmail: "✉", tasks: "✓", calendar: "▦", github: "#" }[source]; }
+function composerPrompt(source: ResourceSource | null): string { return source === "tasks" ? "선택한 태스크에 대해 질문하거나 업무를 요청하세요..." : source === "calendar" ? "선택한 일정에 대해 질문하거나 업무를 요청하세요..." : source === "github" ? "선택한 GitHub Issue에 대해 질문하거나 업무를 요청하세요..." : source === "gmail" ? "선택한 메일에 대해 질문하거나 업무를 요청하세요..." : "자료를 연결하거나 자연어로 업무를 요청하세요..."; }
+function emptyMessage(source: ResourceSource | null): string { return source === "tasks" ? "왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다." : source === "calendar" ? "왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다." : source === "github" ? "왼쪽 목록에서 GitHub Issue를 선택하면 상세 내용을 확인할 수 있습니다." : source === "gmail" ? "왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다." : "Connector를 연결하면 왼쪽에서 자료를 탐색할 수 있습니다."; }
 function text(value: unknown): string | null { if (typeof value !== "string" && typeof value !== "number") return null; return String(value).trim() || null; }
 function mailbox(name: string | null, email: string | null): string | null { return name && email && name !== email ? `${name} <${email}>` : name ?? (email ? `<${email}>` : null); }
 function parsedDate(value: string | null): Date | null { if (!value) return null; const milliseconds = /^\d{12,}$/.test(value) ? Number(value) : Date.parse(value); if (!Number.isFinite(milliseconds)) return null; const date = new Date(milliseconds); return Number.isNaN(date.getTime()) ? null : date; }

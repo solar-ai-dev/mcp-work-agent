@@ -3,6 +3,7 @@ import type {
   CalendarListItemWire,
   CalendarContainer,
   GmailListItemWire,
+  GitHubIssueListItemWire,
   ResourceCountResponse,
   ResourceItem,
   ResourceListResponse,
@@ -24,7 +25,8 @@ export function listCalendars(): Promise<{ schema_version: 1; items: CalendarCon
 export type ListResourcesRequest =
   | { source: "gmail"; query: string; continuation?: string | null; pageSize?: number; includeThreadMetadata?: boolean }
   | { source: "tasks"; taskListId?: string | null; continuation?: string | null; pageSize?: number; statusScope?: "incomplete" | "completed" }
-  | { source: "calendar"; calendarId?: string | null; continuation?: string | null; pageSize?: number; timeMin: string; timeMax: string };
+  | { source: "calendar"; calendarId?: string | null; continuation?: string | null; pageSize?: number; timeMin: string; timeMax: string }
+  | { source: "github"; repository: string; issueState?: "OPEN" | "CLOSED" | "ALL" };
 
 export function listResources(request: ListResourcesRequest): Promise<ResourceListResponse> {
   const search = new URLSearchParams();
@@ -38,12 +40,15 @@ export function listResources(request: ListResourcesRequest): Promise<ResourceLi
     if (request.taskListId) search.set("task_list_id", request.taskListId);
     if (request.continuation) search.set("page_token", request.continuation);
     if (request.statusScope === "completed") search.set("status_scope", "completed");
-  } else {
+  } else if (request.source === "calendar") {
     search.set("page_size", String(boundedPageSize(request.pageSize, 100)));
     if (request.calendarId) search.set("calendar_id", request.calendarId);
     if (request.continuation) search.set("page_token", request.continuation);
     search.set("time_min", request.timeMin);
     search.set("time_max", request.timeMax);
+  } else {
+    search.set("repository", request.repository);
+    search.set("state", request.issueState ?? "OPEN");
   }
   return requestJson<ResourceListWireResponse>(`/api/v1/resources/${request.source}?${search.toString()}`).then((response) => ({
     ...response,
@@ -118,6 +123,28 @@ function projectResourceItem(
         scheduled_date: item.scheduled_date,
         completed_at: item.completed_at,
         tasklist_id: item.tasklist_id,
+      },
+    };
+  }
+  if (source === "github") {
+    const item = value as GitHubIssueListItemWire;
+    return {
+      ...item,
+      source,
+      resource_type: "github_issue",
+      parent_id: item.repository,
+      subtitle: `#${item.issue_number}`,
+      link_url: item.url,
+      version: projectionVersion,
+      related_resource_ids: [item.repository],
+      metadata: {
+        repository: item.repository,
+        issue_number: item.issue_number,
+        description: item.description,
+        issue_state: item.issue_state,
+        url: item.url,
+        labels: item.labels,
+        assignees: item.assignees,
       },
     };
   }

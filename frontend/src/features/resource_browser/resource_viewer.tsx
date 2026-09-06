@@ -104,6 +104,15 @@ export function ResourceViewer({ projection }: Props): JSX.Element {
 }
 
 function metadataEntries(item: ResourceItem): Array<[string, string]> {
+  if (item.source === "github" && item.resource_type === "github_issue") {
+    const entries: Array<[string, string]> = [];
+    entries.push(["상태", item.metadata.issue_state === "CLOSED" ? "닫힘" : "열림"]);
+    if (item.metadata.repository) entries.push(["Repository", item.metadata.repository]);
+    if (item.metadata.assignees?.length) entries.push(["담당자", item.metadata.assignees.join(", ")]);
+    if (item.metadata.labels?.length) entries.push(["라벨", item.metadata.labels.join(", ")]);
+    if (item.metadata.description) entries.push(["설명", item.metadata.description]);
+    return entries;
+  }
   if (item.source === "tasks" && item.resource_type === "task") {
     const entries: Array<[string, string]> = [];
     const status = taskStatusLabel(item.metadata.task_status ?? null);

@@ -1003,7 +1003,7 @@ test("confirms an interrupt and explicitly resolves a mismatch", async () => {
   );
 });
 
-test("starts Google OAuth from the disconnected status action", async () => {
+test("starts Google OAuth from Connector settings without promoting Google in the header", async () => {
   installFetch((path, init) => {
     if (path === "/health/live") {
       return jsonResponse(liveResponse());
@@ -1017,11 +1017,9 @@ test("starts Google OAuth from the disconnected status action", async () => {
     if (path === "/api/v1/google/connection") {
       return jsonResponse({
         ...googleConnection(),
-        connected: false,
-        credential_state: "DISCONNECTED",
-        account_email: null,
-        safe_error_code: "TOKEN_EXCHANGE_INVALID_REQUEST",
-        safe_error_description: "Google rejected a required token request field.",
+        account_id: null,
+        display_email: null,
+        connection_status: "DISCONNECTED",
       });
     }
     if (path === "/api/v1/settings") {
@@ -1056,7 +1054,9 @@ test("starts Google OAuth from the disconnected status action", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "Google 연결", exact: true }));
+  await user.click(await screen.findByRole("button", { name: "Connector 설정 열기" }));
+  const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
+  await user.click(await googleSettings.findByRole("button", { name: "연결", exact: true }));
 
   expect(window.open).toHaveBeenCalledOnce();
   const [openedUrl, target, features] = vi.mocked(window.open).mock.calls[0];
@@ -1081,7 +1081,7 @@ test("does not open an unexpected authorization URL returned by the API", async 
       return jsonResponse({ summary: runtimeSummary([]), api_contract_version: "1" });
     }
     if (path === "/api/v1/google/connection") {
-      return jsonResponse({ ...googleConnection(), connected: false, credential_state: "DISCONNECTED", account_email: null });
+      return jsonResponse({ ...googleConnection(), account_id: null, display_email: null, connection_status: "DISCONNECTED" });
     }
     if (path === "/api/v1/llm/connection") {
       return jsonResponse({ llm: llmConnectionPayload(), api_contract_version: "1" });
@@ -1112,7 +1112,9 @@ test("does not open an unexpected authorization URL returned by the API", async 
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "Google 연결", exact: true }));
+  await user.click(await screen.findByRole("button", { name: "Connector 설정 열기" }));
+  const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
+  await user.click(await googleSettings.findByRole("button", { name: "연결", exact: true }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/v1/connections/google/start",
@@ -1120,7 +1122,7 @@ test("does not open an unexpected authorization URL returned by the API", async 
     ),
   );
   expect(window.open).not.toHaveBeenCalled();
-  expect(screen.getByText("Google 연결을 시작하지 못했습니다.")).toBeInTheDocument();
+  expect(screen.getByText("작업을 완료하지 못했습니다.")).toBeInTheDocument();
 });
 
 test("disconnects Google and refreshes the runtime summary", async () => {
@@ -1534,6 +1536,24 @@ test("TST-UI-202 renders the left, center, and right workspace panels", async ()
   expect(screen.getByRole("region", { name: "선택 자료 상세" })).toBeInTheDocument();
   expect(screen.getByText("대화")).toBeInTheDocument();
   expect(screen.getByText("최근 실행")).toBeInTheDocument();
+});
+
+test("Google과 GitHub가 모두 미연결이어도 메인 화면에 진입하고 Resource 탭을 숨긴다", async () => {
+  installUiContractFetch({ googleConnectionStates: ["DISCONNECTED"], githubConnectionStates: ["DISCONNECTED"], accountAbsent: true });
+  render(<App />);
+
+  expect(await screen.findByText("연결된 Connector의 자료가 여기에 표시됩니다.")).toBeInTheDocument();
+  expect(screen.getByText("mcp-work-agent")).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /메일|캘린더|태스크|GitHub Issues/ })).not.toBeInTheDocument();
+});
+
+test("GitHub만 연결되면 GitHub Issues를 기존 Resource Browser에서 탐색한다", async () => {
+  installUiContractFetch({ googleConnectionStates: ["DISCONNECTED"], githubConnectionStates: ["CONNECTED"], accountAbsent: true, githubRepository: "solar-ai-dev/google-work-agent" });
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: /GitHub Issues/ })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /메일|캘린더|태스크/ })).not.toBeInTheDocument();
+  expect(await screen.findByText("Runtime closure")).toBeInTheDocument();
 });
 
 test("TST-UI-203 resource row supports focus, selection, and keyboard-accessible controls", async () => {
@@ -3287,6 +3307,7 @@ function installUiContractFetch(options: {
   gmailCountResponse?: Promise<Response>;
   googleConnectionStates?: Array<GoogleConnection["connection_status"]>;
   githubConnectionStates?: Array<GoogleConnection["connection_status"]>;
+  githubRepository?: string | null;
   historyMessages?: Array<{ id: string; run_id: string | null; role: string; content: string; created_at_ms: number }>;
   historyRuns?: Array<{ run_id: string; status: string; started_at_ms: number; finished_at_ms: number | null }>;
   run?: boolean;
@@ -3383,7 +3404,10 @@ function installUiContractFetch(options: {
       return jsonFetchResponse({ account, api_contract_version: "1" });
     }
     if (path === "/api/v1/settings") return jsonFetchResponse({
-      settings: settingsPayload(options.setupCompleted === false ? { external_llm_consent: false } : {}),
+      settings: settingsPayload({
+        ...(options.setupCompleted === false ? { external_llm_consent: false } : {}),
+        default_github_repository: options.githubRepository ? { repository: options.githubRepository, repository_id: 1, account_id: "github:42" } : null,
+      }),
       api_contract_version: "1",
     });
     if (path === "/api/v1/credentials/llm/gemini") return jsonFetchResponse({
@@ -3614,6 +3638,15 @@ function installUiContractFetch(options: {
       calendarResponseIndex += 1;
       if (calendarPageResponse) return calendarPageResponse;
       return jsonFetchResponse(calendarEventResponse(options.calendarEvents));
+    }
+    if (path.startsWith("/api/v1/resources/github")) {
+      return jsonFetchResponse({
+        schema_version: 1,
+        items: [{ schema_version: 1, selection_handle: "github-handle", resource_id: "solar-ai-dev/google-work-agent#181", repository: "solar-ai-dev/google-work-agent", issue_number: 181, title: "Runtime closure", description: "Connector Sidebar", issue_state: "OPEN", url: "https://github.com/solar-ai-dev/google-work-agent/issues/181", labels: ["product"], assignees: [] }],
+        next_page_token: null,
+        total_count: 1,
+        projection_version: "1",
+      });
     }
     if (path === "/api/v1/conversations" && init?.method === "POST") {
       if (options.conversationError) {

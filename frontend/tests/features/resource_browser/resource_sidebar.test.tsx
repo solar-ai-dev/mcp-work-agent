@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { presentResource, ResourceSidebar } from "../../../src/features/resource_browser/resource_sidebar";
 import * as resourceApi from "../../../src/features/resource_browser/api/list_resources";
@@ -21,10 +22,24 @@ function mockBrowse() {
   });
 }
 
+function sidebarProps(overrides: Partial<ComponentProps<typeof ResourceSidebar>> = {}): ComponentProps<typeof ResourceSidebar> {
+  return {
+    scopeKey: "session",
+    googleAccountId: "google-account",
+    githubAccountId: null,
+    googleConnected: true,
+    githubConnected: false,
+    githubRepository: null,
+    timezone: "Asia/Seoul",
+    onProjectionChange: vi.fn(),
+    ...overrides,
+  };
+}
+
 test("Task List selection discovers another page and shows future tasks without changing defaults", async () => {
   const browse = mockBrowse();
   const lists = vi.spyOn(resourceApi, "listTaskLists").mockImplementation(async (token) => ({ schema_version: 1, items: [{ schema_version: 1, tasklist_id: token ? "validation" : "first", title: token ? "GWA E2E Validation" : "My Tasks" }], next_page_token: token ? null : "opaque-next" }));
-  render(<ResourceSidebar scopeKey="session" accountId="account" connected timezone="Asia/Seoul" onProjectionChange={vi.fn()} />);
+  render(<ResourceSidebar {...sidebarProps()} />);
   fireEvent.click(screen.getByRole("tab", { name: /태스크/ }));
   fireEvent.click(await screen.findByRole("button", { name: "목록 더 불러오기" }));
   await screen.findByRole("option", { name: "GWA E2E Validation" });
@@ -51,7 +66,7 @@ test("Task List selection discovers another page and shows future tasks without 
 test("Task List discovery failure is not an empty list and refresh can recover", async () => {
   mockBrowse();
   vi.spyOn(resourceApi, "listTaskLists").mockRejectedValueOnce(new Error("denied")).mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
-  render(<ResourceSidebar scopeKey="session" accountId="account" connected timezone="Asia/Seoul" onProjectionChange={vi.fn()} />);
+  render(<ResourceSidebar {...sidebarProps()} />);
   fireEvent.click(screen.getByRole("tab", { name: /태스크/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent("태스크 목록을 불러오지 못했습니다");
   expect(screen.queryByText("사용 가능한 태스크 목록이 없습니다.")).not.toBeInTheDocument();
@@ -64,10 +79,10 @@ test("Account change discards stale Task List discovery and selected container",
   let resolveOld!: (value: Awaited<ReturnType<typeof resourceApi.listTaskLists>>) => void;
   vi.spyOn(resourceApi, "listTaskLists").mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; })).mockResolvedValue({ schema_version: 1, items: [{ schema_version: 1, tasklist_id: "new-list", title: "New account list" }], next_page_token: null });
   const onProjectionChange = vi.fn();
-  const { rerender } = render(<ResourceSidebar scopeKey="session" accountId="old" connected timezone="Asia/Seoul" onProjectionChange={onProjectionChange} />);
+  const { rerender } = render(<ResourceSidebar {...sidebarProps({ googleAccountId: "old", onProjectionChange })} />);
   fireEvent.click(screen.getByRole("tab", { name: /태스크/ }));
   await waitFor(() => expect(resolveOld).toBeDefined());
-  rerender(<ResourceSidebar scopeKey="session" accountId="new" connected timezone="Asia/Seoul" onProjectionChange={onProjectionChange} />);
+  rerender(<ResourceSidebar {...sidebarProps({ googleAccountId: "new", onProjectionChange })} />);
   await screen.findByRole("option", { name: "New account list" });
   await act(async () => resolveOld({ schema_version: 1, items: [{ schema_version: 1, tasklist_id: "old-list", title: "Old account list" }], next_page_token: null }));
   expect(screen.queryByRole("option", { name: "Old account list" })).not.toBeInTheDocument();
@@ -77,4 +92,65 @@ test("Account change discards stale Task List discovery and selected container",
 test("resource sidebar presents exact server-projected provider titles", () => {
   expect(presentResource({ schema_version: 1, selection_handle: "a", source: "tasks", resource_type: "task", resource_id: "a", title: "GWA-DEADLINE-ONLY-TEST", link_url: null, version: "1", related_resource_ids: [], metadata: {} }).title).toBe("GWA-DEADLINE-ONLY-TEST");
   expect(presentResource({ schema_version: 1, selection_handle: "b", source: "gmail", resource_type: "gmail_thread", resource_id: "b", title: "예산 검토 요청", subject: "예산 검토 요청", link_url: null, version: "1", related_resource_ids: [], metadata: {} }).title).toBe("예산 검토 요청");
+});
+
+test.each([
+  ["Google만 연결", true, false, ["메일", "캘린더", "태스크"], ["GitHub Issues"]],
+  ["GitHub만 연결", false, true, ["GitHub Issues"], ["메일", "캘린더", "태스크"]],
+  ["모두 연결", true, true, ["메일", "캘린더", "태스크", "GitHub Issues"], []],
+  ["모두 미연결", false, false, [], ["메일", "캘린더", "태스크", "GitHub Issues"]],
+])("%s이면 연결된 Connector의 Resource 탭만 표시한다", (_label, googleConnected, githubConnected, visible, hidden) => {
+  mockBrowse();
+  vi.spyOn(resourceApi, "listTaskLists").mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
+  render(<ResourceSidebar {...sidebarProps({
+    googleAccountId: googleConnected ? "google-account" : null,
+    githubAccountId: githubConnected ? "github-account" : null,
+    googleConnected,
+    githubConnected,
+    githubRepository: githubConnected ? "solar-ai-dev/google-work-agent" : null,
+  })} />);
+  for (const name of visible) expect(screen.getByRole("tab", { name: new RegExp(name) })).toBeInTheDocument();
+  for (const name of hidden) expect(screen.queryByRole("tab", { name: new RegExp(name) })).not.toBeInTheDocument();
+  if (!googleConnected && !githubConnected) {
+    expect(screen.getByText("연결된 Connector의 자료가 여기에 표시됩니다.")).toBeInTheDocument();
+  }
+});
+
+test("네 Resource 사이 전환 시 이전 상세를 제거하고 GitHub Issue를 탐색한다", async () => {
+  const issue: ResourceItem = {
+    schema_version: 1,
+    selection_handle: "github-selection",
+    source: "github",
+    resource_type: "github_issue",
+    resource_id: "solar-ai-dev/google-work-agent#181",
+    parent_id: "solar-ai-dev/google-work-agent",
+    title: "Runtime closure",
+    subtitle: "#181",
+    link_url: "https://github.com/solar-ai-dev/google-work-agent/issues/181",
+    version: "1",
+    related_resource_ids: ["solar-ai-dev/google-work-agent"],
+    metadata: { repository: "solar-ai-dev/google-work-agent", issue_number: 181, description: "Sidebar", issue_state: "OPEN", labels: [], assignees: [] },
+  };
+  mockBrowse().mockImplementation(async (request) => request.source === "github" ? { ...emptyPage, items: [issue], total_count: 1 } : emptyPage);
+  vi.spyOn(resourceApi, "listTaskLists").mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
+  const onProjectionChange = vi.fn();
+  const { rerender } = render(<ResourceSidebar {...sidebarProps({ githubAccountId: "github-account", githubConnected: true, githubRepository: "solar-ai-dev/google-work-agent", onProjectionChange })} />);
+
+  for (const name of ["캘린더", "태스크", "GitHub Issues", "메일"]) {
+    fireEvent.click(screen.getByRole("tab", { name: new RegExp(name) }));
+    expect(screen.getByRole("tab", { name: new RegExp(name) })).toHaveAttribute("aria-selected", "true");
+  }
+  fireEvent.click(screen.getByRole("tab", { name: /GitHub Issues/ }));
+  expect(await screen.findByText("Runtime closure")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Runtime closure 선택" }));
+  fireEvent.click(screen.getByRole("button", { name: /Runtime closure/ }));
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ activeSource: "github", focusedItem: issue, selectedContext: expect.objectContaining({ resourceIds: [issue.resource_id] }) })));
+  fireEvent.click(screen.getByRole("tab", { name: /메일/ }));
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ activeSource: "gmail", focusedItem: null, selectedContext: expect.objectContaining({ resourceIds: [] }) })));
+  expect(screen.queryByText("Runtime closure")).not.toBeInTheDocument();
+
+  rerender(<ResourceSidebar {...sidebarProps({ scopeKey: "session|github:disconnected", githubAccountId: null, githubConnected: false, onProjectionChange })} />);
+  expect(screen.queryByRole("tab", { name: /GitHub Issues/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /메일/ })).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ selectedContext: expect.objectContaining({ resourceIds: [] }) })));
 });

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getCurrentGoogleAccount,
+  getGitHubConnection,
   getGoogleConnection,
   getSettings,
   type CurrentGoogleAccount,
   type GoogleConnection,
+  type GitHubConnection,
   type SettingsView,
 } from "../features/settings";
 import { getRuntime, StartupCheckScreen, type RuntimeSummary, type StartupCheckState } from "../features/diagnostics";
@@ -20,6 +22,7 @@ import { SafeModeRecovery } from "./safe_mode_recovery";
 export type StartupFlowContext = {
   runtime: RuntimeSummary;
   google: GoogleConnection;
+  github: GitHubConnection | null;
   currentAccount: CurrentGoogleAccount["account"];
   settings: SettingsView;
   calendarTimezone: string;
@@ -127,9 +130,10 @@ export function StartupFlow({ children }: Props): JSX.Element {
         phase: "runtime",
         message: "보호된 실행 상태를 불러오고 있습니다.",
       }));
-      const [runtime, google, settings, firstAccount] = await Promise.all([
+      const [runtime, google, github, settings, firstAccount] = await Promise.all([
         getRuntime(),
         getGoogleConnection(),
+        getGitHubConnection().catch(() => null),
         getSettings(),
         getCurrentGoogleAccount(),
       ]);
@@ -156,6 +160,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
       setContext({
         runtime,
         google,
+        github,
         currentAccount: account,
         settings,
         calendarTimezone: settings.timezone,
