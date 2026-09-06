@@ -13,7 +13,7 @@ vi.mock("../../src/api", () => ({
 }));
 vi.mock("../../src/features/diagnostics/api/get_runtime", () => ({ getRuntime: vi.fn() }));
 vi.mock("../../src/features/settings/api/get_settings", () => ({ getSettings: vi.fn() }));
-vi.mock("../../src/features/settings/api/google_connection_operations", () => ({ getGoogleConnection: vi.fn(), getCurrentGoogleAccount: vi.fn() }));
+vi.mock("../../src/features/settings/api/google_connection_operations", () => ({ getGoogleConnection: vi.fn(), getGitHubConnection: vi.fn(), getCurrentGoogleAccount: vi.fn() }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -37,6 +37,7 @@ test("loads protected state only after readiness and compatible bootstrap", asyn
   vi.mocked(api.bootstrapSession).mockResolvedValue({ schema_version: 1, session_established: true, service_instance_id: "service-1", api_contract_version: "1", compatibility: "COMPATIBLE" });
   vi.mocked(runtimeApi.getRuntime).mockResolvedValue({ llm_providers: [{ provider: "API_LLM", configured: true }], local_models: [] } as never);
   vi.mocked(googleApi.getGoogleConnection).mockResolvedValue({ connection_status: "DISCONNECTED" } as never);
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ connection_status: "DISCONNECTED" } as never);
   vi.mocked(settingsApi.getSettings).mockResolvedValue({ timezone: "Asia/Seoul", preferred_llm_mode: "API_LLM", preferred_local_model_id: null, external_llm_consent: true } as never);
   vi.mocked(googleApi.getCurrentGoogleAccount).mockResolvedValue({ account: null } as never);
 
@@ -53,6 +54,7 @@ test("keeps failed automatic recovery passive without user recovery controls", a
   vi.mocked(api.getReady).mockResolvedValue({ status: "SAFE_MODE", api_contract_version: "1", checks: [{ name: "migration", state: "SAFE_MODE", detail: "MIGRATION_FAILED" }] } as never);
   vi.mocked(runtimeApi.getRuntime).mockResolvedValue({ llm_providers: [{ provider: "API_LLM", configured: true }], local_models: [] } as never);
   vi.mocked(googleApi.getGoogleConnection).mockResolvedValue({ connection_status: "DISCONNECTED" } as never);
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ connection_status: "DISCONNECTED" } as never);
   vi.mocked(settingsApi.getSettings).mockResolvedValue({ timezone: "Asia/Seoul", preferred_llm_mode: "API_LLM", preferred_local_model_id: null, external_llm_consent: true } as never);
   vi.mocked(googleApi.getCurrentGoogleAccount).mockResolvedValue({ account: null } as never);
 

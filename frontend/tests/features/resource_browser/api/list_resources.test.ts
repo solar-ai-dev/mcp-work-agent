@@ -69,3 +69,36 @@ test("resource count remains in the resource-browser API owner", async () => {
   expect(response.exact_count).toBe(3);
   expect(response).not.toHaveProperty("total_count");
 });
+
+test("GitHub Issues use the same resource browser transport and preserve selection identity", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+    schema_version: 1,
+    items: [{
+      schema_version: 1,
+      selection_handle: "github-handle",
+      resource_id: "solar-ai-dev/google-work-agent#181",
+      repository: "solar-ai-dev/google-work-agent",
+      issue_number: 181,
+      title: "Runtime closure",
+      description: "Connector Sidebar",
+      issue_state: "OPEN",
+      url: "https://github.com/solar-ai-dev/google-work-agent/issues/181",
+      labels: ["product"],
+      assignees: ["octocat"],
+    }],
+    next_page_token: null,
+    total_count: 1,
+    projection_version: "1",
+  }), { status: 200, headers: { "content-type": "application/json" } }));
+
+  const response = await listResources({ source: "github", repository: "solar-ai-dev/google-work-agent", issueState: "ALL" });
+
+  expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/resources/github?repository=solar-ai-dev%2Fgoogle-work-agent&state=ALL");
+  expect(response.items[0]).toEqual(expect.objectContaining({
+    selection_handle: "github-handle",
+    source: "github",
+    resource_type: "github_issue",
+    parent_id: "solar-ai-dev/google-work-agent",
+    metadata: expect.objectContaining({ issue_number: 181, issue_state: "OPEN" }),
+  }));
+});

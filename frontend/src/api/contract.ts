@@ -288,13 +288,20 @@ export type ResourceItemMetadata = {
   timezone?: string;
   calendar_id?: string;
   location?: string | null;
+  repository?: string;
+  issue_number?: number;
+  description?: string;
+  issue_state?: "OPEN" | "CLOSED";
+  url?: string;
+  labels?: string[];
+  assignees?: string[];
 };
 
 export type ResourceItem = {
   schema_version: 1;
   selection_handle: string;
-  source: "gmail" | "tasks" | "calendar";
-  resource_type: "gmail_thread" | "task" | "calendar_event";
+  source: "gmail" | "tasks" | "calendar" | "github";
+  resource_type: "gmail_thread" | "task" | "calendar_event" | "github_issue";
   resource_id: string;
   parent_id?: string | null;
   title: string;
@@ -345,7 +352,21 @@ export type CalendarListItemWire = {
   location: string | null;
 };
 
-export type ResourceListItemWire = GmailListItemWire | TaskListItemWire | CalendarListItemWire;
+export type GitHubIssueListItemWire = {
+  schema_version: 1;
+  selection_handle: string;
+  resource_id: string;
+  repository: string;
+  issue_number: number;
+  title: string;
+  description: string;
+  issue_state: "OPEN" | "CLOSED";
+  url: string;
+  labels: string[];
+  assignees: string[];
+};
+
+export type ResourceListItemWire = GmailListItemWire | TaskListItemWire | CalendarListItemWire | GitHubIssueListItemWire;
 
 export type ResourceListWireResponse = {
   schema_version: 1;

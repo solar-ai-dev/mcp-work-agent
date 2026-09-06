@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getCurrentGoogleAccount,
+  getGitHubConnection,
   getGoogleConnection,
   getSettings,
   type CurrentGoogleAccount,
   type GoogleConnection,
+  type GitHubConnection,
   type SettingsView,
 } from "../features/settings";
 import { getRuntime, StartupCheckScreen, type RuntimeSummary, type StartupCheckState } from "../features/diagnostics";
@@ -20,6 +22,7 @@ import { SafeModeRecovery } from "./safe_mode_recovery";
 export type StartupFlowContext = {
   runtime: RuntimeSummary;
   google: GoogleConnection;
+  github: GitHubConnection | null;
   currentAccount: CurrentGoogleAccount["account"];
   settings: SettingsView;
   calendarTimezone: string;
@@ -126,9 +129,10 @@ export function StartupFlow({ children }: Props): JSX.Element {
         phase: "runtime",
         message: "보호된 실행 상태를 불러오고 있습니다.",
       }));
-      const [runtimeResult, googleResult, settingsResult, accountResult] = await Promise.allSettled([
+      const [runtimeResult, googleResult, githubResult, settingsResult, accountResult] = await Promise.allSettled([
         getRuntime(),
         getGoogleConnection(),
+        getGitHubConnection().catch(() => null),
         getSettings(),
         getCurrentGoogleAccount(),
       ]);
@@ -148,10 +152,15 @@ export function StartupFlow({ children }: Props): JSX.Element {
         schema_version: 1, connector_id: "google_workspace", connection_status: "UNAVAILABLE",
         account_id: null, display_email: null, granted_scopes: [], missing_required_scopes: [],
       };
-      const account = accountResult.status === "fulfilled" ? accountResult.value.account : null;
+      const github = githubResult.status === "fulfilled" ? githubResult.value : null;
+      const firstAccount = accountResult.status === "fulfilled" ? accountResult.value.account : null;
+      const account = google.connection_status === "CONNECTED" && firstAccount === null
+        ? (await getCurrentGoogleAccount()).account
+        : firstAccount;
       setContext({
         runtime,
         google,
+        github,
         currentAccount: account,
         settings,
         calendarTimezone: "Asia/Seoul",

@@ -6,23 +6,20 @@ import { TopBar } from "../../src/app/top_bar";
 test("shows the product and controls without account or connection badges", async () => {
   const toggleTheme = vi.fn();
   const openSettings = vi.fn();
-  render(<TopBar google={{ connection_status: "CONNECTED", display_email: "user@example.com" } as never} statusLine="ready" googleConnectPending={false} onConnectGoogle={vi.fn()} onOpenSettings={openSettings} onShowHelp={vi.fn()} onToggleResourcePanel={vi.fn()} onToggleConversationPanel={vi.fn()} resourcePanelOpen conversationPanelOpen theme="light" onThemeChange={toggleTheme} />);
+  render(<TopBar statusLine="ready" onOpenSettings={openSettings} onShowHelp={vi.fn()} onToggleResourcePanel={vi.fn()} onToggleConversationPanel={vi.fn()} resourcePanelOpen conversationPanelOpen theme="light" onThemeChange={toggleTheme} />);
 
   expect(screen.getByText("mcp-work-agent")).toBeInTheDocument();
   expect(screen.queryByText("Google 연결됨")).not.toBeInTheDocument();
   expect(screen.queryByText("user@example.com")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Google 패널 전환" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "자료 패널 전환" })).toHaveAttribute("aria-pressed", "true");
   await userEvent.click(screen.getByRole("button", { name: "테마 전환" }));
   expect(toggleTheme).toHaveBeenCalledWith("dark");
   await userEvent.click(screen.getByRole("button", { name: "설정" }));
   expect(openSettings).toHaveBeenCalledOnce();
 });
 
-test("keeps the connection action available when Google is disconnected", async () => {
-  const connectGoogle = vi.fn();
-  render(<TopBar google={null} statusLine="ready" googleConnectPending={false} onConnectGoogle={connectGoogle} onOpenSettings={vi.fn()} onShowHelp={vi.fn()} onToggleResourcePanel={vi.fn()} onToggleConversationPanel={vi.fn()} resourcePanelOpen conversationPanelOpen theme="light" onThemeChange={vi.fn()} />);
+test("does not promote a disconnected connector in the global header", () => {
+  render(<TopBar statusLine="ready" onOpenSettings={vi.fn()} onShowHelp={vi.fn()} onToggleResourcePanel={vi.fn()} onToggleConversationPanel={vi.fn()} resourcePanelOpen conversationPanelOpen theme="light" onThemeChange={vi.fn()} />);
 
-  expect(screen.queryByText("Google 미연결")).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Google 연결", exact: true }));
-  expect(connectGoogle).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Google 연결", exact: true })).not.toBeInTheDocument();
 });

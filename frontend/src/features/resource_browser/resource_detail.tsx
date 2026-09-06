@@ -195,13 +195,13 @@ export function ResourceDetail({
     >
       {focusItem ? (
         <div className="viewer-actions viewer-actions-floating">
-          {canonicalUrl && hasCanonicalGoogleUrl(canonicalUrl) ? (
+          {canonicalUrl && hasCanonicalResourceUrl(canonicalUrl) ? (
             <button
               className="icon-button icon-button--plain"
               type="button"
-              aria-label="Gmail에서 찾기"
-              title="Gmail에서 찾기"
-              onClick={() => window.open(safeGoogleLink(canonicalUrl), "_blank", "noopener,noreferrer")}
+              aria-label={focusItem.source === "github" ? "GitHub에서 열기" : "Google에서 열기"}
+              title={focusItem.source === "github" ? "GitHub에서 열기" : "Google에서 열기"}
+              onClick={() => window.open(safeResourceLink(canonicalUrl), "_blank", "noopener,noreferrer")}
             >
               ↗
             </button>
@@ -428,17 +428,15 @@ function parsedResourceDate(value: string | null): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function safeGoogleLink(url: string): string {
-  if (!hasCanonicalGoogleUrl(url)) {
-    return "https://calendar.google.com/";
-  }
+function safeResourceLink(url: string): string {
+  if (!hasCanonicalResourceUrl(url)) return "https://github.com/issues";
   return new URL(url).toString();
 }
 
-function hasCanonicalGoogleUrl(url: string): boolean {
+function hasCanonicalResourceUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    const allowedHosts = new Set(["mail.google.com", "tasks.google.com", "calendar.google.com"]);
+    const allowedHosts = new Set(["mail.google.com", "tasks.google.com", "calendar.google.com", "github.com"]);
     return parsed.protocol === "https:" && allowedHosts.has(parsed.host);
   } catch {
     return false;

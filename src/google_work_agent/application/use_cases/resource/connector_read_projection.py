@@ -50,7 +50,15 @@ class ConnectorReadProjection:
         return _snapshot(cast(dict[str, object], output["item"]))
 
     def page(self, tool_id: str, arguments: dict[str, JsonValue]) -> ResourcePage:
-        output = self.call(tool_id, arguments)
+        return self.page_for_connector(self.connector_id, tool_id, arguments)
+
+    def page_for_connector(
+        self,
+        connector_id: str,
+        tool_id: str,
+        arguments: dict[str, JsonValue],
+    ) -> ResourcePage:
+        output = self.call_for_connector(connector_id, tool_id, arguments)
         return ResourcePage(
             items=tuple(
                 _snapshot(cast(dict[str, object], item))
@@ -192,6 +200,13 @@ class ConnectorReadProjection:
             "github",
             "github_get_issue",
             {"repository": repository, "issue_number": issue_number},
+        )
+
+    def list_github_issues(self, *, repository: str, state: str) -> ResourcePage:
+        return self.page_for_connector(
+            "github",
+            "github_list_issues",
+            {"repository": repository, "state": state},
         )
 
 

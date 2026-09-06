@@ -9,10 +9,10 @@ import {
   getGoogleConnection,
   getGitHubConnection,
   getSettings,
-  startGoogleConnection,
   updateSettings,
   type CurrentGoogleAccount,
   type GoogleConnection,
+  type GitHubConnection,
   type SettingsView,
 } from "../features/settings";
 import { CenterWorkspace } from "./center_workspace";
@@ -28,13 +28,13 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [runtime, setRuntime] = useState<RuntimeSummary>(initial.runtime);
   const [google, setGoogle] = useState<GoogleConnection>(initial.google);
+  const [github, setGitHub] = useState<GitHubConnection | null>(initial.github);
   const [currentAccount, setCurrentAccount] = useState<CurrentGoogleAccount["account"]>(initial.currentAccount);
   const [calendarTimezone, setCalendarTimezone] = useState(initial.calendarTimezone);
-  const [googleConnectPending, setGoogleConnectPending] = useState(false);
   const [statusLine, setStatusLine] = useState("로컬 API에 연결되어 있습니다.");
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [resourceProjection, setResourceProjection] = useState<ResourceBrowserProjection>({
-    activeSource: "gmail",
+    activeSource: null,
     focusedItem: null,
     selectedContext: { items: [], resourceIds: [], selectionHandles: [], labels: [] },
     composerPrompt: "선택한 메일에 대해 질문하거나 업무를 요청하세요...",
@@ -131,14 +131,16 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
     onOpenDiagnostics: () => setStatusLine("설정의 Runtime 상태에서 진단 정보를 확인하세요."),
   };
   const refreshRuntimeSummary = useCallback(async (): Promise<void> => {
-    const [runtimeResponse, googleResponse, accountResponse, settingsResponse] = await Promise.all([
+    const [runtimeResponse, googleResponse, githubResponse, accountResponse, settingsResponse] = await Promise.all([
       getRuntime(),
       getGoogleConnection(),
+      getGitHubConnection().catch(() => null),
       getCurrentGoogleAccount(),
       getSettings(),
     ]);
     setRuntime(runtimeResponse);
     setGoogle(googleResponse);
+    setGitHub(githubResponse);
     setCurrentAccount(accountResponse.account);
     setSettings(settingsResponse);
     setTheme(settingsResponse.theme === "DARK" ? "dark" : "light");
@@ -186,6 +188,7 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
     const checkConnection = (): void => {
       void getGitHubConnection().then((freshConnection) => {
         if (cancelled) return;
+        setGitHub(freshConnection);
         if (freshConnection.connection_status === "CONNECTED") {
           resumeAfterFreshConnection();
           return;
@@ -250,40 +253,18 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
     return commandId;
   }
 
-  async function handleGoogleConnect(): Promise<void> {
-    if (google?.connection_status === "CONNECTED" || googleConnectPending) {
-      return;
-    }
-    setGoogleConnectPending(true);
-    try {
-      let commandId = operationalCommandIds.current.get("google:connect");
-      if (!commandId) { commandId = crypto.randomUUID(); operationalCommandIds.current.set("google:connect", commandId); }
-      const response = await startGoogleConnection(commandId);
-      operationalCommandIds.current.delete("google:connect");
-      window.open(requireOAuthLaunchUrl(response.authorization_url), "_blank", "noopener,noreferrer");
-      setStatusLine("Google 연결 완료를 기다리고 있습니다.");
-    } catch (error) {
-      setStatusLine(error instanceof ApiClientError ? error.message : "Google 연결을 시작하지 못했습니다.");
-    } finally {
-      setGoogleConnectPending(false);
-    }
-  }
-
   if (!workspaceReady) {
     return <main className="startup" aria-busy="true" aria-label="이전 작업 복구 중" />;
   }
 
   return (
     <MainShell
-      google={google}
       statusLine={statusLine}
-      googleConnectPending={googleConnectPending}
       theme={theme}
       onThemeChange={(nextTheme) => void handleThemeChange(nextTheme)}
       conversationPanelDefaultOpen={settings.panel_preferences.right_panel_default_open}
       onConversationPanelOpenChange={(isOpen) => void handleConversationPanelOpenChange(isOpen)}
       onShowHelp={() => setStatusLine("자료를 선택하거나 자연어 요청을 입력해 업무를 시작할 수 있습니다.")}
-      onConnectGoogle={() => void handleGoogleConnect()}
       onOpenSettings={() => setSettingsOpen(true)}
       settingsPanel={settingsOpen ? (
         <SettingsDrawer
@@ -296,10 +277,13 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
       ) : null}
     >
         <ResourceSidebar
-          scopeKey={`${runtime.service_instance_id}|${currentAccount?.account_id ?? "disconnected"}|${JSON.stringify([settings.selected_calendar_ids, settings.selected_tasklist_ids, settings.google_resource_account_id])}`}
-          accountId={currentAccount?.account_id}
-          connected={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}
-          onConnect={() => setSettingsOpen(true)}
+          scopeKey={`${runtime.service_instance_id}|google:${currentAccount?.account_id ?? "disconnected"}|google-selection:${JSON.stringify([settings.selected_calendar_ids, settings.selected_tasklist_ids, settings.google_resource_account_id])}|github:${github?.account_id ?? "disconnected"}|repository:${settings.default_github_repository?.repository ?? "none"}`}
+          googleAccountId={currentAccount?.account_id}
+          githubAccountId={github?.account_id}
+          googleConnected={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}
+          githubConnected={github?.connection_status === "CONNECTED" && github.missing_required_scopes.length === 0}
+          githubRepository={settings.default_github_repository?.repository}
+          onOpenSettings={() => setSettingsOpen(true)}
           timezone={calendarTimezone}
           onProjectionChange={setResourceProjection}
         />
@@ -318,20 +302,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
         />
     </MainShell>
   );
-}
-
-function requireOAuthLaunchUrl(value: string): string {
-  const url = new URL(value);
-  if (
-    url.protocol !== "http:" ||
-    url.hostname !== "127.0.0.1" ||
-    !url.port ||
-    url.pathname !== "/oauth/authorize"
-  ) {
-    throw new Error("Unexpected OAuth authorization URL");
-  }
-  url.searchParams.set("return_to", new URL("/", window.location.origin).toString());
-  return url.toString();
 }
 
 function formatTime(value: number): string {

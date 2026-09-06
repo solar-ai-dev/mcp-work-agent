@@ -40,7 +40,21 @@ class CalendarListItemV1(ApiModel):
     location: str | None
 
 
-ResourceListItemV1 = GmailListItemV1 | TaskListItemV1 | CalendarListItemV1
+class GitHubIssueListItemV1(ApiModel):
+    schema_version: Literal[1]
+    selection_handle: str
+    resource_id: str
+    repository: str
+    issue_number: int
+    title: str
+    description: str
+    issue_state: Literal["OPEN", "CLOSED"]
+    url: str
+    labels: list[str]
+    assignees: list[str]
+
+
+ResourceListItemV1 = GmailListItemV1 | TaskListItemV1 | CalendarListItemV1 | GitHubIssueListItemV1
 
 
 class ResourceListResponse(ApiModel):
@@ -54,6 +68,7 @@ class ResourceListResponse(ApiModel):
 __all__ = [
     "CalendarListItemV1",
     "GmailListItemV1",
+    "GitHubIssueListItemV1",
     "ResourceListItemV1",
     "ResourceListResponse",
     "TaskListItemV1",
