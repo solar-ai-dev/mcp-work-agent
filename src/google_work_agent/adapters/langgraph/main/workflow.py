@@ -97,9 +97,6 @@ from google_work_agent.adapters.langgraph.main.supervisor_decision import (
 from google_work_agent.adapters.langgraph.main.supervisor_state_projection import (
     project_supervisor_state,
 )
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    CurrentRunResourceIdentityV1,
-)
 from google_work_agent.adapters.langgraph.pre_analysis_composition import (
     build_pre_analysis_subgraphs,
 )
@@ -197,6 +194,10 @@ from google_work_agent.application.use_cases.plan.project_dependencies import (
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultCommandV1,
     ReviewDispositionV1,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    CurrentRunResourceIdentityV1,
+    ValidatePlanForPublicationQueryV1,
 )
 from google_work_agent.application.use_cases.recovery.resolve_recovery import (
     ResolveRecoveryCommandV1,
@@ -435,6 +436,7 @@ class _WorkflowRuntimeComposition:
         self._read_result_cache = retrieval_cache or InMemoryRunRetrievalCache()
         self._evidence_store = RunScopedEvidenceStore()
         self._canonical_domain_validation = services.domain_validation
+        self._persist_resource_ref = services.persist_resource_ref
         self._complete_answer_only = services.complete_answer_only
         self._complete_read_only_run = services.complete_read_only_run
         self._complete_write_run = services.complete_write_run
@@ -1344,13 +1346,15 @@ class _WorkflowRuntimeComposition:
             plan_review = _require_state_value(typed_state.get("plan_review"), "plan_review")
             resource_identity_reader = _ResourceIdentityProjection(resource_refs)
             result = self._canonical_domain_validation(
-                run_id=run_id,
-                planning_result=cast(Any, planning_result),
-                plan_review=cast(PlanReviewResultV2, plan_review),
-                work_analysis_result=typed_state.get("work_analysis_result"),
-                evidence_drafts=evidence_drafts,
-                policy_confirmation_receipts=typed_state.get("policy_confirmation_receipts", []),
-                resource_identity_reader=resource_identity_reader,
+                ValidatePlanForPublicationQueryV1(
+                    run_id=run_id,
+                    planning_result=cast(Any, planning_result),
+                    plan_review=cast(PlanReviewResultV2, plan_review),
+                    work_analysis_result=typed_state.get("work_analysis_result"),
+                    evidence_drafts=evidence_drafts,
+                    policy_confirmation_receipts=typed_state.get("policy_confirmation_receipts", []),
+                    resource_identity_reader=resource_identity_reader,
+                )
             )
         else:
             raise ValueError(

@@ -1,17 +1,9 @@
-"""Domain Validation input boundary for canonical post-Retrieval artifacts.
-
-This module changes only the Application/Workflow input authority used by
-Domain Validation. It does not change Domain run/action transitions, approval,
-claim, cancellation, recovery commands, or persistence invariants.
-
-The production graph is not switched to this service until the post-Retrieval
-V2 owner chain can be cut over atomically. Until then this module is an
-import-ready boundary with contract tests, not a second production authority.
-"""
+"""Validate current Plan publication inputs without lifecycle mutation or external I/O."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, Protocol, TypedDict, cast
 
 from google_work_agent.application.agents.planning.contracts.action_plan_draft import (
@@ -76,12 +68,7 @@ class CurrentRunResourceIdentityV1(TypedDict):
 
 
 class RunScopedResourceIdentityReader(Protocol):
-    """Agent-3 consumer protocol for current-run normalized resource identity.
-
-    This name/shape is not a provider-side Agent 4 contract. Integration may
-    adapt Agent 4's final ephemeral read-only boundary to this consumer shape.
-    Raw provider payloads must never cross this boundary.
-    """
+    """Read current-Run identity from the caller's in-memory projection only."""
 
     def resolve_resource_identity(
         self,
@@ -99,7 +86,18 @@ class PolicyOverrideProvenanceDependency(RuntimeError):
     """Override safety cannot be proven until the Policy Receipt wave lands."""
 
 
-class CanonicalDomainValidationService:
+@dataclass(frozen=True, slots=True)
+class ValidatePlanForPublicationQueryV1:
+    run_id: str
+    planning_result: ActionPlanDraftV2
+    plan_review: PlanReviewResultV2
+    work_analysis_result: WorkAnalysisResultV2 | None
+    evidence_drafts: Sequence[Mapping[str, object]]
+    policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1]
+    resource_identity_reader: RunScopedResourceIdentityReader
+
+
+class ValidatePlanForPublicationHandler:
     """Validate current Planning artifacts before Domain persistence."""
 
     def __init__(
@@ -111,25 +109,15 @@ class CanonicalDomainValidationService:
         self._tool_registry = tool_registry
         self._validate_action_arguments = validate_action_arguments
 
-    def __call__(
-        self,
-        *,
-        run_id: str,
-        planning_result: ActionPlanDraftV2,
-        plan_review: PlanReviewResultV2,
-        work_analysis_result: WorkAnalysisResultV2 | None,
-        evidence_drafts: Sequence[Mapping[str, object]],
-        policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1],
-        resource_identity_reader: RunScopedResourceIdentityReader,
-    ) -> DomainValidationOutputV1:
+    def __call__(self, query: ValidatePlanForPublicationQueryV1) -> DomainValidationOutputV1:
         return build_domain_validation_output_from_v2(
-            run_id=run_id,
-            planning_result=planning_result,
-            plan_review=plan_review,
-            work_analysis_result=work_analysis_result,
-            evidence_drafts=evidence_drafts,
-            policy_confirmation_receipts=policy_confirmation_receipts,
-            resource_identity_reader=resource_identity_reader,
+            run_id=query.run_id,
+            planning_result=query.planning_result,
+            plan_review=query.plan_review,
+            work_analysis_result=query.work_analysis_result,
+            evidence_drafts=query.evidence_drafts,
+            policy_confirmation_receipts=query.policy_confirmation_receipts,
+            resource_identity_reader=query.resource_identity_reader,
             tool_registry=self._tool_registry,
             validate_action_arguments=self._validate_action_arguments,
         )
@@ -399,12 +387,14 @@ def _validate_action(
     if len(dependencies) != len(set(dependencies)):
         raise CanonicalDomainValidationError(f"{path}.depends_on_action_ids contains duplicates")
 
-    if effect in {EffectType.UPDATE.value, EffectType.DELETE.value} or (
-        tool_id == "gmail_send" and "draft_id" in arguments
-    ) or (
-        tool_id in {"gmail_create_draft", "gmail_send"}
-        and isinstance(arguments.get("payload"), Mapping)
-        and cast(Mapping[str, object], arguments["payload"]).get("thread_id") is not None
+    if (
+        effect in {EffectType.UPDATE.value, EffectType.DELETE.value}
+        or (tool_id == "gmail_send" and "draft_id" in arguments)
+        or (
+            tool_id in {"gmail_create_draft", "gmail_send"}
+            and isinstance(arguments.get("payload"), Mapping)
+            and cast(Mapping[str, object], arguments["payload"]).get("thread_id") is not None
+        )
     ):
         resolve_exact_target_evidence_handle(
             tool_id=tool_id,
@@ -480,8 +470,12 @@ def required_target_identity(
     path: str,
 ) -> tuple[str, str, str | None]:
     payload = arguments.get("payload")
-    if (tool_id in {"gmail_create_draft", "gmail_send"} and "draft_id" not in arguments
-            and isinstance(payload, Mapping) and payload.get("thread_id") is not None):
+    if (
+        tool_id in {"gmail_create_draft", "gmail_send"}
+        and "draft_id" not in arguments
+        and isinstance(payload, Mapping)
+        and payload.get("thread_id") is not None
+    ):
         return "gmail_thread", _text(payload["thread_id"], f"{path}.payload.thread_id"), None
     binding = _TARGET_BINDINGS.get(tool_id)
     if binding is None:
@@ -636,7 +630,8 @@ def _string_list(value: object, path: str) -> list[str]:
 
 __all__ = [
     "CanonicalDomainValidationError",
-    "CanonicalDomainValidationService",
+    "ValidatePlanForPublicationHandler",
+    "ValidatePlanForPublicationQueryV1",
     "CurrentRunResourceIdentityV1",
     "PolicyOverrideProvenanceDependency",
     "RunScopedResourceIdentityReader",

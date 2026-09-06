@@ -485,6 +485,31 @@ def test_immediate_concrete__barrel__authority() -> None:
     clean(errors)
 
 
+def test_plan_publication__application_owner__has_no_graph_writer_or_legacy_validator() -> None:
+    legacy = SRC / "adapters/langgraph/main/validate_planning_output.py"
+    errors = [f"legacy Plan validation authority remains: {rel(legacy)}"] if legacy.exists() else []
+    owner = SRC / "application/use_cases/plan/validate_plan_for_publication.py"
+    if "ValidatePlanForPublicationHandler" not in exported_symbols(owner):
+        errors.append("Plan publication requires its Application Handler")
+    for path in pyfiles():
+        for module in imports(path):
+            if module == "google_work_agent.adapters.langgraph.main.validate_planning_output":
+                errors.append(f"old Plan validation import remains: {rel(path)}")
+        if parts(path)[:3] not in {
+            ("adapters", "langgraph", "main"),
+            ("adapters", "langgraph", "subgraphs"),
+        }:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "commit"
+            ):
+                errors.append(f"Graph owns a persistence commit: {rel(path)}:{node.lineno}")
+    clean(errors)
+
+
 def test_immediate_public__alias_reexport_and__duplicate_definition_zero() -> None:
     errors: list[str] = []
     definitions: dict[tuple[type[ast.AST], str], list[Path]] = {}

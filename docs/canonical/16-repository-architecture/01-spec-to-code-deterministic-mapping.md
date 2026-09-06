@@ -182,6 +182,8 @@ For compound commands, creation of a subordinate durable artifact does not move 
 
 Execution/Verification external-I/O mapping is exact:
 
+- `application/use_cases/plan/validate_plan_for_publication.py` → `ValidatePlanForPublicationQueryV1`, `ValidatePlanForPublicationHandler` → existing `DomainValidationOutputV1`; consumes current Planning/Review/Evidence/Policy Receipt projections before publication. This is the Application realization of the existing Domain Validation stage, not a new lifecycle command or Agent operation. Registry/schema, exact target identity, Review freshness and receipt binding stay here; LangGraph only projects inputs/results. Resource identity reader is an in-memory projection contract, not a Provider I/O Port. Test `tests/unit/application/use_cases/plan/test_validate_plan_for_publication.py`.
+- `resource_ref.persist_resource_ref` owns ResourceRef write transactions for Graph publication callers as well as other Application callers. Graph may project an acquired snapshot and invoke the injected `PersistResourceRefHandler`, but may not commit the repository mutation itself.
 - `application/use_cases/action/validate_action_arguments.py` → `ValidateActionArgumentsQueryV1`, `ActionArgumentsSchemaValidationResultV1`, `ValidateActionArgumentsHandler`; Tool schema only, no policy/mutation.
 - `application/use_cases/action/evaluate_action_policy.py` → `EvaluateActionPolicyQueryV1`, `ActionPolicyEvaluationResultV1`, `EvaluateActionPolicyHandler`; 01-B deterministic policy only, no Domain mutation/external I/O.
 - `application/use_cases/claim/build_claim_context.py` → `BuildClaimContextQueryV1`, `ClaimContextV2`, `BuildClaimContextHandler`; committed Claim/Attempt와 final dispatch args integrity만 소유, no DB mutation/no external I/O.

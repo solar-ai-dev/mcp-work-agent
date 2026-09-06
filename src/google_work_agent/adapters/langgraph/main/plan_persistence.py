@@ -16,10 +16,6 @@ from google_work_agent.adapters.langgraph.main.state import (
     _resource_handle_for_ref,
     request_from_state,
 )
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    RunScopedResourceIdentityReader,
-    resolve_exact_target_evidence_handle,
-)
 from google_work_agent.application.agents.planning.contracts.action_plan_draft import (
     ActionPlanDraftV2,
     PlannedActionV2,
@@ -29,7 +25,6 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     EvidenceDraftV1,
     RetrievalResultV1,
 )
-from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.calendar_conflicts import (
     CALENDAR_CONFLICT_TOOLS,
 )
@@ -40,6 +35,10 @@ from google_work_agent.application.use_cases.action.task_duplicates import (
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultCommandV1,
 )
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    RunScopedResourceIdentityReader,
+    resolve_exact_target_evidence_handle,
+)
 from google_work_agent.application.use_cases.plan.write_plan_contracts import (
     PublishWritePlanCommand,
     SaveWritePlanCommand,
@@ -47,7 +46,8 @@ from google_work_agent.application.use_cases.plan.write_plan_contracts import (
     WriteEvidenceDraft,
 )
 from google_work_agent.application.use_cases.resource_ref.persist_resource_ref import (
-    persist_registered_resource_ref,
+    PersistResourceRefCommand,
+    PersistResourceRefHandler,
 )
 from google_work_agent.application.use_cases.resource_ref.resource_ref_projection import (
     is_durable_resource_type,
@@ -199,6 +199,7 @@ class PlanPersistenceMixin:
     """Canonical runtime with deterministic Expected and explicit connector persistence."""
 
     if TYPE_CHECKING:
+        _persist_resource_ref: PersistResourceRefHandler
         _id_factory: Callable[[], str]
         _now_ms: Callable[[], int]
         _evidence_store: Any
@@ -206,7 +207,6 @@ class PlanPersistenceMixin:
         _save_write_plan: Callable[[SaveWritePlanCommand], Any]
         _publish_write_plan: Callable[[PublishWritePlanCommand], Any]
         _record_review_result: Callable[[RecordReviewResultCommandV1], Any]
-        _tool_catalog: SignedToolRegistry
 
         def _current_run_version(self, run_id: str) -> int: ...
 
@@ -219,32 +219,6 @@ class PlanPersistenceMixin:
         ) -> dict[str, object]: ...
 
         def _request_hash(self, payload: dict[str, object]) -> str: ...
-
-    def __init__(
-        self,
-        *args: Any,
-        default_calendar_id_provider: Callable[[], str | None] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        llm_runtime = kwargs.get("llm_runtime")
-        if default_calendar_id_provider is None and llm_runtime is not None:
-            settings_service = getattr(llm_runtime, "settings_service", None)
-            if callable(settings_service):
-
-                def get_default_calendar_id() -> str | None:
-                    return getattr(settings_service(), "default_calendar_id", None)
-
-                default_calendar_id_provider = get_default_calendar_id
-
-        if kwargs.get("connector_execution") is None:
-            raise TypeError("connector_execution is required")
-
-        next_initializer = cast(Callable[..., None], super().__init__)
-        next_initializer(
-            *args,
-            default_calendar_id_provider=default_calendar_id_provider,
-            **kwargs,
-        )
 
     def _persist_write_plan(
         self,
@@ -553,40 +527,34 @@ class PlanPersistenceMixin:
                     and resource_handle == _resource_handle_for_ref(resource_ref)
                 ):
                     return resource_ref.id
-            resource = _acquired_resource_by_handle(
-                acquisition_result=acquisition_result, resource_handle=resource_handle
+        resource = _acquired_resource_by_handle(
+            acquisition_result=acquisition_result, resource_handle=resource_handle
+        )
+        if resource is None:
+            raise LookupError(
+                f"target resource handle was not acquired for this run: {resource_handle}"
             )
-            if resource is None:
-                raise LookupError(
-                    f"target resource handle was not acquired for this run: {resource_handle}"
-                )
-            payload = cast(dict[str, object], resource["payload"])
-            snapshot = ResourceSnapshot(
-                fixture_snapshot_id=str(resource.get("fixture_snapshot_id") or "runtime"),
-                resource_type=ResourceType(str(resource["resource_type"])),
-                resource_id=str(resource["resource_id"]),
-                parent_id=cast(str | None, resource.get("parent_id")),
-                related_resource_ids=tuple(
-                    str(item)
-                    for item in cast(list[object], resource.get("related_resource_ids") or [])
-                ),
-                version=str(resource.get("version") or ""),
-                recovery_fingerprint=cast(str | None, resource.get("recovery_fingerprint")),
-                payload=payload,
-            )
-            resource_ref = resource_ref_from_snapshot(
-                run_id=run_id,
-                connector_id=connector_id,
-                snapshot=snapshot,
-                captured_at_ms=self._now_ms(),
-            )
-            persisted = persist_registered_resource_ref(
-                unit_of_work,
-                resource_ref,
-                catalog=self._tool_catalog,
-            )
-            unit_of_work.commit()
-            return persisted.id
+        payload = cast(dict[str, object], resource["payload"])
+        snapshot = ResourceSnapshot(
+            fixture_snapshot_id=str(resource.get("fixture_snapshot_id") or "runtime"),
+            resource_type=ResourceType(str(resource["resource_type"])),
+            resource_id=str(resource["resource_id"]),
+            parent_id=cast(str | None, resource.get("parent_id")),
+            related_resource_ids=tuple(
+                str(item)
+                for item in cast(list[object], resource.get("related_resource_ids") or [])
+            ),
+            version=str(resource.get("version") or ""),
+            recovery_fingerprint=cast(str | None, resource.get("recovery_fingerprint")),
+            payload=payload,
+        )
+        resource_ref = resource_ref_from_snapshot(
+            run_id=run_id,
+            connector_id=connector_id,
+            snapshot=snapshot,
+            captured_at_ms=self._now_ms(),
+        )
+        return self._persist_resource_ref(PersistResourceRefCommand(resource_ref)).resource_ref.id
 
 
 __all__ = [

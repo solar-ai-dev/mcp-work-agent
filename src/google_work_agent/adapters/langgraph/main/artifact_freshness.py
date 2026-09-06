@@ -18,9 +18,6 @@ from google_work_agent.adapters.langgraph.main.supervisor_decision import (
     SupervisorDecisionV1,
     SupervisorTarget,
 )
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    RunScopedResourceIdentityReader,
-)
 from google_work_agent.adapters.langgraph.write_execution import (
     write_action_statuses_are_closed,
 )
@@ -30,6 +27,9 @@ from google_work_agent.application.agents.planning.contracts.action_plan_draft i
 from google_work_agent.application.use_cases.plan.persistence_projection import (
     current_plan_tuple,
     load_plan_record,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    RunScopedResourceIdentityReader,
 )
 from google_work_agent.application.use_cases.run.cancel_intent import has_durable_cancel_intent
 from google_work_agent.domain.plan.model import PlanStatusV1

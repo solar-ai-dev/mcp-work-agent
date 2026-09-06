@@ -62,9 +62,6 @@ from google_work_agent.adapters.langgraph.main.application_services import (
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
     RESUME_CONTRACT_VERSION,
 )
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    CanonicalDomainValidationService,
-)
 from google_work_agent.adapters.langgraph.main.workflow import LangGraphWorkflowRuntime
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.registry.checkpoint_target_resolver import (
@@ -301,6 +298,9 @@ from google_work_agent.application.use_cases.plan.publish_read_only_plan import 
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultHandler,
 )
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    ValidatePlanForPublicationHandler,
+)
 from google_work_agent.application.use_cases.recovery.lookup_unknown_result import (
     LookupUnknownResultHandler,
 )
@@ -350,6 +350,9 @@ from google_work_agent.application.use_cases.resource.opaque_continuation_access
 )
 from google_work_agent.application.use_cases.resource.resolve_selection_handle import (
     ResolveSelectionHandle,
+)
+from google_work_agent.application.use_cases.resource_ref.persist_resource_ref import (
+    PersistResourceRefHandler,
 )
 from google_work_agent.application.use_cases.resource_ref.resolve_resource_ref import (
     ResolveResourceRefHandler,
@@ -765,9 +768,13 @@ def _build_workflow_application_services(
         begin_retrieval=begin_retrieval,
         begin_planning=begin_planning,
         request_confirmation=request_confirmation,
-        domain_validation=CanonicalDomainValidationService(
+        domain_validation=ValidatePlanForPublicationHandler(
             tool_registry=tool_catalog,
             validate_action_arguments=ValidateActionArgumentsHandler(),
+        ),
+        persist_resource_ref=PersistResourceRefHandler(
+            unit_of_work_factory=unit_of_work_factory,
+            tool_registry=tool_catalog,
         ),
         complete_answer_only=complete_answer_only,
         complete_read_only_run=complete_read_only_run,

@@ -23,7 +23,11 @@ def test_persists_connector__bound_resource__ref(tmp_path: Path) -> None:
         connection.execute("INSERT INTO conversations VALUES ('c-1', 'a-1', 'Test', 1, 1);")
         connection.execute(
             """
-            INSERT INTO runs VALUES (
+            INSERT INTO runs (
+                id, conversation_id, entry_mode, status, langgraph_thread_id,
+                requested_mode, actual_runtime, budget_json, version,
+                started_at_ms, finished_at_ms, terminal_result_kind
+            ) VALUES (
                 'run-1', 'c-1', 'AGENT_SEARCH', 'CREATED', 't-1',
                 'AUTO', NULL, '{}', 0, 1, NULL, NULL
             );
@@ -45,11 +49,14 @@ def test_persists_connector__bound_resource__ref(tmp_path: Path) -> None:
         captured_at_ms=1,
     )
 
-    result = PersistResourceRefHandler(
+    handler = PersistResourceRefHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(path),
         tool_registry=load_signed_tool_registry(),
-    )(
-        PersistResourceRefCommand(record)
     )
+    result = handler(PersistResourceRefCommand(record))
 
     assert result.resource_ref == record
+    assert handler(PersistResourceRefCommand(record)).resource_ref == record
+    with sqlite_unit_of_work_factory(path)() as unit_of_work:
+        assert unit_of_work.resource_refs.get(record.id) == record
+        assert len(unit_of_work.resource_refs.list_for_run_bounded("run-1", limit=10)) == 1

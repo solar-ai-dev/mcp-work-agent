@@ -17,10 +17,6 @@ from google_work_agent.adapters.langgraph.main.state import (
     GraphState,
     _require_state_value,
 )
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    RunScopedResourceIdentityReader,
-    required_target_identity,
-)
 from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
     resolve_evidence_projection,
 )
@@ -44,6 +40,10 @@ from google_work_agent.application.use_cases.plan.project_dependencies import (
 )
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultCommandV1,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    RunScopedResourceIdentityReader,
+    required_target_identity,
 )
 from google_work_agent.application.use_cases.plan.write_plan_contracts import (
     PublishWritePlanCommand,

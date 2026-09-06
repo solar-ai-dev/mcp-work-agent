@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    ValidatePlanForPublicationHandler,
+)
+from google_work_agent.application.use_cases.resource_ref.persist_resource_ref import (
+    PersistResourceRefHandler,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class WorkflowApplicationServices:
@@ -17,7 +24,8 @@ class WorkflowApplicationServices:
     begin_retrieval: Any
     begin_planning: Any
     request_confirmation: Any
-    domain_validation: Any
+    domain_validation: ValidatePlanForPublicationHandler
+    persist_resource_ref: PersistResourceRefHandler
     complete_answer_only: Any
     complete_read_only_run: Any
     complete_write_run: Any

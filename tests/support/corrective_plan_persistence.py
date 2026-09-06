@@ -13,9 +13,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from google_work_agent.adapters.langgraph.main.state import GraphState
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    CurrentRunResourceIdentityV1,
-)
 from google_work_agent.adapters.langgraph.main.workflow import (
     LangGraphWorkflowRuntime,
 )
@@ -35,6 +32,9 @@ from google_work_agent.application.use_cases.plan.persistence_projection import 
 from google_work_agent.application.use_cases.plan.publish_plan import PublishPlanHandler
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultHandler,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    CurrentRunResourceIdentityV1,
 )
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.canonical import calculate_canonical_json_hash

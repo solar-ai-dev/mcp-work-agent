@@ -10,11 +10,11 @@ from google_work_agent.adapters.langgraph.corrective_plan_persistence import (
     persist_reserved_corrective_write_plan,
 )
 from google_work_agent.adapters.langgraph.main.state import GraphState
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    RunScopedResourceIdentityReader,
-)
 from google_work_agent.application.agents.planning.contracts.action_plan_draft import (
     ActionPlanDraftV2,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    RunScopedResourceIdentityReader,
 )
 from google_work_agent.domain.plan.model import Plan as PlanRecord
 from google_work_agent.domain.plan.model import PlanStatusV1

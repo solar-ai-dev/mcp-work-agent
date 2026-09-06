@@ -6,16 +6,17 @@ from typing import Any, cast
 
 import pytest
 
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    CanonicalDomainValidationService,
-    PolicyOverrideProvenanceDependency,
-    build_domain_validation_output_from_v2,
-)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
 from google_work_agent.application.use_cases.action.validate_action_arguments import (
     ValidateActionArgumentsHandler,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    PolicyOverrideProvenanceDependency,
+    ValidatePlanForPublicationHandler,
+    ValidatePlanForPublicationQueryV1,
+    build_domain_validation_output_from_v2,
 )
 
 
@@ -172,16 +173,19 @@ def _call(
     analysis: Any = None,
     receipts: Any = (),
 ) -> Any:
-    return build_domain_validation_output_from_v2(
-        run_id="run-1",
-        planning_result=plan,
-        plan_review=cast(Any, review or _review()),
-        work_analysis_result=analysis,
-        evidence_drafts=cast(Any, evidence or _evidence()),
-        policy_confirmation_receipts=receipts,
-        resource_identity_reader=cast(Any, reader or _reader()),
+    return ValidatePlanForPublicationHandler(
         tool_registry=load_signed_tool_registry(),
         validate_action_arguments=ValidateActionArgumentsHandler(),
+    )(
+        ValidatePlanForPublicationQueryV1(
+            run_id="run-1",
+            planning_result=plan,
+            plan_review=cast(Any, review or _review()),
+            work_analysis_result=analysis,
+            evidence_drafts=cast(Any, evidence or _evidence()),
+            policy_confirmation_receipts=receipts,
+            resource_identity_reader=cast(Any, reader or _reader()),
+        )
     )
 
 
@@ -229,23 +233,37 @@ def test_create_accepts__current_run_user_message__as_evidence() -> None:
 @pytest.mark.parametrize("tool_name", ["gmail_create_draft", "gmail_send"])
 @pytest.mark.parametrize("matched", [True, False])
 def test_gmail_reply__requires_current_run_thread_evidence__before_approval(
-    tool_name: str, matched: bool,
+    tool_name: str,
+    matched: bool,
 ) -> None:
     plan = _task_create_plan()
     plan["actions"][0].update(
-        tool_id=tool_name, effect="SEND" if tool_name == "gmail_send" else "CREATE",
-        arguments={"payload": {
-            "to": ["to@example.com"], "subject": "회신", "body": "본문",
-            "thread_id": "thread-1", "in_reply_to": "<source@example.com>",
-            "references": "<source@example.com>",
-        }},
+        tool_id=tool_name,
+        effect="SEND" if tool_name == "gmail_send" else "CREATE",
+        arguments={
+            "payload": {
+                "to": ["to@example.com"],
+                "subject": "회신",
+                "body": "본문",
+                "thread_id": "thread-1",
+                "in_reply_to": "<source@example.com>",
+                "references": "<source@example.com>",
+            }
+        },
     )
     result = _call(
-        plan, evidence=_evidence("thread-handle"),
-        reader=_ResourceReader({"thread-handle": {
-            "resource_handle": "thread-handle", "resource_type": "gmail_thread",
-            "resource_id": "thread-1" if matched else "other-thread", "parent_id": None,
-        }}),
+        plan,
+        evidence=_evidence("thread-handle"),
+        reader=_ResourceReader(
+            {
+                "thread-handle": {
+                    "resource_handle": "thread-handle",
+                    "resource_type": "gmail_thread",
+                    "resource_id": "thread-1" if matched else "other-thread",
+                    "parent_id": None,
+                }
+            }
+        ),
     )
     assert result["result"] == ("REQUIRE_APPROVAL" if matched else "BLOCK")
 
@@ -300,7 +318,7 @@ def test_not_required_analysis__with_action_fails_closed__on_override_provenance
 
 
 def test_registry_authority__must_be__explicitly_injected() -> None:
-    service_parameter = signature(CanonicalDomainValidationService).parameters["tool_registry"]
+    service_parameter = signature(ValidatePlanForPublicationHandler).parameters["tool_registry"]
     helper_parameter = signature(build_domain_validation_output_from_v2).parameters["tool_registry"]
 
     assert service_parameter.default is Parameter.empty
