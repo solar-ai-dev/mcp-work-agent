@@ -191,6 +191,7 @@ class StructuredInferenceRuntimeRouter:
             raise LLMInvocationError(
                 LLMErrorCode.RUNTIME_MODE_BLOCKED,
                 "requested runtime mode is disabled by the release profile",
+                runtime_prerequisite=True,
             )
         try:
             provider = self._resolve_provider(
@@ -338,26 +339,34 @@ class StructuredInferenceRuntimeRouter:
         if runtime is ActualRuntime.API_LLM:
             if not settings.external_llm_consent:
                 raise LLMInvocationError(
-                    LLMErrorCode.CONSENT_REQUIRED, "external LLM consent is disabled"
+                    LLMErrorCode.CONSENT_REQUIRED,
+                    "external LLM consent is disabled",
+                    runtime_prerequisite=True,
                 )
             if self.credential_service.read_secret(self.api_provider_name) is None:
                 raise LLMInvocationError(
-                    LLMErrorCode.API_KEY_MISSING, "LLM API key is not configured"
+                    LLMErrorCode.API_KEY_MISSING,
+                    "LLM API key is not configured",
+                    runtime_prerequisite=True,
                 )
             return self._api_leaf
         if hardware_capability.capability_status is not HardwareCapabilityStatus.VALIDATED:
             raise LLMInvocationError(
                 LLMErrorCode.LOCAL_UNAVAILABLE,
                 "local hardware capability is not validated for LOCAL_GPU",
+                runtime_prerequisite=True,
             )
         if approved_model is None:
             raise LLMInvocationError(
-                LLMErrorCode.MODEL_NOT_APPROVED, "approved model is unavailable"
+                LLMErrorCode.MODEL_NOT_APPROVED,
+                "approved model is unavailable",
+                runtime_prerequisite=True,
             )
         if not self.runtime_selection.is_active:
             raise LLMInvocationError(
                 LLMErrorCode.LOCAL_UNAVAILABLE,
                 "local runtime is not activated by a current signed product decision",
+                runtime_prerequisite=True,
             )
         return self.ollama_provider_factory(approved_model)
 
@@ -557,8 +566,7 @@ class StructuredInferenceRuntimeRouter:
         if repair_errors:
             raise LLMInvocationError(
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
-                "schema repair did not produce a valid payload: "
-                + "; ".join(repair_errors[-8:]),
+                "schema repair did not produce a valid payload: " + "; ".join(repair_errors[-8:]),
             )
         return repaired, 2
 

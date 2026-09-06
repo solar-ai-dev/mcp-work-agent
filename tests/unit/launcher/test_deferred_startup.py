@@ -19,7 +19,7 @@ from google_work_agent.adapters.llm.runtime.llm_credential_router import (
     SessionMemorySecretStore,
 )
 from google_work_agent.adapters.persistence.connection import connect_sqlite
-from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.migration import apply_migrations, discover_migrations
 from google_work_agent.adapters.runtime.safe_mode import SafeModeController
 from google_work_agent.adapters.system.filesystem_backup import FilesystemBackupAdapter
 from google_work_agent.adapters.system.process_maintenance_gate import (
@@ -250,7 +250,7 @@ def test_safe_mode__restore_migrates_then__rebinds_ready_core(
         maintenance_gate=ProcessMaintenanceGateAdapter(has_active_write=lambda: False),
         release_version="test",
         domain_contract_version="1",
-        schema_version="0019",
+        schema_version=f"{discover_migrations()[-1].version:04d}",
     )
     backup_adapter.create_backup("seed-safe-mode-restore")
     connection = connect_sqlite(database_path)
@@ -299,6 +299,16 @@ def test_safe_mode__restore_migrates_then__rebinds_ready_core(
         _bootstrap(client, headers)
         assert client.get("/health/ready", headers=headers).json()["status"] == "READY"
         assert attempts == 2
+        restored = connect_sqlite(database_path)
+        try:
+            assert restored.execute(
+                "SELECT checksum FROM schema_migrations WHERE version=1"
+            ).fetchone()[0] != "0" * 64
+            assert restored.execute(
+                "SELECT COUNT(*) FROM google_accounts WHERE id='account-restored'"
+            ).fetchone()[0] == 1
+        finally:
+            restored.close()
         blocked = client.post(
             "/api/v1/restore",
             headers={**headers, "x-api-contract-version": "1"},

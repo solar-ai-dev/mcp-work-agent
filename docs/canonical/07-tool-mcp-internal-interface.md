@@ -982,6 +982,8 @@ Connector MCP child가 소비하는 것은 Registry 자체가 아니라 `MCPTool
 
 Port는 abstraction이고 concrete Adapter가 아니다. FastAPI Route·Agent·Domain이 concrete SQLite/Checkpointer/Provider SDK/Keyring implementation을 직접 호출하는 경로는 허용하지 않는다.
 
+LLM 예외의 `runtime_prerequisite`는 Router가 Provider dispatch 전에 확인한 실행 전제 부족에만 설정한다(기본 `False`). 최초 Start의 분석 상태이며 Action이 없는 경우에만 기존 BLOCKED terminal 경로로 소비한다. Provider 통신 실패, 실행 중 Connector 재인증, resume 실패를 이 값으로 추측하지 않는다. 별도 Domain 상태나 자동 resume 계약을 추가하지 않는다.
+
 #### 4.1-0 Transport-only shared contracts
 
 아래 타입은 MCP transport/checkpoint **boundary metadata만** 소유하며 Product semantic artifact나 Domain truth가 아니다.

@@ -694,10 +694,11 @@ class _WorkflowRuntimeComposition:
         try:
             return self._invocation.start(request)
         except LLMInvocationError as error:
-            return self._settle_llm_budget_exhaustion(
+            return self._settle_llm_invocation_failure(
                 error=error,
                 run_id=request.run_id,
                 workflow_key=request.workflow_key,
+                initial_start=True,
             )
 
     def prepare_start(self, request: WorkflowStartRequest) -> None:
@@ -744,37 +745,59 @@ class _WorkflowRuntimeComposition:
         try:
             return self._invocation.resume(request)
         except LLMInvocationError as error:
-            return self._settle_llm_budget_exhaustion(
+            return self._settle_llm_invocation_failure(
                 error=error,
                 run_id=request.run_id,
                 workflow_key=request.workflow_key,
             )
 
-    def _settle_llm_budget_exhaustion(
+    def _settle_llm_invocation_failure(
         self,
         *,
         error: LLMInvocationError,
         run_id: str,
         workflow_key: str,
+        initial_start: bool = False,
     ) -> WorkflowInvocationResult:
-        """Fail closed when the canonical per-Run provider budget is exhausted."""
+        """Route initial admission failure or exhausted budget to existing terminal commit."""
 
-        if error.code is not LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED:
-            raise error
-        message = str(error)
-        reason_code = (
-            "ABSOLUTE_LLM_LIMIT_EXHAUSTED"
-            if "ABSOLUTE_LLM_LIMIT_EXHAUSTED" in message
-            else "PROFILE_LLM_LIMIT_EXHAUSTED"
-        )
         config = self._config_for_thread(workflow_key)
         snapshot = self._graph.get_state(config)
+        if error.code is LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED:
+            reason_code = (
+                "ABSOLUTE_LLM_LIMIT_EXHAUSTED"
+                if "ABSOLUTE_LLM_LIMIT_EXHAUSTED" in str(error)
+                else "PROFILE_LLM_LIMIT_EXHAUSTED"
+            )
+        elif (
+            initial_start
+            and error.runtime_prerequisite
+            and error.code
+            in {
+                LLMErrorCode.LOCAL_UNAVAILABLE,
+                LLMErrorCode.MODEL_NOT_APPROVED,
+                LLMErrorCode.API_KEY_MISSING,
+                LLMErrorCode.CONSENT_REQUIRED,
+                LLMErrorCode.RUNTIME_MODE_BLOCKED,
+            }
+        ):
+            facts = self._read_terminal_facts(run_id)
+            if (
+                facts["status"] not in {"CREATED", "ANALYZING"}
+                or facts["action_statuses"]
+                or snapshot.values.get("request_intent") is not None
+                or snapshot.values.get("retry_budget", {}).get("llm_calls_used", 0) != 0
+            ):
+                raise error
+            reason_code = error.code.value
+        else:
+            raise error
         pending_owner = next(
             (node for node in snapshot.next if isinstance(node, str) and node != "__start__"),
             None,
         )
         if pending_owner is None:
-            raise RuntimeError("LLM budget exhaustion has no resumable graph owner")
+            raise RuntimeError("LLM terminal failure has no resumable graph owner")
         self._graph.update_state(
             config,
             {

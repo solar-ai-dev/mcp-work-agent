@@ -11,6 +11,20 @@ def format_blocked_terminal_message(
     """Explain the blocked outcome without exposing internal reason codes."""
 
     reasons = frozenset(reason_codes)
+    if reasons & {"LOCAL_UNAVAILABLE", "MODEL_NOT_APPROVED"}:
+        return (
+            "사용할 로컬 AI 모델이 준비되지 않아 요청을 실행하지 않았습니다. "
+            "설정에서 모델을 검사하고 준비된 모델을 선택한 뒤 새로 요청해 주세요."
+        )
+    if "API_KEY_MISSING" in reasons:
+        return "API AI 연결이 필요합니다. 설정에서 API Key를 등록한 뒤 새로 요청해 주세요."
+    if "CONSENT_REQUIRED" in reasons:
+        return (
+            "외부 AI 전송 동의가 없어 요청을 실행하지 않았습니다. "
+            "설정에서 동의하거나 준비된 로컬 AI를 선택한 뒤 새로 요청해 주세요."
+        )
+    if "RUNTIME_MODE_BLOCKED" in reasons:
+        return "선택한 AI 실행 방식은 사용할 수 없습니다. 설정을 확인한 뒤 새로 요청해 주세요."
     if "CONTEXT_BLOCKED" in reasons:
         return (
             "요청을 뒷받침할 충분한 근거를 확보하지 못해 작업을 완료하지 못했습니다. "

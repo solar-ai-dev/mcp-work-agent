@@ -239,11 +239,13 @@ class LLMInvocationError(RuntimeError):
         *,
         retryable: bool = False,
         fallback_reason: str | None = None,
+        runtime_prerequisite: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.fallback_reason = fallback_reason
+        self.runtime_prerequisite = runtime_prerequisite
 
 
 class StructuredLLMProvider(Protocol):
