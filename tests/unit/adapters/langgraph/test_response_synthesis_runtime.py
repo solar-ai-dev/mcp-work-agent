@@ -26,6 +26,60 @@ def _answer() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("status", ["ANALYZING", "RETRIEVING", "PLANNING"])
+def test_initial_connection_failure__closes_partial_answer__without_auth_wait(status):
+    message = "GitHub 연결 후 요청을 다시 보내주세요."
+    state = {
+        "run_id": "run-1",
+        "finalize_intent": {
+            "schema_version": 1,
+            "intent": "COMPLETED",
+            "result_kind": "PARTIAL",
+            "reason_code": "CONNECTOR_PREREQUISITE_UNMET",
+            "prerequisite_message": message,
+        },
+    }
+    result = response_synthesis_node(
+        state,
+        read_terminal_facts=lambda _: {
+            "status": status,
+            "version": 1,
+            "terminal_result_kind": None,
+            "action_statuses": [],
+            "action_effect_types": [],
+        },
+        build_terminal_message=BuildTerminalMessageHandler(),
+    )
+    intent = result["terminal_commit_intent"]
+    assert intent["kind"] == "COMPLETE_ANSWER_ONLY"
+    assert intent["terminal_message"].content == message
+    assert intent["terminal_message"].result_kind == "PARTIAL"
+    assert result["__target__"] == "terminal_commit"
+
+
+@pytest.mark.parametrize("status", ["REAUTH_REQUIRED", "EXECUTING", "VERIFYING"])
+def test_initial_connection_failure__cannot_close__inflight_or_reauth(status):
+    with pytest.raises(ValueError, match="active execution"):
+        response_synthesis_node(
+            {
+                "run_id": "run-1",
+                "finalize_intent": {
+                    "intent": "COMPLETED",
+                    "reason_code": "CONNECTOR_PREREQUISITE_UNMET",
+                    "prerequisite_message": "connect",
+                },
+            },
+            read_terminal_facts=lambda _: {
+                "status": status,
+                "version": 1,
+                "terminal_result_kind": None,
+                "action_statuses": [],
+                "action_effect_types": [],
+            },
+            build_terminal_message=BuildTerminalMessageHandler(),
+        )
+
+
 def test_response_synthesis__materializes_terminal__commit_intent() -> None:
     state = cast(
         GraphState,

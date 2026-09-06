@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal, Required, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     StateArtifactMetaV1,
@@ -66,13 +66,17 @@ class ScopeExpansionRequiredV1(TypedDict):
 
 class ToolRouteResultV1(TypedDict):
     schema_version: Required[Literal[1]]
-    disposition: Literal["ROUTE_READY", "NO_TOOL_NEEDED", "NEEDS_CONFIRMATION", "BLOCKED"]
+    disposition: Literal[
+        "ROUTE_READY", "NO_TOOL_NEEDED", "NEEDS_CONFIRMATION", "BLOCKED", "PREREQUISITE_UNMET"
+    ]
+    prerequisite_message: NotRequired[str]
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: ScopeExpansionRequiredV1 | None
     reason_codes: list[str]
 
 
 class ToolRouteDisposition(StrEnum):
+    PREREQUISITE_UNMET = "PREREQUISITE_UNMET"
     ROUTE_READY = "ROUTE_READY"
     NO_TOOL_NEEDED = "NO_TOOL_NEEDED"
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"

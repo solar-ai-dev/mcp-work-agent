@@ -184,6 +184,18 @@ def _classify(
             None,
             [intent_reason or "RECOVERY_FAIL"],
         )
+    if intent_reason == "CONNECTOR_PREREQUISITE_UNMET":
+        if (
+            action_statuses
+            or action_effect_types
+            or status not in {"ANALYZING", "RETRIEVING", "PLANNING", "COMPLETED"}
+        ):
+            raise ValueError("initial connector failure cannot close active execution")
+        message = _required_string(
+            cast(Mapping[str, object], finalize_intent).get("prerequisite_message"),
+            "prerequisite_message",
+        )
+        return "COMPLETE_ANSWER_ONLY", "ANSWER_DRAFT", "PARTIAL", message, [intent_reason]
     if answer_text is not None:
         result = cast(
             TerminalResultKindV1,

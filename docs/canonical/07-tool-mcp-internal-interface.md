@@ -1,5 +1,15 @@
 # 07. Tool · MCP · 내부 인터페이스 명세서
 
+### 초기 연결 prerequisite 내부 계약
+
+`CheckConnectorPrerequisitesQuery(connector_ids, admitted_connector_ids, run_id)`는 확정된 Route의 ID와 현재 Run에서 확인된 ID만 받는다. `CheckConnectorPrerequisitesResult(admitted_connector_ids, user_message)`는 token-free projection이며 credential과 새 auth-wait lifecycle을 소유하지 않는다. Google/GitHub binding은 Composition이 기존 `OAuthCredentialPort`로 주입한다.
+
+Query의 optional `resource_types`는 Request Understanding candidate의 resource hints를 받는다. Application owner가 주입된 Signed Tool Registry의 정확한 resource type 등록만으로 Connector를 찾는다. Request Understanding State도 `admitted_connector_ids`를 보존하고 local `prerequisite_message`와 terminal `finalize_intent`를 projection한다.
+
+`ToolRouteResultV1`은 `PREREQUISITE_UNMET` disposition과 optional `prerequisite_message`를 지원한다. 기존 값은 호환된다. `FinalizeIntentV1.prerequisite_message`는 해당 reason의 `COMPLETED/PARTIAL`에만 허용되며 4096 UTF-8 bytes 이내다. Main/Tool Routing State의 optional `admitted_connector_ids`는 같은 Run 내부 사실로만 사용하고 LLM Prompt로 전송하지 않는다. API/SSE enum, Domain state, OAuth callback payload 변경은 없다.
+
+Conversation create/list API는 로컬 세션·version·runtime access 검사를 유지하지만 Google credential은 선행조건이 아니다. 요청/응답 schema는 변경하지 않으며 내부 actor attribution/persistence 변경은 04의 `0022` 계약을 따른다.
+
 > **Authority:** Local API, Connector MCP Tool, 내부 Port·Command/Query typed interface. Domain/Workflow/Retrieval behavior와 repository placement는 해당 owner를 따른다.
 
 ## 0. 문서 정보

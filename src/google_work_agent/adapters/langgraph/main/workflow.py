@@ -175,6 +175,9 @@ from google_work_agent.application.use_cases.action.read_contracts import (
     FailReadActionCommand,
     FinalizeReadActionCommand,
 )
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
+)
 from google_work_agent.application.use_cases.execution_attempt.abort_claimed_execution import (
     AbortClaimedExecutionCommandV1,
 )
@@ -393,6 +396,7 @@ class _WorkflowRuntimeComposition:
         environment: str = "TEST",
         release_version: str = "test",
         repository_access: GetRepositoryAccessHandler | None = None,
+        connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._tool_catalog = tool_catalog
@@ -535,6 +539,7 @@ class _WorkflowRuntimeComposition:
         self._finalize_cancel = services.finalize_cancel
         self._continue_cancel_resolution = services.continue_cancel_resolution
         entry_subgraphs = build_pre_analysis_subgraphs(
+            connector_prerequisites=connector_prerequisites,
             repository_access=repository_access,
             should_stop_for_cancel=self._should_stop_for_cancel,
             llm_runtime=self._llm_runtime,

@@ -4,6 +4,10 @@
 
 Main Graph routing is deterministic. Six native semantic owners are `request_understanding`, `tool_routing`, `retrieval`, `work_analysis`, `planning`, `review`.
 
+Initial Connector prerequisite is owned by `application/use_cases/connection/check_connector_prerequisites.py`, invoked by the existing Tool Routing `nodes/validate_route_node.py`. Main and the intake subgraphs share optional `admitted_connector_ids` as Run-local control facts. The caller projects the Application result as an admission patch and local `prerequisite_message`. Main only projects `PREREQUISITE_UNMET` to the 06/07 terminal contract. No new graph node, Provider-specific Main branch, Prompt field, or Domain auth-wait state is introduced.
+
+Request Understanding `nodes/detect_ambiguity_node.py` also invokes this same Application owner before user Confirmation, using exact Registry resource hints. It carries the same admission patch and local prerequisite message; its existing finalization boundary may emit `finalize_intent`. Both callers share one prerequisite authority; neither implements OAuth policy.
+
 Repository placement is fixed:
 
 ```

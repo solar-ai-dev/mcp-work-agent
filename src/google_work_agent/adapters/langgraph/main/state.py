@@ -79,6 +79,7 @@ _TYPE_HINT_NAMESPACE = (
 
 
 class GraphStateUpdateV1(TypedDict, total=False):
+    admitted_connector_ids: list[str]
     """Typed partial update returned by workflow agents and the supervisor."""
 
     workflow_phase: str
@@ -162,6 +163,7 @@ class VerificationSummaryV1(TypedDict):
 
 
 class GraphState(TypedDict, total=False):
+    admitted_connector_ids: list[str]
     """The single canonical Main graph/checkpoint state schema."""
 
     schema_version: Required[Literal[2]]
@@ -273,6 +275,7 @@ def initial_graph_state(
         "workflow_phase": WorkflowPhase.INITIALIZE.value,
         "request_intent": None,
         "tool_route_plan": None,
+        "admitted_connector_ids": [],
         "workflow_signal": None,
         "acquisition_result": None,
         "retrieval_result": None,

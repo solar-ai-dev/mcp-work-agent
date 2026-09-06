@@ -316,7 +316,7 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
         <ResourceSidebar
           scopeKey={`${runtime.service_instance_id}|${currentAccount?.account_id ?? "disconnected"}`}
           accountId={currentAccount?.account_id}
-          connected={google.connection_status === "CONNECTED"}
+          connected={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}
           onConnect={() => setSettingsOpen(true)}
           timezone={calendarTimezone}
           onProjectionChange={setResourceProjection}

@@ -22,6 +22,9 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptExecutionScope
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
+)
 from google_work_agent.application.use_cases.resource.get_repository_access import (
     GetRepositoryAccessHandler,
 )
@@ -68,11 +71,13 @@ def build_pre_analysis_subgraphs(
     default_tasklist_id_provider: Callable[[], str | None] | None = None,
     default_calendar_id_provider: Callable[[], str | None] | None = None,
     repository_access: GetRepositoryAccessHandler | None = None,
+    connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
 ) -> PreAnalysisSubgraphs:
     """Create nodes only; workflow policy remains in their Application owners."""
 
     return PreAnalysisSubgraphs(
         request_understanding=RequestUnderstandingSubgraph(
+            connector_prerequisites=connector_prerequisites,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,
@@ -83,6 +88,7 @@ def build_pre_analysis_subgraphs(
             confirm_inline=confirm_request_understanding_inline,
         ).build(),
         tool_route=build_tool_routing_subgraph(
+            connector_prerequisites=connector_prerequisites,
             tool_catalog=tool_catalog,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,

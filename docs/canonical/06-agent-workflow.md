@@ -1,5 +1,17 @@
 # 06. Agent · Workflow 설계서
 
+### 요청 단위 초기 Connector prerequisite
+
+Tool Routing의 기존 `validate_route` Node는 Registry 검증된 input/output route의 Connector ID를 `CheckConnectorPrerequisites` Application use case에 전달한다. 이 owner가 선언된 OAuth Credential Port의 token-free status/필수 권한을 검사한다. Main Graph에는 Google/GitHub 분기나 Provider I/O를 추가하지 않는다.
+
+Request Understanding의 `detect_ambiguity`에서도 같은 use case를 사용한다. goal candidate의 resource type이 Registry에 정확히 등록된 경우만 Connector에 매핑하여, 초기 미연결인데 repository 등 추가 입력을 먼저 요구하는 Confirmation을 방지한다. 이름/문자열 추측이나 keyword 목록으로 Connector를 판정하지 않는다. 검사 실패는 기존 `finalize_intent → end` 경로로 terminal handoff를 전달하며 LLM ambiguity call·Confirmation interrupt는 생성하지 않는다. unknown hint는 추측하지 않고 기존 의미 해소와 최종 Tool Route 검증을 유지한다.
+
+- 새 Run의 typed `admitted_connector_ids=[]`에서 시작한다. 연결 확인을 통과한 ID는 same-Run back-edge/checkpoint/resume에서 보존하며 Prompt 입력·credential·authorization authority가 아니다. 이미 admitted인 Connector의 이후 만료는 기존 접근/REAUTH_REQUIRED 안전 경로가 처리한다.
+- 초기 미연결·초기 REAUTH_REQUIRED·권한 부족·구성 실패는 `ToolRouteResultV1.PREREQUISITE_UNMET`과 bounded 안내로 전달한다. `FinalizeIntentV1(intent=COMPLETED, result_kind=PARTIAL, reason_code=CONNECTOR_PREREQUISITE_UNMET, prerequisite_message=...)` → 기존 `CompleteAnswerOnlyRun`으로 종료한다. 이는 요청 실행 성공이 아니며, 안내는 실행하지 않았음과 Settings에서 조치 후 새 요청이 필요함을 명시한다. Plan/Action/in-flight 또는 Domain REAUTH_REQUIRED가 있으면 이 종료를 허용하지 않는다.
+- `admitted_connector_ids`가 없는 배포 전 checkpoint에는 초기 admission을 소급 적용하지 않는다. 기존 실행/재인증 계약을 유지한다. 새로운 Run은 항상 빈 목록을 초기화한다.
+- Repository 설치·접근 검증은 기존 `GetRepositoryAccess`/Connector READ owner를 유지한다. 접근 불가를 정상 no-result로 바꾸거나 다른 repository로 fallback하지 않는다.
+- OAuth callback은 Run-neutral이다. 초기 실패에서 interrupt/인증 대기 checkpoint/자동 resume를 만들지 않는다.
+
 > **Authority:** Agent·Workflow runtime topology, State projection, Node/Edge/Interrupt와 registered continuation semantics. Domain lifecycle은 State Contract, Retrieval은 `05`, typed interface는 `07`을 따른다.  
 > **상태:** Draft v7.29 · **기준일:** 2026-09-06 · **DB Schema:** v1.9 · **대상:** P0 MVP
 

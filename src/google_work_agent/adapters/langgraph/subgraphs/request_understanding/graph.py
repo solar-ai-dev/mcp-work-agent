@@ -20,6 +20,9 @@ from google_work_agent.adapters.langgraph.main.state import (
 )
 from google_work_agent.adapters.langgraph.main.supervisor import route_supervisor
 from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorDecisionV1
+from google_work_agent.adapters.langgraph.main.supervisor_terminal_projection import (
+    finalize_supervisor_result,
+)
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state import (
     RequestUnderstandingInputState,
@@ -31,6 +34,9 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     PromptExecutionScope,
     default_prompt_manifest_path,
     load_prompt_reference,
+)
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
@@ -82,6 +88,7 @@ class RequestUnderstandingSubgraph:
         transition_run: TransitionRun,
         merge_decision: MergeDecision,
         confirm_inline: ConfirmInline,
+        connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -100,6 +107,7 @@ class RequestUnderstandingSubgraph:
         self._transition_run = transition_run
         self._merge_decision = merge_decision
         self._confirm_inline = confirm_inline
+        self._connector_prerequisites = connector_prerequisites
 
     def build(self) -> Any:
         graph = StateGraph(
@@ -174,6 +182,7 @@ class RequestUnderstandingSubgraph:
         request = request_from_run_input_state(cast(Any, state))
         patch = detect_ambiguity_node(
             state,
+            connector_prerequisites=self._connector_prerequisites,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._detect_ambiguity_prompt_ref,
         )
@@ -183,13 +192,21 @@ class RequestUnderstandingSubgraph:
             "trace_context": self._trace(
                 state,
                 node_name="detect_ambiguity",
-                llm_call_id=f"{request.run_id}:request.detect_ambiguity",
-                prompt_ref=self._detect_ambiguity_prompt_ref,
-                llm_call_increment=1,
+                llm_call_id=None
+                if patch.get("prerequisite_message")
+                else f"{request.run_id}:request.detect_ambiguity",
+                prompt_ref=None
+                if patch.get("prerequisite_message")
+                else self._detect_ambiguity_prompt_ref,
+                llm_call_increment=0 if patch.get("prerequisite_message") else 1,
             ),
         }
         ambiguity = working_state.get("ambiguity_candidate")
-        if ambiguity is not None and ambiguity["requires_confirmation"]:
+        if (
+            not patch.get("prerequisite_message")
+            and ambiguity is not None
+            and ambiguity["requires_confirmation"]
+        ):
             result.update(self._confirmation_signal(working_state))
         return result
 
@@ -230,6 +247,22 @@ class RequestUnderstandingSubgraph:
     def _finalize_intent_node(
         self, state: RequestUnderstandingStateV2
     ) -> RequestUnderstandingStateV2:
+        if state.get("prerequisite_message"):
+            decision = finalize_supervisor_result(
+                state=cast(GraphState, state),
+                intent="COMPLETED",
+                result_kind="PARTIAL",
+                reason_code="CONNECTOR_PREREQUISITE_UNMET",
+                prerequisite_message=state["prerequisite_message"],
+            )
+            return cast(
+                RequestUnderstandingStateV2,
+                self._merge_decision(
+                    state,
+                    {},
+                    decision,
+                ),
+            )
         ambiguity = state.get("ambiguity_candidate")
         if ambiguity is None:
             raise ValueError("request-understanding ambiguity result is required")

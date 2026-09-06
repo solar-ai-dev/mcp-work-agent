@@ -39,6 +39,8 @@ from google_work_agent.ports.system.contracts.workflow_signal import (
 class ToolRoutingInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Tool Routing."""
 
+    admitted_connector_ids: list[str]
+
     request_intent: RequestIntentV2
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: ScopeExpansionRequiredV1 | RouteReconsiderationRequiredV1 | None
@@ -55,12 +57,15 @@ class ToolRouteStateV1(ToolRoutingInputState, total=False):
     bound_input_routes: list[InputToolRouteV1]
     bound_output_routes: list[OutputToolRouteV1]
     final_route: ToolRoutePlanV2 | None
+    prerequisite_message: str | None
 
     finalize_intent: FinalizeIntentV1 | None
 
 
 class ToolRoutingParentOutputState(AgentSubgraphInputEnvelope, total=False):
     """Only fields that Tool Routing may project back to Main."""
+
+    admitted_connector_ids: list[str]
 
     request_intent: RequestIntentV2
     tool_route_plan: ToolRoutePlanV2 | None

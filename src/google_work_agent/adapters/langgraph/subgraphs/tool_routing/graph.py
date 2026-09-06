@@ -54,6 +54,9 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
+)
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
@@ -116,6 +119,7 @@ class ToolRoutingSubgraph:
         merge_decision: MergeDecision,
         confirm_inline: ConfirmInline,
         id_factory: Callable[[], str],
+        connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
         self._tool_catalog = tool_catalog
@@ -134,6 +138,7 @@ class ToolRoutingSubgraph:
         self._merge_decision = merge_decision
         self._confirm_inline = confirm_inline
         self._id_factory = id_factory
+        self._connector_prerequisites = connector_prerequisites
 
     def build(self) -> Any:
         graph = StateGraph(
@@ -222,9 +227,7 @@ class ToolRoutingSubgraph:
             "trace_context": self._trace(
                 working_state,
                 node_name="determine_io_resources",
-                llm_call_id=(
-                    f"{request.run_id}:route.determine_resources" if uses_llm else None
-                ),
+                llm_call_id=(f"{request.run_id}:route.determine_resources" if uses_llm else None),
                 prompt_ref=self._determine_prompt_ref if uses_llm else None,
                 llm_call_increment=1 if uses_llm else 0,
                 invocation_id=invocation_id,
@@ -397,7 +400,11 @@ class ToolRoutingSubgraph:
         }
 
     def _validate_route_node(self, state: ToolRouteStateV1) -> ToolRouteStateV1:
-        patch = validate_route_node(state, tool_catalog=self._tool_catalog)
+        patch = validate_route_node(
+            state,
+            tool_catalog=self._tool_catalog,
+            connector_prerequisites=self._connector_prerequisites,
+        )
         plan = patch.get("tool_route_plan")
         disposition: Literal["ROUTE_READY", "NO_TOOL_NEEDED", "BLOCKED"]
         if plan is None:
@@ -419,6 +426,10 @@ class ToolRoutingSubgraph:
             "workflow_signal": cast(ScopeExpansionRequiredV1 | None, patch["workflow_signal"]),
             "reason_codes": reason_codes,
         }
+        if patch.get("prerequisite_message") is not None:
+            result["disposition"] = "PREREQUISITE_UNMET"
+            result["prerequisite_message"] = cast(str, patch["prerequisite_message"])
+            result["reason_codes"] = ["CONNECTOR_PREREQUISITE_UNMET"]
         decision = route_supervisor(
             phase=WorkflowPhase.TOOL_ROUTING,
             state=cast(GraphState, {**state, **patch}),
@@ -498,8 +509,10 @@ def build_tool_routing_subgraph(
     merge_decision: MergeDecision,
     graph_profile: GraphProfile,
     confirm_inline: ConfirmInline,
+    connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
 ) -> Any:
     return ToolRoutingSubgraph(
+        connector_prerequisites=connector_prerequisites,
         llm_runtime=llm_runtime,
         tool_catalog=tool_catalog,
         prompt_manifest_path=prompt_manifest_path,

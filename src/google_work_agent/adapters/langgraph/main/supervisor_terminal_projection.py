@@ -55,6 +55,7 @@ def finalize_supervisor_result(
     result_kind: str | None = None,
     budget_decision: BudgetDecisionV1 | None = None,
     current_update: Mapping[str, object] | None = None,
+    prerequisite_message: str | None = None,
     **extra: object,
 ) -> SupervisorDecisionV1:
     state_update = boundary_supervisor_state_update(
@@ -70,6 +71,13 @@ def finalize_supervisor_result(
                     "intent": intent,
                     "reason_code": reason_code,
                     "result_kind": result_kind or _partial_result_kind(state, extra),
+                    **(
+                        {}
+                        if prerequisite_message is None
+                        else {
+                            "prerequisite_message": prerequisite_message,
+                        }
+                    ),
                 }
             ),
         }

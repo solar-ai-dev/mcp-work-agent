@@ -227,6 +227,9 @@ from google_work_agent.application.use_cases.component_circuit.record_component_
     RecordComponentCallResultCommandV1,
     RecordComponentCallResultHandler,
 )
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
+)
 from google_work_agent.application.use_cases.connection.get_connection_status import (
     GetConnectionStatusHandler,
     GetConnectionStatusQuery,
@@ -2600,6 +2603,13 @@ def build_production_runtime(
     )
     try:
         workflow_runtime = LangGraphWorkflowRuntime(
+            connector_prerequisites=CheckConnectorPrerequisitesHandler(
+                {
+                    "google_workspace": ("Google Workspace", google_provider),
+                    GITHUB_CONNECTOR_ID: ("GitHub", github_provider),
+                },
+                tool_catalog=connector_bundle.tool_registry,
+            ),
             repository_access=get_repository_access,
             unit_of_work_factory=unit_of_work_factory,
             llm_runtime=llm_runtime,

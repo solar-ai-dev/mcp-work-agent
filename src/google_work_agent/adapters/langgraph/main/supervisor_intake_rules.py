@@ -174,6 +174,15 @@ def route_tool_routing(
             reason_code="TOOL_ROUTE_CONTRACT_VIOLATION",
         )
     plan = result["tool_route_plan"]
+    if disposition is ToolRouteDisposition.PREREQUISITE_UNMET:
+        return finalize_supervisor_result(
+            state=state,
+            intent=FinalizeIntent.COMPLETED.value,
+            result_kind="PARTIAL",
+            reason_code="CONNECTOR_PREREQUISITE_UNMET",
+            prerequisite_message=result["prerequisite_message"],
+            tool_route_plan=plan,
+        )
     if disposition in {
         ToolRouteDisposition.ROUTE_READY,
         ToolRouteDisposition.NO_TOOL_NEEDED,
@@ -214,9 +223,7 @@ def route_tool_routing(
     return finalize_supervisor_result(
         state=state,
         intent=FinalizeIntent.BLOCKED.value,
-        reason_code=result["reason_codes"][0]
-        if result["reason_codes"]
-        else "TOOL_ROUTE_BLOCKED",
+        reason_code=result["reason_codes"][0] if result["reason_codes"] else "TOOL_ROUTE_BLOCKED",
         tool_route_plan=None,
         workflow_signal=result["workflow_signal"],
     )
