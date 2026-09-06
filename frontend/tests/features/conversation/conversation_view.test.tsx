@@ -78,5 +78,5 @@ test("terminal snapshot message appears immediately and is deduplicated from his
 
   expect(screen.getAllByText(finalMessage.content)).toHaveLength(1);
   expect(screen.queryByText("stale history copy")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("에이전트 진행")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("에이전트 진행")).toBeInTheDocument();
 });

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from langgraph.types import interrupt
 
+from google_work_agent.adapters.langgraph.activity_callback import RunActivityCallback
 from google_work_agent.adapters.langgraph.invocation import WorkflowInvocationCoordinator
 from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
     project_current_action_evidence,
@@ -261,6 +262,9 @@ from google_work_agent.application.use_cases.sse_event.project_run_event import 
 )
 from google_work_agent.application.use_cases.trace_event.emit_trace_event import (
     EmitTraceEventCommand,
+)
+from google_work_agent.application.use_cases.trace_event.record_run_activity import (
+    RecordRunActivityHandler,
 )
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.action.model import ActionStatusV1
@@ -675,6 +679,15 @@ class _WorkflowRuntimeComposition:
             cancel_signals=self._cancel_signals,
             now_ms=now_ms,
             retrieval_node=self._physical_agent_node("context_retriever"),
+            callbacks=(
+                RunActivityCallback(
+                    RecordRunActivityHandler(
+                        emit_trace=self._emit_terminal_trace,
+                        now_ms=now_ms,
+                        service_instance_id=self._service_instance_id,
+                    )
+                ),
+            ),
         )
 
     def start(self, request: WorkflowStartRequest) -> WorkflowInvocationResult:
@@ -1352,7 +1365,9 @@ class _WorkflowRuntimeComposition:
                     plan_review=cast(PlanReviewResultV2, plan_review),
                     work_analysis_result=typed_state.get("work_analysis_result"),
                     evidence_drafts=evidence_drafts,
-                    policy_confirmation_receipts=typed_state.get("policy_confirmation_receipts", []),
+                    policy_confirmation_receipts=typed_state.get(
+                        "policy_confirmation_receipts", []
+                    ),
                     resource_identity_reader=resource_identity_reader,
                 )
             )

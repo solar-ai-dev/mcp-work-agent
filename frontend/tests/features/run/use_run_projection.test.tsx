@@ -23,6 +23,17 @@ function options() {
   };
 }
 
+test("activity cursors prevent equal-version history regression", async () => {
+  vi.mocked(getRunContext).mockResolvedValue({ context: null } as never);
+  const newer = { ...snapshot("WAITING_APPROVAL", 3), activity: { schema_version: 1 as const, trace_cursor: 9, audit_cursor: 5, rows: [] } };
+  const older = { ...newer, activity: { ...newer.activity, trace_cursor: 8 } };
+  vi.mocked(getRunSnapshot).mockResolvedValueOnce(newer).mockResolvedValueOnce(older);
+  const { result } = renderHook(() => useRunProjection(options()));
+  await act(async () => { await result.current.refreshRun("run"); });
+  await act(async () => { await result.current.refreshRun("run"); });
+  expect(result.current.runSnapshot?.activity?.trace_cursor).toBe(9);
+});
+
 test("active runs reconcile approval snapshots without an SSE event and stop polling when suspended", async () => {
   vi.useFakeTimers();
   vi.mocked(getRunContext).mockResolvedValue({ context: null } as never);

@@ -152,6 +152,21 @@ export type PendingInterrupt = {
 };
 
 export type RunSnapshot = {
+  activity?: {
+    schema_version: 1;
+    trace_cursor: number;
+    audit_cursor: number;
+    rows: {
+      execution_id: string;
+      sequence: number;
+      role: string;
+      state: "RUNNING" | "WAITING" | "RECORDED" | "PARTIAL" | "FAILED" | "INTERRUPTED" | "UNKNOWN";
+      label: string;
+      details: { label: string; value: string }[];
+      started_at_ms: number;
+      updated_at_ms: number;
+    }[];
+  } | null;
   run: {
     run_id: string;
     conversation_id: string;

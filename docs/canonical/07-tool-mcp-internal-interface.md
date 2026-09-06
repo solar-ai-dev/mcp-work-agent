@@ -1945,6 +1945,8 @@ RunSnapshotResponseV1
 - terminal_result_kind: SUCCESS | PARTIAL | BLOCKED | FAILED | CANCELLED | NONE
 - projection_version
 
+Run Snapshot의 additive optional `activity`는 `RunActivityV1`이다. 이전 서버 응답에서 없으면 이력 없음으로 표시한다. `schema_version=1`, `trace_cursor`, `audit_cursor`, `rows`를 가지며 각 행은 서버가 정한 `execution_id`, `sequence`, `role`, `state`, `label`, `details[]`, `started_at_ms`, `updated_at_ms`를 갖는다. detail은 `label/value` 문자열 쌍이고 raw payload는 없다. 상태는 `RUNNING|WAITING|RECORDED|PARTIAL|FAILED|INTERRUPTED|UNKNOWN`이며 관측 완료와 업무 성공을 구분한다. Domain Audit 행만 승인/실행/검증 사실을 투영한다. Snapshot Run version 및 두 cursor 중 어느 하나라도 감소하는 응답은 클라이언트가 적용하지 않는다. SSE는 기존 Snapshot refresh를 유발하며 행을 직접 추가하지 않는다. 로컬 이력 조회/펼침은 추가 LLM/Connector 호출을 하지 않는다.
+
 `RunSnapshotResponseV1.actions[]`는 승인 UI가 실제 persisted Action을 검토할 수 있도록 `action_id`, `tool_name`, canonical `arguments`, status/version, effect/approval/verification/risk와 허용된 사용자 조작 metadata를 투영한다. Browser는 Plan 제목이나 Tool 이름에서 Arguments를 재구성하지 않으며 Snapshot Arguments를 표시만 한다. Secret·Credential·ClaimContext는 이 projection에 포함하지 않는다.
 
 `RunSnapshotResponseV1.context_preview`는 `run.project_context_preview`가 current selected Evidence/ResourceRef에서 만드는 deterministic projection이다. 기본은 read-only이며, `adjustment_allowed=true`일 때 Browser는 `allowed_adjustments`에 포함된 조정만 `POST /api/v1/runs/{run_id}/context-adjustments`로 보낸다. Browser는 Evidence/Plan/Run 상태를 직접 mutate하지 않는다.

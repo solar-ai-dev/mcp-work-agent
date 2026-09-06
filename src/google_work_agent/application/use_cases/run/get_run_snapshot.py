@@ -40,6 +40,10 @@ from google_work_agent.application.use_cases.run.project_external_llm_transfer_s
     ProjectExternalLlmTransferScopeHandler,
     ProjectExternalLlmTransferScopeQueryV1,
 )
+from google_work_agent.application.use_cases.run.project_run_activity import (
+    ProjectRunActivityHandler,
+    RunActivityV1,
+)
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.action.model import (
     ActionCommand,
@@ -156,6 +160,7 @@ class GetRunSnapshotResult:
     execution_status: dict[str, object]
     verification_summary: dict[str, object]
     recovery_summary: dict[str, object]
+    activity: RunActivityV1 | None = None
 
     @property
     def run_id(self) -> str:
@@ -194,6 +199,9 @@ class GetRunSnapshotHandler:
             if run is None:
                 return None
             observed_runtimes = unit_of_work.traces.list_observed_runtimes(run.id)
+            activity = ProjectRunActivityHandler()(
+                unit_of_work, run.id, run_status=run.status.value
+            )
             actual_runtime = (
                 "MIXED" if len(observed_runtimes) > 1 else
                 observed_runtimes[0] if observed_runtimes else run.actual_runtime
@@ -291,6 +299,7 @@ class GetRunSnapshotHandler:
                 "NONE" if run.terminal_result_kind is None else run.terminal_result_kind.value
             ),
             projection_version=1,
+            activity=activity,
             approvals=tuple(approvals),
             execution_status={
                 "action_count": len(actions),

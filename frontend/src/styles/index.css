@@ -644,6 +644,39 @@ main.panel .panel-header > div:first-child .muted {
 .agent-progress-lines {
   display: grid;
   gap: 0.32rem;
+  max-height: 28rem;
+  overflow-y: auto;
+  overflow-anchor: none;
+}
+
+.agent-activity-row {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.agent-activity-row summary {
+  cursor: pointer;
+  padding: 0.25rem;
+}
+
+.agent-activity-row summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.agent-activity-detail {
+  padding: 0.4rem 0.7rem;
+  border-left: 2px solid var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.agent-activity-detail dl > div {
+  margin-block: 0.4rem;
+}
+
+.agent-activity-detail dd {
+  margin-left: 0.6rem;
 }
 
 .agent-status-line {

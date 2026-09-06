@@ -45,6 +45,7 @@ class WorkflowInvocationCoordinator:
         graph_version: str = "v1",
         now_ms: Callable[[], int] = lambda: 0,
         retrieval_node: str = "context_retriever",
+        callbacks: Sequence[Any] = (),
     ) -> None:
         self._graph = graph
         self._graph_profile = graph_profile
@@ -62,6 +63,7 @@ class WorkflowInvocationCoordinator:
         self._cancel_signals = cancel_signals
         self._now_ms = now_ms
         self._retrieval_node = retrieval_node
+        self._callbacks = callbacks
 
     def prepare_start(self, request: WorkflowStartRequest) -> None:
         """Durably materialize input state without invoking the first owner node."""
@@ -382,9 +384,8 @@ class WorkflowInvocationCoordinator:
             return None
         return self._resume_reauth_execution(values), "action_execution"
 
-    @staticmethod
-    def config_for_thread(workflow_key: str) -> dict[str, object]:
-        return {"configurable": {"thread_id": workflow_key}}
+    def config_for_thread(self, workflow_key: str) -> dict[str, object]:
+        return {"configurable": {"thread_id": workflow_key}, "callbacks": list(self._callbacks)}
 
     def workflow_result_from_state(
         self,

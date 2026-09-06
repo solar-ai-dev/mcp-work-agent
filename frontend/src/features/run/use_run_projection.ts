@@ -38,7 +38,7 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
   const [confirmationText, setConfirmationText] = useState("");
   const subscriptionRef = useRef<(() => void) | null>(null);
   const subscriptionRunIdRef = useRef<string | null>(null);
-  const snapshotVersionRef = useRef<{ runId: string; generation: number; version: number } | null>(null);
+  const snapshotVersionRef = useRef<{ runId: string; generation: number; version: number; traceCursor: number; auditCursor: number } | null>(null);
 
   const resetRunProjection = useCallback((): void => {
     subscriptionRef.current?.();
@@ -58,8 +58,11 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
     const [snapshot, contextResponse] = await Promise.all([getRunSnapshot(runId), getRunContext(runId)]);
     if (conversationId === null || snapshot.run.conversation_id !== conversationId || !isCurrentProjection(conversationId, generation)) return false;
     const previous = snapshotVersionRef.current;
-    if (previous?.runId === runId && previous.generation === generation && previous.version > snapshot.run.version) return true;
-    snapshotVersionRef.current = { runId, generation, version: snapshot.run.version };
+    const traceCursor = snapshot.activity?.trace_cursor ?? 0;
+    const auditCursor = snapshot.activity?.audit_cursor ?? 0;
+    if (previous?.runId === runId && previous.generation === generation
+      && (previous.version > snapshot.run.version || previous.traceCursor > traceCursor || previous.auditCursor > auditCursor)) return true;
+    snapshotVersionRef.current = { runId, generation, version: snapshot.run.version, traceCursor, auditCursor };
     setRunSnapshot(snapshot);
     setRunContext(contextResponse.context);
     const pending = snapshot.pending_interrupt;
@@ -104,6 +107,7 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
     subscriptionRef.current = subscribeRunEvents(runId, {
       onStateChange: onStatusLine,
       onEvent: (event) => {
+        if (event.run_id !== runId || !isCurrentProjection(conversationId, generation)) return;
         setLatestRunEvent(event);
         void refreshRun(runId, conversationId, generation);
       },
@@ -114,7 +118,7 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
       },
     });
     subscriptionRunIdRef.current = runId;
-  }, [beginConversationProjection, getConversationProjection, onStatusLine, refreshRun, reloadConversationHistory]);
+  }, [beginConversationProjection, getConversationProjection, isCurrentProjection, onStatusLine, refreshRun, reloadConversationHistory]);
 
   const selectConversation = useCallback(async (conversationId: string): Promise<void> => {
     await selectConversationHistory(conversationId, selectRun);

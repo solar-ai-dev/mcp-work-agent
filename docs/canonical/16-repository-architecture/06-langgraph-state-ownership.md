@@ -174,4 +174,6 @@ Supporting deterministic operations `tool_routing.resolve_policy_preconditions`,
 
 ## Main control-stage terminal boundary
 
+`adapters/langgraph/activity_callback.py → RunActivityCallback` observes existing LangGraph task lifecycle callbacks only. It passes checkpoint namespace identity and typed output to Application `trace_event.record_run_activity`; it owns no UI wording, Domain transition, DB write or new graph node. Invocation config carries this callback; observation failures must not replay or fail a business command. Tests: `tests/integration/workflow/test_run_activity.py`.
+
 `RESPONSE_SYNTHESIS → TERMINAL_COMMIT → FINALIZE` is the only current terminal-output control chain. `RESPONSE_SYNTHESIS` creates `TerminalAssistantMessageInputV1/TerminalCommitIntentV1`; `TERMINAL_COMMIT` invokes exactly one existing terminal lifecycle handler; `FINALIZE` emits post-commit Trace/SSE only. These control nodes do not become semantic Agent owners.

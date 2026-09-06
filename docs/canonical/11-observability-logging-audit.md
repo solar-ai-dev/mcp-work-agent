@@ -337,6 +337,18 @@ Schema 검증 → Field Allowlist → Secret·PII Redaction → 길이 제한 �
 
 ## 8. 보존
 
+### Run Activity 관측 projection
+
+`RUN_ACTIVITY_OBSERVED`는 기존 `trace_events`에 저장하는 schema version 1의 진단 projection이다. LangGraph checkpoint task namespace를 Run과 함께 해시한 execution ID로 같은 task의 시작·interrupt·재개·결과를 연결한다. 정상 back-edge는 다른 task ID를 가진다. Callback invocation UUID나 Frontend 수신 순서는 실행 identity가 아니다.
+
+Application `trace_event.record_run_activity`가 책임, 관측 상태, 그 실행의 validated artifact revision 및 bounded allowlisted detail을 선택하고 기존 `emit_trace_event` sanitization/retention을 적용한다. 요청 goal, 선택 근거 제목, 계획 title/date/time, 검토·부족 정보 설명은 각 512자 이하로 제한하며 본문·전체 Answer/Approval·Prompt·Completion은 저장하지 않는다. 누락된 결과나 실패한 관측은 추측하지 않는다.
+
+Application `run.project_run_activity`는 기존 Trace/Audit keyset 페이지를 읽어 Run별 행을 복원한다. 승인·실행·검증 사실은 committed Domain Audit만 사용한다. 같은 attempt의 dispatch/result는 같은 실행 행을 갱신하고 Verification은 별도 행이다. 재조회는 Provider/LLM I/O와 mutation을 하지 않으며 보존 정책 내 행을 임의 최근 N개로 자르지 않는다.
+
+`RUN_REAUTH_RESUMED`는 같은 Run의 재인증 대기 행을, `RECOVERY_RESOLVED`는 같은 action 범위의 복구 대기 행을 갱신한다. 후속 처리 결정은 외부 효과 성공이나 Verification 완료를 뜻하지 않는다. 승인 상세는 해당 Audit/Attempt가 가리키는 immutable Approval snapshot, 검증 상세는 해당 Verification ID의 expected/actual 허용 필드만 사용한다.
+
+취소·복구의 사용자용 행은 Domain Audit에서만 만든다. 대응하는 workflow callback을 별도 행으로 중복 표시하지 않는다.
+
 - App Log 14일
 - Terminal Run Trace: owning Run의 configured `retention_days`와 동일하며 default 30일 (`1..30`)
 - Audit 90일 고정
