@@ -132,7 +132,12 @@ def load_google_seed() -> dict[str, Any]:
     assert task["payload"]["due"][:10] == "2026-09-10"
     assert task["payload"]["status"] == "needsAction"
     assert "김대리와 진행한 주간 프로젝트 회의 후속자료를 정리한다." in task["payload"]["notes"]
-    return {"source": "LIVE_GOOGLE_READ_ONLY", "task_list": selected_list, "task": task}
+    return {
+        "source": "LIVE_GOOGLE_READ_ONLY",
+        "account_email": provider.account_email,
+        "task_list": selected_list,
+        "task": task,
+    }
 
 
 def seed_from_user_description() -> dict[str, Any]:
@@ -287,6 +292,37 @@ def measure(
                 fixture["task_verification_mutation"] = mutation
             fixture_path.parent.mkdir(parents=True, exist_ok=True)
             fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+            if seed:
+                containers = client.get("/api/v1/resources/task-lists")
+                assert containers.status_code == 200, containers.text
+                assert any(
+                    item["tasklist_id"] == task_list_id
+                    and item["title"] == seed["task_list"]["payload"]["title"]
+                    for item in containers.json()["items"]
+                )
+                browse = client.get(
+                    "/api/v1/resources/tasks", params={"task_list_id": task_list_id}
+                )
+                assert browse.status_code == 200, browse.text
+                item = next(
+                    item for item in browse.json()["items"]
+                    if item["resource_id"] == seed["task"]["resource_id"]
+                )
+                detail = client.get(
+                    f"/api/v1/resources/tasks/{item['resource_id']}",
+                    params={"selection_handle": item["selection_handle"]},
+                )
+                assert detail.status_code == 200, detail.text
+                expected = {
+                    "tasklist_id": task_list_id,
+                    "title": seed["task"]["payload"]["title"],
+                    "scheduled_date": seed["task"]["payload"]["due"][:10],
+                    "task_status": "incomplete",
+                }
+                assert all(item[key] == value for key, value in expected.items())
+                assert all(detail.json()[key] == value for key, value in expected.items())
+                assert detail.json()["notes"] == seed["task"]["payload"]["notes"]
+                report["seed_browse_detail"] = detail.json()
             request_text = (
                 "E2E:MAIL_TASK_CREATE 보고서 요청 메일을 찾아 그 내용으로 태스크를 만들어줘."
                 if scenario == "mail"
@@ -460,6 +496,8 @@ def measure(
         or bool(report["verification"])
         and report["verification"][-1]["status"] == ("MISMATCH" if mismatch else "VERIFIED"),
         "production_node_path_observed": bool(recorder.path),
+        "seed_api_projection_matches_google": seed is None
+        or bool(report.get("seed_browse_detail")),
     }
     expected_arguments = {"payload": payload, "task_list_id": task_list_id}
     nodes = [event["node"] for event in recorder.path]
@@ -511,7 +549,15 @@ def measure(
             == (2 if scenario == "review_revision" else 1)
             and nodes.count("request_understanding") == 1,
             "independent_get_after_write": no_write
-            or tools.index("tasks_create_task") < tools.index("tasks_get_task"),
+            or all(
+                any(
+                    index > tools.index("tasks_create_task")
+                    and event["tool_name"] == "tasks_get_task"
+                    and event["arguments"].get("task_id") == task["resource_id"]
+                    for index, event in enumerate(events)
+                )
+                for task in report["created_tasks"]
+            ),
             "attempt_count": len(report["attempts"])
             == (0 if no_write else 2 if scenario == "retry" else 1),
             "only_tasks_write": all(
