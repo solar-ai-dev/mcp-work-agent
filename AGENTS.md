@@ -1,4 +1,4 @@
-# Google Work Agent — Codex Instructions
+# mcp-work-agent — Codex Instructions
 
 이 `AGENTS.md`는 저장소 루트 전체에 적용한다.
 
@@ -25,7 +25,7 @@
 
 ## Work Procedure
 
-각 capability는 다음 순서로 처리한다.
+각 capability의 구현은 다음 순서로 처리하고, 테스트 실행은 아래 프롬프트 단위 검증 순서로 모은다.
 
 ```text
 SPEC
@@ -35,7 +35,7 @@ SPEC
 → canonical implementation으로 cut-over
 → production caller 전환
 → old authority / import / export 제거
-→ 관련 테스트
+→ 관련 계약·테스트 코드 갱신 (실행은 프롬프트 단위로 일괄)
 ```
 
 규칙:
@@ -103,6 +103,12 @@ Canonical은 기존 구조 위에 추가되는 새 계층이 아니다.
 
 ## Tests / Gates
 
+* 기본 검증 단위는 개별 기능이나 파일이 아니라 사용자가 전달한 한 프롬프트의 작업 범위다. 구현 전 production path와 기존 테스트를 조사하고, 계약·테스트 코드는 구현과 함께 갱신한다.
+* 해당 프롬프트 범위의 구현을 마친 뒤 직접 영향 자동 테스트와 typing/lint/관련 architecture gate를 일괄 실행한다. 통과 후 실제 앱 E2E → 필요한 수정 → 실패 시나리오와 직접 영향 경로 재검증 순서로 진행한다.
+* 개별 기능 수정마다 같은 테스트 묶음, 앱 재시작, 전체 E2E를 반복하지 않는다. 전체 회귀는 별도로 지정된 최종 단계에서 수행한다.
+* 이미 확인된 검증 실패나 안전성 문제가 있으면 기능 범위를 확장하지 않고 원인 수정에 집중한다. 검증을 뒤로 모으는 것은 검사 기준을 낮추거나 미검증 결과를 PASS로 간주한다는 뜻이 아니다.
+* 사용자가 커밋을 허용한 작업에서는 기능 경계별 coherent commit을 유지할 수 있다. 테스트 전 커밋은 검증 대기이며, 필수 검증을 마치기 전에는 기능이나 프롬프트 작업의 완료를 선언하지 않는다.
+* 현재 Product Runtime Closure 작업에서는 실제 앱 E2E만 마지막 8/8로 모은다. 노드 입출력 계약 테스트는 반드시 수행하고, 필요한 pytest·API 테스트와 typing/lint·architecture gate는 중간에도 직접 영향 범위로 실행한다. 특히 WRITE는 노드 간 입력값·출력 형식, 승인 인자와 실행 인자의 보존, 실행 안전 경계를 검증한다. 같은 대형 테스트 묶음은 매 수정마다 반복하지 않는다. E2E 전에는 `구현 완료·E2E 검증 대기`로 구분하며, 제공되지 않은 후속 단계의 범위를 임의로 만들지 않는다.
 * 기존 테스트도 Authority가 아니다. Canonical behavior와 invariant를 검증해야 한다.
 * 기존 테스트가 Canonical과 충돌하면 KEEP | REWRITE | DELETE를 판정한다.
 * 테스트는 observable behavior, state transition, safety invariant, external effect를 우선 검증한다.
