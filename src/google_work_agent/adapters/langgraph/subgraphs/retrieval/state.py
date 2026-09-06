@@ -23,6 +23,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     ContextBundleV1,
     EvidenceDraftV1,
     EvidenceSelectionResultV2,
+    PersonCandidateV1,
     RetrievalResultV1,
     RetrievalSourceStatusV1,
     SufficiencyResultV2,
@@ -75,6 +76,8 @@ class ContextRetrievalLocalState(GraphState):
     final_result: NotRequired[RetrievalResultV1 | None]
     context_bundle: NotRequired[ContextBundleV1]
     evidence_drafts: NotRequired[list[EvidenceDraftV1]]
+    person_candidates: NotRequired[list[PersonCandidateV1]]
+    selected_person_identities: NotRequired[dict[str, str]]
     llm_provider_result: NotRequired[dict[str, object] | None]
     query_plan: NotRequired[RetrievalQueryPlanV2 | None]
     source_fetch_plans: NotRequired[list[SourceFetchPlanV1]]

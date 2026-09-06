@@ -24,9 +24,35 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     authorize_retrieval_followup,
     missing_information_projection,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
 )
+
+
+def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard() -> None:
+    intent = _intent()
+    intent.update(analysis_requirement="NONE", constraints=[])
+    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    result = assess_sufficiency(
+        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
+        request_intent=intent, tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(), retry_budget=_run_budget(used=0),
+        evidence_drafts=[{
+            "schema_version": 1, "evidence_id": "e1", "resource_handle": "gmail_thread:thread-kim",
+            "segment_id": "s1", "kind": "excerpt", "excerpt": "연수는 9월 4일입니다.",
+            "locator": {}, "reason_codes": ["SUPPORTS"],
+        }],
+        query_attempts=[cast(QueryAttemptV1, {
+            "route_id": "route-gmail", "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH",
+            "normalized_intent_constraints": [{
+                "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME", "timezone": "Asia/Seoul",
+                "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
+            }],
+        })],
+    )
+    assert result["status"] == "PARTIAL"
+    assert result["issues"][0]["reason_codes"] == ["EVENT_YEAR_UNCONFIRMED"]
 
 
 @pytest.mark.parametrize("code", ["NOT_FOUND", "PERMISSION_DENIED"])
@@ -77,7 +103,7 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
                 "segment_id": "segment-1",
                 "kind": "excerpt",
                 "excerpt": "Project Alpha update",
-                "locator": {},
+                "locator": {"sender_name": "Kim", "sender_email": "kim@example.test"},
                 "reason_codes": ["SUPPORTS"],
             }
         ],
@@ -413,7 +439,7 @@ def test_assess_sufficiency__requires_each_selected_gmail_thread_detail_for_anal
             "segment_id": f"segment-{name}",
             "kind": "excerpt",
             "excerpt": f"KAN-93 {name}",
-            "locator": {},
+            "locator": {"sender_name": "Kim", "sender_email": "kim@example.test"},
             "reason_codes": ["SUPPORTS"],
         }
         for name in ("first", "second")
@@ -542,7 +568,7 @@ def test_assess_sufficiency__accepts_analysis_after_all_candidate_details() -> N
             "segment_id": f"segment-{name}",
             "kind": "excerpt",
             "excerpt": f"KAN-93 {name}",
-            "locator": {},
+            "locator": {"sender_name": "Kim", "sender_email": "kim@example.test"},
             "reason_codes": ["SUPPORTS"],
         }
         for name in ("first", "second")

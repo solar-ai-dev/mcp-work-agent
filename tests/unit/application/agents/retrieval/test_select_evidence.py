@@ -12,6 +12,7 @@ from tests.support.context_retrieval import (
 )
 from tests.support.evidence_assessment import evidence_assessment_output
 
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     ContextBudget,
     SourceSegment,
@@ -23,6 +24,42 @@ from google_work_agent.application.agents.retrieval.select_evidence import (
 )
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
+
+
+@pytest.mark.parametrize("has_topic", [False, True])
+def test_receipt_listing__uses_receipt_not_event_date__unless_content_is_requested(
+    has_topic: bool,
+) -> None:
+    intent = _intent()
+    intent.update(analysis_requirement="NONE", constraints=[])
+    if has_topic:
+        intent["constraints"] = [{"kind": "USER_REQUIREMENT", "field": "search_terms",
+                                  "value": ["계약"]}]
+    segments = [SourceSegment(
+        "mail", "gmail_thread:1", "GMAIL", "gmail_thread", "1", None, None,
+        {"received_at": "2026-09-03T09:00:00+09:00"}, "행사는 2026년 10월 1일입니다.",
+    )]
+    runtime = FakeLLMRuntime(deque([_llm_result({
+        "schema_version": 3, "segment_assessments": {
+            "mail": {"role": "EXCLUDED", "relevance_reason": "계약 내용이 없음"},
+        },
+    })]))
+    attempts = [cast(QueryAttemptV1, {
+        "route_id": "gmail", "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH",
+        "normalized_intent_constraints": [{
+            "kind": "TEMPORAL_RANGE", "axis": "MESSAGE_TIME", "timezone": "Asia/Seoul",
+            "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
+        }],
+    })]
+    result, _ = select_evidence(
+        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU", request_intent=intent,
+        rag_candidates=[{"segment_id": "mail", "resource_ref": "gmail_thread:1",
+                         "retrieval_score": 20.0, "reason_codes": []}],
+        segments=segments, retry_budget=_run_budget(used=0), query_attempts=attempts,
+    )
+    assert result["selected_segment_ids"] == ([] if has_topic else ["mail"])
+    assert len(runtime.calls) == int(has_topic)
 
 
 @pytest.mark.parametrize("invalid", [

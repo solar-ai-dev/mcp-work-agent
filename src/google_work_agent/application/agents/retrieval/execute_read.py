@@ -24,6 +24,7 @@ from google_work_agent.application.use_cases.resource.get_repository_access impo
     GetRepositoryAccessQuery,
 )
 from google_work_agent.application.use_cases.run.consume_retrieval_read_budget import (
+    RetrievalReadBudgetExceeded,
     consume_retrieval_read_budget,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
@@ -161,12 +162,20 @@ def execute_read(
                     error, run_id=run_id, binding=binding,
                     read_result_handle=read_result_handle, provider_called=False,
                 )
-    consume_retrieval_read_budget(
-        run_budget,
-        run_id=run_id,
-        is_detail=plan["operation_kind"] == "DETAIL_FETCH",
-        now_ms=now_ms,
-    )
+            except RetrievalReadBudgetExceeded:
+                return RetrievalReadExecutionV1(
+                    1, "FAILED", read_result_handle, binding.tool_id,
+                    None, False, "BUDGET_EXHAUSTED",
+                )
+    try:
+        consume_retrieval_read_budget(
+            run_budget, run_id=run_id,
+            is_detail=plan["operation_kind"] == "DETAIL_FETCH", now_ms=now_ms,
+        )
+    except RetrievalReadBudgetExceeded:
+        return RetrievalReadExecutionV1(
+            1, "FAILED", read_result_handle, binding.tool_id, None, False, "BUDGET_EXHAUSTED",
+        )
     try:
         result = connector_reader.execute_read(binding, arguments)
     except ConnectorOperationFailure as error:

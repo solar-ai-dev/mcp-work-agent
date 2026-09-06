@@ -26,9 +26,6 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
 )
-from google_work_agent.application.agents.retrieval.expand_business_concept import (
-    expand_business_concept,
-)
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
@@ -50,6 +47,14 @@ ROUTE: InputToolRouteV1 = {
 POLICIES = {"gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
 
 
+def _concept() -> dict[str, object]:
+    return {
+        "kind": "CONCEPT",
+        "concept": "일정",
+        "manifestations": ["체육대회", "박람회", "시간변경"],
+    }
+
+
 def test_period_only_mail_request_reaches_provider_without_invented_schedule_filter() -> None:
     request = "9월 첫째주에 온 메일 찾아줘."
     intent = preserve_vague_read_semantics.preserve_vague_read_semantics(
@@ -62,7 +67,7 @@ def test_period_only_mail_request_reaches_provider_without_invented_schedule_fil
         }, request_text=request, entry_mode="AGENT_SEARCH",
     )
     planned = preserve_gmail_search_semantics(
-        _plan([expand_business_concept("일정"),
+        _plan([_concept(),
                {"kind": "KEYWORD", "terms": ["회의"], "match_mode": "PHRASE"}]),
         prompt_input={"request_intent": intent}, frozen_routes=[ROUTE],
         now_ms=int(datetime(2026, 9, 6, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000),
@@ -114,6 +119,7 @@ def test_schedule_concept_keeps_project_anchor_but_never_broadens_an_exact_subje
     )
     # A literal model keyword must not AND away the requested concept alternatives.
     runtime = FakeStructuredInferencePort(outputs=[_plan([
+        _concept(),
         {"kind": "KEYWORD", "terms": ["일정"], "match_mode": "PHRASE"},
     ])])
     planned, _, invoked = plan_query(
@@ -135,14 +141,12 @@ def test_schedule_concept_keeps_project_anchor_but_never_broadens_an_exact_subje
         assert not any(item["kind"] == "CONCEPT" for item in fetch["effective_constraints"])
     else:
         assert arguments["query"] == (
-            '{"개최" "교육" "박람회" "방문" "시간변경" "일정" "참석" '
-            '"체육대회" "출장" "행사" "회의"} "KAN-93"'
+            '{"박람회" "시간변경" "체육대회"} "KAN-93"'
         )
         concept = next(item for item in fetch["effective_constraints"] if item["kind"] == "CONCEPT")
         assert concept["concept"] == "일정"
         assert set(concept["manifestations"]) == {
-            "일정", "회의", "행사", "박람회", "체육대회", "교육",
-            "출장", "방문", "참석", "개최", "시간변경",
+            "박람회", "체육대회", "시간변경",
         }
 
 
@@ -160,12 +164,12 @@ def test_concept_schema_and_builder_reject_unbounded_or_provider_syntax(
 
 
 def test_concept_only_search_is_bounded_and_new_query_identity_preserves_changes() -> None:
-    concept = expand_business_concept("일정")
+    concept = _concept()
     assert concept is not None
     candidate = _plan([concept])
     initial = build_query(candidate, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     reversed_plan = _plan([
-        {**concept, "manifestations": list(reversed(concept["manifestations"]))},
+        {**concept, "manifestations": list(reversed(cast(list[str], concept["manifestations"])))},
     ])
     reordered = build_query(reversed_plan, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     assert initial["query_identity_hash"] == reordered["query_identity_hash"]
@@ -174,7 +178,6 @@ def test_concept_only_search_is_bounded_and_new_query_identity_preserves_changes
     )
     assert arguments["query"]
     assert "after:" not in str(arguments["query"])
-    assert expand_business_concept("invented ontology") is None
 
 
 def test_concept_ranking_is_a_candidate_signal_not_an_event_fact() -> None:
@@ -193,7 +196,7 @@ def test_concept_ranking_is_a_candidate_signal_not_an_event_fact() -> None:
         ),
     ]
     plans = build_query(
-        _plan([expand_business_concept("일정")]), frozen_routes=[ROUTE], route_policies=POLICIES,
+        _plan([_concept()]), frozen_routes=[ROUTE], route_policies=POLICIES,
     )
     ranked = rag_retrieve_rerank(segments, request_intent=intent, source_plans=plans, top_k=3)
     assert [item["segment_id"] for item in ranked] == ["s2", "s3", "s1"]

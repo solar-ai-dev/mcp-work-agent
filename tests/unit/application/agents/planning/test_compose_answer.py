@@ -28,6 +28,37 @@ def test_answer_draft_schema__binds_citations__to_approved_outline() -> None:
     }
 
 
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_partial_source_answer__preserves_yearless_date__without_another_model_call(
+    uncertain: bool,
+) -> None:
+    def forbidden(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        raise AssertionError("a bounded source projection needs no further inference")
+
+    retrieval: dict[str, object] = {"coverage": "PARTIAL"}
+    if uncertain:
+        retrieval["unresolved_event_dates"] = [{"evidence_id": "e1", "source_text": "9월 4일"}]
+    answer = compose_answer(
+        user_request="9월 첫째주 일정",
+        request_intent={"requested_effect_hints": ["READ"]},
+        answer_outline={"sections": ["확인한 자료"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[
+            {
+                "evidence_id": "e1",
+                "excerpt": "Received: 2026-08-26T09:00:00+09:00\n연수는 9월 4일입니다.",
+            }
+        ],
+        invoke=forbidden,
+        retrieval_result=retrieval,
+    )
+    assert answer["evidence_refs"] == ["e1"]
+    assert "연수는 9월 4일입니다." in answer["answer"]
+    assert "2026년 9월 4일" not in answer["answer"]
+    assert "수신 시각:" in answer["answer"]
+    assert "부분 결과" in answer["answer"]
+
+
 def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
     captured: dict[str, object] = {}
 
@@ -55,12 +86,63 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
     assert isinstance(prompt_input, dict)
     assert prompt_input["request_intent"] == {"goal": "summary"}
     assert set(prompt_input) == {
-        "user_request",
-        "request_intent",
-        "answer_outline",
-        "evidence",
-        "temporal_constraints",
+        "user_request", "request_intent", "answer_outline", "evidence", "temporal_constraints",
     }
+
+
+def test_source_projection__reports_omitted_text__without_citing_invisible_evidence() -> None:
+    answer = compose_answer(
+        user_request="메일 목록",
+        request_intent={"requested_effect_hints": ["READ"]},
+        answer_outline={"sections": ["자료"], "evidence_refs": ["e1", "e2"]},
+        work_analysis=None,
+        evidence=[{"evidence_id": "e1", "excerpt": "짧은 원문"},
+                  {"evidence_id": "e2", "excerpt": "긴 원문" * MAX_USER_VISIBLE_ANSWER_CHARS}],
+        invoke=lambda *_: pytest.fail("source projection must not call inference"),
+        retrieval_result={"coverage": "PARTIAL"},
+    )
+    assert "일부 원문은 생략" in answer["answer"]
+    assert "짧은 원문" in answer["answer"]
+    assert answer["evidence_refs"] == ["e1"]
+    assert len(answer["answer"]) <= MAX_USER_VISIBLE_ANSWER_CHARS
+
+
+def test_confirmed_person__narrows_answer_projection__without_deleting_run_evidence() -> None:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        assert prompt_input["selected_person_identities"] == {"김대리": "second@example.test"}
+        assert prompt_input["answer_outline"] == {"sections": ["메일"], "evidence_refs": ["e2"]}
+        assert prompt_input["evidence"] == [
+            {"evidence_id": "e2", "segment_id": "s2", "excerpt": "B"}
+        ]
+        return {"schema_version": 2, "answer": "B", "evidence_refs": ["e2"]}
+
+    evidence = [{"evidence_id": "e1", "segment_id": "s1", "excerpt": "A"},
+                {"evidence_id": "e2", "segment_id": "s2", "excerpt": "B"}]
+    result = compose_answer(
+        user_request="김대리 메일",
+        request_intent={},
+        answer_outline={"sections": ["메일"], "evidence_refs": ["e1", "e2"]},
+        work_analysis=None,
+        evidence=evidence,
+        invoke=invoke,
+        retrieval_result={
+            "selected_person_identities": {"김대리": "second@example.test"},
+            "person_candidates": [
+                {
+                    "mention": "김대리",
+                    "identity": "first@example.test",
+                    "source_segment_ids": ["s1"],
+                },
+                {
+                    "mention": "김대리",
+                    "identity": "second@example.test",
+                    "source_segment_ids": ["s2"],
+                },
+            ],
+        },
+    )
+    assert result["evidence_refs"] == ["e2"]
+    assert len(evidence) == 2
 
 
 @pytest.mark.parametrize(

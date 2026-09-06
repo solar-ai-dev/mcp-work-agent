@@ -1,5 +1,17 @@
 # 06. Agent · Workflow 설계서
 
+### Retrieval 인물 선택 후 같은 Run 검색
+
+05 소유 후보를 선택한 Confirmation은 기존 `retrieval.assess_sufficiency` origin과
+`finalize` interrupt boundary를 사용한다. 선택이 검증되고 기존 acquisition budget이 허용하면
+`finalize → plan_query`로 같은 frozen Route의 exact identity 검색을 수행한다. 이 내부 edge는
+새 Domain 상태/resume target이 아니며 query history·Evidence·선택 provenance를 초기화하지 않는다.
+추가 수집이 불가능하면 기존 PARTIAL/BLOCKED 종료 규칙을 적용한다.
+
+`RetrievalResultV1`의 선택 필드 `person_candidates`, `selected_person_identities`,
+`unresolved_event_dates`는 05 소유 typed 근거·선택·날짜 불확실성이다. 기존 checkpoint에서
+필드가 없으면 빈 값으로 읽으며, Workflow가 인물이나 행사 연도를 재해석하지 않는다.
+
 ### 요청 단위 초기 Connector prerequisite
 
 Tool Routing의 기존 `validate_route` Node는 Registry 검증된 input/output route의 Connector ID를 `CheckConnectorPrerequisites` Application use case에 전달한다. 이 owner가 선언된 OAuth Credential Port의 token-free status/필수 권한을 검사한다. Main Graph에는 Google/GitHub 분기나 Provider I/O를 추가하지 않는다.

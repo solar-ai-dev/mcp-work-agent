@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from hashlib import sha256
 from pathlib import Path
@@ -91,6 +91,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     authorize_retrieval_followup,
+    deterministic_sufficiency,
 )
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
@@ -109,6 +110,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
+    PersonCandidateV1,
     RetrievalResultV1,
     SufficiencyIssueV2,
     SufficiencyResultV2,
@@ -117,6 +119,9 @@ from google_work_agent.application.agents.retrieval.execute_read import Retrieva
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
     advance_current_round_no,
     initialize_current_round_no,
+)
+from google_work_agent.application.agents.retrieval.match_person_mention import (
+    project_person_candidates,
 )
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
     deterministic_candidate_detail_plan,
@@ -449,7 +454,7 @@ class RetrievalSubgraph:
             ("rag_retrieve", route_after_rag_retrieve_rerank, ("select_evidence",)),
             ("select_evidence", route_after_select_evidence, ("assess_sufficiency",)),
             ("assess_sufficiency", route_after_assess_sufficiency, ("plan_query", "finalize")),
-            ("finalize", route_after_finalize_retrieval, ("finalize",)),
+            ("finalize", route_after_finalize_retrieval, ("finalize", "plan_query")),
         )
         for name, router, successors in boundaries:
             graph.add_conditional_edges(
@@ -500,9 +505,14 @@ class RetrievalSubgraph:
             prompt_ref=self._select_prompt_ref,
         )
         retry_budget = _authorize_context_adjustment_budget(state)
+        prior_result = state.get("retrieval_result")
         next_state: ContextRetrievalLocalState = {
             **state,
             "retry_budget": retry_budget,
+            "selected_person_identities": state.get(
+                "selected_person_identities",
+                {} if prior_result is None else prior_result.get("selected_person_identities", {}),
+            ),
             "input_route_ref": cast(
                 StateArtifactRefV1, dict(tool_route_plan["input_plan"]["meta"])
             ),
@@ -597,6 +607,7 @@ class RetrievalSubgraph:
         rag_candidates = _require_state_value(
             state.get(CONTEXT_RAG_CANDIDATES_KEY), "rag candidates"
         )
+        calls_before = state["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(state)
         patch = select_evidence_node(
             cast(
@@ -626,6 +637,7 @@ class RetrievalSubgraph:
         )
         selection = cast(Any, patch["evidence_selection"])
         revised_retry_budget = cast(RunBudgetV2, patch["retry_budget"])
+        calls_used = revised_retry_budget["llm_calls_used"] - calls_before
         updated_local = dict(local_state)
         updated_local["node_state"] = "SELECT_EVIDENCE_COMPLETE"
         updated_local["typed_result"] = cast(dict[str, object], selection)
@@ -649,9 +661,11 @@ class RetrievalSubgraph:
                     agent_invocation_id=local_state["invocation_id"],
                     subgraph_namespace="context",
                     node_name="select_evidence",
-                    llm_call_id=f"{request.run_id}:retrieval.select_evidence",
-                    prompt_ref=self._select_prompt_ref,
-                    llm_call_increment=1,
+                    llm_call_id=(
+                        f"{request.run_id}:retrieval.select_evidence" if calls_used else None
+                    ),
+                    prompt_ref=self._select_prompt_ref if calls_used else None,
+                    llm_call_increment=calls_used,
                 ),
             },
         )
@@ -786,10 +800,18 @@ class RetrievalSubgraph:
         updated_local = dict(local_state)
         updated_local["node_state"] = "SELECTION_VALIDATED"
         updated_local["typed_result"] = cast(dict[str, object], selection)
+        prior_result = state.get("retrieval_result")
+        prior_candidates = [] if prior_result is None else prior_result.get("person_candidates", [])
         return {
             **state,
             CONTEXT_AGENT_LOCAL_KEY: cast(AgentLocalStateV1, updated_local),
             "evidence_drafts": evidence_drafts,
+            "person_candidates": project_person_candidates(
+                _require_state_value(state["request_intent"], "request_intent"), evidence_drafts,
+                state.get("person_candidates", prior_candidates),
+                state.get("exclusion_obligation_segment_ids", []),
+                source_segments=self._normalized_segments(state),
+            ),
             "trace_context": merge_trace_context(
                 state,
                 graph_profile=self._graph_profile.value,
@@ -813,6 +835,25 @@ class RetrievalSubgraph:
         pause, so ``evidence_drafts`` here is always the same already-frozen
         selection, never re-derived or re-fetched.
         """
+        deterministic = deterministic_sufficiency(
+            request_intent=_require_state_value(state["request_intent"], "request_intent"),
+            tool_route_plan=state.get("tool_route_plan"),
+            acquisition_result=_require_state_value(
+                state["acquisition_result"], "acquisition_result"
+            ),
+            evidence_drafts=state["evidence_drafts"],
+            retry_budget=cast(RunBudgetV2, state["retry_budget"]),
+            confirmation_response=confirmation_response,
+            person_candidates=state.get("person_candidates", []),
+            selected_person_identities=state.get("selected_person_identities"),
+            query_attempts=state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+        )
+        if deterministic is not None:
+            return (
+                deterministic,
+                {"structured_output_attempts": 0},
+                cast(RunBudgetV2, state["retry_budget"]),
+            )
         ensure_llm_call_budget(state)
         patch = assess_sufficiency_node(
             cast(
@@ -865,7 +906,9 @@ class RetrievalSubgraph:
             retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(state["evidence_drafts"]),
             detail_fetch_count=len(detail_followup["route_queries"]) if detail_followup else 0,
-            can_acquire_new_information=has_retrieval_followup_path(
+            can_acquire_new_information=any(
+                item["slot"] == "person_identity_search" for item in sufficiency_result["issues"]
+            ) or has_retrieval_followup_path(
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
                 tool_route_plan=tool_route_plan,
                 route_policies=_runtime_route_constraint_policies(
@@ -900,9 +943,17 @@ class RetrievalSubgraph:
                 agent_invocation_id=local_state["invocation_id"],
                 subgraph_namespace="context",
                 node_name="assess_sufficiency",
-                llm_call_id=f"{request_from_state(state).run_id}:retrieval.assess_sufficiency",
-                prompt_ref=self._sufficiency_prompt_ref,
-                llm_call_increment=1,
+                llm_call_id=(
+                    f"{request_from_state(state).run_id}:retrieval.assess_sufficiency"
+                    if llm_provider_result.get("structured_output_attempts", 0) else None
+                ),
+                prompt_ref=(
+                    self._sufficiency_prompt_ref
+                    if llm_provider_result.get("structured_output_attempts", 0) else None
+                ),
+                llm_call_increment=cast(
+                    int, llm_provider_result.get("structured_output_attempts", 0)
+                ),
             ),
         }
         if should_plan_followup:
@@ -921,7 +972,9 @@ class RetrievalSubgraph:
             # across finalize's node-replay.
             request_intent = _require_state_value(state["request_intent"], "request_intent")
             user_interrupt, confirmation_interrupt = self._materialize_confirmation_interrupt(
-                result=sufficiency_result, request_intent=request_intent
+                result=sufficiency_result, request_intent=request_intent,
+                person_candidates=state.get("person_candidates", []),
+                selected_person_identities=state.get("selected_person_identities", {}),
             )
             next_state["workflow_phase"] = WorkflowPhase.WAITING_CONFIRMATION.value
             next_state["user_interrupt"] = cast(Any, user_interrupt)
@@ -1064,6 +1117,8 @@ class RetrievalSubgraph:
             validated_container_refs=validated_container_refs,
             detail_candidate_refs=detail_candidate_refs,
             attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+            person_candidates=state.get("person_candidates", []),
+            selected_person_identities=state.get("selected_person_identities"),
         )
         if deterministic_plan is None:
             ensure_llm_call_budget(state)
@@ -1088,6 +1143,8 @@ class RetrievalSubgraph:
                             "attempted_detail_candidate_refs": attempted_detail_candidate_refs,
                             "now_ms": state["retry_budget"]["started_at_ms"],
                             "timezone": self._timezone_provider(),
+                            "person_candidates": state.get("person_candidates", []),
+                            "selected_person_identities": state.get("selected_person_identities"),
                         }
                     }
                 },
@@ -1531,7 +1588,9 @@ class RetrievalSubgraph:
         return "finalize"
 
     def _materialize_confirmation_interrupt(
-        self, *, result: SufficiencyResultV2, request_intent: RequestIntentV2
+        self, *, result: SufficiencyResultV2, request_intent: RequestIntentV2,
+        person_candidates: Sequence[PersonCandidateV1] = (),
+        selected_person_identities: Mapping[str, str] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         """Build one round's ``(user_interrupt, confirmation_interrupt metadata)``.
 
@@ -1567,6 +1626,21 @@ class RetrievalSubgraph:
             "known_context_summary": request_intent["goal"],
             "options": [],
         }
+        if reason_code == "PERSON_IDENTITY_AMBIGUOUS":
+            for mention in dict.fromkeys(item["mention"] for item in person_candidates):
+                candidates = [item for item in person_candidates if item["mention"] == mention]
+                if len(candidates) < 2 or (selected_person_identities or {}).get(mention) in {
+                    item["identity"] for item in candidates
+                }:
+                    continue
+                question["question"] = (
+                    f"‘{mention}’에 해당할 수 있는 사람이 여러 명입니다. 누구를 찾으시나요?"
+                )
+                question["options"] = [{
+                    "option_id": item["identity"],
+                    "label": f"{' / '.join(item['display_names'])} ({item['identity']})",
+                } for item in candidates]
+                break
         interrupt_id = self._id_factory()
         user_interrupt = {
             **build_user_interrupt_v1(question),
@@ -1606,7 +1680,9 @@ class RetrievalSubgraph:
                 # task for that round.
                 request_intent = _require_state_value(state["request_intent"], "request_intent")
                 user_interrupt, confirmation_interrupt = self._materialize_confirmation_interrupt(
-                    result=result, request_intent=request_intent
+                    result=result, request_intent=request_intent,
+                    person_candidates=state.get("person_candidates", []),
+                    selected_person_identities=state.get("selected_person_identities", {}),
                 )
                 prompt_context = dict(cast(dict[str, object], state.get("prompt_context", {})))
                 prompt_context["confirmation_interrupt"] = confirmation_interrupt
@@ -1621,6 +1697,8 @@ class RetrievalSubgraph:
                     },
                 )
 
+        if result["status"] == "NEEDS_MORE_DATA":
+            return self._assess_sufficiency_node(state)
         return self._finalize_resolved(state, result=result)
 
     def _resolve_confirmation_inline(
@@ -1646,6 +1724,21 @@ class RetrievalSubgraph:
         if early_return_patch is not None:
             return cast(ContextRetrievalLocalState, {**state, **early_return_patch}), None
         assert confirmation_response is not None
+
+        candidates = state.get("person_candidates", [])
+        selection = confirmation_response.get("selected_option") or confirmation_response.get(
+            "free_text"
+        )
+        current_interrupt = state.get("user_interrupt")
+        offered = set() if current_interrupt is None else {
+            item["option_id"] for item in current_interrupt["options"]
+        }
+        if selection in offered:
+            selected = dict(state.get("selected_person_identities", {}))
+            for item in candidates:
+                if item["identity"] == selection:
+                    selected[item["mention"]] = item["identity"]
+            state = {**state, "selected_person_identities": selected}
 
         sufficiency_result, llm_provider_result, retry_budget = self._run_sufficiency_attempt(
             state, confirmation_response=confirmation_response
@@ -1694,6 +1787,8 @@ class RetrievalSubgraph:
                         "sufficiency": sufficiency,
                         "availability_results": state.get("availability_results", []),
                         "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+                        "person_candidates": state.get("person_candidates", []),
+                        "selected_person_identities": state.get("selected_person_identities", {}),
                         "exclusion_obligation_segment_ids": state.get(
                             "exclusion_obligation_segment_ids", []
                         ),

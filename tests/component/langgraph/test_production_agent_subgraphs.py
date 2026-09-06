@@ -312,6 +312,78 @@ class _ComponentConnectorReadPort:
         )
 
 
+@pytest.mark.parametrize("multiple", [False, True])
+def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple: bool) -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def execute_read(self, binding: Any, arguments: dict[str, Any]) -> ConnectorReadResultV1:
+            query = arguments["query"]
+            self.queries.append(query)
+            identities = [("김하늘 대리", "first@example.test")]
+            if multiple:
+                identities.append(("김바다 대리", "second@example.test"))
+            if "@" in query:
+                identities = [item for item in identities if item[1] in query]
+            return ConnectorReadResultV1(1, binding.tool_id, "person-fixture", {
+                "items": [{
+                    "resource_type": "gmail_thread", "resource_id": email,
+                    "parent_id": None, "version": "v1", "related_resource_ids": [],
+                    "payload": {"subject": "status", "body": "status reviewed",
+                                "sender_name": name, "sender_email": email},
+                } for name, email in identities],
+            }, None, len(identities))
+
+    def confirm(state: Any) -> Any:
+        return interrupt(state["user_interrupt"]), None
+
+    reader = Reader()
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, {
+        **_intent(), "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
+    })
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    retrieval = RetrievalSubgraph(
+        now_ms=lambda: 1_000, should_stop_for_cancel=lambda _: False,
+        timezone_provider=lambda: "Asia/Seoul", llm_runtime=_ComponentInferencePort(),
+        prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda *_: None, merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(), connector_reader=reader,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(), confirm_inline=confirm,
+    ).build()
+    wrapper = StateGraph(GraphState)
+    wrapper.add_node("retrieval", retrieval)
+    wrapper.add_edge(START, "retrieval")
+    wrapper.add_edge("retrieval", END)
+    graph = wrapper.compile(checkpointer=InMemorySaver())
+    config: RunnableConfig = {"configurable": {"thread_id": "person-measurement"}}
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state, config)
+    chosen = "second@example.test" if multiple else "first@example.test"
+    if multiple:
+        payload = result["__interrupt__"][0].value
+        assert {item["option_id"] for item in payload["options"]} == {
+            "first@example.test", "second@example.test",
+        }
+        assert len(reader.queries) == 1
+        with provider_dispatch_execution_scope():
+            result = graph.invoke(Command(resume={
+                "schema_version": 1, "response_kind": "OPTION",
+                "selected_option": chosen, "free_text": None,
+            }), config)
+    assert graph.get_state(config).next == ()
+    assert len(reader.queries) == 2
+    assert chosen in reader.queries[1]
+    artifact = result["retrieval_result"]
+    assert len(artifact["person_candidates"]) == (2 if multiple else 1)
+    if multiple:
+        assert artifact["selected_person_identities"] == {"김대리": chosen}
+    assert all(item["source_segment_ids"] for item in artifact["person_candidates"])
+
+
 def _state(
     *,
     initial_target: str = "request_understanding",
@@ -666,6 +738,12 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
             self.assessed_resources: list[list[str]] = []
 
         def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
+            if prompt_id == "retrieval.plan_query":
+                result = super()._response(prompt_id, projection)
+                cast(Any, result)["route_queries"][0]["search_spec"]["constraints"].append({
+                    "kind": "CONCEPT", "concept": "일정", "manifestations": ["회의", "시간변경"],
+                })
+                return result
             if prompt_id == "retrieval.select_evidence":
                 self.assessed_resources.append([
                     str(segment["resource_ref"])

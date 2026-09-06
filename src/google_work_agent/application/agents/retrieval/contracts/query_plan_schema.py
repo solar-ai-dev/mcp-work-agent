@@ -44,7 +44,7 @@ _CONSTRAINT_SCHEMA = {
                     "uniqueItems": True,
                     "items": {
                         "type": "string", "minLength": 1,
-                        "pattern": CONCEPT_LITERAL_PATTERN,
+                        "pattern": CONCEPT_LITERAL_PATTERN.replace(":", ":,;，；"),
                     },
                 },
             },

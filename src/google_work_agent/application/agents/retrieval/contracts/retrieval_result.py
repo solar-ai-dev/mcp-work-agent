@@ -63,6 +63,18 @@ class EvidenceDraftV1(TypedDict):
     reason_codes: list[str]
 
 
+class PersonCandidateV1(TypedDict):
+    mention: str
+    identity: str
+    display_names: list[str]
+    source_segment_ids: list[str]
+
+
+class UnresolvedEventDateV1(TypedDict):
+    evidence_id: str
+    source_text: str
+
+
 class ContextBundleV1(TypedDict):
     schema_version: Required[Literal[1]]
     resource_refs: list[dict[str, object]]
@@ -175,3 +187,6 @@ class RetrievalResultV1(TypedDict):
     retrieval_rounds: int
     # Absent only in pre-temporal-projection checkpoints; consumers must not infer bounds.
     temporal_constraints: NotRequired[list[TemporalRangeConstraintV1]]
+    person_candidates: NotRequired[list[PersonCandidateV1]]
+    selected_person_identities: NotRequired[dict[str, str]]
+    unresolved_event_dates: NotRequired[list[UnresolvedEventDateV1]]

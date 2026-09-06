@@ -125,6 +125,23 @@ RETRIEVING checkpoint load
 
 ### 5.1 `retrieval.plan_query`
 
+의미 검색은 exact anchor와 검색 가설을 분리한다. `CONCEPT(concept, manifestations)`는
+사용자 `business_concepts`에 결합된 bounded planner 가설이며, 특정 개념의 고정 동의어
+목록으로 대체하지 않는다. Provider syntax 없는 서로 다른 manifestation을 1~12개 허용하며,
+literal concept 하나만 반환한 계획은 같은 EVENT_TIME의 날짜 표기 가설로 보완할 수 있으며,
+이 보완이 불가능하면 기존 semantic revision 대상이다. exact subject/프로젝트
+anchor는 보존한다. 후보의 concept match는 발견 신호일 뿐 Evidence relevance나 행사 사실이 아니다.
+행사 의미의 concept 가설이 빈 결과이면 동일 EVENT_TIME 범위의 날짜 표기(월·ISO 등)를
+다음 bounded discovery 가설로 사용할 수 있다. 수신일 필터로 전환하거나 exact anchor를
+제거하지 않는다. 날짜 언급은 후보 발견만 소유하며 뉴스레터 기간·행사일 relevance는 이후
+Evidence selection이 판정한다. 같은 가설 반복과 기존 검색/detail budget 상한은 유지한다.
+
+월만 지정한 요청의 검색 연도는 사실 확정과 구분한다. 명시 연도는 그대로 사용하고,
+수신 시각 검색은 Run-local 기준 이미 시작된 가장 최근 해당 월, 행사 검색은 인접 연도 중
+Run-local 날짜에 가장 가까운 해당 기간을 검색 가설로 사용한다. 이 검색 가설만으로 원문의
+생략된 행사 연도를 확정하거나 요일을 만들지 않는다. 본문 행사일과 뉴스레터 발행/대상 기간은
+Evidence selection에서 구분하고, 원문에 확정되지 않은 연도는 최종 답변에서도 미확정으로 남긴다.
+
 입력:
 
 ```
@@ -578,6 +595,11 @@ Keyword                   최대 +15
 
 ## 10. Segment·Evidence
 
+분석·인물·주제 등 추가 조건이 없는 수신 기간 메일 목록은 provider의 timezone-aware
+수신시각과 MESSAGE_TIME 범위를 비교하여 기존 bounded 후보를 선택한다. 본문 행사일이
+검색 기간 밖이거나 뉴스레터라는 이유로 수신 조건을 만족하는 메일을 제외하지 않는다.
+본문 의미 조건이 있으면 기존 semantic relevance 선택을 사용한다.
+
 ### 10.1 Stable SourceSegment identity
 
 `segment_id`는 UI row용 임의 UUID가 아니라 **same provider source version을 다시 normalize/chunk했을 때 동일하게 재생성되는 deterministic Evidence identity**다. `05 Retrieval`이 이 identity semantics의 단일 owner다.
@@ -739,6 +761,15 @@ class QueryAttemptV1:
 
 ## 17. Clarification · Overbroad Retrieval
 
+Retrieval의 `PersonCandidateV1(mention, identity, display_names, source_segment_ids)`는
+관측 metadata의 표시 이름↔email 결합만 보존한다. 다른 메시지의 같은 email에 붙은 별칭은
+합칠 수 있지만 surname/title만으로 서로 다른 email을 합치지 않는다. 이 bounded 후보는
+Retrieval local checkpoint 및 `RetrievalResultV1.person_candidates`에 보존한다. 이전 artifact에
+필드가 없으면 빈 후보로 취급하며, 후보의 source segment provenance가 제외된 경우 재사용하지 않는다.
+복수 후보는 기존 Retrieval Confirmation 옵션으로 노출하고 선택 email은 해당 후보 집합에서만
+수용한다. 유일 후보 또는 사용자 선택 후 같은 frozen Route에서 exact PARTICIPANT 후속 검색을
+수행한다. 이것은 RequestIntent의 사용자 원문을 바꾸거나 LLM에게 email 생성 권한을 주지 않는다.
+
 - 요청 자체에서 드러나는 모호성은 Request Understanding에서 확인한다.
 - Tool Route가 불명확하면 Tool Route Subgraph가 확인한다.
 - 동명이인·복수 Resource·저신뢰 후보처럼 검색 후 드러나는 모호성은 후보·차이와 함께 `NEEDS_CONFIRMATION`으로 보낸다.
@@ -746,6 +777,33 @@ class QueryAttemptV1:
 - Calendar 시간 overlap은 conflict와 분리하며 관계 근거를 Work Analysis에 전달한다.
 
 ## 18. 정보 부족 분류와 결정적 종료 Guard
+
+인물 후보는 수집된 SourceSegment의 metadata와 명시적인 이름·이메일 연결을 근거로 만든다.
+답변용 Evidence 선택이 다른 사람의 자료를 제외했더라도 실제 복수 후보를 단일 인물로
+축소하지 않는다. 사용자 exclusion만 해당 후보 provenance를 철회할 수 있다.
+확인된 선택은 `selected_person_identities`로 same-Run에서 보존하며 Planning의 답변
+projection은 선택되지 않은 인물만의 근거를 제외한다. 원래 Run Evidence는 삭제하지 않는다.
+분석이 필요하지 않은 날짜·인물 lookup은 선택된 원문과 provider 수신시각의 bounded
+projection으로 답할 수 있다. 인용된 ISO offset을 임의의 오전/오후·요일로 재계산하지 않는다.
+`planning.compose_answer` V2 input의 optional `selected_person_identities`가 이 선택을
+전달한다. 기존 호출·checkpoint는 필드 생략이 가능하며 natural-language intent를 위조하지 않는다.
+
+행사 날짜의 연도가 원문에서 확정되지 않았으면 검색 기간의 연도를 사실로 승격하지 않는다.
+선택된 Evidence의 연도 미확정 날짜(명시적 보고·집계 기간은 제외)는
+`unresolved_event_dates`에 원문·Evidence
+참조와 함께 전달한다. 다른 resource의 검색 시간 제약을 전파하지 않는다.
+READ의 해당 날짜 범위는 PARTIAL이며 Planning은 해당 근거를
+원문 인용과 연도 미확정 안내로 제시한다. 뉴스레터 CONTEXT의 집계 기간이나 수신시각을
+행사일로 사용하지 않는다. 구 checkpoint에서 이 선택 필드가 없으면 빈 목록으로 읽는다.
+
+READ follow-up은 기존 RunBudget 안에서 답변 outline/compose와 bounded repair 여유를
+남긴다. `analysis_requirement=REQUIRED`인 READ는 기존 Work Analysis의 여섯 semantic
+operation도 같은 상한 안에서 고려한다. 부분 결과의 답변은 인용 가능한 Evidence 원문을
+bounded projection으로 제공할 수 있으며, 추가 추론이나 전체 성공 주장을 요구하지 않는다.
+추가 수집이 답변 여유를 침범하면 이미 검증된 Evidence를 보존해 PARTIAL로
+닫는다. 결정적으로 종료할 수 있는 sufficiency는 LLM 호출을 요구하지 않으며 사용하지 않은
+호출을 counter/Trace에 기록하지 않는다. WRITE의 필수 Target/Argument/Policy Evidence가
+미확정인 경우 이 READ 최적화를 적용하지 않는다.
 
 ### 18.1 Sufficiency Issue
 

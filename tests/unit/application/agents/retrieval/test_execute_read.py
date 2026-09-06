@@ -25,9 +25,6 @@ from google_work_agent.application.agents.retrieval.execute_read import (
     RetrievalReadBindingError,
     execute_read,
 )
-from google_work_agent.application.use_cases.run.consume_retrieval_read_budget import (
-    RetrievalReadBudgetExceeded,
-)
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
@@ -314,8 +311,11 @@ def test_detail_dispatch__charges_only_detail_dimension_and_honors_limit(
     if expected_calls:
         execute_read(**arguments)
     else:
-        with pytest.raises(RetrievalReadBudgetExceeded, match="DETAIL_FETCH_LIMIT"):
-            execute_read(**arguments)
+        outcome = execute_read(**arguments)
+        assert outcome.status == "FAILED"
+        assert outcome.failure_code == "BUDGET_EXHAUSTED"
+        assert outcome.provider_called is False
+        assert outcome.candidate_count is None
     assert len(reader.calls) == expected_calls
     assert budget["detail_fetches_used"] == detail_used + expected_calls
     assert budget["connector_calls_used"] == expected_calls

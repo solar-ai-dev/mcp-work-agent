@@ -103,3 +103,26 @@ def test_legacy_period_without_axis_is_not_silently_treated_as_message_time() ->
         )
         is None
     )
+
+
+@pytest.mark.parametrize(("axis", "now", "period", "expected"), [
+    ("MESSAGE_TIME", "2026-01-05", "12월", "2025-12-01"),
+    ("EVENT_TIME", "2026-12-25", "1월 첫째주", "2027-01-01"),
+    ("EVENT_TIME", "2026-01-05", "12월", "2025-12-01"),
+    ("MESSAGE_TIME", "2026-01-05", "2027년 12월", "2027-12-01"),
+])
+def test_yearless_month__uses_axis_and_run_time__without_current_year_override(
+    axis: str, now: str, period: str, expected: str,
+) -> None:
+    result = resolve_relative_period(
+        [
+            {"kind": "DATE", "field": "period", "value": period},
+            {"kind": "TIME", "field": "temporal_axis", "value": axis},
+        ],
+        now_ms=int(
+            datetime.fromisoformat(now).replace(tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000
+        ),
+        timezone="Asia/Seoul",
+    )
+    assert result is not None
+    assert result["start_local"] == expected + "T00:00:00"

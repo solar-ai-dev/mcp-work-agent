@@ -18,9 +18,13 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     AcquisitionResultV1,
     EvidenceDraftV1,
     EvidenceSelectionResultV2,
+    PersonCandidateV1,
     RetrievalResultV1,
     RetrievalSourceStatusV1,
     SufficiencyResultV2,
+)
+from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
+    project_unresolved_event_dates,
 )
 from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
     project_query_temporal_constraints,
@@ -47,6 +51,8 @@ def finalize_retrieval(
     exclusion_obligation_segment_ids: Iterable[str] = (),
     prior_result: RetrievalResultV1 | None = None,
     query_attempts: Sequence[QueryAttemptV1] = (),
+    person_candidates: Sequence[PersonCandidateV1] = (),
+    selected_person_identities: Mapping[str, str] | None = None,
 ) -> RetrievalResultV1:
     """Materialize the only parent-facing Retrieval business artifact."""
     selected_ids = list(selection_result["selected_segment_ids"])
@@ -104,6 +110,11 @@ def finalize_retrieval(
         "missing_information": missing_information_projection(sufficiency_result["issues"]),
         "retrieval_rounds": retrieval_round_count(current_round_no=current_round_no),
         "temporal_constraints": project_query_temporal_constraints(query_attempts),
+        "unresolved_event_dates": project_unresolved_event_dates(
+            evidence, query_attempts,
+        ),
+        "person_candidates": list(person_candidates),
+        "selected_person_identities": dict(selected_person_identities or {}),
     }
 
 

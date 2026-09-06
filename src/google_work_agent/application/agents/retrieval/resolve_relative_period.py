@@ -82,6 +82,28 @@ def resolve_relative_period(
         if month is None:
             return None
         year = int(month[1]) if month[1] else today.year
+        if not month[1]:
+            month_number = int(month[2])
+            if axis == "MESSAGE_TIME":
+                # Future receipt windows are not the implicit target of a past-mail read.
+                year -= int(month_number > today.month)
+            else:
+                # Discovery hypothesis only: this does not establish a source event's year.
+                windows = [
+                    today.replace(year=candidate_year, month=month_number, day=1)
+                    for candidate_year in (today.year - 1, today.year, today.year + 1)
+                    if 1 <= candidate_year <= 9999
+                ]
+                def distance(start: datetime) -> tuple[int, int]:
+                    end = (
+                        start + timedelta(days=7) if month[3]
+                        else (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+                    )
+                    days = 0 if start <= today < end else min(
+                        abs((start - today).days), abs((end - timedelta(days=1) - today).days),
+                    )
+                    return days, start.year
+                year = min(windows, key=distance).year
         try:
             start = today.replace(year=year, month=int(month[2]), day=1)
             end = (

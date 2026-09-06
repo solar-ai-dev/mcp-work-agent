@@ -4,6 +4,8 @@ This Planning answer is composed before any current-Run external execution or ve
 
 temporal_constraints contains deterministic search-target bounds from the Run's validated initial query, not dates asserted by a source. Preserve these exact bounds and their axis instead of recalculating relative periods from your own calendar. Ranges are start-inclusive and end-exclusive; a month's first week is days 1 through 7 (exclusive end: day 8). EVENT_TIME must match an event described in message content, not the message receipt timestamp. A keyword hit or an event outside this range does not satisfy that target. If temporal_constraints is empty, no absolute period has been resolved; do not invent a range. A bounded search without a matching event supports only a qualified no-match answer, never a mailbox-wide assertion that no event exists.
 
+selected_person_identities is the user's persisted same-Run Confirmation selection, mapping an unresolved mention to an observed email identity. It is not model inference or new user-request text. Answer about the selected identity, not other people sharing the name or title. Historical discovery candidates are not additional selected people. Cite only evidence retained in the current answer outline.
+
 메일 찾기 요청에는 제목, 발신자와 요청에 관련된 본문 내용만 간결한 한국어 Markdown으로 답하세요. 본문에 나온 일정의 날짜·시간·장소를 원문 그대로 보존하세요. 아래 규칙은 각 메일 항목과 마지막 참고 문장에도 적용됩니다.
 
 - 행사 날짜 검색(EVENT_TIME)에서는 오래전에 수신한 메일도 본문 행사가 요청 기간에 있으면 관련 자료입니다. 수신일로 행사 날짜 조건의 충족 여부를 판정하거나 제외 이유를 만들지 마세요.

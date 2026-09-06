@@ -300,6 +300,26 @@ adapters/langgraph/subgraphs/<role>/nodes/<verb>_<object>_node.py
 
 Supporting deterministic operations that 06 keeps inside an existing node/stage keep their canonical Application operation file/test but do **not** require a second LangGraph Node, Router, Edge, or resume target. Current examples are `retrieval.resolve_availability`, `work_analysis.validate_work_analysis` inside runtime `analysis.finalize`, `planning.validate_plan` inside runtime `planning.assemble`, and `review.validate_review` inside runtime `review.aggregate_findings`.
 
+### Semantic retrieval resolution mapping (05 owner)
+
+The following exact supporting-operation mappings implement 05's source-date, identity and
+bounded-search contracts. They are not new workflow nodes or independent retrieval authorities.
+
+| 05 responsibility | Application file / symbol | Test owner |
+| --- | --- | --- |
+| Run-local period search hypothesis; never a source event year | `retrieval/resolve_relative_period.py` → `resolve_relative_period` | `tests/unit/application/agents/retrieval/test_resolve_relative_period.py` |
+| Source receipt/event/reporting-date comparison and uncertainty projection | `retrieval/match_temporal_evidence.py` → `match_temporal_evidence`, `project_unresolved_event_dates` | `tests/unit/application/agents/retrieval/test_match_temporal_evidence.py` |
+| Unresolved mention, exact-email alias join and source provenance | `retrieval/match_person_mention.py` → `match_person_mention`, `project_person_candidates` | `tests/unit/application/agents/retrieval/test_match_person_mention.py` |
+| User-owned anchor preservation and concept discovery validation | `retrieval/preserve_gmail_search_semantics.py` → `preserve_gmail_search_semantics`, `validate_requested_concepts` | `tests/unit/application/agents/retrieval/test_business_concept_search.py` |
+| Bounded next-page, date-spelling and resolved-identity search hypotheses | `retrieval/plan_query_expansion.py` → `deterministic_followup_query_plan` | Retrieval unit and `tests/component/langgraph/test_production_agent_subgraphs.py` |
+
+Paths above are relative to `application/agents/`. The old `expand_business_concept` fixed-example
+authority is removed; production concepts come from the bounded query-planning contract.
+`assess_sufficiency` owns deterministic READ reserve/termination, `finalize_retrieval` authors the
+typed parent artifact, and `planning/compose_answer` projects uncertainty and confirmed-person scope
+without changing persisted Run Evidence. Existing structural closed-set reconciliation outside
+these mappings is not waived by this section.
+
 ### Local Runtime provisioning target mapping
 
 Automatic provisioning is direction-approved but is not part of the current exact Application capability manifest. Its implementation may activate only after the Application handler, Port/Adapter, API owner, test owner, and V2 signed artifacts are cut over as one complete capability. Until then existing `get_runtime_status` remains the only runtime-status projection capability and the unimplemented endpoint is not advertised by the current boundary manifest.

@@ -29,6 +29,12 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     bind_retrieval_query_plan_output_schema,
 )
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    PersonCandidateV1,
+)
+from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
+    has_explicit_gmail_subject,
+)
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
     deterministic_candidate_detail_plan,
 )
@@ -39,6 +45,7 @@ from google_work_agent.application.agents.retrieval.preserve_gmail_search_semant
     preserve_gmail_search_semantics,
     requested_participant_identities,
     resolve_gmail_query_periods,
+    validate_requested_concepts,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -159,6 +166,8 @@ def deterministic_query_plan(
     validated_container_refs: Mapping[str, Collection[str]] | None,
     detail_candidate_refs: Collection[str] = (),
     attempted_detail_candidate_refs: Collection[str] = (),
+    person_candidates: Sequence[PersonCandidateV1] = (),
+    selected_person_identities: Mapping[str, str] | None = None,
 ) -> RetrievalQueryPlanV2 | None:
     """Project deterministic initial and candidate-detail continuations."""
 
@@ -173,6 +182,8 @@ def deterministic_query_plan(
     followup = deterministic_followup_query_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
+        person_candidates=person_candidates,
+        selected_person_identities=selected_person_identities,
     )
     if followup is not None:
         return followup
@@ -412,6 +423,8 @@ def plan_query(
     attempted_detail_candidate_refs: Collection[str] = (),
     now_ms: int | None = None,
     timezone: str | None = None,
+    person_candidates: Sequence[PersonCandidateV1] = (),
+    selected_person_identities: Mapping[str, str] | None = None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2, bool]:
     """Plan provider-neutral retrieval intent against already-frozen input routes."""
     for route_id, policy in route_policies.items():
@@ -455,6 +468,8 @@ def plan_query(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+        person_candidates=person_candidates,
+        selected_person_identities=selected_person_identities,
     )
     if deterministic_plan is not None:
         return (
@@ -495,6 +510,7 @@ def plan_query(
             validated_container_refs=validated_container_refs,
             detail_candidate_refs=detail_candidate_refs,
         )
+        validate_requested_concepts(validated, prompt_input, frozen_routes)
         return (
             _validate_query_plan_round(
                 validated,
@@ -674,6 +690,7 @@ def _revise_plan_once(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
     )
+    validate_requested_concepts(validated, prompt_input, frozen_routes)
     return (
         _validate_query_plan_round(validated, is_followup=is_followup),
         decision["run_budget"],
@@ -719,25 +736,34 @@ def has_retrieval_followup_path(
     """Return whether the frozen route can produce information not read yet."""
 
     routes = tool_route_plan["input_plan"]["input_routes"]
-    return (
-        deterministic_query_plan(
-            prompt_input={
-                "request_intent": request_intent,
-                "current_round_no": max(
-                    (attempt.get("round_no", 0) for attempt in query_attempts), default=0
-                ),
-                "prior_query_attempts": list(query_attempts),
-                "unresolved_sufficiency_issues": list(unresolved_sufficiency_issues),
-                "read_result_summaries": list(read_result_summaries),
-            },
-            frozen_routes=routes,
-            route_policies=route_policies,
-            validated_resource_refs=None,
-            validated_container_refs=None,
-            detail_candidate_refs=detail_candidate_refs,
-            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+    return deterministic_query_plan(
+        prompt_input={
+            "request_intent": request_intent,
+            "current_round_no": max(
+                (attempt.get("round_no", 0) for attempt in query_attempts), default=0
+            ),
+            "prior_query_attempts": list(query_attempts),
+            "unresolved_sufficiency_issues": list(unresolved_sufficiency_issues),
+            "read_result_summaries": list(read_result_summaries),
+        },
+        frozen_routes=routes,
+        route_policies=route_policies,
+        validated_resource_refs=None,
+        validated_container_refs=None,
+        detail_candidate_refs=detail_candidate_refs,
+        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+    ) is not None or (
+        not has_explicit_gmail_subject(request_intent["constraints"])
+        and any(
+            attempt["operation_kind"] == "SEARCH"
+            and attempt.get("stop_reason") == "COMPLETE"
+            and sum(
+                other["operation_kind"] == "SEARCH" and other["route_id"] == attempt["route_id"]
+                for other in query_attempts
+            ) == 1
+            and any(item["kind"] == "CONCEPT" for item in attempt["normalized_intent_constraints"])
+            for attempt in query_attempts
         )
-        is not None
     )
 
 

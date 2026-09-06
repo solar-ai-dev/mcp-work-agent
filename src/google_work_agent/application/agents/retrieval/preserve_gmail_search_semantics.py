@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from datetime import datetime, timedelta
 from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    CONCEPT_MANIFESTATION_LIMIT,
     RetrievalV2ValidationError,
     TemporalRangeConstraintV1,
     validate_participant_identity,
-)
-from google_work_agent.application.agents.retrieval.expand_business_concept import (
-    expand_business_concept,
 )
 from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
     has_explicit_gmail_subject,
@@ -85,7 +84,8 @@ def preserve_gmail_search_semantics(
         now_ms=now_ms,
         timezone=timezone,
     )
-    if not explicit_constraints or not isinstance(value, Mapping):
+    concepts = _requested_concepts(request_intent.get("constraints"))
+    if (not explicit_constraints and not concepts) or not isinstance(value, Mapping):
         return value
     route_queries = value.get("route_queries")
     if not isinstance(route_queries, list):
@@ -116,7 +116,7 @@ def preserve_gmail_search_semantics(
     if replacement_kinds == {"TEMPORAL_RANGE"} and not has_topic:
         # A period-only intent has no topical filter for the planner to specialize.
         replacement_kinds.update({"KEYWORD", "CONCEPT"})
-    if "CONCEPT" in replacement_kinds:
+    if concepts:
         # A model's literal concept keyword must not AND away its alternatives.
         replacement_kinds.add("KEYWORD")
     if has_explicit_gmail_subject(request_intent.get("constraints")):
@@ -137,7 +137,98 @@ def preserve_gmail_search_semantics(
             for item in constraints
             if not isinstance(item, Mapping) or str(item.get("kind")) not in replacement_kinds
         ] + explicit_constraints
+        if concepts and not has_explicit_gmail_subject(intent_constraints):
+            search_spec["constraints"] = [
+                item for item in search_spec["constraints"]
+                if not isinstance(item, Mapping) or item.get("kind") != "CONCEPT"
+                or item.get("concept") in concepts
+            ]
+            temporal = next((item for item in explicit_constraints
+                             if item["kind"] == "TEMPORAL_RANGE"), None)
+            alternatives = temporal_discovery_manifestations(temporal) if temporal else []
+            if alternatives:
+                for item in search_spec["constraints"]:
+                    if not isinstance(item, dict) or item.get("kind") != "CONCEPT":
+                        continue
+                    phrases = item.get("manifestations", [])
+                    if isinstance(phrases, list) and not any(
+                        isinstance(phrase, str) and str(item["concept"]) not in phrase
+                        for phrase in phrases
+                    ):
+                        item["manifestations"] = alternatives
+                        route_query["reason_codes"] = ["TEMPORAL_DISCOVERY_HYPOTHESIS"]
     return candidate
+
+
+def temporal_discovery_manifestations(constraint: Mapping[str, object]) -> list[str]:
+    """Date spellings are bounded discovery hypotheses, never a concept dictionary."""
+    if constraint.get("axis") != "EVENT_TIME" or not constraint.get("start_local"):
+        return []
+    start = datetime.fromisoformat(str(constraint["start_local"]))
+    end = datetime.fromisoformat(str(constraint.get("end_local") or constraint["start_local"]))
+    if end > start:
+        end -= timedelta(microseconds=1)
+    months = min(12, max(1, (end.year - start.year) * 12 + end.month - start.month + 1))
+    return list(
+        dict.fromkeys(
+            spelling
+            for format_index in range(5)
+            for offset in range(months)
+            for month in [(start.month - 1 + offset) % 12 + 1]
+            for spelling in [
+                [f"{month}월", f"-{month:02}-", f"{month}/", f"{month:02}/", f".{month:02}."][
+                    format_index
+                ]
+            ]
+        )
+    )[:CONCEPT_MANIFESTATION_LIMIT]
+
+
+def validate_requested_concepts(
+    value: object, prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
+) -> None:
+    """Require planner-owned discovery hypotheses, never a built-in synonym list."""
+    intent = prompt_input.get("request_intent")
+    if not isinstance(intent, Mapping) or not isinstance(value, Mapping):
+        return
+    if has_explicit_gmail_subject(intent.get("constraints")):
+        return
+    concepts = _requested_concepts(intent.get("constraints"))
+    gmail_ids = {route["route_id"] for route in frozen_routes
+                 if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}}
+    for query in value.get("route_queries", []):
+        if query.get("route_id") not in gmail_ids:
+            continue
+        spec = query.get("search_spec")
+        if not isinstance(spec, Mapping) or spec.get("mode") != "INITIAL":
+            continue
+        constraints = spec.get("constraints", [])
+        for concept in concepts:
+            if not any(
+                item.get("kind") == "CONCEPT" and item.get("concept") == concept
+                and any(concept not in term for term in item.get("manifestations", []))
+                and not any(
+                    separator in term for term in item.get("manifestations", [])
+                    for separator in ",;，；"
+                )
+                for item in constraints
+            ):
+                raise RetrievalV2ValidationError(
+                    "business concept requires at least one discovery phrase "
+                    "without its literal label",
+                    affected_field_paths=("$.route_queries[].search_spec.constraints",),
+                )
+
+
+def _requested_concepts(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {
+        entry for item in value if isinstance(item, Mapping)
+        and item.get("kind") == "USER_REQUIREMENT" and item.get("field") == "business_concepts"
+        for entry in (item["value"] if isinstance(item.get("value"), list) else [item.get("value")])
+        if isinstance(entry, str) and entry
+    }
 
 
 def _explicit_gmail_constraints(
@@ -152,6 +243,7 @@ def _explicit_gmail_constraints(
     subjects: list[str] = []
     search_terms: list[str] = []
     business_concepts: list[str] = []
+    discovery_terms: dict[str, str] = {}
     participant_fields = {
         "sender": "SENDER",
         "sender_email": "SENDER",
@@ -179,7 +271,8 @@ def _explicit_gmail_constraints(
                 try:
                     identity = validate_participant_identity(entry)
                 except RetrievalV2ValidationError:
-                    search_terms.append(person_discovery_term(entry))
+                    discovery_terms[entry] = person_discovery_term(entry)
+                    search_terms.append(discovery_terms[entry])
                 else:
                     participants.append({"role": participant_fields[field], "identity": identity})
         elif kind in {"RESOURCE", "SCOPE", "USER_REQUIREMENT"} and field in {
@@ -198,13 +291,13 @@ def _explicit_gmail_constraints(
     if subjects and (not search_terms or has_explicit_gmail_subject(value)):
         result.append({"kind": "KEYWORD", "terms": subjects, "match_mode": "PHRASE"})
     else:
-        concept = next(
-            (expanded for name in business_concepts if (expanded := expand_business_concept(name))),
-            None,
+        search_terms = list(
+            dict.fromkeys(
+                discovery_terms.get(term, term)
+                for term in search_terms
+                if term not in business_concepts
+            )
         )
-        if concept is not None:
-            result.append(dict(concept))
-            search_terms = [term for term in search_terms if term != concept["concept"]]
         if search_terms:
             result.append(
                 {

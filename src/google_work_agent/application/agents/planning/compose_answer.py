@@ -92,8 +92,88 @@ def compose_answer(
 ) -> AnswerDraftCandidateV2:
     if not user_request.strip():
         raise ValueError("user_request is required")
+    selected_people = cast(
+        dict[str, str], (retrieval_result or {}).get("selected_person_identities", {})
+    )
+    if selected_people:
+        candidates = cast(
+            list[dict[str, object]], (retrieval_result or {}).get("person_candidates", [])
+        )
+        accepted: set[str] = set()
+        rejected: set[str] = set()
+        for person in candidates:
+            chosen = selected_people.get(str(person["mention"]))
+            if chosen is None:
+                continue
+            target = accepted if chosen == person["identity"] else rejected
+            target.update(cast(list[str], person["source_segment_ids"]))
+        evidence = [item for item in evidence if item.get("segment_id") not in rejected - accepted]
+        visible_refs = {_evidence_ref(item) for item in evidence}
+        answer_outline = {**answer_outline, "evidence_refs": [
+            ref for ref in answer_outline["evidence_refs"] if ref in visible_refs
+        ]}
     approved_refs = set(answer_outline["evidence_refs"])
     approved_evidence = [dict(item) for item in evidence if _evidence_ref(item) in approved_refs]
+    uncertain_dates = (retrieval_result or {}).get("unresolved_event_dates", [])
+    unresolved_person = any(
+        isinstance(item, Mapping) and item.get("code") == "person_identity"
+        for item in cast(list[object], (retrieval_result or {}).get("missing_information", []))
+    )
+    grounded_lookup = (
+        request_intent.get("requested_effect_hints") == ["READ"]
+        and request_intent.get("analysis_requirement", "NONE") == "NONE"
+        and (
+            bool((retrieval_result or {}).get("temporal_constraints"))
+            or bool((retrieval_result or {}).get("person_candidates"))
+        )
+    )
+    if uncertain_dates or unresolved_person or (
+        approved_evidence and (
+            (retrieval_result or {}).get("coverage") == "PARTIAL" or grounded_lookup
+        )
+    ):
+        # Do not let free-form prose promote a search-year hypothesis into an event fact.
+        sections = []
+        if uncertain_dates:
+            sections.append(
+                "행사 연도가 확정되지 않은 자료가 있어 요청 기간에 해당하는지 확인이 필요합니다. "
+                "수신 연도를 행사 연도로 사용하지 않았으며, 요일도 계산하지 않았습니다."
+            )
+        if unresolved_person:
+            sections.append(
+                "요청하신 인물을 근거로 특정하지 못했습니다. 이름이나 이메일 확인이 필요합니다."
+            )
+        if any(
+            isinstance(item, Mapping) and item.get("failure_kind") is not None
+            for item in cast(list[object], (retrieval_result or {}).get("source_statuses", []))
+        ):
+            sections.append("일부 자료를 읽지 못했습니다. 검색 결과가 없다는 뜻은 아닙니다.")
+        cited: list[str] = []
+        omitted = False
+        for item in approved_evidence:
+            excerpt, ref = item.get("excerpt"), _evidence_ref(item)
+            if not isinstance(excerpt, str) or ref is None:
+                continue
+            quote = "\n".join(
+                "> " + line.replace("Received:", "수신 시각:", 1)
+                for line in excerpt.splitlines()
+                if not line.startswith(("Sender name:", "Sender email:"))
+            )
+            locator = item.get("locator")
+            sender = locator.get("sender_email") if isinstance(locator, Mapping) else None
+            section = (f"발신자: {sender}\n" if sender else "") + "확인한 자료 원문:\n" + quote
+            if sum(map(len, sections)) + len(section) > MAX_USER_VISIBLE_ANSWER_CHARS - 200:
+                omitted = True
+                continue
+            sections.append(section)
+            cited.append(ref)
+        if omitted:
+            sections.append(
+                "표시 길이 제한으로 일부 원문은 생략했습니다. 전체 자료를 표시한 답변은 아닙니다."
+            )
+        return _with_partial_scope({
+            "schema_version": 2, "answer": "\n\n".join(sections), "evidence_refs": cited,
+        }, {"coverage": "PARTIAL"} if uncertain_dates or unresolved_person else retrieval_result)
     prompt_input: dict[str, object] = {
         "user_request": user_request,
         "request_intent": {
@@ -108,6 +188,8 @@ def compose_answer(
             )
         ],
     }
+    if selected_people:
+        prompt_input["selected_person_identities"] = selected_people
     gmail_projection = project_gmail_read_planning(
         user_request=user_request,
         request_intent=request_intent,
@@ -125,7 +207,7 @@ def compose_answer(
     if task_projection is not None:
         if not set(task_projection.draft["evidence_refs"]).issubset(approved_refs):
             raise ValueError("task read answer references evidence outside its approved outline")
-        return task_projection.draft
+        return _with_partial_scope(task_projection.draft, retrieval_result)
     decision_projection = project_gmail_decision_read_answer(
         user_request=user_request,
         request_intent=request_intent,
@@ -134,7 +216,7 @@ def compose_answer(
     if decision_projection is not None:
         if not set(decision_projection.draft["evidence_refs"]).issubset(approved_refs):
             raise ValueError("Gmail decision answer references evidence outside its outline")
-        return decision_projection.draft
+        return _with_partial_scope(decision_projection.draft, retrieval_result)
     security_projection = project_gmail_security_read_answer(
         user_request=user_request,
         request_intent=request_intent,
@@ -143,7 +225,7 @@ def compose_answer(
     if security_projection is not None:
         if not set(security_projection.draft["evidence_refs"]).issubset(approved_refs):
             raise ValueError("Gmail security answer references evidence outside its outline")
-        return security_projection.draft
+        return _with_partial_scope(security_projection.draft, retrieval_result)
     empty_projection = project_empty_read_answer(
         user_request=user_request,
         request_intent=request_intent,
@@ -161,6 +243,11 @@ def compose_answer(
     if not isinstance(answer, str) or not answer.strip():
         raise ValueError("compose_answer output requires answer")
     normalized_answer = normalize_generated_answer_prose(answer)
+    if any(item["axis"] == "MESSAGE_TIME" for item in cast(
+        list[dict[str, object]], prompt_input["temporal_constraints"],
+    )):
+        # The provider projection contains received_at, not a proved sent-at timestamp.
+        normalized_answer = normalized_answer.replace("보낸 날짜:", "수신 시각:")
     if len(normalized_answer) > MAX_USER_VISIBLE_ANSWER_CHARS:
         raise ValueError("compose_answer output exceeds the user-visible answer limit")
     if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
@@ -180,7 +267,19 @@ def compose_answer(
             if isinstance((excerpt := item.get("excerpt")), str)
         ],
     )
-    return {"schema_version": 2, "answer": visible_answer, "evidence_refs": list(refs)}
+    return _with_partial_scope(
+        {"schema_version": 2, "answer": visible_answer, "evidence_refs": list(refs)},
+        retrieval_result,
+    )
+
+
+def _with_partial_scope(
+    draft: AnswerDraftCandidateV2, retrieval_result: Mapping[str, object] | None,
+) -> AnswerDraftCandidateV2:
+    if retrieval_result is None or retrieval_result.get("coverage") != "PARTIAL":
+        return draft
+    notice = "확인한 범위의 부분 결과입니다. 요청한 전체 범위를 확인한 것은 아닙니다."
+    return {**draft, "answer": notice + "\n\n" + draft["answer"]}
 
 
 def _evidence_ref(item: Mapping[str, object]) -> str | None:

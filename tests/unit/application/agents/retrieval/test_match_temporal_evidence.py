@@ -1,10 +1,46 @@
+from typing import cast
+
 import pytest
 
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    EvidenceDraftV1,
+)
 from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
+    has_only_reporting_period_dates,
     match_temporal_evidence,
     project_event_date_candidates,
+    project_unresolved_event_dates,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
+
+
+def test_reporting_period__does_not_prove_event__or_hide_separate_event_date() -> None:
+    period = "집계 기간은 2026년 9월 1일부터 9월 7일까지입니다."
+    assert has_only_reporting_period_dates(period)
+    assert not has_only_reporting_period_dates(period + "행사는 9월 4일 열립니다.")
+    assert not has_only_reporting_period_dates("행사는 9월 1일부터 9월 7일까지입니다.")
+
+
+@pytest.mark.parametrize(
+    "resource_type, expected", [("GMAIL_THREAD", True), ("CALENDAR_EVENT", False)],
+)
+def test_unresolved_event_year__respects_resource_scope__in_cross_resource_read(
+    first_week, resource_type, expected,
+) -> None:
+    evidence = cast(EvidenceDraftV1, {
+        "evidence_id": "e1", "resource_handle": "gmail_thread:t",
+        "excerpt": "연수는 9월 4일입니다.",
+        "reason_codes": ["CONTEXT"],
+    })
+    attempt = cast(QueryAttemptV1, {
+        "route_id": "route", "resource_type": resource_type, "operation_kind": "SEARCH",
+        "normalized_intent_constraints": [first_week],
+    })
+    unresolved = project_unresolved_event_dates([evidence], [attempt])
+    assert bool(unresolved) is expected
+    if expected:
+        assert unresolved == [{"evidence_id": "e1", "source_text": "9월 4일"}]
 
 
 @pytest.fixture
