@@ -2,39 +2,39 @@
 
 이 `AGENTS.md`는 저장소 루트 전체에 적용한다.
 
-하위 `AGENTS.md`는 경로별 규칙을 추가할 수 있지만 이 파일과 `/docs`의 Canonical 계약을 약화시키면 안 된다.
+하위 `AGENTS.md`는 경로별 규칙을 추가할 수 있지만 이 파일의 현재 제품 요구 우선순위와 안전·ownership 규칙을 약화시키면 안 된다.
 
 ## Authority
 
-* 코딩 기준은 현재 저장소 `/docs`의 Canonical snapshot이다.
+* Repository는 `solar-ai-dev/google-work-agent`, 작업 브랜치는 `product/issue-181-runtime-closure`다. 모든 작업은 현재 remote/local HEAD와 working tree를 확인한 뒤 그 상태를 기준으로 진행한다.
+* 과거 SHA, 이전 완료 보고, 닫힌 Issue는 참고 자료일 뿐 작업 기준점이나 STOP 조건이 아니다. 과거 SHA로 reset/revert하지 않는다.
+* 현재 제품 코드와 실제 동작을 우선 확인한다. 기존 Canonical과 현재 제품 요구가 충돌하면 이번 제품 요구를 구현하고, 최종 단계에서 Canonical을 실제 제품에 맞춰 동기화한다. 충돌과 필요한 계약 변경은 명시한다.
 * 항상 `00 Project Source Guide`에서 Concern Owner와 선행 읽기 순서를 먼저 확인한다.
 * behavior는 해당 Concern Owner가 소유하고, repository path/file/symbol/import/single-authority 규칙은 `16 Repository Architecture`가 소유한다.
-* 현재 코드, 기존 테스트, Git history, 기존 파일명은 설계 Authority가 아니다. migration input이다.
-* 현재 구현에서 target architecture를 역추론하지 않는다.
-* 문서에 없는 state, lifecycle, owner, Port, operation, contract/type을 임의로 만들지 않는다.
+* 기존 owner, Port, typed contract, LangGraph 구조와 single production authority를 최대한 재사용한다. 현재 구현만으로 새로운 target architecture를 추측하거나 state, lifecycle, owner, Port, operation, contract/type을 임의로 만들지 않는다.
 * 적용된 Migration은 수정하지 않는다. 필요한 DB 변경은 forward Migration으로 추가한다.
 
 ## Current Work Mode
 
-현재 작업은 일반적인 behavior-preserving refactor가 아니라 **Canonical design에 기존 구현을 reconciliation하는 migration**이다.
+현재 작업은 **현재 제품의 실제 결함을 최소 수정하는 제품 완성 작업**이다. Canonical reconciliation을 이유로 기능 수정을 구조 전체 리팩터링으로 확대하지 않는다.
 
-* 잘못된 기존 구조나 behavior는 기존 코드라는 이유로 보존하지 않는다.
-* Canonical과 이미 일치하는 구현은 불필요하게 rewrite하지 않는다.
+* 실제 결함이 확인된 경우에만 필요한 부분을 최소 수정한다.
+* 이미 정상인 기능은 다시 만들거나 불필요하게 rewrite하지 않는다.
 * 작업 단위는 파일이 아니라 **semantic capability**다.
-* 새 구현을 추가하는 것보다 기존 authority를 canonical authority로 교체하는 것을 우선한다.
+* 새 구현·authority를 추가하기보다 기존 production owner에서 결함을 닫는 것을 우선한다.
 
 ## Work Procedure
 
 각 capability의 구현은 다음 순서로 처리하고, 테스트 실행은 아래 프롬프트 단위 검증 순서로 모은다.
 
 ```text
-SPEC
-→ Canonical Owner 확인
+현재 HEAD / working tree / 제품 요구 확인
+→ 기존 Owner와 Canonical 계약 확인 (충돌 시 현재 제품 요구 우선)
 → 기존 implementation / caller / test / DI 검색
 → KEEP | MOVE | MERGE | REWRITE | DELETE | CREATE 판정
-→ canonical implementation으로 cut-over
-→ production caller 전환
-→ old authority / import / export 제거
+→ 확인된 결함 최소 수정 (교체가 필요한 경우만 cut-over)
+→ production caller / consumer 연결 확인
+→ 이번 교체로 불필요해진 old authority / import / export만 제거
 → 관련 계약·테스트 코드 갱신 (실행은 프롬프트 단위로 일괄)
 ```
 
@@ -104,13 +104,14 @@ Canonical은 기존 구조 위에 추가되는 새 계층이 아니다.
 ## Tests / Gates
 
 * 기본 검증 단위는 개별 기능이나 파일이 아니라 사용자가 전달한 한 프롬프트의 작업 범위다. 구현 전 production path와 기존 테스트를 조사하고, 계약·테스트 코드는 구현과 함께 갱신한다.
-* 해당 프롬프트 범위의 구현을 마친 뒤 직접 영향 자동 테스트와 typing/lint/관련 architecture gate를 일괄 실행한다. 통과 후 실제 앱 E2E → 필요한 수정 → 실패 시나리오와 직접 영향 경로 재검증 순서로 진행한다.
+* 해당 프롬프트 범위의 구현을 마친 뒤 직접 영향 자동 테스트와 typing/lint/관련 architecture gate를 일괄 실행한다. 자동 테스트만으로 제품 PASS를 선언하지 않는다. 작업에 적합한 production LangGraph 실행 스크립트, 실제 Local LLM, 실제 MCP/Provider, 실제 Browser 검증 → 필요한 수정 → 실패 시나리오와 직접 영향 경로 재검증 순서로 진행한다.
+* 일부 Live Provider, Credential, Device Flow, signing key 등의 외부 조건이 없어 특정 검증을 못 해도 작업 전체를 중단하지 않는다. 가능한 구현·테스트·제품 검증은 계속하고, 실제 secret/private key 등 필수 외부 조건이 없어 수행할 수 없는 최종 검증만 BLOCKED로 분리한다. 미수행 검증을 PASS로 쓰지 않는다.
 * 개별 기능 수정마다 같은 테스트 묶음, 앱 재시작, 전체 E2E를 반복하지 않는다. 전체 회귀는 별도로 지정된 최종 단계에서 수행한다.
 * 이미 확인된 검증 실패나 안전성 문제가 있으면 기능 범위를 확장하지 않고 원인 수정에 집중한다. 검증을 뒤로 모으는 것은 검사 기준을 낮추거나 미검증 결과를 PASS로 간주한다는 뜻이 아니다.
-* 사용자가 커밋을 허용한 작업에서는 기능 경계별 coherent commit을 유지할 수 있다. 테스트 전 커밋은 검증 대기이며, 필수 검증을 마치기 전에는 기능이나 프롬프트 작업의 완료를 선언하지 않는다.
+* 기능 경계별 coherent commit을 유지하고 각 프롬프트 작업 완료 후 commit/push한다. 테스트 전 커밋은 검증 대기다. 가능한 검증을 마쳤더라도 외부 조건 때문에 남은 검증은 별도로 표시하며 전체 검증 완료로 과장하지 않는다.
 * 현재 Product Runtime Closure 작업에서는 실제 앱 E2E만 마지막 8/8로 모은다. 노드 입출력 계약 테스트는 반드시 수행하고, 필요한 pytest·API 테스트와 typing/lint·architecture gate는 중간에도 직접 영향 범위로 실행한다. 특히 WRITE는 노드 간 입력값·출력 형식, 승인 인자와 실행 인자의 보존, 실행 안전 경계를 검증한다. 같은 대형 테스트 묶음은 매 수정마다 반복하지 않는다. E2E 전에는 `구현 완료·E2E 검증 대기`로 구분하며, 제공되지 않은 후속 단계의 범위를 임의로 만들지 않는다.
-* 기존 테스트도 Authority가 아니다. Canonical behavior와 invariant를 검증해야 한다.
-* 기존 테스트가 Canonical과 충돌하면 KEEP | REWRITE | DELETE를 판정한다.
+* 기존 테스트도 제품 요구의 Authority가 아니다. 현재 제품 요구와 safety/state invariant를 검증해야 한다.
+* 기존 테스트와 현재 제품 요구가 충돌하면 KEEP | REWRITE | DELETE를 판정하되, 결함을 숨기거나 구조 위반을 정당화하기 위해 검사나 enforcement를 완화하지 않는다.
 * 테스트는 observable behavior, state transition, safety invariant, external effect를 우선 검증한다.
 * production source 문자열이나 private method 내부 구현을 직접 검사하는 테스트는 피한다.
 * 테스트 파일끼리 private helper를 import하지 않는다. 반복되는 fixture/fake는 `tests/support` 또는 `tests/fakes`로 이동한다.
@@ -133,12 +134,13 @@ duplicate production authority        = 0
 
 Capability는 다음을 만족해야 완료다.
 
-* canonical authority 존재
-* production caller가 canonical authority 사용
+* 현재 제품 요구를 만족하는 단일 production authority 존재
+* production caller가 해당 authority 사용
 * duplicate writer/authority 0
 * 불필요한 old caller/import/export 제거
 * temporary compatibility 제거 또는 명시적 미완료 dependency만 존재
-* 관련 Canonical tests 통과
+* 직접 영향 테스트와 architecture/type/lint 검사 통과
+* 적합한 제품 검증 결과와 미검증 항목 구분; Canonical 동기화는 최종 단계에서 수행
 * safety/state/transaction invariant 유지
 
 새 구현을 추가한 것만으로 완료가 아니다.
@@ -150,7 +152,7 @@ Capability는 다음을 만족해야 완료다.
 * 사용자의 상시 승인에 따라 각 프롬프트 작업 완료 시 해당 범위의 검증된 변경을 coherent commit으로 커밋하고 현재 작업 브랜치에 push한다. 완료 보고 전에 local/remote HEAD 일치와 untracked를 포함한 working tree를 확인한다.
 * 미완료 작업이나 다른 작업자의 변경을 완료 범위에 섞어 커밋하지 않는다. push 실패·remote 충돌은 보고하고, 별도 승인 없이 force push, merge, rebase, branch switch, destructive Git operation을 하지 않는다.
 * 관련 없는 cleanup, formatting-only 대형 diff, dependency-wide upgrade를 만들지 않는다.
-* 다른 작업자의 변경을 임의로 되돌리지 않는다.
+* working tree에 기존 변경이 있으면 먼저 내용을 확인하고 보존한다. 다른 작업자의 변경을 임의 삭제·clean·discard하거나 되돌리지 않는다.
 * 저장소에서 확인 가능한 내용을 사용자에게 다시 묻지 않는다.
 
 ## Completion Report
@@ -160,6 +162,7 @@ Capability는 다음을 만족해야 완료다.
 * 변경한 capability
 * cut-over / 삭제한 legacy authority
 * 테스트·Gate 결과
-* 남은 실제 blocker 또는 명시적 migration dependency
+* DONE / TESTED / PENDING / BLOCKED를 구분한다. DONE은 구현 완료, TESTED는 실제 수행한 검증, PENDING은 남은 작업·미검증, BLOCKED는 필수 외부 조건 부재로 수행 불가능한 최종 검증이다.
+* commit/push 결과와 local/remote HEAD 일치 여부, 남은 working tree 변경
 
 별도 status/report 문서는 사용자가 요청하지 않으면 만들지 않는다.
