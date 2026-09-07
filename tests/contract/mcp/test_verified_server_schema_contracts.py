@@ -10,7 +10,7 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
 from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
     entrypoint as verified_server,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 
 def test_invalid_input__is_rejected__before_handler_dispatch(

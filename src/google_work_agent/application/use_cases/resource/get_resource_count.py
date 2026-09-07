@@ -16,6 +16,8 @@ from google_work_agent.ports.connector.connector_failure import (
 from google_work_agent.ports.connector.contracts.google_workspace import (
     DEFAULT_CALENDAR_ID,
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
 )
 

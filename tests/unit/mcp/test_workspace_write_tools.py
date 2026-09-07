@@ -17,7 +17,7 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server.credentia
     GoogleOAuthSettings,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 SESSION_KEY = "11" * 32
 SERVICE_INSTANCE_ID = "svc-test-1"
@@ -220,16 +220,22 @@ def test_gmail_send__dispatches_with__valid_claim(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize("wrong", [None, "thread", "message", "subject", "references"])
 def test_gmail_reply__binds_original_headers__before_one_send(
-    monkeypatch: pytest.MonkeyPatch, wrong: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    wrong: str | None,
 ) -> None:
     from email import policy
     from email.parser import BytesParser
 
     writes: list[dict[str, object]] = []
     payload: dict[str, object] = {
-        "to": ["person@example.com"], "cc": [], "bcc": [],
-        "subject": "회의 결과", "body": "검토했습니다.", "thread_id": "thread-1",
-        "in_reply_to": "<original@example.com>", "references": "<original@example.com>",
+        "to": ["person@example.com"],
+        "cc": [],
+        "bcc": [],
+        "subject": "회의 결과",
+        "body": "검토했습니다.",
+        "thread_id": "thread-1",
+        "in_reply_to": "<original@example.com>",
+        "references": "<original@example.com>",
     }
     if wrong == "references":
         payload["references"] = "<different@example.com>"
@@ -237,11 +243,24 @@ def test_gmail_reply__binds_original_headers__before_one_send(
     def read(*args: object, **kwargs: object) -> dict[str, object]:
         return {
             "id": "wrong" if wrong == "thread" else "thread-1",
-            "messages": [{"payload": {"headers": [
-                {"name": "Message-ID", "value": "<wrong@example.com>" if wrong == "message"
-                 else "<original@example.com>"},
-                {"name": "Subject", "value": "다른 제목" if wrong == "subject" else "회의 결과"},
-            ]}}],
+            "messages": [
+                {
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<wrong@example.com>"
+                                if wrong == "message"
+                                else "<original@example.com>",
+                            },
+                            {
+                                "name": "Subject",
+                                "value": "다른 제목" if wrong == "subject" else "회의 결과",
+                            },
+                        ]
+                    }
+                }
+            ],
         }
 
     def write(state: object, url: str, body: dict[str, object]) -> dict[str, object]:
@@ -262,12 +281,14 @@ def test_gmail_reply__binds_original_headers__before_one_send(
     claim = _build_claim(state=state, tool_name="gmail_send", execution_arguments=arguments)
     if wrong:
         with pytest.raises(server._WorkspaceToolError, match="INVALID_ARGUMENT"):
-            verified_server._tool_call(state, tool_name="gmail_send",
-                                       arguments={**arguments, "claim_context": claim})
+            verified_server._tool_call(
+                state, tool_name="gmail_send", arguments={**arguments, "claim_context": claim}
+            )
         assert writes == []
     else:
-        verified_server._tool_call(state, tool_name="gmail_send",
-                                   arguments={**arguments, "claim_context": claim})
+        verified_server._tool_call(
+            state, tool_name="gmail_send", arguments={**arguments, "claim_context": claim}
+        )
         assert len(writes) == 1
 
 
@@ -277,8 +298,9 @@ def test_gmail_send__legacy_id_only__cannot_dispatch(monkeypatch: pytest.MonkeyP
     args: dict[str, object] = {"draft_id": "draft-1"}
     claim = _build_claim(state=state, tool_name="gmail_send", execution_arguments=args)
     with pytest.raises(verified_server._VerifiedToolContractError, match="INVALID_ARGUMENT"):
-        verified_server._tool_call(state, tool_name="gmail_send",
-                                   arguments={**args, "claim_context": claim})
+        verified_server._tool_call(
+            state, tool_name="gmail_send", arguments={**args, "claim_context": claim}
+        )
 
 
 def test_gmail_get__draft_reads__without_a_claim(monkeypatch: pytest.MonkeyPatch) -> None:

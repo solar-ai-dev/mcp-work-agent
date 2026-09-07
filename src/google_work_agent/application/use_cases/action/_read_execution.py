@@ -26,10 +26,12 @@ from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.evidence.model import EvidenceOriginType
 from google_work_agent.ports.connector.contracts.google_workspace import (
     FreeBusyCalendar,
+    TimeRange,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
-    TimeRange,
 )
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 

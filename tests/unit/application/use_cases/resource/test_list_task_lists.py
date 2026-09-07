@@ -4,15 +4,15 @@ from collections.abc import Callable, Iterator
 
 import pytest
 
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
 from google_work_agent.application.use_cases.resource.list_task_lists import (
     ListTaskListsHandler,
     ListTaskListsQuery,
-)
-from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
 )
 from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
@@ -55,7 +55,7 @@ def _tokens(values: Iterator[str]) -> Callable[[], str]:
 
 def test_task_list__continuation_is_local__and_principal_bound() -> None:
     read = _TaskListRead()
-    store = LocalResourceContinuationStore(token_factory=_tokens(iter(("local-task-lists",))))
+    store = InMemoryResourceContinuationAdapter(token_factory=_tokens(iter(("local-task-lists",))))
     handler = ListTaskListsHandler(
         connector_read=read,
         registry=load_signed_tool_registry(),

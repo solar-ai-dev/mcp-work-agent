@@ -5,7 +5,7 @@ from __future__ import annotations
 from google_work_agent.adapters.connectors.github.github.mcp_server.github_api import (
     GitHubApiClient,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 from .get_issue import ensure_target_is_issue
 from .issue_contract import (

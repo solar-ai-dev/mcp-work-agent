@@ -25,7 +25,7 @@ from google_work_agent.application.use_cases.resource.resolve_selection_handle i
     ResolveSelectionHandle,
     ResolveSelectionHandleQuery,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,

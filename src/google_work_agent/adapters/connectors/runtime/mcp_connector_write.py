@@ -12,7 +12,7 @@ from google_work_agent.ports.connector.connector_write_port import (
     ConnectorWritePort,
     ConnectorWriteResultV1,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )

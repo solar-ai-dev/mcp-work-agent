@@ -16,6 +16,8 @@ from google_work_agent.application.use_cases.resource.list_resources import (
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GmailAttachmentMetadata,
     GmailThreadDetail,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
 )
 

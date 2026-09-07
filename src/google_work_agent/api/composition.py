@@ -127,6 +127,9 @@ from google_work_agent.adapters.system.filesystem_operational_command_replay imp
     FilesystemOperationalCommandReplayAdapter,
 )
 from google_work_agent.adapters.system.json_settings import FileSettingsStore, JsonSettingsAdapter
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.adapters.system.memory.run_retrieval_cache import InMemoryRunRetrievalCache
 from google_work_agent.adapters.system.memory.sse_event_buffer import InMemorySseEventBuffer
 from google_work_agent.adapters.system.process_component_circuit_state import (
@@ -345,7 +348,6 @@ from google_work_agent.application.use_cases.resource.list_repositories import (
 from google_work_agent.application.use_cases.resource.list_resources import ListResourcesHandler
 from google_work_agent.application.use_cases.resource.list_task_lists import ListTaskListsHandler
 from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
     OpaqueConnectorResourceAccess,
 )
 from google_work_agent.application.use_cases.resource.require_resource_selection import (
@@ -463,6 +465,8 @@ from google_work_agent.ports.connector.connector_write_port import ConnectorWrit
 from google_work_agent.ports.connector.contracts.google_workspace import (
     DEFAULT_CALENDAR_ID,
     DEFAULT_TASK_LIST_ID,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
 )
 from google_work_agent.ports.connector.mcp_client_port import MCPClientPort, MCPClientPortError
@@ -2515,7 +2519,7 @@ def build_production_runtime(
     list_repositories = ListRepositoriesHandler(
         connector_read=connector_reader,
         binding=github_internal_read_binding("github.repositories.list"),
-        continuation_store=LocalResourceContinuationStore(),
+        continuation_store=InMemoryResourceContinuationAdapter(),
     )
     get_repository_access = GetRepositoryAccessHandler(
         list_repositories=list_repositories,
@@ -3036,7 +3040,7 @@ def build_production_runtime(
         supported_restore_schema_versions=("0018", actual_database_migration_version),
     )
 
-    resource_continuations = LocalResourceContinuationStore(now_ms=clock.now_ms)
+    resource_continuations = InMemoryResourceContinuationAdapter(now_ms=clock.now_ms)
     resource_access = OpaqueConnectorResourceAccess(
         ConnectorResourceAccess(
             gateway=read_projection,

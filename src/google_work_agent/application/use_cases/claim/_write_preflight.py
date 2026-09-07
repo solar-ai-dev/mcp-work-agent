@@ -81,6 +81,8 @@ from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceRefRecord
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )

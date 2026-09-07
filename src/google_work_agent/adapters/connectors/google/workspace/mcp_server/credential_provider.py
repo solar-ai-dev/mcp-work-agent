@@ -41,7 +41,7 @@ from google_work_agent.adapters.system.filesystem_attachment_staging import (
     FilesystemAttachmentStagingAdapter,
     StagedAttachmentDescriptorV1,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 from google_work_agent.ports.keyring.secret_store_port import SecretStorePort
 
@@ -408,10 +408,14 @@ def _gmail_message_content(message: dict[str, object]) -> dict[str, object]:
     body = _gmail_message_body(message)
     mime_payload = message.get("payload")
     mime_body = mime_payload.get("body") if isinstance(mime_payload, dict) else None
-    if (body is None and isinstance(mime_payload, dict)
-            and mime_payload.get("mimeType") == "text/plain"
-            and isinstance(mime_body, dict) and mime_body.get("size") == 0
-            and mime_body.get("data") in (None, "")):
+    if (
+        body is None
+        and isinstance(mime_payload, dict)
+        and mime_payload.get("mimeType") == "text/plain"
+        and isinstance(mime_body, dict)
+        and mime_body.get("size") == 0
+        and mime_body.get("data") in (None, "")
+    ):
         body = ""
     return {
         "subject": (
@@ -431,8 +435,10 @@ def _gmail_message_content(message: dict[str, object]) -> dict[str, object]:
 
 
 def _validate_gmail_reply(
-    state: GoogleWorkspaceCredentialProvider, payload: dict[str, object],
-    *, existing_draft_id: str | None = None,
+    state: GoogleWorkspaceCredentialProvider,
+    payload: dict[str, object],
+    *,
+    existing_draft_id: str | None = None,
 ) -> None:
     thread_id = _optional_text(payload.get("thread_id"))
     reply_id = _optional_text(payload.get("in_reply_to"))
@@ -449,8 +455,11 @@ def _validate_gmail_reply(
             {"format": "metadata"},
         )
         message = draft.get("message")
-        if (draft.get("id") == existing_draft_id and isinstance(message, dict)
-                and message.get("threadId") == thread_id):
+        if (
+            draft.get("id") == existing_draft_id
+            and isinstance(message, dict)
+            and message.get("threadId") == thread_id
+        ):
             return
         raise _WorkspaceToolError("INVALID_ARGUMENT")
     if not reply_id or not references or reply_id not in references.split():
@@ -461,7 +470,8 @@ def _validate_gmail_reply(
         {"format": "metadata"},
     )
     matching = [
-        _headers(message) for message in _object_list(thread.get("messages"))
+        _headers(message)
+        for message in _object_list(thread.get("messages"))
         if _headers(message).get("message-id") == reply_id
     ]
     if thread.get("id") != thread_id or len(matching) != 1:

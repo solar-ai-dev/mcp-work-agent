@@ -4,15 +4,15 @@ from collections.abc import Callable, Iterator
 
 import pytest
 
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
 from google_work_agent.application.use_cases.resource.list_calendars import (
     ListCalendarsHandler,
     ListCalendarsQuery,
-)
-from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
 )
 from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
@@ -58,7 +58,7 @@ def test_calendar_list__continuation_is_local__and_principal_bound() -> None:
     handler = ListCalendarsHandler(
         connector_read=read,
         registry=load_signed_tool_registry(),
-        continuation_store=LocalResourceContinuationStore(
+        continuation_store=InMemoryResourceContinuationAdapter(
             token_factory=_tokens(iter(("local-calendars",)))
         ),
     )

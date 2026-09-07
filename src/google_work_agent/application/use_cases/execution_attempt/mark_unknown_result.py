@@ -26,7 +26,7 @@ from google_work_agent.domain.execution_attempt.transitions.mark_unknown_result 
 )
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.trace_event.model import TraceEvent as TraceEventRecord
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 
 

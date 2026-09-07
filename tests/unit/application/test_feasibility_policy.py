@@ -19,9 +19,11 @@ from google_work_agent.application.use_cases.action.feasibility import (
 from google_work_agent.domain.action.model import PolicyViolationError
 from google_work_agent.ports.connector.contracts.google_workspace import (
     FreeBusyCalendar,
+    TimeRange,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceType,
-    TimeRange,
 )
 
 NOW = datetime.fromisoformat("2026-08-12T09:00:00+09:00")

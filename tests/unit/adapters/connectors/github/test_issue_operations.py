@@ -45,7 +45,7 @@ from google_work_agent.adapters.connectors.github.issues.issues.search_by_recove
 from google_work_agent.adapters.connectors.github.issues.issues.update_issue import (
     UpdateIssueOperation,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 
 class _Credentials(GitHubCredentialProvider):

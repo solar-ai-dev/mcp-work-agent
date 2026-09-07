@@ -8,7 +8,7 @@ from typing import NoReturn, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 from .credential_provider import GitHubCredentialProvider
 from .oauth_device_flow import GitHubReauthenticationRequired

@@ -102,8 +102,10 @@ from google_work_agent.ports.connector.connector_failure import (
     ConnectorOperationFailure,
 )
 from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.delivery_certainty import (
     DeliveryCertainty,
+)
+from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
 )

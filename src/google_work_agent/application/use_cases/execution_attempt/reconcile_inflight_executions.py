@@ -35,8 +35,10 @@ from google_work_agent.application.use_cases.run.resume_confirmation import Resu
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.delivery_certainty import (
     DeliveryCertainty,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
 )
 from google_work_agent.ports.persistence.execution_attempt_repository import (

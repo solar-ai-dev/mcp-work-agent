@@ -69,7 +69,7 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
     VerifyEffectHandler,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )

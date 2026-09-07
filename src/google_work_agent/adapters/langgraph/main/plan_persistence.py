@@ -57,7 +57,7 @@ from google_work_agent.application.use_cases.verification.write_verification_pro
     build_expected_verification_projection,
 )
 from google_work_agent.domain.evidence.model import EvidenceOriginType
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
@@ -253,8 +253,8 @@ class PlanPersistenceMixin:
 
         evidence_drafts: dict[str, Mapping[str, object]] = {}
         for item in project_current_action_evidence(
-                state=state,
-                evidence_store=self._evidence_store,
+            state=state,
+            evidence_store=self._evidence_store,
         ):
             evidence_id = item.get("evidence_id")
             if not isinstance(evidence_id, str) or not evidence_id:
@@ -309,7 +309,8 @@ class PlanPersistenceMixin:
                         evidence_duplicate_risk(
                             arguments=action["arguments"],
                             acquisition_result=_require_state_value(
-                                acquisition, "acquisition_result",
+                                acquisition,
+                                "acquisition_result",
                             ),
                             checked_at_ms=self._now_ms(),
                         )
@@ -541,8 +542,7 @@ class PlanPersistenceMixin:
             resource_id=str(resource["resource_id"]),
             parent_id=cast(str | None, resource.get("parent_id")),
             related_resource_ids=tuple(
-                str(item)
-                for item in cast(list[object], resource.get("related_resource_ids") or [])
+                str(item) for item in cast(list[object], resource.get("related_resource_ids") or [])
             ),
             version=str(resource.get("version") or ""),
             recovery_fingerprint=cast(str | None, resource.get("recovery_fingerprint")),

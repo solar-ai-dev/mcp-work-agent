@@ -1,4 +1,4 @@
-"""Bounded user-facing facts for observed semantic Agent subgraph steps."""
+"""Resolve user-facing facts for observed semantic Agent steps."""
 
 from dataclasses import dataclass
 
@@ -85,7 +85,10 @@ _COMPOSITE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
 }
 
 
-def resolve_activity_step(responsibility: str, node: str) -> ActivityStepPresentation | None:
+def resolve_activity_step(
+    responsibility: str,
+    node: str,
+) -> ActivityStepPresentation | None:
     direct = _STEPS.get((responsibility, node))
     if direct is not None:
         return direct

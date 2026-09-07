@@ -8,7 +8,7 @@ from google_work_agent.application.use_cases.execution_attempt import (
     reconcile_inflight_executions,
 )
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.persistence.execution_attempt_repository import (
     ExecutionReconciliationCandidateV1,
 )
@@ -99,9 +99,14 @@ def test_startup_drain__continues_short_batches__until_durable_progress_stops() 
 
 
 def test_startup_drain__bounds_nonquiescent_handler__without_silent_success() -> None:
-    handler = Mock(return_value=reconcile_inflight_executions.ReconcileInflightExecutionsResult(
-        1, 1, 1, False,
-    ))
+    handler = Mock(
+        return_value=reconcile_inflight_executions.ReconcileInflightExecutionsResult(
+            1,
+            1,
+            1,
+            False,
+        )
+    )
     with pytest.raises(RuntimeError, match="did not reach quiescence"):
         reconcile_inflight_executions.drain_inflight_executions_to_quiescence(handler, max_passes=3)
     assert handler.call_count == 3

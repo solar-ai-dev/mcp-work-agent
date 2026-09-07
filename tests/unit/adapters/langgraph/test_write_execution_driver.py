@@ -51,6 +51,8 @@ from google_work_agent.ports.connector.connector_write_port import ConnectorWrit
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )

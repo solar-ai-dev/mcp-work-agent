@@ -13,6 +13,8 @@ from google_work_agent.domain.action.model import PolicyViolationError
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
@@ -112,9 +114,12 @@ def test_fresh_check__has_no__date_window() -> None:
 def test_legacy_due__fails_closed_before__duplicate_read() -> None:
     gateway = _PagedGateway({})
     with pytest.raises(PolicyViolationError, match="new plan and approval"):
-        TaskDuplicateValidator(gateway=gateway, now_ms=lambda: 123).fresh_risk({
-            "task_list_id": "list-1", "payload": {"title": "Send summary", "due": "2026-09-07"},
-        })
+        TaskDuplicateValidator(gateway=gateway, now_ms=lambda: 123).fresh_risk(
+            {
+                "task_list_id": "list-1",
+                "payload": {"title": "Send summary", "due": "2026-09-07"},
+            }
+        )
     assert gateway.calls == []
 
 
@@ -123,10 +128,21 @@ def test_evidence_and_fresh_check__agree_on__canonical_scheduled_date() -> None:
     arguments = _arguments(scheduled_date="2026-09-07")
     evidence = evidence_duplicate_risk(
         arguments=arguments,
-        acquisition_result={"source_summaries": [{"source": "TASKS", "resources": [{
-            "resource_type": "task", "resource_id": snapshot.resource_id,
-            "parent_id": snapshot.parent_id, "payload": snapshot.payload,
-        }]}]},
+        acquisition_result={
+            "source_summaries": [
+                {
+                    "source": "TASKS",
+                    "resources": [
+                        {
+                            "resource_type": "task",
+                            "resource_id": snapshot.resource_id,
+                            "parent_id": snapshot.parent_id,
+                            "payload": snapshot.payload,
+                        }
+                    ],
+                }
+            ]
+        },
         checked_at_ms=123,
     )
     gateway = _PagedGateway({None: ResourcePage(items=(snapshot,), next_page_token=None)})

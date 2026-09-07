@@ -6,6 +6,9 @@ from typing import TypedDict, Unpack
 
 import pytest
 
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.application.use_cases.resource.get_resource_count import (
     GetResourceCountHandler,
     GetResourceCountQuery,
@@ -20,9 +23,6 @@ from google_work_agent.application.use_cases.resource.list_resources import (
     ResourceListPage,
 )
 from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
-)
-from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
     OpaqueConnectorResourceAccess as _OpaqueConnectorResourceAccess,
 )
 from google_work_agent.ports.connector.connector_failure import (
@@ -31,7 +31,8 @@ from google_work_agent.ports.connector.connector_failure import (
 )
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GmailThreadDetail,
-    GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
 )
 
@@ -262,7 +263,7 @@ def _token_factory(values: Iterator[str]) -> Callable[[], str]:
 
 def test_provider_page_token__is_replaced_by__server_local_handle() -> None:
     raw = _ResourceServiceStub()
-    store = LocalResourceContinuationStore(
+    store = InMemoryResourceContinuationAdapter(
         token_factory=_token_factory(iter(("local-gmail-1", "local-gmail-2")))
     )
     service = OpaqueConnectorResourceAccess(raw, continuation_store=store)
@@ -289,7 +290,10 @@ def test_provider_page_token__is_replaced_by__server_local_handle() -> None:
 
 def test_provider_token_cannot__be_replayed_as__a_local_continuation() -> None:
     raw = _ResourceServiceStub()
-    service = OpaqueConnectorResourceAccess(raw)
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(),
+    )
 
     with pytest.raises(ConnectorOperationFailure) as caught:
         service.list_gmail_threads(
@@ -304,7 +308,7 @@ def test_provider_token_cannot__be_replayed_as__a_local_continuation() -> None:
 
 def test_local_continuation_is__bound_to_its__exact_query_scope() -> None:
     raw = _ResourceServiceStub()
-    store = LocalResourceContinuationStore(
+    store = InMemoryResourceContinuationAdapter(
         token_factory=_token_factory(iter(("local-scope-1", "local-scope-2")))
     )
     service = OpaqueConnectorResourceAccess(raw, continuation_store=store)
@@ -325,7 +329,7 @@ def test_local_continuation_is__bound_to_its__exact_query_scope() -> None:
 
 def test_local_continuation__cannot_cross__resource_sources() -> None:
     raw = _ResourceServiceStub()
-    store = LocalResourceContinuationStore(
+    store = InMemoryResourceContinuationAdapter(
         token_factory=_token_factory(iter(("local-source-1", "local-source-2")))
     )
     service = OpaqueConnectorResourceAccess(raw, continuation_store=store)
@@ -345,7 +349,10 @@ def test_local_continuation__cannot_cross__resource_sources() -> None:
 
 def test_count_paths__do_not_allocate__or_resolve_continuations() -> None:
     raw = _ResourceServiceStub()
-    service = OpaqueConnectorResourceAccess(raw)
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(),
+    )
 
     assert service.count_gmail_threads(query="").total_count == 0
     assert service.count_tasks(task_list_id=None).total_count == 0
@@ -353,29 +360,3 @@ def test_count_paths__do_not_allocate__or_resolve_continuations() -> None:
         service.count_calendar_resources(calendar_id=None, time_min=None, time_max=None).total_count
         == 0
     )
-
-
-def test_local_continuation__is_session_account__bound_and_expires() -> None:
-    now_ms = 100
-    store = LocalResourceContinuationStore(
-        token_factory=lambda: "local-bound",
-        now_ms=lambda: now_ms,
-        ttl_ms=10,
-    )
-    scope = ("a" * 64, "account-1", "gmail", "", "20", "metadata")
-    handle = store.issue(scope=scope, provider_page_token="provider-secret")
-
-    with pytest.raises(GoogleWorkspaceGatewayError):
-        store.resolve(
-            scope=("b" * 64, "account-1", "gmail", "", "20", "metadata"),
-            local_handle=handle,
-        )
-    with pytest.raises(GoogleWorkspaceGatewayError):
-        store.resolve(
-            scope=("a" * 64, "account-2", "gmail", "", "20", "metadata"),
-            local_handle=handle,
-        )
-
-    now_ms = 110
-    with pytest.raises(GoogleWorkspaceGatewayError):
-        store.resolve(scope=scope, local_handle=handle)

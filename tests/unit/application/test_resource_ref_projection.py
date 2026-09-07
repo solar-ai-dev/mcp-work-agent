@@ -6,7 +6,7 @@ from google_work_agent.application.use_cases.resource_ref.resource_ref_projectio
     is_durable_resource_type,
     resource_ref_from_snapshot,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )

@@ -3,15 +3,15 @@ from typing import Any, cast
 
 import pytest
 
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.application.use_cases.resource.get_repository_access import (
     GetRepositoryAccessHandler,
     GetRepositoryAccessQuery,
 )
 from google_work_agent.application.use_cases.resource.list_repositories import (
     ListRepositoriesHandler,
-)
-from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
 )
 from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
 from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
@@ -34,7 +34,7 @@ def test_repository_access__current_identity__rejects_stale_default(
     listing = ListRepositoriesHandler(
         connector_read=cast(Any, reader),
         binding=cast(Any, None),
-        continuation_store=LocalResourceContinuationStore(),
+        continuation_store=InMemoryResourceContinuationAdapter(),
     )
     handler = GetRepositoryAccessHandler(
         list_repositories=listing, current_account_id=lambda: "github:1"

@@ -33,7 +33,7 @@ from google_work_agent.ports.connector.connector_read_port import (
     ConnectorReadResultV1,
     JsonValue,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import ResourceType
+from google_work_agent.ports.connector.contracts.resource_snapshot import ResourceType
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )

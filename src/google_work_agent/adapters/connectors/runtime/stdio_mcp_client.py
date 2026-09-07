@@ -21,7 +21,7 @@ from typing import Any, Literal, cast
 from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
     ConnectorRuntimeRegistry,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.connector.mcp_client_port import (
     JsonValue,
     MCPClientPortError,

@@ -19,7 +19,7 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
     load_signed_tool_registry,
 )
 from google_work_agent.ports.connector.connector_read_port import JsonValue
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.connector.mcp_client_port import (
     MCPClientPortError,
     MCPClientPortErrorCode,
@@ -53,9 +53,7 @@ class _Client:
         assert connector_id == "google_workspace"
         return self.process_id
 
-    def sign_claim_context(
-        self, connector_id: str, payload: dict[str, object]
-    ) -> str:
+    def sign_claim_context(self, connector_id: str, payload: dict[str, object]) -> str:
         self.sign_calls += 1
         assert connector_id == "google_workspace"
         assert payload["mcp_process_instance_id"] == self.process_id

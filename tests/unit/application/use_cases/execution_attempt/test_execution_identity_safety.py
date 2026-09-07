@@ -39,7 +39,7 @@ from google_work_agent.domain.execution_attempt.model import (
 from google_work_agent.domain.plan.model import Plan, PlanStatusV1
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.run.model import Run, RunStatusV1
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 
 class _Repository:
@@ -260,10 +260,15 @@ def test_legacy_calendar_expectation__cannot_skip_approved_fields__before_verifi
     )
     unit_of_work = _UnitOfWork(
         action=action,
-        approval=replace(_approval(), arguments_snapshot_json=dumps({
-            "calendar_id": "calendar-1",
-            "payload": {"title": "Review", "attendees": ["a@example.com"]},
-        })),
+        approval=replace(
+            _approval(),
+            arguments_snapshot_json=dumps(
+                {
+                    "calendar_id": "calendar-1",
+                    "payload": {"title": "Review", "attendees": ["a@example.com"]},
+                }
+            ),
+        ),
         attempt=_attempt(ExecutionAttemptStatusV1.SUCCEEDED),
     )
     handler = VerifyEffectHandler(

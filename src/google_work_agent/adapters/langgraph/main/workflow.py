@@ -281,6 +281,8 @@ from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceR
 from google_work_agent.domain.run.model import RunStatusV1
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )

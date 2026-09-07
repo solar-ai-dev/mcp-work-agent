@@ -22,7 +22,7 @@ from google_work_agent.adapters.system.filesystem_attachment_staging import (
     FilesystemAttachmentStagingAdapter,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.system.attachment_staging_port import (
     StagedAttachmentDescriptorV1,
 )

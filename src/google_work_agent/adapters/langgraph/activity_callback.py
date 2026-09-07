@@ -9,14 +9,14 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphInterrupt
 
-from google_work_agent.adapters.langgraph.activity_step_registry import (
-    ActivityStepPresentation,
-    resolve_activity_step,
-)
 from google_work_agent.application.use_cases.trace_event.record_run_activity import (
     ACTIVITY_ROLES,
     RecordRunActivityCommand,
     RecordRunActivityHandler,
+)
+from google_work_agent.application.use_cases.trace_event.resolve_activity_step import (
+    ActivityStepPresentation,
+    resolve_activity_step,
 )
 
 _LOGGER = logging.getLogger(__name__)

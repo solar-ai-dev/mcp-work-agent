@@ -36,7 +36,7 @@ from google_work_agent.domain.run.transitions.complete_answer_only_run import (
     transition_complete_answer_only_run,
 )
 from google_work_agent.domain.trace_event.model import TraceEvent as TraceEventRecord
-from google_work_agent.ports.connector.contracts.google_workspace import ResourceType
+from google_work_agent.ports.connector.contracts.resource_snapshot import ResourceType
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 
 

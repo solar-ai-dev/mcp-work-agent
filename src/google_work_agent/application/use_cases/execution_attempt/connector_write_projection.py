@@ -16,7 +16,7 @@ from google_work_agent.application.use_cases.resource.connector_read_projection 
     ConnectorReadProjection,
 )
 from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )

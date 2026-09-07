@@ -13,7 +13,7 @@ from google_work_agent.application.use_cases.action.task_duplicate_policy import
     normalize_scheduled_date,
 )
 from google_work_agent.domain.action.model import PolicyViolationError, normalize_action_risk
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,

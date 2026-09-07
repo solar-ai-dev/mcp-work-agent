@@ -8,6 +8,9 @@ from typing import Protocol
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+from google_work_agent.application.use_cases.resource.normalize_continuation_error import (
+    normalize_resource_continuation_error,
+)
 from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
     strip_resource_recovery_marker,
 )
@@ -19,9 +22,14 @@ from google_work_agent.ports.connector.connector_failure import (
 from google_work_agent.ports.connector.contracts.google_workspace import (
     DEFAULT_CALENDAR_ID,
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
+)
+from google_work_agent.ports.system.resource_continuation_invalid_error import (
+    ResourceContinuationInvalidError,
 )
 
 MAX_RESOURCE_PAGE_SIZE = 100
@@ -172,6 +180,8 @@ class ListResourcesHandler:
                 )
         except GoogleWorkspaceGatewayError as error:
             raise normalize_google_workspace_failure(error) from error
+        except ResourceContinuationInvalidError as error:
+            raise normalize_resource_continuation_error(error) from error
         except ValueError as error:
             raise ConnectorOperationFailure(
                 code=ConnectorFailureCode.INVALID_ARGUMENT,

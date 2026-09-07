@@ -8,7 +8,7 @@ from google_work_agent.application.use_cases.resource.list_resources import (
     ListResourcesQuery,
 )
 from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,

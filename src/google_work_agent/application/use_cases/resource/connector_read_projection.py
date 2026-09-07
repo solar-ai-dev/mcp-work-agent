@@ -10,10 +10,12 @@ from google_work_agent.ports.connector.connector_read_port import ConnectorReadP
 from google_work_agent.ports.connector.contracts.google_workspace import (
     FreeBusyCalendar,
     FreeBusyInterval,
+    TimeRange,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
-    TimeRange,
 )
 
 

@@ -9,7 +9,7 @@ from typing import cast
 from google_work_agent.adapters.connectors.github.github.mcp_server.github_api import (
     GitHubProviderError,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 from .issue_contract import RESOURCE_TYPE
 
