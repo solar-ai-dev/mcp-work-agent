@@ -299,6 +299,13 @@ def validate_route_query_intent_v2(
             reason_code="QUERY_OPERATION_FIELD_MISMATCH",
             affected_field_paths=("$.route_queries[].operation",),
         )
+    resource_type = frozen_routes[route_id]["resource_type"]
+    if (resource_type == "CALENDAR_FREEBUSY") != (operation == "FREEBUSY"):
+        raise RetrievalV2ValidationError(
+            "route_query.operation does not match the frozen route resource type",
+            reason_code="QUERY_OPERATION_FIELD_MISMATCH",
+            affected_field_paths=("$.route_queries[].operation",),
+        )
     if not _non_empty_strings(intent["reason_codes"]):
         raise RetrievalV2ValidationError("route_query.reason_codes must be non-empty strings")
     search_spec = intent["search_spec"]

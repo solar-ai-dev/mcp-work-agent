@@ -143,6 +143,7 @@ def deterministic_initial_query_plan(
     route_policies: Mapping[str, RouteConstraintPolicy],
     validated_resource_refs: Mapping[str, Collection[str]] | None,
     validated_container_refs: Mapping[str, Collection[str]] | None,
+    timezone: str | None = None,
 ) -> RetrievalQueryPlanV2 | None:
     """Materialize initial reads whose meaning is fully fixed by validated state."""
     exact_detail = exact_resource_detail_plan(
@@ -158,6 +159,7 @@ def deterministic_initial_query_plan(
         route_policies=route_policies,
         validated_container_refs=validated_container_refs,
         is_followup="current_round_no" in prompt_input,
+        timezone=timezone,
     )
     if calendar_plan is not None:
         return calendar_plan
@@ -177,6 +179,7 @@ def deterministic_query_plan(
     route_policies: Mapping[str, RouteConstraintPolicy],
     validated_resource_refs: Mapping[str, Collection[str]] | None,
     validated_container_refs: Mapping[str, Collection[str]] | None,
+    timezone: str | None = None,
     detail_candidate_refs: Collection[str] = (),
     attempted_detail_candidate_refs: Collection[str] = (),
     person_candidates: Sequence[PersonCandidateV1] = (),
@@ -206,6 +209,7 @@ def deterministic_query_plan(
         route_policies=route_policies,
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
+        timezone=timezone,
     )
 
 
@@ -216,6 +220,7 @@ def _exact_calendar_conflict_check_plan(
     route_policies: Mapping[str, RouteConstraintPolicy],
     validated_container_refs: Mapping[str, Collection[str]] | None,
     is_followup: bool,
+    timezone: str | None,
 ) -> RetrievalQueryPlanV2 | None:
     """Build the policy-required Calendar pre-read when no query choice remains."""
     if is_followup or not frozen_routes:
@@ -239,7 +244,10 @@ def _exact_calendar_conflict_check_plan(
         return None
     if "CALENDAR_EVENT" not in _string_collection(request_intent.get("requested_resource_hints")):
         return None
-    temporal = _exact_calendar_temporal_range(request_intent.get("constraints"))
+    temporal = _exact_calendar_temporal_range(
+        request_intent.get("constraints"),
+        default_timezone=timezone,
+    )
     if temporal is None:
         return None
 
@@ -383,7 +391,11 @@ def _string_collection(value: object) -> frozenset[str]:
     return frozenset(value)
 
 
-def _exact_calendar_temporal_range(value: object) -> dict[str, str] | None:
+def _exact_calendar_temporal_range(
+    value: object,
+    *,
+    default_timezone: str | None,
+) -> dict[str, str] | None:
     if not isinstance(value, list):
         return None
     values: dict[str, str] = {}
@@ -396,10 +408,13 @@ def _exact_calendar_temporal_range(value: object) -> dict[str, str] | None:
             if field in values:
                 return None
             values[field] = item_value
-    if not {"start_time", "end_time", "timezone"}.issubset(values):
+    if not {"start_time", "end_time"}.issubset(values):
+        return None
+    timezone_name = values.get("timezone", default_timezone)
+    if timezone_name is None:
         return None
     try:
-        timezone = ZoneInfo(values["timezone"])
+        timezone = ZoneInfo(timezone_name)
         start = _calendar_local_datetime(values["start_time"], values.get("date"))
         end = _calendar_local_datetime(values["end_time"], values.get("date"))
         start_local = (
@@ -413,7 +428,7 @@ def _exact_calendar_temporal_range(value: object) -> dict[str, str] | None:
     return {
         "start_local": start_local.replace(tzinfo=None).isoformat(),
         "end_local": end_local.replace(tzinfo=None).isoformat(),
-        "timezone": values["timezone"],
+        "timezone": timezone_name,
     }
 
 
@@ -517,6 +532,7 @@ def plan_query(
         route_policies=route_policies,
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
+        timezone=timezone,
         detail_candidate_refs=detail_candidate_refs,
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
         person_candidates=person_candidates,

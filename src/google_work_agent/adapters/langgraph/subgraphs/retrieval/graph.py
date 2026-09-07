@@ -1152,6 +1152,7 @@ class RetrievalSubgraph:
             route_policies=route_policies,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            timezone=self._timezone_provider(),
             detail_candidate_refs=detail_candidate_refs,
             attempted_detail_candidate_refs=attempted_detail_candidate_refs,
             person_candidates=state.get("person_candidates", []),
