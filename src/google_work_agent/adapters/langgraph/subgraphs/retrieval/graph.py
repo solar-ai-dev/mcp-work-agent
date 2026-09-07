@@ -96,6 +96,10 @@ from google_work_agent.application.agents.retrieval.assess_sufficiency import (
 from google_work_agent.application.agents.retrieval.authorize_evidence_reassessment import (
     authorize_evidence_reassessment,
 )
+from google_work_agent.application.agents.retrieval.bind_exact_resource_refs import (
+    ExactResourceBindingsV1,
+    bind_exact_resource_refs,
+)
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     build_query_attempt,
@@ -1066,53 +1070,36 @@ class RetrievalSubgraph:
         return result
 
     @staticmethod
-    def _validated_resource_refs(
+    def _exact_resource_bindings(
         state: ContextRetrievalLocalState,
         frozen_routes: list[InputToolRouteV1],
-    ) -> dict[str, list[str]]:
-        """Bind current-Run selected identities only to exact direct-read routes."""
-        selected_refs = request_from_state(state).selected_resources
-        direct_read_tools = {
-            "gmail_get_thread",
-            "gmail_get_message",
-            "gmail_get_draft",
-            "gmail_get_attachment",
-            "tasks_get_task",
-            "calendar_get_event",
-            "github_get_issue",
-        }
-        result: dict[str, list[str]] = {}
-        for route in frozen_routes:
-            if not direct_read_tools.intersection(route["allowed_read_tool_ids"]):
-                continue
-            route_type = route["resource_type"].upper()
-            refs: list[str] = []
-            for item in selected_refs:
-                if item.connector_id != route["connector_id"]:
-                    continue
-                selected_type = item.resource_type.upper()
-                if selected_type == route_type:
-                    refs.append(f"{route_type.lower()}:{item.resource_id}")
-            if refs:
-                result[route["route_id"]] = refs
-        return result
+    ) -> ExactResourceBindingsV1:
+        request_intent = cast(
+            RequestIntentV2,
+            _require_state_value(state.get("request_intent"), "request intent"),
+        )
+        return bind_exact_resource_refs(
+            request_intent=request_intent,
+            frozen_routes=frozen_routes,
+            selected_resources=request_from_state(state).selected_resources,
+        )
 
     @staticmethod
-    def _selected_detail_resource(
+    def _bound_detail_resource(
         state: ContextRetrievalLocalState,
         *,
         resource_type: str,
         resource_ref: str,
     ) -> Mapping[str, object] | None:
-        for item in request_from_state(state).selected_resources:
-            if resource_ref != f"{resource_type.lower()}:{item.resource_id}":
-                continue
-            return {
-                "resource_type": resource_type.lower(),
-                "resource_id": item.resource_id,
-                "parent_id": item.parent_resource_id,
-            }
-        return None
+        tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
+        bindings = RetrievalSubgraph._exact_resource_bindings(
+            state,
+            tool_route_plan["input_plan"]["input_routes"],
+        )
+        identity = bindings["identities_by_ref"].get(resource_ref)
+        if identity is None or identity["resource_type"].upper() != resource_type.upper():
+            return None
+        return identity
 
     def _plan_query_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         if CONTEXT_AGENT_LOCAL_KEY not in state:
@@ -1120,7 +1107,8 @@ class RetrievalSubgraph:
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
-        validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
+        exact_resource_bindings = self._exact_resource_bindings(state, frozen_routes)
+        validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)
         followup = state.get(CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY)
         detail_candidate_refs = self._detail_candidate_refs(state)
@@ -1262,7 +1250,7 @@ class RetrievalSubgraph:
                 )
                 detail_resource = find_detail_resource(candidate_ref, prior_results)
                 if detail_resource is None:
-                    detail_resource = self._selected_detail_resource(
+                    detail_resource = self._bound_detail_resource(
                         state,
                         resource_type=plan["resource_type"],
                         resource_ref=candidate_ref,
@@ -1282,7 +1270,7 @@ class RetrievalSubgraph:
                     raise RetrievalReadBindingError(
                         "direct selected-resource read requires exactly one resource ref"
                     )
-                detail_resource = self._selected_detail_resource(
+                detail_resource = self._bound_detail_resource(
                     state,
                     resource_type=plan["resource_type"],
                     resource_ref=resource_refs[0],
@@ -1489,7 +1477,8 @@ class RetrievalSubgraph:
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
-        validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
+        exact_resource_bindings = self._exact_resource_bindings(state, frozen_routes)
+        validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)
         query_plan = _require_state_value(state.get("query_plan"), "query plan")
         detail_candidate_refs = state.get(CONTEXT_SEGMENT_HANDLES_KEY, [])

@@ -257,6 +257,60 @@ def test_selected_exact_resource__materializes_detail_fetch__without_llm() -> No
     ]
 
 
+def test_explicit_resource_id__materializes_detail_fetch__without_llm() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = [
+        {
+            "route_id": "route-draft",
+            "resource_type": "GMAIL_DRAFT",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_get_draft"],
+            "required": True,
+            "reason_codes": ["EXPLICIT_RESOURCE_ID"],
+        }
+    ]
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": {}, "input_routes": frozen_routes},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
+        route_policies={"route-draft": RouteConstraintPolicy(frozenset({"RESOURCE_REF"}))},
+        retry_budget=build_default_run_budget(),
+        validated_resource_refs={
+            "route-draft": ["gmail_draft:r976635311795334843"]
+        },
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert result["route_queries"] == [
+        {
+            "route_id": "route-draft",
+            "operation": "DETAIL_FETCH",
+            "reason_codes": ["EXPLICIT_RESOURCE_ID"],
+            "search_spec": None,
+            "detail_candidate_ref": "gmail_draft:r976635311795334843",
+        }
+    ]
+
+
 def test_followup_with_ranked_candidate__materializes_detail_fetch__without_llm() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(

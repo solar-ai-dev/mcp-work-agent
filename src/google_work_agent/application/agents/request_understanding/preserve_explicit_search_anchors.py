@@ -38,6 +38,10 @@ _EXPLICIT_REPOSITORY_PATTERN = re.compile(
     r"(?P<repository>[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]*[A-Za-z0-9_-])"
     r"(?![A-Za-z0-9_/-])"
 )
+_EXPLICIT_GMAIL_DRAFT_ID_PATTERN = re.compile(
+    r"(?i)(?:gmail\s*)?(?:초안|draft)\s*(?:id|아이디)\s*[:：]?\s*"
+    r"(?P<draft_id>[A-Za-z0-9_-]{3,256})"
+)
 _SOURCE_OWNED_FIELDS = frozenset(
     {"search_terms", "business_concepts", "person", "sender", "recipient", "subject"}
 )
@@ -52,6 +56,7 @@ def preserve_explicit_search_anchors(
     """Keep explicit source anchors without inferring their business meaning."""
 
     candidate = _preserve_explicit_repository(candidate, request_text=request_text)
+    candidate = _preserve_explicit_gmail_draft_id(candidate, request_text=request_text)
 
     if (
         entry_mode != "AGENT_SEARCH"
@@ -93,6 +98,35 @@ def preserve_explicit_search_anchors(
         constraints.append(
             {"kind": "RESOURCE", "field": "subject", "value": explicit_subjects}
         )
+    return {**candidate, "constraints": constraints}
+
+
+def _preserve_explicit_gmail_draft_id(
+    candidate: RequestGoalCandidateV1,
+    *,
+    request_text: str,
+) -> RequestGoalCandidateV1:
+    if "GMAIL_DRAFT" not in candidate["requested_resource_hints"]:
+        return candidate
+    draft_ids = list(
+        dict.fromkeys(
+            match.group("draft_id")
+            for match in _EXPLICIT_GMAIL_DRAFT_ID_PATTERN.finditer(request_text)
+        )
+    )
+    if not draft_ids:
+        return candidate
+    constraints = [
+        constraint
+        for constraint in candidate["constraints"]
+        if not (
+            constraint["kind"] == "RESOURCE" and constraint["field"] == "draft_id"
+        )
+    ]
+    constraints.extend(
+        {"kind": "RESOURCE", "field": "draft_id", "value": draft_id}
+        for draft_id in draft_ids
+    )
     return {**candidate, "constraints": constraints}
 
 

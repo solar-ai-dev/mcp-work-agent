@@ -82,6 +82,54 @@ def test_finalize_intent__materializes_confirmation_response__repository_provena
     }
 
 
+def test_finalize_intent__materializes_exact_user_request__gmail_draft_provenance() -> None:
+    draft_id = "r976635311795334843"
+    request_text = f"Gmail 초안 ID {draft_id}를 수정해줘"
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "Gmail 초안 수정",
+        "completion_conditions": ["초안을 수정한다"],
+        "constraints": [{"kind": "RESOURCE", "field": "draft_id", "value": draft_id}],
+        "requested_effect_hints": ["UPDATE"],
+        "requested_resource_hints": ["GMAIL_DRAFT"],
+        "analysis_requirement": "NONE",
+    }
+
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-1",
+        user_request=request_text,
+    )
+
+    start_offset = request_text.index(draft_id)
+    assert intent["constraints"][0]["provenance"] == {
+        "source": "USER_REQUEST",
+        "start_offset": start_offset,
+        "end_offset": start_offset + len(draft_id),
+    }
+
+
+def test_finalize_intent__rejects_llm_only__gmail_draft_id() -> None:
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "Gmail 초안 수정",
+        "completion_conditions": ["초안을 수정한다"],
+        "constraints": [
+            {"kind": "RESOURCE", "field": "draft_id", "value": "invented-draft-id"}
+        ],
+        "requested_effect_hints": ["UPDATE"],
+        "requested_resource_hints": ["GMAIL_DRAFT"],
+        "analysis_requirement": "NONE",
+    }
+
+    with pytest.raises(RequestUnderstandingValidationError, match="source binding"):
+        finalize_intent(
+            candidate,
+            {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+            artifact_id="intent-1",
+            user_request="이 Gmail 초안을 수정해줘",
+        )
+
+
 @pytest.mark.parametrize("repository", ["google-work-agent", "owner/", "/repo", "a/b/c"])
 def test_finalize_intent__rejects_repository_without__fully_qualified_source_authority(
     repository: str,

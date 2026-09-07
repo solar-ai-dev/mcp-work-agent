@@ -142,3 +142,36 @@ def is_fully_qualified_repository(value: str) -> bool:
 
 def is_repository_constraint(constraint: ConstraintV1) -> bool:
     return constraint["kind"] == "RESOURCE" and constraint["field"] == "repository"
+
+
+def validated_gmail_draft_anchor(request_intent: RequestIntentV2) -> str | None:
+    """Return one explicit, source-proven Gmail Draft identifier for bounded lookup."""
+    if request_intent["ambiguity"]["requires_confirmation"]:
+        raise RequestUnderstandingValidationError(
+            "Gmail Draft authority cannot be consumed from an ambiguous intent"
+        )
+    anchors: set[str] = set()
+    for constraint in request_intent["constraints"]:
+        if not is_gmail_draft_constraint(constraint):
+            continue
+        value = constraint["value"]
+        if (
+            not isinstance(value, str)
+            or not is_valid_gmail_draft_id(value)
+            or constraint.get("provenance") is None
+        ):
+            raise RequestUnderstandingValidationError(
+                "Gmail Draft anchor requires a source-proven opaque identifier"
+            )
+        anchors.add(value)
+    if len(anchors) > 1:
+        raise RequestUnderstandingValidationError("Gmail Draft anchor is ambiguous")
+    return next(iter(anchors), None)
+
+
+def is_gmail_draft_constraint(constraint: ConstraintV1) -> bool:
+    return constraint["kind"] == "RESOURCE" and constraint["field"] == "draft_id"
+
+
+def is_valid_gmail_draft_id(value: str) -> bool:
+    return re.fullmatch(r"[A-Za-z0-9_-]{3,256}", value) is not None

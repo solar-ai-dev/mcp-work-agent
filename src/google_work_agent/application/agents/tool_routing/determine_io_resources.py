@@ -6,6 +6,8 @@ from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
+    RequestUnderstandingValidationError,
+    validated_gmail_draft_anchor,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -208,19 +210,38 @@ def _exact_intent_candidate(
         )
     if request.selected_resources:
         return None
-    if len(resource_types) != 1 or len(effect_values) != 1:
+    if len(resource_types) != 1:
         return None
-    effect = EffectType(effect_values[0])
     resource_type = resource_types[0]
-    if effect is EffectType.READ:
+    if effect_values == ("READ",):
         return SemanticRouteCandidate(
             input_resource_types=(resource_type,),
             output_pairs=(),
             output_mode="ANSWER",
             analysis_requirement=request_intent["analysis_requirement"],
         )
+    write_effects = tuple(effect for effect in effect_values if effect != "READ")
+    if len(write_effects) != 1:
+        return None
+    effect = EffectType(write_effects[0])
+    if len(effect_values) != 1 and not (
+        resource_type == "GMAIL_DRAFT"
+        and effect in {EffectType.UPDATE, EffectType.SEND}
+        and set(effect_values) == {"READ", effect.value}
+    ):
+        return None
+    input_reason_codes: tuple[tuple[str, str], ...] = ()
+    if resource_type == "GMAIL_THREAD":
+        input_reason_codes = ((resource_type, "REQUESTED_INPUT"),)
+    elif resource_type == "GMAIL_DRAFT" and effect in {EffectType.UPDATE, EffectType.SEND}:
+        try:
+            draft_id = validated_gmail_draft_anchor(request_intent)
+        except RequestUnderstandingValidationError as error:
+            raise ToolRouteValidationError(str(error)) from error
+        if draft_id is not None:
+            input_reason_codes = ((resource_type, "EXPLICIT_RESOURCE_ID"),)
     return SemanticRouteCandidate(
-        input_resource_types=(resource_type,) if resource_type == "GMAIL_THREAD" else (),
+        input_resource_types=tuple(item[0] for item in input_reason_codes),
         output_pairs=(
             (
                 _normalize_output_resource_type(coarse_resource_category(resource_type), effect),
@@ -229,6 +250,7 @@ def _exact_intent_candidate(
         ),
         output_mode="ACTION",
         analysis_requirement=request_intent["analysis_requirement"],
+        input_reason_codes=input_reason_codes,
     )
 
 

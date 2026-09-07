@@ -87,7 +87,7 @@ _DIRECT_DETAIL_TOOL_BY_RESOURCE_TYPE = {
 }
 
 
-def exact_selected_detail_plan(
+def exact_resource_detail_plan(
     *,
     frozen_routes: Sequence[InputToolRouteV1],
     validated_resource_refs: Mapping[str, Collection[str]] | None,
@@ -97,7 +97,15 @@ def exact_selected_detail_plan(
     if is_followup or len(frozen_routes) != 1:
         return None
     route = frozen_routes[0]
-    if "RESOURCE_SELECTED" not in route["reason_codes"]:
+    exact_reason = next(
+        (
+            reason
+            for reason in route["reason_codes"]
+            if reason in {"RESOURCE_SELECTED", "EXPLICIT_RESOURCE_ID"}
+        ),
+        None,
+    )
+    if exact_reason is None:
         return None
     detail_tool = _DIRECT_DETAIL_TOOL_BY_RESOURCE_TYPE.get(route["resource_type"])
     if detail_tool is None or detail_tool not in route["allowed_read_tool_ids"]:
@@ -108,7 +116,7 @@ def exact_selected_detail_plan(
     resource_ref = resource_refs[0]
     if not resource_ref.startswith(f"{route['resource_type'].lower()}:"):
         raise RetrievalV2ValidationError(
-            "selected-resource ref does not match its frozen route",
+            "exact-resource ref does not match its frozen route",
             reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
             affected_field_paths=("$.validated_resource_refs",),
         )
@@ -118,12 +126,12 @@ def exact_selected_detail_plan(
             {
                 "route_id": route["route_id"],
                 "operation": "DETAIL_FETCH",
-                "reason_codes": ["RESOURCE_SELECTED"],
+                "reason_codes": [exact_reason],
                 "search_spec": None,
                 "detail_candidate_ref": resource_ref,
             }
         ],
-        "required_information": ["selected resource detail"],
+        "required_information": ["exact resource detail"],
         "retrieval_order": [route["route_id"]],
     }
 
@@ -137,13 +145,13 @@ def deterministic_initial_query_plan(
     validated_container_refs: Mapping[str, Collection[str]] | None,
 ) -> RetrievalQueryPlanV2 | None:
     """Materialize initial reads whose meaning is fully fixed by validated state."""
-    selected_detail = exact_selected_detail_plan(
+    exact_detail = exact_resource_detail_plan(
         frozen_routes=frozen_routes,
         validated_resource_refs=validated_resource_refs,
         is_followup="current_round_no" in prompt_input,
     )
-    if selected_detail is not None:
-        return selected_detail
+    if exact_detail is not None:
+        return exact_detail
     calendar_plan = _exact_calendar_conflict_check_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,

@@ -143,6 +143,67 @@ def test_task_create__produces_semantic_candidate__without_tool_identity() -> No
     assert runtime.calls == []
 
 
+@pytest.mark.parametrize("effect_hints", [["UPDATE"], ["UPDATE", "READ"]])
+def test_explicit_gmail_draft_update__requires_exact_draft_read__without_llm(
+    effect_hints: list[str],
+) -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-draft", "revision": 1, "based_on": []},
+            "goal": "update draft",
+            "completion_conditions": ["updated without sending"],
+            "constraints": [
+                {
+                    "kind": "RESOURCE",
+                    "field": "draft_id",
+                    "value": "r976635311795334843",
+                    "provenance": {
+                        "source": "USER_REQUEST",
+                        "start_offset": 16,
+                        "end_offset": 36,
+                    },
+                }
+            ],
+            "requested_effect_hints": effect_hints,
+            "requested_resource_hints": ["GMAIL_DRAFT"],
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-draft",
+        conversation_id="conversation",
+        workflow_key="thread",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="Gmail 초안 ID r976635311795334843를 수정해줘.",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[])
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate.input_resource_types == ("GMAIL_DRAFT",)
+    assert candidate.input_reason_codes == (("GMAIL_DRAFT", "EXPLICIT_RESOURCE_ID"),)
+    assert candidate.output_pairs == (("GMAIL_DRAFT", EffectType.UPDATE),)
+    assert runtime.calls == []
+
+
 def test_calendar_create__uses_exact_validated_intent__without_llm() -> None:
     catalog = load_signed_tool_registry()
     intent: RequestIntentV2 = {

@@ -14,7 +14,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
     RequestUnderstandingValidationError,
     is_fully_qualified_repository,
+    is_gmail_draft_constraint,
     is_repository_constraint,
+    is_valid_gmail_draft_id,
     repository_from_constraints,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
@@ -196,13 +198,23 @@ def materialize_validated_constraint_provenance(
     for index, constraint in enumerate(constraints):
         copied = cast(ConstraintV1, dict(constraint))
         copied.pop("provenance", None)
-        if not is_repository_constraint(copied):
+        is_repository = is_repository_constraint(copied)
+        is_gmail_draft = is_gmail_draft_constraint(copied)
+        if not is_repository and not is_gmail_draft:
             materialized.append(copied)
             continue
         value = copied["value"]
-        if not isinstance(value, str) or not is_fully_qualified_repository(value):
+        if not isinstance(value, str):
+            raise RequestUnderstandingValidationError(
+                f"$.constraints[{index}].value must be a scalar identity"
+            )
+        if is_repository and not is_fully_qualified_repository(value):
             raise RequestUnderstandingValidationError(
                 f"$.constraints[{index}].value must be a fully-qualified repository"
+            )
+        if is_gmail_draft and not is_valid_gmail_draft_id(value):
+            raise RequestUnderstandingValidationError(
+                f"$.constraints[{index}].value must be a valid Gmail Draft identifier"
             )
         for source, source_text in sources:
             start = source_text.find(value)
@@ -275,7 +287,10 @@ def _validate_provenance_binding(
     provenance_sources: Mapping[ConstraintProvenanceSource, str],
 ) -> None:
     provenance = constraint.get("provenance")
-    if is_repository_constraint(constraint) and provenance is None:
+    requires_provenance = is_repository_constraint(constraint) or is_gmail_draft_constraint(
+        constraint
+    )
+    if requires_provenance and provenance is None:
         raise RequestUnderstandingValidationError(f"{path}.provenance is required")
     if provenance is None:
         return
@@ -294,6 +309,10 @@ def _validate_provenance_binding(
     if is_repository_constraint(constraint) and not is_fully_qualified_repository(value):
         raise RequestUnderstandingValidationError(
             f"{path}.value must be a fully-qualified repository"
+        )
+    if is_gmail_draft_constraint(constraint) and not is_valid_gmail_draft_id(value):
+        raise RequestUnderstandingValidationError(
+            f"{path}.value must be a valid Gmail Draft identifier"
         )
 
 

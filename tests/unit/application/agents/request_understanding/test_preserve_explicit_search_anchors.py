@@ -183,3 +183,57 @@ def test_github_candidate__with_bare_project_name__does_not_infer_repository() -
     )
 
     assert result is candidate
+
+
+def test_gmail_draft_candidate__with_explicit_id__restores_exact_anchor() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {"kind": "RESOURCE", "field": "draft_id", "value": "invented-draft"}
+    ]
+    candidate["requested_effect_hints"] = ["UPDATE"]
+    candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text="Gmail 초안 ID r976635311795334843를 수정해줘.",
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert result["constraints"] == [
+        {"kind": "RESOURCE", "field": "draft_id", "value": "r976635311795334843"}
+    ]
+
+
+def test_gmail_draft_candidate__without_explicit_id__does_not_infer_anchor() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = []
+    candidate["requested_effect_hints"] = ["UPDATE"]
+    candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text="방금 만든 Gmail 초안을 수정해줘.",
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert result is candidate
+
+
+def test_gmail_draft_candidate__draft_word_in_subject__is_not_an_identifier() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = []
+    candidate["requested_effect_hints"] = ["UPDATE"]
+    candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text=(
+            "Gmail 초안 ID draft-123를 수정하고 제목은 "
+            '"[GWA E2E] Draft updated"로 바꿔.'
+        ),
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert result["constraints"] == [
+        {"kind": "RESOURCE", "field": "draft_id", "value": "draft-123"}
+    ]

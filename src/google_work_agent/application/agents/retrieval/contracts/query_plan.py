@@ -339,7 +339,7 @@ def validate_route_query_intent_v2(
             *route_resource_refs,
         }:
             raise RetrievalV2ValidationError(
-                "DETAIL_FETCH requires a validated candidate or selected-resource ref",
+                "DETAIL_FETCH requires a validated candidate or exact-resource ref",
                 reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
                 affected_field_paths=("$.route_queries[].detail_candidate_ref",),
             )

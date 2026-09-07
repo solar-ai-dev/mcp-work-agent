@@ -7,6 +7,7 @@ import pytest
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
     RequestUnderstandingValidationError,
+    validated_gmail_draft_anchor,
     validated_repository_authority,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
@@ -150,6 +151,58 @@ def test_validate_intent__rejects_forged_repository_value__against_exact_span() 
             candidate,
             provenance_sources={"USER_REQUEST": "acme/repo"},
         )
+
+
+def test_validate_intent__forged_gmail_draft_provenance__is_rejected() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "RESOURCE",
+            "field": "draft_id",
+            "value": "draft-123",
+            "provenance": {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": len("other-123"),
+            },
+        }
+    ]
+
+    with pytest.raises(RequestUnderstandingValidationError, match="does not match source"):
+        validate_intent(
+            candidate,
+            provenance_sources={"USER_REQUEST": "other-123"},
+        )
+
+
+def test_validated_gmail_draft_anchor__validated_source_identity__is_used() -> None:
+    request_text = "Gmail 초안 ID draft-123를 수정해줘"
+    start_offset = request_text.index("draft-123")
+    candidate = _candidate()
+    candidate.update(
+        {
+            "constraints": [
+                {
+                    "kind": "RESOURCE",
+                    "field": "draft_id",
+                    "value": "draft-123",
+                    "provenance": {
+                        "source": "USER_REQUEST",
+                        "start_offset": start_offset,
+                        "end_offset": start_offset + len("draft-123"),
+                    },
+                }
+            ],
+            "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},
+        }
+    )
+    intent = validate_intent(
+        candidate,
+        require_meta=True,
+        provenance_sources={"USER_REQUEST": request_text},
+    )
+
+    assert validated_gmail_draft_anchor(intent) == "draft-123"
 
 
 def test_validated_repository_authority__explicit_selected_match__normalizes_once() -> None:
