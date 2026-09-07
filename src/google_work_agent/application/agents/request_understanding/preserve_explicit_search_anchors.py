@@ -7,6 +7,8 @@ import re
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     ConstraintV1,
     RequestGoalCandidateV1,
+    is_fully_qualified_repository,
+    is_repository_constraint,
 )
 
 _PLACEHOLDER_VALUES = frozenset(
@@ -31,6 +33,11 @@ _EXPLICIT_PERIOD_PATTERN = re.compile(
     r"(?<!\d)(?:\d{4}년\s*)?(?:1[0-2]|[1-9])월(?:\s*첫째\s*주)?(?!\s*\d{1,2}\s*일)"
     r"|지난\s*주|이번\s*주|다음\s*주|지난\s*달|이번\s*달|최근|오늘|어제|그제"
 )
+_EXPLICIT_REPOSITORY_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.-/])"
+    r"(?P<repository>[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]*[A-Za-z0-9_-])"
+    r"(?![A-Za-z0-9_/-])"
+)
 _SOURCE_OWNED_FIELDS = frozenset(
     {"search_terms", "business_concepts", "person", "sender", "recipient", "subject"}
 )
@@ -42,7 +49,9 @@ def preserve_explicit_search_anchors(
     request_text: str,
     entry_mode: str,
 ) -> RequestGoalCandidateV1:
-    """Keep verbatim request and explicitly labelled subject without inferring meaning."""
+    """Keep explicit source anchors without inferring their business meaning."""
+
+    candidate = _preserve_explicit_repository(candidate, request_text=request_text)
 
     if (
         entry_mode != "AGENT_SEARCH"
@@ -84,6 +93,34 @@ def preserve_explicit_search_anchors(
         constraints.append(
             {"kind": "RESOURCE", "field": "subject", "value": explicit_subjects}
         )
+    return {**candidate, "constraints": constraints}
+
+
+def _preserve_explicit_repository(
+    candidate: RequestGoalCandidateV1,
+    *,
+    request_text: str,
+) -> RequestGoalCandidateV1:
+    if "GITHUB_ISSUE" not in candidate["requested_resource_hints"]:
+        return candidate
+    repositories = list(
+        dict.fromkeys(
+            match.group("repository")
+            for match in _EXPLICIT_REPOSITORY_PATTERN.finditer(request_text)
+            if is_fully_qualified_repository(match.group("repository"))
+        )
+    )
+    if not repositories:
+        return candidate
+    constraints = [
+        constraint
+        for constraint in candidate["constraints"]
+        if not is_repository_constraint(constraint)
+    ]
+    constraints.extend(
+        {"kind": "RESOURCE", "field": "repository", "value": repository}
+        for repository in repositories
+    )
     return {**candidate, "constraints": constraints}
 
 

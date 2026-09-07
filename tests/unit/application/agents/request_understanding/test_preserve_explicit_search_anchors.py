@@ -153,3 +153,33 @@ def test_non_gmail_candidate__during_anchor_preservation__is_unchanged() -> None
         request_text="태스크를 보여줘.",
         entry_mode="AGENT_SEARCH",
     ) is candidate
+
+
+def test_github_candidate__with_explicit_repository__restores_identity_from_request() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = []
+    candidate["requested_resource_hints"] = ["GITHUB_ISSUE"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text="List open issues in acme/search-save.",
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert result["constraints"] == [
+        {"kind": "RESOURCE", "field": "repository", "value": "acme/search-save"}
+    ]
+
+
+def test_github_candidate__with_bare_project_name__does_not_infer_repository() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = []
+    candidate["requested_resource_hints"] = ["GITHUB_ISSUE"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text="search-save 저장소의 열린 이슈를 조회해줘.",
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert result is candidate

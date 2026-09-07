@@ -183,6 +183,35 @@ def test_default_repository__stays_system_owned__without_user_constraint_or_conf
     assert all(item["field"] != "repository" for item in intent["constraints"])
 
 
+def test_explicit_repository__omitted_by_inference__retains_current_run_authority() -> None:
+    repository = "acme/search-save"
+    request = _request(f"{repository} 저장소의 열린 이슈를 조회해줘")
+    runtime = FakeStructuredInferencePort(outputs=[{
+        "goal": "열린 이슈 조회", "completion_conditions": ["조회 결과를 보여준다"],
+        "constraints": _goal_constraints(status=["OPEN"]),
+        "requested_effect_hints": ["READ"], "requested_resource_hints": ["GITHUB_ISSUE"],
+        "analysis_requirement": "NONE",
+    }])
+
+    candidate = identify_goal(
+        llm_runtime=runtime, request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+    ambiguity = detect_ambiguity(
+        llm_runtime=runtime, request=request, goal_candidate=candidate,
+    )
+    intent = finalize_intent(
+        candidate, ambiguity, artifact_id="intent-1", user_request=request.request_text,
+    )
+
+    repository_constraint = next(
+        item for item in intent["constraints"] if item["field"] == "repository"
+    )
+    assert ambiguity["requires_confirmation"] is False
+    assert repository_constraint["value"] == repository
+    assert repository_constraint["provenance"]["source"] == "USER_REQUEST"
+
+
 @pytest.mark.parametrize("request_text, expected_resources", [
     (
         "Google Calendar에 'Gmail Google Tasks 검증' 일정을 만들어줘. "
