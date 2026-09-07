@@ -23,7 +23,7 @@ VERSION = "1"
     ],
 )
 def test_modify_input__rejects_ambiguous_transport__before_interpretation(
-    modification, patch
+    modification: str, patch: dict[str, object]
 ) -> None:
     with pytest.raises(ValidationError):
         ModifyActionRequestV2.model_validate(

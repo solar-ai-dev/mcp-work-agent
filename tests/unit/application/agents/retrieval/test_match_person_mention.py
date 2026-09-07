@@ -87,7 +87,7 @@ def test_shared_surname_title__retains_distinct_identities__and_requires_confirm
     )
 
 
-def test_single_identity__with_supporting_evidence__resolves_without_confirmation() -> None:
+def test_single_identity__with_supporting_evidence__requires_exact_identity_search() -> None:
     evidence = [
         _evidence("김하늘 대리", "first@example.test", "s1"),
         _evidence("김바다 대리", "second@example.test", "s2"),
@@ -98,15 +98,41 @@ def test_single_identity__with_supporting_evidence__resolves_without_confirmatio
     assert resolve_supported_person_identities(candidates, evidence) == {
         "김대리": "first@example.test"
     }
-    assert _guard(
-        candidates,
-        selected_person_identities=resolve_supported_person_identities(candidates, evidence),
-    )["status"] == "NEEDS_MORE_DATA"
-    assert _guard(
-        candidates,
-        evidence_drafts=evidence,
-        selected_person_identities=resolve_supported_person_identities(candidates, evidence),
-    ) is None
+    assert (
+        _guard(
+            candidates,
+            selected_person_identities=resolve_supported_person_identities(candidates, evidence),
+        )["status"]
+        == "NEEDS_MORE_DATA"
+    )
+    assert (
+        _guard(
+            candidates,
+            evidence_drafts=evidence,
+            selected_person_identities=resolve_supported_person_identities(candidates, evidence),
+        )["status"]
+        == "NEEDS_MORE_DATA"
+    )
+    assert (
+        _guard(
+            candidates,
+            evidence_drafts=evidence,
+            selected_person_identities=resolve_supported_person_identities(candidates, evidence),
+            query_attempts=[
+                {
+                    "operation_kind": "SEARCH",
+                    "normalized_intent_constraints": [
+                        {
+                            "kind": "PARTICIPANT",
+                            "participants": [{"role": "ANY", "identity": "first@example.test"}],
+                            "match_mode": "ALL",
+                        }
+                    ],
+                }
+            ],
+        )
+        is None
+    )
 
 
 def test_multiple_identities__with_supporting_evidence__remain_for_confirmation() -> None:
@@ -129,13 +155,23 @@ def test_email_only__without_alias_provenance__does_not_resolve_mention() -> Non
 
 
 def test_candidate_discovery__survives_llm_evidence_exclusion__without_picking_one_person() -> None:
-    segments = [SourceSegment(
-        key, "gmail_thread:" + key, "GMAIL", "gmail_thread", key, None, "v1",
-        {"sender_name": name, "sender_email": email}, "검토 자료",
-    ) for key, name, email in [
-        ("s1", "김하늘 대리", "first@example.test"),
-        ("s2", "김바다 대리", "second@example.test"),
-    ]]
+    segments = [
+        SourceSegment(
+            key,
+            "gmail_thread:" + key,
+            "GMAIL",
+            "gmail_thread",
+            key,
+            None,
+            "v1",
+            {"sender_name": name, "sender_email": email},
+            "검토 자료",
+        )
+        for key, name, email in [
+            ("s1", "김하늘 대리", "first@example.test"),
+            ("s2", "김바다 대리", "second@example.test"),
+        ]
+    ]
     candidates = project_person_candidates(_intent(), [], source_segments=segments)
     assert len(candidates) == 2
     assert _guard(candidates)["status"] == "NEEDS_CONFIRMATION"

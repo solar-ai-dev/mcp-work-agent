@@ -6,7 +6,7 @@ Behavioral coverage lives in the exact application/agents/retrieval test owners.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -144,17 +144,21 @@ def _intent() -> RequestIntentV2:
     }
 
 
-def _tool_route_plan(routes: list[dict[str, object]] | None = None) -> ToolRoutePlanV2:
-    input_routes = routes or [
-        {
-            "route_id": "route-gmail",
-            "resource_type": "GMAIL_THREAD",
-            "connector_id": "google_workspace",
-            "allowed_read_tool_ids": ["gmail_search_threads"],
-            "required": True,
-            "reason_codes": [],
-        }
-    ]
+def _tool_route_plan(routes: Sequence[Mapping[str, object]] | None = None) -> ToolRoutePlanV2:
+    input_routes = (
+        [dict(route) for route in routes]
+        if routes is not None
+        else [
+            {
+                "route_id": "route-gmail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": [],
+            }
+        ]
+    )
     return cast(
         ToolRoutePlanV2,
         {

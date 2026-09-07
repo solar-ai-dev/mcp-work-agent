@@ -14,7 +14,8 @@ from google_work_agent.application.agents.review.inspect_goal_and_evidence impor
 def test_exact_task_create__skips_no_information__review_inference() -> None:
     request_intent, planning_result, tool_route_plan, work_analysis = _exact_task_state()
 
-    def fail_inference(_prompt_id: str, _input: Mapping[str, object]) -> Mapping[str, object]:
+    def fail_inference(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id, prompt_input
         raise AssertionError("an exact task plan with clean duplicate analysis adds no information")
 
     results = (
@@ -57,17 +58,21 @@ def test_exact_task_create__keeps_review__when_duplicate_risk_exists() -> None:
     ]
     calls: list[str] = []
 
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_input
+        calls.append(prompt_id)
+        return {
+            "schema_version": 1,
+            "dimension": "review.inspect_goal_and_evidence",
+            "findings": [],
+        }
+
     inspect_goal_and_evidence(
         request_intent=request_intent,
         planning_result=planning_result,
         evidence=[],
         work_analysis=work_analysis,
-        invoke=lambda prompt_id, _input: calls.append(prompt_id)
-        or {
-            "schema_version": 1,
-            "dimension": "review.inspect_goal_and_evidence",
-            "findings": [],
-        },
+        invoke=invoke,
     )
 
     assert calls == ["review.inspect_goal_and_evidence"]

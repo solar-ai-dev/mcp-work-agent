@@ -201,6 +201,10 @@ class _ResourceServiceStub:
         )
         return ResourcePage(items=(), next_page_token=page.next_page_token)
 
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage:
+        del repository, state
+        return ResourcePage(items=(), next_page_token=None)
+
     def list_task_lists_page(self, *, page_token: str | None, page_size: int) -> ResourcePage:
         del page_token, page_size
         return ResourcePage(items=(), next_page_token=None)

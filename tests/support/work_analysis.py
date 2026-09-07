@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
@@ -15,10 +15,17 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferenceResultV1
 
 
+class WorkAnalysisRuntimeCall(TypedDict):
+    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    prompt_ref: PromptReference
+    prompt_input: dict[str, object]
+    output_schema: OutputSchemaDefinition
+
+
 @dataclass
 class WorkAnalysisRuntimeFake:
     output: object
-    calls: list[dict[str, object]] = field(default_factory=list)
+    calls: list[WorkAnalysisRuntimeCall] = field(default_factory=list)
 
     def infer(
         self,
@@ -46,6 +53,10 @@ class WorkAnalysisRuntimeFake:
             latency_ms=1,
             fallback_reason=None,
         )
+
+
+def output_json_schema(runtime: WorkAnalysisRuntimeFake) -> dict[str, Any]:
+    return cast(dict[str, Any], runtime.calls[0]["output_schema"].json_schema)
 
 
 def prompt_ref(prompt_id: str, node_name: str) -> PromptReference:

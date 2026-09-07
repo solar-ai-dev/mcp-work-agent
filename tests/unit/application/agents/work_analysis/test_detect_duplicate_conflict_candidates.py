@@ -1,7 +1,12 @@
 from google_work_agent.application.agents.work_analysis import (
     detect_duplicate_conflict_candidates,
 )
-from tests.support.work_analysis import WorkAnalysisRuntimeFake, fact, prompt_ref
+from tests.support.work_analysis import (
+    WorkAnalysisRuntimeFake,
+    fact,
+    output_json_schema,
+    prompt_ref,
+)
 
 
 def test_duplicate_is__never_promoted__by_candidate_operation() -> None:
@@ -33,8 +38,7 @@ def test_duplicate_is__never_promoted__by_candidate_operation() -> None:
     assert result == output["relation_candidates"]
     assert len(runtime.calls) == 1
     assert "validated_relations" not in output
-    output_schema = runtime.calls[0]["output_schema"]
-    candidate_schema = output_schema.json_schema["properties"]["relation_candidates"]["items"]
+    candidate_schema = output_json_schema(runtime)["properties"]["relation_candidates"]["items"]
     properties = candidate_schema["properties"]
     assert properties["source_fact_id"]["enum"] == ["f1", "f2"]
     assert properties["target_fact_id"]["enum"] == ["f1", "f2"]

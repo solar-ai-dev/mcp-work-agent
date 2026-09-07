@@ -545,11 +545,19 @@ def _select_tool(resource_type: str, effect: str, candidates: list[str]) -> str:
 def _route_query(route: Mapping[str, object], *, is_followup: bool = False) -> dict[str, object]:
     resource_type = str(route["resource_type"])
     if resource_type == "EMAIL":
-        constraint: dict[str, object] = {
-            "kind": "KEYWORD",
-            "terms": ["E2E follow-up" if is_followup else "E2E"],
-            "match_mode": "ANY",
-        }
+        constraint: dict[str, object] = (
+            {
+                "kind": "CONCEPT",
+                "concept": "additional deterministic evidence",
+                "manifestations": ["E2E follow-up"],
+            }
+            if is_followup
+            else {
+                "kind": "KEYWORD",
+                "terms": ["E2E"],
+                "match_mode": "ANY",
+            }
+        )
     else:
         container_refs = cast(list[str], route.get("container_refs", []))
         if not container_refs:
@@ -581,7 +589,7 @@ def _has_search_tool(route: Mapping[str, object]) -> bool:
 
 def _supports_keyword_expansion(route: Mapping[str, object]) -> bool:
     kinds = route.get("supported_constraint_kinds", [])
-    return isinstance(kinds, list) and "KEYWORD" in kinds
+    return isinstance(kinds, list) and {"CONCEPT", "KEYWORD"}.issubset(kinds)
 
 
 def _evidence_refs(prompt_input: Mapping[str, object]) -> list[str]:

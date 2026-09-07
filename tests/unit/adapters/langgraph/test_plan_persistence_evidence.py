@@ -65,6 +65,51 @@ def test_freebusy_evidence__materializes_without__durable_resource_ref() -> None
     assert result.locator_json is not None
 
 
+def test_answer_context__freebusy_evidence__does_not_create_resource_ref() -> None:
+    runtime = object.__new__(LangGraphWorkflowRuntime)
+    runtime._unit_of_work_factory = lambda: nullcontext(  # type: ignore[assignment,return-value]
+        SimpleNamespace(resource_refs=SimpleNamespace(list_for_run_bounded=lambda *_a, **_k: ()))
+    )
+    runtime._now_ms = lambda: 1000
+    handle = "calendar_freebusy:primary:query-hash"
+    state = {
+        "run_id": "run-1",
+        "tool_route_plan": {
+            "input_plan": {
+                "input_routes": [
+                    {
+                        "resource_type": "CALENDAR_FREEBUSY",
+                        "connector_id": "google_workspace",
+                    }
+                ]
+            }
+        },
+        "acquisition_result": {
+            "source_summaries": [
+                {
+                    "source": "CALENDAR",
+                    "resources": [
+                        {
+                            "resource_handle": handle,
+                            "resource_type": "calendar_freebusy",
+                            "resource_id": "primary",
+                            "version": "query-hash",
+                            "payload": {"busy_intervals": []},
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+    result = runtime._answer_context_resource_refs(
+        state=state,
+        evidence_drafts=cast(Any, ({"resource_handle": handle},)),
+    )
+
+    assert result == ()
+
+
 @pytest.mark.parametrize("repository", ["acme/first", "acme/second"])
 def test_answer_context__github_evidence__retains_exact_identity(repository: str) -> None:
     runtime = object.__new__(LangGraphWorkflowRuntime)
@@ -75,21 +120,35 @@ def test_answer_context__github_evidence__retains_exact_identity(repository: str
     handle = f"github_issue:{repository}#7"
     state = {
         "run_id": "run-1",
-        "tool_route_plan": {"input_plan": {"input_routes": [
-            {"resource_type": "GMAIL_THREAD", "connector_id": "google_workspace"},
-            {"resource_type": "GITHUB_ISSUE", "connector_id": "github"},
-        ]}},
-        "acquisition_result": {"source_summaries": [{
-            "source": "GITHUB",
-            "resources": [{
-                "resource_handle": handle, "resource_type": "github_issue",
-                "resource_id": f"{repository}#7", "parent_id": repository,
-                "version": "v1", "payload": {"title": "Issue title", "body": "private body"},
-            }],
-        }]},
+        "tool_route_plan": {
+            "input_plan": {
+                "input_routes": [
+                    {"resource_type": "GMAIL_THREAD", "connector_id": "google_workspace"},
+                    {"resource_type": "GITHUB_ISSUE", "connector_id": "github"},
+                ]
+            }
+        },
+        "acquisition_result": {
+            "source_summaries": [
+                {
+                    "source": "GITHUB",
+                    "resources": [
+                        {
+                            "resource_handle": handle,
+                            "resource_type": "github_issue",
+                            "resource_id": f"{repository}#7",
+                            "parent_id": repository,
+                            "version": "v1",
+                            "payload": {"title": "Issue title", "body": "private body"},
+                        }
+                    ],
+                }
+            ]
+        },
     }
     result = runtime._answer_context_resource_refs(
-        state=state, evidence_drafts=cast(Any, ({"resource_handle": handle},)),
+        state=state,
+        evidence_drafts=cast(Any, ({"resource_handle": handle},)),
     )
     assert len(result) == 1
     assert result[0].connector_id == "github"
@@ -100,5 +159,6 @@ def test_answer_context__github_evidence__retains_exact_identity(repository: str
     state["tool_route_plan"]["input_plan"]["input_routes"].pop()  # type: ignore[index]
     with pytest.raises(ValueError, match="exactly one frozen connector"):
         runtime._answer_context_resource_refs(
-            state=state, evidence_drafts=cast(Any, ({"resource_handle": handle},)),
+            state=state,
+            evidence_drafts=cast(Any, ({"resource_handle": handle},)),
         )

@@ -2,6 +2,8 @@
 
 import json
 from dataclasses import asdict, replace
+from pathlib import Path
+from typing import TypedDict, cast
 
 import pytest
 from langgraph.graph import END, START, StateGraph
@@ -16,27 +18,39 @@ from google_work_agent.application.use_cases.resource.require_resource_selection
     SelectedResourceReadPort,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
+from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
+
+
+class _MeasurementState(TypedDict, total=False):
+    operation_inputs: dict[str, object]
+    read_execution: object
 
 
 @pytest.mark.parametrize(
     "target,expected_status,expected_calls", [("two", "COMPLETE", 1), ("one", "FAILED", 0)]
 )
 def test_resource_selection__production_read_node_in_langgraph__measures_terminal_result(
-    tmp_path, target, expected_status, expected_calls
-):
+    tmp_path: Path,
+    target: str,
+    expected_status: str,
+    expected_calls: int,
+) -> None:
     settings = replace(
         JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json")).get_settings(),
         selected_tasklist_ids=("two", "three"),
         google_resource_account_id="google:1",
     )
-    calls = []
+    calls: list[tuple[str, dict[str, JsonValue]]] = []
 
     class Provider:
-        def execute_read(self, binding, arguments):
+        def execute_read(
+            self,
+            binding: ValidatedConnectorToolBindingV1,
+            arguments: dict[str, JsonValue],
+        ) -> ConnectorReadResultV1:
             calls.append((binding.tool_id, dict(arguments)))
             return ConnectorReadResultV1(
                 1,
@@ -72,8 +86,11 @@ def test_resource_selection__production_read_node_in_langgraph__measures_termina
         "now_ms": 2,
         "prior_query_attempts": [],
     }
-    graph = StateGraph(dict)
-    graph.add_node("execute_read", lambda state: execute_read_node(state))
+    graph = StateGraph(_MeasurementState)
+    graph.add_node(
+        "execute_read",
+        lambda state: cast(_MeasurementState, execute_read_node(state)),
+    )
     graph.add_edge(START, "execute_read")
     graph.add_edge("execute_read", END)
     updates = list(

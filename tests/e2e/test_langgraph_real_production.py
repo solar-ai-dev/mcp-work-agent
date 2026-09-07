@@ -37,6 +37,9 @@ from tests.support.langgraph_product_driver import (
     wait_for_action_status as _wait_for_action_status,
 )
 from tests.support.langgraph_product_driver import (
+    wait_for_pending_interrupt as _wait_for_pending_interrupt,
+)
+from tests.support.langgraph_product_driver import (
     wait_for_status as _wait_for_status,
 )
 
@@ -80,10 +83,10 @@ def test_answer_only__reaches_terminal_through__real_production_composition(
     }
     assert {
         "request_understanding.identify_goal",
-        "request_understanding.detect_ambiguity",
         "planning.outline_answer",
         "planning.compose_answer",
     }.issubset(invoked)
+    assert "request_understanding.detect_ambiguity" not in invoked
     assert not any(prompt_id.startswith("tool_routing.") for prompt_id in invoked)
     assert not any(prompt_id.startswith("retrieval.") for prompt_id in invoked)
     assert not any(prompt_id.startswith("work_analysis.") for prompt_id in invoked)
@@ -213,6 +216,7 @@ def test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_ll
     assert not any(prompt_id.startswith("work_analysis.") for prompt_id in invoked)
     assert invoked == [
         "request_understanding.identify_goal",
+        "planning.outline_answer",
         "planning.compose_answer",
     ]
 
@@ -662,7 +666,7 @@ def test_restart_recreates__production_composition_and__resumes_durable_interrup
             _create_conversation(first_client, "restart-resume"),
             "E2E:RESTART_RESUME create task",
         )
-        interrupted = _wait_for_status(first_client, run_id, {"WAITING_CONFIRMATION"})
+        interrupted = _wait_for_pending_interrupt(first_client, run_id)
         original_interrupt = cast(dict[str, object], interrupted["pending_interrupt"])
 
     second_transport = LangGraphE2EGeminiTransport()
@@ -679,7 +683,7 @@ def test_restart_recreates__production_composition_and__resumes_durable_interrup
         headers=_API_HEADERS,
     ) as second_client:
         _bootstrap(second_client, command_suffix="restart")
-        restored = _wait_for_status(second_client, run_id, {"WAITING_CONFIRMATION"})
+        restored = _wait_for_pending_interrupt(second_client, run_id)
         restored_interrupt = cast(dict[str, object], restored["pending_interrupt"])
         assert restored_interrupt["interrupt_id"] == original_interrupt["interrupt_id"]
         response = second_client.post(

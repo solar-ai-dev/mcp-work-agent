@@ -77,9 +77,7 @@ class _Status:
 
     def get_model_for_prompt(self, prompt_id: str) -> ApprovedModelInfo:
         model_id = (
-            "qwen3.5:4b"
-            if prompt_id == "request_understanding.identify_goal"
-            else "qwen3.5:9b"
+            "qwen3.5:4b" if prompt_id == "request_understanding.identify_goal" else "qwen3.5:9b"
         )
         return ApprovedModelInfo(model_id, "OLLAMA", "1", "1")
 
@@ -135,9 +133,7 @@ def _router(
     repairer: _Repairer | None = None,
     deployment_profile: str = "LOCAL_CAPABLE",
 ) -> StructuredInferenceRuntimeRouter:
-    settings = settings_view(
-        preferred_llm_mode="API_LLM", external_llm_consent=consent
-    )
+    settings = settings_view(preferred_llm_mode="API_LLM", external_llm_consent=consent)
     selection = runtime_selection(
         deployment_profile=deployment_profile,
         model=(
@@ -188,7 +184,12 @@ def test_local_request__uses_profile__model_for_prompt() -> None:
     local = _Provider(runtime=ActualRuntime.LOCAL_GPU)
     router = _router(checkpoint=checkpoint, api=_Provider(), local=local)
     selected: list[str] = []
-    router.ollama_provider_factory = lambda model: selected.append(model.model_id) or local
+
+    def select_local_provider(model: ApprovedModelInfo) -> _Provider:
+        selected.append(model.model_id)
+        return local
+
+    router.ollama_provider_factory = select_local_provider
 
     router.infer(
         "LOCAL_GPU",
@@ -206,8 +207,13 @@ def test_local_inference_trace__actual_provider_result__includes_class_profile_a
     router.runtime_selection = replace(
         router.runtime_selection,
         local_model_profile=LocalModelProfileV1(
-            1, "single-9b", "OLLAMA", "qwen3.5:9b", "qwen3.5:9b",
-            LocalInferenceClass.REASONING, (),
+            1,
+            "single-9b",
+            "OLLAMA",
+            "qwen3.5:9b",
+            "qwen3.5:9b",
+            LocalInferenceClass.REASONING,
+            (),
         ),
     )
     recorder = Mock()

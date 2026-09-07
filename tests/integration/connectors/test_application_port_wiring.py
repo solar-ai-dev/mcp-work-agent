@@ -101,6 +101,9 @@ class _RuntimeHandle:
     def call_tool(self, tool_id: str, arguments: object, timeout_ms: int) -> MCPToolCallResultV1:
         raise AssertionError((tool_id, arguments, timeout_ms))
 
+    def sign_claim_context(self, payload: dict[str, object]) -> str:
+        return calculate_canonical_json_hash(payload)
+
     def restart_once(self) -> MCPRestartResultV1:
         return MCPRestartResultV1(1, False, None)
 
@@ -109,7 +112,6 @@ class _RuntimeHandle:
 
 
 class _DeterministicMcpClient:
-
     def __init__(self, descriptors: list[MCPToolDescriptorV1]) -> None:
         self._descriptors = descriptors
         self.calls: list[tuple[str, dict[str, object]]] = []
@@ -118,9 +120,7 @@ class _DeterministicMcpClient:
         assert connector_id == GOOGLE_WORKSPACE_CONNECTOR_ID
         return "mcp-1"
 
-    def sign_claim_context(
-        self, connector_id: str, payload: dict[str, object]
-    ) -> str:
+    def sign_claim_context(self, connector_id: str, payload: dict[str, object]) -> str:
         assert connector_id == GOOGLE_WORKSPACE_CONNECTOR_ID
         del payload
         return "signature-1"

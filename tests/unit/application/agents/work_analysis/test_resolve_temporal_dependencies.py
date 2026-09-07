@@ -4,7 +4,12 @@ from google_work_agent.application.agents.work_analysis.resolve_temporal_depende
     resolve_temporal_dependencies,
     temporal_dependency_candidate_llm_required,
 )
-from tests.support.work_analysis import WorkAnalysisRuntimeFake, fact, prompt_ref
+from tests.support.work_analysis import (
+    WorkAnalysisRuntimeFake,
+    fact,
+    output_json_schema,
+    prompt_ref,
+)
 
 
 def test_temporal_dependency__preserves_candidate__boundary() -> None:
@@ -74,8 +79,7 @@ def test_temporal_dependency__binds_dynamic_references__before_inference() -> No
         requested_mode="LOCAL_GPU",
     )
 
-    output_schema = runtime.calls[0]["output_schema"]
-    item_schema = output_schema.json_schema["properties"]["relation_candidates"]["items"]
+    item_schema = output_json_schema(runtime)["properties"]["relation_candidates"]["items"]
     assert item_schema["properties"]["source_fact_id"]["enum"] == ["f1", "f2"]
     assert item_schema["properties"]["target_fact_id"]["enum"] == ["f1", "f2"]
     assert item_schema["properties"]["evidence_refs"] == {
@@ -114,9 +118,11 @@ def test_temporal_dependency__rejects_same_fact__relation() -> None:
 
 
 def test_temporal_dependency__without_temporal_fact__does_not_require_llm() -> None:
-    assert temporal_dependency_candidate_llm_required(
-        [fact("f1", "TASK"), fact("f2", "STATUS")]
-    ) is False
-    assert temporal_dependency_candidate_llm_required(
-        [fact("f1", "TASK"), fact("f2", "DEADLINE")]
-    ) is True
+    assert (
+        temporal_dependency_candidate_llm_required([fact("f1", "TASK"), fact("f2", "STATUS")])
+        is False
+    )
+    assert (
+        temporal_dependency_candidate_llm_required([fact("f1", "TASK"), fact("f2", "DEADLINE")])
+        is True
+    )

@@ -26,7 +26,9 @@ def test_schema_integrity__checks__pass(migrated_connection: sqlite3.Connection)
     assert migrated_connection.execute("PRAGMA foreign_key_check;").fetchall() == []
 
 
-def test_local_actor_migration__preserves_inflight_rows__and_all_safety_triggers(tmp_path: Path):
+def test_local_actor_migration__preserves_inflight_rows__and_all_safety_triggers(
+    tmp_path: Path,
+) -> None:
     previous = tmp_path / "previous"
     previous.mkdir()
     for migration in discover_migrations():

@@ -66,7 +66,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
+from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
@@ -138,12 +138,24 @@ class _ComponentInferencePort:
     def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
         has_confirmation = isinstance(projection.get("confirmation_response"), Mapping)
         if prompt_id == "request_understanding.identify_goal":
+            needs_action = self.request_confirmation or has_confirmation
             return {
-                "goal": "schedule team sync" if has_confirmation else "summarize status",
+                "goal": "schedule team sync" if needs_action else "summarize status",
                 "completion_conditions": ["return a result"],
-                "constraints": [],
-                "requested_effect_hints": ["CREATE"] if has_confirmation else [],
-                "requested_resource_hints": ["CALENDAR_EVENT"] if has_confirmation else [],
+                "constraints": {
+                    "search_terms": [],
+                    "business_concepts": [],
+                    "required_information": [],
+                    "person": [],
+                    "sender": [],
+                    "recipient": [],
+                    "subject": [],
+                    "period": [],
+                    "status": [],
+                    "additional_constraints": [],
+                },
+                "requested_effect_hints": ["CREATE"] if needs_action else [],
+                "requested_resource_hints": ["CALENDAR_EVENT"] if needs_action else [],
                 "analysis_requirement": "NONE",
             }
         if prompt_id == "request_understanding.detect_ambiguity":
@@ -169,15 +181,19 @@ class _ComponentInferencePort:
                     "mode": "CHANGED",
                     "constraint_delta": {
                         "upsert_constraints": [
-                            {
-                                "kind": "KEYWORD",
-                                "terms": [
-                                    f"status-{current_round_no}"
-                                    if self.retrieval_followup_changes_query
-                                    else "status"
-                                ],
-                                "match_mode": "ANY",
-                            }
+                            (
+                                {
+                                    "kind": "CONCEPT",
+                                    "concept": "new status evidence",
+                                    "manifestations": [f"status-{current_round_no}"],
+                                }
+                                if self.retrieval_followup_changes_query
+                                else {
+                                    "kind": "KEYWORD",
+                                    "terms": ["status"],
+                                    "match_mode": "ANY",
+                                }
+                            )
                         ],
                         "remove_constraint_kinds": [],
                     },
@@ -326,33 +342,61 @@ def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple
                 identities.append(("김바다 대리", "second@example.test"))
             if "@" in query:
                 identities = [item for item in identities if item[1] in query]
-            return ConnectorReadResultV1(1, binding.tool_id, "person-fixture", {
-                "items": [{
-                    "resource_type": "gmail_thread", "resource_id": email,
-                    "parent_id": None, "version": "v1", "related_resource_ids": [],
-                    "payload": {"subject": "status", "body": "status reviewed",
-                                "sender_name": name, "sender_email": email},
-                } for name, email in identities],
-            }, None, len(identities))
+            return ConnectorReadResultV1(
+                1,
+                binding.tool_id,
+                "person-fixture",
+                {
+                    "items": [
+                        {
+                            "resource_type": "gmail_thread",
+                            "resource_id": email,
+                            "parent_id": None,
+                            "version": "v1",
+                            "related_resource_ids": [],
+                            "payload": {
+                                "subject": "status",
+                                "body": "status reviewed",
+                                "sender_name": name,
+                                "sender_email": email,
+                            },
+                        }
+                        for name, email in identities
+                    ],
+                },
+                None,
+                len(identities),
+            )
 
     def confirm(state: Any) -> Any:
         return interrupt(state["user_interrupt"]), None
 
     reader = Reader()
     state = _state(initial_target="context_retriever")
-    state["request_intent"] = cast(Any, {
-        **_intent(), "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
-    })
+    state["request_intent"] = cast(
+        Any,
+        {
+            **_intent(),
+            "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
+        },
+    )
     state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
     retrieval = RetrievalSubgraph(
-        now_ms=lambda: 1_000, should_stop_for_cancel=lambda _: False,
-        timezone_provider=lambda: "Asia/Seoul", llm_runtime=_ComponentInferencePort(),
-        prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
-        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
-        transition_run=lambda *_: None, merge_decision=cast(Any, _merge_decision),
-        evidence_store=RunScopedEvidenceStore(), connector_reader=reader,
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda *_: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=reader,
         tool_catalog=load_development_tool_registry(),
-        read_result_cache=InMemoryRunRetrievalCache(), confirm_inline=confirm,
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=confirm,
     ).build()
     wrapper = StateGraph(GraphState)
     wrapper.add_node("retrieval", retrieval)
@@ -366,14 +410,22 @@ def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple
     if multiple:
         payload = result["__interrupt__"][0].value
         assert {item["option_id"] for item in payload["options"]} == {
-            "first@example.test", "second@example.test",
+            "first@example.test",
+            "second@example.test",
         }
         assert len(reader.queries) == 1
         with provider_dispatch_execution_scope():
-            result = graph.invoke(Command(resume={
-                "schema_version": 1, "response_kind": "OPTION",
-                "selected_option": chosen, "free_text": None,
-            }), config)
+            result = graph.invoke(
+                Command(
+                    resume={
+                        "schema_version": 1,
+                        "response_kind": "OPTION",
+                        "selected_option": chosen,
+                        "free_text": None,
+                    }
+                ),
+                config,
+            )
     assert graph.get_state(config).next == ()
     assert len(reader.queries) == 2
     assert chosen in reader.queries[1]
@@ -557,10 +609,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         result = graph.invoke(_state())
 
     assert result["request_intent"]["goal"] == "summarize status"
-    assert llm.calls == [
-        "request_understanding.identify_goal",
-        "request_understanding.detect_ambiguity",
-    ]
+    assert llm.calls == ["request_understanding.identify_goal"]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 
@@ -614,28 +663,57 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     with provider_dispatch_execution_scope():
         result = graph.invoke(state)
 
-    assert result["retrieval_result"]["coverage"] == "SUFFICIENT"
+    assert result["retrieval_result"]["coverage"] == "PARTIAL"
+    assert result["retrieval_result"]["missing_information"][0]["reason_codes"] == [
+        "NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT"
+    ]
     assert result["retrieval_result"]["evidence_refs"]
     assert connector.call_count == 1
     assert set(graph.get_graph().nodes) == {
-        "__start__", "__end__", "plan_query", "build_query", "execute_read",
-        "normalize_segments", "rag_retrieve", "select_evidence", "assess_sufficiency", "finalize",
+        "__start__",
+        "__end__",
+        "plan_query",
+        "build_query",
+        "execute_read",
+        "normalize_segments",
+        "rag_retrieve",
+        "select_evidence",
+        "assess_sufficiency",
+        "finalize",
     }
-    assert all((node, "__end__") in _edge_set(graph) for node in (
-        "plan_query", "build_query", "execute_read", "normalize_segments", "rag_retrieve",
-        "select_evidence", "assess_sufficiency", "finalize",
-    ))
+    assert all(
+        (node, "__end__") in _edge_set(graph)
+        for node in (
+            "plan_query",
+            "build_query",
+            "execute_read",
+            "normalize_segments",
+            "rag_retrieve",
+            "select_evidence",
+            "assess_sufficiency",
+            "finalize",
+        )
+    )
     assert ("assess_sufficiency", "plan_query") in _edge_set(graph)
     assert ("finalize", "finalize") in _edge_set(graph)
 
 
-@pytest.mark.parametrize("cancel_after, expected_reads, expected_prompts", [
-    ("retrieval.plan_query", 0, ["retrieval.plan_query"]),
-    ("connector", 1, ["retrieval.plan_query"]),
-    ("retrieval.assess_sufficiency", 1, ["retrieval.plan_query", "retrieval.assess_sufficiency"]),
-])
+@pytest.mark.parametrize(
+    "cancel_after, expected_reads, expected_prompts",
+    [
+        ("retrieval.plan_query", 0, ["retrieval.plan_query"]),
+        ("connector", 1, ["retrieval.plan_query"]),
+        (
+            "retrieval.assess_sufficiency",
+            1,
+            ["retrieval.plan_query", "retrieval.assess_sufficiency"],
+        ),
+    ],
+)
 def test_retrieval_cancellation__requested__returns_to_main_without_external_call(
-    cancel_after: str, expected_reads: int, expected_prompts: list[str],
+    cancel_after: str,
+    expected_reads: int,
+    expected_prompts: list[str],
 ) -> None:
     from google_work_agent.adapters.langgraph.main.routing.route_after_context_retriever import (
         route_after_context_retriever,
@@ -653,7 +731,9 @@ def test_retrieval_cancellation__requested__returns_to_main_without_external_cal
 
     class CancelAfterRead(_ComponentConnectorReadPort):
         def execute_read(
-            self, binding: Any, arguments: Mapping[str, object],
+            self,
+            binding: Any,
+            arguments: dict[str, Any],
         ) -> ConnectorReadResultV1:
             nonlocal cancelled
             result = super().execute_read(binding, arguments)
@@ -668,13 +748,20 @@ def test_retrieval_cancellation__requested__returns_to_main_without_external_cal
     connector = CancelAfterRead()
     graph = RetrievalSubgraph(
         should_stop_for_cancel=lambda _run_id: cancelled,
-        now_ms=lambda: 1_000, timezone_provider=lambda: "Asia/Seoul",
-        llm_runtime=llm, prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
-        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        now_ms=lambda: 1_000,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
         transition_run=lambda _run_id, _transition: None,
-        merge_decision=cast(Any, _merge_decision), evidence_store=RunScopedEvidenceStore(),
-        connector_reader=connector, tool_catalog=load_development_tool_registry(),
-        read_result_cache=InMemoryRunRetrievalCache(), confirm_inline=cast(Any, _confirm_early),
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
     ).build()
     with provider_dispatch_execution_scope():
         result = graph.invoke(state)
@@ -682,19 +769,28 @@ def test_retrieval_cancellation__requested__returns_to_main_without_external_cal
     assert connector.call_count == expected_reads
     assert llm.calls == expected_prompts
     assert result.get("retrieval_result") is None  # No fabricated successful handoff.
-    assert route_after_context_retriever(
-        result, available_targets=frozenset({"end"}),
-        should_stop_for_cancel=lambda _run_id: cancelled,
-    ) == "end"  # Release the invocation for the existing cancellation command owner.
+    assert (
+        route_after_context_retriever(
+            result,
+            available_targets=frozenset({"end"}),
+            should_stop_for_cancel=lambda _run_id: cancelled,
+        )
+        == "end"
+    )  # Release the invocation for the existing cancellation command owner.
 
 
-@pytest.mark.parametrize("cancel_after_update, expected_reads, expected_prompts", [
-    ("build_query", 0, ["retrieval.plan_query"]),
-    ("rag_retrieve", 1, ["retrieval.plan_query"]),
-    ("select_evidence", 1, ["retrieval.plan_query"]),
-])
+@pytest.mark.parametrize(
+    "cancel_after_update, expected_reads, expected_prompts",
+    [
+        ("build_query", 0, ["retrieval.plan_query"]),
+        ("rag_retrieve", 1, ["retrieval.plan_query"]),
+        ("select_evidence", 1, ["retrieval.plan_query"]),
+    ],
+)
 def test_retrieval_cancellation__between_scheduled_nodes__prevents_new_io(
-    cancel_after_update: str, expected_reads: int, expected_prompts: list[str],
+    cancel_after_update: str,
+    expected_reads: int,
+    expected_prompts: list[str],
 ) -> None:
     cancelled = False
     state = _state(initial_target="context_retriever")
@@ -704,13 +800,20 @@ def test_retrieval_cancellation__between_scheduled_nodes__prevents_new_io(
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         should_stop_for_cancel=lambda _run_id: cancelled,
-        now_ms=lambda: 1_000, timezone_provider=lambda: "Asia/Seoul",
-        llm_runtime=llm, prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
-        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        now_ms=lambda: 1_000,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
         transition_run=lambda _run_id, _transition: None,
-        merge_decision=cast(Any, _merge_decision), evidence_store=RunScopedEvidenceStore(),
-        connector_reader=connector, tool_catalog=load_development_tool_registry(),
-        read_result_cache=InMemoryRunRetrievalCache(), confirm_inline=cast(Any, _confirm_early),
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
     ).build()
     updates = []
     with provider_dispatch_execution_scope():
@@ -738,23 +841,31 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
         def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
             if prompt_id == "retrieval.plan_query":
                 result = super()._response(prompt_id, projection)
-                cast(Any, result)["route_queries"][0]["search_spec"]["constraints"].append({
-                    "kind": "CONCEPT", "concept": "일정", "manifestations": ["회의", "시간변경"],
-                })
+                cast(Any, result)["route_queries"][0]["search_spec"]["constraints"].append(
+                    {
+                        "kind": "CONCEPT",
+                        "concept": "일정",
+                        "manifestations": ["회의", "시간변경"],
+                    }
+                )
                 return result
             if prompt_id == "retrieval.select_evidence":
-                self.assessed_resources.append([
-                    str(segment["resource_ref"])
-                    for segment in cast(list[dict[str, Any]], projection["ranked_segments"])
-                ])
+                self.assessed_resources.append(
+                    [
+                        str(segment["resource_ref"])
+                        for segment in cast(list[dict[str, Any]], projection["ranked_segments"])
+                    ]
+                )
                 for segment in cast(list[dict[str, Any]], projection["ranked_segments"]):
                     annotation = segment["temporal_date_candidates"][0]
                     assert annotation["target_index"] == 0
                     assert annotation["date_mentions_truncated"] is date_rich
                     assert len(annotation["date_mentions"]) == (12 if date_rich else 1)
                     assert annotation["date_mentions"][0] == {
-                        "source_text": "2026년 9월 3일", "candidate_date": "2026-09-03",
-                        "year_explicit": True, "date_intersects_window": True,
+                        "source_text": "2026년 9월 3일",
+                        "candidate_date": "2026-09-03",
+                        "year_explicit": True,
+                        "date_intersects_window": True,
                     }
             if prompt_id in {"retrieval.select_evidence", "retrieval.assess_sufficiency"}:
                 assert projection["temporal_constraints"] == [
@@ -779,7 +890,7 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
                 if binding.tool_id == "gmail_get_thread"
                 else ["one", "two", "three"]
             )
-            items = [
+            items: list[JsonValue] = [
                 {
                     "resource_type": "gmail_thread",
                     "resource_id": resource_id,
@@ -788,15 +899,17 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
                     "related_resource_ids": [],
                     "payload": {
                         "subject": f"Status {resource_id}",
-                        "body": f"회의 일정은 2026년 9월 3일 {resource_id}" + (
+                        "body": f"회의 일정은 2026년 9월 3일 {resource_id}"
+                        + (
                             " ".join(f"2026년 9월 {day}일" for day in range(1, 22))
-                            if date_rich else ""
+                            if date_rich
+                            else ""
                         ),
                     },
                 }
                 for resource_id in ids
             ]
-            output = (
+            output: dict[str, JsonValue] = (
                 {"item": items[0]} if binding.tool_id == "gmail_get_thread" else {"items": items}
             )
             return ConnectorReadResultV1(
@@ -807,8 +920,9 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     intent = _intent()
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
     intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": "EVENT_TIME"}]
-    intent["constraints"].append({"kind": "DATE", "field": "period", "value": "이번주"})
-    intent["constraints"].append(
+    constraints = cast(list[dict[str, object]], intent["constraints"])
+    constraints.append({"kind": "DATE", "field": "period", "value": "이번주"})
+    constraints.append(
         {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]}
     )
     state["retry_budget"]["started_at_ms"] = run_start
@@ -917,14 +1031,27 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     assert second["retrieval_result"]["meta"]["revision"] == 2
     assert second["retrieval_result"]["retrieval_rounds"] == 2
     assert connector.call_count == 2
-    assert llm.calls.count("retrieval.plan_query") == 2
-    assert cast(Any, second["__context_query_attempts__"])[0]["normalized_intent_constraints"][0][
-        "terms"
-    ] == ["status"]
-    assert cast(Any, second["__context_query_attempts__"])[1]["normalized_intent_constraints"][0][
-        "terms"
-    ] == ["status-1"]
-    assert len(second["__context_query_attempts__"]) == 2
+    assert llm.calls.count("retrieval.plan_query") == 3
+    attempts = cast(list[dict[str, Any]], second["__context_query_attempts__"])
+    assert all(
+        next(
+            constraint
+            for constraint in attempt["normalized_intent_constraints"]
+            if constraint["kind"] == "KEYWORD"
+        )["terms"]
+        == ["status"]
+        for attempt in attempts
+    )
+    assert next(
+        constraint
+        for constraint in attempts[1]["normalized_intent_constraints"]
+        if constraint["kind"] == "CONCEPT"
+    ) == {
+        "kind": "CONCEPT",
+        "concept": "new status evidence",
+        "manifestations": ["status-1"],
+    }
+    assert len(attempts) == 2
 
 
 def test_retrieval__unchanged_main_back_edge__closes_partial_without_a_second_read() -> None:

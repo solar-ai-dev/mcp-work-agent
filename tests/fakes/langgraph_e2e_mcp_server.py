@@ -120,7 +120,8 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
         )
     event: dict[str, object] = {"tool_name": tool_name, "arguments": arguments}
     if tool_name in _write_tools() and (
-        _load_state().get("task_fixture_mode") or _load_state().get("calendar_fixture_mode")
+        _load_state().get("task_fixture_mode")
+        or _load_state().get("calendar_fixture_mode")
         or _load_state().get("gmail_fixture_mode")
     ):
         claim = cast(dict[str, object], arguments["claim_context"])
@@ -143,9 +144,7 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
                 == 1
             )
         if not event["begin_committed_before_write"]:
-            raise AssertionError(
-                "Write reached Provider before committed BeginExecutionAttempt"
-            )
+            raise AssertionError("Write reached Provider before committed BeginExecutionAttempt")
     _append_event(event)
     payload = _tool_payload(tool_name, arguments)
     validate_tool_output(tool_name, payload)
@@ -330,12 +329,21 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         read_item = _get_fixture(tool_name, arguments, state)
         if read_item is None:
             raise _ExternalFailure("NOT_FOUND", "NOT_SENT")
+        if tool_name == "gmail_get_thread":
+            payload = cast(dict[str, object], read_item.get("payload") or {})
+            if "body" not in payload and isinstance(payload.get("snippet"), str):
+                read_item = {
+                    **read_item,
+                    "payload": {**payload, "body": payload["snippet"]},
+                }
         item_failure_mode = _failure_mode(
             {"payload": cast(dict[str, object], read_item.get("payload") or {})}
         )
         mutation_key = (
-            "calendar_verification_mutation" if tool_name == "calendar_get_event"
-            else "gmail_verification_mutation" if tool_name.startswith("gmail_")
+            "calendar_verification_mutation"
+            if tool_name == "calendar_get_event"
+            else "gmail_verification_mutation"
+            if tool_name.startswith("gmail_")
             else "task_verification_mutation"
         )
         if state.get(mutation_key):
@@ -347,7 +355,8 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
                 "payload": {
                     **cast(dict[str, object], read_item["payload"]),
                     **{
-                        key: value for key, value in mutation.items()
+                        key: value
+                        for key, value in mutation.items()
                         if key not in {"parent_id", "resource_id"}
                     },
                 },
@@ -414,13 +423,15 @@ def _write_fixture(
         body_part = parsed.get_body(preferencelist=("plain",))
         payload = {
             "subject": str(parsed["Subject"]),
-            "to": str(parsed["To"]), "cc": str(parsed["Cc"] or ""),
+            "to": str(parsed["To"]),
+            "cc": str(parsed["Cc"] or ""),
             "bcc": str(parsed["Bcc"] or ""),
             "body": body_part.get_content() if body_part else "",
             "thread_id": payload.get("thread_id") or "gmail-thread-created",
             "in_reply_to": str(parsed["In-Reply-To"]) if parsed["In-Reply-To"] else None,
             "references": str(parsed["References"]) if parsed["References"] else None,
-            "attachments": [], "sent": tool_name == "gmail_send",
+            "attachments": [],
+            "sent": tool_name == "gmail_send",
         }
     if tool_name.startswith("tasks"):
         resource_type = "task"
@@ -444,9 +455,14 @@ def _write_fixture(
         parent_id = str(arguments.get("calendar_id", "calendar-e2e"))
         if tool_name == "calendar_create_event":
             return {
-                **_event_snapshot({
-                    "id": resource_id, "status": "confirmed", **_calendar_create_body(payload),
-                }, parent_id),
+                **_event_snapshot(
+                    {
+                        "id": resource_id,
+                        "status": "confirmed",
+                        **_calendar_create_body(payload),
+                    },
+                    parent_id,
+                ),
                 "recovery_fingerprint": fingerprint,
             }
     elif "draft" in tool_name:

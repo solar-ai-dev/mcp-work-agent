@@ -15,8 +15,8 @@ from google_work_agent.adapters.langgraph.profiles.profile_registry import Graph
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.projections import (
     execute_read_projection,
 )
-from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestGoalCandidateV1,
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema as goal_schema,
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     detect_ambiguity,
@@ -81,16 +81,19 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 읽고 요약해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef(
-            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
-        ),),
+        selected_resources=(
+            SelectedResourceRef("ref-thread-42", "google_workspace", "gmail_thread", "thread-42"),
+        ),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
         run_budget=build_default_run_budget(),
     )
-    goal_output: RequestGoalCandidateV1 = {
+    goal_output: dict[str, object] = {
         "goal": "선택한 메일 읽기",
         "completion_conditions": ["선택한 메일을 요약한다"],
-        "constraints": [],
+        "constraints": {
+            **dict.fromkeys(goal_schema.REQUEST_GOAL_SLOT_KINDS, []),
+            "additional_constraints": [],
+        },
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "NONE",
@@ -109,7 +112,10 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         prompt_ref=_prompt("request_understanding.detect_ambiguity"),
     )
     intent = finalize_intent(
-        goal, ambiguity, artifact_id="intent-1", user_request=request.request_text,
+        goal,
+        ambiguity,
+        artifact_id="intent-1",
+        user_request=request.request_text,
     )
     catalog = load_signed_tool_registry()
     candidate, retry_budget = determine_io_resources(
@@ -144,18 +150,14 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         prompt_input={"request_intent": intent, "input_routes": frozen_routes},
         requested_mode="LOCAL_GPU",
         frozen_routes=frozen_routes,
-        route_policies={
-            "route-0": RouteConstraintPolicy(frozenset({"RESOURCE_REF"}))
-        },
+        route_policies={"route-0": RouteConstraintPolicy(frozenset({"RESOURCE_REF"}))},
         retry_budget=retry_budget,
         validated_resource_refs={"route-0": ["gmail_thread:thread-42"]},
     )
     fetch_plan = build_query(
         plan,
         frozen_routes=frozen_routes,
-        route_policies={
-            "route-0": RouteConstraintPolicy(frozenset({"RESOURCE_REF"}))
-        },
+        route_policies={"route-0": RouteConstraintPolicy(frozenset({"RESOURCE_REF"}))},
         validated_resource_refs={"route-0": ["gmail_thread:thread-42"]},
     )[0]
     tool_id, arguments = execute_read_projection.project_connector_call(
@@ -175,9 +177,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
     assert plan["route_queries"][0]["operation"] == "DETAIL_FETCH"
     assert tool_id == "gmail_get_thread"
     assert arguments == {"thread_id": "thread-42"}
-    assert [
-        cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls
-    ] == [
+    assert [cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
     ]
 

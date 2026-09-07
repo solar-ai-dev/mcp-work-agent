@@ -6,8 +6,17 @@ from google_work_agent.application.agents.work_analysis.assess_information_gaps 
     assess_information_gaps,
     combine_information_gap_assessment,
 )
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    InformationGapAssessmentV1,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
-from tests.support.work_analysis import WorkAnalysisRuntimeFake, fact, intent, prompt_ref
+from tests.support.work_analysis import (
+    WorkAnalysisRuntimeFake,
+    fact,
+    intent,
+    output_json_schema,
+    prompt_ref,
+)
 
 
 def test_assess_information_gaps__uses_exact_prompt__and_bounded_retrieval_need() -> None:
@@ -82,8 +91,7 @@ def test_assess_information__gaps_exposes_disposition_invariants__to_repair() ->
         requested_mode="LOCAL_GPU",
     )
 
-    output_schema = runtime.calls[0]["output_schema"]
-    schema = output_schema.json_schema
+    schema = output_json_schema(runtime)
     branches = {branch["properties"]["disposition"]["const"]: branch for branch in schema["oneOf"]}
     assert branches["COMPLETE"]["properties"]["evidence_refs"]["items"]["enum"] == ["ev-1"]
     assert set(branches["COMPLETE"]["required"]) == {
@@ -140,7 +148,7 @@ def test_read_only_gap__missing_evidence__does_not_interrupt_for_confirmation() 
 def test_write_gap__user_owned_choice__preserves_confirmation() -> None:
     request_intent = intent()
     request_intent["requested_effect_hints"] = ["CREATE"]
-    assessment = {
+    assessment: InformationGapAssessmentV1 = {
         "disposition": "NEEDS_CONFIRMATION",
         "ambiguities": [],
         "retrieval_needs": [],

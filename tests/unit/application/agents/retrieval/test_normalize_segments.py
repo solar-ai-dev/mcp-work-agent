@@ -55,25 +55,42 @@ def test_segment_id__is_stable__and_content_sensitive() -> None:
 def test_gmail_preview__without_body__preserves_metadata_only_fact() -> None:
     result = _result("known body")
     assert normalize_segments(result)[0].locator["is_metadata_only"] is False
-    result["source_summaries"][0]["resources"][0]["payload"] = {"subject": "reference"}
+    resources = cast(list[dict[str, object]], result["source_summaries"][0]["resources"])
+    resources[0]["payload"] = {"subject": "reference"}
     assert normalize_segments(result)[0].locator["is_metadata_only"] is True
 
 
 def test_github_issue__preserves_observed_metadata__separately_from_description() -> None:
-    result = cast(AcquisitionResultV1, {
-        "schema_version": 1, "resource_handles": ["github_issue:sample/project#17"],
-        "availability_results": [], "source_summaries": [{
-            "connector_id": "github", "source": "GITHUB", "resources": [{
-                "resource_handle": "github_issue:sample/project#17",
-                "resource_type": "github_issue",
-                "resource_id": "sample/project#17", "version": "v1", "payload": {
-                    "repository": "sample/project", "issue_number": 17, "title": "연결 확인",
-                    "state": "OPEN", "url": "https://github.com/sample/project/issues/17",
-                    "description": "개발 작업이 필요하지 않은 참고 자료입니다.",
-                },
-            }],
-        }],
-    })
+    result = cast(
+        AcquisitionResultV1,
+        {
+            "schema_version": 1,
+            "resource_handles": ["github_issue:sample/project#17"],
+            "availability_results": [],
+            "source_summaries": [
+                {
+                    "connector_id": "github",
+                    "source": "GITHUB",
+                    "resources": [
+                        {
+                            "resource_handle": "github_issue:sample/project#17",
+                            "resource_type": "github_issue",
+                            "resource_id": "sample/project#17",
+                            "version": "v1",
+                            "payload": {
+                                "repository": "sample/project",
+                                "issue_number": 17,
+                                "title": "연결 확인",
+                                "state": "OPEN",
+                                "url": "https://github.com/sample/project/issues/17",
+                                "description": "개발 작업이 필요하지 않은 참고 자료입니다.",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
     segment = normalize_segments(result)[0]
     assert "issue_number: 17" in segment.text
     assert "title: 연결 확인" in segment.text
@@ -92,8 +109,11 @@ def test_source_chunking__long_source__preserves_header_and_line_boundaries(over
         "Design recruitment\nSchedule 09/01 ~ 09/14\n\n"
     ) * 4
     segments = normalize_segments(
-        _result(text), context_budget=ContextBudget(
-            chunk_target_tokens=130, chunk_max_tokens=160, chunk_overlap_tokens=overlap,
+        _result(text),
+        context_budget=ContextBudget(
+            chunk_target_tokens=130,
+            chunk_max_tokens=160,
+            chunk_overlap_tokens=overlap,
         ),
     )
     assert len(segments) > 1
@@ -102,8 +122,11 @@ def test_source_chunking__long_source__preserves_header_and_line_boundaries(over
     assert any("recruitment\nSchedule" in segment.text for segment in segments)
     assert all(len(segment.text.encode("utf-8")) <= 160 for segment in segments)
     flat = normalize_segments(
-        _result(" ".join(text.split())), context_budget=ContextBudget(
-            chunk_target_tokens=130, chunk_max_tokens=160, chunk_overlap_tokens=overlap,
+        _result(" ".join(text.split())),
+        context_budget=ContextBudget(
+            chunk_target_tokens=130,
+            chunk_max_tokens=160,
+            chunk_overlap_tokens=overlap,
         ),
     )
     assert {segment.segment_id for segment in segments}.isdisjoint(
@@ -115,10 +138,13 @@ def test_search_candidate__sender_metadata__does_not_promote_body_mentions() -> 
     acquisition = _result("김정우 대리에게 문의하세요")
     resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
     payload = cast(dict[str, object], resources[0]["payload"])
-    payload.update({
-        "sender_name": "김철수 대리", "sender_email": "kim_0728@example.com",
-        "received_at": "Thu, 20 Aug 2026 10:00:00 +0900",
-    })
+    payload.update(
+        {
+            "sender_name": "김철수 대리",
+            "sender_email": "kim_0728@example.com",
+            "received_at": "Thu, 20 Aug 2026 10:00:00 +0900",
+        }
+    )
     segment = normalize_segments(acquisition)[0]
     assert "Sender name: 김철수 대리" in segment.text
     assert "Sender email: kim_0728@example.com" in segment.text
@@ -137,34 +163,54 @@ def test_detail_growth__acquired_evidence__preserves_identity_on_rebuild() -> No
     prior = normalize_segments(acquisition, context_budget=budget)
     protected = prior[-1].segment_id
     resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
-    resources.extend({
-        "resource_handle": f"gmail_thread:new-{n}", "resource_type": "gmail_thread",
-        "resource_id": f"new-{n}", "version": "1", "payload": {"body": f"새로운 메일 {n}"},
-    } for n in range(6))
-    resources.append({
-        "resource_handle": "task:new", "resource_type": "task", "resource_id": "new",
-        "version": "1", "payload": {"title": "확인할 업무"},
-    })
+    resources.extend(
+        {
+            "resource_handle": f"gmail_thread:new-{n}",
+            "resource_type": "gmail_thread",
+            "resource_id": f"new-{n}",
+            "version": "1",
+            "payload": {"body": f"새로운 메일 {n}"},
+        }
+        for n in range(6)
+    )
+    resources.append(
+        {
+            "resource_handle": "task:new",
+            "resource_type": "task",
+            "resource_id": "new",
+            "version": "1",
+            "payload": {"title": "확인할 업무"},
+        }
+    )
     task = resources.pop()
-    acquisition["source_summaries"].append({
-        "connector_id": "google_workspace", "source": "TASKS", "resources": [task],
-    })
+    acquisition["source_summaries"].append(
+        {
+            "connector_id": "google_workspace",
+            "source": "TASKS",
+            "resources": [task],
+        }
+    )
     ordinary = normalize_segments(acquisition, context_budget=budget)
     assert protected not in {segment.segment_id for segment in ordinary}
     kept = normalize_segments(
-        acquisition, context_budget=budget, preferred_segment_ids=[protected],
+        acquisition,
+        context_budget=budget,
+        preferred_segment_ids=[protected],
     )
     assert len(kept) == budget.max_segments
     assert kept[0].segment_id == protected
     assert {segment.source for segment in kept} == {"GMAIL", "TASKS"}
     rebuilt = normalize_segments(
-        acquisition, context_budget=budget,
+        acquisition,
+        context_budget=budget,
         preferred_segment_ids=[segment.segment_id for segment in kept],
     )
     assert rebuilt == kept
     resources[0]["version"] = "2"
     changed = normalize_segments(
-        acquisition, context_budget=budget, preferred_segment_ids=[protected],
+        acquisition,
+        context_budget=budget,
+        preferred_segment_ids=[protected],
     )
     assert protected not in {segment.segment_id for segment in changed}
 
@@ -237,23 +283,33 @@ def test_source_chunks__identical_text_in_two_messages__keeps_distinct_provenanc
     acquisition = _result("unused")
     messages = [
         {
-            "message_id": f"m{index}", "thread_id": "thread-1",
-            "sender_name": "김철수 대리", "sender_email": "kim_0728@example.com",
-            "recipients": ["recipient@example.com"], "received_at": "2026-08-20T10:00:00Z",
-            "subject": "체육대회", "body": " ".join(["동일한 본문 내용"] * 100),
+            "message_id": f"m{index}",
+            "thread_id": "thread-1",
+            "sender_name": "김철수 대리",
+            "sender_email": "kim_0728@example.com",
+            "recipients": ["recipient@example.com"],
+            "received_at": "2026-08-20T10:00:00Z",
+            "subject": "체육대회",
+            "body": " ".join(["동일한 본문 내용"] * 100),
             "body_truncated": False,
         }
         for index in range(2)
     ]
-    acquisition["source_summaries"][0]["resources"] = [{
-        "resource_handle": "gmail_thread:thread-1", "resource_type": "gmail_thread",
-        "resource_id": "thread-1", "version": "1",
-        "payload": {"messages": messages, "message_count": 2},
-    }]
+    acquisition["source_summaries"][0]["resources"] = [
+        {
+            "resource_handle": "gmail_thread:thread-1",
+            "resource_type": "gmail_thread",
+            "resource_id": "thread-1",
+            "version": "1",
+            "payload": {"messages": messages, "message_count": 2},
+        }
+    ]
     segments = normalize_segments(
         acquisition,
         context_budget=ContextBudget(
-            chunk_target_tokens=30, chunk_max_tokens=40, chunk_overlap_tokens=0,
+            chunk_target_tokens=30,
+            chunk_max_tokens=40,
+            chunk_overlap_tokens=0,
         ),
     )
     assert len(segments) > 4
@@ -449,7 +505,10 @@ def test_google_source_families__with_same_input__retain_stable_normalization() 
 def test_mixed_sources__full_preferred_google_budget__still_retains_new_github() -> None:
     google = _result("one two three four five six seven eight nine ten")
     budget = ContextBudget(
-        max_segments=2, chunk_target_tokens=3, chunk_max_tokens=4, chunk_overlap_tokens=0,
+        max_segments=2,
+        chunk_target_tokens=3,
+        chunk_max_tokens=4,
+        chunk_overlap_tokens=0,
     )
     prior = normalize_segments(google, context_budget=budget)
     assert len(prior) == 2
@@ -457,7 +516,9 @@ def test_mixed_sources__full_preferred_google_budget__still_retains_new_github()
         _github_result([(7, "v1", "Issue facts")])["source_summaries"]
     )
     mixed = normalize_segments(
-        google, context_budget=budget, preferred_segment_ids=[item.segment_id for item in prior],
+        google,
+        context_budget=budget,
+        preferred_segment_ids=[item.segment_id for item in prior],
     )
     assert {segment.source for segment in mixed} == {"GMAIL", "GITHUB"}
     assert mixed[0].segment_id == prior[0].segment_id

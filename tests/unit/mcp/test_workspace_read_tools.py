@@ -36,21 +36,29 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server.credentia
     ],
 )
 def test_recovery_read__scopes_provider_request__to_approved_container(
-    monkeypatch, resource_type, key, path
-):
+    monkeypatch: pytest.MonkeyPatch,
+    resource_type: str,
+    key: str,
+    path: str,
+) -> None:
     from google_work_agent.adapters.connectors.google.workspace.mcp_server.dispatch_tool import (
         dispatch_internal_tool,
     )
 
-    calls = []
+    calls: list[str] = []
 
-    def google_api(_state, url, params=None):
+    def google_api(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str | list[str]] | None = None,
+    ) -> dict[str, object]:
+        del params
         calls.append(url)
         return {"items": []}
 
     monkeypatch.setattr(server, "_google_api", google_api)
     result = dispatch_internal_tool(
-        None,
+        _state(),
         "search_by_recovery_fingerprint",
         {
             "resource_type": resource_type,

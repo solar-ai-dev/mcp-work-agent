@@ -13,6 +13,9 @@ from google_work_agent.application.use_cases.plan.persistence_projection import 
 from google_work_agent.application.use_cases.resource_ref.persist_resource_ref import (
     persist_registered_resource_ref,
 )
+from google_work_agent.application.use_cases.resource_ref.resource_ref_projection import (
+    is_durable_resource_type,
+)
 from google_work_agent.application.use_cases.run.build_terminal_message import (
     BuildTerminalMessageHandler,
     BuildTerminalMessageQueryV1,
@@ -33,6 +36,7 @@ from google_work_agent.domain.run.transitions.complete_answer_only_run import (
     transition_complete_answer_only_run,
 )
 from google_work_agent.domain.trace_event.model import TraceEvent as TraceEventRecord
+from google_work_agent.ports.connector.contracts.google_workspace import ResourceType
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 
 
@@ -274,10 +278,10 @@ class CompleteAnswerOnlyRunHandler:
         }
         for draft in command.evidence_drafts:
             resource = refs_by_handle.get(draft["resource_handle"])
-            if resource is None:
-                raise LookupError(
-                    f"answer evidence resource is unavailable: {draft['resource_handle']}"
-                )
+            origin_type, resource_ref_id = _evidence_origin(
+                resource_handle=draft["resource_handle"],
+                resource=resource,
+            )
             role = draft["reason_codes"][0] if draft["reason_codes"] else ""
             if role not in {"SUPPORTS", "CONTRADICTS", "CONTEXT"}:
                 raise ValueError("answer evidence role is invalid")
@@ -285,8 +289,8 @@ class CompleteAnswerOnlyRunHandler:
                 EvidenceRecord(
                     id=self._evidence_id_factory(),
                     run_id=command.run_id,
-                    origin_type=EvidenceOriginType.GOOGLE_RESOURCE,
-                    resource_ref_id=resource.id,
+                    origin_type=origin_type,
+                    resource_ref_id=resource_ref_id,
                     message_id=None,
                     kind=draft["kind"],
                     excerpt=draft["excerpt"],
@@ -295,6 +299,8 @@ class CompleteAnswerOnlyRunHandler:
                             "retrieval_artifact_id": command.retrieval_artifact_id,
                             "segment_id": draft["segment_id"],
                             "role": role,
+                            "resource_handle": draft["resource_handle"],
+                            "source_locator": draft["locator"],
                         },
                         sort_keys=True,
                     ),
@@ -407,6 +413,24 @@ class CompleteAnswerOnlyRunHandler:
         )
         unit_of_work.commit()
         return response
+
+
+def _evidence_origin(
+    *,
+    resource_handle: str,
+    resource: ResourceRefRecord | None,
+) -> tuple[EvidenceOriginType, str | None]:
+    if resource is not None:
+        return EvidenceOriginType.GOOGLE_RESOURCE, resource.id
+
+    resource_type_value, separator, _resource_identity = resource_handle.partition(":")
+    try:
+        resource_type = ResourceType(resource_type_value)
+    except ValueError as error:
+        raise LookupError(f"answer evidence resource is unavailable: {resource_handle}") from error
+    if not separator or is_durable_resource_type(resource_type):
+        raise LookupError(f"answer evidence resource is unavailable: {resource_handle}")
+    return EvidenceOriginType.DERIVED, None
 
 
 def _response_json(response: CompleteAnswerOnlyRunResult) -> str:

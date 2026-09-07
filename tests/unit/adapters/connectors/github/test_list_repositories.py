@@ -71,15 +71,20 @@ def test_repository_list__invalid_cursor__performs_no_provider_call(cursor: str)
     assert api.urls == []
 
 
-@pytest.mark.parametrize("invalid_row", [
-    {"id": 0, "full_name": "sample/project", "private": False},
-    {"id": True, "full_name": "sample/project", "private": False},
-    {"id": 5, "full_name": "sample/project", "private": "false"},
-    {"id": 5, "full_name": "sample/..", "private": False},
-])
-def test_repository_list__invalid_provider_metadata__fails_closed(invalid_row):
+@pytest.mark.parametrize(
+    "invalid_row",
+    [
+        {"id": 0, "full_name": "sample/project", "private": False},
+        {"id": True, "full_name": "sample/project", "private": False},
+        {"id": 5, "full_name": "sample/project", "private": "false"},
+        {"id": 5, "full_name": "sample/..", "private": False},
+    ],
+)
+def test_repository_list__invalid_provider_metadata__fails_closed(
+    invalid_row: dict[str, object],
+) -> None:
     class InvalidApi(RepositoryApi):
-        def get(self, url):
+        def get(self, url: str) -> object:
             if "/repositories?" in url:
                 return {"repositories": [invalid_row]}
             return super().get(url)
@@ -88,7 +93,7 @@ def test_repository_list__invalid_provider_metadata__fails_closed(invalid_row):
         ListRepositoriesOperation(cast(Any, InvalidApi())).execute({})
 
 
-def test_repository_list__oversized_installation_page__rejects_unbounded_input():
+def test_repository_list__oversized_installation_page__rejects_unbounded_input() -> None:
     api = RepositoryApi()
     api.installations = [{"id": item + 1} for item in range(101)]
     with pytest.raises(GitHubProviderError, match="MALFORMED_RESPONSE"):

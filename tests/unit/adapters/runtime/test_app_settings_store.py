@@ -177,7 +177,8 @@ def test_repository_default__save_change_remove__survives_restart(tmp_path: Path
         assert _adapter(tmp_path).get_settings() == result
         reconciled = adapter.reconcile_settings(f"repository-{index}", patch)
         assert reconciled.status == "COMPLETED"
-        assert reconciled.bounded_result and "panel_preferences" in reconciled.bounded_result
+        assert isinstance(reconciled.bounded_result, dict)
+        assert "panel_preferences" in reconciled.bounded_result
         adapter.update_settings(SettingsPatchV1(1, theme="DARK"), f"theme-{index}")
         assert adapter.get_settings().default_github_repository == selection
 

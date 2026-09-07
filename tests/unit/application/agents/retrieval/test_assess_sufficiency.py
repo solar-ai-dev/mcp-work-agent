@@ -1,7 +1,7 @@
 from collections import deque
 from copy import deepcopy
 from dataclasses import replace
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from tests.support.context_retrieval import (
@@ -29,54 +29,106 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceDraftV1,
+    SufficiencyResultV2,
+)
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    ActionOutputPlanV1,
 )
 
 
 def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() -> None:
     intent = _intent()
-    intent.update(analysis_requirement="NONE", constraints=[])
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = []
     runtime = FakeLLMRuntime(deque())
     route_plan = _tool_route_plan()
-    route_plan["input_plan"]["input_routes"][0].update(
-        resource_type="GMAIL_THREAD",
-        allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"],
-    )
+    route = route_plan["input_plan"]["input_routes"][0]
+    route["resource_type"] = "GMAIL_THREAD"
+    route["allowed_read_tool_ids"] = ["gmail_search_threads", "gmail_get_thread"]
     result = assess_sufficiency(
-        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
-        request_intent=intent, tool_route_plan=route_plan,
-        acquisition_result=_acquisition_result(), retry_budget=_run_budget(used=0),
-        evidence_drafts=[{"schema_version": 1, "evidence_id": "e1",
-                          "resource_handle": "gmail_thread:thread-kim", "segment_id": "s1",
-                          "kind": "excerpt", "excerpt": "unclear title",
-                          "locator": {"is_metadata_only": True}, "reason_codes": ["CONTEXT"]}],
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=_acquisition_result(),
+        retry_budget=_run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "unclear title",
+                "locator": {"is_metadata_only": True},
+                "reason_codes": ["CONTEXT"],
+            }
+        ],
     )
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][0]["reason_codes"] == ["CANDIDATE_DETAIL_REQUIRED"]
     assert runtime.calls == []
-@pytest.mark.parametrize("has_next,exhausted,used,expected", [
-    (True, False, 0, "NEEDS_MORE_DATA"), (True, False, 2, "PARTIAL"),
-    (True, True, 0, "SUFFICIENT"), (False, False, 0, "SUFFICIENT"),
-])
+
+
+@pytest.mark.parametrize(
+    "has_next,exhausted,used,expected",
+    [
+        (True, False, 0, "NEEDS_MORE_DATA"),
+        (True, False, 2, "PARTIAL"),
+        (True, True, 0, "SUFFICIENT"),
+        (False, False, 0, "SUFFICIENT"),
+    ],
+)
 def test_sufficiency_node__unread_page__requires_bounded_coverage(
-    has_next, exhausted, used, expected,
+    has_next: bool,
+    exhausted: bool,
+    used: int,
+    expected: str,
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
-    intent.update(analysis_requirement="NONE", constraints=[])
-    result = assess_sufficiency_node(
-        {"request_intent": intent,
-         "evidence_selection": {"schema_version": 2, "evidence_drafts": [],
-                                "selected_segment_ids": [], "excluded_segment_ids": []}},
-        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
-        tool_route_plan=_tool_route_plan(), acquisition_result=_acquisition_result(),
-        retry_budget=_run_budget(used=used), evidence_drafts=[{
-            "schema_version": 1, "evidence_id": "e1", "resource_handle": "gmail_thread:thread-kim",
-            "segment_id": "s1", "kind": "excerpt", "excerpt": "현재 확인한 한 개의 자료",
-            "locator": {}, "reason_codes": ["SUPPORTS"],
-        }], read_result_summaries=[{
-            "route_id": "route-gmail", "has_next_page": has_next, "exhausted": exhausted,
-        }],
-    )["sufficiency"]
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = []
+    result = cast(
+        SufficiencyResultV2,
+        assess_sufficiency_node(
+            {
+                "request_intent": intent,
+                "evidence_selection": {
+                    "schema_version": 2,
+                    "evidence_drafts": [],
+                    "selected_segment_ids": [],
+                    "excluded_segment_ids": [],
+                },
+            },
+            llm_runtime=runtime,
+            prompt_ref=SUFFICIENCY_PROMPT_REF,
+            requested_mode="LOCAL_GPU",
+            tool_route_plan=_tool_route_plan(),
+            acquisition_result=_acquisition_result(),
+            retry_budget=_run_budget(used=used),
+            evidence_drafts=[
+                {
+                    "schema_version": 1,
+                    "evidence_id": "e1",
+                    "resource_handle": "gmail_thread:thread-kim",
+                    "segment_id": "s1",
+                    "kind": "excerpt",
+                    "excerpt": "현재 확인한 한 개의 자료",
+                    "locator": {},
+                    "reason_codes": ["SUPPORTS"],
+                }
+            ],
+            read_result_summaries=[
+                {
+                    "route_id": "route-gmail",
+                    "has_next_page": has_next,
+                    "exhausted": exhausted,
+                }
+            ],
+        )["sufficiency"],
+    )
     assert result["status"] == expected
     if has_next and not exhausted:
         assert result["issues"][0]["reason_codes"] == ["UNREAD_PAGE_AVAILABLE"]
@@ -84,24 +136,48 @@ def test_sufficiency_node__unread_page__requires_bounded_coverage(
 
 def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard() -> None:
     intent = _intent()
-    intent.update(analysis_requirement="NONE", constraints=[])
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = []
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     result = assess_sufficiency(
-        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
-        request_intent=intent, tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(), retry_budget=_run_budget(used=0),
-        evidence_drafts=[{
-            "schema_version": 1, "evidence_id": "e1", "resource_handle": "gmail_thread:thread-kim",
-            "segment_id": "s1", "kind": "excerpt", "excerpt": "연수는 9월 4일입니다.",
-            "locator": {}, "reason_codes": ["SUPPORTS"],
-        }],
-        query_attempts=[cast(QueryAttemptV1, {
-            "route_id": "route-gmail", "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH",
-            "normalized_intent_constraints": [{
-                "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME", "timezone": "Asia/Seoul",
-                "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
-            }],
-        })],
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        retry_budget=_run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "연수는 9월 4일입니다.",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        query_attempts=[
+            cast(
+                QueryAttemptV1,
+                {
+                    "route_id": "route-gmail",
+                    "resource_type": "GMAIL_THREAD",
+                    "operation_kind": "SEARCH",
+                    "normalized_intent_constraints": [
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "EVENT_TIME",
+                            "timezone": "Asia/Seoul",
+                            "start_local": "2026-09-01T00:00:00",
+                            "end_local": "2026-09-08T00:00:00",
+                        }
+                    ],
+                },
+            )
+        ],
     )
     assert result["status"] == "PARTIAL"
     assert result["issues"][0]["reason_codes"] == ["EVENT_YEAR_UNCONFIRMED"]
@@ -110,27 +186,59 @@ def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard()
 @pytest.mark.parametrize("code", ["NOT_FOUND", "PERMISSION_DENIED"])
 @pytest.mark.parametrize(("effect", "expected"), [("READ", "PARTIAL"), ("CREATE", "BLOCKED")])
 def test_sufficiency_node__target_access_failure__stops_without_search_or_write(
-    code, effect, expected,
-):
+    code: str,
+    effect: Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"],
+    expected: str,
+) -> None:
     runtime = FakeLLMRuntime(deque())
     budget = _run_budget(used=0)
     original_budget = deepcopy(budget)
     acquisition = _acquisition_result()
-    acquisition.update(status="FAILED", resource_handles=[])
-    acquisition["source_summaries"] = [{
-        "route_id": "route-github", "connector_id": "github", "source": "GITHUB",
-        "status": "FAILED", "error_code": code, "resource_count": 0, "resource_handles": [],
-    }]
-    result = assess_sufficiency_node(
-        {"request_intent": {**_intent(), "requested_effect_hints": [effect]},
-         "evidence_selection": {"schema_version": 2, "evidence_drafts": [],
-                                "selected_segment_ids": [], "excluded_segment_ids": []}},
-        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="AUTO",
-        tool_route_plan=_tool_route_plan([{
-            "route_id": "route-github", "connector_id": "github", "resource_type": "GITHUB_ISSUE",
-            "allowed_read_tool_ids": ["github_list_issues"], "required": True, "reason_codes": [],
-        }]), acquisition_result=acquisition, evidence_drafts=[], retry_budget=budget,
-    )["sufficiency"]
+    acquisition["status"] = "FAILED"
+    acquisition["resource_handles"] = []
+    acquisition["source_summaries"] = [
+        {
+            "route_id": "route-github",
+            "connector_id": "github",
+            "source": "GITHUB",
+            "status": "FAILED",
+            "error_code": code,
+            "resource_count": 0,
+            "resource_handles": [],
+        }
+    ]
+    result = cast(
+        SufficiencyResultV2,
+        assess_sufficiency_node(
+            {
+                "request_intent": {**_intent(), "requested_effect_hints": [effect]},
+                "evidence_selection": {
+                    "schema_version": 2,
+                    "evidence_drafts": [],
+                    "selected_segment_ids": [],
+                    "excluded_segment_ids": [],
+                },
+            },
+            llm_runtime=runtime,
+            prompt_ref=SUFFICIENCY_PROMPT_REF,
+            requested_mode="AUTO",
+            tool_route_plan=_tool_route_plan(
+                [
+                    {
+                        "route_id": "route-github",
+                        "connector_id": "github",
+                        "resource_type": "GITHUB_ISSUE",
+                        "allowed_read_tool_ids": ["github_list_issues"],
+                        "required": True,
+                        "reason_codes": [],
+                    }
+                ]
+            ),
+            acquisition_result=acquisition,
+            evidence_drafts=[],
+            retry_budget=budget,
+        )["sufficiency"],
+    )
     assert result["status"] == expected
     assert result["issues"][0]["route_id"] == "route-github"
     assert "SOURCE_" + code in result["issues"][0]["reason_codes"]
@@ -408,18 +516,27 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
 
 
 @pytest.mark.parametrize("failed", [False, True])
-def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(failed):
+def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
+    failed: bool,
+) -> None:
     acquisition = _acquisition_result()
     acquisition["source_summaries"][0].update(
-        status="FAILED" if failed else "COMPLETE", resource_count=0, resource_handles=[],
+        status="FAILED" if failed else "COMPLETE",
+        resource_count=0,
+        resource_handles=[],
     )
     if failed:
         acquisition["source_summaries"][0]["error_code"] = "PERMISSION_DENIED"
     runtime = FakeLLMRuntime(deque())
     result = assess_sufficiency(
-        llm_runtime=runtime, prompt_ref=SUFFICIENCY_PROMPT_REF, requested_mode="LOCAL_GPU",
-        request_intent=_intent(), tool_route_plan=_tool_route_plan(),
-        acquisition_result=acquisition, evidence_drafts=[], retry_budget=_run_budget(used=0),
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        evidence_drafts=[],
+        retry_budget=_run_budget(used=0),
     )
     reasons = {code for issue in result["issues"] for code in issue["reason_codes"]}
     expected_reason = (
@@ -464,7 +581,8 @@ def test_mail_to_task__empty_mail__does_not_substitute_task_policy_evidence(
     )
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][-1]["reason_codes"] == [
-        "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if mail_count == 0
+        "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
+        if mail_count == 0
         else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
     ]
 
@@ -480,7 +598,11 @@ def test_mail_to_task__empty_mail__does_not_substitute_task_policy_evidence(
     ],
 )
 def test_assess_sufficiency__analysis_request__requires_each_selected_thread_detail(
-    analysis: str, axis: str, used: int, person: bool, concept: bool
+    analysis: Literal["NONE", "REQUIRED"],
+    axis: str,
+    used: int,
+    person: bool,
+    concept: bool,
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
@@ -506,7 +628,7 @@ def test_assess_sufficiency__analysis_request__requires_each_selected_thread_det
             }
         ]
     )
-    evidence = [
+    evidence: list[EvidenceDraftV1] = [
         {
             "schema_version": 1,
             "evidence_id": f"evidence-{name}",
@@ -637,7 +759,7 @@ def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() 
             }
         ]
     )
-    evidence = [
+    evidence: list[EvidenceDraftV1] = [
         {
             "schema_version": 1,
             "evidence_id": f"evidence-{name}",
@@ -789,6 +911,8 @@ def test_google_insufficiency__with_existing_source__retains_google() -> None:
 
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][0]["resolution_source"] == "GOOGLE"
+
+
 @pytest.mark.parametrize(
     "tool", ["github_update_issue", "github_close_issue", "github_reopen_issue"]
 )
@@ -806,15 +930,15 @@ def test_google_insufficiency__with_existing_source__retains_google() -> None:
         "missing_slot",
     ],
 )
-def test_selected_github_mutation__complete_target_read__does_not_require_future_values(tool, gap):
+def test_selected_github_mutation__complete_target_read__does_not_require_future_values(
+    tool: str, gap: str | None
+) -> None:
     intent = _intent()
-    intent.update(
-        analysis_requirement="NONE",
-        requested_effect_hints=["UPDATE"],
-        constraints=[
-            {"kind": "RESOURCE", "field": "selected_resource_id", "value": ["owner/repo#7"]}
-        ],
-    )
+    intent["analysis_requirement"] = "NONE"
+    intent["requested_effect_hints"] = ["UPDATE"]
+    intent["constraints"] = [
+        {"kind": "RESOURCE", "field": "selected_resource_id", "value": ["owner/repo#7"]}
+    ]
     route = {
         "route_id": "route-github",
         "resource_type": "GITHUB_ISSUE",
@@ -878,8 +1002,9 @@ def test_selected_github_mutation__complete_target_read__does_not_require_future
             {**plan["input_plan"]["input_routes"][0], "route_id": "other"}
         )
     elif gap == "other_output":
-        plan["output_plan"]["output_routes"].append(
-            {**plan["output_plan"]["output_routes"][0], "route_id": "other"}
+        action_output = cast(ActionOutputPlanV1, plan["output_plan"])
+        action_output["output_routes"].append(
+            {**action_output["output_routes"][0], "route_id": "other"}
         )
     elif gap == "missing_slot":
         acquisition["missing_slots"] = ["target"]

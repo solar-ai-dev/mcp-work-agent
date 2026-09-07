@@ -89,7 +89,9 @@ def test_dispatch__is_owned__by_connector_local_operation_map() -> None:
         arguments={"repository": "acme/repo", "issue_number": 7},
     )
 
-    assert result["arguments"]["issue_number"] == 7
+    arguments = result["arguments"]
+    assert isinstance(arguments, dict)
+    assert arguments["issue_number"] == 7
     with pytest.raises(ToolNotAvailableError):
         dispatch_github_tool(state, tool_name="google_get_task", arguments={})
 
@@ -254,7 +256,7 @@ def test_device_flow_status_polling__preserves_interval__and_slow_down_backoff()
             "AccountApi",
             (),
             {"get": lambda _self, _url: {"id": 42, "login": "octocat", "email": None}},
-        )(),  # type: ignore[arg-type]
+        )(),
         operations={},
         now_ms=lambda: now[0],
     )

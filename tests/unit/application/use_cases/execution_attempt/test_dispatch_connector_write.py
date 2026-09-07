@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
 from json import dumps
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -285,7 +286,9 @@ def test_missing_begin_execution_receipt__prevents_connector__io() -> None:
     assert port.calls == 0
 
 
-def test_revoked_scope__preserves_approved_arguments__and_blocks_external_effect(tmp_path) -> None:
+def test_revoked_scope__preserves_approved_arguments__and_blocks_external_effect(
+    tmp_path: Path,
+) -> None:
     from google_work_agent.adapters.system.json_settings import (
         FileSettingsStore,
         JsonSettingsAdapter,

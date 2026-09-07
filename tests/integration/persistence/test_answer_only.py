@@ -290,6 +290,59 @@ def test_answer_only__persists_acquired_resource__with_search_evidence(
         connection.close()
 
 
+def test_answer_only__persists_freebusy_context__as_derived_evidence(
+    answer_only_database: Path,
+) -> None:
+    service = CompleteAnswerOnlyRunHandler(
+        unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
+        now_ms=lambda: 1000,
+        message_id_factory=lambda: "message-1",
+        evidence_id_factory=lambda: "evidence-freebusy-1",
+    )
+
+    response = service(
+        CompleteAnswerOnlyRunCommand(
+            command_id="command-freebusy-context-1",
+            conversation_id="conversation-1",
+            run_id="run-1",
+            assistant_message="해당 시간은 비어 있습니다.",
+            expected_version=0,
+            request_hash="b" * 64,
+            retrieval_artifact_id="retrieval-freebusy-1",
+            evidence_drafts=(
+                {
+                    "schema_version": 1,
+                    "evidence_id": "logical-freebusy-1",
+                    "resource_handle": "calendar_freebusy:primary:query-hash",
+                    "segment_id": "segment-freebusy-1",
+                    "kind": "AVAILABILITY",
+                    "excerpt": "요청한 시간 범위에 바쁜 일정이 없습니다.",
+                    "locator": {"calendar_id": "primary"},
+                    "reason_codes": ["SUPPORTS"],
+                },
+            ),
+        )
+    )
+
+    assert response.applied
+    connection = connect_sqlite(answer_only_database)
+    try:
+        evidence = connection.execute(
+            """
+            SELECT origin_type, resource_ref_id, locator_json
+            FROM evidence WHERE run_id = 'run-1';
+            """
+        ).fetchone()
+        assert evidence["origin_type"] == "DERIVED"
+        assert evidence["resource_ref_id"] is None
+        assert (
+            '"resource_handle": "calendar_freebusy:primary:query-hash"' in evidence["locator_json"]
+        )
+        assert '"source_locator": {"calendar_id": "primary"}' in evidence["locator_json"]
+    finally:
+        connection.close()
+
+
 def test_same_command__id_and_hash__returns_stored_result(answer_only_database: Path) -> None:
     service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),

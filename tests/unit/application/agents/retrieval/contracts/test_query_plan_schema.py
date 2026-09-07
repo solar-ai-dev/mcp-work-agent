@@ -1,5 +1,7 @@
 """Owner-local Retrieval query-plan schema scenarios."""
 
+from typing import Any
+
 import pytest
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
@@ -12,22 +14,46 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
-@pytest.mark.parametrize("start,end,valid", [
-    (None, None, False), ("2026-09-01", None, True),
-    (None, "2026-09-08", True), ("2026-09-01", "2026-09-08", True),
-])
-def test_temporal_range__partial_or_empty_bounds__preserves_contract(start, end, valid):
+@pytest.mark.parametrize(
+    "start,end,valid",
+    [
+        (None, None, False),
+        ("2026-09-01", None, True),
+        (None, "2026-09-08", True),
+        ("2026-09-01", "2026-09-08", True),
+    ],
+)
+def test_temporal_range__partial_or_empty_bounds__preserves_contract(
+    start: str | None, end: str | None, valid: bool
+) -> None:
     schema = bind_retrieval_query_plan_output_schema(
-        route_ids=["gmail"], supported_constraint_kinds={"gmail": ["TEMPORAL_RANGE"]},
+        route_ids=["gmail"],
+        supported_constraint_kinds={"gmail": ["TEMPORAL_RANGE"]},
     )
-    candidate = {
-        "schema_version": 2, "route_queries": [{
-            "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
-            "search_spec": {"mode": "INITIAL", "constraints": [{
-                "kind": "TEMPORAL_RANGE", "axis": "MESSAGE_TIME",
-                "start_local": start, "end_local": end, "timezone": "Asia/Seoul",
-            }]}, "detail_candidate_ref": None,
-        }], "required_information": ["received mail"], "retrieval_order": ["gmail"],
+    candidate: dict[str, Any] = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "MESSAGE_TIME",
+                            "start_local": start,
+                            "end_local": end,
+                            "timezone": "Asia/Seoul",
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+        "required_information": ["received mail"],
+        "retrieval_order": ["gmail"],
     }
     assert (not validate_output_schema(candidate, schema.json_schema)) is valid
     candidate["route_queries"][0]["search_spec"]["constraints"] = [{"start_local": start}]
@@ -36,8 +62,10 @@ def test_temporal_range__partial_or_empty_bounds__preserves_contract(start, end,
 
 def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     temporal: TemporalRangeConstraintV1 = {
-        "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
-        "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
+        "kind": "TEMPORAL_RANGE",
+        "axis": "EVENT_TIME",
+        "start_local": "2026-09-01T00:00:00",
+        "end_local": "2026-09-08T00:00:00",
         "timezone": "Asia/Seoul",
     }
     schema = bind_retrieval_query_plan_output_schema(
@@ -49,14 +77,18 @@ def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
         validated_container_refs={"calendar": ["primary"]},
         resolved_temporal_constraints={"gmail": temporal},
     )
-    query = {
-        "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
+    query: dict[str, Any] = {
+        "route_id": "gmail",
+        "operation": "SEARCH",
+        "reason_codes": ["USER_REQUEST"],
         "search_spec": {"mode": "INITIAL", "constraints": [dict(temporal)]},
         "detail_candidate_ref": None,
     }
-    candidate = {
-        "schema_version": 2, "route_queries": [query],
-        "required_information": ["일정 근거"], "retrieval_order": ["gmail"],
+    candidate: dict[str, Any] = {
+        "schema_version": 2,
+        "route_queries": [query],
+        "required_information": ["일정 근거"],
+        "retrieval_order": ["gmail"],
     }
     assert validate_output_schema(candidate, schema.json_schema) == []
     query["search_spec"]["constraints"][0]["start_local"] = "2025-09-01"
@@ -75,17 +107,37 @@ def test_bound_concept_hypothesis__current_meaning__rejects_unbounded_or_differe
     changed: bool,
 ) -> None:
     schema = bind_retrieval_query_plan_output_schema(
-        route_ids=["gmail"], supported_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
-        requested_concepts={"gmail": ["업무 개념"]}, is_followup=changed,
+        route_ids=["gmail"],
+        supported_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
+        requested_concepts={"gmail": ["업무 개념"]},
+        is_followup=changed,
     )
     concept = {"kind": "CONCEPT", "concept": "업무 개념", "manifestations": ["자료"]}
-    spec = ({"mode": "CHANGED", "constraint_delta": {
-        "upsert_constraints": [concept], "remove_constraint_kinds": [],
-    }} if changed else {"mode": "INITIAL", "constraints": [concept]})
-    candidate = {"schema_version": 2, "route_queries": [{
-        "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["MISSING_EVIDENCE"],
-        "search_spec": spec, "detail_candidate_ref": None,
-    }], "required_information": ["source text"], "retrieval_order": ["gmail"]}
+    spec = (
+        {
+            "mode": "CHANGED",
+            "constraint_delta": {
+                "upsert_constraints": [concept],
+                "remove_constraint_kinds": [],
+            },
+        }
+        if changed
+        else {"mode": "INITIAL", "constraints": [concept]}
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["MISSING_EVIDENCE"],
+                "search_spec": spec,
+                "detail_candidate_ref": None,
+            }
+        ],
+        "required_information": ["source text"],
+        "retrieval_order": ["gmail"],
+    }
     assert validate_output_schema(candidate, schema.json_schema) == []
     concept["manifestations"] = ["하나", "둘", "셋", "넷"]
     assert validate_output_schema(candidate, schema.json_schema)
@@ -94,25 +146,45 @@ def test_bound_concept_hypothesis__current_meaning__rejects_unbounded_or_differe
     assert validate_output_schema(candidate, schema.json_schema)
 
 
-@pytest.mark.parametrize("identity, valid", [
-    ("@default", False), ("primary", False), ("김대리", False),
-    ("bonggyulim0728@gmail.com", True),
-])
+@pytest.mark.parametrize(
+    "identity, valid",
+    [
+        ("@default", False),
+        ("primary", False),
+        ("김대리", False),
+        ("bonggyulim0728@gmail.com", True),
+    ],
+)
 def test_bound_query_schema__container_alias_is_not__a_participant(
-    identity: str, valid: bool,
+    identity: str,
+    valid: bool,
 ) -> None:
     schema = bind_retrieval_query_plan_output_schema(
-        route_ids=["gmail"], supported_constraint_kinds={"gmail": ["PARTICIPANT"]},
+        route_ids=["gmail"],
+        supported_constraint_kinds={"gmail": ["PARTICIPANT"]},
     )
     candidate = {
         "schema_version": 2,
-        "route_queries": [{
-            "route_id": "gmail", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
-            "search_spec": {"mode": "INITIAL", "constraints": [{
-                "kind": "PARTICIPANT", "match_mode": "ALL",
-                "participants": [{"role": "SENDER", "identity": identity}],
-            }]}, "detail_candidate_ref": None,
-        }], "required_information": ["메일 내용"], "retrieval_order": ["gmail"],
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "PARTICIPANT",
+                            "match_mode": "ALL",
+                            "participants": [{"role": "SENDER", "identity": identity}],
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+        "required_information": ["메일 내용"],
+        "retrieval_order": ["gmail"],
     }
     assert (not validate_output_schema(candidate, schema.json_schema)) is valid
 
@@ -182,9 +254,7 @@ def test_v2_output_schema__empty_initial_constraints__rejects() -> None:
         "retrieval_order": ["route-1"],
     }
 
-    assert validate_output_schema(
-        candidate, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema
-    )
+    assert validate_output_schema(candidate, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema)
 
 
 def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> None:
@@ -193,7 +263,7 @@ def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> 
         supported_constraint_kinds={"route-1": ["KEYWORD"]},
         is_followup=True,
     )
-    candidate = {
+    candidate: dict[str, Any] = {
         "schema_version": 2,
         "route_queries": [
             {
@@ -219,9 +289,7 @@ def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> 
     assert validate_output_schema(candidate, schema.json_schema) == []
     candidate["route_queries"][0]["search_spec"] = {
         "mode": "INITIAL",
-        "constraints": [
-            {"kind": "KEYWORD", "terms": ["invoice"], "match_mode": "ANY"}
-        ],
+        "constraints": [{"kind": "KEYWORD", "terms": ["invoice"], "match_mode": "ANY"}],
     }
     assert validate_output_schema(candidate, schema.json_schema)
     candidate["route_queries"][0]["search_spec"] = {
@@ -269,12 +337,10 @@ def test_constraint_union__rejects_extra_fields__for_declared_kind() -> None:
 def test_runtime_binding__rejects_unvalidated__container_ref() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["calendar-read"],
-        supported_constraint_kinds={
-            "calendar-read": ["TEMPORAL_RANGE", "CONTAINER_REF"]
-        },
+        supported_constraint_kinds={"calendar-read": ["TEMPORAL_RANGE", "CONTAINER_REF"]},
         validated_container_refs={"calendar-read": ["primary"]},
     )
-    candidate = {
+    candidate: dict[str, Any] = {
         "schema_version": 2,
         "route_queries": [
             {
@@ -295,26 +361,39 @@ def test_runtime_binding__rejects_unvalidated__container_ref() -> None:
     }
 
     assert validate_output_schema(candidate, schema.json_schema)
-    candidate["route_queries"][0]["search_spec"]["constraints"][0]["container_refs"] = [
-        "primary"
-    ]
+    candidate["route_queries"][0]["search_spec"]["constraints"][0]["container_refs"] = ["primary"]
     assert validate_output_schema(candidate, schema.json_schema) == []
 
 
 @pytest.mark.parametrize("is_followup", [False, True])
 def test_runtime_binding__query_round__accepts_only_current_mode(is_followup: bool) -> None:
     schema = bind_retrieval_query_plan_output_schema(
-        route_ids=["r"], supported_constraint_kinds={"r": ["KEYWORD"]}, is_followup=is_followup,
+        route_ids=["r"],
+        supported_constraint_kinds={"r": ["KEYWORD"]},
+        is_followup=is_followup,
     )
     constraint = {"kind": "KEYWORD", "terms": ["exact"], "match_mode": "PHRASE"}
     initial = {"mode": "INITIAL", "constraints": [constraint]}
-    changed = {"mode": "CHANGED", "constraint_delta": {
-        "upsert_constraints": [constraint], "remove_constraint_kinds": [],
-    }}
-    query = {"route_id": "r", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
-             "search_spec": changed if is_followup else initial, "detail_candidate_ref": None}
-    candidate = {"schema_version": 2, "route_queries": [query], "required_information": ["read"],
-                 "retrieval_order": ["r"]}
+    changed = {
+        "mode": "CHANGED",
+        "constraint_delta": {
+            "upsert_constraints": [constraint],
+            "remove_constraint_kinds": [],
+        },
+    }
+    query = {
+        "route_id": "r",
+        "operation": "SEARCH",
+        "reason_codes": ["USER_REQUEST"],
+        "search_spec": changed if is_followup else initial,
+        "detail_candidate_ref": None,
+    }
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [query],
+        "required_information": ["read"],
+        "retrieval_order": ["r"],
+    }
     assert validate_output_schema(candidate, schema.json_schema) == []
     query["search_spec"] = initial if is_followup else changed
     assert validate_output_schema(candidate, schema.json_schema)

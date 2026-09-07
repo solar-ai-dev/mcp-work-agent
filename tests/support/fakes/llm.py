@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import cast
+from typing import TypedDict, cast
 
 from google_work_agent.ports.llm.llm_runtime_status_port import (
     LlmProviderRuntimeStatus,
@@ -28,6 +28,13 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferenceResultV1
 
 
+class StructuredInferenceCall(TypedDict):
+    requested_mode: str
+    prompt_ref: PromptReference
+    prompt_input: dict[str, object]
+    output_schema: OutputSchemaDefinition
+
+
 class DisabledLlmRuntimeStatusPort:
     def get_status(self, provider: str) -> LlmProviderRuntimeStatus:
         return LlmProviderRuntimeStatus(1, provider, False, "DISABLED", None, None)
@@ -41,7 +48,7 @@ class FakeStructuredInferencePort:
     """Queued fake for the canonical structured-inference Port."""
 
     outputs: list[object]
-    calls: list[dict[str, object]] = field(default_factory=list)
+    calls: list[StructuredInferenceCall] = field(default_factory=list)
     validate_schema: bool = False
 
     def infer(

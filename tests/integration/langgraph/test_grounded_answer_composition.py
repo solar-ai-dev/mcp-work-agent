@@ -43,7 +43,8 @@ def test_grounded_answer__production_graph__composes_instead_of_dumping_source(c
         ]
     if case == "selected":
         retrieval["selected_person_identities"] = {"김대리": "person@example.test"}
-        retrieval["person_candidates"].append(
+        person_candidates = cast(list[dict[str, object]], retrieval["person_candidates"])
+        person_candidates.append(
             {
                 "mention": "김대리",
                 "identity": "other@example.test",

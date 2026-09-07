@@ -8,6 +8,9 @@ from google_work_agent.adapters.system.filesystem_operational_command_replay imp
     FilesystemOperationalCommandReplayAdapter,
 )
 from google_work_agent.adapters.system.json_settings import FileSettingsStore, JsonSettingsAdapter
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessQuery,
+)
 from google_work_agent.application.use_cases.setting.update_settings import (
     UpdateSettingsCommand,
     UpdateSettingsHandler,
@@ -16,31 +19,35 @@ from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
 )
-from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1, SettingsPatchV1
+from google_work_agent.ports.system.settings_port import (
+    GitHubRepositoryDefaultV1,
+    SettingsPatchV1,
+    SettingsViewV1,
+)
 
 
 def test_resource_selection__save_reload_clear_and_replay__preserves_identity(
     tmp_path: Path,
 ) -> None:
     settings = JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json"))
-    calls = []
+    calls: list[object] = []
 
     class Inventory:
-        def list_task_lists(self, **_kwargs):
+        def list_task_lists(self, **_kwargs: object) -> SimpleNamespace:
             calls.append("tasks")
             return SimpleNamespace(
                 items=[SimpleNamespace(resource_id=item) for item in ("one", "two", "three")],
                 next_page_token=None,
             )
 
-        def list_calendars(self, **_kwargs):
+        def list_calendars(self, **_kwargs: object) -> SimpleNamespace:
             calls.append("calendars")
             return SimpleNamespace(
                 items=[SimpleNamespace(resource_id=item) for item in ("one", "two", "three")],
                 next_page_token=None,
             )
 
-    def access(query):
+    def access(query: GetRepositoryAccessQuery) -> GitHubRepositoryDefaultV1:
         calls.append(query.repository)
         return GitHubRepositoryDefaultV1(
             query.repository, 2 if query.repository.endswith("two") else 3, "github:1"
@@ -66,6 +73,7 @@ def test_resource_selection__save_reload_clear_and_replay__preserves_identity(
     assert first.settings.google_resource_account_id == "google:1"
     assert first.settings.default_tasklist_id is None and first.settings.default_calendar_id is None
     assert first.settings.default_github_repository is None
+    assert first.settings.selected_github_repositories is not None
     assert len(first.settings.selected_github_repositories) == 2
     assert (
         JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json")).get_settings()
@@ -92,7 +100,7 @@ def test_resource_selection__invalid_or_stale_target__does_not_persist(tmp_path:
     handler = UpdateSettingsHandler(
         settings=settings,
         replay=FilesystemOperationalCommandReplayAdapter(tmp_path / "replay"),
-        resource_inventory=inventory,
+        resource_inventory=cast(Any, inventory),
         google_account_id=lambda: "google:1",
     )
     with pytest.raises(ValueError, match="접근 가능한"):
@@ -106,8 +114,8 @@ def test_resource_selection__invalid_or_stale_target__does_not_persist(tmp_path:
     "ready,active,allowed", [(True, False, True), (False, False, False), (True, True, False)]
 )
 def test_local_model_selection__validates_ready_and_active_run__before_save(
-    tmp_path, ready, active, allowed
-):
+    tmp_path: Path, ready: bool, active: bool, allowed: bool
+) -> None:
     settings = JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json"))
     models = SimpleNamespace(
         list_local_models=lambda: [
@@ -144,9 +152,9 @@ def test_repository_selection__server_bound_identity__replays_without_provider_a
     tmp_path: Path,
 ) -> None:
     settings = JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json"))
-    calls = []
+    calls: list[GetRepositoryAccessQuery] = []
 
-    def access(query):
+    def access(query: GetRepositoryAccessQuery) -> GitHubRepositoryDefaultV1:
         calls.append(query)
         return GitHubRepositoryDefaultV1(query.repository, 12, "github:42")
 
@@ -172,7 +180,7 @@ def test_repository_selection__permission_failure__does_not_persist_default(tmp_
     settings = JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json"))
     original = settings.get_settings()
 
-    def denied(_query):
+    def denied(_query: GetRepositoryAccessQuery) -> GitHubRepositoryDefaultV1:
         raise ConnectorOperationFailure(ConnectorFailureCode.PERMISSION_DENIED, "DENIED")
 
     handler = UpdateSettingsHandler(
@@ -189,13 +197,13 @@ def test_repository_selection__post_commit_crash__reconciles_full_settings_witho
     tmp_path: Path,
 ) -> None:
     class InterruptedSettings(JsonSettingsAdapter):
-        def update_settings(self, patch, operation_ref):
+        def update_settings(self, patch: SettingsPatchV1, operation_ref: str) -> SettingsViewV1:
             super().update_settings(patch, operation_ref)
             raise RuntimeError("simulated crash after atomic settings save")
 
-    calls = []
+    calls: list[GetRepositoryAccessQuery] = []
 
-    def access(query):
+    def access(query: GetRepositoryAccessQuery) -> GitHubRepositoryDefaultV1:
         calls.append(query)
         return GitHubRepositoryDefaultV1(query.repository, 12, "github:42")
 
@@ -210,5 +218,6 @@ def test_repository_selection__post_commit_crash__reconciles_full_settings_witho
         handler(command)
     recovered = handler(command)
     assert recovered.replayed
+    assert recovered.settings.default_github_repository is not None
     assert recovered.settings.default_github_repository.repository == "sample/project"
     assert len(calls) == 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any, cast
 
 import pytest
 
@@ -13,7 +14,7 @@ from google_work_agent.application.agents.planning.compose_answer import (
 
 def test_answer_draft_schema__binds_citations__to_approved_outline() -> None:
     schema = answer_draft_output_schema(["e2", "e1", "e1"])
-    properties = schema.json_schema["properties"]
+    properties = cast(dict[str, Any], schema.json_schema)["properties"]
 
     assert properties["evidence_refs"] == {
         "type": "array",
@@ -256,7 +257,8 @@ def test_compose_answer__resolved_period__preserves_without_inventing_legacy_bou
 ) -> None:
     captured: dict[str, object] = {}
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
         captured.update(prompt_input)
         return {"schema_version": 2, "answer": "확인한 자료의 일정입니다.", "evidence_refs": ["e1"]}
 
@@ -277,7 +279,8 @@ def test_compose_answer__resolved_period__preserves_without_inventing_legacy_bou
 def test_compose_answer__with_unapproved_evidence__projects_only_outline_refs() -> None:
     captured: dict[str, object] = {}
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
         captured.update(prompt_input)
         return {
             "schema_version": 2,
@@ -378,7 +381,9 @@ def test_gmail_read__with_intermediate_analysis__uses_semantic_composition() -> 
     )
 
     assert captured["prompt_id"] == "planning.compose_answer"
-    assert captured["prompt_input"]["work_analysis"] == {
+    prompt_input = captured["prompt_input"]
+    assert isinstance(prompt_input, dict)
+    assert prompt_input["work_analysis"] == {
         "work_facts": [{"fact_id": "fact-internal", "value": "근거 없는 마감일"}]
     }
     assert result["answer"] == "근거에서 네비게이션바 확정을 확인했습니다."
@@ -440,7 +445,8 @@ def test_compose_answer__with_internal_thread_id__removes_resource_identity() ->
 def test_compose_gmail_read__empty_result__explains_without_llm() -> None:
     invoked = False
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id, prompt_input
         nonlocal invoked
         invoked = True
         return {}
@@ -465,12 +471,14 @@ def test_compose_gmail_read__empty_result__explains_without_llm() -> None:
         retrieval_result={
             "coverage": "PARTIAL",
             "source_statuses": [{"status": "COMPLETE", "failure_kind": None}],
-            "missing_information": [{
-                "code": "required_source_evidence",
-                "description": "검색 결과가 없습니다.",
-                "required_for": "RETRIEVAL",
-                "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
-            }],
+            "missing_information": [
+                {
+                    "code": "required_source_evidence",
+                    "description": "검색 결과가 없습니다.",
+                    "required_for": "RETRIEVAL",
+                    "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
+                }
+            ],
         },
         invoke=invoke,
     )
@@ -561,7 +569,8 @@ def test_compose_answer__over_visible_limit__rejects() -> None:
 def test_compose_task_read__concrete_evidence__projects_without_llm() -> None:
     invoked = False
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id, prompt_input
         nonlocal invoked
         invoked = True
         return {}

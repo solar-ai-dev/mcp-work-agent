@@ -7,16 +7,24 @@ from google_work_agent.application.agents.planning.project_empty_read_answer imp
 
 @pytest.mark.parametrize("failure_kind", ["NOT_FOUND", "SCOPE"])
 def test_github_access_failure__requires_access_action__never_claims_empty_issues(
-    failure_kind,
+    failure_kind: str,
 ) -> None:
     result = project_empty_read_answer(
         user_request="열린 이슈 보여줘",
         request_intent={
-            "requested_effect_hints": ["READ"], "requested_resource_hints": ["GITHUB_ISSUE"],
+            "requested_effect_hints": ["READ"],
+            "requested_resource_hints": ["GITHUB_ISSUE"],
         },
-        retrieval_result={"source_statuses": [{
-            "resource_type": "GITHUB_ISSUE", "status": "FAILED", "failure_kind": failure_kind,
-        }]}, evidence=[],
+        retrieval_result={
+            "source_statuses": [
+                {
+                    "resource_type": "GITHUB_ISSUE",
+                    "status": "FAILED",
+                    "failure_kind": failure_kind,
+                }
+            ]
+        },
+        evidence=[],
     )
     assert result is not None
     assert "GitHub App 설치" in result.draft["answer"]
@@ -63,12 +71,14 @@ def test_no_result_criteria__user_owned_constraints__uses_only_authorized_values
         },
         retrieval_result={
             "source_statuses": [{"status": "COMPLETE", "failure_kind": None}],
-            "missing_information": [{
-                "code": "required_source_evidence",
-                "description": "검색 결과가 없습니다.",
-                "required_for": "RETRIEVAL",
-                "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
-            }],
+            "missing_information": [
+                {
+                    "code": "required_source_evidence",
+                    "description": "검색 결과가 없습니다.",
+                    "required_for": "RETRIEVAL",
+                    "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
+                }
+            ],
         },
         evidence=[],
     )
@@ -87,11 +97,13 @@ def test_description_marker__without_typed_reason__does_not_claim_no_result() ->
         },
         retrieval_result={
             "source_statuses": [{"status": "COMPLETE", "failure_kind": None}],
-            "missing_information": [{
-                "code": "required_source_evidence",
-                "description": "RETURNED_NO_RESOURCES라는 문구의 의미를 확인해야 합니다.",
-                "required_for": "RETRIEVAL",
-            }],
+            "missing_information": [
+                {
+                    "code": "required_source_evidence",
+                    "description": "RETURNED_NO_RESOURCES라는 문구의 의미를 확인해야 합니다.",
+                    "required_for": "RETRIEVAL",
+                }
+            ],
         },
         evidence=[],
     )

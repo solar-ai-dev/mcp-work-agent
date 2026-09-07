@@ -44,7 +44,8 @@ def test_intent_revision__with_existing_downstream__invalidates_all_artifacts() 
         "plan_review",
         "approved_plan_id",
     ]
-    assert all(current[field] is None for field in invalidated)
+    current_values = cast(dict[str, object], current)
+    assert all(current_values[field] is None for field in invalidated)
 
 
 def test_retrieval_revision__with_existing_downstream__invalidates_dependent_artifacts() -> None:
@@ -87,7 +88,8 @@ def test_upstream_revision__with_existing_artifacts__invalidates_declared_descen
 ) -> None:
     previous = _state()
     current = deepcopy(previous)
-    artifact = current[upstream]
+    current_values = cast(dict[str, object], current)
+    artifact = current_values[upstream]
     if upstream == "tool_route_plan":
         artifact = cast(dict[str, object], artifact)["input_plan"]
     cast(dict[str, object], artifact)["meta"] = _meta(f"{upstream}-2", 2)
@@ -95,7 +97,7 @@ def test_upstream_revision__with_existing_artifacts__invalidates_declared_descen
     invalidated = invalidate_stale_downstream(previous=previous, current=current)
 
     assert invalidated == expected
-    assert all(current[field] is None for field in invalidated)
+    assert all(current_values[field] is None for field in invalidated)
 
 
 def test_upstream_revision__with_new_fresh_downstream__retains_new_artifacts() -> None:
@@ -155,8 +157,12 @@ def test_supervisor_trace__after_invalidation__records_stage_produced_revision()
         ),
     )
 
-    trace = projection.state["trace_context"]["supervisor_decisions"][-1]
-    assert "request_intent=intent-1:2" in trace["progress_signature"]
+    trace_context = cast(dict[str, object], projection.state["trace_context"])
+    decisions = cast(list[dict[str, object]], trace_context["supervisor_decisions"])
+    trace = decisions[-1]
+    progress_signature = trace["progress_signature"]
+    assert isinstance(progress_signature, str)
+    assert "request_intent=intent-1:2" in progress_signature
     assert trace["invalidated_fields"] == [
         "tool_route_plan",
         "acquisition_result",

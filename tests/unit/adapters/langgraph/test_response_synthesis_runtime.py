@@ -30,9 +30,9 @@ def _answer() -> dict[str, object]:
     "durable_result,expected", [(None, "PARTIAL"), ("SUCCESS", "SUCCESS"), ("PARTIAL", "PARTIAL")]
 )
 def test_partial_retrieval_answer__terminal_projection__preserves_scope_and_durable_result(
-    durable_result,
-    expected,
-):
+    durable_result: str | None,
+    expected: str,
+) -> None:
     result = response_synthesis_node(
         {
             "run_id": "run-1",
@@ -48,11 +48,14 @@ def test_partial_retrieval_answer__terminal_projection__preserves_scope_and_dura
         },
         build_terminal_message=BuildTerminalMessageHandler(),
     )
-    assert result["terminal_commit_intent"]["terminal_message"].result_kind == expected
+    intent = cast(TerminalCommitIntentV1, result["terminal_commit_intent"])
+    assert intent["terminal_message"].result_kind == expected
 
 
 @pytest.mark.parametrize("status", ["CANCEL_REQUESTED", "VERIFYING"])
-def test_cancelled_verified_effect__keeps_cancel_intent__and_partial_message(status):
+def test_cancelled_verified_effect__keeps_cancel_intent__and_partial_message(
+    status: str,
+) -> None:
     result = response_synthesis_node(
         {"run_id": "run-1"},
         read_terminal_facts=lambda _: {
@@ -73,14 +76,16 @@ def test_cancelled_verified_effect__keeps_cancel_intent__and_partial_message(sta
         },
         build_terminal_message=BuildTerminalMessageHandler(),
     )
-    intent = result["terminal_commit_intent"]
+    intent = cast(TerminalCommitIntentV1, result["terminal_commit_intent"])
     assert intent["kind"] == "FINALIZE_CANCEL"
     assert intent["terminal_message"].result_kind == "PARTIAL"
     assert "생성했고" in intent["terminal_message"].content
 
 
 @pytest.mark.parametrize("status", ["ANALYZING", "RETRIEVING", "PLANNING"])
-def test_initial_connection_failure__closes_partial_answer__without_auth_wait(status):
+def test_initial_connection_failure__closes_partial_answer__without_auth_wait(
+    status: str,
+) -> None:
     message = "GitHub 연결 후 요청을 다시 보내주세요."
     state = {
         "run_id": "run-1",
@@ -103,7 +108,7 @@ def test_initial_connection_failure__closes_partial_answer__without_auth_wait(st
         },
         build_terminal_message=BuildTerminalMessageHandler(),
     )
-    intent = result["terminal_commit_intent"]
+    intent = cast(TerminalCommitIntentV1, result["terminal_commit_intent"])
     assert intent["kind"] == "COMPLETE_ANSWER_ONLY"
     assert intent["terminal_message"].content == message
     assert intent["terminal_message"].result_kind == "PARTIAL"
@@ -111,7 +116,7 @@ def test_initial_connection_failure__closes_partial_answer__without_auth_wait(st
 
 
 @pytest.mark.parametrize("status", ["REAUTH_REQUIRED", "EXECUTING", "VERIFYING"])
-def test_initial_connection_failure__cannot_close__inflight_or_reauth(status):
+def test_initial_connection_failure__cannot_close__inflight_or_reauth(status: str) -> None:
     with pytest.raises(ValueError, match="active execution"):
         response_synthesis_node(
             {

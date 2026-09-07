@@ -82,8 +82,11 @@ def _answer_call_reserve(intent: RequestIntentV2) -> int:
 
 
 def deterministic_sufficiency(
-    *, request_intent: RequestIntentV2, tool_route_plan: ToolRoutePlanV2 | None,
-    acquisition_result: AcquisitionResultV1, evidence_drafts: list[EvidenceDraftV1],
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
     retry_budget: RunBudgetV2,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     person_candidates: Sequence[PersonCandidateV1] = (),
@@ -97,34 +100,42 @@ def deterministic_sufficiency(
         if chosen not in identities:
             chosen = next(iter(identities)) if len(identities) == 1 else None
         if chosen is None:
-            return {"schema_version": 2, "status": "NEEDS_CONFIRMATION", "issues": [{
-                "slot": "person_identity", "issue_type": "CONFLICT", "required": True,
-                "resolution_source": "USER", "safety_critical": False,
-                "reason_codes": ["PERSON_IDENTITY_AMBIGUOUS"],
-            }]}
+            return {
+                "schema_version": 2,
+                "status": "NEEDS_CONFIRMATION",
+                "issues": [
+                    {
+                        "slot": "person_identity",
+                        "issue_type": "CONFLICT",
+                        "required": True,
+                        "resolution_source": "USER",
+                        "safety_critical": False,
+                        "reason_codes": ["PERSON_IDENTITY_AMBIGUOUS"],
+                    }
+                ],
+            }
         searched = any(
-            constraint["kind"] == "PARTICIPANT" and any(
-                item["identity"].casefold() == chosen for item in constraint["participants"]
-            )
-            for attempt in query_attempts if attempt["operation_kind"] == "SEARCH"
+            constraint["kind"] == "PARTICIPANT"
+            and any(item["identity"].casefold() == chosen for item in constraint["participants"])
+            for attempt in query_attempts
+            if attempt["operation_kind"] == "SEARCH"
             for constraint in attempt["normalized_intent_constraints"]
         )
-        supported = any(
-            candidate["identity"] == chosen
-            and set(candidate["source_segment_ids"]).intersection(
-                draft["segment_id"]
-                for draft in evidence_drafts
-                if "SUPPORTS" in draft["reason_codes"]
-            )
-            for candidate in person_candidates
-            if candidate["mention"] == mention
-        )
-        if not searched and not supported:
-            return {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": [{
-                "slot": "person_identity_search", "issue_type": "MISSING", "required": True,
-                "resolution_source": "GOOGLE", "safety_critical": False,
-                "reason_codes": ["PERSON_IDENTITY_SEARCH_REQUIRED"],
-            }]}
+        if not searched:
+            return {
+                "schema_version": 2,
+                "status": "NEEDS_MORE_DATA",
+                "issues": [
+                    {
+                        "slot": "person_identity_search",
+                        "issue_type": "MISSING",
+                        "required": True,
+                        "resolution_source": "GOOGLE",
+                        "safety_critical": False,
+                        "reason_codes": ["PERSON_IDENTITY_SEARCH_REQUIRED"],
+                    }
+                ],
+            }
     if confirmation_response is not None:
         return None
     remaining = (
@@ -134,32 +145,56 @@ def deterministic_sufficiency(
     if remaining > _answer_call_reserve(request_intent) or set(
         request_intent["requested_effect_hints"]
     ) != {"READ"}:
-        metadata_candidates = [draft for draft in evidence_drafts
-                               if (draft["locator"] or {}).get("is_metadata_only") is True]
+        metadata_candidates = [
+            draft
+            for draft in evidence_drafts
+            if (draft["locator"] or {}).get("is_metadata_only") is True
+        ]
         if metadata_candidates:
             detail_need = _require_gmail_candidate_details(
                 {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
-                request_intent=request_intent, tool_route_plan=tool_route_plan,
+                request_intent=request_intent,
+                tool_route_plan=tool_route_plan,
                 evidence_drafts=metadata_candidates,
                 attempted_detail_candidate_refs=project_attempted_detail_refs(query_attempts),
             )
             if detail_need["issues"]:
                 return detail_need
         source_result = _deterministic_source_sufficiency(
-            request_intent=request_intent, tool_route_plan=tool_route_plan,
-            acquisition_result=acquisition_result, evidence_drafts=evidence_drafts,
-            retry_budget=retry_budget, confirmation_response=confirmation_response,
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+            retry_budget=retry_budget,
+            confirmation_response=confirmation_response,
         )
-        return _guard_event_year(
-            source_result, request_intent, evidence_drafts, query_attempts,
-        ) if source_result is not None else None
+        return (
+            _guard_event_year(
+                source_result,
+                request_intent,
+                evidence_drafts,
+                query_attempts,
+            )
+            if source_result is not None
+            else None
+        )
     result = _fail_closed_on_empty_required_acquisition(
-        {"schema_version": 2, "status": "PARTIAL", "issues": [{
-            "slot": "retrieval_budget", "issue_type": "MISSING", "required": False,
-            "resolution_source": "POLICY", "safety_critical": False,
-            "reason_codes": ["ANSWER_CAPACITY_RESERVED"],
-        }]},
-        tool_route_plan=tool_route_plan, acquisition_result=acquisition_result,
+        {
+            "schema_version": 2,
+            "status": "PARTIAL",
+            "issues": [
+                {
+                    "slot": "retrieval_budget",
+                    "issue_type": "MISSING",
+                    "required": False,
+                    "resolution_source": "POLICY",
+                    "safety_critical": False,
+                    "reason_codes": ["ANSWER_CAPACITY_RESERVED"],
+                }
+            ],
+        },
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
         evidence_drafts=evidence_drafts,
     )
     if any(issue["required"] and issue["safety_critical"] for issue in result["issues"]):
@@ -177,20 +212,25 @@ def _deterministic_source_sufficiency(
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
 ) -> SufficiencyResultV2 | None:
     if (
-        not evidence_drafts and set(request_intent["requested_effect_hints"]) == {"READ"}
-        and acquisition_result["source_summaries"] and all(
+        not evidence_drafts
+        and set(request_intent["requested_effect_hints"]) == {"READ"}
+        and acquisition_result["source_summaries"]
+        and all(
             summary.get("status") == "COMPLETE" and summary.get("resource_count") == 0
             for summary in acquisition_result["source_summaries"]
         )
     ):
         empty_result = _fail_closed_on_empty_required_acquisition(
             {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
-            tool_route_plan=tool_route_plan, acquisition_result=acquisition_result,
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
             evidence_drafts=evidence_drafts,
         )
         if empty_result["issues"]:
             return enforce_sufficiency_guard(
-                empty_result, request_intent=request_intent, retry_budget=retry_budget,
+                empty_result,
+                request_intent=request_intent,
+                retry_budget=retry_budget,
                 evidence_supported_partial_possible=False,
             )
     terminal_read_failure = any(
@@ -201,11 +241,14 @@ def _deterministic_source_sufficiency(
     if terminal_read_failure:
         guarded = _fail_closed_on_empty_required_acquisition(
             {"schema_version": 2, "status": "PARTIAL", "issues": []},
-            tool_route_plan=tool_route_plan, acquisition_result=acquisition_result,
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
             evidence_drafts=evidence_drafts,
         )
         return enforce_sufficiency_guard(
-            guarded, request_intent=request_intent, retry_budget=retry_budget,
+            guarded,
+            request_intent=request_intent,
+            retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(evidence_drafts),
         )
     if _is_complete_selected_gmail_read(
@@ -224,22 +267,29 @@ def _deterministic_source_sufficiency(
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     if _is_complete_selected_github_update(
-        request_intent, tool_route_plan, acquisition_result, evidence_drafts,
+        request_intent,
+        tool_route_plan,
+        acquisition_result,
+        evidence_drafts,
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     return None
 
 
 def _is_complete_selected_github_update(
-    intent: RequestIntentV2, plan: ToolRoutePlanV2 | None,
-    acquisition: AcquisitionResultV1, evidence: list[EvidenceDraftV1],
+    intent: RequestIntentV2,
+    plan: ToolRoutePlanV2 | None,
+    acquisition: AcquisitionResultV1,
+    evidence: list[EvidenceDraftV1],
 ) -> bool:
     if (
-        plan is None or plan["output_plan"]["output_mode"] != "ACTION"
+        plan is None
+        or plan["output_plan"]["output_mode"] != "ACTION"
         or intent["analysis_requirement"] != "NONE"
         or intent["ambiguity"]["requires_confirmation"]
         or set(intent["requested_effect_hints"]) - {"READ"} != {"UPDATE"}
-        or acquisition["status"] != "COMPLETE" or acquisition["missing_slots"]
+        or acquisition["status"] != "COMPLETE"
+        or acquisition["missing_slots"]
     ):
         return False
     inputs, outputs = plan["input_plan"]["input_routes"], plan["output_plan"]["output_routes"]
@@ -247,36 +297,54 @@ def _is_complete_selected_github_update(
         return False
     route, output = inputs[0], outputs[0]
     if (
-        route["connector_id"] != "github" or route["resource_type"] != "GITHUB_ISSUE"
-        or "RESOURCE_SELECTED" not in route["reason_codes"] or not route["required"]
-        or output["connector_id"] != "github" or output["resource_type"] != "GITHUB_ISSUE"
-        or output["effect"] != "UPDATE" or output["selected_tool_id"] not in {
-            "github_update_issue", "github_close_issue", "github_reopen_issue",
+        route["connector_id"] != "github"
+        or route["resource_type"] != "GITHUB_ISSUE"
+        or "RESOURCE_SELECTED" not in route["reason_codes"]
+        or not route["required"]
+        or output["connector_id"] != "github"
+        or output["resource_type"] != "GITHUB_ISSUE"
+        or output["effect"] != "UPDATE"
+        or output["selected_tool_id"]
+        not in {
+            "github_update_issue",
+            "github_close_issue",
+            "github_reopen_issue",
         }
     ):
         return False
     selected = {
         f"github_issue:{identity}"
-        for constraint in intent["constraints"] if constraint["field"] == "selected_resource_id"
-        and isinstance(constraint["value"], list)
-        for identity in constraint["value"] if isinstance(identity, str)
+        for constraint in intent["constraints"]
+        if constraint["field"] == "selected_resource_id" and isinstance(constraint["value"], list)
+        for identity in constraint["value"]
+        if isinstance(identity, str)
     }
     summaries = _route_summaries(route, inputs, acquisition)
     return (
-        len(selected) == 1 and bool(summaries)
+        len(selected) == 1
+        and bool(summaries)
         and all(item.get("status") == "COMPLETE" for item in summaries)
         and selected == {item["resource_handle"] for item in evidence}
-        and selected.issubset({handle for item in summaries for handle in cast(
-            list[str], item.get("resource_handles", [])
-        )})
+        and selected.issubset(
+            {
+                handle
+                for item in summaries
+                for handle in cast(list[str], item.get("resource_handles", []))
+            }
+        )
     )
 
 
 def assess_sufficiency(
-    *, llm_runtime: StructuredInferencePort, prompt_ref: PromptReference,
-    requested_mode: RequestedModeV1, request_intent: RequestIntentV2,
-    tool_route_plan: ToolRoutePlanV2 | None, acquisition_result: AcquisitionResultV1,
-    evidence_drafts: list[EvidenceDraftV1], retry_budget: RunBudgetV2,
+    *,
+    llm_runtime: StructuredInferencePort,
+    prompt_ref: PromptReference,
+    requested_mode: RequestedModeV1,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+    retry_budget: RunBudgetV2,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     attempted_detail_candidate_refs: Collection[str] = (),
     query_attempts: Sequence[QueryAttemptV1] = (),
@@ -284,9 +352,12 @@ def assess_sufficiency(
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
     deterministic = deterministic_sufficiency(
-        request_intent=request_intent, tool_route_plan=tool_route_plan,
-        acquisition_result=acquisition_result, evidence_drafts=evidence_drafts,
-        retry_budget=retry_budget, confirmation_response=confirmation_response,
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        retry_budget=retry_budget,
+        confirmation_response=confirmation_response,
         query_attempts=query_attempts,
     )
     if deterministic is not None:
@@ -329,19 +400,29 @@ def assess_sufficiency(
     )
     if tool_route_plan is not None and set(request_intent["requested_effect_hints"]) == {"READ"}:
         unread_routes = {
-            summary.get("route_id") for summary in read_result_summaries
+            summary.get("route_id")
+            for summary in read_result_summaries
             if summary.get("has_next_page") is True and summary.get("exhausted") is not True
         }
         for route in tool_route_plan["input_plan"]["input_routes"]:
-            if (route["route_id"] not in unread_routes
-                    or "RESOURCE_SELECTED" in route["reason_codes"]):
+            if (
+                route["route_id"] not in unread_routes
+                or "RESOURCE_SELECTED" in route["reason_codes"]
+            ):
                 continue
-            validated["issues"].append({
-                "slot": "source_page_coverage", "route_id": route["route_id"],
-                "issue_type": "MISSING", "required": True, "safety_critical": False,
-                "resolution_source": "GOOGLE" if route["connector_id"] == "google_workspace"
-                else "CONNECTOR", "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
-            })
+            validated["issues"].append(
+                {
+                    "slot": "source_page_coverage",
+                    "route_id": route["route_id"],
+                    "issue_type": "MISSING",
+                    "required": True,
+                    "safety_critical": False,
+                    "resolution_source": "GOOGLE"
+                    if route["connector_id"] == "google_workspace"
+                    else "CONNECTOR",
+                    "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
+                }
+            )
     validated = require_read_evidence_support(
         validated,
         request_intent=request_intent,
@@ -356,13 +437,21 @@ def assess_sufficiency(
         and any(item["kind"] == "PERSON" for item in request_intent["constraints"])
         and not project_person_candidates(request_intent, evidence_drafts)
     ):
-        return {"schema_version": 2, "status": "PARTIAL", "issues": [
-            *validated["issues"], {
-                "slot": "person_identity", "issue_type": "MISSING", "required": False,
-                "resolution_source": "GOOGLE", "safety_critical": False,
-                "reason_codes": ["PERSON_IDENTITY_UNRESOLVED"],
-            },
-        ]}
+        return {
+            "schema_version": 2,
+            "status": "PARTIAL",
+            "issues": [
+                *validated["issues"],
+                {
+                    "slot": "person_identity",
+                    "issue_type": "MISSING",
+                    "required": False,
+                    "resolution_source": "GOOGLE",
+                    "safety_critical": False,
+                    "reason_codes": ["PERSON_IDENTITY_UNRESOLVED"],
+                },
+            ],
+        }
     validated = enforce_sufficiency_guard(
         validated,
         request_intent=request_intent,
@@ -373,8 +462,10 @@ def assess_sufficiency(
 
 
 def _guard_event_year(
-    result: SufficiencyResultV2, intent: RequestIntentV2,
-    evidence: Sequence[EvidenceDraftV1], attempts: Sequence[QueryAttemptV1],
+    result: SufficiencyResultV2,
+    intent: RequestIntentV2,
+    evidence: Sequence[EvidenceDraftV1],
+    attempts: Sequence[QueryAttemptV1],
 ) -> SufficiencyResultV2:
     if (
         result["status"] == "SUFFICIENT"
@@ -382,13 +473,21 @@ def _guard_event_year(
         and set(intent["requested_effect_hints"]) == {"READ"}
         and project_unresolved_event_dates(evidence, attempts)
     ):
-        return {"schema_version": 2, "status": "PARTIAL", "issues": [
-            *result["issues"], {
-                "slot": "event_year", "issue_type": "MISSING", "required": False,
-                "resolution_source": "GOOGLE", "safety_critical": False,
-                "reason_codes": ["EVENT_YEAR_UNCONFIRMED"],
-            },
-        ]}
+        return {
+            "schema_version": 2,
+            "status": "PARTIAL",
+            "issues": [
+                *result["issues"],
+                {
+                    "slot": "event_year",
+                    "issue_type": "MISSING",
+                    "required": False,
+                    "resolution_source": "GOOGLE",
+                    "safety_critical": False,
+                    "reason_codes": ["EVENT_YEAR_UNCONFIRMED"],
+                },
+            ],
+        }
     return result
 
 
@@ -439,16 +538,19 @@ def _fail_closed_on_empty_required_acquisition(
         if is_policy and status == "COMPLETE":
             continue
         route_handles = {
-            handle for summary in summaries
+            handle
+            for summary in summaries
             for handle in cast(list[str], summary.get("resource_handles", []))
         }
         has_evidence = bool(evidence_handles & route_handles)
-        if not route_handles and sum(
-            other["resource_type"] == route["resource_type"] for other in routes
-        ) == 1:
+        if (
+            not route_handles
+            and sum(other["resource_type"] == route["resource_type"] for other in routes) == 1
+        ):
             resource_type = (
                 normalize_resource_type(route["resource_type"])
-                if route["resource_type"] == "EMAIL" else route["resource_type"]
+                if route["resource_type"] == "EMAIL"
+                else route["resource_type"]
             )
             has_evidence = any(
                 handle.startswith(resource_type.lower() + ":") for handle in evidence_handles
@@ -459,8 +561,10 @@ def _fail_closed_on_empty_required_acquisition(
             summary.get("resource_count") == 0 for summary in summaries
         )
         reason = (
-            "REQUIRED_SOURCE_" + status if status != "COMPLETE"
-            else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" if no_resources
+            "REQUIRED_SOURCE_" + status
+            if status != "COMPLETE"
+            else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
+            if no_resources
             else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
         )
         access_reasons = [
@@ -469,16 +573,21 @@ def _fail_closed_on_empty_required_acquisition(
             if summary.get("status") == "FAILED"
             and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED", "BUDGET_EXHAUSTED"}
         ]
-        issues.append({
-            "slot": "required_source_evidence",
-            "route_id": route["route_id"],
-            "issue_type": "MISSING",
-            "required": True,
-            "resolution_source": "POLICY" if is_policy else
-            "GOOGLE" if route["connector_id"] == "google_workspace" else "CONNECTOR",
-            "safety_critical": is_policy,
-            "reason_codes": list(dict.fromkeys([reason, *access_reasons])),
-        })
+        issues.append(
+            {
+                "slot": "required_source_evidence",
+                "route_id": route["route_id"],
+                "issue_type": "MISSING",
+                "required": True,
+                "resolution_source": "POLICY"
+                if is_policy
+                else "GOOGLE"
+                if route["connector_id"] == "google_workspace"
+                else "CONNECTOR",
+                "safety_critical": is_policy,
+                "reason_codes": list(dict.fromkeys([reason, *access_reasons])),
+            }
+        )
     return {
         "schema_version": 2,
         "status": result["status"],
@@ -487,7 +596,9 @@ def _fail_closed_on_empty_required_acquisition(
 
 
 def _bind_issue_routes(
-    result: SufficiencyResultV2, *, tool_route_plan: ToolRoutePlanV2 | None,
+    result: SufficiencyResultV2,
+    *,
+    tool_route_plan: ToolRoutePlanV2 | None,
 ) -> SufficiencyResultV2:
     routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
     issues: list[SufficiencyIssueV2] = []
@@ -498,8 +609,11 @@ def _bind_issue_routes(
         if route_id is not None and not any(route["route_id"] == route_id for route in routes):
             raise RetrievalValidationError("sufficiency issue references an unknown frozen route")
         if source in {"GOOGLE", "CONNECTOR"}:
-            eligible = [route for route in routes if
-                        (route["connector_id"] == "google_workspace") == (source == "GOOGLE")]
+            eligible = [
+                route
+                for route in routes
+                if (route["connector_id"] == "google_workspace") == (source == "GOOGLE")
+            ]
             if route_id is not None:
                 if not any(route["route_id"] == route_id for route in eligible):
                     raise RetrievalValidationError("sufficiency issue Connector binding conflicts")
@@ -512,7 +626,8 @@ def _bind_issue_routes(
 
 
 def _route_summaries(
-    route: InputToolRouteV1, routes: Sequence[InputToolRouteV1],
+    route: InputToolRouteV1,
+    routes: Sequence[InputToolRouteV1],
     acquisition_result: AcquisitionResultV1,
 ) -> list[dict[str, object]]:
     source = _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
@@ -521,12 +636,14 @@ def _route_summaries(
         for item in routes
     )
     return [
-        summary for summary in acquisition_result["source_summaries"]
+        summary
+        for summary in acquisition_result["source_summaries"]
         if summary.get("source") == source
         and summary.get("connector_id", route["connector_id"]) == route["connector_id"]
-        and (summary.get("route_id") == route["route_id"] or (
-            summary.get("route_id") is None and source_route_count == 1
-        ))
+        and (
+            summary.get("route_id") == route["route_id"]
+            or (summary.get("route_id") is None and source_route_count == 1)
+        )
     ]
 
 
@@ -605,10 +722,7 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
     required = tuple(issue for issue in context.issues if issue.required)
     if any(issue.resolution_source is ResolutionSource.POLICY for issue in required):
         return InsufficientDataDisposition.BLOCKED
-    if any(
-        issue.safety_critical
-        for issue in required
-    ):
+    if any(issue.safety_critical for issue in required):
         return InsufficientDataDisposition.BLOCKED
     if any(issue.resolution_source is ResolutionSource.USER for issue in required):
         return InsufficientDataDisposition.NEEDS_CONFIRMATION
@@ -635,6 +749,7 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
 
 # Preserved deterministic evaluator is owned by this sufficiency operation.
 
+
 def sufficiency_output_schema(tool_route_plan: ToolRoutePlanV2 | None) -> OutputSchemaDefinition:
     """Constrain route references before inference to the current frozen route set."""
     schema = deepcopy(SUFFICIENCY_OUTPUT_SCHEMA.json_schema)
@@ -648,7 +763,8 @@ def sufficiency_output_schema(tool_route_plan: ToolRoutePlanV2 | None) -> Output
     else:
         fields.pop("route_id", None)
     return OutputSchemaDefinition(
-        schema_version=SUFFICIENCY_OUTPUT_SCHEMA.schema_version, json_schema=schema,
+        schema_version=SUFFICIENCY_OUTPUT_SCHEMA.schema_version,
+        json_schema=schema,
     )
 
 
@@ -805,7 +921,8 @@ def _worst_source_status(summaries: list[dict[str, object]]) -> tuple[str, str |
         status, failure_kind = _SOURCE_STATUS_MAP.get(raw_status, ("FAILED", raw_status))
         if raw_status == "FAILED":
             failure_kind = {
-                "NOT_FOUND": "NOT_FOUND", "PERMISSION_DENIED": "SCOPE",
+                "NOT_FOUND": "NOT_FOUND",
+                "PERMISSION_DENIED": "SCOPE",
                 "BUDGET_EXHAUSTED": "BUDGET_EXHAUSTED",
             }.get(str(summary.get("error_code")), failure_kind)
         priority = _SOURCE_STATUS_PRIORITY.get(status, 3)
@@ -907,8 +1024,11 @@ def enforce_sufficiency_guard(
             0, retry_budget["max_detail_fetches"] - retry_budget["detail_fetches_used"]
         )
     if any(
-        set(issue["reason_codes"]) & {
-            "SOURCE_NOT_FOUND", "SOURCE_PERMISSION_DENIED", "SOURCE_BUDGET_EXHAUSTED",
+        set(issue["reason_codes"])
+        & {
+            "SOURCE_NOT_FOUND",
+            "SOURCE_PERMISSION_DENIED",
+            "SOURCE_BUDGET_EXHAUSTED",
         }
         for issue in sufficiency_result["issues"]
     ):
@@ -965,8 +1085,10 @@ def _require_gmail_candidate_details(
         tool_route_plan is None
         or not (
             request_intent["analysis_requirement"] == "REQUIRED"
-            or any((draft["locator"] or {}).get("is_metadata_only") is True
-                   for draft in evidence_drafts)
+            or any(
+                (draft["locator"] or {}).get("is_metadata_only") is True
+                for draft in evidence_drafts
+            )
             or any(
                 item["kind"] == "PERSON" or item["field"] == "business_concepts"
                 for item in request_intent["constraints"]
@@ -1044,7 +1166,8 @@ def authorize_retrieval_followup(
     if (
         set(request_intent["requested_effect_hints"]) == {"READ"}
         and min(retry_budget["llm_call_limit"], retry_budget["absolute_llm_call_limit"])
-        - retry_budget["llm_calls_used"] <= _answer_call_reserve(request_intent) + 2
+        - retry_budget["llm_calls_used"]
+        <= _answer_call_reserve(request_intent) + 2
     ):
         # Another query/evidence pass must leave the answer's existing allowance intact.
         return {**sufficiency_result, "status": "PARTIAL"}, retry_budget, False

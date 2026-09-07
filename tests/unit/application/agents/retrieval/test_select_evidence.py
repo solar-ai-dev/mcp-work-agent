@@ -30,27 +30,57 @@ def test_evidence_selection__no_candidates__does_not_invoke_model() -> None:
     runtime = FakeLLMRuntime(deque())
     budget = _run_budget(used=0)
     result, returned_budget = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=_intent(),
-        rag_candidates=[], segments=[], retry_budget=budget,
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        rag_candidates=[],
+        segments=[],
+        retry_budget=budget,
     )
-    assert result == {"schema_version": 2, "selected_segment_ids": [],
-                      "excluded_segment_ids": [], "evidence_drafts": []}
+    assert result == {
+        "schema_version": 2,
+        "selected_segment_ids": [],
+        "excluded_segment_ids": [],
+        "evidence_drafts": [],
+    }
     assert returned_budget == budget
     assert runtime.calls == []
 
 
 def test_search_candidate__metadata_only__is_context_not_a_business_fact() -> None:
     intent = _intent()
-    intent.update(analysis_requirement="NONE", requested_effect_hints=["READ"])
+    intent["analysis_requirement"] = "NONE"
+    intent["requested_effect_hints"] = ["READ"]
     runtime = FakeLLMRuntime(deque())
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=intent,
-        rag_candidates=[{"segment_id": "candidate", "resource_ref": "gmail_thread:1",
-                         "retrieval_score": 0.0, "reason_codes": []}],
-        segments=[SourceSegment("candidate", "gmail_thread:1", "GMAIL", "gmail_thread", "1",
-                                None, None, {"is_metadata_only": True}, "unclear title")],
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        rag_candidates=[
+            {
+                "segment_id": "candidate",
+                "resource_ref": "gmail_thread:1",
+                "retrieval_score": 0.0,
+                "reason_codes": [],
+            }
+        ],
+        segments=[
+            SourceSegment(
+                "candidate",
+                "gmail_thread:1",
+                "GMAIL",
+                "gmail_thread",
+                "1",
+                None,
+                None,
+                {"is_metadata_only": True},
+                "unclear title",
+            )
+        ],
         retry_budget=_run_budget(used=0),
     )
     assert result["selected_segment_ids"] == ["candidate"]
@@ -63,61 +93,133 @@ def test_receipt_listing__uses_receipt_not_event_date__unless_content_is_request
     has_topic: bool,
 ) -> None:
     intent = _intent()
-    intent.update(analysis_requirement="NONE", constraints=[])
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = []
     if has_topic:
-        intent["constraints"] = [{"kind": "USER_REQUIREMENT", "field": "search_terms",
-                                  "value": ["계약"]}]
-    segments = [SourceSegment(
-        "mail", "gmail_thread:1", "GMAIL", "gmail_thread", "1", None, None,
-        {"received_at": "2026-09-03T09:00:00+09:00"}, "행사는 2026년 10월 1일입니다.",
-    )]
-    runtime = FakeLLMRuntime(deque([_llm_result({
-        "schema_version": 3, "segment_assessments": {
-            "mail": {"role": "EXCLUDED", "relevance_reason": "계약 내용이 없음"},
-        },
-    })]))
-    attempts = [cast(QueryAttemptV1, {
-        "route_id": "gmail", "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH",
-        "normalized_intent_constraints": [{
-            "kind": "TEMPORAL_RANGE", "axis": "MESSAGE_TIME", "timezone": "Asia/Seoul",
-            "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
-        }],
-    })]
+        intent["constraints"] = [
+            {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["계약"]}
+        ]
+    segments = [
+        SourceSegment(
+            "mail",
+            "gmail_thread:1",
+            "GMAIL",
+            "gmail_thread",
+            "1",
+            None,
+            None,
+            {"received_at": "2026-09-03T09:00:00+09:00"},
+            "행사는 2026년 10월 1일입니다.",
+        )
+    ]
+    runtime = FakeLLMRuntime(
+        deque(
+            [
+                _llm_result(
+                    {
+                        "schema_version": 3,
+                        "segment_assessments": {
+                            "mail": {"role": "EXCLUDED", "relevance_reason": "계약 내용이 없음"},
+                        },
+                    }
+                )
+            ]
+        )
+    )
+    attempts = [
+        cast(
+            QueryAttemptV1,
+            {
+                "route_id": "gmail",
+                "resource_type": "GMAIL_THREAD",
+                "operation_kind": "SEARCH",
+                "normalized_intent_constraints": [
+                    {
+                        "kind": "TEMPORAL_RANGE",
+                        "axis": "MESSAGE_TIME",
+                        "timezone": "Asia/Seoul",
+                        "start_local": "2026-09-01T00:00:00",
+                        "end_local": "2026-09-08T00:00:00",
+                    }
+                ],
+            },
+        )
+    ]
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=intent,
-        rag_candidates=[{"segment_id": "mail", "resource_ref": "gmail_thread:1",
-                         "retrieval_score": 20.0, "reason_codes": []}],
-        segments=segments, retry_budget=_run_budget(used=0), query_attempts=attempts,
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        rag_candidates=[
+            {
+                "segment_id": "mail",
+                "resource_ref": "gmail_thread:1",
+                "retrieval_score": 20.0,
+                "reason_codes": [],
+            }
+        ],
+        segments=segments,
+        retry_budget=_run_budget(used=0),
+        query_attempts=attempts,
     )
     assert result["selected_segment_ids"] == ([] if has_topic else ["mail"])
     assert len(runtime.calls) == int(has_topic)
 
 
-@pytest.mark.parametrize("invalid", [
-    {}, {"other": {"role": "CONTEXT", "relevance_reason": "존재하지 않는 후보"}},
-    {"mail": {"role": "EXCLUDED", "relevance_reason": ""}},
-])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {},
+        {"other": {"role": "CONTEXT", "relevance_reason": "존재하지 않는 후보"}},
+        {"mail": {"role": "EXCLUDED", "relevance_reason": ""}},
+    ],
+)
 def test_source_assessment__missing_invented_or_unjustified__uses_bounded_repair(
     invalid: dict[str, object],
 ) -> None:
     draft = {"segment_id": "mail", "role": "CONTEXT", "relevance_reason": "인물 후보"}
-    repaired = {"schema_version": 2, "evidence_drafts": [draft],
-                "selected_segment_ids": ["mail"], "excluded_segment_ids": []}
-    runtime = FakeLLMRuntime(deque([
-        _llm_result({"schema_version": 3, "segment_assessments": invalid}),
-        _llm_result(evidence_assessment_output(repaired)),
-    ]))
+    repaired = {
+        "schema_version": 2,
+        "evidence_drafts": [draft],
+        "selected_segment_ids": ["mail"],
+        "excluded_segment_ids": [],
+    }
+    runtime = FakeLLMRuntime(
+        deque(
+            [
+                _llm_result({"schema_version": 3, "segment_assessments": invalid}),
+                _llm_result(evidence_assessment_output(repaired)),
+            ]
+        )
+    )
     segment = SourceSegment(
-        "mail", "gmail_thread:1", "GMAIL", "gmail_thread", "1", None, None,
-        {}, "김철수 대리의 박람회 참석 안내",
+        "mail",
+        "gmail_thread:1",
+        "GMAIL",
+        "gmail_thread",
+        "1",
+        None,
+        None,
+        {},
+        "김철수 대리의 박람회 참석 안내",
     )
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=_intent(),
-        rag_candidates=[{"segment_id": "mail", "resource_ref": "gmail_thread:1",
-                         "retrieval_score": 20.0, "reason_codes": ["ENTITY_CANDIDATE_MATCH"]}],
-        segments=[segment], retry_budget=_run_budget(used=0),
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        rag_candidates=[
+            {
+                "segment_id": "mail",
+                "resource_ref": "gmail_thread:1",
+                "retrieval_score": 20.0,
+                "reason_codes": ["ENTITY_CANDIDATE_MATCH"],
+            }
+        ],
+        segments=[segment],
+        retry_budget=_run_budget(used=0),
     )
     assert len(runtime.calls) == 2
     assert result == repaired
@@ -129,56 +231,116 @@ def test_source_assessment__missing_invented_or_unjustified__uses_bounded_repair
 def test_materialization__inconsistent_legacy_selection__rejects_without_guessing() -> None:
     with pytest.raises(ValueError, match="inconsistent selected segment/evidence binding"):
         materialize_evidence_drafts(
-            {"schema_version": 2, "selected_segment_ids": ["mail"],
-             "excluded_segment_ids": [], "evidence_drafts": []},
+            {
+                "schema_version": 2,
+                "selected_segment_ids": ["mail"],
+                "excluded_segment_ids": [],
+                "evidence_drafts": [],
+            },
             segments=[],
         )
 
 
-def test_source_assessment__object_order_changes__preserves_ranked_detail_priority():
-    segments = [SourceSegment(key, f"gmail_thread:{key}", "GMAIL", "gmail_thread", key,
-                              None, None, {}, "박람회 참석 안내") for key in ("z-top", "a-low")]
-    runtime = FakeLLMRuntime(deque([_llm_result({
-        "schema_version": 3, "segment_assessments": {
-            key: {"role": "CONTEXT", "relevance_reason": "관련 행사 후보"}
-            for key in ("a-low", "z-top")
-        },
-    })]))
+def test_source_assessment__object_order_changes__preserves_ranked_detail_priority() -> None:
+    segments = [
+        SourceSegment(
+            key,
+            f"gmail_thread:{key}",
+            "GMAIL",
+            "gmail_thread",
+            key,
+            None,
+            None,
+            {},
+            "박람회 참석 안내",
+        )
+        for key in ("z-top", "a-low")
+    ]
+    runtime = FakeLLMRuntime(
+        deque(
+            [
+                _llm_result(
+                    {
+                        "schema_version": 3,
+                        "segment_assessments": {
+                            key: {"role": "CONTEXT", "relevance_reason": "관련 행사 후보"}
+                            for key in ("a-low", "z-top")
+                        },
+                    }
+                )
+            ]
+        )
+    )
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=_intent(),
-        rag_candidates=[{"segment_id": item.segment_id, "resource_ref": item.resource_handle,
-                         "retrieval_score": float(2 - i), "reason_codes": []}
-                        for i, item in enumerate(segments)],
-        segments=segments, retry_budget=_run_budget(used=0),
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        rag_candidates=[
+            {
+                "segment_id": item.segment_id,
+                "resource_ref": item.resource_handle,
+                "retrieval_score": float(2 - i),
+                "reason_codes": [],
+            }
+            for i, item in enumerate(segments)
+        ],
+        segments=segments,
+        retry_budget=_run_budget(used=0),
     )
     assert result["selected_segment_ids"] == ["z-top", "a-low"]
     evidence = materialize_evidence_drafts(result, segments=segments)
     assert [item["resource_handle"] for item in evidence] == [
-        "gmail_thread:z-top", "gmail_thread:a-low",
+        "gmail_thread:z-top",
+        "gmail_thread:a-low",
     ]
 
 
-def test_selection_budget__multiple_sources__represents_each_and_binds_visible_schema():
+def test_selection_budget__multiple_sources__represents_each_and_binds_visible_schema() -> None:
     segments = [
-        SourceSegment(f"mail-{n}", f"gmail_thread:{n}", "GMAIL", "gmail_thread", str(n),
-                      None, None, {}, "회의 안내")
+        SourceSegment(
+            f"mail-{n}",
+            f"gmail_thread:{n}",
+            "GMAIL",
+            "gmail_thread",
+            str(n),
+            None,
+            None,
+            {},
+            "회의 안내",
+        )
         for n in range(20)
     ] + [SourceSegment("task", "task:1", "TASK", "task", "1", None, None, {}, "후속 업무")]
-    output = {"schema_version": 2, "selected_segment_ids": ["mail-0", "task"],
-              "excluded_segment_ids": [], "evidence_drafts": [
-                  {"segment_id": item, "role": "CONTEXT", "relevance_reason": "관련 자료"}
-                  for item in ("mail-0", "task")
-              ]}
+    output = {
+        "schema_version": 2,
+        "selected_segment_ids": ["mail-0", "task"],
+        "excluded_segment_ids": [],
+        "evidence_drafts": [
+            {"segment_id": item, "role": "CONTEXT", "relevance_reason": "관련 자료"}
+            for item in ("mail-0", "task")
+        ],
+    }
     runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(output))]))
     intent = _intent()
     intent["requested_resource_hints"] = ["GMAIL_THREAD", "TASK"]
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=intent,
-        rag_candidates=[{"segment_id": item.segment_id, "resource_ref": item.resource_handle,
-                         "retrieval_score": 1.0, "reason_codes": []} for item in segments],
-        segments=segments, retry_budget=_run_budget(used=0),
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        rag_candidates=[
+            {
+                "segment_id": item.segment_id,
+                "resource_ref": item.resource_handle,
+                "retrieval_score": 1.0,
+                "reason_codes": [],
+            }
+            for item in segments
+        ],
+        segments=segments,
+        retry_budget=_run_budget(used=0),
         context_budget=ContextBudget(max_normalized_context_items=2),
     )
     assert result == output
@@ -198,20 +360,22 @@ def test_select_evidence__preserves_stable__exclusion_obligations() -> None:
     runtime = FakeLLMRuntime(
         deque(
             [
-                _llm_result(evidence_assessment_output(
-                    {
-                        "schema_version": 2,
-                        "evidence_drafts": [
-                            {
-                                "segment_id": "segment-2",
-                                "role": "SUPPORTS",
-                                "relevance_reason": "current evidence",
-                            }
-                        ],
-                        "selected_segment_ids": ["segment-2"],
-                        "excluded_segment_ids": [],
-                    }
-                ))
+                _llm_result(
+                    evidence_assessment_output(
+                        {
+                            "schema_version": 2,
+                            "evidence_drafts": [
+                                {
+                                    "segment_id": "segment-2",
+                                    "role": "SUPPORTS",
+                                    "relevance_reason": "current evidence",
+                                }
+                            ],
+                            "selected_segment_ids": ["segment-2"],
+                            "excluded_segment_ids": [],
+                        }
+                    )
+                )
             ]
         )
     )
@@ -292,20 +456,41 @@ def test_select_evidence__sole_exact_selected_read__skips_llm() -> None:
     assert result["evidence_drafts"][0]["role"] == "SUPPORTS"
 
 
-def test_search_candidates__all_irrelevant__excludes_without_repair_or_fabrication():
-    output = {"schema_version": 2, "evidence_drafts": [], "selected_segment_ids": [],
-              "excluded_segment_ids": ["outside-period"]}
+def test_search_candidates__all_irrelevant__excludes_without_repair_or_fabrication() -> None:
+    output = {
+        "schema_version": 2,
+        "evidence_drafts": [],
+        "selected_segment_ids": [],
+        "excluded_segment_ids": ["outside-period"],
+    }
     runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(output))]))
     segment = SourceSegment(
-        "outside-period", "gmail_thread:old", "GMAIL", "gmail_thread", "old", None, None,
-        {}, "2026년 7월 3일 종료된 행사 안내",
+        "outside-period",
+        "gmail_thread:old",
+        "GMAIL",
+        "gmail_thread",
+        "old",
+        None,
+        None,
+        {},
+        "2026년 7월 3일 종료된 행사 안내",
     )
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=_intent(),
-        rag_candidates=[{"segment_id": segment.segment_id, "resource_ref": segment.resource_handle,
-                         "retrieval_score": 1.0, "reason_codes": []}],
-        segments=[segment], retry_budget=_run_budget(used=0),
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        rag_candidates=[
+            {
+                "segment_id": segment.segment_id,
+                "resource_ref": segment.resource_handle,
+                "retrieval_score": 1.0,
+                "reason_codes": [],
+            }
+        ],
+        segments=[segment],
+        retry_budget=_run_budget(used=0),
     )
     assert result == output
     assert len(runtime.calls) == 1
@@ -384,10 +569,14 @@ def test_select_evidence__repairs_container_only_selection__for_task_read() -> N
         "selected_segment_ids": ["task-segment"],
         "excluded_segment_ids": ["task-list-segment"],
     }
-    runtime = FakeLLMRuntime(deque([
-        _llm_result(evidence_assessment_output(container_only)),
-        _llm_result(evidence_assessment_output(concrete_task)),
-    ]))
+    runtime = FakeLLMRuntime(
+        deque(
+            [
+                _llm_result(evidence_assessment_output(container_only)),
+                _llm_result(evidence_assessment_output(concrete_task)),
+            ]
+        )
+    )
     intent = _intent()
     intent["requested_resource_hints"] = ["TASK"]
     segments = [
@@ -534,11 +723,11 @@ def test_select_evidence__with_lineage_keywords__does_not_force_selection() -> N
         "excluded_segment_ids": [],
     }
     empty_selection["excluded_segment_ids"] = [
-        "first-body-1", "first-body-2", "second-metadata",
+        "first-body-1",
+        "first-body-2",
+        "second-metadata",
     ]
-    runtime = FakeLLMRuntime(
-        deque([_llm_result(evidence_assessment_output(empty_selection))])
-    )
+    runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(empty_selection))]))
     intent = _intent()
     intent["analysis_requirement"] = "REQUIRED"
     intent["requested_effect_hints"] = ["READ"]
@@ -609,7 +798,9 @@ def test_select_evidence__with_lineage_keywords__does_not_force_selection() -> N
 
     assert result["selected_segment_ids"] == []
     assert result["excluded_segment_ids"] == [
-        "first-body-1", "first-body-2", "second-metadata",
+        "first-body-1",
+        "first-body-2",
+        "second-metadata",
     ]
     assert len(runtime.calls) == 1
 
@@ -627,12 +818,26 @@ def test_event_time__resource_with_only_explicit_outside_dates__excludes_title_c
     runtime = FakeLLMRuntime(deque([_llm_result(evidence_assessment_output(output))]))
     segments = [
         SourceSegment(
-            "title", "gmail_thread:outside", "GMAIL", "gmail_thread", "outside",
-            None, None, {}, "오로라 이후 점검",
+            "title",
+            "gmail_thread:outside",
+            "GMAIL",
+            "gmail_thread",
+            "outside",
+            None,
+            None,
+            {},
+            "오로라 이후 점검",
         ),
         SourceSegment(
-            "body", "gmail_thread:outside", "GMAIL", "gmail_thread", "outside",
-            None, None, {}, "점검 일정은 2026년 9월 15일입니다.",
+            "body",
+            "gmail_thread:outside",
+            "GMAIL",
+            "gmail_thread",
+            "outside",
+            None,
+            None,
+            {},
+            "점검 일정은 2026년 9월 15일입니다.",
         ),
     ]
     intent = _intent()
@@ -641,22 +846,44 @@ def test_event_time__resource_with_only_explicit_outside_dates__excludes_title_c
         {"kind": "DATE", "field": "period", "value": ["9월 첫째주"]},
         {"kind": "TIME", "field": "temporal_axis", "value": ["EVENT_TIME"]},
     ]
-    attempts = [cast(QueryAttemptV1, {
-        "route_id": "gmail", "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH",
-        "normalized_intent_constraints": [{
-            "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME", "timezone": "Asia/Seoul",
-            "start_local": "2026-09-01T00:00:00", "end_local": "2026-09-08T00:00:00",
-        }],
-    })]
+    attempts = [
+        cast(
+            QueryAttemptV1,
+            {
+                "route_id": "gmail",
+                "resource_type": "GMAIL_THREAD",
+                "operation_kind": "SEARCH",
+                "normalized_intent_constraints": [
+                    {
+                        "kind": "TEMPORAL_RANGE",
+                        "axis": "EVENT_TIME",
+                        "timezone": "Asia/Seoul",
+                        "start_local": "2026-09-01T00:00:00",
+                        "end_local": "2026-09-08T00:00:00",
+                    }
+                ],
+            },
+        )
+    ]
 
     result, _ = select_evidence(
-        llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=intent,
-        rag_candidates=[{
-            "segment_id": item.segment_id, "resource_ref": item.resource_handle,
-            "retrieval_score": 1.0, "reason_codes": [],
-        } for item in segments],
-        segments=segments, retry_budget=_run_budget(used=0), query_attempts=attempts,
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        rag_candidates=[
+            {
+                "segment_id": item.segment_id,
+                "resource_ref": item.resource_handle,
+                "retrieval_score": 1.0,
+                "reason_codes": [],
+            }
+            for item in segments
+        ],
+        segments=segments,
+        retry_budget=_run_budget(used=0),
+        query_attempts=attempts,
     )
 
     assert result["selected_segment_ids"] == []
@@ -684,7 +911,9 @@ def test_select_evidence__with_detail_assessment__selects_semantic_result() -> N
             },
         ],
         "selected_segment_ids": [
-            "detail", "second-status", "decision-without-lineage-in-chunk",
+            "detail",
+            "second-status",
+            "decision-without-lineage-in-chunk",
         ],
         "excluded_segment_ids": ["preview", "second-preview"],
     }
@@ -722,8 +951,7 @@ def test_select_evidence__with_detail_assessment__selects_semantic_result() -> N
             None,
             None,
             {},
-            "From: 최수진 <jira@example.com>\nDate: 2026-04-22 15:49\n"
-            "상태: 해야 할 일 → 진행",
+            "From: 최수진 <jira@example.com>\nDate: 2026-04-22 15:49\n상태: 해야 할 일 → 진행",
         ),
         SourceSegment(
             "second-status",

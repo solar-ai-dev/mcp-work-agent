@@ -86,12 +86,17 @@ def test_default_gpu_probe_timeout__normal_nvidia_smi_startup__allows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed_timeouts: list[float] = []
+
+    def probe_gpu(timeout: float) -> tuple[str, int]:
+        observed_timeouts.append(timeout)
+        return "gpu", 8 * 1024**3
+
     monkeypatch.setattr(probe_module.os, "cpu_count", lambda: 8)
     monkeypatch.setattr(probe_module, "_physical_memory_bytes", lambda: 16 * 1024**3)
     monkeypatch.setattr(
         probe_module,
         "_probe_gpu",
-        lambda timeout: observed_timeouts.append(timeout) or ("gpu", 8 * 1024**3),
+        probe_gpu,
     )
     monkeypatch.setattr(probe_module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(probe_module.platform, "machine", lambda: "AMD64")

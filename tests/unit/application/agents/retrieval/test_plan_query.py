@@ -387,25 +387,34 @@ def test_query_expansion__lexical_anchor_only__does_not_relax_with_dictionary(
         plan_query_expansion,
     )
 
-    assert plan_query_expansion(
-        prompt_input={
-            "current_round_no": 0,
-            "request_intent": {"constraints": []},
-            "prior_query_attempts": [{
-                "route_id": "route-1", "operation_kind": "SEARCH", "stop_reason": "COMPLETE",
-                "normalized_intent_constraints": [
-                    {"kind": "KEYWORD", "terms": terms, "match_mode": "ALL"},
+    assert (
+        plan_query_expansion(
+            prompt_input={
+                "current_round_no": 0,
+                "request_intent": {"constraints": []},
+                "prior_query_attempts": [
+                    {
+                        "route_id": "route-1",
+                        "operation_kind": "SEARCH",
+                        "stop_reason": "COMPLETE",
+                        "normalized_intent_constraints": [
+                            {"kind": "KEYWORD", "terms": terms, "match_mode": "ALL"},
+                        ],
+                    }
                 ],
-            }],
-            "unresolved_sufficiency_issues": [{"required": True, "resolution_source": "GOOGLE"}],
-            "read_result_summaries": [
-                {"route_id": "route-1", "result_count": 0, "exhausted": True},
-            ],
-        },
-        frozen_routes=_tool_route_plan(
-            allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"],
-        )["input_plan"]["input_routes"],
-    ) is None
+                "unresolved_sufficiency_issues": [
+                    {"required": True, "resolution_source": "GOOGLE"}
+                ],
+                "read_result_summaries": [
+                    {"route_id": "route-1", "result_count": 0, "exhausted": True},
+                ],
+            },
+            frozen_routes=_tool_route_plan(
+                allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"],
+            )["input_plan"]["input_routes"],
+        )
+        is None
+    )
 
 
 def test_general_search__with_semantic_choice__keeps_query_planning_llm() -> None:
@@ -669,14 +678,17 @@ def test_exact_calendar_create_precondition__materializes_all_policy_reads__with
             "reason_codes": ["POLICY_CALENDAR_CONFLICT_CHECK"],
         },
     ]
-    policies = {
+    typed_routes = cast(list[InputToolRouteV1], frozen_routes)
+    policies: dict[str, RouteConstraintPolicy] = {
         route["route_id"]: RouteConstraintPolicy(
             frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
             frozenset({"CONTAINER_REF"}) if route["resource_type"] != "CALENDAR" else frozenset(),
         )
-        for route in frozen_routes
+        for route in typed_routes
     }
-    container_refs = {route["route_id"]: ["primary"] for route in frozen_routes}
+    container_refs: dict[str, list[str]] = {
+        route["route_id"]: ["primary"] for route in typed_routes
+    }
 
     result, _, llm_invoked = plan_query(
         llm_runtime=runtime,
@@ -705,7 +717,7 @@ def test_exact_calendar_create_precondition__materializes_all_policy_reads__with
             "input_routes": frozen_routes,
         },
         requested_mode="LOCAL_GPU",
-        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
+        frozen_routes=typed_routes,
         route_policies=policies,
         retry_budget=build_default_run_budget(),
         validated_container_refs=container_refs,
@@ -722,12 +734,16 @@ def test_exact_calendar_create_precondition__materializes_all_policy_reads__with
     for route_query in result["route_queries"]:
         search_spec = route_query["search_spec"]
         assert search_spec is not None
-        assert search_spec["constraints"][0] == {
+        assert search_spec["mode"] == "INITIAL"
+        constraints = search_spec["constraints"]
+        assert constraints[0] == {
             "kind": "CONTAINER_REF",
             "container_refs": ["primary"],
         }
-        assert search_spec["constraints"][1]["start_local"] == "2026-09-05T15:00:00"
-        assert search_spec["constraints"][1]["end_local"] == "2026-09-05T15:30:00"
+        temporal = constraints[1]
+        assert temporal["kind"] == "TEMPORAL_RANGE"
+        assert temporal["start_local"] == "2026-09-05T15:00:00"
+        assert temporal["end_local"] == "2026-09-05T15:30:00"
 
 
 def test_exact_task_create_precondition__materializes_duplicate_reads__without_llm() -> None:
@@ -763,14 +779,17 @@ def test_exact_task_create_precondition__materializes_duplicate_reads__without_l
             "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
         },
     ]
-    policies = {
+    typed_routes = cast(list[InputToolRouteV1], frozen_routes)
+    policies: dict[str, RouteConstraintPolicy] = {
         route["route_id"]: RouteConstraintPolicy(
             frozenset({"CONTAINER_REF"}),
             frozenset({"CONTAINER_REF"}) if route["resource_type"] == "TASK" else frozenset(),
         )
-        for route in frozen_routes
+        for route in typed_routes
     }
-    container_refs = {route["route_id"]: ["@default"] for route in frozen_routes}
+    container_refs: dict[str, list[str]] = {
+        route["route_id"]: ["@default"] for route in typed_routes
+    }
 
     result, _, llm_invoked = plan_query(
         llm_runtime=runtime,
@@ -786,7 +805,7 @@ def test_exact_task_create_precondition__materializes_duplicate_reads__without_l
             "input_routes": frozen_routes,
         },
         requested_mode="LOCAL_GPU",
-        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
+        frozen_routes=typed_routes,
         route_policies=policies,
         retry_budget=build_default_run_budget(),
         validated_container_refs=container_refs,
@@ -928,7 +947,7 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
             "reason_codes": ["USER_REQUEST"],
         }
     ]
-    prompt_input = {
+    prompt_input: dict[str, object] = {
         "request_intent": {
             "constraints": [
                 {
@@ -957,6 +976,7 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
     assert llm_invoked is True
     constraints = result["route_queries"][0]["search_spec"]
     assert constraints is not None
+    assert constraints["mode"] == "INITIAL"
     assert constraints["constraints"] == [
         {
             "kind": "PARTICIPANT",
@@ -1011,7 +1031,7 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
             "reason_codes": ["USER_REQUEST"],
         }
     ]
-    prompt_input = {
+    prompt_input: dict[str, object] = {
         "request_intent": {
             "constraints": [
                 {"kind": "RESOURCE", "field": "subject", "value": "project_schedule"},
@@ -1046,6 +1066,7 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
     assert llm_invoked is True
     search_spec = result["route_queries"][0]["search_spec"]
     assert search_spec is not None
+    assert search_spec["mode"] == "INITIAL"
     assert search_spec["constraints"] == [
         {"kind": "KEYWORD", "terms": ["대리", "프로젝트", "일정"], "match_mode": "ALL"},
     ]
@@ -1125,6 +1146,7 @@ def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None
 
     search_spec = result["route_queries"][0]["search_spec"]
     assert search_spec is not None
+    assert search_spec["mode"] == "INITIAL"
     assert search_spec["constraints"] == [
         {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ALL"},
         {
@@ -1137,7 +1159,9 @@ def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None
     ]
     dispatched_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
     assert validate_output_schema(result, dispatched_schema.json_schema) == []
-    search_spec["constraints"][-1]["start_local"] = "2025-08-24T00:00:00"
+    temporal = search_spec["constraints"][-1]
+    assert temporal["kind"] == "TEMPORAL_RANGE"
+    temporal["start_local"] = "2025-08-24T00:00:00"
     assert validate_output_schema(result, dispatched_schema.json_schema)
 
 

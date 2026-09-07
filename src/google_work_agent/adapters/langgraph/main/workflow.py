@@ -210,6 +210,7 @@ from google_work_agent.application.use_cases.resource.get_repository_access impo
     GetRepositoryAccessHandler,
 )
 from google_work_agent.application.use_cases.resource_ref.resource_ref_projection import (
+    is_durable_resource_type,
     resource_ref_from_snapshot,
 )
 from google_work_agent.application.use_cases.run.begin_planning import (
@@ -1080,9 +1081,12 @@ class _WorkflowRuntimeComposition:
             if acquired is None:
                 raise LookupError(f"answer evidence resource was not acquired: {handle}")
             payload = cast(dict[str, Any], acquired["payload"])
+            resource_type = ResourceType(str(acquired["resource_type"]))
+            if not is_durable_resource_type(resource_type):
+                continue
             snapshot = ResourceSnapshot(
                 fixture_snapshot_id=str(acquired.get("fixture_snapshot_id") or "runtime"),
-                resource_type=ResourceType(str(acquired["resource_type"])),
+                resource_type=resource_type,
                 resource_id=str(acquired["resource_id"]),
                 parent_id=cast(str | None, acquired.get("parent_id")),
                 related_resource_ids=tuple(

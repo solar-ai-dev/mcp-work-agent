@@ -8,6 +8,7 @@ from google_work_agent.application.agents.planning.compose_arguments_per_output_
     tool_argument_candidate_output_schema,
 )
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
+    ActionObjectiveCandidateV1,
     PlanningSemanticInvoker,
 )
 from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
@@ -31,7 +32,7 @@ ROUTE = {
     "selected_tool_id": "tasks_create_task",
     "reason_codes": [],
 }
-OBJECTIVE = {
+OBJECTIVE: ActionObjectiveCandidateV1 = {
     "schema_version": 1,
     "route_id": "r1",
     "objective": "Create task",
@@ -46,8 +47,8 @@ OBJECTIVE = {
 )
 @pytest.mark.parametrize("binding", ["exact", "no_selection", "wrong_selection", "wrong_evidence"])
 def test_github_arguments__selected_identity_binding__preserves_only_exact_target_evidence(
-    tool, binding
-):
+    tool: str, binding: str
+) -> None:
     route = {
         **ROUTE,
         "connector_id": "github",
@@ -123,8 +124,9 @@ def test_compose_modification__explicit_changes__preserve_partial_shape(
         "timezone": "Asia/Seoul",
     }
 
-    def invoke(_prompt_id: str, value: Mapping[str, object]) -> Mapping[str, object]:
-        assert value["modification"] == modification
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
+        assert prompt_input["modification"] == modification
         result = {
             "schema_version": 1,
             "route_id": "r1",
@@ -132,14 +134,16 @@ def test_compose_modification__explicit_changes__preserve_partial_shape(
             "evidence_refs": [],
         }
         assert (
-            validate_output_schema(result, tool_argument_candidate_output_schema(value).json_schema)
+            validate_output_schema(
+                result, tool_argument_candidate_output_schema(prompt_input).json_schema
+            )
             == []
         )
         return result
 
     result = compose_arguments_per_output_route(
         [ROUTE],
-        objectives=[OBJECTIVE],  # type: ignore[list-item]
+        objectives=[OBJECTIVE],
         bound_tool_schemas=[bound],
         modification=modification,
         invoke=invoke,
@@ -163,7 +167,7 @@ def test_compose_modification__unsupported_or_invalid_fields__rejects(
     with pytest.raises(PlanningArgumentBindingError):
         compose_arguments_per_output_route(
             [ROUTE],
-            objectives=[OBJECTIVE],  # type: ignore[list-item]
+            objectives=[OBJECTIVE],
             bound_tool_schemas=[bound],
             modification={"request": "수정"},
             invoke=lambda *_: {
@@ -218,7 +222,8 @@ def test_argument_prompt__receives_only_selected__bound_tool_schema() -> None:
         explicit_container_id="list-1",
     )
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
         assert set(prompt_input) == {"output_route", "action_objective", "tool_schema", "evidence"}
         assert prompt_input["tool_schema"]["properties"]["task_list_id"]["const"] == "list-1"  # type: ignore[index]
         candidate = {
@@ -233,7 +238,7 @@ def test_argument_prompt__receives_only_selected__bound_tool_schema() -> None:
 
     result = compose_arguments_per_output_route(
         [ROUTE],
-        objectives=[OBJECTIVE],  # type: ignore[list-item]
+        objectives=[OBJECTIVE],
         bound_tool_schemas=[bound],
         evidence=[{"evidence_ref": "e1"}],
         invoke=cast(PlanningSemanticInvoker, invoke),
@@ -250,7 +255,7 @@ def test_argument_candidate__cannot_override__bound_container() -> None:
     with pytest.raises(PlanningArgumentBindingError, match="immutable"):
         compose_arguments_per_output_route(
             [ROUTE],
-            objectives=[OBJECTIVE],  # type: ignore[list-item]
+            objectives=[OBJECTIVE],
             bound_tool_schemas=[bound],
             evidence=[{"evidence_ref": "e1"}],
             invoke=lambda *_: {
@@ -362,7 +367,7 @@ def test_exact_task_create__materializes_arguments__without_llm() -> None:
 
     result = compose_arguments_per_output_route(
         [ROUTE],
-        objectives=[OBJECTIVE],  # type: ignore[list-item]
+        objectives=[OBJECTIVE],
         bound_tool_schemas=[bound],
         request_intent=request_intent,
         evidence=[{"evidence_ref": "e1"}],
@@ -396,7 +401,8 @@ def test_github_argument_omission__immutable_repository__is_injected(
         request_intent=_github_intent("acme/repo"),
     )
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
         candidate = {
             "schema_version": 1,
             "route_id": "r1",

@@ -4,7 +4,12 @@ from google_work_agent.application.agents.work_analysis.resolve_entity_relations
     entity_relation_candidate_llm_required,
     resolve_entity_relations,
 )
-from tests.support.work_analysis import WorkAnalysisRuntimeFake, fact, prompt_ref
+from tests.support.work_analysis import (
+    WorkAnalysisRuntimeFake,
+    fact,
+    output_json_schema,
+    prompt_ref,
+)
 
 
 def test_entity_relation__is_candidate__only() -> None:
@@ -42,8 +47,7 @@ def test_entity_relation__binds_output_references__to_validated_inputs() -> None
         requested_mode="AUTO",
     )
 
-    output_schema = runtime.calls[0]["output_schema"]
-    properties = output_schema.json_schema["properties"]  # type: ignore[union-attr]
+    properties = output_json_schema(runtime)["properties"]
     candidates = properties["relation_candidates"]
     item = candidates["items"]
     item_properties = item["properties"]
@@ -123,9 +127,9 @@ def test_entity_relation__rejects_guarded__kind() -> None:
 
 
 def test_entity_relation__without_entity_fact__does_not_require_llm() -> None:
-    assert entity_relation_candidate_llm_required(
-        [fact("f1", "TASK"), fact("f2", "STATUS")]
-    ) is False
-    assert entity_relation_candidate_llm_required(
-        [fact("f1", "TASK"), fact("f2", "PERSON")]
-    ) is True
+    assert (
+        entity_relation_candidate_llm_required([fact("f1", "TASK"), fact("f2", "STATUS")]) is False
+    )
+    assert (
+        entity_relation_candidate_llm_required([fact("f1", "TASK"), fact("f2", "PERSON")]) is True
+    )

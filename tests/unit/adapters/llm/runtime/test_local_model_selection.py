@@ -71,7 +71,9 @@ def test_user_choice__uses_ready_4b_without_9b__for_both_inference_classes() -> 
         preferred_model_id=lambda: "qwen3.5:4b",
     )
     for prompt in ("request_understanding.identify_goal", "planning.compose_answer"):
-        assert resolver.get_model_for_prompt(prompt).model_id == "qwen3.5:4b"
+        model = resolver.get_model_for_prompt(prompt)
+        assert model is not None
+        assert model.model_id == "qwen3.5:4b"
     assert [item.model_id for item in resolver.list_options() if item.selected] == ["qwen3.5:4b"]
 
 

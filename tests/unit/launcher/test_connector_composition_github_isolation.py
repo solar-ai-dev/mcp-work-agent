@@ -31,9 +31,7 @@ class _RuntimeHandle:
 
 
 class _ConnectorWithoutProcess:
-    def __init__(
-        self, *, descriptor: object, runtime_registry: object, **_kwargs: object
-    ) -> None:
+    def __init__(self, *, descriptor: object, runtime_registry: object, **_kwargs: object) -> None:
         self.descriptor = descriptor
         self.runtime_registry = runtime_registry
         self.connector_id = descriptor.connector_id  # type: ignore[attr-defined]
@@ -41,7 +39,7 @@ class _ConnectorWithoutProcess:
     def start(self) -> None:
         self.runtime_registry.register(  # type: ignore[attr-defined]
             self.connector_id,
-            _RuntimeHandle(self.connector_id),  # type: ignore[arg-type]
+            _RuntimeHandle(self.connector_id),
         )
 
     def close(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any, cast
 
 import pytest
 
@@ -15,7 +16,8 @@ def test_answer_outline_schema__binds_citations__to_current_evidence() -> None:
         ["e2", "e1", "e1"],
         confirmation_allowed=True,
     )
-    answer_schema = schema.json_schema["oneOf"][0]
+    json_schema = cast(dict[str, Any], schema.json_schema)
+    answer_schema = json_schema["oneOf"][0]
 
     assert answer_schema["properties"]["evidence_refs"] == {
         "type": "array",
@@ -27,8 +29,9 @@ def test_answer_outline_schema__binds_citations__to_current_evidence() -> None:
 def test_answer_outline_schema__disallows_confirmation__for_actionable_intent() -> None:
     schema = answer_outline_output_schema(["e1"], confirmation_allowed=False)
 
-    assert len(schema.json_schema["oneOf"]) == 1
-    assert schema.json_schema["oneOf"][0]["required"] == ["sections", "evidence_refs"]
+    json_schema = cast(dict[str, Any], schema.json_schema)
+    assert len(json_schema["oneOf"]) == 1
+    assert json_schema["oneOf"][0]["required"] == ["sections", "evidence_refs"]
 
 
 def test_outline_rejects__confirmation__for_actionable_intent() -> None:
@@ -62,7 +65,9 @@ def test_outline_uses__distinct_prompt__and_minimum_projection() -> None:
         request_intent={
             "goal": "summary",
             "repository_default": {
-                "repository": "sample/project", "repository_id": 2, "account_id": "github:1",
+                "repository": "sample/project",
+                "repository_id": 2,
+                "account_id": "github:1",
             },
         },
         work_analysis={"action_necessity": "NOT_REQUIRED"},
@@ -114,7 +119,8 @@ def test_outline__does_not_replace__invalid_evidence_identity() -> None:
 def test_outline_task_read__concrete_task__selects_without_llm() -> None:
     invoked = False
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id, prompt_input
         nonlocal invoked
         invoked = True
         return {}
@@ -152,7 +158,8 @@ def test_outline_task_read__concrete_task__selects_without_llm() -> None:
 def test_outline_gmail_read__empty_evidence__returns_no_result_without_llm() -> None:
     invoked = False
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id, prompt_input
         nonlocal invoked
         invoked = True
         return {}
@@ -176,12 +183,14 @@ def test_outline_gmail_read__empty_evidence__returns_no_result_without_llm() -> 
         retrieval_result={
             "coverage": "PARTIAL",
             "source_statuses": [{"status": "COMPLETE", "failure_kind": None}],
-            "missing_information": [{
-                "code": "required_source_evidence",
-                "description": "검색 결과가 없습니다.",
-                "required_for": "RETRIEVAL",
-                "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
-            }],
+            "missing_information": [
+                {
+                    "code": "required_source_evidence",
+                    "description": "검색 결과가 없습니다.",
+                    "required_for": "RETRIEVAL",
+                    "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
+                }
+            ],
         },
         invoke=invoke,
     )

@@ -83,6 +83,8 @@ class ResourceAccess(Protocol):
         continuation_scope: tuple[str, ...],
     ) -> ResourcePage: ...
 
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage: ...
+
     def count_gmail_page(
         self,
         *,
@@ -270,6 +272,9 @@ class OpaqueConnectorResourceAccess:
             show_hidden=show_hidden,
             show_deleted=show_deleted,
         )
+
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage:
+        return self._service.list_github_issues_page(repository=repository, state=state)
 
     def list_calendar_events_page(
         self,

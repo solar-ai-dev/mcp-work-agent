@@ -20,9 +20,7 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
     load_signed_tool_registry,
 )
 
-GITHUB_MODULE = (
-    "google_work_agent.adapters.connectors.github.github.mcp_server.entrypoint"
-)
+GITHUB_MODULE = "google_work_agent.adapters.connectors.github.github.mcp_server.entrypoint"
 
 
 def test_github_mcp__handshakes_and_advertises__signed_tools(tmp_path: Path) -> None:
@@ -60,6 +58,7 @@ def test_github_write__rejects_invalid_claim__before_provider_access(tmp_path: P
 
         assert result.transport_status == "ERROR"
         assert result.error_code == "TOOL_REJECTED"
+        assert isinstance(result.payload, dict)
         assert result.payload["delivery_certainty"] == "NOT_SENT"
     finally:
         registry.close_all()
@@ -73,6 +72,7 @@ def test_github_control__reports_unavailable__without_client_id(
         result = client.call_tool("github", "github.connection.get", {}, 5_000)
 
         assert result.transport_status == "OK"
+        assert isinstance(result.payload, dict)
         assert result.payload["connected"] is False
         assert result.payload["credential_state"] == "ERROR"
         assert result.payload["detail_code"] == "GITHUB_APP_CLIENT_ID_MISSING"

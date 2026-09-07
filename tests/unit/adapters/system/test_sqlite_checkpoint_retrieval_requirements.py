@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -168,11 +169,13 @@ def test_paused_budget__updates_only_budget__or_rejects_active_execution(
             graph_profile, graph_version, owner_scope,
             retrieval_cache_requirements_json, created_at_ms
         ) VALUES ('thread', 'checkpoint', 1, 'run', 'SIX_ROLE_BASELINE', 'v1', 'MAIN', '[]', 0)""")
-    calls = []
+    calls: list[Mapping[str, object]] = []
 
-    def update(current):
+    def update(current: Mapping[str, object]) -> Mapping[str, object]:
         calls.append(current)
-        return {**current, "llm_calls_used": current["llm_calls_used"] + 1}
+        llm_calls_used = current["llm_calls_used"]
+        assert isinstance(llm_calls_used, int)
+        return {**current, "llm_calls_used": llm_calls_used + 1}
 
     try:
         if blocking:
@@ -196,6 +199,7 @@ def test_paused_budget__updates_only_budget__or_rejects_active_execution(
             },
         }
         envelope = reopened.load_same_run_checkpoint("run", "thread")
+        assert envelope is not None
         assert envelope.checkpoint_generation == 1
         assert envelope.checkpoint_id == "checkpoint"
     finally:

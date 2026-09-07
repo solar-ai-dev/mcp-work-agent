@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import cast
 
 from google_work_agent.application.agents.review.inspect_action_scope_and_route import (
     inspect_action_scope_and_route,
@@ -14,7 +15,8 @@ from google_work_agent.application.agents.review.inspect_goal_and_evidence impor
 def test_exact_calendar_create__skips_no_information__review_inference() -> None:
     request_intent, planning_result, tool_route_plan = _exact_calendar_state()
 
-    def fail_inference(_prompt_id: str, _input: Mapping[str, object]) -> Mapping[str, object]:
+    def fail_inference(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id, prompt_input
         raise AssertionError("an exact deterministic plan adds no Review LLM information")
 
     results = (
@@ -44,21 +46,24 @@ def test_exact_calendar_create__skips_no_information__review_inference() -> None
 
 def test_exact_calendar_create__keeps_review__for_extra_unchecked_scope() -> None:
     request_intent, planning_result, _tool_route_plan = _exact_calendar_state()
-    request_intent["constraints"].append(
-        {"kind": "EMAIL", "field": "attendee", "value": "person@example.com"}
-    )
+    constraints = cast(list[dict[str, object]], request_intent["constraints"])
+    constraints.append({"kind": "EMAIL", "field": "attendee", "value": "person@example.com"})
     calls: list[str] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_input
+        calls.append(prompt_id)
+        return {
+            "schema_version": 1,
+            "dimension": "review.inspect_goal_and_evidence",
+            "findings": [],
+        }
 
     inspect_goal_and_evidence(
         request_intent=request_intent,
         planning_result=planning_result,
         evidence=[],
-        invoke=lambda prompt_id, _input: calls.append(prompt_id)
-        or {
-            "schema_version": 1,
-            "dimension": "review.inspect_goal_and_evidence",
-            "findings": [],
-        },
+        invoke=invoke,
     )
 
     assert calls == ["review.inspect_goal_and_evidence"]

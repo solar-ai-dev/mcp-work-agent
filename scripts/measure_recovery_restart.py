@@ -15,7 +15,7 @@ import sys
 import tempfile
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -206,8 +206,11 @@ def measure(
                 # Exact command replay must return the original Run, not allocate another.
                 assert start_run(active_client, conversation, request) == run_id
                 report["run_id"] = run_id
-                waiting = wait_for_status(
-                    active_client, run_id, {"WAITING_APPROVAL"}, timeout_seconds=40
+                waiting = cast(
+                    dict[str, Any],
+                    wait_for_status(
+                        active_client, run_id, {"WAITING_APPROVAL"}, timeout_seconds=40
+                    ),
                 )
                 report["before_approval"] = waiting
                 report["action"] = waiting["actions"][0]
@@ -225,11 +228,14 @@ def measure(
                     approve_action(active_client, report["action"], "approve-recovery")
             run_id = report["run_id"]
             if scenario == "reauth_verification":
-                paused = wait_for_status(
-                    active_client,
-                    run_id,
-                    {"REAUTH_REQUIRED", "RECOVERY_REQUIRED"},
-                    timeout_seconds=20,
+                paused = cast(
+                    dict[str, Any],
+                    wait_for_status(
+                        active_client,
+                        run_id,
+                        {"REAUTH_REQUIRED", "RECOVERY_REQUIRED"},
+                        timeout_seconds=20,
+                    ),
                 )
                 report["reauth_pause"] = paused
                 assert paused["run"]["status"] == "REAUTH_REQUIRED", paused
@@ -245,16 +251,19 @@ def measure(
                 )
                 report["reauth_response"] = resumed.json()
                 assert resumed.status_code == 200, resumed.text
-            final = wait_for_status(
-                active_client,
-                run_id,
-                {"COMPLETED", "RECOVERY_REQUIRED", "CANCELLED", "FAILED", "BLOCKED"}
-                | (
-                    {"WAITING_APPROVAL"}
-                    if restarted and scenario == "crash_before_write"
-                    else set()
+            final = cast(
+                dict[str, Any],
+                wait_for_status(
+                    active_client,
+                    run_id,
+                    {"COMPLETED", "RECOVERY_REQUIRED", "CANCELLED", "FAILED", "BLOCKED"}
+                    | (
+                        {"WAITING_APPROVAL"}
+                        if restarted and scenario == "crash_before_write"
+                        else set()
+                    ),
+                    timeout_seconds=40,
                 ),
-                timeout_seconds=40,
             )
             report["final"] = final
             if scenario == "lookup_unavailable":

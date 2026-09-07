@@ -184,6 +184,32 @@ def wait_for_status(
     raise AssertionError(f"run did not reach {sorted(expected)}: {last}")
 
 
+def wait_for_pending_interrupt(
+    client: TestClient,
+    run_id: str,
+    *,
+    timeout_seconds: float = 20,
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout_seconds
+    last: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        response = client.get(
+            f"/api/v1/runs/{run_id}",
+            headers={"X-API-Contract-Version": "1"},
+        )
+        assert response.status_code == 200, response.text
+        last = cast(dict[str, object], response.json())
+        run = last.get("run")
+        if (
+            isinstance(run, dict)
+            and run.get("status") == "WAITING_CONFIRMATION"
+            and isinstance(last.get("pending_interrupt"), dict)
+        ):
+            return last
+        time.sleep(0.02)
+    raise AssertionError(f"run did not expose its pending interrupt: {last}")
+
+
 def wait_for_action_status(
     client: TestClient,
     run_id: str,

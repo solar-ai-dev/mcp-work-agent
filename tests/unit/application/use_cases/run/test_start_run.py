@@ -67,7 +67,7 @@ def _command() -> StartRunCommand:
     )
 
 
-def test_local_request__terminates_once__and_resubmission_creates_new_run(tmp_path: Path):
+def test_local_request__terminates_once__and_resubmission_creates_new_run(tmp_path: Path) -> None:
     path = _database(tmp_path)
     with connect_sqlite(path) as connection:
         connection.execute("UPDATE conversations SET account_id='local-workspace'")

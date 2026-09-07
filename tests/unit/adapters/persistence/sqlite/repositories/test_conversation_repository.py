@@ -29,7 +29,7 @@ def _repository() -> SqliteConversationRepository:
     return SqliteConversationRepository(connection)
 
 
-def test_local_conversation__survives_connection_change__without_merging_other_accounts():
+def test_local_conversation__survives_connection_change__without_merging_other_accounts() -> None:
     repository = _repository()
     for index, account_id in enumerate((LOCAL_WORKSPACE_ACCOUNT_ID, "account-1", "account-2")):
         repository.create(ConversationRecord(str(index), account_id, "title", 1, index + 1))

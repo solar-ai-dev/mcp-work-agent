@@ -1,6 +1,7 @@
 import pytest
 
 from google_work_agent.application.agents.review.contracts.review_findings import (
+    ReviewDimensionIdV1,
     review_inspector_output_schema,
     review_recheck_output_schema,
 )
@@ -11,18 +12,25 @@ from google_work_agent.ports.llm.output_schema_validation import validate_output
 def test_review_output__initial_and_repair_schema__requires_korean_description(
     recheck: bool,
 ) -> None:
-    dimension = "review.inspect_goal_and_evidence"
+    dimension: ReviewDimensionIdV1 = "review.inspect_goal_and_evidence"
     schema = (
         review_recheck_output_schema((dimension,))
-        if recheck else review_inspector_output_schema(dimension)
+        if recheck
+        else review_inspector_output_schema(dimension)
     )
     finding = {
-        "dimension": dimension, "code": "SENDER_REQUIRED", "finding_kind": "CONFIRMATION",
-        "description": "Please confirm the sender.", "evidence_refs": [],
-        "affected_action_ids": [], "affected_route_ids": [], "required_information": ["sender"],
+        "dimension": dimension,
+        "code": "SENDER_REQUIRED",
+        "finding_kind": "CONFIRMATION",
+        "description": "Please confirm the sender.",
+        "evidence_refs": [],
+        "affected_action_ids": [],
+        "affected_route_ids": [],
+        "required_information": ["sender"],
     }
     output = {
-        "schema_version": 1, "findings": [finding],
+        "schema_version": 1,
+        "findings": [finding],
         **({"affected_dimensions": [dimension]} if recheck else {"dimension": dimension}),
     }
     assert validate_output_schema(output, schema.json_schema)

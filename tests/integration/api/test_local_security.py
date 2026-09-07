@@ -1,6 +1,8 @@
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.fakes import DeterministicUUID, FakeClockPort
 from tests.support.fakes.llm import DisabledLlmRuntimeStatusPort
@@ -199,7 +201,7 @@ def test_bootstrap_sets__cookie_and__runtime_requires_session() -> None:
     assert authorized.status_code == 200
 
 
-def test_local_session__creates_and_lists_conversations__without_google(tmp_path: Path):
+def test_local_session__creates_and_lists_conversations__without_google(tmp_path: Path) -> None:
     path = tmp_path / "local-conversation.db"
     with connect_sqlite(path) as connection:
         apply_migrations(connection)
@@ -211,8 +213,9 @@ def test_local_session__creates_and_lists_conversations__without_google(tmp_path
         "Sec-Fetch-Dest": "empty",
     }
     with _build_client() as client:
-        container = client.app.state.container
-        client.app.state.container = replace(
+        app = cast(FastAPI, client.app)
+        container = app.state.container
+        app.state.container = replace(
             container,
             current_account_id_provider=lambda: None,
             create_conversation_handler=CreateConversationHandler(

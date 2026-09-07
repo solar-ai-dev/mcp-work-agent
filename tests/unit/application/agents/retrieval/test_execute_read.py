@@ -1,3 +1,4 @@
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from hashlib import sha256
@@ -23,7 +24,12 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.execute_read import (
     RetrievalReadBindingError,
+    RetrievalReadExecutionV1,
     execute_read,
+)
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+    GetRepositoryAccessQuery,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.connector.connector_failure import (
@@ -122,38 +128,47 @@ def test_github_default__lost_access__prevents_issue_read() -> None:
             ),
         },
     )
-    access_calls = []
+    access_calls: list[GetRepositoryAccessQuery] = []
 
-    def denied(query, *, before_page):
-        access_calls.append(query)
-        before_page()
-        raise ConnectorOperationFailure(ConnectorFailureCode.PERMISSION_DENIED, "ACCESS_REMOVED")
+    class DeniedRepositoryAccess(GetRepositoryAccessHandler):
+        def __call__(
+            self,
+            query: GetRepositoryAccessQuery,
+            *,
+            before_page: Callable[[], None] | None = None,
+        ) -> GitHubRepositoryDefaultV1:
+            access_calls.append(query)
+            if before_page is not None:
+                before_page()
+            raise ConnectorOperationFailure(
+                ConnectorFailureCode.PERMISSION_DENIED, "ACCESS_REMOVED"
+            )
 
     budget = build_default_run_budget()
     execution = execute_read(
-            plan={
-                **_plan(),
-                "connector_id": "github",
-                "resource_type": "GITHUB_ISSUE",
-                "operation_kind": "SEARCH",
-                "prior_read_result_handle": None,
-            },
-            run_id="run",
-            binding=replace(
-                _binding(),
-                connector_id="github",
-                resource_type="GITHUB_ISSUE",
-                tool_id="github_list_issues",
-            ),
-            tool_arguments={"repository": "example/project", "state": "open"},
-            connector_reader=reader,
-            read_result_cache=InMemoryRunRetrievalCache(),
-            read_result_handle="read",
-            run_budget=budget,
-            now_ms=0,
-            prior_query_attempts=[],
-            request_intent=intent,
-            repository_access=denied,
+        plan={
+            **_plan(),
+            "connector_id": "github",
+            "resource_type": "GITHUB_ISSUE",
+            "operation_kind": "SEARCH",
+            "prior_read_result_handle": None,
+        },
+        run_id="run",
+        binding=replace(
+            _binding(),
+            connector_id="github",
+            resource_type="GITHUB_ISSUE",
+            tool_id="github_list_issues",
+        ),
+        tool_arguments={"repository": "example/project", "state": "open"},
+        connector_reader=reader,
+        read_result_cache=InMemoryRunRetrievalCache(),
+        read_result_handle="read",
+        run_budget=budget,
+        now_ms=0,
+        prior_query_attempts=[],
+        request_intent=intent,
+        repository_access=object.__new__(DeniedRepositoryAccess),
     )
     assert execution.status == "FAILED"
     assert execution.failure_code == "PERMISSION_DENIED"
@@ -165,29 +180,51 @@ def test_github_default__lost_access__prevents_issue_read() -> None:
 
 
 @pytest.mark.parametrize(
-    "code", [ConnectorFailureCode.NOT_FOUND, ConnectorFailureCode.PERMISSION_DENIED],
+    "code",
+    [ConnectorFailureCode.NOT_FOUND, ConnectorFailureCode.PERMISSION_DENIED],
 )
-def test_execute_read_node__target_failure__preserves_typed_output_and_traceback(code) -> None:
+def test_execute_read_node__target_failure__preserves_typed_output_and_traceback(
+    code: ConnectorFailureCode,
+) -> None:
     @contextmanager
-    def boundary():
+    def boundary() -> Iterator[None]:
         yield
 
     failure = ConnectorOperationFailure(code, "PROVIDER_FAILURE")
 
     class Reader:
-        def execute_read(self, binding, tool_arguments):
+        def execute_read(
+            self,
+            binding: ValidatedConnectorToolBindingV1,
+            tool_arguments: dict[str, JsonValue],
+        ) -> ConnectorReadResultV1:
+            del binding, tool_arguments
             with boundary():
                 raise failure
 
     cache = InMemoryRunRetrievalCache()
     budget = build_default_run_budget()
-    result = execute_read_node({"operation_inputs": {"execute_read": {
-        "plan": {**_plan(), "operation_kind": "SEARCH"},
-        "run_id": "run", "binding": _binding(), "tool_arguments": {"query": "bounded"},
-        "connector_reader": Reader(), "read_result_cache": cache,
-        "read_result_handle": "failed", "run_budget": budget, "now_ms": 0,
-        "prior_query_attempts": [],
-    }}})["read_execution"]
+    result = cast(
+        RetrievalReadExecutionV1,
+        execute_read_node(
+            {
+                "operation_inputs": {
+                    "execute_read": {
+                        "plan": {**_plan(), "operation_kind": "SEARCH"},
+                        "run_id": "run",
+                        "binding": _binding(),
+                        "tool_arguments": {"query": "bounded"},
+                        "connector_reader": Reader(),
+                        "read_result_cache": cache,
+                        "read_result_handle": "failed",
+                        "run_budget": budget,
+                        "now_ms": 0,
+                        "prior_query_attempts": [],
+                    }
+                }
+            }
+        )["read_execution"],
+    )
     assert result.status == "FAILED"
     assert result.failure_code == code.value
     assert result.candidate_count is None
@@ -202,17 +239,33 @@ def test_execute_read_node__credential_failure__retains_existing_exception_contr
     failure = ConnectorOperationFailure(ConnectorFailureCode.AUTH_REQUIRED, "AUTH_EXPIRED")
 
     class Reader:
-        def execute_read(self, binding, tool_arguments):
+        def execute_read(
+            self,
+            binding: ValidatedConnectorToolBindingV1,
+            tool_arguments: dict[str, JsonValue],
+        ) -> ConnectorReadResultV1:
+            del binding, tool_arguments
             raise failure
 
     with pytest.raises(ConnectorOperationFailure) as raised:
-        execute_read_node({"operation_inputs": {"execute_read": {
-            "plan": {**_plan(), "operation_kind": "SEARCH"},
-            "run_id": "run", "binding": _binding(), "tool_arguments": {"query": "bounded"},
-            "connector_reader": Reader(), "read_result_cache": InMemoryRunRetrievalCache(),
-            "read_result_handle": "failed", "run_budget": build_default_run_budget(), "now_ms": 0,
-            "prior_query_attempts": [],
-        }}})
+        execute_read_node(
+            {
+                "operation_inputs": {
+                    "execute_read": {
+                        "plan": {**_plan(), "operation_kind": "SEARCH"},
+                        "run_id": "run",
+                        "binding": _binding(),
+                        "tool_arguments": {"query": "bounded"},
+                        "connector_reader": Reader(),
+                        "read_result_cache": InMemoryRunRetrievalCache(),
+                        "read_result_handle": "failed",
+                        "run_budget": build_default_run_budget(),
+                        "now_ms": 0,
+                        "prior_query_attempts": [],
+                    }
+                }
+            }
+        )
     assert raised.value is failure
 
 
@@ -465,12 +518,21 @@ def test_next_page__first_unread_page__does_not_treat_as_repeat() -> None:
     )
     assert result.provider_called
     assert reader.calls == [{"query": "bounded", "page_token": "opaque"}]
-    consumed = {**attempt, "operation_kind": "NEXT_PAGE", "page_state_hash": None}
+    consumed = cast(
+        QueryAttemptV1,
+        {**attempt, "operation_kind": "NEXT_PAGE", "page_state_hash": None},
+    )
     with pytest.raises(QueryUnchangedAfterFailureError):
         execute_read(
-            plan=plan, run_id="run", binding=_binding(), tool_arguments={"query": "bounded"},
-            connector_reader=reader, read_result_cache=cache, read_result_handle="repeated",
-            run_budget=build_default_run_budget(), now_ms=0,
+            plan=plan,
+            run_id="run",
+            binding=_binding(),
+            tool_arguments={"query": "bounded"},
+            connector_reader=reader,
+            read_result_cache=cache,
+            read_result_handle="repeated",
+            run_budget=build_default_run_budget(),
+            now_ms=0,
             prior_query_attempts=[attempt, consumed],
         )
     assert len(reader.calls) == 1

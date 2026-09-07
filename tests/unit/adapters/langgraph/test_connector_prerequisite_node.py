@@ -14,6 +14,7 @@ from google_work_agent.adapters.langgraph.subgraphs.tool_routing.nodes.validate_
     validate_route_node,
 )
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.state import ToolRouteStateV1
+from google_work_agent.application.agents.state_artifact import StateArtifactMetaV1
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ToolRoutePlanV2,
 )
@@ -34,13 +35,24 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 )
 
 
-def test_missing_github__terminates_before_repository_confirmation__in_compiled_subgraph():
+def test_missing_github__terminates_before_repository_confirmation__in_compiled_subgraph() -> None:
     llm = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "pv-fusion 최근 이슈 확인",
                 "completion_conditions": ["이슈 확인"],
-                "constraints": [],
+                "constraints": {
+                    "search_terms": [],
+                    "business_concepts": [],
+                    "required_information": [],
+                    "person": [],
+                    "sender": [],
+                    "recipient": [],
+                    "subject": [],
+                    "period": [],
+                    "status": [],
+                    "additional_constraints": [],
+                },
                 "requested_effect_hints": ["READ"],
                 "requested_resource_hints": ["GITHUB_ISSUE"],
                 "analysis_requirement": "NONE",
@@ -116,14 +128,14 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
 )
 @pytest.mark.parametrize("write_only", [False, True])
 def test_route_node__projects_initial_connection_failure__to_terminal_handoff(
-    connector_id,
-    tool_id,
-    write_only,
-):
+    connector_id: str,
+    tool_id: str,
+    write_only: bool,
+) -> None:
     catalog = load_signed_tool_registry()
     # The registered entry determines the resource type; no provider call is made here.
     entry = catalog.get_required(connector_id=connector_id, tool_id=tool_id)
-    meta = {
+    meta: StateArtifactMetaV1 = {
         "artifact_id": "route",
         "revision": 1,
         "based_on": [{"artifact_id": "intent", "revision": 1}],
@@ -201,7 +213,9 @@ def test_route_node__projects_initial_connection_failure__to_terminal_handoff(
     )
     assert decision["target"] == "FINALIZE"
     assert decision["state_update"]["user_interrupt"] is None
-    assert decision["state_update"]["finalize_intent"]["result_kind"] == "PARTIAL"
+    finalize_intent = decision["state_update"]["finalize_intent"]
+    assert finalize_intent is not None
+    assert finalize_intent["result_kind"] == "PARTIAL"
     # Old checkpoints have no admission field: retain the existing running-Run contract.
     port.reset_mock()
     legacy = validate_route_node(

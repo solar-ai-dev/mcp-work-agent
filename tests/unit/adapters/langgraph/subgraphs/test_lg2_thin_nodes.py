@@ -49,6 +49,7 @@ def test_retrieval_projection__is_operation__allowlisted() -> None:
         "exclusion_obligation_segment_ids": ["segment-1"],
         "query_attempts": [],
         "prior_selection": None,
+        "evidence_reassessment_issues": [],
     }
 
 

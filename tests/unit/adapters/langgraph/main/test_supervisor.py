@@ -36,7 +36,10 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
     PlanReviewResultV2,
 )
-from google_work_agent.application.agents.state_artifact import StateArtifactMetaV1
+from google_work_agent.application.agents.state_artifact import (
+    StateArtifactMetaV1,
+    StateArtifactRefV1,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
     ToolRoutePlanV2,
@@ -630,9 +633,9 @@ def test_review_retrieve_more__with_frozen_route__becomes_retrieval_required() -
             "evidence_refs": ["evidence-1"],
         },
     )
-    state["planning_result"]["meta"]["based_on"].append(
-        {"artifact_id": "retrieval-1", "revision": 1}
-    )
+    planning_result = state["planning_result"]
+    assert planning_result is not None
+    planning_result["meta"]["based_on"].append({"artifact_id": "retrieval-1", "revision": 1})
 
     decision = route_supervisor(
         phase=WorkflowPhase.PLAN_REVIEW,
@@ -805,25 +808,42 @@ def test_durable_priority__with_lifecycle_fact__preempts_normal_planning(
     assert decision["target"] == expected_target.value
 
 
-@pytest.mark.parametrize("target", [
-    SupervisorTarget.ACTION_EXECUTION, SupervisorTarget.RESPONSE_SYNTHESIS,
-    SupervisorTarget.FINALIZE,
-])
-@pytest.mark.parametrize("statuses, may_close", [
-    (("REJECTED",), True), (("REJECTED", "DEPENDENCY_BLOCKED"), True),
-    (("REJECTED", "PROPOSED"), False), ((), False),
-])
+@pytest.mark.parametrize(
+    "target",
+    [
+        SupervisorTarget.ACTION_EXECUTION,
+        SupervisorTarget.RESPONSE_SYNTHESIS,
+        SupervisorTarget.FINALIZE,
+    ],
+)
+@pytest.mark.parametrize(
+    "statuses, may_close",
+    [
+        (("REJECTED",), True),
+        (("REJECTED", "DEPENDENCY_BLOCKED"), True),
+        (("REJECTED", "PROPOSED"), False),
+        ((), False),
+    ],
+)
 def test_waiting_approval__allows_existing_closure_owner__only_for_settled_actions(
-    target: SupervisorTarget, statuses: tuple[str, ...], may_close: bool,
+    target: SupervisorTarget,
+    statuses: tuple[str, ...],
+    may_close: bool,
 ) -> None:
     candidate = make_supervisor_decision(
-        target=target, next_phase=None, state_update={}, reason_code="WRITE_RUN_COMPLETABLE",
+        target=target,
+        next_phase=None,
+        state_update={},
+        reason_code="WRITE_RUN_COMPLETABLE",
     )
     result = apply_durable_priority(
-        state=_state(), decision=candidate,
+        state=_state(),
+        decision=candidate,
         facts=SupervisorObservationV1(
-            run_status="WAITING_APPROVAL", next_allowed_commands=(),
-            action_statuses=statuses, cancel_intent_active=False,
+            run_status="WAITING_APPROVAL",
+            next_allowed_commands=(),
+            action_statuses=statuses,
+            cancel_intent_active=False,
         ),
     )
     assert result["target"] == (target if may_close else SupervisorTarget.WAITING_APPROVAL).value
@@ -986,7 +1006,7 @@ def _request_intent(
 
 
 def _tool_route_plan() -> ToolRoutePlanV2:
-    request_ref = {"artifact_id": "intent-1", "revision": 1}
+    request_ref: StateArtifactRefV1 = {"artifact_id": "intent-1", "revision": 1}
     meta: StateArtifactMetaV1 = {
         "artifact_id": "route-plan-1",
         "revision": 1,
