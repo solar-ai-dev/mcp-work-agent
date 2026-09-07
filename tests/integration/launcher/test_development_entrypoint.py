@@ -45,6 +45,19 @@ def test_development_config__ambient_github_values__requires_explicit_handoff(
     assert handed_off.github_oauth_scope == "ambient-scope"
 
 
+def test_development_script__missing_github_environment__uses_repository_app_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from launcher.development_entrypoint import DEVELOPMENT_GITHUB_APP_CLIENT_ID
+    from scripts.run_development import development_runtime_config
+
+    monkeypatch.delenv("GITHUB_APP_CLIENT_ID", raising=False)
+
+    config = development_runtime_config(runtime_root=tmp_path)
+
+    assert config.github_oauth_client_id == DEVELOPMENT_GITHUB_APP_CLIENT_ID
+
+
 def test_development_config__prompt_manifest__requires_explicit_handoff(
     tmp_path: Path,
 ) -> None:

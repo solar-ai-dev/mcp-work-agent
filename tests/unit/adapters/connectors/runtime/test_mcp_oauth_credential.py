@@ -7,6 +7,10 @@ from google_work_agent.adapters.connectors.runtime.mcp_oauth_credential import (
 from google_work_agent.adapters.connectors.runtime.stdio_mcp_client import (
     is_control_operation_id,
 )
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
 from google_work_agent.ports.connector.mcp_client_port import MCPToolCallResultV1
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 
@@ -124,3 +128,38 @@ def test_control_operation_classification__is_provider__neutral() -> None:
     assert is_control_operation_id("github.device_flow.start") is True
     assert is_control_operation_id("github.connection.get") is True
     assert is_control_operation_id("github_get_issue") is False
+
+
+class _FailedControlClient:
+    def call_tool(
+        self,
+        connector_id: str,
+        tool_id: str,
+        arguments: object,
+        timeout_ms: int,
+    ) -> MCPToolCallResultV1:
+        return MCPToolCallResultV1(
+            schema_version=1,
+            tool_id=tool_id,
+            transport_status="ERROR",
+            payload=None,
+            error_code="CONFIGURATION_ERROR",
+        )
+
+
+def test_oauth_control_failure__configuration_error__raises_typed_connector_failure() -> None:
+    registry = ConnectorRuntimeRegistry()
+    registry.register("github", _RuntimeHandle())  # type: ignore[arg-type]
+    adapter = McpOAuthCredentialAdapter(
+        runtime_registry=registry,
+        mcp_client=_FailedControlClient(),  # type: ignore[arg-type]
+    )
+
+    try:
+        adapter.get_connection_status("github")
+    except ConnectorOperationFailure as error:
+        assert error.code is ConnectorFailureCode.CONFIGURATION_ERROR
+        assert error.detail_code == "CONFIGURATION_ERROR"
+        assert error.retryable is False
+    else:
+        raise AssertionError("typed Connector failure was not raised")

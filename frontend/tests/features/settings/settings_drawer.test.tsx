@@ -138,6 +138,26 @@ test("GitHub Device Flow 코드를 표시하고 검증 URL만 연다", async () 
   opened.mockRestore();
 });
 
+test("GitHub 연결 불가 원인을 구성과 상태 조회 실패로 구분한다", async () => {
+  vi.mocked(settingsApi.getSettings).mockResolvedValue(connectionSettings());
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: null, display_email: null, connection_status: "UNAVAILABLE", granted_scopes: [], missing_required_scopes: [], detail_code: "GITHUB_APP_CLIENT_ID_MISSING" });
+  const props = { runtime: null, theme: "light", onThemeChange: vi.fn(), onClose: vi.fn(), onOperationalStateChanged: vi.fn().mockResolvedValue(undefined) };
+  const first = render(<SettingsDrawer {...props} />);
+  const github = await screen.findByLabelText("GitHub 연결");
+
+  expect(github).toHaveTextContent("GitHub 연결 구성이 없습니다");
+  expect(within(github).getByRole("button", { name: "연결" })).toBeDisabled();
+
+  first.unmount();
+  vi.mocked(googleApi.getGitHubConnection).mockRejectedValue(new Error("transport failed"));
+  render(<SettingsDrawer {...props} />);
+
+  const failed = await screen.findByLabelText("GitHub 연결");
+  expect(failed).toHaveTextContent("GitHub 연결 상태를 확인하지 못했습니다");
+  expect(failed).not.toHaveTextContent("개발·배포 설정");
+  expect(within(failed).getByRole("button", { name: "연결" })).toBeDisabled();
+});
+
 function connectionSettings(): settingsApi.SettingsView {
   return { schema_version: 1, timezone: "Asia/Seoul", default_tasklist_id: "tasks-1", default_calendar_id: "calendar-1", default_github_repository: null, preferred_llm_mode: "LOCAL_GPU", preferred_local_model_id: null, external_llm_consent: false, retention_days: 30, theme: "LIGHT", panel_preferences: { schema_version: 1, right_panel_default_open: false, right_panel_default_tab: "CONVERSATIONS" }, working_day_start_local: "09:00", working_day_end_local: "18:00", include_weekends: false, calendar_buffer_minutes: 0, max_run_execution_ms: 900000, max_connector_calls_per_run: 50, max_source_page_calls_per_run: 8, max_detail_fetches_per_run: 12, max_context_tokens_per_run: 16000, max_retry_attempts_per_run: 2, circuit_failure_threshold: 3, circuit_open_duration_ms: 30000 };
 }

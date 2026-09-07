@@ -10,6 +10,7 @@ from typing import NoReturn
 
 from fastapi import FastAPI
 from launcher.bootstrap_secret import create_bootstrap_secret
+from launcher.development_entrypoint import DEVELOPMENT_GITHUB_APP_CLIENT_ID
 
 from google_work_agent.api.app import create_app
 from google_work_agent.api.composition import ProductionRuntimeConfig
@@ -35,7 +36,9 @@ def development_runtime_config(
         mcp_manifest_version=MCP_MANIFEST_VERSION,
         mcp_module_name=mcp_module_name,
         prompt_manifest_path=prompt_manifest_path,
-        github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID"),
+        github_oauth_client_id=os.environ.get(
+            "GITHUB_APP_CLIENT_ID", DEVELOPMENT_GITHUB_APP_CLIENT_ID
+        ),
         github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
     )
 

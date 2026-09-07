@@ -29,6 +29,8 @@ from launcher.bootstrap_secret import create_bootstrap_secret
 from launcher.open_product_ui import build_product_ui_url, open_product_ui
 from launcher.readiness import ServiceReadiness, wait_for_service_ready
 
+DEVELOPMENT_GITHUB_APP_CLIENT_ID = "Iv23liYV2mScbAiVwc5Y"
+
 MCP_MANIFEST_VERSION = "2026-08-07.p0"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,7 +80,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
             mcp_manifest_version=MCP_MANIFEST_VERSION,
-            github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID"),
+            github_oauth_client_id=os.environ.get(
+                "GITHUB_APP_CLIENT_ID", DEVELOPMENT_GITHUB_APP_CLIENT_ID
+            ),
             github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
             keyring_store=SessionMemorySecretStore(),
             prompt_manifest_path=arguments.prompt_manifest,

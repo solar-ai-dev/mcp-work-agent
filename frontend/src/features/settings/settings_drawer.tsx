@@ -13,7 +13,7 @@ import { listRepositories, type RepositoryItem } from "./api/list_repositories";
 const runtimeModeLabels: Record<RuntimeMode, string> = {
   AUTO: "자동 선택", LOCAL_GPU: "로컬 GPU", API_LLM: "외부 API 모델",
 };
-const googleConnectionLabels: Record<GoogleConnection["connection_status"], string> = {
+const connectionStatusLabels: Record<GoogleConnection["connection_status"], string> = {
   CONNECTING: "연결 중", CONNECTED: "연결됨", DISCONNECTED: "연결되지 않음",
   REAUTH_REQUIRED: "다시 로그인해야 합니다", UNAVAILABLE: "연결 상태를 확인할 수 없습니다",
 };
@@ -25,6 +25,36 @@ const credentialValidationLabels: Record<LlmCredentialStatus["validation_status"
 function runtimeModeLabel(mode: string | null | undefined): string {
   if (mode === "MIXED") return "로컬·외부 모델 함께 사용";
   return mode && mode in runtimeModeLabels ? runtimeModeLabels[mode as RuntimeMode] : "확인 중";
+}
+
+function githubUnavailableMessage(connection: GitHubConnection): string | null {
+  if (connection.connection_status !== "UNAVAILABLE") return null;
+  if (connection.detail_code === "GITHUB_APP_CLIENT_ID_MISSING") {
+    return "GitHub 연결 구성이 없습니다. 개발·배포 설정을 확인해 주세요.";
+  }
+  if (connection.detail_code === "KEYRING_UNAVAILABLE") {
+    return "이 PC의 안전한 자격증명 저장소를 사용할 수 없습니다. 시스템 상태를 확인해 주세요.";
+  }
+  return "GitHub 연결 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.";
+}
+
+function githubStatusFailureMessage(error: unknown): string {
+  if (!(error instanceof ApiClientError)) {
+    return "GitHub 연결 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.";
+  }
+  const errorCode = error.envelope?.error_code;
+  if (errorCode === "CONFIGURATION_ERROR") {
+    return error.envelope?.detail_code === "GITHUB_APP_CLIENT_ID_MISSING"
+      ? "GitHub 연결 구성이 없습니다. 개발·배포 설정을 확인해 주세요."
+      : "GitHub 연결 구성이 올바르지 않습니다. 개발·배포 설정을 확인해 주세요.";
+  }
+  if (errorCode === "AUTH_REQUIRED") {
+    return "GitHub 인증이 만료되었거나 유효하지 않습니다. 다시 연결해 주세요.";
+  }
+  if (errorCode === "PERMISSION_DENIED") {
+    return "GitHub 계정 또는 Repository 접근 권한을 확인해 주세요.";
+  }
+  return "GitHub 서비스의 연결 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.";
 }
 
 type Props = {
@@ -40,6 +70,7 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [google, setGoogle] = useState<GoogleConnection | null>(null);
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
+  const [githubStatusError, setGitHubStatusError] = useState<string | null>(null);
   const [githubAuthorization, setGitHubAuthorization] = useState<AuthorizationStart | null>(null);
   const [repositories, setRepositories] = useState<RepositoryItem[]>([]);
   const [repositoryCursor, setRepositoryCursor] = useState<string | null>(null);
@@ -73,7 +104,13 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
         ?? []);
     }
     if (nextGoogle.status === "fulfilled") setGoogle(nextGoogle.value);
-    if (nextGitHub.status === "fulfilled") setGitHub(nextGitHub.value);
+    if (nextGitHub.status === "fulfilled") {
+      setGitHub(nextGitHub.value);
+      setGitHubStatusError(null);
+    } else {
+      setGitHub(null);
+      setGitHubStatusError(githubStatusFailureMessage(nextGitHub.reason));
+    }
     if (nextCredential.status === "fulfilled") setCredential(nextCredential.value);
     setTaskLists(nextTaskLists.status === "fulfilled" ? nextTaskLists.value : []);
     setCalendars(nextCalendars.status === "fulfilled" ? nextCalendars.value : []);
@@ -123,11 +160,12 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
       void getGitHubConnection().then(async (connection) => {
         if (disposed) return;
         setGitHub(connection);
+        setGitHubStatusError(null);
         if (connection.connection_status === "CONNECTED" && connection.account_id === github?.account_id) {
           await refreshRepositories();
         }
-      }).catch(() => {
-        if (!disposed) setRepositoryError("GitHub 연결 상태를 확인하지 못했습니다. Repository 새로고침으로 다시 확인해 주세요.");
+      }).catch((error: unknown) => {
+        if (!disposed) setGitHubStatusError(githubStatusFailureMessage(error));
       }).finally(() => { refreshing = false; });
     };
     window.addEventListener("focus", refreshAfterReturn);
@@ -156,6 +194,7 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
       void getGitHubConnection().then((connection) => {
         if (disposed) return;
         setGitHub(connection);
+        setGitHubStatusError(null);
         if (connection.authorization_status === "DENIED" || connection.authorization_status === "EXPIRED") {
           setGitHubAuthorization(null);
           setMessage(connection.authorization_status === "DENIED" ? "GitHub 인증이 거부되었습니다. 연결을 다시 시작할 수 있습니다." : "GitHub 인증 코드가 만료되었습니다. 연결을 다시 시작해 주세요.");
@@ -256,7 +295,7 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
         {message ? <p role="status" className="status-warn">{message}</p> : null}
         <div role="tabpanel" id="settings-panel-connections" aria-labelledby="settings-tab-connections" hidden={tab !== "connections"}>
         <section className="info-card" aria-label="Google 연결">
-          <strong>Google Workspace</strong><p>{google ? googleConnectionLabels[google.connection_status] : "확인 중"}</p>
+          <strong>Google Workspace</strong><p>{google ? connectionStatusLabels[google.connection_status] : "확인 중"}</p>
           {google?.display_email ? <p>{google.display_email}</p> : null}
           {google?.missing_required_scopes.length ? <p className="status-warn">필요한 권한이 부족합니다. 재연결해 권한을 허용해 주세요.</p> : google?.connection_status === "CONNECTED" ? <p>필요 권한 확인됨</p> : null}
           {settings ? <>
@@ -280,10 +319,10 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
         </section>
         <section className="info-card" aria-label="GitHub 연결">
           <strong>GitHub</strong>
-          <p>{github ? googleConnectionLabels[github.connection_status] : "확인 중"}</p>
+          <p>{github ? connectionStatusLabels[github.connection_status] : githubStatusError ? "연결 상태를 확인할 수 없습니다" : "확인 중"}</p>
           {github?.display_email ? <p>{github.display_email}</p> : null}
           {github?.connection_status !== "CONNECTED" ? <p>GitHub를 연결하면 접근 가능한 Repository의 Issue를 조회하고 관리할 수 있습니다.</p> : <p>Repository 접근 범위는 GitHub App 설치 권한에 따릅니다.</p>}
-          {github?.connection_status === "UNAVAILABLE" ? <p className="status-warn">GitHub 연결 준비가 필요합니다. 개발·배포 설정을 확인해 주세요.</p> : null}
+          {githubStatusError ? <p className="status-warn">{githubStatusError}</p> : github?.connection_status === "UNAVAILABLE" ? <p className="status-warn">{githubUnavailableMessage(github)}</p> : null}
           {github?.missing_required_scopes.length ? <p className="status-warn">필요한 GitHub 권한이 부족합니다. 접근 설정을 확인해 주세요.</p> : null}
           {githubAuthorization?.flow_kind === "DEVICE_CODE" ? <div>
             <p>GitHub에 입력할 코드: <strong>{githubAuthorization.user_code}</strong></p>
@@ -308,7 +347,7 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
             </div>
           </div> : null}
           <div className="button-row">
-            {github?.connection_status !== "CONNECTED" ? <button type="button" className="button-primary" disabled={busy || github?.connection_status === "UNAVAILABLE"} onClick={() => void run("github:connect", async (id) => { const result = await startGitHubConnection(id); setGitHubAuthorization(result); window.open(requireGitHubVerificationUrl(result.verification_uri ?? result.authorization_url), "_blank", "noopener,noreferrer"); }, github?.connection_status === "REAUTH_REQUIRED" ? "GitHub 재인증을 시작했습니다." : "GitHub 연결을 시작했습니다.")}>{github?.connection_status === "REAUTH_REQUIRED" ? "재연결" : "연결"}</button> : null}
+            {github?.connection_status !== "CONNECTED" ? <button type="button" className="button-primary" disabled={busy || github === null || github.connection_status === "UNAVAILABLE"} onClick={() => void run("github:connect", async (id) => { const result = await startGitHubConnection(id); setGitHubAuthorization(result); window.open(requireGitHubVerificationUrl(result.verification_uri ?? result.authorization_url), "_blank", "noopener,noreferrer"); }, github?.connection_status === "REAUTH_REQUIRED" ? "GitHub 재인증을 시작했습니다." : "GitHub 연결을 시작했습니다.")}>{github?.connection_status === "REAUTH_REQUIRED" ? "재연결" : "연결"}</button> : null}
             {github?.connection_status === "CONNECTED" ? <button type="button" className="button-danger" disabled={busy} onClick={() => void run("github:disconnect", async (id) => { await disconnectGitHub(id); setGitHubAuthorization(null); }, "GitHub 연결을 해제했습니다.")}>연결 해제</button> : null}
             {github?.connection_status === "CONNECTED" ? <button type="button" className="button-secondary" disabled={busy} onClick={() => void run("github:reconnect", async (id) => { setGitHubAuthorization(await startGitHubConnection(id)); }, "GitHub 재연결 인증을 기다리고 있습니다.")}>재연결</button> : null}
           </div>
