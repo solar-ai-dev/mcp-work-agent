@@ -225,6 +225,24 @@ test("저장소 다중 선택을 저장하고 해제해도 Google과 Gemini 설�
   expect(updateApi.updateSettings).toHaveBeenLastCalledWith(expect.any(String), { selected_github_repositories: [] });
 });
 
+test("GitHub 저장소 목록__여러 설치 페이지__자동으로 모두 표시한다", async () => {
+  vi.mocked(settingsApi.getSettings).mockResolvedValue(connectionSettings());
+  vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: "github:1", display_email: "sample", connection_status: "CONNECTED", granted_scopes: [], missing_required_scopes: [] });
+  const listRepositories = vi.mocked(repositoryApi.listRepositories);
+  listRepositories.mockReset();
+  listRepositories
+    .mockResolvedValueOnce({ schema_version: 1, account_id: "github:1", items: [{ repository: "sample/personal", repository_id: 1, private: true }], next_cursor: "next-installation" })
+    .mockResolvedValueOnce({ schema_version: 1, account_id: "github:1", items: [{ repository: "sample/team", repository_id: 2, private: false }], next_cursor: null });
+
+  render(<SettingsDrawer runtime={null} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn().mockResolvedValue(undefined)} />);
+
+  expect(await screen.findByRole("checkbox", { name: /sample\/personal/ })).toBeInTheDocument();
+  expect(await screen.findByRole("checkbox", { name: /sample\/team/ })).toBeInTheDocument();
+  expect(listRepositories).toHaveBeenNthCalledWith(1, undefined);
+  expect(listRepositories).toHaveBeenNthCalledWith(2, "next-installation");
+  expect(screen.queryByRole("button", { name: "Repository 더 보기" })).not.toBeInTheDocument();
+});
+
 test("Repository 권한 실패와 정상 빈 목록을 구분하고 새로고침한다", async () => {
   vi.mocked(settingsApi.getSettings).mockResolvedValue(connectionSettings());
   vi.mocked(googleApi.getGitHubConnection).mockResolvedValue({ schema_version: 1, connector_id: "github", account_id: "github:1", display_email: "sample", connection_status: "CONNECTED", granted_scopes: [], missing_required_scopes: [] });
@@ -234,6 +252,6 @@ test("Repository 권한 실패와 정상 빈 목록을 구분하고 새로고침
   expect(screen.queryByText(/현재 페이지에 접근 가능한 Repository가 없습니다/)).not.toBeInTheDocument();
   vi.mocked(repositoryApi.listRepositories).mockResolvedValue({ schema_version: 1, account_id: "github:1", items: [], next_cursor: null });
   await userEvent.click(screen.getByRole("button", { name: "Repository 새로고침" }));
-  expect(await screen.findByText(/현재 페이지에 접근 가능한 Repository가 없습니다/)).toBeInTheDocument();
+  expect(await screen.findByText(/접근 가능한 Repository가 없습니다/)).toBeInTheDocument();
   expect(within(screen.getByLabelText("GitHub 연결")).queryByRole("alert")).not.toBeInTheDocument();
 });

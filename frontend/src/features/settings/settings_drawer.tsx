@@ -73,7 +73,6 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   const [githubStatusError, setGitHubStatusError] = useState<string | null>(null);
   const [githubAuthorization, setGitHubAuthorization] = useState<AuthorizationStart | null>(null);
   const [repositories, setRepositories] = useState<RepositoryItem[]>([]);
-  const [repositoryCursor, setRepositoryCursor] = useState<string | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [selectedRepositories, setSelectedRepositories] = useState<string[]>([]);
@@ -120,20 +119,17 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
     }
   }, []);
 
-  const refreshRepositories = useCallback(async (cursor?: string): Promise<void> => {
+  const refreshRepositories = useCallback(async (): Promise<void> => {
     const requestId = ++repositoryRequest.current;
     setRepositoryLoading(true);
     setRepositoryError(null);
     try {
-      const page = await listRepositories(cursor);
+      const items = await loadRepositoryPages(github?.account_id ?? null);
       if (requestId !== repositoryRequest.current) return;
-      if (page.account_id !== github?.account_id) throw new Error("GitHub account changed");
-      setRepositories((current) => [...new Map([...(cursor ? current : []), ...page.items].map((item) => [item.repository_id, item])).values()]);
-      setRepositoryCursor(page.next_cursor);
+      setRepositories(items);
     } catch {
       if (requestId === repositoryRequest.current) {
         setRepositories([]);
-        setRepositoryCursor(null);
         setRepositoryError("Repository 목록을 확인하지 못했습니다. GitHub 연결과 Repository 접근 권한을 확인해 주세요.");
       }
     } finally {
@@ -143,7 +139,7 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
 
   useEffect(() => {
     if (github?.connection_status === "CONNECTED") void refreshRepositories();
-    else { setRepositories([]); setRepositoryCursor(null); }
+    else setRepositories([]);
     return () => { repositoryRequest.current += 1; };
   }, [github?.connection_status, refreshRepositories]);
 
@@ -336,13 +332,12 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
               {repositories.map((item) => <label key={item.repository_id}><input type="checkbox" checked={selectedRepositories.includes(item.repository)} onChange={(e) => setSelectedRepositories(toggleValue(selectedRepositories, item.repository, e.target.checked))} /><span>{item.repository}{item.private ? <small>비공개</small> : null}</span></label>)}
               {selectedRepositories.filter((name) => !repositories.some((item) => item.repository === name)).map((name) => <label key={name}><input type="checkbox" checked onChange={() => setSelectedRepositories(selectedRepositories.filter((value) => value !== name))} /><span>{name}<small>접근 재확인 필요</small></span></label>)}
             </fieldset>
-            {repositoryError ? <p role="alert" className="status-warn">{repositoryError}</p> : github?.connection_status === "CONNECTED" && !repositoryLoading && repositories.length === 0 ? <p>현재 페이지에 접근 가능한 Repository가 없습니다. 접근 관리에서 설치 범위를 확인해 주세요.</p> : null}
+            {repositoryError ? <p role="alert" className="status-warn">{repositoryError}</p> : github?.connection_status === "CONNECTED" && !repositoryLoading && repositories.length === 0 ? <p>접근 가능한 Repository가 없습니다. 접근 관리에서 설치 범위를 확인해 주세요.</p> : null}
             {repositoryLoading ? <p>Repository 접근 권한을 확인하고 있습니다.</p> : null}
             <div className="button-row">
               <button type="button" className="button-primary" disabled={busy || repositoryLoading || github?.connection_status !== "CONNECTED"} onClick={() => void run(`github:repositories:${JSON.stringify(selectedRepositories)}`, async (id) => { await updateSettings(id, { selected_github_repositories: selectedRepositories }); }, "사용할 저장소를 저장했습니다.")}>저장소 선택 저장</button>
               <button type="button" className="button-secondary" disabled={busy || !selectedRepositories.length} onClick={() => setSelectedRepositories([])}>모두 해제</button>
               <button type="button" className="button-secondary" disabled={repositoryLoading || github?.connection_status !== "CONNECTED"} onClick={() => void refreshRepositories()}>Repository 새로고침</button>
-              {repositoryCursor ? <button type="button" className="button-secondary" disabled={repositoryLoading} onClick={() => void refreshRepositories(repositoryCursor)}>Repository 더 보기</button> : null}
               <a className="button-secondary" href="https://github.com/settings/installations" target="_blank" rel="noreferrer">Repository 접근 관리</a>
             </div>
           </div> : null}
@@ -403,6 +398,23 @@ function availableRuntimeModes(profile: string | undefined): RuntimeMode[] {
 
 function toggleValue(values: string[], value: string, checked: boolean): string[] {
   return checked ? [...new Set([...values, value])] : values.filter((item) => item !== value);
+}
+
+async function loadRepositoryPages(accountId: string | null): Promise<RepositoryItem[]> {
+  if (!accountId) throw new Error("GitHub account is unavailable");
+  const items = new Map<number, RepositoryItem>();
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < 100; page += 1) {
+    const result = await listRepositories(cursor);
+    if (result.account_id !== accountId) throw new Error("GitHub account changed");
+    result.items.forEach((item) => items.set(item.repository_id, item));
+    cursor = result.next_cursor ?? undefined;
+    if (!cursor) return [...items.values()];
+    if (seen.has(cursor)) break;
+    seen.add(cursor);
+  }
+  throw new Error("Repository 목록을 모두 확인하지 못했습니다.");
 }
 
 async function loadContainerPages<T>(fetchPage: (cursor: string | null) => Promise<{ items: T[]; next_page_token: string | null }>): Promise<T[]> {
