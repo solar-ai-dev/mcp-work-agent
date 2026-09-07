@@ -1549,12 +1549,30 @@ test("Google과 GitHub가 모두 미연결이어도 메인 화면에 진입하�
 });
 
 test("GitHub만 연결되면 GitHub Issues를 기존 Resource Browser에서 탐색한다", async () => {
-  installUiContractFetch({ googleConnectionStates: ["DISCONNECTED"], githubConnectionStates: ["CONNECTED"], accountAbsent: true, githubRepository: "solar-ai-dev/google-work-agent" });
+  const user = userEvent.setup();
+  installUiContractFetch({ googleConnectionStates: ["DISCONNECTED"], githubConnectionStates: ["CONNECTED"], accountAbsent: true, githubRepositories: ["bonggyulim/search-save", "solar-ai-dev/google-work-agent"] });
   render(<App />);
 
   expect(await screen.findByRole("tab", { name: /GitHub Issues/ })).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /메일|캘린더|태스크/ })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("조회할 GitHub Repository")).toHaveValue("");
+  await user.selectOptions(screen.getByLabelText("조회할 GitHub Repository"), "solar-ai-dev/google-work-agent");
   expect(await screen.findByText("Runtime closure")).toBeInTheDocument();
+});
+
+test("현재 GitHub 계정에 묶이지 않은 Repository 선택은 Resource Browser에 노출하지 않는다", async () => {
+  installUiContractFetch({
+    googleConnectionStates: ["DISCONNECTED"],
+    githubConnectionStates: ["CONNECTED"],
+    accountAbsent: true,
+    githubRepositories: ["previous-account/private-repo"],
+    githubRepositoryAccountId: "github:previous",
+  });
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: /GitHub Issues/ })).toBeInTheDocument();
+  expect(screen.queryByLabelText("조회할 GitHub Repository")).not.toBeInTheDocument();
+  expect(screen.getByText("탐색할 GitHub Repository를 설정해 주세요.")).toBeInTheDocument();
 });
 
 test("TST-UI-203 resource row supports focus, selection, and keyboard-accessible controls", async () => {
@@ -3304,7 +3322,8 @@ function installUiContractFetch(options: {
   gmailCountResponse?: Promise<Response>;
   googleConnectionStates?: Array<GoogleConnection["connection_status"]>;
   githubConnectionStates?: Array<GoogleConnection["connection_status"]>;
-  githubRepository?: string | null;
+  githubRepositories?: string[];
+  githubRepositoryAccountId?: string;
   historyMessages?: Array<{ id: string; run_id: string | null; role: string; content: string; created_at_ms: number }>;
   historyRuns?: Array<{ run_id: string; status: string; started_at_ms: number; finished_at_ms: number | null }>;
   run?: boolean;
@@ -3403,7 +3422,7 @@ function installUiContractFetch(options: {
     if (path === "/api/v1/settings") return jsonFetchResponse({
       settings: settingsPayload({
         ...(options.setupCompleted === false ? { external_llm_consent: false } : {}),
-        default_github_repository: options.githubRepository ? { repository: options.githubRepository, repository_id: 1, account_id: "github:42" } : null,
+        selected_github_repositories: options.githubRepositories?.map((repository, index) => ({ repository, repository_id: index + 1, account_id: options.githubRepositoryAccountId ?? "github:42" })) ?? [],
       }),
       api_contract_version: "1",
     });

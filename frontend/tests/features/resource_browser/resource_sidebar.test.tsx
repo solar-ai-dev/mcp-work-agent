@@ -29,7 +29,7 @@ function sidebarProps(overrides: Partial<ComponentProps<typeof ResourceSidebar>>
     githubAccountId: null,
     googleConnected: true,
     githubConnected: false,
-    githubRepository: null,
+    githubRepositories: [],
     timezone: "Asia/Seoul",
     onProjectionChange: vi.fn(),
     ...overrides,
@@ -107,7 +107,7 @@ test.each([
     githubAccountId: githubConnected ? "github-account" : null,
     googleConnected,
     githubConnected,
-    githubRepository: githubConnected ? "solar-ai-dev/google-work-agent" : null,
+    githubRepositories: githubConnected ? ["solar-ai-dev/google-work-agent"] : [],
   })} />);
   for (const name of visible) expect(screen.getByRole("tab", { name: new RegExp(name) })).toBeInTheDocument();
   for (const name of hidden) expect(screen.queryByRole("tab", { name: new RegExp(name) })).not.toBeInTheDocument();
@@ -134,7 +134,7 @@ test("네 Resource 사이 전환 시 이전 상세를 제거하고 GitHub Issue�
   mockBrowse().mockImplementation(async (request) => request.source === "github" ? { ...emptyPage, items: [issue], total_count: 1 } : emptyPage);
   vi.spyOn(resourceApi, "listTaskLists").mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
   const onProjectionChange = vi.fn();
-  const { rerender } = render(<ResourceSidebar {...sidebarProps({ githubAccountId: "github-account", githubConnected: true, githubRepository: "solar-ai-dev/google-work-agent", onProjectionChange })} />);
+  const { rerender } = render(<ResourceSidebar {...sidebarProps({ githubAccountId: "github-account", githubConnected: true, githubRepositories: ["solar-ai-dev/google-work-agent"], onProjectionChange })} />);
 
   for (const name of ["캘린더", "태스크", "GitHub Issues", "메일"]) {
     fireEvent.click(screen.getByRole("tab", { name: new RegExp(name) }));
@@ -153,4 +153,44 @@ test("네 Resource 사이 전환 시 이전 상세를 제거하고 GitHub Issue�
   expect(screen.queryByRole("tab", { name: /GitHub Issues/ })).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: /메일/ })).toHaveAttribute("aria-selected", "true");
   await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ selectedContext: expect.objectContaining({ resourceIds: [] }) })));
+});
+
+test("복수 GitHub allowlist는 첫 저장소를 암묵적으로 조회하지 않고 명시적으로 선택한 저장소만 탐색한다", async () => {
+  const issue: ResourceItem = {
+    schema_version: 1,
+    selection_handle: "github-selection",
+    source: "github",
+    resource_type: "github_issue",
+    resource_id: "solar-ai-dev/google-work-agent#205",
+    parent_id: "solar-ai-dev/google-work-agent",
+    title: "GitHub repository access",
+    link_url: "https://github.com/solar-ai-dev/google-work-agent/issues/205",
+    version: "1",
+    related_resource_ids: ["solar-ai-dev/google-work-agent"],
+    metadata: { repository: "solar-ai-dev/google-work-agent", issue_number: 205, issue_state: "OPEN" },
+  };
+  const browse = mockBrowse().mockImplementation(async (request) => request.source === "github" && request.repository === "solar-ai-dev/google-work-agent"
+    ? { ...emptyPage, items: [issue], total_count: 1 }
+    : emptyPage);
+
+  render(<ResourceSidebar {...sidebarProps({
+    googleAccountId: null,
+    githubAccountId: "github-account",
+    googleConnected: false,
+    githubConnected: true,
+    githubRepositories: ["bonggyulim/search-save", "solar-ai-dev/google-work-agent"],
+  })} />);
+
+  const repositorySelect = screen.getByLabelText("조회할 GitHub Repository");
+  expect(repositorySelect).toHaveValue("");
+  expect(screen.getByText("탐색할 GitHub Repository를 선택해 주세요.")).toBeInTheDocument();
+  expect(browse).not.toHaveBeenCalledWith(expect.objectContaining({ source: "github" }));
+
+  fireEvent.change(repositorySelect, { target: { value: "solar-ai-dev/google-work-agent" } });
+  expect(await screen.findByText("GitHub repository access")).toBeInTheDocument();
+  expect(browse).toHaveBeenCalledWith(expect.objectContaining({ source: "github", repository: "solar-ai-dev/google-work-agent" }));
+
+  fireEvent.change(repositorySelect, { target: { value: "bonggyulim/search-save" } });
+  await waitFor(() => expect(screen.queryByText("GitHub repository access")).not.toBeInTheDocument());
+  expect(browse).toHaveBeenCalledWith(expect.objectContaining({ source: "github", repository: "bonggyulim/search-save" }));
 });

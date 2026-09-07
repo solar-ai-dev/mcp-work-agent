@@ -5,6 +5,7 @@ import type { GitHubIssuesController } from "./github_controller";
 type Props = {
   github: GitHubIssuesController;
   repository: string | null | undefined;
+  hasAllowedRepositories: boolean;
   onOpenSettings?: () => void;
   selectedResourceIds: string[];
   focusedResourceId: string | null;
@@ -12,7 +13,7 @@ type Props = {
   onFocusResource: (item: ResourceItem) => void;
 };
 
-export function GitHubPanel({ github, repository, onOpenSettings, selectedResourceIds, focusedResourceId, onToggleResource, onFocusResource }: Props): JSX.Element {
+export function GitHubPanel({ github, repository, hasAllowedRepositories, onOpenSettings, selectedResourceIds, focusedResourceId, onToggleResource, onFocusResource }: Props): JSX.Element {
   const [filter, setFilter] = useState("");
   const visibleItems = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("ko-KR");
@@ -24,8 +25,8 @@ export function GitHubPanel({ github, repository, onOpenSettings, selectedResour
   if (!repository) {
     return (
       <div className="info-card">
-        <p>탐색할 GitHub Repository를 설정해 주세요.</p>
-        <button className="button-primary" type="button" onClick={onOpenSettings}>설정 열기</button>
+        <p>{hasAllowedRepositories ? "탐색할 GitHub Repository를 선택해 주세요." : "탐색할 GitHub Repository를 설정해 주세요."}</p>
+        {!hasAllowedRepositories ? <button className="button-primary" type="button" onClick={onOpenSettings}>설정 열기</button> : null}
       </div>
     );
   }

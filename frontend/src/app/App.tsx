@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import { ConversationHistoryPanel, useConversation } from "../features/conversation";
 import { ResourceSidebar, ResourceViewer, type ResourceBrowserProjection } from "../features/resource_browser";
@@ -82,6 +82,12 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
   const reauthConnectionCheckRef = useRef<string | null>(null);
   const reauthResumeAttemptRef = useRef<string | null>(null);
   const operationalCommandIds = useRef(new Map<string, string>());
+  const githubRepositories = useMemo(
+    () => settings.selected_github_repositories
+      ?.filter((item) => item.account_id === github?.account_id)
+      .map((item) => item.repository) ?? [],
+    [github?.account_id, settings.selected_github_repositories],
+  );
 
   useEffect(() => {
     if (restoredOpenRunRef.current) {
@@ -279,12 +285,12 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
       ) : null}
     >
         <ResourceSidebar
-          scopeKey={`${runtime.service_instance_id}|google:${currentAccount?.account_id ?? "disconnected"}|google-selection:${JSON.stringify([settings.selected_calendar_ids, settings.selected_tasklist_ids, settings.google_resource_account_id])}|github:${github?.account_id ?? "disconnected"}|repository:${settings.default_github_repository?.repository ?? "none"}`}
+          scopeKey={`${runtime.service_instance_id}|google:${currentAccount?.account_id ?? "disconnected"}|google-selection:${JSON.stringify([settings.selected_calendar_ids, settings.selected_tasklist_ids, settings.google_resource_account_id])}|github:${github?.account_id ?? "disconnected"}|repositories:${JSON.stringify(githubRepositories)}`}
           googleAccountId={currentAccount?.account_id}
           githubAccountId={github?.account_id}
           googleConnected={google.connection_status === "CONNECTED" && google.missing_required_scopes.length === 0}
           githubConnected={github?.connection_status === "CONNECTED" && github.missing_required_scopes.length === 0}
-          githubRepository={settings.default_github_repository?.repository}
+          githubRepositories={githubRepositories}
           onOpenSettings={() => setSettingsOpen(true)}
           timezone={calendarTimezone}
           onProjectionChange={setResourceProjection}

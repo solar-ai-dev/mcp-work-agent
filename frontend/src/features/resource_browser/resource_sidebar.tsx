@@ -30,7 +30,7 @@ type Props = {
   githubAccountId: string | null | undefined;
   googleConnected: boolean;
   githubConnected: boolean;
-  githubRepository: string | null | undefined;
+  githubRepositories: readonly string[];
   onOpenSettings?: () => void;
   timezone: string;
   onProjectionChange: (projection: ResourceBrowserProjection) => void;
@@ -38,7 +38,7 @@ type Props = {
 
 const PAGE_SIZE = 20;
 
-export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, googleConnected, githubConnected, githubRepository, timezone, onProjectionChange, onOpenSettings }: Props): JSX.Element {
+export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, googleConnected, githubConnected, githubRepositories, timezone, onProjectionChange, onOpenSettings }: Props): JSX.Element {
   const visibleSources = useMemo<ResourceSource[]>(() => [
     ...(googleConnected ? ["gmail", "calendar", "tasks"] as ResourceSource[] : []),
     ...(githubConnected ? ["github"] as ResourceSource[] : []),
@@ -55,8 +55,10 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
   const [taskListsNext, setTaskListsNext] = useState<string | null>(null);
   const [taskListsLoading, setTaskListsLoading] = useState(false);
   const [taskListsError, setTaskListsError] = useState<string | null>(null);
+  const [githubRepository, setGitHubRepository] = useState<string | null>(() => githubRepositories.length === 1 ? githubRepositories[0] : null);
   const taskListsGeneration = useRef(0);
   const previousScopeKey = useRef(scopeKey);
+  const previousGitHubRepository = useRef(githubRepository);
   const gmail = useGmail({ accountId: googleAccountId, active: source === "gmail" });
   const tasks = useTasks({ accountId: googleAccountId, parentId, active: source === "tasks", filter });
   const calendar = useCalendar({ accountId: googleAccountId, calendarId: parentId, active: googleConnected && source === "calendar" && parentId !== null, timezone });
@@ -70,6 +72,19 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
     [selectedItems],
   );
   const focusedItemSelected = focusedItem !== null && selectedContext.selectionHandles.includes(focusedItem.selection_handle);
+
+  useEffect(() => {
+    setGitHubRepository((current) => current && githubRepositories.includes(current)
+      ? current
+      : githubRepositories.length === 1 ? githubRepositories[0] : null);
+  }, [githubRepositories]);
+
+  useEffect(() => {
+    if (previousGitHubRepository.current === githubRepository) return;
+    previousGitHubRepository.current = githubRepository;
+    setSelectedItems([]);
+    setFocusedItem(null);
+  }, [githubRepository]);
 
   const loadTaskLists = useCallback(async (continuation: string | null = null): Promise<void> => {
     const generation = ++taskListsGeneration.current;
@@ -218,10 +233,16 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
           {taskListsError ? <p role="alert">{taskListsError}</p> : null}
           {!taskListsLoading && !taskListsError && taskLists.length === 0 ? <p>사용 가능한 태스크 목록이 없습니다.</p> : null}
         </div> : null}
+        {githubConnected && source === "github" && githubRepositories.length > 0 ? <div className="resource-search-row">
+          <label>Repository<select aria-label="조회할 GitHub Repository" value={githubRepository ?? ""} onChange={(event) => setGitHubRepository(event.target.value || null)}>
+            <option value="">Repository 선택</option>
+            {githubRepositories.map((repository) => <option key={repository} value={repository}>{repository}</option>)}
+          </select></label>
+        </div> : null}
         {googleConnected && source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: setFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} /> : null}
         {googleConnected && source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: setFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} /> : null}
         {googleConnected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
-        {githubConnected && source === "github" ? <GitHubPanel github={github} repository={githubRepository} onOpenSettings={onOpenSettings} selectedResourceIds={selectedContext.resourceIds} focusedResourceId={focusedItem?.resource_id ?? null} onToggleResource={(resourceId) => toggleByResourceId(resourceId, github.items)} onFocusResource={setFocusedItem} /> : null}
+        {githubConnected && source === "github" ? <GitHubPanel github={github} repository={githubRepository} hasAllowedRepositories={githubRepositories.length > 0} onOpenSettings={onOpenSettings} selectedResourceIds={selectedContext.resourceIds} focusedResourceId={focusedItem?.resource_id ?? null} onToggleResource={(resourceId) => toggleByResourceId(resourceId, github.items)} onFocusResource={setFocusedItem} /> : null}
       </div>
     </aside>
   );
