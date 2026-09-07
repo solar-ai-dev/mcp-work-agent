@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Literal, cast
 
@@ -110,12 +111,13 @@ def determine_io_resources(
     }
     if confirmation_response is not None:
         base_projection["confirmation_response"] = dict(confirmation_response)
+    output_schema = _output_schema_for_request_intent(request_intent)
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(
             request.requested_mode,
             resolved_prompt_ref,
             base_projection,
-            ROUTE_RESOURCE_CANDIDATE_OUTPUT_SCHEMA,
+            output_schema,
         )
         try:
             candidate = _validated_semantic_candidate(
@@ -156,7 +158,7 @@ def determine_io_resources(
                         failure_context_ids=[str(error)],
                     ),
                 },
-                ROUTE_RESOURCE_CANDIDATE_OUTPUT_SCHEMA,
+                output_schema,
             )
             candidate = _validated_semantic_candidate(
                 revised.structured_output,
@@ -165,6 +167,31 @@ def determine_io_resources(
             )
             retry_budget = decision["run_budget"]
         return candidate, merge_provider_dispatch_usage(retry_budget)
+
+
+def _output_schema_for_request_intent(
+    request_intent: RequestIntentV2,
+) -> OutputSchemaDefinition:
+    """Bind Tool Routing output effects to the validated request contract."""
+
+    schema = deepcopy(ROUTE_RESOURCE_CANDIDATE_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], schema["properties"])
+    output_effects = cast(dict[str, object], properties["output_effects"])
+    requested_write_effects = list(
+        dict.fromkeys(
+            effect
+            for effect in request_intent["requested_effect_hints"]
+            if effect != EffectType.READ.value
+        )
+    )
+    if requested_write_effects:
+        output_effects["items"] = {"enum": requested_write_effects}
+    else:
+        output_effects["maxItems"] = 0
+    return OutputSchemaDefinition(
+        schema_version=ROUTE_RESOURCE_CANDIDATE_OUTPUT_SCHEMA.schema_version,
+        json_schema=schema,
+    )
 
 
 def requires_io_resource_inference(

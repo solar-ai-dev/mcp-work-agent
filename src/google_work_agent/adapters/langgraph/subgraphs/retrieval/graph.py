@@ -187,6 +187,7 @@ from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.observability import ObservabilityContext
+from google_work_agent.ports.system.contracts.retrieval_head import RetrievalHeadV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
     RetrievalRequiredV1,
@@ -403,6 +404,7 @@ class RetrievalSubgraph:
         default_tasklist_id_provider: Callable[[], str | None] | None = None,
         default_calendar_id_provider: Callable[[], str | None] | None = None,
         repository_access: GetRepositoryAccessHandler | None = None,
+        load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -425,6 +427,7 @@ class RetrievalSubgraph:
         self._evidence_store = evidence_store
         self._connector_reader = connector_reader
         self._repository_access = repository_access
+        self._load_retrieval_head = load_retrieval_head
         self._tool_catalog = tool_catalog
         self._read_result_cache = read_result_cache
         self._confirm_inline = confirm_inline
@@ -1805,6 +1808,15 @@ class RetrievalSubgraph:
             "SUFFICIENT",
             "PARTIAL",
         }:
+            prior_result = state.get("retrieval_result")
+            prior_artifact_ref: StateArtifactRefV1 | None = None
+            if prior_result is None and self._load_retrieval_head is not None:
+                head = self._load_retrieval_head(state["run_id"])
+                if head is not None:
+                    prior_artifact_ref = {
+                        "artifact_id": head.retrieval_artifact_id,
+                        "revision": head.retrieval_revision,
+                    }
             patch = finalize_retrieval_node(
                 cast(
                     RetrievalState,
@@ -1830,7 +1842,8 @@ class RetrievalSubgraph:
                 ),
                 evidence_drafts=state["evidence_drafts"],
                 current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
-                prior_result=state.get("retrieval_result"),
+                prior_result=prior_result,
+                prior_artifact_ref=prior_artifact_ref,
             )
             retrieval_result = cast(Any, patch["final_result"])
         self._evidence_store.put(run_id=state["run_id"], evidence_drafts=state["evidence_drafts"])

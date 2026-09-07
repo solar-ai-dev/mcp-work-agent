@@ -854,7 +854,15 @@ def test_exact_task_create_precondition__materializes_duplicate_reads__without_l
             "request_intent": {
                 "requested_effect_hints": ["CREATE"],
                 "requested_resource_hints": ["TASK"],
-                "constraints": [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
+                "constraints": [
+                    {
+                        "kind": "RESOURCE",
+                        "field": "title",
+                        "value": "Submit report",
+                    },
+                    {"kind": "RESOURCE", "field": "notes", "value": "Attach evidence"},
+                    {"kind": "DATE", "field": "scheduled_date", "value": "2026-09-11"},
+                ],
             },
             "input_routes": frozen_routes,
         },

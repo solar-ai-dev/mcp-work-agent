@@ -146,6 +146,29 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
     }
 
 
+def test_finalize_retrieval__after_active_result_invalidation__continues_durable_head() -> None:
+    result = finalize_retrieval(
+        artifact_id="unused-new-id",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        selection_result={
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": [],
+        },
+        evidence_drafts=[],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=0,
+        prior_artifact_ref={"artifact_id": "retrieval-head", "revision": 4},
+    )
+
+    assert result["meta"]["artifact_id"] == "retrieval-head"
+    assert result["meta"]["revision"] == 5
+    assert {"artifact_id": "retrieval-head", "revision": 4} in result["meta"]["based_on"]
+
+
 def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() -> None:
     route_plan = _tool_route_plan(
         [

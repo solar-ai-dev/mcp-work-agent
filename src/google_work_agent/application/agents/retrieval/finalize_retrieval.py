@@ -50,6 +50,7 @@ def finalize_retrieval(
     availability_results: list[AvailableIntervalV1] | None = None,
     exclusion_obligation_segment_ids: Iterable[str] = (),
     prior_result: RetrievalResultV1 | None = None,
+    prior_artifact_ref: StateArtifactRefV1 | None = None,
     query_attempts: Sequence[QueryAttemptV1] = (),
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
@@ -59,18 +60,17 @@ def finalize_retrieval(
     selected = set(selected_ids)
     evidence = [item for item in evidence_drafts if item["segment_id"] in selected]
     route_meta = tool_route_plan["input_plan"]["meta"]
-    prior_ref: list[StateArtifactRefV1] = (
-        []
+    previous_ref = (
+        prior_artifact_ref
         if prior_result is None
-        else [
-            {
-                "artifact_id": prior_result["meta"]["artifact_id"],
-                "revision": prior_result["meta"]["revision"],
-            }
-        ]
+        else {
+            "artifact_id": prior_result["meta"]["artifact_id"],
+            "revision": prior_result["meta"]["revision"],
+        }
     )
-    artifact_identity = artifact_id if prior_result is None else prior_result["meta"]["artifact_id"]
-    revision = 1 if prior_result is None else prior_result["meta"]["revision"] + 1
+    prior_ref: list[StateArtifactRefV1] = [] if previous_ref is None else [previous_ref]
+    artifact_identity = artifact_id if previous_ref is None else previous_ref["artifact_id"]
+    revision = 1 if previous_ref is None else previous_ref["revision"] + 1
     excluded_ids = _unique(
         [
             *(prior_result["excluded_segment_ids"] if prior_result is not None else []),

@@ -356,14 +356,21 @@ def _exact_task_duplicate_check_plan(
 
 
 def _exact_task_title(value: object) -> str | None:
-    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], Mapping):
+    if not isinstance(value, list):
         return None
-    constraint = value[0]
+    title_constraints = [
+        constraint
+        for constraint in value
+        if isinstance(constraint, Mapping)
+        and constraint.get("kind") == "RESOURCE"
+        and constraint.get("field") == "title"
+    ]
+    if len(title_constraints) != 1:
+        return None
+    constraint = title_constraints[0]
     title = constraint.get("value")
     if (
-        constraint.get("kind") != "RESOURCE"
-        or constraint.get("field") != "title"
-        or not isinstance(title, str)
+        not isinstance(title, str)
         or not title
     ):
         return None

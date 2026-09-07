@@ -27,7 +27,7 @@ def is_complete_create_policy_read(
         confirmation_response is not None
         or tool_route_plan is None
         or request_intent["analysis_requirement"] != "NONE"
-        or set(request_intent["requested_effect_hints"]) != {"CREATE"}
+        or set(request_intent["requested_effect_hints"]) not in ({"CREATE"}, {"READ", "CREATE"})
 
         or acquisition_result["status"] != "COMPLETE"
         or acquisition_result["missing_slots"]
@@ -52,7 +52,8 @@ def is_complete_create_policy_read(
         reason_code = "POLICY_CALENDAR_CONFLICT_CHECK"
     else:
         return False
-    if set(request_intent["requested_resource_hints"]) != {resource}:
+    requested_resources = set(request_intent["requested_resource_hints"])
+    if resource not in requested_resources or not requested_resources.issubset(required_resources):
         return False
     input_routes = tool_route_plan["input_plan"]["input_routes"]
     if {route["resource_type"] for route in input_routes} != required_resources:
@@ -73,4 +74,3 @@ def is_complete_create_policy_read(
         and summaries_by_route[route["route_id"]].get("status") == "COMPLETE"
         for route in input_routes
     )
-

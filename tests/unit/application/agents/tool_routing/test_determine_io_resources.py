@@ -406,6 +406,70 @@ def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> 
     ]
 
 
+def test_semantic_route_schema__with_requested_writes__permits_only_those_effects() -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-task", "revision": 1, "based_on": []},
+            "goal": "check for a duplicate and create one task",
+            "completion_conditions": ["created once"],
+            "constraints": [],
+            "requested_effect_hints": ["READ", "CREATE"],
+            "requested_resource_hints": ["TASK_LIST", "TASK"],
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-task",
+        conversation_id="conversation-task",
+        workflow_key="thread-task",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="check for a duplicate and create one task",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request-task", "command-task", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[_valid_output()], validate_schema=True)
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+        prompt_ref=PromptReference(
+            prompt_bundle_version="test",
+            prompt_id="tool_routing.determine_io_resources",
+            prompt_version="1",
+            content_hash="hash",
+            agent_role="tool_routing",
+            subgraph_name="tool_routing",
+            node_name="determine_io_resources",
+            node_state="INITIAL",
+            purpose="determine_io_resources",
+            input_schema_version="v1",
+            output_schema_version="v1",
+        ),
+    )
+
+    schema = runtime.calls[0]["output_schema"].json_schema
+    output_effects = cast(
+        Mapping[str, object],
+        cast(Mapping[str, object], schema["properties"])["output_effects"],
+    )
+    assert output_effects["items"] == {"enum": ["CREATE"]}
+    assert candidate.input_resource_types == ("TASK",)
+    assert candidate.output_pairs == (("TASK", EffectType.CREATE),)
+
+
 def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
     catalog = load_signed_tool_registry()
     intent: RequestIntentV2 = {

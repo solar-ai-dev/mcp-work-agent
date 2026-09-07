@@ -8,6 +8,9 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     ActionObjectiveCandidateV1,
     PlanningSemanticInvoker,
 )
+from google_work_agent.application.agents.planning.materialize_task_create_payload import (
+    materialize_task_create_payload,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 PROMPT_ID = "planning.draft_action_objective_per_output_route"
@@ -243,31 +246,15 @@ def _deterministic_task_create_objective(
         or request_intent.get("requested_effect_hints") != ["CREATE"]
     ):
         return None
-    ambiguity = request_intent.get("ambiguity")
-    if not isinstance(ambiguity, Mapping) or ambiguity.get("requires_confirmation") is not False:
-        return None
-    constraints = request_intent.get("constraints")
-    if (
-        not isinstance(constraints, Sequence)
-        or isinstance(constraints, (str, bytes))
-        or len(constraints) != 1
-    ):
-        return None
-    title = constraints[0]
-    if (
-        not isinstance(title, Mapping)
-        or title.get("kind") != "RESOURCE"
-        or title.get("field") != "title"
-        or not isinstance(title.get("value"), str)
-        or not title["value"]
-    ):
+    payload = materialize_task_create_payload(request_intent)
+    if payload is None:
         return None
     return {
         "schema_version": 1,
         "route_id": route_id,
         "objective": "Create the exact task specified by the validated request intent.",
         "target_semantics": "TASK",
-        "scope_constraints": [f"title: {title['value']}"],
+        "scope_constraints": [f"{field}: {value}" for field, value in payload.items()],
         "evidence_refs": [],
     }
 

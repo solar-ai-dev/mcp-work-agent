@@ -362,7 +362,16 @@ def test_exact_task_create__materializes_arguments__without_llm() -> None:
     )
     request_intent = {
         "ambiguity": {"requires_confirmation": False},
-        "constraints": [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["GWA E2E Validation"],
+            },
+            {"kind": "RESOURCE", "field": "title", "value": "Submit report"},
+            {"kind": "RESOURCE", "field": "notes", "value": "Attach evidence"},
+            {"kind": "DATE", "field": "scheduled_date", "value": "2026-09-11"},
+        ],
     }
 
     result = compose_arguments_per_output_route(
@@ -376,7 +385,11 @@ def test_exact_task_create__materializes_arguments__without_llm() -> None:
 
     assert result[0]["arguments"] == {
         "task_list_id": "@default",
-        "payload": {"title": "Submit report"},
+        "payload": {
+            "title": "Submit report",
+            "notes": "Attach evidence",
+            "scheduled_date": "2026-09-11",
+        },
     }
 
 

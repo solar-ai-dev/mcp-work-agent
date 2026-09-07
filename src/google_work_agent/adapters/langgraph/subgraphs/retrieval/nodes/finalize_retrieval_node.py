@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    StateArtifactRefV1,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceDraftV1,
@@ -25,6 +28,7 @@ def finalize_retrieval_node(
     evidence_drafts: list[EvidenceDraftV1],
     current_round_no: int,
     prior_result: RetrievalResultV1 | None = None,
+    prior_artifact_ref: StateArtifactRefV1 | None = None,
 ) -> dict[str, object]:
     projection = project_finalize_retrieval_input(state)
     return {
@@ -35,6 +39,7 @@ def finalize_retrieval_node(
             evidence_drafts=evidence_drafts,
             current_round_no=current_round_no,
             prior_result=prior_result,
+            prior_artifact_ref=prior_artifact_ref,
             **projection,
         )
     }

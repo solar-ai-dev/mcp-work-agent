@@ -121,7 +121,11 @@ def test_exact_task_create__materializes_objective__without_llm() -> None:
             "requested_resource_hints": ["TASK"],
             "requested_effect_hints": ["CREATE"],
             "ambiguity": {"requires_confirmation": False},
-            "constraints": [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
+            "constraints": [
+                {"kind": "RESOURCE", "field": "title", "value": "Submit report"},
+                {"kind": "RESOURCE", "field": "notes", "value": "Attach evidence"},
+                {"kind": "DATE", "field": "scheduled_date", "value": "2026-09-11"},
+            ],
         },
         work_analysis=None,
         evidence=[{"evidence_id": "user-message-1"}],
@@ -129,7 +133,11 @@ def test_exact_task_create__materializes_objective__without_llm() -> None:
     )
 
     assert result[0]["target_semantics"] == "TASK"
-    assert result[0]["scope_constraints"] == ["title: Submit report"]
+    assert result[0]["scope_constraints"] == [
+        "title: Submit report",
+        "notes: Attach evidence",
+        "scheduled_date: 2026-09-11",
+    ]
     assert result[0]["evidence_refs"] == ["user-message-1"]
 
 

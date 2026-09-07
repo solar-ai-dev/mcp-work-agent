@@ -569,6 +569,7 @@ class _WorkflowRuntimeComposition:
             timezone_provider=self._timezone_provider,
             default_tasklist_id_provider=self._default_tasklist_id_provider,
             default_calendar_id_provider=self._default_calendar_id_provider,
+            load_retrieval_head=self._checkpoint_port.load_retrieval_head,
         )
         self._request_subgraph = entry_subgraphs.request_understanding
         self._tool_route_subgraph = entry_subgraphs.tool_route

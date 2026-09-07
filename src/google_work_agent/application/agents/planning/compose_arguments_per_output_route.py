@@ -16,6 +16,9 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     PlanningSemanticInvoker,
     ToolArgumentCandidateV1,
 )
+from google_work_agent.application.agents.planning.materialize_task_create_payload import (
+    materialize_task_create_payload,
+)
 from google_work_agent.application.agents.planning.resolve_default_container import (
     BoundSelectedToolSchemaV1,
     PlanningArgumentBindingError,
@@ -370,26 +373,7 @@ def _task_create_payload(
         or not isinstance(request_intent, Mapping)
     ):
         return None
-    ambiguity = request_intent.get("ambiguity")
-    if not isinstance(ambiguity, Mapping) or ambiguity.get("requires_confirmation") is not False:
-        return None
-    constraints = request_intent.get("constraints")
-    if (
-        not isinstance(constraints, Sequence)
-        or isinstance(constraints, (str, bytes))
-        or len(constraints) != 1
-    ):
-        return None
-    title = constraints[0]
-    if (
-        not isinstance(title, Mapping)
-        or title.get("kind") != "RESOURCE"
-        or title.get("field") != "title"
-        or not isinstance(title.get("value"), str)
-        or not title["value"]
-    ):
-        return None
-    return {"title": title["value"]}
+    return materialize_task_create_payload(request_intent)
 
 
 def _aware_calendar_datetime(

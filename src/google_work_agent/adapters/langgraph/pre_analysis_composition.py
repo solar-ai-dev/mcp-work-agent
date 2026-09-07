@@ -33,6 +33,7 @@ from google_work_agent.ports.llm.structured_inference_port import StructuredInfe
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
+from google_work_agent.ports.system.contracts.retrieval_head import RetrievalHeadV1
 from google_work_agent.ports.system.run_retrieval_cache_port import RunRetrievalCachePort
 
 
@@ -72,6 +73,7 @@ def build_pre_analysis_subgraphs(
     default_calendar_id_provider: Callable[[], str | None] | None = None,
     repository_access: GetRepositoryAccessHandler | None = None,
     connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
+    load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
 ) -> PreAnalysisSubgraphs:
     """Create nodes only; workflow policy remains in their Application owners."""
 
@@ -100,6 +102,7 @@ def build_pre_analysis_subgraphs(
         ),
         context_retrieval=RetrievalSubgraph(
             repository_access=repository_access,
+            load_retrieval_head=load_retrieval_head,
             should_stop_for_cancel=should_stop_for_cancel,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
