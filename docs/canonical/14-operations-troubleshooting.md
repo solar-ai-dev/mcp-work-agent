@@ -5,7 +5,7 @@
 ## 0. 문서 정보
 
 - **문서명:** 14. mcp-work-agent · 예외 처리 · 운영 · 트러블슈팅 가이드
-- **상태:** Draft v2.28
+- **상태:** Draft v2.29
 - **기준일:** 2026-09-07
 - **대상:** P0 MVP
 - **운영 형태:** Windows 11 x64 로컬 단일 사용자 애플리케이션
@@ -16,36 +16,34 @@
 
 ## 1. 목적과 범위
 
-이 문서는 제품에서 오류가 발생했을 때 owning contract가 이미 정한 안전 경계를 **운영 절차로 소비·투영**하여 데이터와 외부 Connector Write의 무결성을 보존하고 사용자 조치·지원 Escalation 순서를 제공한다. 공통 MCP·인증·Write/Verification/Recovery 절차는 현재 Google Workspace와 GitHub Connector에 각각 적용한다. Google OAuth·Workspace API처럼 Provider 고유 절은 concrete 예로 유지하며 GitHub Device Flow·Repository 접근의 exact interface/security 계약은 07·09를 따른다.
+제품 오류가 발생했을 때 사용자 조치·자동 복구·개발자 지원 순서를 제공한다. 각 소유 문서가 정한 안전 경계를 운영 절차로 적용하며, 데이터와 외부 Connector Write의 무결성을 보존한다.
 
-이 문서가 소유하는 것은 **운영 절차와 진단 presentation**뿐이다:
+공통 MCP·인증·Write·Verification·Recovery 절차는 Google Workspace와 GitHub에 각각 적용한다. Google OAuth·Workspace API 등 Provider 고유 절차는 해당 절에서 다루며, GitHub Device Flow·Repository 접근의 상세 인터페이스·보안 계약은 `07`·`09`를 따른다.
 
-- 오류 Severity/사용자 영향의 운영 분류와 표시
-- owning contract를 따르는 공통 Triage 순서
-- canonical Retry·Fallback·재시작 허용성에 대한 Runbook 절차(허용성 자체를 새로 정의하지 않음)
-- Launcher·Browser·Session·OAuth·LLM·MCP Runbook
-- `FAILED`, `UNKNOWN_RESULT`, `MISMATCH`, `RECOVERY_REQUIRED`에 대한 사용자/개발자 대응 절차
-- SQLite·Checkpoint·Migration·Backup·Restore 운영 절차
-- canonical Safe Mode contract의 운영 조치
-- Installer·Upgrade·Uninstall 문제 대응
-- Diagnostic Bundle과 Escalation Evidence
-- Security Incident와 Credential 폐기 절차
-- 해결 완료·재발 방지 기준
+| 이 문서의 책임 | 범위 |
+| --- | --- |
+| 오류 분류·초기 대응 | Severity, 사용자 영향 표시, 공통 Triage 순서 |
+| 구성요소별 대응 | Launcher·Browser·Session·OAuth·LLM·MCP, Installer·Upgrade·Uninstall |
+| 실행 결과 복구 | `FAILED`·`UNKNOWN_RESULT`·`MISMATCH`·`RECOVERY_REQUIRED`의 사용자·개발자 대응 |
+| 저장소·시작·종료 복구 | SQLite·Checkpoint·Migration·Backup·Restore, Safe Mode 운영 조치 |
+| 진단·지원·종료 | Diagnostic Bundle, Escalation Evidence, Security Incident·Credential 폐기, 해결 완료·재발 방지 기준 |
 
-이 문서가 소유하지 않는 내용:
+Retry·Fallback·재시작의 **허용성 자체는 새로 정하지 않는다.** 아래 상세 계약을 운영에 적용한다.
 
-- Domain lifecycle command·허용 source state·guard·transition semantics → `Domain State Transition Contract`
-- Domain 영속 사실·DB Transaction·persistence realization → `04`; exact DB enforcement → 04 Domain·DB required DB invariant contract
-- Workflow Node·Interrupt 상세 → `06`
-- API·MCP Error Schema → `07`
-- 정상·실패 호출 순서 → `08`
-- 위협 모델·Credential 정책 → `09`
-- 설치·Process·Directory 구현 → `10`
-- Log·Trace·Audit Event Schema → `11`
-- 재현 Test와 Release Gate → `12`
-- 모델·Prompt 품질 평가 → `13`
+| 이 문서가 재정의하지 않는 내용 | 소유 문서 |
+| --- | --- |
+| Domain lifecycle command·허용 source state·guard·transition | Domain State Transition Contract |
+| Domain 영속 사실·DB Transaction·persistence와 required DB invariant | 04 Domain·DB |
+| Workflow Node·Interrupt 상세 | 06 Agent·Workflow |
+| API·MCP Error Schema | 07 Interface |
+| 정상·실패 호출 순서 | 08 Sequence |
+| 위협 모델·Credential 정책 | 09 Security·Auth |
+| 설치·Process·Directory 구현 | 10 Infrastructure |
+| Log·Trace·Audit Event Schema | 11 Observability |
+| 재현 Test·Release Gate | 12 Test |
+| 모델·Prompt 품질 평가 | 13 Evaluation |
 
-따라서 이 문서의 `FAILED`, `UNKNOWN_RESULT`, `RECOVERY_REQUIRED`, `REAUTH_REQUIRED`, 취소/재시도 표기는 운영자가 적용할 **runbook mapping**이며 새 상태·Command·Guard를 정의하지 않는다.
+상태·취소·재시도 표기는 운영 대응을 위한 Runbook mapping이며, 새 상태·Command·Guard를 정의하지 않는다.
 
 ## 2. 운영 역할
 
@@ -117,28 +115,50 @@ flowchart TD
 | LLM API 429·일시적 5xx | 동일 Gemini 경로의 bounded Retry | Retry 1회 | Local 자동 전환 |
 | Structured Output 실패 | 동일 단계 Repair | 1회 | 무한 Prompt 반복 |
 | Write `NOT_SENT` 확정 실패 | `FAILED` 저장 | 자동 재실행 없음 | `FAILED → EXECUTING` |
-| `MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST` | `UNKNOWN_RESULT`·GET/Search | 조회 Budget 범위 | 새 Attempt·Write |
+| `MAY_HAVE_BEEN_SENT \| SENT_RESPONSE_LOST` | `UNKNOWN_RESULT`·GET/Search | 조회 Budget 범위 | 새 Attempt·Write |
 | SQLite Busy | 짧은 Busy Timeout 후 실패 | 5초 | DB Lock 상태 외부 Write |
 | Migration·DB Integrity 실패 | 검증된 최신 호환 Backup 1개 자동 Restore·실패 시 원본 Rollback·Safe Mode 유지 | 자동 Restore 1회 | DB 삭제·Downgrade Open·사용자 임의 선택 |
 
+### 6.1 Workflow handoff 복구 확인
 
-### 6.1 Durable pending handoff recovery
+Pending·blocked·consumed handoff는 제품의 startup/live reconciliation으로 복구한다. **수동 DB 수정이나 직접 LangGraph 호출로 우회하지 않는다.**
 
-운영 관점에서 pending/blocked/consumed handoff를 **수동 DB 수정이나 직접 LangGraph 호출로 복구하지 않는다.** Product가 제공하는 canonical startup/live reconciliation을 사용한다.
+| 순서 | 확인할 내용 |
+| --- | --- |
+| 1 | Startup Log에서 Connector MCP·Tool Schema와 LLM Runtime이 Core-ready인지 확인 |
+| 2 | startup-only `ReconcileInflightExecutionsHandler` drain 결과 확인. `EXECUTING/UNKNOWN_RESULT/EXECUTED/FAILED` process-loss fact가 먼저 정리되는지 확인 |
+| 3 | initial `RedriveWorkflowHandoffsHandler` drain과 live `WorkflowHandoffReconciliationLoop` 시작 여부 확인 |
+| 4 | `BLOCKED_BINDING`, stale admission, CONSUMED continuation, later PENDING head를 Handler의 Typed Result·Trace로 판정 |
+| 5 | Retrieval cache prerequisite가 사라졌다면 raw `next_page_token`을 복원하지 않고 retrieval-cache restart 경로가 stage됐는지 확인 |
 
-Runbook 확인 순서:
+Startup과 live runtime의 handoff 의미 판정은 동일한 `RedriveWorkflowHandoffsHandler`를 사용한다. 운영 절차에서 별도 ordering rule이나 fallback executor를 만들지 않는다.
 
-1. Startup log에서 Connector MCP/Tool Schema와 LLM runtime이 Core-ready인지 확인한다.
-2. startup-only `ReconcileInflightExecutionsHandler` drain 결과를 확인한다. 이 단계가 `EXECUTING/UNKNOWN_RESULT/EXECUTED/FAILED` process-loss fact를 먼저 정리한다.
-3. initial `RedriveWorkflowHandoffsHandler` drain과 live `WorkflowHandoffReconciliationLoop` 시작 여부를 확인한다.
-4. `BLOCKED_BINDING`, stale admission, CONSUMED continuation, later PENDING head는 handler의 typed result/Trace로 판정하고 row/status를 운영자가 임의 변경하지 않는다.
-5. Retrieval cache prerequisite가 사라진 경우 raw `next_page_token`을 복원하지 않고 canonical retrieval-cache restart path가 stage되었는지 확인한다.
+| 관찰·금지 항목 | 적용 |
+| --- | --- |
+| 관찰 | backlog·blocked reason·no-progress를 Trace·Diagnostic으로 확인 |
+| 수동 조작 금지 | DB row/status, checkpoint generation, `run_sequence`, admission |
+| Startup/live lifetime·순서 | `10 Infrastructure`의 durable workflow handoff startup/live reconciliation 계약 적용 |
+| 의미 판정 | reconciliation precedence·admission CAS/conflict/staleness·supersession·registered target·CONSUMED lineage·Cancel/terminal preemption은 `04/05/06/07`의 해당 계약 적용 |
 
-정확한 reconciliation precedence·admission CAS·supersession·registered target rule은 `04/05/06/07`, startup/live ordering은 `10`이 소유한다. Operations에는 그 알고리즘을 복제하지 않는다.
+여기서는 확인 위치와 금지되는 우회만 설명하며, 복구 알고리즘을 복제하지 않는다.
 
-### 6.2 Resume target 운영 불변조건
+### 6.2 재인증·복구의 재개 대상
 
-Reauth/Recovery resume은 `RegisteredResumeTargetRefV2`만 사용한다. Agent semantic checkpoint는 `AgentNodeResumeTargetV2`; Main control checkpoint는 `MainControlResumeTargetV2(RETRIEVAL_ENTRY|PLANNING_ENTRY|REVIEW_ENTRY|PREFLIGHT|READ_EXECUTION|VERIFICATION|RECOVERY|CANCEL_RESOLUTION)`의 current closed set만 허용한다. `ACTION_EXECUTION`/free-string checkpoint를 직접 resume하지 않는다. 실행 중 credential/transport 문제가 있으면 외부 결과 reconciliation을 먼저 수행하고 Recovery target으로 복귀한다.
+Reauth/Recovery는 `RegisteredResumeTargetRefV2`로 등록된 대상만 재개한다.
+
+| 대상 | 허용 형식 |
+| --- | --- |
+| Agent semantic checkpoint | `AgentNodeResumeTargetV2` |
+| Main control checkpoint | `MainControlResumeTargetV2`의 아래 등록 값 |
+
+Main control의 허용 값:
+
+```text
+RETRIEVAL_ENTRY | PLANNING_ENTRY | REVIEW_ENTRY | PREFLIGHT |
+READ_EXECUTION | VERIFICATION | RECOVERY | CANCEL_RESOLUTION
+```
+
+`ACTION_EXECUTION` 또는 free-string checkpoint를 직접 resume하지 않는다. 실행 중 credential·transport 문제가 있으면 외부 결과 reconciliation을 먼저 수행하고 Recovery target으로 복귀한다.
 
 ## 7. 사용자에게 절대 안내하지 않는 조치
 
@@ -234,14 +254,14 @@ SSE 단절은 Agent·Write 실패가 아니다. 화면에 Event가 보이지 않
 
 ## 11. Connector 인증·Keyring Runbook
 
-### 11.1 로그인 실패
+### 11.1 Google 로그인 실패
 
 - OAuth Client JSON을 사용자에게 요청하지 않는다.
 - 앱의 `Google로 로그인` 흐름을 새로 시작한다.
 - `state` 불일치·Callback 만료는 기존 흐름을 폐기하고 새 인증을 생성한다.
 - `redirect_uri_mismatch`는 Desktop OAuth Client와 Loopback 설정을 개발 환경에서 확인한다.
 
-### 11.2 Scope 일부 거절
+### 11.2 Google Scope 일부 거절
 
 - P0 필수 Gmail·Tasks·Calendar Scope 중 하나라도 거절되면 Google 연결 완료로 처리하지 않는다.
 - 필요한 이유와 Scope를 다시 표시하고 사용자 재동의 또는 연결 취소를 기다린다.
@@ -261,7 +281,15 @@ SSE 단절은 Agent·Write 실패가 아니다. 화면에 Event가 보이지 않
 → stale이면 Expire/Refresh/Review/새 승인 또는 Recovery
 ```
 
-Checkpoint/registered target/active graph version가 stale·missing이면 같은 Thread를 추측 resume하지 않고 `RequireRecovery(CHECKPOINT_MISMATCH)`로 전환한다. `REAUTH_REQUIRED`인 동안 `SAFE_CHECKPOINT_RESUME`로 우회하는 것도 금지한다.
+연결 완료와 Run 재개는 구분한다.
+
+| 상황 | 처리 |
+| --- | --- |
+| OAuth 성공 | Credential 연결만 완료. Run 자동 resume 없음 |
+| 중단 Run 재개 | UI가 해당 `REAUTH_REQUIRED` Run에 `/resume(REAUTH_COMPLETED)` 전송. `ResumeAfterReauth(applied=true)`와 durable handoff가 성공한 뒤 Workflow 계속 |
+| OAuth 성공 뒤 crash | Run은 `REAUTH_REQUIRED` 유지. 동일 Run Command 재시도 가능 |
+| Checkpoint·registered target·active graph version가 stale 또는 missing | 같은 Thread를 추측 resume하지 않고 `RequireRecovery(CHECKPOINT_MISMATCH)`로 전환 |
+| `REAUTH_REQUIRED` 유지 중 | `SAFE_CHECKPOINT_RESUME` 우회 금지 |
 
 ### 11.4 Keyring 장애
 
@@ -271,15 +299,11 @@ Checkpoint/registered target/active graph version가 stale·missing이면 같은
 - 연결 해제는 해당 Keyring Entry 삭제까지 완료돼야 한다.
 
 
-### 11.5 Reauth completion runbook authority
-
-OAuth 성공은 credential 연결만 완료하며 Run을 자동 resume하지 않는다. UI가 해결 중인 `REAUTH_REQUIRED` Run에 대해 `/resume(REAUTH_COMPLETED)`를 보내고, `ResumeAfterReauth(applied=true)` + durable handoff가 성공해야 workflow가 계속된다. OAuth 성공 뒤 crash해도 Run은 REAUTH_REQUIRED로 남아 안전하며 동일 Run command를 재시도할 수 있다.
-
-### 11.6 GitHub Device Flow·Repository 접근
+### 11.5 GitHub Device Flow·Repository 접근
 
 - Device Flow 완료와 GitHub account 연결, 실제 Repository 접근 가능 상태를 구분한다.
 - GitHub App permission과 Settings Repository allowlist의 교집합 밖 Repository를 다른 계정·첫 allowlist 항목·Google credential로 대체하지 않는다.
-- 초기 미연결 요청은 안내 후 종료하며 Device Flow 완료로 종료된 요청을 자동 resume하지 않는다. 실행 중 credential 만료만 11.5의 same-Run reauth 경계를 사용한다.
+- 초기 미연결 요청은 안내 후 종료하며 Device Flow 완료로 종료된 요청을 자동 resume하지 않는다. 실행 중 credential 만료만 §11.3의 same-Run reauth 경계를 사용한다.
 - 연결 해제·접근 철회는 GitHub credential과 해당 Connector cache만 무효화하고 Google 연결이나 이미 dispatch된 effect를 변경하지 않는다.
 
 ## 12. API_ONLY·LOCAL_CAPABLE·Ollama Runbook
@@ -293,20 +317,24 @@ OAuth 성공은 credential 연결만 완료하며 Run을 자동 resume하지 않
 
 ### 12.2 LOCAL_CAPABLE
 
-- Ollama는 Product Core에 내장되지 않은 별도 runtime이다. 제품은 상태와 설치된 지원 모델을 검사할 뿐 install·pull·update·종료·제거하지 않는다.
+Ollama는 Product Core에 내장되지 않은 별도 Runtime이다. 제품은 상태와 설치된 지원 모델만 검사한다.
 
-확인:
+확인 항목:
 
 - Ollama Loopback Endpoint
 - 지원 Version
-- 지원 Model ID (`qwen3.5:9b`, `qwen3.5:4b`)
+- 지원 Model ID: `qwen3.5:9b`, `qwen3.5:4b`
 - GPU·VRAM Profile
 - Structured Output Smoke Test
 - OOM·Timeout
 
-Local 실패는 Gemini fallback 조건이 아니다. 재검사에서도 지원 모델이 하나면 그 모델을 선택하고, 검사 실패와 모델 미설치를 구분한다.
+운영 제한:
 
-## 12-A. Local Runtime 검사 Runbook
+- 앱은 install·pull·download·update·종료·제거·삭제·shell command를 수행하지 않는다.
+- Unsupported model을 선택하거나 arbitrary model tag·endpoint 입력을 받지 않는다.
+- Local 실패를 Gemini fallback 조건으로 사용하지 않는다.
+
+### 12.3 Local Runtime 검사
 
 ```text
 Runtime Detail 확인
@@ -316,11 +344,13 @@ Runtime Detail 확인
 → 테스트 추론 결과와 실제 선택 모델 확인
 ```
 
-- `OLLAMA_NOT_READY`: process/loopback readiness 실패로 표시하고 재검사를 제공한다.
-- `NO_SUPPORTED_MODEL`: 모델 준비 안내를 제공하되 Core 진입과 이력 조회를 유지한다.
-- `INSPECTION_FAILED`: 모델 없음으로 표현하지 않고 진단 정보와 재검사를 제공한다.
-- unsupported model은 선택하지 않으며 arbitrary model tag나 endpoint 입력을 받지 않는다.
-- 설치·pull·download·삭제·shell command를 앱이 수행하지 않는다.
+재검사에서도 지원 모델이 하나면 그 모델을 선택한다. **검사 실패와 모델 미설치를 구분한다.**
+
+| 결과 | 표시·조치 |
+| --- | --- |
+| `OLLAMA_NOT_READY` | Process·Loopback readiness 실패로 표시하고 재검사 제공 |
+| `NO_SUPPORTED_MODEL` | 모델 준비 안내. Core 진입과 이력 조회 유지 |
+| `INSPECTION_FAILED` | 모델 없음으로 표현하지 않고 진단 정보와 재검사 제공 |
 
 ## 13. LLM·Structured Output·Retrieval Runbook
 
@@ -356,9 +386,14 @@ LLM Output을 직접 MCP Arguments로 전달하지 않는다.
 - Tool·Policy·승인 우회 시도를 차단하고 `POLICY_BLOCKED` 또는 안전 오류로 기록한다.
 
 
-### 13.5 Retrieval cache loss after restart
+### 13.5 재시작 후 Retrieval cache 유실
 
-Checkpoint는 유효하지만 memory-only `read_result_handle`이 사라졌다면 raw provider token을 복원/추측하지 않는다. frozen current RequestIntent/InputRoute를 검증한 뒤 `RETRIEVAL_CACHE_RESTART → MAIN_CONTROL:RETRIEVAL_ENTRY`로 fresh Retrieval을 수행하고 새 revision을 발급한다. 기존 RunBudget 사용량은 유지한다. checkpoint/binding 자체가 invalid이면 이 restart를 쓰지 않고 Recovery로 전환한다.
+| 상황 | 처리 |
+| --- | --- |
+| Checkpoint는 유효하지만 memory-only `read_result_handle`이 사라짐 | Frozen current RequestIntent/InputRoute 검증 후 `RETRIEVAL_CACHE_RESTART → MAIN_CONTROL:RETRIEVAL_ENTRY`에서 fresh Retrieval·새 revision 발급 |
+| Checkpoint·binding 자체가 invalid | Cache restart를 사용하지 않고 Recovery로 전환 |
+
+Raw Provider token을 복원·추측하지 않으며, fresh Retrieval에서도 기존 RunBudget 사용량을 유지한다.
 
 ## 14. MCP·Provider API Runbook
 
@@ -390,12 +425,14 @@ Write 도중 종료했으면 자동 재시작 후 같은 Write를 보내지 않�
 
 ### 14.3 Provider Read 오류
 
-- 401: Connector Error `AUTH_EXPIRED`로 정규화 → Domain/Workflow `REAUTH_REQUIRED` 전환
-- 403: `POLICY_BLOCKED` 또는 Scope·Resource 접근 실패 원인을 구분하고 정책/권한 상태 확인
-- 404: `NOT_FOUND`; Resource 삭제·ID 만료·Account 불일치 구분
-- 429: `RATE_LIMITED`; Retry-After·Budget 범위 Backoff
-- 5xx: `UPSTREAM_5XX`; 제한된 Retry 후 Partial/Recovery 경계 적용
-- Timeout: `TIMEOUT`; 전달 여부가 불명확한 Write와 혼동하지 않고 Read retry budget만 적용
+| Provider 응답 | 오류 구분 | 운영 조치 |
+| --- | --- | --- |
+| 401 | `AUTH_EXPIRED` | Domain/Workflow `REAUTH_REQUIRED`로 전환 |
+| 403 | `POLICY_BLOCKED` 또는 Scope·Resource 접근 실패 | 원인을 구분하고 정책·권한 상태 확인 |
+| 404 | `NOT_FOUND` | Resource 삭제·ID 만료·Account 불일치 구분 |
+| 429 | `RATE_LIMITED` | Retry-After·Budget 범위에서 Backoff |
+| 5xx | `UPSTREAM_5XX` | 제한된 Retry 후 Partial/Recovery 경계 적용 |
+| Timeout | `TIMEOUT` | Read retry budget만 적용. 전달 여부가 불명확한 Write와 혼동하지 않음 |
 
 위 Connector Error 이름은 `07 Interface`가 소유하며, 이 Runbook은 현재 Google Workspace·GitHub 응답을 해당 공통 Enum과 운영 조치로 매핑할 뿐 새 오류 taxonomy를 만들지 않는다.
 
@@ -444,10 +481,53 @@ APPROVED → EXPIRED
 - Policy Block은 기술 오류가 아니므로 자동 Retry하지 않는다.
 - 사용자가 허용된 대안 Action을 선택하도록 안내한다.
 
+### 15.4 취소 처리·재시작 복구
 
-### 15.4 Cancel-resolution coordinator
+| 항목 | 처리 |
+| --- | --- |
+| 진입 | `RequestCancel(applied=true)` 뒤 `MAIN_CONTROL:CANCEL_RESOLUTION` 사용 |
+| 담당 | `ContinueCancelResolutionHandler` 하나. `application/use_cases/run/continue_cancel_resolution.py` |
+| 조정 대상 | Current durable child facts에 따라 기존 `CancelPendingAction`, Legacy READ settlement, dispatch result classification, Verification, Recovery, `FinalizeCancel`만 순서대로 조정 |
+| 재시작 | Pending cancel handoff 자동 redrive |
+| 금지 | Generic `SAFE_CHECKPOINT_RESUME`로 `CANCEL_REQUESTED`를 깨우지 않음 |
 
-`RequestCancel(applied=true)` 뒤 production owner는 `MAIN_CONTROL:CANCEL_RESOLUTION → application/use_cases/run/continue_cancel_resolution.py → ContinueCancelResolutionHandler` 하나다. Generic `SAFE_CHECKPOINT_RESUME`로 `CANCEL_REQUESTED`를 깨우지 않는다. Coordinator는 current durable child facts를 읽어 기존 `CancelPendingAction`, Legacy READ settlement, dispatch result classification, Verification, Recovery, `FinalizeCancel`만 순서대로 조정한다. restart 후 pending cancel handoff가 자동 redrive된다.
+#### 승인형 Write 취소
+
+APPLIED `RequestCancel` Receipt로 `cancel_intent_active=true`가 복원된 Run은 `ACCEPT_PARTIAL`·`CREATE_CORRECTIVE_PLAN`으로 새 `COMPLETED`·Planning 경로를 만들지 않는다. 필요한 결과 확인·Verification만 수행하며, **새 Claim·Write는 금지한다.**
+
+| 취소 처리 위치 | 종료 처리 |
+| --- | --- |
+| Run이 `RECOVERY_REQUIRED` | `ResolveRecovery(CANCEL)`로 `CANCELLED` 처리 |
+| Verification으로 복귀한 뒤 | `FinalizeCancel`로 `CANCELLED` 처리 |
+
+#### Legacy READ-only 취소
+
+Cancel intent가 active이면 새 ConnectorRead retry나 `MAIN_CONTROL:READ_EXECUTION` Reauth를 시작하지 않는다.
+
+| Current READ 상태·상황 | 처리 |
+| --- | --- |
+| `PROPOSED` | `CancelPendingAction` |
+| `EXECUTING`이고 성공 결과가 이미 도착함 | `CompleteReadAction → FinalizeReadAction`으로 성공 결과 보존 |
+| `EXECUTING`이고 미dispatch·실패·`AUTH_EXPIRED`·restart-uncertain | `FailReadAction`으로 종료 |
+| `EXECUTED` | `FinalizeReadAction` 적용 뒤 `FinalizeCancel` |
+
+Hidden `CancelReadAction`이나 read replay를 만들지 않는다.
+
+### 15.5 Claim V2 차단
+
+다음은 Security/Integrity 오류다.
+
+| 검증 항목 | 오류 조건 |
+| --- | --- |
+| 필수 값 | `version`·`issued_at_ms` 누락 |
+| 서명·유효성·결합 | Signature·TTL·Instance·Action·Approval·Attempt·Tool Binding 불일치 |
+| 실행 인자 | 실제 Execution Arguments 재해시 불일치 |
+| 재사용 | Nonce 재사용 |
+
+Claim 검증 실패 시 Google Write가 0회였는지 Trace/Audit의 결과 코드와 Provider call count로 확인한다.
+
+- 원인 해결을 위해 Claim Token을 수정·재서명하거나 MCP Write를 수동 호출하지 않는다.
+- Token·Hash·Nonce 원문을 Log에서 찾거나 사용자에게 요청하지 않는다.
 
 ## 16. `FAILED` Write Runbook
 
@@ -474,35 +554,26 @@ FAILED
 
 ## 17. `UNKNOWN_RESULT` Runbook
 
-`UNKNOWN_RESULT`는 P0에서 가장 우선적으로 보호해야 하는 복구 상태다.
+`UNKNOWN_RESULT`는 P0에서 가장 우선적으로 보호해야 하는 복구 상태다. **신규 Attempt와 Write Command를 차단한 뒤 기존 결과부터 조회한다.**
 
-```mermaid
-flowchart TD
-    U["UNKNOWN_RESULT"] --> T{"Action Effect"}
-    T -->|"CREATE"| S["RESOURCE_SEARCH · Recovery Fingerprint Search"]
-    T -->|"UPDATE"| G["GET_TARGET · Target Resource GET"]
-    T -->|"SEND"| M["MESSAGE_SEARCH · 기존 전송 결과 후보 검색"]
-    T -->|"DELETE"| D["GET_TARGET · 삭제 대상 상태 조회"]
-    S --> F{"기존 결과 확인"}
-    G --> F
-    M --> F
-    D --> F
-    F -->|"확인"| E["기존 Attempt 결과 복구"]
-    E --> V["Effect별 Verification · GET_COMPARE/SENT_LOOKUP/GET_ABSENT"]
-    F -->|"미확인"| R["RECOVERY_REQUIRED"]
-```
+### 17.1 Effect별 기존 결과 조회
 
-운영 절차:
+| Action Effect | 결과 조회 | 확인된 결과의 Verification |
+| --- | --- | --- |
+| CREATE | `RESOURCE_SEARCH`: Recovery Fingerprint 기반 후보 Resource 검색 | `GET_COMPARE` |
+| UPDATE | `GET_TARGET`: 기존 Target 상태 조회 | `GET_COMPARE` |
+| SEND | `MESSAGE_SEARCH`: 기존 전송 결과 후보 검색 | 식별된 후보를 `SENT_LOOKUP`으로 검증 |
+| DELETE | `GET_TARGET`: 삭제 대상 상태 조회 | 대상 부재·삭제 상태를 `GET_ABSENT`로 검증 |
 
-1. 신규 Attempt와 Write Command를 차단한다.
-2. CREATE는 `RESOURCE_SEARCH`로 Recovery Fingerprint 기반 후보 Resource를 찾는다.
-3. UPDATE는 `GET_TARGET`으로 기존 Target 상태를 조회한다.
-4. SEND는 `MESSAGE_SEARCH`로 기존 전송 결과 후보를 찾고 식별된 후보를 `SENT_LOOKUP`으로 검증한다.
-5. DELETE는 `GET_TARGET`으로 삭제 대상 상태를 조회하고 대상 부재/삭제 상태를 `GET_ABSENT`로 검증한다.
-6. Source·Time Window·Canonical Field와 Effect별 식별자를 비교한다.
-7. 결과가 확인되면 기존 Attempt 결과를 복구하고 Effect별 Verification으로 연결한다.
-8. 찾지 못했거나 후보가 여러 개면 `RECOVERY_REQUIRED`로 유지한다.
-9. 사용자가 새 Write를 원하면 기존 결과 불확실성을 해결한 뒤 새 Action·새 승인을 생성한다.
+조회 결과의 Source·Time Window·Canonical Field와 Effect별 식별자를 비교한다.
+
+### 17.2 조회 결과별 처리
+
+| 조회 결과 | 처리 |
+| --- | --- |
+| 기존 결과 확인 | 기존 Attempt 결과를 복구하고 Effect별 Verification으로 연결 |
+| 찾지 못했거나 후보가 여러 개 | `RECOVERY_REQUIRED`로 유지 |
+| 사용자가 새 Write를 원함 | 기존 결과 불확실성을 해결한 뒤 새 Action·새 Approval 생성 |
 
 찾지 못했다는 이유만으로 같은 Write를 즉시 다시 실행하지 않는다.
 
@@ -527,13 +598,14 @@ Expected·Actual·Diff 저장
 → 사용자 Recovery 선택
 ```
 
-`cancel_intent_active=false`일 때 P0 사용자 Recovery 선택은 두 가지다.
+`cancel_intent_active=false`일 때 P0 사용자 Recovery 선택은 다음 두 가지다.
 
-- `ACCEPT_PARTIAL`: 현재 Google 실제 상태를 수용하고 추가 Write 없이 종료한다. 미실행 Action은 취소되고 Run은 `COMPLETED`, 결과는 `PARTIAL`로 표시한다.
-- `CREATE_CORRECTIVE_PLAN`: 실제 Google 상태를 다시 조회해 같은 Run의 새 Plan Revision을 만들고 새 Domain Validation·새 Approval·새 Claim을 거친다.
+| 선택 | 처리·결과 |
+| --- | --- |
+| `ACCEPT_PARTIAL` | 현재 Google 실제 상태를 수용하고 추가 Write 없이 종료. 미실행 Action은 취소, Run은 `COMPLETED`, 결과는 `PARTIAL` |
+| `CREATE_CORRECTIVE_PLAN` | 실제 Google 상태를 다시 조회해 같은 Run의 새 Plan Revision 생성. 새 Domain Validation·Approval·Claim 필요 |
 
-APPLIED `RequestCancel` Receipt로 `cancel_intent_active=true`가 복원되는 Run에서는 위 두 선택으로 새 `COMPLETED`/Planning 경로를 만들지 않는다. 필요한 결과 확인·Verification만 수행하고, Run이 `RECOVERY_REQUIRED`이면 `ResolveRecovery(CANCEL)`, Verification으로 복귀한 뒤에는 `FinalizeCancel`로 `CANCELLED` 처리한다. cancel intent가 활성인 동안 새 Claim·Write는 금지한다.
-Legacy READ-only Run에서 cancel intent가 active이면 새 ConnectorRead retry나 `MAIN_CONTROL:READ_EXECUTION` Reauth를 시작하지 않는다. current READ가 PROPOSED면 `CancelPendingAction`, EXECUTING이면 이미 도착한 성공 결과만 `CompleteReadAction→FinalizeReadAction`으로 보존하고 미dispatch/실패/AUTH_EXPIRED/restart-uncertain은 `FailReadAction`으로 닫는다. EXECUTED면 `FinalizeReadAction`을 적용한 뒤 `FinalizeCancel`한다. hidden `CancelReadAction`이나 read replay를 만들지 않는다.
+`cancel_intent_active=true`이면 위 두 선택을 사용하지 않고 §15.4의 취소 절차를 따른다.
 
 기존 `MISMATCH` Action·Approval·Attempt·Verification을 재사용하지 않는다. 사용자가 전체 Run을 중단하려면 일반 Cancel Command를 사용한다.
 
@@ -554,7 +626,8 @@ Disk Space
 
 ### 19.2 Busy·Disk Full
 
-- DB availability/precondition과 필요한 durable pre-I/O fact를 먼저 검증·commit한 뒤 Google·LLM·MCP 호출을 수행한다. **외부 호출을 기다리는 동안 SQLite write transaction을 보유하지 않는다.**
+DB availability/precondition과 필요한 durable pre-I/O fact를 먼저 검증·commit한 뒤 Google·LLM·MCP 호출을 수행한다. **외부 호출을 기다리는 동안 SQLite write transaction을 보유하지 않는다.**
+
 - Busy Timeout 후 Command를 실패시킨다.
 - Disk Space 확보 전 신규 Run·Write를 차단한다.
 - Log와 Trace 정리는 계약된 Purge만 사용한다.
@@ -604,23 +677,10 @@ Safe Mode 진입 조건:
 - MCP Schema 불일치
 - Domain·Checkpoint 복구 불일치
 
-Safe Mode 허용:
-
-- Health·Version 조회
-- Diagnostic Bundle 생성
-- Backup
-- Restore
-- Sanitized Log 확인
-- 설정 확인
-
-Safe Mode 금지:
-
-- 새 Run
-- 승인·수정 Command
-- Google Write
-- 자동 Migration 재시도
-- MCP Write Tool
-- 손상 DB 자동 초기화
+| 구분 | 기능·조치 |
+| --- | --- |
+| 허용 | Health·Version 조회, Diagnostic Bundle 생성, Backup·Restore, Sanitized Log·설정 확인 |
+| 금지 | 새 Run, 승인·수정 Command, Google Write, 자동 Migration 재시도, MCP Write Tool, 손상 DB 자동 초기화 |
 
 Safe Mode 해제 조건은 원인별 검증이 성공하고 Readiness가 다시 통과하는 것이다.
 
@@ -661,9 +721,15 @@ Restore 중 실패하면 원본과 Restore 대상 모두 보존한다. 마지막
 - 둘 중 먼저 도달한 기준으로 정리
 - Migration 직전 마지막 정상 Backup은 새 Version 첫 정상 시작 전까지 유지
 
-### 22.4 Safe Mode automatic backup target selection
+### 22.4 Safe Mode의 자동 Restore 대상 선택
 
-System recovery coordinator는 `BackupPort.list_backups()`의 integrity·schema-compatible metadata만 소비한다. `created_at_ms DESC, backup_ref ASC`의 첫 항목 하나를 선택하고 동일 candidate에는 operational replay로 1회만 Restore한다. UI target selector, raw path input, directory probing은 금지한다. Post-restore Readiness 실패나 중간 오류는 Restore 전 DB를 보존·복원하고 Safe Mode를 유지한다.
+| 항목 | 처리 |
+| --- | --- |
+| 대상 정보 | System recovery coordinator가 `BackupPort.list_backups()`의 integrity·schema-compatible metadata만 소비 |
+| 선택 순서 | `created_at_ms DESC, backup_ref ASC`의 첫 항목 하나 |
+| 실행 횟수 | 동일 candidate는 operational replay로 1회만 Restore |
+| 금지 | UI target selector, raw path input, directory probing |
+| Restore 중간 오류·복원 후 Readiness 실패 | Restore 전 DB를 보존·복원하고 Safe Mode 유지 |
 
 ## 23. Shutdown·Crash Recovery Runbook
 
@@ -699,15 +765,9 @@ System recovery coordinator는 `BackupPort.list_backups()`의 integrity·schema-
 
 `VERIFIED` Action은 재실행하지 않는다.
 
-### 23.4 Workflow handoff startup/live ordering
+### 23.4 Workflow handoff 복구 확인
 
-Startup과 live runtime 모두 workflow handoff 자체의 semantic 판정은 `RedriveWorkflowHandoffsHandler`를 통해 수행한다. Operations가 별도 ordering rule이나 fallback executor를 만들지 않는다.
-
-- startup-only execution-attempt reconciliation과 live handoff loop의 lifetime 분리는 `10 §Durable workflow handoff startup + live reconciliation`을 따른다.
-- `BLOCKED_BINDING`, CONSUMED lineage, admission conflict/staleness, Cancel/terminal preemption의 exact behavior는 `04/06/07`을 따른다.
-- 운영자는 backlog/blocked reason/no-progress를 Trace·Diagnostic으로 확인하고 DB status, checkpoint generation, `run_sequence`, admission을 수동 조작하지 않는다.
-
-이 절의 목적은 **어디를 관찰하고 어떤 우회가 금지되는지**만 고정하는 것이다.
+Startup/live handoff 복구는 §6.1의 확인 순서를 따른다.
 
 ## 24. Installer·Repair·Uninstall Runbook
 
@@ -729,24 +789,11 @@ Repair는 Program File과 Manifest를 복구하고 사용자 DB·Backup·Setting
 
 ### 24.3 기본 Uninstall
 
-제거:
-
-- Program File
-- Shortcut
-- Launcher 등록
-- Uninstaller 정보
-
-보존:
-
-- SQLite DB
-- Backup
-- Settings
-
-삭제:
-
-- Google OAuth Refresh Token Keyring Entry
-- LLM API Key Keyring Entry
-- Local Session·Bootstrap Runtime 값
+| 처리 | 대상 |
+| --- | --- |
+| 제거 | Program File, Shortcut, Launcher 등록, Uninstaller 정보 |
+| 보존 | SQLite DB, Backup, Settings |
+| 삭제 | Google OAuth Refresh Token Keyring Entry, LLM API Key Keyring Entry, Local Session·Bootstrap Runtime 값 |
 
 ### 24.4 완전 삭제
 
@@ -762,19 +809,23 @@ Repair는 Program File과 Manifest를 복구하고 사용자 DB·Backup·Setting
 
 ### 25.1 진단 화면 표시
 
-- Release·Frontend·Backend Version
-- Deployment Profile·Runtime Mode
-- Local Service·MCP·DB·LLM 상태
-- 최근 Sanitized Error Code
-- Safe Mode·Recovery 상태
-- 마지막 Backup·Migration 결과
+P0 진단 화면은 protected `GET /api/v1/runtime`의 bounded `RuntimeDetailResponseV1`만 사용한다. Browser가 Launcher-only `/health/ready`를 직접 호출하지 않는다.
 
-표시 금지:
+| 표시 항목 | 내용 |
+| --- | --- |
+| 버전 | Release·Frontend·Backend·API Version |
+| 실행 환경 | Deployment Profile·Runtime Mode |
+| 구성요소 상태 | Local Service·Connector·MCP·Credential·LLM·DB·Migration·SSE |
+| 장애·복구 | 최근 Sanitized Error Code, Safe Mode·Recovery 상태 |
+| 저장소 작업 | 마지막 Backup·Migration 결과 |
 
-- OAuth Token·API Key·Cookie
-- Gmail·Draft 전체 본문
+표시하지 않는 정보:
+
+- OAuth Token·API Key·Cookie 등 Secret
+- Gmail·Draft 전체 본문 및 Source body
 - Approval Snapshot 전체
-- 사용자 Home Path
+- 사용자 Home Path 등 raw path
+- DB content
 
 ### 25.2 Diagnostic Bundle 생성
 
@@ -805,10 +856,6 @@ Approval Snapshot
 ```
 
 Bundle은 자동 업로드하지 않으며 사용자가 파일을 저장하고 내용을 확인한 뒤 공유한다.
-
-### 25.3 P0 diagnostics runtime projection
-
-P0 사용자 진단 화면은 protected `GET /api/v1/runtime`의 bounded `RuntimeDetailResponseV1`만 사용한다. 이 projection은 release/frontend/API version, deployment profile/runtime mode, connector/MCP/credential, LLM, DB/migration, SSE, recent sanitized error code, Safe Mode/recovery, last backup/migration status를 포함한다. raw path, secret, token, DB content, source body는 노출하지 않는다. Launcher-only `/health/ready`를 Browser가 직접 호출하지 않는다.
 
 ## 26. Security Incident Runbook
 
@@ -879,31 +926,25 @@ Credential·Google 원문·Prompt는 Evidence에 포함하지 않는다.
 - Readiness 또는 제한된 Safe Mode 목적이 충족됐다.
 - Audit·Trace에 해결 결과가 기록됐다.
 - 사용자에게 실제 결과와 남은 제한을 표시했다.
-- 재현 가능한 결함이면 `12` Regression Test가 추가됐다.
-- 모델·Prompt 품질 문제면 failure classification은 `15 Prompt·Failure`의 taxonomy를 사용하고, 후보 비교·채택 근거는 `13 Evaluation`의 evidence/decision record에 반영한다.
 
+문제 유형에 따라 다음 반영까지 완료해야 한다.
 
-## 29. Claim V2·Attachment 운영 Runbook
+| 문제 유형 | 반영 위치 |
+| --- | --- |
+| 재현 가능한 결함 | `12 Test` Regression Test 추가 |
+| 모델·Prompt 품질 문제 | `15 Prompt·Failure`의 taxonomy로 실패 분류. 후보 비교·채택 근거는 `13 Evaluation`의 evidence/decision record에 반영 |
 
-### Claim V2 차단
+## 29. 첨부파일 운영 Runbook
 
-- `version`·`issued_at_ms` 누락, Signature·TTL·Instance·Action·Approval·Attempt·Tool Binding 불일치, 실제 Execution Arguments 재해시 불일치, Nonce 재사용은 Security/Integrity 오류다.
-- 원인을 해결한다는 이유로 Claim Token을 수정·재서명하거나 MCP Write를 수동 호출하지 않는다.
-- Claim 검증 실패 시 Google Write가 0회였는지 Trace/Audit의 결과 코드와 Provider call count로 확인한다. Token·Hash·Nonce 원문을 Log에서 찾거나 사용자에게 요청하지 않는다.
+| 상황 | 운영 조치·제한 |
+| --- | --- |
+| Gmail 수신 첨부파일 다운로드 실패 | Message/Attachment ID, Google 연결 상태, 파일 크기 제한 확인 후 Read 경로만 재시도. LLM Retry로 해결하지 않음 |
+| 발신 Staging 파일 만료·삭제·Hash mismatch | 기존 Approval로 실행 금지. 파일 재선택 → Descriptor 갱신 → Action 수정 → 새 Approval |
+| Staging Cache 복구 | Backup에서 복원하거나 수동으로 파일을 바꿔 넣지 않음 |
+| 앱 비정상 종료 후 만료 Attachment Cache 잔존 | Startup에서 정리. Domain DB 복구와 별개 |
+| Diagnostic Bundle | Attachment bytes·Local Path 포함 금지 |
 
-### 첨부파일
-
-- Gmail 수신 첨부파일 다운로드 실패는 Message/Attachment ID, Google 연결 상태, 파일 크기 제한을 확인한 뒤 Read 경로만 재시도한다. LLM Retry로 해결하지 않는다.
-- 발신 Staging 파일이 만료·삭제·Hash mismatch이면 기존 Approval로 실행하지 않는다. 파일 재선택 → Descriptor 갱신 → Action 수정 → 새 Approval 순서로 진행한다.
-- Staging Cache를 복구 목적으로 Backup에서 복원하거나 수동으로 파일을 바꿔 넣지 않는다.
-- 앱 비정상 종료 후 남은 만료 Attachment Cache는 Startup 정리 대상이며 Domain DB 복구와 별개다.
-- Attachment bytes·Local Path를 Diagnostic Bundle에 포함하지 않는다.
-
-
-
-
-
-## 30. 완료 조건
+## 30. 운영 가이드 완료 조건
 
 - 오류를 `SEV-0~3`으로 분류할 수 있다.
 - 모든 Runbook이 사용자 조치·자동 조치·금지 조치를 구분한다.

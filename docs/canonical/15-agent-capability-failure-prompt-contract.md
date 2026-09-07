@@ -1,36 +1,35 @@
 # 15. Agent Capability · Failure · Prompt 공통 계약
 
 > **Authority:** Agent capability·normalized failure·Prompt runtime contract. 승인/Claim/Write/Verification/Domain lifecycle의 최종 판정은 해당 owner를 따른다.  
-> **상태:** Approved v1.33 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
+> **상태:** Approved v1.34 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
 
 ## 0. 문서 목적
 
-Task Preview의 자연어 수정 준비는 기존 `planning.compose_arguments_per_output_route`의 optional `modification` projection을 사용한다. `request`, persisted `current_arguments`, `reference_time`, `timezone`만 전달하며 supplied Tool schema는 허용된 부분 payload로 좁힌다. 응답에서 누락된 필드는 보존하고 notes 빈 문자열·due null만 명시적 제거로 해석한다. 모호하거나 허용 범위를 벗어난 요청은 빈 patch/검증 실패로 기존 Preview를 유지한다. 이 준비 단계는 Domain 사실을 변경하지 않으며, 이후 기존 ModifyAction CAS·Approval revoke·REVIEW_ENTRY handoff가 변경을 확정한다. Frontend parsing 또는 새 Prompt/Agent authority를 만들지 않는다.
-이 계약은 다음 항목을 하나의 기준으로 고정한다.
+이 문서는 다음 항목을 정의한다.
 
-1. 각 Agent/Node의 capability와 Typed Result 범위
-2. 실패를 분류하는 공통 `failure_reason_code`
-3. 실패 유형별 Repair·Revision·Redirection·Recovery 처리 규칙
-4. Prompt Registry·PromptRef·Input Contract와 bounded Prompt assembly
-5. Query Attempt와 Product Prompt가 공유하는 runtime-safe failure/projection contract
+| 항목 | 범위 |
+| --- | --- |
+| Agent·Node Capability | 각 책임의 입력 조건과 Typed Result 범위 |
+| Failure | 공통 `failure_reason_code`와 실패 분류 |
+| Retry·Recovery | 실패 유형별 Repair·Revision·Redirection·Recovery 처리 |
+| Prompt Runtime | Prompt Registry·PromptRef·Input Contract와 bounded assembly |
+| Query Attempt | Product Prompt가 소비하는 runtime-safe failure/projection 계약 |
 
-이 문서는 `05 Context·Retrieval`과 `06 Agent·Workflow`의 제품 의미를 Prompt·Failure 관점으로 정규화한다. `12 Test`와 `13 Evaluation`은 여기의 PromptRef·failure/result contract를 검증·평가용으로 소비하지만 Dataset·Grader·candidate selection 의미를 이 문서에 역수입하지 않는다.
-
----
+`05 Context·Retrieval`과 `06 Agent·Workflow`의 제품 의미를 Prompt·Failure 관점으로 정규화한다. `12 Test`와 `13 Evaluation`은 이 문서의 계약을 검증·평가용으로 소비하며, Dataset·Grader·candidate selection 의미를 역수입하지 않는다.
 
 ### 0.1 Product Prompt input boundary
 
-- Product Prompt는 **사용자 요청, 허용된 Context, Policy Summary, Failure Record 같은 선언된 Runtime 입력만** 본다.
-- `gold`, `grader`, `expected_route`, benchmark score는 Product Prompt 입력이 아니다.
-- Ollama structured transport는 선언된 동일 OutputSchema를 `format`과 모델이 읽는
-  요청 본문에 함께 전달한다. grammar enforcement만으로 필드 의미가 전달됐다고
-  간주하지 않는다. 이 provider protocol projection은 새 업무 입력·Prompt authority가
-  아니며, 허용 enum/필드 의미와 기존 응답 validator를 서로 다르게 만들지 않는다.
-- Failure-specific Prompt는 별도 전체 Prompt가 아니라 **Base Slot + Failure Instruction Block**으로 조립한다.
-- Evaluation diagnostic decomposition에서도 Product Prompt 입력과 Gold/Grader metadata를 파일·schema 수준에서 분리한다.
-- Current Prompt Runtime은 `06 Workflow`의 current LLM responsibility set과 본 문서의 PromptRef/Input Contract에서 파생한다. required PromptRef = runtime caller = manifest = source = assembled = input-contract exact-set equality를 만족해야 하며 numeric Slot count나 non-current bundle version을 current authority로 사용하지 않는다. DEV·Holdout·Safety Gate는 구현된 Prompt artifact의 release activation만 결정한다.
+Product Prompt는 **사용자 요청, 허용된 Context, Policy Summary, Failure Record 같은 선언된 Runtime 입력만** 본다.
 
-### Inference tier input boundary
+| 구분 | 입력 경계 |
+| --- | --- |
+| 평가 정보 | `gold`, `grader`, `expected_route`, benchmark score는 Product Prompt 입력이 아니다. |
+| 평가용 분해 | Evaluation diagnostic decomposition에서도 Product Prompt 입력과 Gold/Grader metadata를 파일·schema 수준에서 분리한다. |
+| 평가에서 발견한 오류 | Runtime과 동일한 `failure_record` 형태로 투영한 뒤 전달한다. Grader 정보 자체를 입력으로 사용하지 않는다. |
+
+**Ollama structured transport:** 선언된 동일 OutputSchema를 `format`과 모델이 읽는 요청 본문에 함께 전달한다. grammar enforcement만으로 필드 의미가 전달됐다고 간주하지 않는다. 이 provider protocol projection은 새 업무 입력·Prompt authority가 아니며, 허용 enum/필드 의미와 기존 응답 validator를 서로 다르게 만들지 않는다.
+
+### 0.2 Inference tier input boundary
 
 - Product Prompt에는 concrete provider/model 선택 지시나 installed model 목록을 넣지 않는다.
 - Runtime caller가 PromptRef와 별도로 closed `InferenceTierV1 = WORKER | REASONING`을 선택한다. Tier는 Prompt semantic input이 아니라 signed runtime binding metadata다.
@@ -39,134 +38,131 @@ Task Preview의 자연어 수정 준비는 기존 `planning.compose_arguments_pe
 - Schema Repair/Semantic Revision/Confirmation resume은 원 invocation tier를 유지한다. allowed fallback/substitution은 Router/Release policy가 결과 Metadata로만 투영한다.
 - 반복 Confirmation 결함은 `request.detect_ambiguity`의 Projection→candidate→validator→disposition을 각 지원 Local 모델에서 재현·회귀하는 required evaluation case다.
 
-### Conversation · Run Prompt 입력 경계
+### 0.3 Conversation · Run Prompt 입력 경계
 
-- Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Product Prompt의 자동 Memory가 아니다.
-- 새 Run의 Product Prompt는 `prompt-runtime-input-contract-v1`이 허용한 **현재 Run Typed Projection만** 직렬화한다. 같은 Conversation의 과거 USER/ASSISTANT Message 전체, 이전 Run의 RequestIntent·ToolRoute·Retrieval/Evidence·WorkAnalysis·Plan/Review·PromptContext를 숨은 입력으로 붙이지 않는다.
-- Request Understanding 최초 invocation은 현재 `RunInputV1.user_request + selected_resource_refs`만 의미 입력으로 사용한다. 사용자가 과거 Resource를 이번 Run에 명시적으로 다시 선택한 경우 그 Resource Ref는 current-run Entry Context로 허용되지만 이전 Run의 Evidence 판정이나 Approval을 함께 가져오지 않는다.
-- 새 Run에는 이전 Run의 `confirmation_response`, Policy Confirmation Receipt, interrupt/checkpoint metadata를 승계하지 않는다.
-- 같은 Run의 Confirmation resume에서만 Controller가 검증·정규화한 bounded `ConfirmationResponseProjectionV1`을 `confirmation_response` optional Root Field로 **originating owner의 해당 Product Prompt**에 전달할 수 있다. 기존 raw resume metadata 금지 계약은 그대로 유지한다.
-- `관련 메일 찾아줘`처럼 이전 Run을 암묵적으로 알아야만 의미가 정해지고 current-run explicit Resource가 없는 요청은 과거 Conversation History를 모델에 주입해 해결하지 않고 Request Understanding의 `NEEDS_CONFIRMATION` 경계로 보낸다.
+Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Product Prompt의 자동 Memory가 아니다. `conversation_id`도 Trace·상관관계 식별자이며, 과거 Message나 이전 Run State를 Prompt에 직렬화할 권한을 만들지 않는다.
+
+| 상황 | 허용 입력·처리 | 제한 |
+| --- | --- | --- |
+| 새 Run | `prompt-runtime-input-contract-v1`이 허용한 현재 Run Typed Projection만 직렬화한다. | 같은 Conversation의 과거 USER/ASSISTANT Message 전체, 이전 Run의 RequestIntent·ToolRoute·Retrieval/Evidence·WorkAnalysis·Plan/Review·PromptContext를 숨은 입력으로 붙이지 않는다. |
+| Request Understanding 최초 invocation | 현재 `RunInputV1.user_request + selected_resource_refs`만 의미 입력으로 사용한다. | `RESOURCE_SELECTED`에서는 이미 검증된 `selected_resource_refs`를 포함해 retrievable Resource fact를 user-owned missing choice로 오인하지 않는다. |
+| 과거 Resource를 이번 Run에 명시적으로 다시 선택 | 해당 Resource Ref만 current-run Entry Context로 허용한다. | 이전 Run의 Evidence 판정이나 Approval은 가져오지 않는다. |
+| 새 Run의 확인 정보 | 이전 Run의 확인 정보를 승계하지 않는다. | `confirmation_response`, Policy Confirmation Receipt, interrupt/checkpoint metadata를 가져오지 않는다. |
+| 같은 Run의 Confirmation resume | Controller가 검증·정규화한 bounded `ConfirmationResponseProjectionV1`을 `confirmation_response` optional Root Field로 originating owner의 해당 Product Prompt에만 전달한다. | Raw resume payload, `interrupt_id`, checkpoint metadata, `RegisteredResumeTargetRefV2`은 Prompt 입력이 아니다. 다른 Agent 호출로 응답을 자동 승계하지 않는다. |
+| 확인 응답이 upstream Intent 의미를 변경 | 현재 owner가 Typed Back-edge를 반환한다. | Prompt가 다른 Agent 책임을 직접 수행하지 않는다. |
+| 이전 Run 없이는 해석되지 않는 요청 | `관련 메일 찾아줘`처럼 current-run explicit Resource가 없으면 Request Understanding의 `NEEDS_CONFIRMATION` 경계로 보낸다. | 과거 Conversation History를 모델에 주입해 해결하지 않는다. |
+
+### 0.4 Node별 입력 Projection
+
+각 Node는 Parent/Main State 전체가 아니라 자기 작업에 필요한 Typed Projection만 받는다.
+
+| Node·호출 상황 | 입력 | 제한 |
+| --- | --- | --- |
+| Retrieval 초기 Round Query Planner | `request_intent + input_routes + retrieval_budget` | 이 초기 입력만 받는다. |
+| Retrieval follow-up Round Query Planner | 초기 입력 + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary` | 추가 입력은 이 범위로 제한한다. |
+| Evidence Selector | `request_intent + ranked_segments` | 이 입력만 받는다. |
+| Work Analysis atomic node | 각 책임에 필요한 최소 Projection | facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. |
+| Planning `draft_action_objective_per_output_route` | `user_request + OutputToolRouteV1 1개 + optional work_analysis + evidence_refs` | Tool Schema를 직렬화하지 않는다. |
+| Planning `compose_arguments_per_output_route` | 같은 frozen Output Route + validated action objective + 해당 Tool Schema | Arguments 표현만 작성한다. 현재 검증된 `request_intent` 제약의 소비는 Planning ACTION 절에 둔다. |
+
+Retrieval Product Prompt는 raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.
 
 ## 1. 기준 문서와 우선순위
 
 ### 1.1 유지하는 확정 계약
 
-- Supervisor는 결정적 Router다.
-- LLM Agent는 외부 Provider API·MCP Write를 직접 호출하지 않는다. P0 Google Workspace Provider도 동일하다.
-- 실제 Raw Query·Page Token·MCP Read Arguments는 결정적 코드가 생성·검증한다. Retrieval pagination의 raw Provider continuation은 `05 Retrieval` current contract가 정의한 Run Retrieval Cache read-result entry에만 memory-only로 존재하며 Product Prompt·Main State·Checkpoint·Domain DB·Trace·Audit에 복제하지 않는다. Release Graph의 READ는 고정된 IN Route를 사용하는 Retrieval만 소유한다. Tool Route는 의미 Route 후보 뒤에 결정적 Policy Precondition Resolver를 적용해 `TASK + CREATE`의 기존 미완료 Task 중복 검사와 `CALENDAR + CREATE`의 Event/FreeBusy 충돌 검사에 필요한 IN READ를 보강한다. 이는 두 번째 Tool 선택이 아니며 OUT Tool을 변경하지 않는다. 단 사용자 지정 Source·기간·Resource 범위를 벗어나는 필수 READ는 `SCOPE_EXPANSION_REQUIRED` Confirmation 전에는 materialize하거나 실행하지 않는다. 실제 사용자 응답을 검증한 Application/Confirmation Controller만 `PolicyConfirmationReceiptV1`을 만들 수 있고 Agent/LLM은 Receipt를 생성할 수 없다. 사용자가 범위 확장을 거절하면 필수 검사를 생략한 Write로 진행하지 않는다. Write/Action Tool Arguments는 Planning LLM이 이미 고정된 OUT Tool Schema 안에서 작성하고 결정적 코드가 검증·조립하며, Tool identity는 Output Route에서 결정적 Assembler가 복사한다. Planning LLM은 Tool을 다시 선택하지 않는다.
-- Prompt는 Agent별 단일 문자열이 아니라 Node·상태·목적별 `PromptRef`로 선택한다.
-- Prompt·Completion 원문은 Graph State·일반 Trace·Audit에 저장하지 않는다.
-- Product Runtime Prompt 문구는 `grader`, `gold`, `expected_route`, 평가 점수에 의존하지 않는다. 실험 Grader가 발견한 오류도 Runtime과 동일한 `failure_record` 형태로 투영한 뒤 Prompt에 전달한다.
-- Structured Output Schema Repair는 Node Call당 최대 1회다.
-- Product LLM Call hard cap은 Run당 24다. `NORMAL` Profile은 최대 14, `RETRIEVAL_HEAVY`는 최대 20, `REVISION_HEAVY`는 최대 18 호출을 허용한다. Profile budget을 맞추기 위해 서로 다른 semantic responsibility를 다시 거대 Prompt로 합치지 않는다.
-- 최초 Retrieval 이후 Additional Retrieval은 최대 2회다.
-- Planning Revision은 Run당 최대 2회다.
-- 실행·검증·승인·정책 최종 판정에는 LLM Prompt를 사용하지 않는다.
-- `UNKNOWN_RESULT`에서는 새 Write Attempt를 만들지 않는다.
+| 경계 | 규칙 |
+| --- | --- |
+| Supervisor | 결정적 Router다. |
+| LLM Agent | 외부 Provider API·MCP Write를 직접 호출하지 않는다. P0 Google Workspace도 동일하다. |
+| Prompt 선택 | Agent별 단일 문자열이 아니라 Node·상태·목적별 `PromptRef`로 선택한다. |
+| 원문 저장 | Prompt·Completion 원문은 Graph State·일반 Trace·Audit에 저장하지 않는다. |
+| 최종 판정 | 실행·검증·승인·정책 최종 판정에는 LLM Prompt를 사용하지 않는다. |
+| 결과 불명 | `UNKNOWN_RESULT`에서는 새 Write Attempt를 만들지 않는다. |
+
+#### Query·READ·WRITE 책임
+
+| 항목 | 책임·조건 |
+| --- | --- |
+| Raw Query·Page Token·MCP Read Arguments | 결정적 코드가 생성·검증한다. |
+| Retrieval pagination | `05 Retrieval`의 Run Retrieval Cache read-result entry만 raw Provider continuation을 memory-only로 보존한다. Product Prompt·Main State·Checkpoint·Domain DB·Trace·Audit에 복제하지 않는다. |
+| Release Graph의 READ | 고정된 IN Route를 사용하는 Retrieval만 소유한다. |
+| Policy Precondition READ | Tool Route는 의미 Route 후보 뒤에 결정적 Policy Precondition Resolver를 적용한다. `TASK + CREATE`의 기존 미완료 Task 중복 검사와 `CALENDAR + CREATE`의 Event/FreeBusy 충돌 검사에 필요한 IN READ를 보강한다. 두 번째 Tool 선택이 아니며 OUT Tool을 변경하지 않는다. |
+| 사용자 범위 밖 필수 READ | 지정된 Source·기간·Resource를 벗어나면 `SCOPE_EXPANSION_REQUIRED` Confirmation 전에는 materialize하거나 실행하지 않는다. 범위 확장을 거절하면 필수 검사를 생략한 Write로 진행하지 않는다. |
+| Policy Confirmation Receipt | 실제 사용자 응답을 검증한 Application/Confirmation Controller만 `PolicyConfirmationReceiptV1`을 만들 수 있다. Agent/LLM은 생성할 수 없다. |
+| Write/Action Arguments | Planning LLM은 고정된 OUT Tool Schema 안에서 작성하고 결정적 코드가 검증·조립한다. Tool identity는 Output Route에서 결정적 Assembler가 복사하며 Planning LLM이 다시 선택하지 않는다. |
+
+호출·Repair·Revision·추가 Retrieval 상한은 §8에서 정리한다. Profile budget을 맞추기 위해 서로 다른 semantic responsibility를 거대 Prompt로 합치지 않는다.
 
 ### 1.2 Concern Authority 적용
 
 문서 번호를 하나의 global priority chain으로 해석하지 않는다. 충돌은 `01 PRD`의 현재 제품 범위와 `00 Project Source Guide`의 **Concern Owner 규칙**으로 해소한다.
 
-```
-제품 목표·범위            → 01 PRD
-안전·금지·승인 정책       → 01-B Policy
-시스템·레이어 경계         → 03 Architecture
-Domain lifecycle semantics → Domain State Transition Contract
-Domain persistence/DB      → 04 Domain·DB + 04 Domain·DB required DB invariant contract
-Retrieval                  → 05 Context·Retrieval
-Agent·Workflow runtime     → 06 Agent·Workflow
-Tool·MCP·내부 Interface   → 07 Interface
-Prompt·Failure             → 본 문서 15
-```
+| Concern | Owner |
+| --- | --- |
+| 제품 목표·범위 | 01 PRD |
+| 안전·금지·승인 정책 | 01-B Policy |
+| 시스템·레이어 경계 | 03 Architecture |
+| Domain lifecycle semantics | Domain State Transition Contract |
+| Domain persistence/DB | 04 Domain·DB + 04 Domain·DB required DB invariant contract |
+| Retrieval | 05 Context·Retrieval |
+| Agent·Workflow runtime | 06 Agent·Workflow |
+| Tool·MCP·내부 Interface | 07 Interface |
+| Prompt·Failure | 본 문서 15 |
 
 `11 Observability`는 관측 계약, `12 Test`는 제품 회귀 검증, `13 Evaluation`은 후보 비교·실험을 소유하며 위 behavioral/runtime 의미를 재정의하지 않는다. 개별 Prompt·Dataset Artifact도 해당 owner 계약을 따라야 한다. 본 계약은 다른 Concern Owner의 안전·승인·Domain·Tool·Workflow 의미를 완화하거나 대체할 수 없다.
-
----
 
 ### 1.3 Agent Subgraph 공통 계약
 
 본 문서에서 **Agent**는 단순 Prompt 호출이나 Python 객체 수가 아니라, Main Supervisor가 호출하는 LangGraph Subgraph를 뜻한다.
 
-필수 속성:
-
-- 안정적인 `agent_role` 책임 계약
-- Parent State에서 필요한 입력만 받는 Input Projection
-- invocation 범위 Subgraph별 Typed Local State
-- PromptRef 기반 LLM Node
-- 역할상 필요한 결정적 Validation·Read Application Node
-- Schema Validation과 허용된 bounded Repair/Revision
-- Versioned Typed Result + disposition + 필요한 Typed Workflow Signal 반환
-- Agent→Agent 직접 호출 금지
-- 장기 Memory 금지
+| 구분 | 필수 속성 |
+| --- | --- |
+| 책임 | 안정적인 `agent_role` 책임 계약 |
+| 입력·작업 상태 | Parent State에서 필요한 입력만 받는 Input Projection과 invocation 범위 Subgraph별 Typed Local State |
+| 처리 | PromptRef 기반 LLM Node, 역할상 필요한 결정적 Validation·Read Application Node |
+| 검증 | Schema Validation과 허용된 bounded Repair/Revision |
+| 반환 | Versioned Typed Result + disposition + 필요한 Typed Workflow Signal |
+| 금지 | Agent→Agent 직접 호출, 장기 Memory |
 
 Prompt Slot 수, PromptRef 수, LLM Call 수는 Agent 수와 독립적이다. 같은 Agent 안의 `INITIAL`, `CLARIFY`, `SCHEMA_REPAIR`, `SEMANTIC_REVISION`, `RECHECK`는 하나의 책임 계약을 보조하는 Prompt variant다.
 
-**Atomic responsibility rule:** Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product LLM 호출로 fuse하지 않는다. Canonical atomic responsibilities는 최소 다음처럼 분리한다.
+#### State 보존·반환
 
-```
-Work Analysis:
-  extract_work_facts
-  resolve_entity_relations                   # conditional
-  resolve_temporal_dependencies              # conditional
-  detect_duplicate_conflict_candidates       # conditional
-  validate_relations                         # deterministic
-  assess_information_gaps
-  assess_operational_risks                   # conditional
-  assemble_work_analysis                     # deterministic
-  validate_work_analysis                     # deterministic
+| 대상 | 규칙 |
+| --- | --- |
+| 공통 Runtime Envelope | invocation metadata와 failure/repair counter만 보존한다. |
+| 업무 데이터 | Subgraph별 Typed Local State에 둔다. |
+| 다른 Agent 호출 | invocation 종료 후 Local candidate·Query candidate·RAG score·Prompt 원문을 자동 승계하지 않는다. |
+| 제품의 장기 사실·승인·실행·검증 | Main Graph Typed State와 Domain Store 계약을 따른다. |
+| 공식 Main State Artifact | 단일 Owner만 새 revision을 만들며 downstream은 upstream Artifact를 read-only로 소비한다. |
+| Subgraph 반환 | owner field와 허용된 workflow signal만 patch merge한다. 다른 Main State field를 `None` 또는 누락 값으로 초기화하지 않는다. |
 
-Planning shared:
-  choose_answer_or_action_from_route          # deterministic
-
-Planning ANSWER:
-  outline_answer
-  compose_answer
-
-Planning ACTION (per frozen OutputToolRouteV1):
-  draft_action_objective_per_output_route
-  compose_arguments_per_output_route
-  build_dependencies                         # deterministic
-  assemble_plan                              # deterministic
-  validate_plan                              # deterministic
-
-Review:
-  inspect_goal_and_evidence
-  inspect_action_scope_and_route             # ACTION only
-  inspect_constraints_and_policy_summary     # conditional
-  aggregate_review_findings                  # deterministic
-  validate_review                            # deterministic
-  recheck_affected_dimensions                # conditional, REVISE only
-```
-
-더 강한 Runtime에서 인접 LLM Node를 fuse하는 것은 허용할 수 있으나, fused call이 위 atomic candidate들의 Typed Output 의미를 모두 재현하고 `12 Test / 13 Evaluation`의 parity·failure-isolation gate를 통과해야 한다. Fusion은 Agent 책임 경계를 바꾸거나 Tool/Policy/Domain authority를 LLM에 추가하는 근거가 아니다.
-
-공통 Runtime Envelope는 invocation metadata와 failure/repair counter만 보존한다. 업무 데이터는 Subgraph별 Typed Local State에 둔다. Local candidate·Query candidate·RAG score·Prompt 원문은 invocation 종료 후 다른 Agent 호출로 자동 승계하지 않는다. 제품의 장기 사실과 승인·실행·검증은 Main Graph Typed State와 Domain Store 계약을 따른다.
-
-각 Node는 Parent/Main State 전체를 받지 않고 자기 작업에 필요한 Typed Projection만 받는다. **Conversation history나 previous-run artifact는 이 Projection의 암묵적 공통 필드가 아니다.** `conversation_id`는 Trace/상관관계 식별에 사용할 수 있지만 과거 Message 또는 이전 Run State를 Product Prompt에 직렬화할 권한을 만들지 않는다. 공식 Main State Artifact는 단일 Owner만 새 revision을 만들며 downstream은 upstream Artifact를 read-only로 소비한다. Subgraph 반환은 owner field와 허용된 workflow signal만 patch merge하고 다른 Main State field를 `None` 또는 누락 값으로 초기화하지 않는다. `RESOURCE_SELECTED`의 Request Understanding Projection에는 current Run에서 이미 검증된 `selected_resource_refs`를 포함해 retrievable Resource fact를 user-owned missing choice로 오인하지 않게 한다. `detect_ambiguity` candidate는 `missing_information_owner=NONE | USER | CONNECTOR`를 출력하고 USER branch만 Confirmation을 허용한다. **Confirmation으로 재개된 invocation에 한해**, Confirmation Controller가 검증·정규화한 `ConfirmationResponseProjectionV1`을 `confirmation_response`라는 optional Root Field로 **originating owner의 해당 Product Prompt에만** 추가할 수 있다. Raw resume payload, `interrupt_id`, checkpoint metadata, `RegisteredResumeTargetRefV2`은 Product Prompt 입력이 아니다. 다른 Agent 호출로 이 응답을 자동 승계하지 않는다. 응답이 upstream Intent 의미를 바꿔야 하면 현재 owner가 Typed Back-edge를 반환하고, Prompt가 다른 Agent 책임을 직접 수행하지 않는다. 예를 들어 Retrieval **초기 Round** Query Planner는 `request_intent + input_routes + retrieval_budget`만 받고, follow-up Round에서는 여기에 `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary`만 추가로 받을 수 있다. Retrieval Product Prompt는 raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다. Evidence Selector는 `request_intent + ranked_segments`만 받는다. Work Analysis atomic node는 각자 필요한 최소 Projection만 받으며 facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. Planning `draft_action_objective_per_output_route`는 `user_request + OutputToolRouteV1 1개 + optional work_analysis + evidence_refs`를 받고 Tool Schema serialization을 하지 않는다. `compose_arguments_per_output_route`는 같은 frozen Output Route + validated action objective + 해당 Tool Schema만 받아 Arguments 표현만 작성한다.
-
-외부 READ는 Retrieval Subgraph의 결정적 Application Node가 `connector_id`에 맞는 Query Builder와 `ConnectorReadPort`를 호출한다. Retrieval LLM Node는 Raw Query·MCP Arguments를 직접 실행하지 않으며 `ToolRoutePlanV2.input_plan.input_routes` 밖의 Tool을 선택하거나 호출하지 않는다. Release Retrieval planner output은 `05 Retrieval`의 current `RetrievalQueryPlanV2 / RouteQueryIntentV2`를 사용한다. `SEARCH`에서는 Provider query 대신 typed `SemanticRetrievalConstraintV1`을 출력하고, follow-up changed SEARCH는 값이 포함된 `ConstraintDeltaV2`를 반환해야 한다. constraint 이름만 있는 delta, Provider-native Query 문자열, raw continuation, MCP Arguments를 planner authority로 반환하면 contract invalid다. 결정적 `SourceFetchPlanBuilder`만 prior effective constraints와 delta를 merge하고 `SourceFetchPlanV1` 및 query identity를 materialize한다.
-
-Graph Profile 간 semantic responsibility parity를 유지한다. 특히 `SINGLE_BASELINE`은 별도 Review Agent를 두지 않더라도 Unified Agent 내부 `self_review` 단계로 계획 품질 점검 책임을 수행한다.
+Graph Profile 간 semantic responsibility parity를 유지한다. `SINGLE_BASELINE`은 별도 Review Agent가 없어도 Unified Agent 내부 `self_review`로 계획 품질 점검 책임을 수행한다.
 
 ### 1.4 Local SLLM Responsibility·Complexity 계약
 
-지원 Local 모델은 `qwen3.5:9b`, `qwen3.5:4b`다. 한 Run은 선택된 모델 하나를 모든 Prompt class에서 사용하고 역할별 switching을 하지 않는다. 모델 크기를 이유로 업무 의미를 heuristic으로 삭제하거나 등록 Tool을 임의 shortlist하지 않는다. 대신 각 LLM Node가 한 번에 해결해야 하는 **semantic branching과 Output Schema 복잡도**를 작게 유지하고, 실제 허용 한계는 Model·Runtime별 Contract Complexity Gate에서 측정한다.
+지원 Local 모델은 `qwen3.5:9b`, `qwen3.5:4b`다. 한 Run은 선택된 모델 하나를 모든 Prompt class에서 사용하며 역할별 switching을 하지 않는다.
 
-설계 원칙:
+모델 크기를 이유로 업무 의미를 heuristic으로 삭제하거나 등록 Tool을 임의 shortlist하지 않는다. 각 Node의 semantic branching과 Output Schema 복잡도를 작게 유지하고, 실제 허용 한계는 Model·Runtime별 Contract Complexity Gate에서 측정한다.
 
-- LLM Node는 원칙적으로 하나의 의미 판단 또는 하나의 구조화 작성 책임을 가진다. 서로 다른 의미 판단을 하나의 거대 Schema에 합치지 않는다.
-- 안정적으로 닫을 수 있는 값은 `Literal`/Enum/discriminated union을 사용하고 자유 `dict` 출력은 금지한다.
-- 같은 의미를 `status + requires_confirmation + blockers`처럼 여러 상호의존 필드에 중복 표현하지 않는다. 한 discriminator가 유효 branch를 결정하게 한다.
-- 날짜 계산, interval 교집합·차집합, Registry eligibility, Policy Precondition Read 보강, 실제 사용자 Confirmation→`PolicyConfirmationReceiptV1` 생성/Context Hash 검증, 중복·충돌 relation 검증, state freshness, DAG cycle, Policy·Approval·Verification은 deterministic code가 소유한다.
-- Tool Route에서 signed Registry 전체를 정보 손실 없이 사용할 수 있으나 LLM에는 현재 판단에 필요한 eligible candidate projection만 전달한다. Eligibility filtering은 Resource·Effect·Schema 적합성의 결정적 규칙이어야 하며 모델 부담 감소만을 이유로 의미 가능한 Tool을 제거하지 않는다.
-- Planning Argument Writer는 `OutputToolRouteV1` 하나와 해당 Tool Schema 하나를 소비한다. 여러 Output Route의 Arguments를 하나의 LLM Schema로 동시에 생성하지 않는다.
-- 다중 Action Dependency의 생성·정규화·cycle 검증은 deterministic Planning Application Node가 소유한다. Product Runtime에는 `planning.compose_dependencies` PromptRef를 추가하지 않는다. Active PromptRef 수를 유지하기 위해 atomic responsibility를 합치지 않는다. P0에서는 Business Arguments에 이미 존재하는 안정적 외부 Resource identity가 같은 Action만 frozen route 순서에 따라 연결하고, CREATE나 서로 다른 Resource에 dependency를 추정하지 않는다.
-- Structured/Constrained Output은 문법 유효성을 높이는 수단이며 의미 정답을 보장하지 않는다. Schema Validator와 Semantic Validator의 책임을 분리한다.
-- Tool Calling과 별도 JSON Schema constrained decoding을 동시에 사용하는 Runtime 조합은 독립 Candidate로 검증한 뒤 채택한다. 한쪽 Contract Gate 성공을 다른 조합의 성공으로 간주하지 않는다.
+#### 설계 원칙
 
-각 LLM Node는 최소 다음 Complexity Metadata를 실험에 노출한다.
+| 항목 | 규칙 |
+| --- | --- |
+| LLM 책임 | 원칙적으로 한 호출은 하나의 의미 판단 또는 하나의 구조화 작성 책임을 가진다. 서로 다른 의미 판단을 하나의 거대 Schema에 합치지 않는다. |
+| Schema | 안정적으로 닫을 수 있는 값은 `Literal`/Enum/discriminated union을 사용한다. 자유 `dict` 출력은 금지한다. |
+| Branch 표현 | `status + requires_confirmation + blockers`처럼 같은 의미를 상호의존 필드에 중복 표현하지 않는다. 한 discriminator가 유효 branch를 결정한다. |
+| 결정적 코드 | 날짜 계산, interval 교집합·차집합, Registry eligibility, Policy Precondition Read 보강, 실제 사용자 Confirmation→`PolicyConfirmationReceiptV1` 생성/Context Hash 검증, 중복·충돌 relation 검증, state freshness, DAG cycle, Policy·Approval·Verification을 소유한다. |
+| Tool 후보 | signed Registry 전체를 정보 손실 없이 사용할 수 있으나 LLM에는 현재 판단에 필요한 eligible candidate projection만 전달한다. Eligibility filtering은 Resource·Effect·Schema 적합성의 결정적 규칙이며, 모델 부담 감소만을 이유로 의미 가능한 Tool을 제거하지 않는다. |
+| Planning Argument Writer | `OutputToolRouteV1` 하나와 해당 Tool Schema 하나를 소비한다. 여러 Output Route의 Arguments를 하나의 LLM Schema로 동시에 생성하지 않는다. |
+| Action Dependency | 생성·정규화·cycle 검증은 deterministic Planning Application Node가 소유한다. `planning.compose_dependencies` PromptRef를 추가하지 않으며 Active PromptRef 수 유지를 위해 atomic responsibility를 합치지 않는다. P0에서는 Business Arguments에 안정적 외부 Resource identity가 이미 있고 그 identity가 같은 Action만 frozen route 순서대로 연결한다. CREATE나 서로 다른 Resource의 dependency를 추정하지 않는다. |
+| 문법·의미 검증 | Structured/Constrained Output은 문법 유효성을 높이는 수단이지 의미 정답의 보장이 아니다. Schema Validator와 Semantic Validator의 책임을 분리한다. |
+| Runtime 조합 | Tool Calling과 별도 JSON Schema constrained decoding을 함께 쓰는 조합은 독립 Candidate로 검증한 뒤 채택한다. 한쪽 Contract Gate 성공을 다른 조합의 성공으로 간주하지 않는다. |
+
+#### Complexity Metadata와 Gate
+
+각 LLM Node는 최소 다음 Metadata를 실험에 노출한다.
 
 ```
 schema_required_field_count
@@ -212,105 +208,91 @@ prompt_assembly: BASE_PLUS_FAILURE_BLOCK
 
 ### 1.7 Responsibility-Split Prompt Topology
 
-목표는 LLM authority를 늘리는 것이 아니라 **한 LLM 호출이 담당하는 semantic responsibility를 줄이는 것**이다. 6개 `SemanticAgentOwnerIdV1` 책임 경계는 유지하되, physical compiled Agent Subgraph 수는 selected Graph Profile의 1/3/6 exact binding을 따른다.
+목표는 LLM authority를 늘리는 것이 아니라 **한 LLM 호출이 담당하는 semantic responsibility를 줄이는 것**이다. 6개 `SemanticAgentOwnerIdV1` 책임 경계는 유지하며 physical compiled Agent Subgraph 수는 selected Graph Profile의 1/3/6 exact binding을 따른다.
 
-### Work Analysis LLM split
+Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product LLM 호출로 fuse하지 않는다. 역할별 atomic responsibility와 처리 조건은 다음과 같다.
 
-Work Analysis는 사람·업무·시간·dependency·duplicate/conflict 판단을 atomic responsibility로 분리한다.
+#### Work Analysis
 
-```
-work_analysis.extract_work_facts                         LLM
-work_analysis.resolve_entity_relations                    LLM/conditional
-work_analysis.resolve_temporal_dependencies               LLM/conditional
-work_analysis.detect_duplicate_conflict_candidates        LLM/conditional
-work_analysis.validate_relations                          deterministic
-work_analysis.assess_information_gaps                     LLM
-work_analysis.assess_operational_risks                    LLM/conditional
-work_analysis.assemble_work_analysis                      deterministic
-work_analysis.validate_work_analysis                      deterministic
-```
+사람·업무·시간·dependency·duplicate/conflict 판단을 atomic responsibility로 분리한다.
 
-- `resolve_entity_relations`: 사람·업무·Resource identity·ownership/reference 관계만 소유한다.
-- `resolve_temporal_dependencies`: 날짜·기간·선후·dependency 후보만 소유한다.
-- `detect_duplicate_conflict_candidates`: duplicate/conflict **candidate**만 제안한다.
-- 실제 `DUPLICATES | CONFLICTS_WITH` 확정은 deterministic relation validator가 계속 소유한다.
+| Operation | 처리 | 조건·책임 |
+| --- | --- | --- |
+| `work_analysis.extract_work_facts` | LLM | 업무 사실 추출 |
+| `work_analysis.resolve_entity_relations` | LLM | conditional. 사람·업무·Resource identity·ownership/reference 관계만 소유한다. |
+| `work_analysis.resolve_temporal_dependencies` | LLM | conditional. 날짜·기간·선후·dependency 후보만 소유한다. |
+| `work_analysis.detect_duplicate_conflict_candidates` | LLM | conditional. duplicate/conflict candidate만 제안한다. |
+| `work_analysis.validate_relations` | deterministic | 실제 `DUPLICATES \| CONFLICTS_WITH` 확정은 relation validator가 소유한다. |
+| `work_analysis.assess_information_gaps` | LLM | 부족 정보 평가 |
+| `work_analysis.assess_operational_risks` | LLM | conditional |
+| `work_analysis.assemble_work_analysis` | deterministic | 분석 결과 조립 |
+| `work_analysis.validate_work_analysis` | deterministic | 분석 결과 검증 |
 
-### Evidence-backed READ answer composition
+#### Planning 공통·ANSWER
 
-Planning `compose_answer`는 사람·시간 조건이나 `PARTIAL`이라는 이유만으로 답변 생성을 생략하고 Evidence 원문을 최종 답변으로 대체하지 않는다. 기존 결정적 resource/empty-result projection은 유지하되, 의미 요약이 필요한 답변은 기존 Prompt slot을 사용한다. 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 이 필드가 없으면 확정 사실을 추측하지 않는다.
+| Operation | 처리 | 범위 |
+| --- | --- | --- |
+| `planning.choose_answer_or_action_from_route` | deterministic | 공통 |
+| `planning.outline_answer` | LLM | ANSWER |
+| `planning.compose_answer` | LLM | ANSWER |
 
-검색 기간은 행사 날짜의 사실 근거가 아니며 미확정 연도·인물을 확정 표현으로 승격하지 않는다. Planning은 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. 기존 RunBudget와 `Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS` 경로를 유지하며 별도 Review 호출이나 새로운 상태를 추가하지 않는다.
+**Evidence-backed READ answer composition**
 
-알려진 연도 미확정 날짜를 명시적 연도 또는 요일로 승격한 답변은 Planning output validation에서 거절한다. 경고를 덧붙여 모순된 답변을 성공 처리하거나 날짜를 임의 교정하지 않는다. 기존 bounded failure 경로를 유지한다.
+| 항목 | 처리·제한 |
+| --- | --- |
+| 답변 생성 | `compose_answer`는 사람·시간 조건이나 `PARTIAL`이라는 이유만으로 생략하지 않는다. Evidence 원문을 최종 답변으로 대체하지 않는다. 기존 결정적 resource/empty-result projection은 유지하되 의미 요약이 필요한 답변은 기존 Prompt slot을 사용한다. |
+| 입력 | 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 필드가 없으면 확정 사실을 추측하지 않는다. |
+| 사실 표현 | 검색 기간은 행사 날짜의 사실 근거가 아니다. 미확정 연도·인물을 확정 표현으로 승격하지 않는다. 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. |
+| 실행 경로 | 기존 RunBudget와 `Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS` 경로를 유지한다. 별도 Review 호출이나 새로운 상태를 추가하지 않는다. |
+| Output validation | 알려진 연도 미확정 날짜를 명시적 연도 또는 요일로 승격한 답변은 거절한다. 경고를 덧붙여 모순된 답변을 성공 처리하거나 날짜를 임의 교정하지 않는다. 기존 bounded failure 경로를 유지한다. |
 
-### Review LLM split
+#### Planning ACTION
 
-Review는 goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsibility로 분리한다.
+Frozen Output Route별로 다음 책임을 분리한다.
 
-```
-review.inspect_goal_and_evidence               LLM
-review.inspect_action_scope_and_route           LLM/conditional, ACTION only
-review.inspect_constraints_and_policy_summary  LLM
-review.aggregate_review_findings               deterministic
-review.validate_review                          deterministic
-review.recheck_affected_dimensions              LLM/conditional
-```
-
-- `inspect_goal_and_evidence`: goal fit, evidence adequacy, unsupported claim/contradiction만 검사한다.
-- `inspect_action_scope_and_route`: action necessity, frozen Tool Route consistency, scope expansion만 검사한다.
-- `inspect_constraints_and_policy_summary`: user constraints + supplied policy summary만 검사한다. 새 정책을 생성하지 않는다.
-- 세 inspector는 `06 Workflow`의 `ReviewInspectorResultV1` typed intermediate만 반환한다. free-form dimension/object를 반환하지 않으며 `ReviewDimensionIdV1` closed set 밖 값은 deterministic validator가 거절한다.
-- `aggregate_review_findings`가 typed finding을 deterministic precedence로 합성해 최종 Review disposition을 만든다. LLM finding category 자체가 routing authority가 아니다.
-- Revision 후에는 `affected_dimensions`만 재검사하며 dimension-only issue는 action/route identity 없이 보존한다.
-
-### Prompt slot accounting
-
-Current required PromptRef 집합은 아래 current LLM responsibilities에서 파생한다. Active Slot 수를 별도 설계 상수로 두지 않으며 manifest/source/caller/input-contract exact-set equality로 계산한다.
-
-새 Active PromptRef:
-
-```
-work_analysis.resolve_entity_relations
-work_analysis.resolve_temporal_dependencies
-work_analysis.detect_duplicate_conflict_candidates
-review.inspect_goal_and_evidence
-review.inspect_action_scope_and_route
-review.inspect_constraints_and_policy_summary
-review.recheck_affected_dimensions
-```
-
-Current runtime에서 사용하지 않는 broad predecessor PromptRef:
-
-```
-work_analysis.resolve_relations
-review.inspect
-review.recheck
-```
-
-Current PromptRef 집합은 broad predecessor ID의 수를 보존하기 위해 만들지 않는다. 각 current LLM responsibility에 실제 caller가 존재하는 PromptRef만 manifest/source/input-contract에 포함한다.
-
-### Safety boundary
-
-- Subgraph 간 authority는 바뀌지 않는다.
-- Tool Route, Approval, Claim, external WRITE, Verification, Recovery authority는 바뀌지 않는다.
-- LLM 결과는 candidate/finding일 뿐 Domain mutation이나 routing authority가 아니다.
-- DEV → Holdout → Safety Gate 전에는 current Prompt manifest를 Runtime Active로 승격하지 않는다.
-
-### Planning ACTION Responsibility Split
-
-Planning ACTION은 frozen Output Route별로 다음 책임을 분리한다.
-
-```
-planning.draft_action_objective_per_output_route    LLM
-planning.compose_arguments_per_output_route         LLM/tool-schema
-planning.build_dependencies                         deterministic
-planning.assemble_plan                              deterministic
-planning.validate_plan                              deterministic
-```
-
-`draft_action_objective_per_output_route`는 사용자 목표와 frozen Output Route의 target semantics만 작성한다. Tool identity/effect/arguments를 변경하지 않는다. `compose_arguments_per_output_route`는 확정 objective와 selected Tool Schema를 받아 business arguments만 직렬화한다. dependency 생성은 계속 deterministic authority다.
+| Operation | 처리 | 책임 |
+| --- | --- | --- |
+| `planning.draft_action_objective_per_output_route` | LLM | 사용자 목표와 frozen Output Route의 target semantics만 작성한다. Tool identity/effect/arguments를 변경하지 않는다. |
+| `planning.compose_arguments_per_output_route` | LLM/tool-schema | 확정 objective와 selected Tool Schema를 받아 business arguments만 직렬화한다. |
+| `planning.build_dependencies` | deterministic | dependency 생성 |
+| `planning.assemble_plan` | deterministic | 계획 조립 |
+| `planning.validate_plan` | deterministic | 계획 검증 |
 
 Arguments Projection에는 현재 검증된 `request_intent` 제약도 포함한다. 정확한 Task/Calendar CREATE가 이 Projection과 frozen Route로 하나로 결정되면 동일 Typed Candidate를 결정적으로 만들 수 있지만, 추가 semantic 판단이 남으면 Product Prompt 호출을 유지한다. 결정적 materialization도 assemble/validate, Review, Domain Validation, Approval, Verification을 우회하지 않는다.
+
+**Task Preview 자연어 수정 준비**
+
+| 항목 | 규칙 |
+| --- | --- |
+| 사용 경로 | 기존 `planning.compose_arguments_per_output_route`의 optional `modification` projection을 사용한다. |
+| 입력 | `request`, persisted `current_arguments`, `reference_time`, `timezone`만 전달한다. supplied Tool schema는 허용된 부분 payload로 좁힌다. |
+| 응답 해석 | 누락된 필드는 보존한다. notes 빈 문자열·due null만 명시적 제거로 해석한다. |
+| 모호하거나 허용 범위 밖인 요청 | 빈 patch/검증 실패로 기존 Preview를 유지한다. |
+| 변경 확정 | 준비 단계는 Domain 사실을 변경하지 않는다. 이후 기존 ModifyAction CAS·Approval revoke·REVIEW_ENTRY handoff가 변경을 확정한다. |
+| 금지 | Frontend parsing 또는 새 Prompt/Agent authority를 만들지 않는다. |
+
+#### Review
+
+Goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsibility로 분리한다.
+
+| Operation | 처리 | 조건·책임 |
+| --- | --- | --- |
+| `review.inspect_goal_and_evidence` | LLM | goal fit, evidence adequacy, unsupported claim/contradiction만 검사한다. |
+| `review.inspect_action_scope_and_route` | LLM | conditional, ACTION only. action necessity, frozen Tool Route consistency, scope expansion만 검사한다. |
+| `review.inspect_constraints_and_policy_summary` | LLM | conditional. user constraints + supplied policy summary만 검사하며 새 정책을 생성하지 않는다. |
+| `review.aggregate_review_findings` | deterministic | typed finding을 deterministic precedence로 합성해 최종 Review disposition을 만든다. LLM finding category 자체가 routing authority가 아니다. |
+| `review.validate_review` | deterministic | Review 검증 |
+| `review.recheck_affected_dimensions` | LLM | conditional, REVISE only. Revision 후 `affected_dimensions`만 재검사하고 dimension-only issue는 action/route identity 없이 보존한다. |
+
+세 inspector는 `06 Workflow`의 `ReviewInspectorResultV1` typed intermediate만 반환한다. free-form dimension/object를 반환하지 않으며 `ReviewDimensionIdV1` closed set 밖 값은 deterministic validator가 거절한다.
+
+#### Fusion·안전 경계
+
+더 강한 Runtime에서 인접 LLM Node를 fuse하려면 위 atomic candidate의 Typed Output 의미를 모두 재현하고 `12 Test / 13 Evaluation`의 parity·failure-isolation gate를 통과해야 한다.
+
+- Subgraph 간 책임과 Tool Route·Policy·Domain·Approval·Claim·external WRITE·Verification·Recovery authority는 바뀌지 않는다.
+- LLM 결과는 candidate/finding일 뿐 Domain mutation이나 routing authority가 아니다.
+- DEV → Holdout → Safety Gate 전에는 current Prompt manifest를 Runtime Active로 승격하지 않는다.
 
 ## 2. Agent Registry
 
@@ -319,11 +301,13 @@ Arguments Projection에는 현재 검증된 `request_intent` 제약도 포함한
 | `request_understanding` | 목표·완료 조건·제약·모호성 구조화 | 사용자 요청, Entry Mode, 선택 Resource | `RequestIntent` | Connector 조회, Action 생성 |
 | `tool_route` | IN Resource/Read Tool 범위와 OUT Resource/Effect/Tool 확정 | `RequestIntentV2`, Signed Tool Registry | `ToolRoutePlanV2` | Query 작성, Evidence 판단, Arguments 작성 |
 | `retrieval` | 고정 IN Route에서 Query·Read·RAG·Evidence·Sufficiency | `RequestIntentV2`, frozen `input_routes`, Retrieval Budget | `RetrievalResultV1` | OUT Tool 변경, Write, Tool 종류 재선택 |
-| `work_analysis` | 필요한 경우 업무 사실·관계·누락·중복·충돌·일정 위험 분석. LLM은 관계 후보를 제안할 수 있으나 `DUPLICATES`·`CONFLICTS_WITH`와 그에 따른 no-action 판단은 결정적 relation validator 검증을 거친다. 정확 중복의 추가 생성이나 검증된 일정 충돌 Override는 각각 `DUPLICATE_OVERRIDE_REQUIRED` / `CONFLICT_OVERRIDE_REQUIRED` 2차 Confirmation을 요구하며 승인 후 결과는 현재 Context에 유효한 Receipt ref를 포함한다. | User Request, Intent, optional Evidence | `WorkAnalysisResultV2` 또는 Work Analysis 소유 Confirmation signal | 정책 최종 판정, 실행, LLM 단독 중복·충돌 확정, Confirmation 없는 Override |
+| `work_analysis` | 필요한 경우 업무 사실·관계·누락·중복·충돌·일정 위험 분석 | User Request, Intent, optional Evidence | `WorkAnalysisResultV2` 또는 Work Analysis 소유 Confirmation signal | 정책 최종 판정, 실행, LLM 단독 중복·충돌 확정, Confirmation 없는 Override |
 | `planning` | 고정 OUT Route의 Answer/Arguments·Dependency 작성 | User Request, Intent, `OutputPlanV1`, optional Analysis, Evidence | `AnswerDraftV2` 또는 `ActionPlanDraftV2` | Tool 재선택, 승인, 실행 |
 | `review` | 목표 충족·Evidence·과잉 Action·모순·Route 오류 검토 | Plan Draft, Evidence, Policy Summary | `PlanReviewResultV2` | Route 직접 변경, 실행 허용 최종 판정 |
 
----
+**Work Analysis의 중복·충돌 처리**
+
+LLM은 관계 후보를 제안할 수 있으나 `DUPLICATES`·`CONFLICTS_WITH`와 그에 따른 no-action 판단은 결정적 relation validator 검증을 거친다. 정확 중복의 추가 생성이나 검증된 일정 충돌 Override는 각각 `DUPLICATE_OVERRIDE_REQUIRED` / `CONFLICT_OVERRIDE_REQUIRED` 2차 Confirmation을 요구한다. 승인 후 결과는 현재 Context에 유효한 Receipt ref를 포함한다.
 
 ## 3. Capability 분류 축
 
@@ -375,35 +359,19 @@ HUMAN_REVIEW
 
 실험 Grader가 발견한 실패를 제품 Runtime이 스스로 감지할 수 있다고 가정하지 않는다.
 
----
-
 ## 4. Node Result Taxonomy
 
 기존 결과 Enum을 유지한다.
 
-```
-Request Understanding:
-  COMPLETE | NEEDS_CONFIRMATION | INVALID
-
-Tool Route:
-  ROUTE_READY | NO_TOOL_NEEDED | NEEDS_CONFIRMATION | BLOCKED
-
-Retrieval:
-  SUFFICIENT | NO_FETCH_NEEDED | NEEDS_MORE_DATA | NEEDS_CONFIRMATION |
-  ROUTE_RECONSIDERATION_REQUIRED | PARTIAL | BLOCKED
-
-Work Analysis:
-  COMPLETE | NEEDS_MORE_DATA | NEEDS_CONFIRMATION | ROUTE_RECONSIDERATION_REQUIRED | BLOCKED
-
-Planning:
-  ANSWER_ONLY | PLAN_READY | NEEDS_CONFIRMATION | ROUTE_RECONSIDERATION_REQUIRED | BLOCKED
-
-Review:
-  PASS | REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION | CONFIRM | BLOCK
-
-Domain:
-  ALLOW_READ | REQUIRE_APPROVAL | BLOCK
-```
+| 책임 | 결과 Enum |
+| --- | --- |
+| Request Understanding | `COMPLETE \| NEEDS_CONFIRMATION \| INVALID` |
+| Tool Route | `ROUTE_READY \| NO_TOOL_NEEDED \| NEEDS_CONFIRMATION \| BLOCKED` |
+| Retrieval | `SUFFICIENT \| NO_FETCH_NEEDED \| NEEDS_MORE_DATA \| NEEDS_CONFIRMATION \| ROUTE_RECONSIDERATION_REQUIRED \| PARTIAL \| BLOCKED` |
+| Work Analysis | `COMPLETE \| NEEDS_MORE_DATA \| NEEDS_CONFIRMATION \| ROUTE_RECONSIDERATION_REQUIRED \| BLOCKED` |
+| Planning | `ANSWER_ONLY \| PLAN_READY \| NEEDS_CONFIRMATION \| ROUTE_RECONSIDERATION_REQUIRED \| BLOCKED` |
+| Review | `PASS \| REVISE \| RETRIEVE_MORE \| ROUTE_RECONSIDERATION \| CONFIRM \| BLOCK` |
+| Domain | `ALLOW_READ \| REQUIRE_APPROVAL \| BLOCK` |
 
 `PARTIAL`은 Run Status가 아니라 결과 종류다.
 
@@ -413,8 +381,6 @@ result_kind: PARTIAL
 ```
 
 장애로 종료되면 `FAILED` 또는 `RECOVERY_REQUIRED`와 함께 기록한다.
-
----
 
 ## 5. Failure Reason Record
 
@@ -440,8 +406,6 @@ detected_by: EXPERIMENT_DETERMINISTIC_GRADER
 runtime_disposition: NOT_AVAILABLE
 experiment_disposition: REJECT_CANDIDATE
 ```
-
----
 
 ## 6. Failure Reason Taxonomy
 
@@ -593,8 +557,6 @@ SSE_LOSS
 LAUNCHER_SHUTDOWN_TIMEOUT
 ```
 
----
-
 ## 7. Retry Kind와 처리 주체
 
 | Retry Kind | 정의 | LLM 사용 |
@@ -608,15 +570,15 @@ LAUNCHER_SHUTDOWN_TIMEOUT
 
 ### 7.1 금지 조합
 
-- `AUTH_REQUIRED`에 LLM Repair·Revision을 호출하지 않는다.
-- 429·5xx·Timeout에 같은 Agent Prompt를 재호출하지 않는다.
-- `UNKNOWN_RESULT`에 Planning Revision 또는 Write 재호출을 하지 않는다.
-- Verification `MISMATCH`에 LLM 자동 수정·Rollback을 하지 않는다.
-- 사용자 범위 확대가 필요한 경우 자동 Query 확장을 하지 않는다.
-- Schema Repair에서 Goal·Evidence·Action 의미를 변경하지 않는다.
-- Runtime에서 차단된 Prompt Injection 결과를 Revision Prompt로 우회하지 않는다.
-
----
+| 상황 | 금지 |
+| --- | --- |
+| `AUTH_REQUIRED` | LLM Repair·Revision 호출 |
+| 429·5xx·Timeout | 같은 Agent Prompt 재호출 |
+| `UNKNOWN_RESULT` | Planning Revision 또는 Write 재호출 |
+| Verification `MISMATCH` | LLM 자동 수정·Rollback |
+| 사용자 범위 확대 필요 | 자동 Query 확장 |
+| Schema Repair | Goal·Evidence·Action 의미 변경 |
+| Runtime에서 차단된 Prompt Injection 결과 | Revision Prompt를 통한 우회 |
 
 ## 8. Retry Decision Contract
 
@@ -657,11 +619,13 @@ REVISION_HEAVY_MAX_LLM_CALLS=18
 ABSOLUTE_MAX_LLM_CALLS=24
 ```
 
-- 기본 Profile은 `NORMAL`이다.
-- `RETRIEVAL_HEAVY`는 `NEEDS_MORE_DATA` 또는 Additional Retrieval이 실제 발생한 경우에만 선택한다.
-- `REVISION_HEAVY`는 Review가 `REVISE`를 반환하고 Domain과 deterministic Policy가 Revision을 허용한 경우에만 선택한다.
-- Profile 승격은 Supervisor의 결정적 규칙으로 수행한다.
-- `ABSOLUTE_MAX_LLM_CALLS`를 넘으면 Prompt를 더 호출하지 않는다.
+| Profile·상한 | 적용 조건 |
+| --- | --- |
+| `NORMAL` | 기본 Profile |
+| `RETRIEVAL_HEAVY` | `NEEDS_MORE_DATA` 또는 Additional Retrieval이 실제 발생한 경우에만 선택 |
+| `REVISION_HEAVY` | Review가 `REVISE`를 반환하고 Domain과 deterministic Policy가 Revision을 허용한 경우에만 선택 |
+| Profile 승격 | Supervisor의 결정적 규칙으로 수행 |
+| `ABSOLUTE_MAX_LLM_CALLS` | 상한을 넘으면 Prompt를 더 호출하지 않음 |
 
 ### 8.3 Budget 소진 처리
 
@@ -672,8 +636,6 @@ result_kind: PARTIAL
 또는
 run_status: WAITING_CONFIRMATION | BLOCKED | FAILED | RECOVERY_REQUIRED
 ```
-
----
 
 ## 9. Prompt Registry Contract
 
@@ -732,67 +694,58 @@ RECHECK
 
 ### 9.3-A Current PromptRef exact-set identity
 
-Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identity key로 사용**한다. `prompt_version`, `content_hash`, `activation_status`, per-invocation `failure_reason_code`는 같은 slot의 release/runtime metadata이며 별도 PromptRef set cardinality를 만들지 않는다. `SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
+Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identity key로 사용**한다.
 
-Current required Product-LLM Prompt Slot set은 정확히 아래 22개다. 각 current slot에서 `prompt_id == prompt_slot_id`이며 broad predecessor ID를 alias로 유지하지 않는다.
+`prompt_version`, `content_hash`, `activation_status`, per-invocation `failure_reason_code`는 같은 slot의 release/runtime metadata이며 별도 PromptRef set cardinality를 만들지 않는다.
+
+`SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
+
+Current required Product-LLM Prompt Slot set은 아래 22개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
+
+| Runtime Node | `prompt_slot_id` (= `prompt_id`) |
+| --- | --- |
+| `request.identify_goal` | `request_understanding.identify_goal` |
+| `request.identify_temporal_scope` | `request_understanding.identify_temporal_scope` |
+| `request.detect_ambiguity` | `request_understanding.detect_ambiguity` |
+| `route.determine_resources` | `tool_routing.determine_io_resources` |
+| `route.select_tool` | `tool_routing.select_tool_if_needed` |
+| `retrieval.plan_query` | `retrieval.plan_query` |
+| `retrieval.select_evidence` | `retrieval.select_evidence` |
+| `retrieval.assess_sufficiency` | `retrieval.assess_sufficiency` |
+| `analysis.extract_facts` | `work_analysis.extract_work_facts` |
+| `analysis.resolve_entity_relations` | `work_analysis.resolve_entity_relations` |
+| `analysis.resolve_temporal_dependencies` | `work_analysis.resolve_temporal_dependencies` |
+| `analysis.detect_duplicate_conflict_candidates` | `work_analysis.detect_duplicate_conflict_candidates` |
+| `analysis.assess_information_gaps` | `work_analysis.assess_information_gaps` |
+| `analysis.assess_operational_risks` | `work_analysis.assess_operational_risks` |
+| `planning.outline_answer` | `planning.outline_answer` |
+| `planning.compose_answer` | `planning.compose_answer` |
+| `planning.draft_action_objective_per_output_route` | `planning.draft_action_objective_per_output_route` |
+| `planning.compose_arguments_per_output_route` | `planning.compose_arguments_per_output_route` |
+| `review.inspect_goal_and_evidence` | `review.inspect_goal_and_evidence` |
+| `review.inspect_action_scope_route` | `review.inspect_action_scope_and_route` |
+| `review.inspect_constraints_policy` | `review.inspect_constraints_and_policy_summary` |
+| `review.recheck` | `review.recheck_affected_dimensions` |
+
+Current PromptRef 집합은 current LLM responsibility에 실제 caller가 있는 Slot에서 파생한다. Active Slot 수를 별도 설계 상수로 두거나 broad predecessor ID의 수를 보존하기 위해 current 집합을 만들지 않는다. manifest/source/caller/input-contract의 exact-set equality로 계산한다.
+
+**현재 사용하지 않는 broad predecessor PromptRef**
 
 ```text
-request_understanding.identify_goal
-request_understanding.identify_temporal_scope
-request_understanding.detect_ambiguity
-tool_routing.determine_io_resources
-tool_routing.select_tool_if_needed
-retrieval.plan_query
-retrieval.select_evidence
-retrieval.assess_sufficiency
-work_analysis.extract_work_facts
-work_analysis.resolve_entity_relations
-work_analysis.resolve_temporal_dependencies
-work_analysis.detect_duplicate_conflict_candidates
-work_analysis.assess_information_gaps
-work_analysis.assess_operational_risks
-planning.outline_answer
-planning.compose_answer
-planning.draft_action_objective_per_output_route
-planning.compose_arguments_per_output_route
-review.inspect_goal_and_evidence
-review.inspect_action_scope_and_route
-review.inspect_constraints_and_policy_summary
-review.recheck_affected_dimensions
+work_analysis.resolve_relations
+review.inspect
+review.recheck
 ```
 
-Current runtime caller mapping은 06의 Node Registry를 그대로 소비한다.
+이 ID들은 alias로 유지하지 않는다. Current responsibility의 실제 caller가 있는 PromptRef만 manifest/source/input-contract에 포함한다.
 
-```text
-request.identify_goal                           → request_understanding.identify_goal
-request.identify_temporal_scope                 → request_understanding.identify_temporal_scope
-request.detect_ambiguity                        → request_understanding.detect_ambiguity
-route.determine_resources                       → tool_routing.determine_io_resources
-route.select_tool                               → tool_routing.select_tool_if_needed
-retrieval.plan_query                            → retrieval.plan_query
-retrieval.select_evidence                       → retrieval.select_evidence
-retrieval.assess_sufficiency                    → retrieval.assess_sufficiency
-analysis.extract_facts                          → work_analysis.extract_work_facts
-analysis.resolve_entity_relations               → work_analysis.resolve_entity_relations
-analysis.resolve_temporal_dependencies          → work_analysis.resolve_temporal_dependencies
-analysis.detect_duplicate_conflict_candidates   → work_analysis.detect_duplicate_conflict_candidates
-analysis.assess_information_gaps                → work_analysis.assess_information_gaps
-analysis.assess_operational_risks               → work_analysis.assess_operational_risks
-planning.outline_answer                         → planning.outline_answer
-planning.compose_answer                         → planning.compose_answer
-planning.draft_action_objective_per_output_route→ planning.draft_action_objective_per_output_route
-planning.compose_arguments_per_output_route     → planning.compose_arguments_per_output_route
-review.inspect_goal_and_evidence                → review.inspect_goal_and_evidence
-review.inspect_action_scope_route               → review.inspect_action_scope_and_route
-review.inspect_constraints_policy               → review.inspect_constraints_and_policy_summary
-review.recheck                                  → review.recheck_affected_dimensions
-```
+`prompt_version`은 current manifest가 slot별로 선택하는 version identity이고, `content_hash`는 9.4 조립 규칙으로 materialize된 immutable prompt artifact의 SHA-256이다. `activation_status`는 9.5/13 Evaluation Gate가 승격한다.
 
-`prompt_version`은 current manifest가 slot별로 선택하는 version identity이고, `content_hash`는 9.4 조립 규칙으로 materialize된 immutable prompt artifact의 SHA-256이다. `activation_status`는 9.5/13 Evaluation Gate가 승격한다. 이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
+이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
 
-`prompt-runtime-input-contract-v1`은 위 22개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다. Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
+`prompt-runtime-input-contract-v1`은 위 22개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
 
-`tool_routing.select_tool_if_needed`의 현재 producer는 같은 Run의 `user_request`를 전달하여 동일 effect의 등록 후보 간 업무 의도(내용 수정/닫기/다시 열기 등)를 구분한다. v1 input allowlist의 optional field로 추가하여 기존 projection과 호환하며, route/eligible candidate authority를 변경하지 않는다. Tool Routing은 Google 이외의 eligible Connector도 동일하게 취급하고, WRITE 선행 Retrieval은 요청된 미래 상태가 아니라 현재 대상의 근거 충분성을 평가한다.
+Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
 Current input-contract artifact의 logical schema는 다음으로 닫는다.
 
@@ -810,6 +763,15 @@ prompt_runtime_input_contract:
 
 `entries[].prompt_slot_id`는 위 22개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
 
+### 9.3-B Tool Routing 선택 Prompt 입력
+
+| 항목 | 규칙 |
+| --- | --- |
+| `tool_routing.select_tool_if_needed` producer | 같은 Run의 `user_request`를 전달해 동일 effect의 등록 후보 간 업무 의도(내용 수정/닫기/다시 열기 등)를 구분한다. |
+| 호환성 | v1 input allowlist의 optional field로 추가하여 기존 projection과 호환한다. route/eligible candidate authority는 변경하지 않는다. |
+| Connector | Google 이외의 eligible Connector도 동일하게 취급한다. |
+| WRITE 선행 Retrieval | 요청된 미래 상태가 아니라 현재 대상의 근거 충분성을 평가한다. |
+
 ### 9.4 조립 규칙
 
 ```
@@ -824,8 +786,6 @@ Base Role Contract
 
 ### 9.5 Runtime 활성화 Gate
 
-사용자 결정 `4-A`를 적용한다.
-
 ```
 DRAFT
 → Node DEV 통과
@@ -837,19 +797,55 @@ DRAFT
 
 검증되지 않은 Prompt는 Artifact로 존재할 수 있으나 Runtime에서 선택할 수 없다.
 
-### 9.5 Prompt execution scope와 release evidence
+### 9.6 Prompt execution scope와 release evidence
 
 Prompt 실행 Scope는 다음 closed vocabulary만 사용한다.
 
-- `PRODUCT_RELEASE`: `SIGNED_RELEASE_MANIFEST` composition만 선택한다. 모든 current Slot이 `RUNTIME_ACTIVE`이고 DEV·HOLDOUT·Safety·Manifest Approval flag와 immutable evidence metadata가 완전해야 한다. `DRAFT`, `DEV_VALIDATED`, `HOLDOUT_VALIDATED`, `RETIRED`는 신규 실행을 fail closed한다. 환경 변수로 이 Scope를 변경할 수 없다.
-- `DEVELOPMENT_SMOKE`: `EXPLICIT_DEVELOPMENT` composition만 선택한다. 실험 전 `DRAFT` baseline의 실제 Product workflow smoke를 허용하지만 release activation이나 Prompt 품질 통과를 뜻하지 않는다. Readiness는 `UNVALIDATED_BASELINE`을 명시한다. `RETIRED`는 신규 실행할 수 없다.
-- `EVALUATION`: offline candidate evaluation 전용이다. Product user runtime과 분리하고 Gold·Grader·expected output·evaluation identity를 Product Prompt input에 넣지 않는다.
+#### PRODUCT_RELEASE
 
-`RUNTIME_ACTIVE`/`RETIRED` entry의 activation evidence metadata는 target model identity와 artifact hash, Prompt source hash, input/output schema version, Dataset artifact path/hash, Grader artifact path/hash/version, 실행 UTC timestamp, Node DEV/HOLDOUT/Safety 결과 artifact path/hash, Manifest Approval artifact path/hash를 포함한다. 모든 path는 Prompt bundle 내부 상대 경로이며 manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 22개 exact Slot의 source hash와 이 evidence chain을 packaging 전에 검증한다.
+`SIGNED_RELEASE_MANIFEST` composition만 선택한다.
 
-Node DEV·Node HOLDOUT·Safety Gate는 고정 Sampling 조건에서 Item당 1회 평가한다(`12` 18.2). Temperature는 Gate Configuration에서 명시적으로 고정하고, Seed는 Provider가 지원함이 확인된 경우에만 고정한다 — 완전한 bit-identical Determinism을 보장하는 것은 아니며 best-effort 재현성이다. 반복 Trial Consistency·평균·분산·Bootstrap Confidence Interval 평가는 `13` Evaluation 소관이며 Gate로 옮기지 않는다.
+- 모든 current Slot이 `RUNTIME_ACTIVE`이고 DEV·HOLDOUT·Safety·Manifest Approval flag와 immutable evidence metadata가 완전해야 한다.
+- `DRAFT`, `DEV_VALIDATED`, `HOLDOUT_VALIDATED`, `RETIRED`는 신규 실행을 fail closed한다.
+- 환경 변수로 이 Scope를 변경할 수 없다.
 
----
+#### DEVELOPMENT_SMOKE
+
+`EXPLICIT_DEVELOPMENT` composition만 선택한다.
+
+- 실험 전 `DRAFT` baseline의 실제 Product workflow smoke를 허용한다. release activation이나 Prompt 품질 통과를 뜻하지 않는다.
+- Readiness는 `UNVALIDATED_BASELINE`을 명시한다.
+- `RETIRED`는 신규 실행할 수 없다.
+
+#### EVALUATION
+
+Offline candidate evaluation 전용이다. Product user runtime과 분리하고 Gold·Grader·expected output·evaluation identity를 Product Prompt input에 넣지 않는다.
+
+#### Activation evidence
+
+`RUNTIME_ACTIVE`/`RETIRED` entry는 다음 metadata를 포함한다.
+
+| 구분 | 필수 metadata |
+| --- | --- |
+| 모델 | target model identity와 artifact hash |
+| Prompt·Schema | Prompt source hash, input/output schema version |
+| Dataset | artifact path/hash |
+| Grader | artifact path/hash/version |
+| 실행 시점 | UTC timestamp |
+| 검증 결과 | Node DEV/HOLDOUT/Safety 결과 artifact path/hash |
+| 승인 | Manifest Approval artifact path/hash |
+
+모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 22개 exact Slot의 source hash와 이 evidence chain을 검증한다.
+
+#### Gate Sampling
+
+| 항목 | 조건 |
+| --- | --- |
+| 평가 횟수 | Node DEV·Node HOLDOUT·Safety Gate는 고정 Sampling 조건에서 Item당 1회 평가한다(`12` 18.2). |
+| Temperature | Gate Configuration에서 명시적으로 고정한다. |
+| Seed | Provider가 지원함이 확인된 경우에만 고정한다. |
+| 재현성 | 완전한 bit-identical Determinism이 아니라 best-effort 재현성이다. |
+| 반복 평가 | Trial Consistency·평균·분산·Bootstrap Confidence Interval은 `13 Evaluation` 소관이며 Gate로 옮기지 않는다. |
 
 ## 10. Prompt Execution Record
 
@@ -874,11 +870,20 @@ prompt_execution:
 
 Prompt·Completion 원문은 Trace에 저장하지 않는다. 합성 Dataset Artifact에서만 원문을 관리한다.
 
----
-
 ## 11. Query Attempt Contract
 
 `QueryAttemptV1`의 **필드·enum·schema_version·identity authority는 05 Retrieval §16 하나만 소유**한다. 이 문서는 Prompt/Failure consumer로서 그 타입을 복제하지 않는다. Retrieval Prompt/validator가 참조할 수 있는 값은 05의 current `QueryAttemptV1` bounded projection뿐이며 Provider-native query/token/raw response는 포함하지 않는다.
+
+### 11.0 Query Planner 출력·결정적 READ
+
+| 항목 | 계약 |
+| --- | --- |
+| 외부 READ | Retrieval Subgraph의 결정적 Application Node가 `connector_id`에 맞는 Query Builder와 `ConnectorReadPort`를 호출한다. Retrieval LLM Node는 Raw Query·MCP Arguments를 직접 실행하지 않으며 `ToolRoutePlanV2.input_plan.input_routes` 밖의 Tool을 선택·호출하지 않는다. |
+| Planner 출력 타입 | `05 Retrieval`의 current `RetrievalQueryPlanV2 / RouteQueryIntentV2`를 사용한다. |
+| `SEARCH` | Provider query 대신 typed `SemanticRetrievalConstraintV1`을 출력한다. |
+| Follow-up changed SEARCH | 값이 포함된 `ConstraintDeltaV2`를 반환해야 한다. |
+| Contract invalid | constraint 이름만 있는 delta, Provider-native Query 문자열, raw continuation, MCP Arguments를 planner authority로 반환한 경우다. |
+| 결정적 Builder | `SourceFetchPlanBuilder`만 prior effective constraints와 delta를 merge하고 `SourceFetchPlanV1` 및 query identity를 materialize한다. |
 
 ### 11.1 반복 검색 판정
 
@@ -892,8 +897,6 @@ Prompt·Completion 원문은 Trace에 저장하지 않는다. 합성 Dataset Art
 - `confidence_band`는 `HIGH | MEDIUM | LOW | NONE`; Threshold 값은 중앙 Retrieval Config authority가 소유한다.
 - 이 문서의 legacy `retrieval_round/source/entry_mode/query_hash/page_token_hash/selected_candidate_ids` 형태는 Release schema가 아니며 새 코드·Prompt·Trace 계약에 사용하지 않는다.
 
----
-
 ## 12. Evaluation consumption boundary
 
 `13 Evaluation`은 본 문서의 current Runtime contract를 **read-only evaluation input contract**로 소비한다. Evaluation artifact가 새로운 Product Prompt field, failure code, retry path, Agent capability, Tool/Policy/Domain authority를 정의할 수 없다.
@@ -904,107 +907,50 @@ Prompt·Completion 원문은 Trace에 저장하지 않는다. 합성 Dataset Art
 
 ### 13.1 요청 이해
 
-```
-명확한 Answer-only
-명확한 Write
-복합 요청
-RESOURCE_SELECTED
-인물·기간·대상 Resource 모호성
-제약 누락 위험
-불필요한 확인 질문
-범위 밖·금지 요청
-Paraphrase·혼합 언어
-```
+| 범주 | Coverage |
+| --- | --- |
+| 요청 유형 | 명확한 Answer-only<br>명확한 Write<br>복합 요청 |
+| 입력·모호성 | RESOURCE_SELECTED<br>인물·기간·대상 Resource 모호성<br>제약 누락 위험 |
+| 질문·범위·표현 | 불필요한 확인 질문<br>범위 밖·금지 요청<br>Paraphrase·혼합 언어 |
 
 ### 13.2 Tool Route
 
-```
-단일·복수 IN Route
-단일·복수 OUT Route
-ANSWER vs ACTION
-RESOURCE_SELECTED Resource 고정
-READ / CREATE / UPDATE / SEND / DELETE Effect
-Registered Tool Binding
-후보 1개 deterministic auto-select
-후보 복수 registered-candidate selection
-Forbidden Route·Tool 배제
-Unregistered Tool 0
-Resource·Effect·Tool Schema 일치
-NEEDS_CONFIRMATION
-BLOCKED
-```
+| 범주 | Coverage |
+| --- | --- |
+| Route·입력 | 단일·복수 IN Route<br>단일·복수 OUT Route<br>ANSWER vs ACTION<br>RESOURCE_SELECTED Resource 고정 |
+| Tool 선택·Binding | READ / CREATE / UPDATE / SEND / DELETE Effect<br>Registered Tool Binding<br>후보 1개 deterministic auto-select<br>후보 복수 registered-candidate selection |
+| 검증·결과 | Forbidden Route·Tool 배제<br>Unregistered Tool 0<br>Resource·Effect·Tool Schema 일치<br>NEEDS_CONFIRMATION<br>BLOCKED |
 
 ### 13.3 Retrieval
 
-```
-고정 IN Route 안 Query 계획
-allowed_read_tool_ids 밖 호출 0
-RESOURCE_SELECTED 직접 GET
-날짜·사람·이메일·상태 제약
-Query 과대·과소·동일 Search 반복 금지
-정상 Pagination·Detail Fetch
-Round 1·2 Additional Retrieval
-Run-scoped RAG Required Segment Recall
-Required Evidence 선택
-Hard Negative 배제
-최신 합의 선택
-상충 Evidence
-긴 Thread·서명·인용 Noise
-저신뢰 후보
-NEEDS_MORE_DATA
-NEEDS_CONFIRMATION
-PARTIAL
-BLOCKED
-Prompt Injection
-Context Budget
-```
+| 범주 | Coverage |
+| --- | --- |
+| Query·직접 조회 | 고정 IN Route 안 Query 계획<br>allowed_read_tool_ids 밖 호출 0<br>RESOURCE_SELECTED 직접 GET<br>날짜·사람·이메일·상태 제약<br>Query 과대·과소·동일 Search 반복 금지 |
+| 추가 수집·근거 선택 | 정상 Pagination·Detail Fetch<br>Round 1·2 Additional Retrieval<br>Run-scoped RAG Required Segment Recall<br>Required Evidence 선택<br>Hard Negative 배제<br>최신 합의 선택 |
+| 품질·불확실성 | 상충 Evidence<br>긴 Thread·서명·인용 Noise<br>저신뢰 후보<br>NEEDS_MORE_DATA |
+| 종료·안전·예산 | NEEDS_CONFIRMATION<br>PARTIAL<br>BLOCKED<br>Prompt Injection<br>Context Budget |
 
 ### 13.4 Work Analysis
 
-```
-담당·일정 연결
-누락 업무
-Task·Event 중복
-가용성·충돌
-상충 Evidence
-부분 Source
-Evidence 없는 추론 차단
-NEEDS_MORE_DATA
-NEEDS_CONFIRMATION
-```
+| 범주 | Coverage |
+| --- | --- |
+| 관계·업무 | 담당·일정 연결<br>누락 업무<br>Task·Event 중복<br>가용성·충돌 |
+| 근거·추가 정보 | 상충 Evidence<br>부분 Source<br>Evidence 없는 추론 차단<br>NEEDS_MORE_DATA<br>NEEDS_CONFIRMATION |
 
 ### 13.5 Planning
 
-```
-ANSWER_ONLY
-단일 CREATE
-단일 UPDATE
-복합 DAG
-부분 승인
-Evidence 연결
-CREATE·UPDATE Target 규칙
-불필요 Action 차단
-금지 Tool 차단
-확인 질문 전환
-BLOCK 전환
-```
+| 범주 | Coverage |
+| --- | --- |
+| 결과·Action 구성 | ANSWER_ONLY<br>단일 CREATE<br>단일 UPDATE<br>복합 DAG<br>부분 승인 |
+| 근거·대상·제한 | Evidence 연결<br>CREATE·UPDATE Target 규칙<br>불필요 Action 차단<br>금지 Tool 차단 |
+| 전환 | 확인 질문 전환<br>BLOCK 전환 |
 
 ### 13.6 Review
 
-```
-정상 PASS
-REVISE
-RETRIEVE_MORE
-CONFIRM
-BLOCK
-False PASS
-False Block
-오류 위치 특정
-Revision 후 Recheck
-동일 실패 반복 종료
-```
-
----
+| 범주 | Coverage |
+| --- | --- |
+| 결과 | 정상 PASS<br>REVISE<br>RETRIEVE_MORE<br>CONFIRM<br>BLOCK |
+| 오류·재검사 | False PASS<br>False Block<br>오류 위치 특정<br>Revision 후 Recheck<br>동일 실패 반복 종료 |
 
 ## 14. Capability completeness contract
 
@@ -1054,11 +1000,9 @@ Credential
 Holdout Gold 원문
 ```
 
----
-
-
-
 ## 17. Clarification Capability
+
+`detect_ambiguity` candidate는 `missing_information_owner=NONE | USER | CONNECTOR`를 출력하며 USER branch만 Confirmation을 허용한다.
 
 - 모호성은 기본 BLOCK이 아니라 `NEEDS_CONFIRMATION → ConfirmationRequiredV1 → RequestConfirmation → same-owner interrupt/resume`다.
 - 후보가 있으면 후보·차이·선택지를 제공하고, 후보가 없으면 최소 누락 정보만 질문한다.
@@ -1073,4 +1017,3 @@ Holdout Gold 원문
 - Agent는 필요 시 파일명·MIME Type·크기·Attachment Descriptor만 사용한다.
 - Download/Stage/Hash Verification/MIME 조립/Claim V2 검증 실패는 `DETERMINISTIC` 또는 `TERMINAL` Runtime 처리이며 LLM Repair·Semantic Revision 대상으로 바꾸지 않는다.
 - Claim V2와 Attachment integrity는 제품 Runtime 안전 계약이므로 Agent Profile 실험의 독립변수로 변경하지 않는다.
-

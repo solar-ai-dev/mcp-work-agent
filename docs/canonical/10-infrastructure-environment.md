@@ -57,9 +57,15 @@ installed release/signature/hash verification
 → READY
 ```
 
-Connector/LLM readiness 실패는 해당 capability 상태로 투영하며 Core를 불필요하게 Safe Mode로 보내지 않는다. DB integrity, migration, required runtime artifact 검증처럼 Core 자체가 안전하지 않은 경우에만 Safe Mode를 사용한다.
+| 상황 | 처리 |
+| --- | --- |
+| Connector/LLM readiness 실패 | 해당 capability 상태로 투영하며 Core를 불필요하게 Safe Mode로 보내지 않는다. |
+| Core 안전성 문제 | DB integrity, migration, required runtime artifact 검증 등 Core 자체가 안전하지 않은 경우에만 Safe Mode를 사용한다. |
 
-초기 미연결 요청은 요청 처리 전 readiness에서 중단하고 설정 안내 후 terminal 처리한다. durable auth-wait Run, 초기 `REAUTH_REQUIRED`, OAuth callback auto-resume를 만들지 않는다. 이미 실행 중인 Run의 credential 만료는 04-A/06의 same-Run Reauth 계약을 사용한다.
+요청의 초기 미연결과 실행 중 만료는 구분한다.
+
+- **초기 미연결:** 요청 처리 전 readiness에서 중단하고 설정 안내 후 terminal 처리한다. durable auth-wait Run, 초기 `REAUTH_REQUIRED`, OAuth callback auto-resume를 만들지 않는다.
+- **실행 중 credential 만료:** 04-A/06의 same-Run Reauth 계약을 사용한다.
 
 ## 4. Local AI inspection
 
@@ -81,13 +87,26 @@ Local Runtime은 외부 Ollama process다. 제품은 Ollama 설치, 시작, 종�
 | 지원 모델 없음 | Local unavailable 안내 |
 | 검사 자체 실패 | inspection failure로 표시; 모델 없음으로 축약 금지 |
 
-재검사는 다음 새 Run의 선택에 반영하며 진행 중 Run의 model/checkpoint/approval binding을 바꾸지 않는다. WORKER/REASONING 역할별 switching, inference 실패 model 교대, 지원 외 모델, Local↔Gemini 자동 fallback을 금지한다. 상태 projection은 current selected model과 actual model을 일치시킨다.
+재검사는 **다음 새 Run의 선택**에 반영하며 진행 중 Run의 model/checkpoint/approval binding을 바꾸지 않는다. 상태 projection은 current selected model과 actual model을 일치시킨다.
+
+다음 동작은 금지한다.
+
+- WORKER/REASONING 역할별 switching
+- inference 실패 model 교대
+- 지원 외 모델 사용
+- Local↔Gemini 자동 fallback
 
 ## 5. AI runtime selection
 
-사용자 선택은 `LOCAL_GPU`(Local AI) 또는 `API_LLM`(Gemini)다. 사용자용 `AUTO`는 없다. 선택 runtime이 준비되지 않으면 해당 새 요청만 처리하지 않고 안내한다.
+사용자 선택은 `LOCAL_GPU`(Local AI) 또는 `API_LLM`(Gemini)다. 사용자용 `AUTO`는 없다.
 
-Gemini 호출은 current credential, external LLM consent, 호출 전 published transfer scope를 모두 요구한다. Local-only 실행에는 external consent가 필요하지 않다. 과거 Run의 legacy `AUTO` 값은 history/resume compatibility를 위해 읽을 수 있지만 새 사용자 선택으로 생성하지 않고 DB history를 재작성하지 않는다.
+| 실행 조건 | 규칙 |
+| --- | --- |
+| 선택 runtime이 준비되지 않음 | 해당 새 요청만 처리하지 않고 안내한다. |
+| Gemini 호출 | current credential, external LLM consent, 호출 전 published transfer scope를 모두 요구한다. |
+| Local-only 실행 | external consent가 필요하지 않다. |
+
+과거 Run의 legacy `AUTO` 값은 history/resume compatibility를 위해 읽을 수 있다. 새 사용자 선택으로 생성하지 않고 DB history를 재작성하지 않는다.
 
 ## 6. Settings configuration
 
@@ -111,9 +130,17 @@ calendar_buffer_minutes
 bounded run/retry/circuit budgets
 ```
 
-`selected_*`는 account/immutable identity에 결속된 복수 allowlist다. 누락은 partial update에서 변경 없음, 빈 배열은 명시적 미선택이다. Provider permission을 확대하지 않고 inventory 조회와 업무 데이터 조회를 구분한다. legacy 단일 default field는 기존 file/Run 호환을 위해 읽을 수 있으나 active allowlist나 WRITE target authority가 아니다.
+| 선택 설정 | 의미 |
+| --- | --- |
+| `selected_*` | account/immutable identity에 결속된 복수 allowlist다. |
+| Partial update에서 필드 누락 | 변경 없음. |
+| 빈 배열 | 명시적 미선택. |
+| 권한·조회 범위 | Provider permission을 확대하지 않는다. inventory 조회와 업무 데이터 조회를 구분한다. |
+| Legacy 단일 default field | 기존 file/Run 호환을 위해 읽을 수 있으나 active allowlist나 WRITE target authority가 아니다. |
 
-제품 timezone은 `Asia/Seoul` 고정이며 사용자 입력 field가 아니다. Working hours와 calendar buffer는 별도 설정이다. `retention_days`의 현재 허용 범위와 category별 적용은 01-B/04가 소유한다.
+- **Timezone:** `Asia/Seoul` 고정이며 사용자 입력 field가 아니다.
+- **Working hours·calendar buffer:** 별도 설정이다.
+- **보존 기간:** `retention_days`의 현재 허용 범위와 category별 적용은 01-B/04가 소유한다.
 
 Unknown key, invalid identity, unsupported model/mode는 추측 보정하지 않고 migration 또는 validation error로 처리한다. Secret은 Settings에 저장하지 않는다.
 
@@ -142,35 +169,73 @@ Temporary 파일은 bounded product-owned staging 아래 두고 crash/restart �
 
 ## 9. Packaging and release
 
-배포는 one-folder application bundle과 사용자별 Windows Installer를 사용한다. Production Installer와 executable은 code signing과 timestamp를 요구한다. `release-manifest.json`과 signature가 installed files의 size/hash를 인증하며 Launcher는 내장 public key로 검증한다.
+| 항목 | 조건 |
+| --- | --- |
+| 배포 형태 | one-folder application bundle과 사용자별 Windows Installer를 사용한다. |
+| 서명 | Production Installer와 executable은 code signing과 timestamp를 요구한다. |
+| 설치 파일 검증 | `release-manifest.json`과 signature가 installed files의 size/hash를 인증하며 Launcher는 내장 public key로 검증한다. |
 
 Runtime Prompt bundle, Prompt input contract, Connector manifest, signed Tool registry/projection, API/schema compatibility artifact는 release hash chain에 포함한다. 각 artifact의 schema/version/hash는 실행 계약이며 문서 버전과 다르다.
 
-Installer는 Python runtime, React build, Product code와 필요한 connector runtime을 포함할 수 있지만 Ollama executable, Local model weight, evaluation runner/result, unapproved candidate를 포함하지 않는다. 앱 또한 설치 뒤 이를 내려받지 않는다.
+| Installer 구성 | 범위 |
+| --- | --- |
+| 포함 가능 | Python runtime, React build, Product code와 필요한 connector runtime |
+| 포함 금지 | Ollama executable, Local model weight, evaluation runner/result, unapproved candidate |
+
+앱 또한 설치 뒤 위 포함 금지 항목을 내려받지 않는다.
 
 ## 10. Database migration
 
-Migration은 적용 순서, version, checksum을 검증한 뒤 SQLite에 적용한다. 이미 적용된 migration은 수정·재번호·이동·squash하지 않는다. schema change는 forward migration만 추가한다.
+| 단계·상황 | 규칙 |
+| --- | --- |
+| Migration 적용 | 적용 순서, version, checksum을 검증한 뒤 SQLite에 적용한다. |
+| 이미 적용된 migration | 수정·재번호·이동·squash하지 않는다. |
+| Schema change | forward migration만 추가한다. |
+| Upgrade 전 | backup을 만든다. |
+| Migration 실패 | 새 binary 시작을 중단한다. |
 
-Upgrade 전 backup을 만들고 migration 실패 시 새 binary 시작을 중단한다. DB를 새로 생성해 실패를 숨기거나 applied checksum mismatch를 무시하지 않는다. Domain Store migration과 checkpoint compatibility를 별도로 판정한다.
+DB를 새로 생성해 실패를 숨기거나 applied checksum mismatch를 무시하지 않는다. Domain Store migration과 checkpoint compatibility는 별도로 판정한다.
 
 ## 11. Backup and restore
 
-Backup은 SQLite online backup 등 일관된 snapshot mechanism을 사용한다. backup metadata에 schema/version/integrity를 기록하고 restore 전 현재 DB를 보존한다. raw path input이나 임의 파일을 restore 대상으로 받지 않는다.
+| 단계·상황 | 규칙 |
+| --- | --- |
+| Backup 생성 | SQLite online backup 등 일관된 snapshot mechanism을 사용한다. backup metadata에 schema/version/integrity를 기록한다. |
+| Restore 대상 | raw path input이나 임의 파일을 받지 않는다. |
+| Restore 전 | 현재 DB를 보존한다. |
+| 자동 복구 후보 선택 | integrity와 schema compatibility를 통과한 backup 중 결정적으로 고른다. |
+| Restore 후 readiness 실패 | restore 전 DB를 복원하고 Safe Mode를 유지한다. |
 
-자동 복구 후보는 integrity와 schema compatibility를 통과한 backup 중 결정적으로 고른다. restore 후 readiness가 실패하면 restore 전 DB를 복원하고 Safe Mode를 유지한다. backup/restore I/O 중 Domain transaction이나 Connector I/O를 겹치지 않는다.
+backup/restore I/O 중 Domain transaction이나 Connector I/O를 겹치지 않는다.
 
 ## 12. Shutdown and crash recovery
 
-Shutdown은 새 command 차단, active external effect 안전 상태 확인, handoff loop stop/drain, MCP child 종료, SQLite/checkpoint flush, runtime secret 폐기, lock 해제 순으로 수행한다.
+Shutdown 순서는 다음과 같다.
 
-다음 시작은 open Run, in-flight Attempt, `UNKNOWN_RESULT`, Verification/Recovery obligation을 검사한다. `BeginExecutionAttempt` 이후 dispatch 결과가 불명확하면 새 WRITE를 보내지 않고 기존 외부 결과 조회부터 수행한다. 이미 `VERIFIED`인 effect를 재실행하지 않는다.
+1. 새 command 차단
+2. active external effect 안전 상태 확인
+3. handoff loop stop/drain
+4. MCP child 종료
+5. SQLite/checkpoint flush
+6. runtime secret 폐기
+7. lock 해제
+
+다음 시작에서 적용하는 복구 규칙은 다음과 같다.
+
+- open Run, in-flight Attempt, `UNKNOWN_RESULT`, Verification/Recovery obligation을 검사한다.
+- `BeginExecutionAttempt` 이후 dispatch 결과가 불명확하면 새 WRITE를 보내지 않고 기존 외부 결과 조회부터 수행한다.
+- 이미 `VERIFIED`인 effect를 재실행하지 않는다.
 
 ## 13. Health and diagnostics
 
 Health는 Core, DB, checkpoint, Connector별 credential/schema/process, Gemini credential/network, Ollama probe/model inventory를 분리한다. `LIVE`, `READY`, degraded optional capability, Safe Mode를 혼동하지 않는다.
 
-Diagnostic bundle은 secret/raw provider payload/업무 원문을 제외하고 version, component status, bounded error code, correlation identity를 제공한다. Activity/Trace/Audit의 authority를 대체하지 않는다.
+| Diagnostic bundle | 내용 |
+| --- | --- |
+| 제공 | version, component status, bounded error code, correlation identity |
+| 제외 | secret, raw provider payload, 업무 원문 |
+
+Diagnostic bundle은 Activity/Trace/Audit의 authority를 대체하지 않는다.
 
 ## 14. CI and release gates
 

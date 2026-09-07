@@ -1,49 +1,52 @@
 # 05. Context · Retrieval 설계서
 
-> **Authority:** Context·Retrieval semantics. Tool Route/Workflow/Domain의 전문 의미는 해당 owner를 직접 소비한다.  
-> **상태:** Draft v2.18 · **기준일:** 2026-09-07 · **대상:** P0 MVP
+> **Authority:** Context·Retrieval의 Query·Evidence·coverage 의미. Tool Route·Workflow·Domain의 전문 계약은 해당 owner를 따른다.  
+> **상태:** Draft v2.19 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적
 
-확정된 Connector Input Route에서 필요한 자료를 최소 호출로 수집하고, 가져온 자료를 그대로 다음 LLM에 전달하지 않고 **관련 Segment를 RAG로 검색·정렬하여 Evidence만 선별**한다. 현재 Connector 범위는 Google Workspace의 Gmail·Tasks·Calendar와 GitHub Issue이며, 각 Connector의 frozen Route와 allowlist를 보존한다. 영구 Vector Index는 P0 필수가 아니며 Run-scoped Retrieval/Reranking을 기본 구조로 사용한다.
+확정된 Connector Input Route에서 필요한 자료를 최소 호출로 수집하고, 관련 Segment를 검색·정렬하여 **다음 단계에 필요한 Evidence만 선별**한다. 가져온 후보 전체를 다음 LLM에 전달하지 않는다.
+
+현재 범위는 Google Workspace의 Gmail·Tasks·Calendar와 GitHub Issue다. 각 Connector의 frozen Route와 allowlist를 보존하며, Run-scoped Retrieval/Reranking을 기본으로 한다. 영구 Vector Index는 P0 필수가 아니다.
+
+이 문서는 검색 제약, 근거 선택, 부족 정보와 조회 범위를 정한다. Graph 구성, Repository 규칙, 평가 프로그램을 새로 정의하지 않는다.
 
 ## 2. 확정 결정
 
-- `CTX-001`: 요청 시점 Connector 원본 연합 검색. 현재 Source는 Google Workspace의 Gmail·Tasks·Calendar와 GitHub Issue다.
-- `CTX-002`: IN/OUT Tool Route 선택은 Retrieval 이전 `Tool Route Subgraph`가 소유
-- `CTX-003`: Retrieval은 고정된 `input_routes`만 사용하고 Resource·Connector·Tool 종류를 재선택하지 않음. `input_routes`에는 사용자 의미상 필요한 READ뿐 아니라 `01-B` Policy Precondition으로 결정적으로 보강된 필수 READ도 포함될 수 있으며 Retrieval은 `required=true`인 Route를 임의 생략하지 않음. 단 사용자 지정 범위를 벗어나는 Policy Precondition Route는 Tool Route의 `SCOPE_EXPANSION_REQUIRED` Confirmation이 완료된 뒤에만 Input Route로 확정될 수 있으며 Retrieval이 스스로 범위를 확대하지 않음
-- `CTX-004`: LLM이 Raw Query·Page Token·MCP Arguments를 직접 실행하지 않음
-- `CTX-005`: Query 계획 → 결정적 Query Builder → MCP Read → Normalize/Segment → Run-scoped RAG → Evidence → Sufficiency
-- `CTX-006`: 가져온 후보 전체를 Work Analysis·Planning Prompt에 직접 전달하지 않음
-- `CTX-007`: 부족 시 같은 IN Route 안에서 추가 Retrieval 최대 2회
-- `CTX-007A`: Retrieval self-loop의 raw Provider continuation은 **Run Retrieval Cache의 해당 read-result entry만** memory-only로 소유한다. Retrieval Local State에는 raw token을 복제하지 않고 `read_result_handle`만 둔다.
-- `CTX-007B`: Follow-up `plan_query`는 현재 round, prior `QueryAttemptV1`, 미해결 `SufficiencyIssueV2`, bounded read-result summary를 입력 Projection으로 사용한다. Raw Page Token·Provider-native Query·MCP Arguments는 LLM 입력에 포함하지 않는다.
-- `CTX-007C`: `NEXT_PAGE`는 결정적 Read Node가 prior `read_result_handle`을 Run Retrieval Cache에서 resolve하고 `run_id + route_id + query_identity_hash` binding을 검증한 뒤 opaque continuation을 MCP Read Arguments에 주입한다. unknown/cross-run/mismatched handle은 fail-closed한다.
-- `CTX-007D`: 같은 Query와 같은 continuation 상태의 반복은 새 Retrieval round로 인정하지 않는다. 추가 round는 새 Page, 필요한 Detail Fetch, 또는 미해결 Sufficiency Issue에 근거한 변경 Query처럼 **새 정보 획득 가능성이 있는 bounded read**여야 한다.
-- `CTX-008`: 새 Resource/Connector Route가 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`를 Parent에 반환
-- `CTX-009`: 일반 Retrieval은 Action Row가 아니라 Trace·Checkpoint·Run Cache 대상
-- `CTX-010`: RAG는 구조적 필수 단계다. Backend는 deterministic score/lexical retrieval, Embedding, Reranker, Vector Index 등 교체 가능한 구현 capability로 둘 수 있으며 제품에서 활성화할 구성은 `13 Evaluation`의 비교 결과와 `10 Infrastructure`의 Release Config가 결정한다.
+| ID | 결정 |
+| --- | --- |
+| `CTX-001` | 요청 시점에 Connector 원본을 연합 검색한다. |
+| `CTX-002` | IN/OUT Tool Route 선택은 Retrieval 이전 Tool Route Subgraph가 소유한다. |
+| `CTX-003` | 고정된 `input_routes`만 사용한다. `required=true`인 Policy Precondition Route를 임의 생략하지 않는다. 사용자 범위 밖 필수 조회는 Tool Route의 `SCOPE_EXPANSION_REQUIRED` Confirmation 이후에만 확정할 수 있다. |
+| `CTX-004` | LLM이 Raw Query·Page Token·MCP Arguments를 직접 실행하지 않는다. |
+| `CTX-005` | 검색 계획, 결정적 조회, 자료 정규화, RAG, Evidence 선택, 충분성 판정을 구분한다. |
+| `CTX-006` | 후보 전체를 Work Analysis·Planning Prompt에 직접 전달하지 않는다. |
+| `CTX-007` | 최초 Retrieval 이후 같은 IN Route 안의 추가 Retrieval은 최대 2회다. |
+| `CTX-007A` | Raw continuation은 Run Retrieval Cache의 read-result entry만 memory-only로 소유한다. Local State는 `read_result_handle`로 참조한다. |
+| `CTX-007B` | Follow-up 계획은 이전 시도·미해결 Issue·제한된 조회 요약을 소비한다. Raw Page Token·Provider Query·MCP Arguments는 Prompt에 넣지 않는다. |
+| `CTX-007C` | `NEXT_PAGE`는 handle의 Run·Route·query binding을 검증한 뒤 결정적 코드가 continuation을 주입한다. |
+| `CTX-007D` | 같은 Query·같은 continuation 상태의 반복은 새 Round가 아니다. 새 정보를 얻을 가능성이 있는 조회만 허용한다. |
+| `CTX-008` | 새 Resource/Connector Route가 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`를 Parent에 반환한다. |
+| `CTX-009` | 일반 Retrieval은 Action Row가 아니라 Trace·Checkpoint·Run Cache 대상이다. |
+| `CTX-010` | RAG는 구조적 필수 단계다. Backend 구성은 교체 가능하며 활성 구성은 평가 결과와 Release Config로 결정한다. |
 
 ## 3. 전체 흐름
 
+```text
+확정된 RequestIntent와 Input Route
+→ 검색 계획 · 결정적 Query 구성과 MCP Read
+→ 자료 정규화 · Segment 검색/정렬
+→ Evidence 선택 · 충분성 판정
+→ 공식 RetrievalResult 반환
 ```
-RequestIntentV2 + ToolRoutePlanV2.input_plan.input_routes
-→ Retrieval Subgraph
-  → plan_query
-  → build_query                         # deterministic
-  → execute_read                        # deterministic
-  → [Calendar availability 필요 시] resolve_availability  # deterministic supporting operation, independent Edge 아님
-  → normalize_segments                  # deterministic
-  → rag_retrieve_rerank
-  → select_evidence
-  → assess_sufficiency
-  → finalize_retrieval                  # deterministic
-→ RetrievalResultV1
-```
+
+이 흐름은 필요한 책임을 나타내며 LangGraph의 Node 수나 세부 Edge를 고정하지 않는다. 아래 operation 이름과 책임은 유지하고, Workflow 연결은 `06 Agent·Workflow`, 배치·네이밍은 `16 Repository Architecture`를 따른다.
 
 Main Graph에는 Query 후보·Page Token·전체 후보·RAG score를 올리지 않는다.
 
 ## 4. Retrieval Subgraph State
+
+현재 State의 필드 표기는 다음과 같다.
 
 ```python
 class RetrievalState:
@@ -64,20 +67,21 @@ class RetrievalState:
     final_result: RetrievalResultV1 | None
 ```
 
-규칙:
+| 구분 | 처리 |
+| --- | --- |
+| Parent 입력 | `request_intent`, `input_route_ref`, `input_routes`는 read-only다. Raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. |
+| Local 작업 상태 | Query 계획·시도, Source 상태, 조회·Segment handle, 가용 시간, RAG 후보, 사용자 조정 의무를 보존한다. |
+| Cache 참조 | `read_result_handles`는 현재 Run의 read-result entry를 가리킨다. Entry는 `run_id + route_id + query_identity_hash`, 제한된 `ConnectorReadResultV1`, continuation 소진 상태를 결합한다. |
+| 사용자 조정 | `07 Interface`가 검증한 `ContextAdjustmentV1` 한 개만 재진입 입력으로 받는다. 아래 §4.2~4.3의 같은 Run 의무로 처리하며 다른 Agent의 장기 업무 사실로 전파하지 않는다. |
+| 공식 반환 | Parent에는 `RetrievalResultV1`과 필요한 Typed Workflow Signal만 반환한다. |
 
-- `request_intent`, `input_route_ref`, `input_routes`는 Parent Projection이며 Retrieval이 수정하지 않는다. Retrieval Product Prompt는 raw `user_request`를 별도 권위 입력으로 재주입하지 않고 `RequestIntentV2`의 Canonical 의미를 소비한다.
-- 사용자 Context Adjustment는 `07`이 검증한 `ContextAdjustmentV1` 한 개만 Retrieval 재진입 입력으로 받을 수 있다. `EXCLUDE_EVIDENCE`는 current Preview membership이 검증된 stable `segment_id`를 `exclusion_obligation_segment_ids`에 materialize한 뒤 새 selection에서 제외한다. `RETRIEVE_MORE`는 validated `RetrievalNeedV1(reason_codes=[USER_CONTEXT_ADJUSTMENT])`를 `pending_user_retrieval_need`에 materialize한다. 두 semantic obligation 모두 **handoff payload clear 전에 같은 checkpoint에 commit**되며 crash/cache-loss/route-reconsideration 재진입에서도 보존된다. `pending_user_retrieval_need`는 해당 Context Adjustment로 시작된 fresh `RetrievalResultV1` revision이 finalize되는 checkpoint에서만 `None`으로 clear한다. 이 입력은 다른 Agent로 전파되는 장기 업무 사실이 아니다.
-- Context Adjustment 후 `RetrievalResultV1`은 새 revision을 발급한다. downstream `WorkAnalysisResultV2`, Plan, Review가 이전 retrieval revision을 `meta.based_on`으로 참조하면 stale이며 재사용하지 않는다. current IN Route로 해결할 수 없는 추가 검색은 기존 `RouteReconsiderationRequiredV1` back-edge를 사용한다.
-- `query_plan`, `query_attempts`, `source_statuses`, `read_result_handles`, `segment_handles`, `availability_results`, `rag_candidates`, `exclusion_obligation_segment_ids`, `pending_user_retrieval_need`는 Local State다. `exclusion_obligation_segment_ids`와 `pending_user_retrieval_need`가 user Context Adjustment에서 온 crash-safe semantic obligations이며 raw Provider cache/token이 아니다.
-- `read_result_handles`는 현재 Run의 Run Retrieval Cache entry를 가리킨다. Cache entry는 `run_id`, `route_id`, validated `query_identity_hash`, Connector-normalized bounded `ConnectorReadResultV1`과 continuation exhaustion 상태를 결합해 보존한다. `ConnectorReadResultV1.next_page_token`의 opaque continuation은 이 entry 밖으로 복제하지 않는다.
-- Parent에는 `RetrievalResultV1`만 병합한다.
-- 실제 Connector 원문과 raw continuation은 Run Retrieval Cache Handle로 참조하고 Main State·Checkpoint·Prompt·Trace·Audit·Domain DB에 복제하지 않는다. P0 Google Workspace 원문도 동일 규칙을 따른다.
+실제 Connector 원문과 raw continuation은 Run Retrieval Cache Handle로 참조한다. Main State·Checkpoint·Prompt·Trace·Audit·Domain DB에 원문이나 raw continuation을 복제하지 않는다.
 
+Context Adjustment 뒤에는 새 Retrieval revision을 발급한다. 이전 revision을 `meta.based_on`으로 참조한 `WorkAnalysisResultV2`·Plan·Review는 stale이며 재사용하지 않는다. 현재 IN Route로 해결할 수 없으면 기존 `RouteReconsiderationRequiredV1` 경로를 사용한다.
 
-### 4.1 Restart semantics for memory-only Retrieval cache
+### 4.1 Cache 유실과 재시작
 
-Raw Provider continuation을 durable storage에 넣지 않는 원칙은 유지한다. 대신 service restart 후 checkpoint에 남은 `read_result_handle`이 현재 Run Retrieval Cache에서 resolve되지 않으면 **그 handle을 추측·재사용하지 않고 deterministic Retrieval restart**를 수행한다.
+Process 재시작 뒤 handle이 유효하지 않으면 **추측 복원이나 재사용 없이 같은 Run의 Retrieval을 다시 시작**한다.
 
 ```text
 RETRIEVING checkpoint load
@@ -90,119 +94,77 @@ RETRIEVING checkpoint load
 → 새 RetrievalResultV1 revision 발급
 ```
 
-- 이것은 `RecoveryReasonV1`을 새로 만드는 경로가 아니다. frozen Route/Request contract와 checkpoint binding이 유효한 한 same-run Retrieval을 처음부터 다시 실행하는 **workflow-local restart**다. binding/contract 자체가 stale이면 기존 `CHECKPOINT_MISMATCH | CONTRACT_VIOLATION` Recovery를 사용한다.
-- raw `next_page_token`과 prior memory-only cache는 복원하지 않는다. Provider 데이터가 restart 사이에 바뀌면 새 조회 결과가 current revision의 authority가 된다.
-- `RunRetrievalCacheResolveResultV1.status=FOUND|EXHAUSTED`는 모두 **현재 handle entry와 run/route/query binding이 유효함**을 뜻하므로 resume prerequisite를 충족하고 cache restart를 만들지 않는다. `EXHAUSTED`는 `entry.continuation_exhausted=true`인 유효 read-result이며 `NEXT_PAGE`만 Provider 호출 전 `NO_MORE_PAGE`로 종료한다. `MISSING|CROSS_RUN|BINDING_MISMATCH`만 cache-loss restart 대상이다.
-- `RunBudgetV2`의 이미 소비된 LLM/read/page/detail counter는 reset하지 않는다. restart가 새 outbound call을 만들면 일반 budget으로 추가 소비하며 hard cap을 넘기지 않는다.
-- `EXCLUDE_EVIDENCE` control이 적용되면 handoff payload clear 전에 stable IDs를 `RetrievalState.exclusion_obligation_segment_ids`에 checkpoint-commit한다. `RETRIEVE_MORE`는 같은 control-patch checkpoint에 `ContextAdjustmentV1.retrieval_need`를 `RetrievalState.pending_user_retrieval_need`로 materialize한다. 이후 cache가 유실되거나 handoff가 이미 CONSUMED여도 fresh retrieval은 exclusion obligation과 pending need를 그대로 사용한다. `pending_user_retrieval_need`는 새 Retrieval revision finalize 전에는 clear하지 않는다.
-- Retrieval-dependent checkpoint를 commit할 때 checkpointer adapter는 Local State의 현재 handle dependency를 `GraphCheckpointEnvelopeV1.retrieval_cache_requirements: list[RetrievalCacheRequirementV1]`로 bounded projection한다. Application은 opaque `checkpoint_blob`을 열지 않고 이 metadata만 검사한다. handle dependency가 끝난 checkpoint는 빈 list를 저장하며 Confirmation/Reauth가 Retrieval-local continuation으로 복귀하는 동안에는 requirement를 유지한다.
-- Confirmation/Reauth suspend 중 process-memory cache가 사라졌다면 해당 owner resume 전에 같은 handle validation을 수행하고, Retrieval local state가 필요한 target이면 위 RETRIEVAL_ENTRY restart로 정상화한다.
-- `RETRIEVAL_CACHE_RESTART` handoff trigger는 `system:retrieval-cache-restart:<run_id>:<checkpoint_generation>` 하나다. staging 전 `WorkflowHandoffRepository.get_by_trigger_command_id(trigger)`로 existing PENDING/DISPATCHED/CONSUMED row를 먼저 resolve하며, 같은 trigger에 두 번째 handoff/control을 만들지 않는다. HTTP command replay 계약을 이 system trigger에 적용하지는 않는다.
-- Run Retrieval Cache의 production boundary는 `07 RunRetrievalCachePort` 하나이며 P0 concrete binding은 `adapters/system/memory/run_retrieval_cache.py → InMemoryRunRetrievalCache`다. `retrieval.execute_read`가 entry 저장/resolve를 사용하고, Run terminal cleanup은 `discard_run(run_id)`만 호출한다. module-global dict, LangGraph private cache, Domain/Checkpoint raw continuation 저장은 second authority라서 금지한다.
-- Cache-loss restart의 Application semantic owner는 `run.reconcile_retrieval_cache_restart → ReconcileRetrievalCacheRestartHandler` 하나다. 이 Handler만 typed checkpoint의 `retrieval_cache_requirements` 각각을 `RunRetrievalCachePort`로 검사하고, invalid/missing이면 위 deterministic trigger를 dedupe한 뒤 `WorkflowHandoffStageV1(control_kind=RETRIEVAL_CACHE_RESTART, target=MAIN_CONTROL:RETRIEVAL_ENTRY)`를 short UoW로 stage하고 기존 `run.schedule_run_execution`을 호출한다. LangGraph Node/Background adapter는 Repository를 직접 쓰지 않는다.
+`RunRetrievalCacheResolveResultV1.status`는 다음처럼 해석한다.
 
-### 4.2 Exclusion obligation checkpoint lifetime
+| Cache resolve 상태 | 의미와 처리 |
+| --- | --- |
+| `FOUND` | Entry와 Run·Route·query binding이 유효하다. Resume dependency를 충족한다. |
+| `EXHAUSTED` | 유효한 entry의 `continuation_exhausted=true` 상태다. Restart하지 않고 `NEXT_PAGE`만 `NO_MORE_PAGE`로 종료한다. Provider 호출은 0이다. |
+| `MISSING`, `CROSS_RUN`, `BINDING_MISMATCH` | Cache-loss restart 대상이다. |
+| Request·Route·checkpoint 계약 자체가 stale | Cache restart로 우회하지 않고 기존 `CHECKPOINT_MISMATCH` 또는 `CONTRACT_VIOLATION` Recovery를 사용한다. |
 
-`EXCLUDE_EVIDENCE`는 one-shot handoff payload 자체를 장기 authority로 사용하지 않는다. Application이 current Preview membership과 `expected_retrieval_revision`을 검증한 뒤 stable `segment_id`를 `RetrievalState.exclusion_obligation_segment_ids`에 materialize하고, **handoff payload clear보다 먼저 checkpoint-commit**한다.
+재시작 시 처리:
 
-- 이 obligation은 해당 same-Run Retrieval lineage가 새 `RetrievalResultV1`을 finalize할 때까지 crash-safe하게 유지한다.
-- cache-loss fresh Retrieval은 checkpoint-local `exclusion_obligation_segment_ids`와 current `RetrievalResultV1.excluded_segment_ids`를 합쳐 `select_evidence`에 적용한다.
-- finalize된 `RetrievalResultV1.excluded_segment_ids`는 이후 같은 Run의 `RETRIEVE_MORE` 또는 fresh Retrieval 재진입 시 Local State 초기 projection이 된다.
-- Route reconsideration 뒤에도 같은 stable `segment_id`가 다시 나타나면 exclusion을 적용한다. source version/content 또는 chunk schema 변화로 새 ID가 된 Evidence를 fuzzy text matching으로 자동 제외하지 않는다.
-- stable `segment_id`의 생성·변경 semantics는 §10.1이 소유한다. 이 절은 checkpoint lifetime만 소유한다.
+- Raw `next_page_token`과 이전 memory-only cache는 복원하지 않는다. Provider 자료가 바뀌었으면 새 조회 결과가 current revision의 기준이다.
+- 이미 소비한 `RunBudgetV2`의 LLM·read·page·detail counter는 초기화하지 않는다. 새 호출도 기존 상한 안에서 추가 소비한다.
+- 사용자 제외 의무와 추가 검색 요구는 보존한다. Lifetime은 §4.2~4.3을 따른다.
+- Frozen Request·Route와 checkpoint binding이 유효한 cache-loss restart는 Workflow-local 처리이며 새 `RecoveryReasonV1`을 만들지 않는다.
 
-### 4.3 RETRIEVE_MORE obligation checkpoint lifetime
+**Checkpoint dependency**
 
-`RETRIEVE_MORE`는 one-shot handoff payload를 Query Planner까지 직접 들고 가지 않는다. control patch가 `ContextAdjustmentV1.retrieval_need`를 `RetrievalState.pending_user_retrieval_need`에 checkpoint-commit한 뒤에만 handoff payload를 clear한다.
+Checkpointer adapter는 필요한 handle만 `GraphCheckpointEnvelopeV1.retrieval_cache_requirements: list[RetrievalCacheRequirementV1]`로 투영한다. Application은 이 metadata만 검사하고 opaque `checkpoint_blob`을 열지 않는다.
 
-- `retrieval.plan_query`의 user-context-adjustment projection은 raw `ContextAdjustmentV1`이 아니라 `pending_user_retrieval_need`를 읽는다.
-- Query/Page/Detail self-loop, Confirmation/Reauth suspend, process-memory cache loss, `RETRIEVAL_CACHE_RESTART`, current-route 실패 후 Route reconsideration/re-entry에서도 같은 need를 보존한다.
-- current IN Route로 해결할 수 없으면 기존 `RouteReconsiderationRequiredV1`을 사용하되 pending need는 새 Route가 확정되어 fresh RetrievalResult revision이 finalize될 때까지 유지한다.
-- `finalize_retrieval`이 새 `RetrievalResultV1` revision을 checkpoint-commit할 때 `pending_user_retrieval_need=None`을 같은 checkpoint에 기록한다. finalize 전 crash는 need를 잃지 않고, finalize 후 crash는 같은 사용자 need를 다시 적용하지 않는다.
-- 두 번째 Context Adjustment는 expected retrieval revision guard를 통과한 경우에만 새로운 pending need를 설정하며 stale request가 current obligation을 덮어쓰지 못한다.
+Handle dependency가 끝나면 빈 목록을 저장한다. Confirmation/Reauth가 Retrieval-local continuation으로 돌아오는 동안에는 requirement를 유지하고, resume 전에 같은 handle 검증을 수행한다. 필요한 cache가 사라졌으면 `MAIN_CONTROL:RETRIEVAL_ENTRY`로 재시작한다.
 
-## 5. Retrieval 내부 책임 · LangGraph Node + deterministic Application operation
+**재시작 중복 방지와 실행 소유권**
+
+| 항목 | 계약 |
+| --- | --- |
+| Trigger | `system:retrieval-cache-restart:<run_id>:<checkpoint_generation>` 하나를 사용한다. |
+| 중복 판정 | Stage 전에 `WorkflowHandoffRepository.get_by_trigger_command_id(trigger)`로 기존 `PENDING`, `DISPATCHED`, `CONSUMED` row를 확인한다. 같은 trigger에 두 번째 handoff/control을 만들지 않는다. HTTP command replay 계약과 혼용하지 않는다. |
+| Application owner | `run.reconcile_retrieval_cache_restart → ReconcileRetrievalCacheRestartHandler`만 dependency 검사와 restart stage를 수행한다. |
+| Stage·실행 | Invalid/missing dependency이면 trigger를 dedupe하고 `WorkflowHandoffStageV1(control_kind=RETRIEVAL_CACHE_RESTART, target=MAIN_CONTROL:RETRIEVAL_ENTRY)`를 short UoW로 stage한 뒤 `run.schedule_run_execution`을 호출한다. |
+| 금지 | LangGraph Node·Background adapter는 Repository를 직접 쓰지 않는다. |
+
+Run Retrieval Cache 경계는 `RunRetrievalCachePort` 하나다. P0 binding은 `adapters/system/memory/run_retrieval_cache.py → InMemoryRunRetrievalCache`이며, `retrieval.execute_read`가 entry 저장·resolve를 사용한다. Terminal cleanup은 `discard_run(run_id)`만 호출한다. Module-global dict, LangGraph private cache, Domain/Checkpoint의 raw continuation 저장을 두 번째 권위로 만들지 않는다.
+
+### 4.2 사용자 Evidence 제외 의무
+
+`EXCLUDE_EVIDENCE`는 Application이 `expected_retrieval_revision`과 current Preview membership을 검증한 stable `segment_id`에만 적용한다. 검증된 ID를 `RetrievalState.exclusion_obligation_segment_ids`에 넣고, **handoff payload를 clear하기 전에 checkpoint에 commit**한다.
+
+| 시점 | 유지·반영 규칙 |
+| --- | --- |
+| 새 결과 확정 전 | 같은 Run의 Retrieval lineage에서 crash-safe하게 의무를 보존한다. |
+| Cache-loss fresh Retrieval | Checkpoint-local 제외 ID와 current `RetrievalResultV1.excluded_segment_ids`를 합쳐 selection에 적용한다. |
+| 공식 결과 확정 | Selection의 제외 ID와 사용자 제외 의무를 stable dedup하여 결과에 남긴다. |
+| 이후 추가 검색·재진입 | 공식 결과의 제외 ID를 Local State 초기 projection으로 사용한다. |
+| Route reconsideration | 같은 stable ID가 다시 나타나면 제외한다. |
+| Source 내용·version·chunk schema 변경 | 새 ID에 과거 제외를 fuzzy text matching으로 자동 승계하지 않는다. ID 의미는 §10.1을 따른다. |
+
+One-shot handoff payload 자체를 장기 권위로 사용하지 않는다.
+
+### 4.3 사용자 추가 검색 요구의 수명
+
+`RETRIEVE_MORE`는 검증된 `ContextAdjustmentV1.retrieval_need`를 `RetrievalState.pending_user_retrieval_need`에 저장한다. 값은 `RetrievalNeedV1(reason_codes=[USER_CONTEXT_ADJUSTMENT])`다. **같은 control-patch checkpoint의 commit 이후에만 handoff payload를 clear**한다.
+
+| 시점 | 유지·해제 규칙 |
+| --- | --- |
+| Query Planner 입력 | Raw `ContextAdjustmentV1` 대신 `pending_user_retrieval_need`를 읽는다. |
+| Query·Page·Detail 반복, Confirmation/Reauth | 같은 need를 보존한다. |
+| Cache 유실·restart, handoff `CONSUMED` 이후 | Need를 잃지 않고 fresh Retrieval에 적용한다. |
+| Route reconsideration·재진입 | 새 Route가 확정돼 fresh 결과가 finalize될 때까지 보존한다. |
+| 새 결과 확정 | 새 `RetrievalResultV1` revision과 `pending_user_retrieval_need=None`을 같은 checkpoint에 commit한다. 확정 전 crash는 요구를 잃지 않고, 확정 후 crash는 같은 요구를 다시 적용하지 않는다. |
+| 다음 Context Adjustment | Expected retrieval revision 검증을 통과한 경우에만 새 need를 설정한다. Stale 요청은 기존 의무를 덮지 못한다. |
+
+## 5. Retrieval 내부 책임
+
+Operation별 책임은 유지하되 검색 전략이나 Graph 세부 순서를 영구 고정하지 않는다.
 
 ### 5.1 `retrieval.plan_query`
 
-의미 검색은 exact anchor와 검색 가설을 분리한다. `CONCEPT(concept, manifestations)`는
-사용자 `business_concepts`에 결합된 bounded planner 가설이며, 특정 개념의 고정 동의어
-목록으로 대체하지 않는다. 새 Planner 출력은 Provider syntax 없는 서로 다른 manifestation을
-한 검색에 1~3개만 허용한다. 기존 v2 artifact의 12개 상한은 읽기 호환용이며 기존 query/hash를
-잘라서 재해석하지 않는다. literal-only 가설은 bounded semantic revision 대상이지 코드가
-날짜 표기나 고정 동의어로 치환할 대상이 아니다. 후보의 concept match는 발견 신호일 뿐
-Evidence relevance나 행사 사실이 아니다.
+허용된 IN Route 안에서 무엇을 찾고 어떤 Page·후보·상세 조회가 필요한지 제안한다. 사용자 제약과 Policy Precondition의 필수 조회 목적을 보존한다.
 
-검색 가설은 기존 `RouteQueryIntentV2`의 operation(발견/상세/페이지), semantic constraints,
-`reason_codes`(검색 목적과 해결할 insufficiency), `required_information`(성공 조건)으로 표현한다.
-`CONCEPT`는 한 가설에 하나만 허용하는 기존 kind uniqueness를 따른다. 복합 개념 요청은
-그중 하나를 후보 발견 축으로 선택할 수 있다. 모든 개념은 RequestIntent와 Evidence/Sufficiency의
-검증 의무에 남기며 단일 검색에 모두 AND하도록 요구하거나 요청 제약을 삭제하지 않는다.
-미해결 사람·시간·업무 의미는 RequestIntent와 SufficiencyIssue에서 소비한다. CHANGED 가설은
-같은 route의 성공한 검색 관측과 미해결 issue에 근거해야 하며 실패를 0건 관측으로 보지 않는다.
-고정 불용 업무 단어 제거, 자동 ALL→ANY 완화, 날짜 문자열만의 자동 fallback은 금지한다.
-Planner가 EVENT_TIME 후보 부재라는 관측에 근거해 요청 기간의 본문 날짜 언급을 다음
-discovery 단서로 선택할 수는 있다. 이는 원래 concept/window를 유지하는 가설이며 날짜
-표기와 최종 검색어를 코드가 고정 목록으로 제공하지 않는다. 날짜 언급만으로 행사 relevance를
-인정하지 않고 detail의 실제 사건/날짜를 검증한다.
-같은 가설 반복과 기존 검색/detail budget 상한은 유지한다.
-
-Query semantic revision은 `QUERY_USER_CONSTRAINT_MISSING`으로 사용자 요구 개념이 빠진 경우를
-구분한다. 개념의 원문 표현만 사용했다는 이유로 확장어를 강제하지 않는다. 확장 표현은
-Planner의 가설이며 실제 관측과 현재 요청에 근거해 선택한다. 모델 재요청에는 원래의 모델 출력
-후보만 전달하고, Application이 복원한 exact anchor/기간/container를 모델 출력으로 위조하지
-않는다. 수정 후 같은 deterministic binding과 validator를 다시 적용한다.
-
-Request Understanding의 의미 추론은 `search_terms`와 `business_concepts`를 생성한다.
-구조화된 검색 필드가 빠져도 원 요청이 남아 있으면 Planner의 bounded KEYWORD 발견을
-닫지 않는다. 필드 부재를 exact identity·기간·상태의 근거로 삼지는 않으며, 기존 Route
-정책과 Provider 문법 검증을 그대로 적용한다. `SCOPE.search_terms`도 같은 원문 anchor로
-소비하며 사용자 값 자체를 새로 추측하지 않는다.
-새 Request Goal 출력의 `search_terms/business_concepts/required_information`은
-`USER_REQUIREMENT` kind로 검증한다. 기존 typed intent의 `SCOPE.search_terms` 소비는 유지한다.
-빈 날짜·상태 placeholder는 검색 제약으로 승격하지 않는다. Temporal 출력 스키마도
-기존 validator와 동일하게 적어도 한 개의 유효한 local boundary를 요구한다.
-Goal 추론 출력은 의미 역할이 섞이지 않도록 이름 있는 검색 슬롯 객체를 사용한다. 원문 기간은
-`DATE.period`로 보존하고, 별도 Request Understanding 의미 연산이 현재 요청과 goal/context를
-바탕으로 `MESSAGE_TIME | EVENT_TIME`을 판단해 `TIME.temporal_axis`를 추가한다. Calendar
-이벤트 값이나 GitHub repository처럼 슬롯에 해당하지 않는 명시적 값은 같은 객체의
-`additional_constraints`에 둔다. Request Understanding owner가 모두 단일 `ConstraintV1`
-목록으로 정규화하며 downstream `RequestIntentV2` authority는 하나다.
-사용자 원문의 사람·기간·시간축·업무 개념·필요 정보는 Request Understanding이 판단하고,
-키워드·이름/직급·문장 패턴을 근거로 일반 코드가 그 결과를 추가·교체하지 않는다. 일반 코드는
-비어 있거나 placeholder인 값과 schema 형식을 검증하고, 명시적으로 `제목`/`subject`라고 표시한
-인용 문자열·명시된 상대 기간·원 요청처럼 형식으로 확정되는 사용자 anchor만 보존한다.
-Gmail-only 검색의 period에는 temporal_axis를 함께 출력한다. 시간축 의미를 키워드나 정규식으로
-덮어쓰지 않는다. Gmail 검색 상태는
-현재 지원하는 명시적 ANY/DRAFT/SENT 값만 고정하며, 다른 Resource의 OPEN 등의 값으로
-임의 메일 상태 필터를 생성하지 않는다.
-
-READ Sufficiency는 같은 Run Cache의 bounded read-result summary에서 미소비 다음 페이지를
-확인한다. selected exact resource 조회를 제외한 검색은 미확인 페이지가 남으면 전체 확인으로
-판정하지 않고 기존 `source_page_coverage` MISSING issue와 budget 안에서 NEXT_PAGE를 수행한다.
-예산상 불가능하면 PARTIAL로 종료한다. raw continuation이나 새 budget authority를 만들지 않는다.
-같은 Route의 상세 조회는 검색의 미소비 페이지를 대체하지 않는다. NEXT_PAGE는 현재
-검색 제약의 query identity에 결합된 cache handle을 사용하고, 상세 resource의 query identity나
-마지막 상세 handle을 pagination authority로 사용하지 않는다.
-각 query identity의 최신 page summary만 continuation 상태를 대표한다. 마지막 페이지가
-소진되면 이전 페이지의 토큰을 다시 소비하지 않으며, QueryAttempt 이력으로도 이미 소비한
-토큰의 재사용을 Provider 호출 전에 차단한다.
-Gmail 본문이 없는 검색 preview의 locator는 `is_metadata_only=true`를 보존한다.
-이는 실제 query에 일치한 후보이지 업무 사실의 확정 근거가 아니다. 아직 본문을 읽지 않은
-preview는 CONTEXT로 유지하고 기존 제한된 detail fetch로 관련성을 판단한다. 제목에
-핵심 단어가 없다는 이유만으로 본문 관련성을 부정하지 않는다. 이미 본문을 읽은 후보와
-기존 checkpoint의 해당 marker 없는 Evidence는 기존 relevance 판단을 유지한다.
-후처리가 업무 단어 사전이나 '메일 앞 단어' 정규식으로 이를 교체하거나 특정 단어를
-business concept으로 승격하지 않는다. 명시적 quoted subject/사람 표기/기간의 원문 보존은
-유지한다. 예를 들어 사용 방식의 수식어는 명시적 제목이나 업무 anchor가 아니다.
-
-월만 지정한 요청의 검색 연도는 사실 확정과 구분한다. 명시 연도는 그대로 사용하고,
-수신 시각 검색은 Run-local 기준 이미 시작된 가장 최근 해당 월, 행사 검색은 인접 연도 중
-Run-local 날짜에 가장 가까운 해당 기간을 검색 가설로 사용한다. 이 검색 가설만으로 원문의
-생략된 행사 연도를 확정하거나 요일을 만들지 않는다. 본문 행사일과 뉴스레터 발행/대상 기간은
-Evidence selection에서 구분하고, 원문에 확정되지 않은 연도는 최종 답변에서도 미확정으로 남긴다.
-
-입력:
+**입력**
 
 ```
 # 모든 Round
@@ -217,9 +179,41 @@ unresolved_sufficiency_issues
 read_result_summaries
 ```
 
-`read_result_summaries`는 `read_result_handle`, `route_id`, query identity/hash, 이미 확인한 Resource 참조의 bounded summary, `has_next_page`, continuation state hash 같은 **의미·진행 metadata만** 포함한다. Raw `next_page_token`은 포함하지 않는다.
+`read_result_summaries`에는 handle, Route·query identity/hash, 확인한 Resource 참조의 제한된 요약, `has_next_page`, continuation state hash만 포함한다. Raw `next_page_token`은 포함하지 않는다.
 
-출력:
+Follow-up의 prior attempt projection은 semantic constraint·operation·reason·결과 수·stop reason·query hash만 사용한다. 원본 `QueryAttemptV1.query_spec`는 Builder·관측용이며 LLM 입력이 아니다. 사용자 Context Adjustment 입력은 §4.3을 따른다.
+
+**소비하는 요청 의미**
+
+| 항목 | Retrieval에서 지킬 의미 |
+| --- | --- |
+| 요청 해석 | 사람·기간·시간축·업무 개념·필요 정보는 Request Understanding의 typed 결과를 소비한다. 일반 코드가 키워드·이름/직급·문장 패턴으로 의미를 추가하거나 교체하지 않는다. |
+| 검색어·업무 개념 | `search_terms`, `business_concepts`, `required_information`은 `USER_REQUIREMENT`로 검증된 값을 사용한다. `SCOPE.search_terms`도 원문 anchor로 소비한다. |
+| 검색 필드 누락 | Typed intent에 원 요청이 남아 있으면 bounded KEYWORD 발견을 막지 않는다. 누락을 exact identity·기간·상태의 근거로 삼지는 않는다. |
+| 기간·시간축 | 원문 기간 `DATE.period`와 의미 역할 `TIME.temporal_axis`를 구분한다. Gmail-only 기간 검색은 시간축을 함께 사용하며 키워드·정규식으로 덮어쓰지 않는다. |
+| 추가 명시 제약 | Calendar 값·GitHub repository 등은 Request Understanding이 정규화한 단일 `ConstraintV1` 목록을 소비한다. 검색 슬롯·`additional_constraints`를 별도 요청 권위로 만들지 않는다. |
+| 형식 검증 | 빈 날짜·상태 placeholder는 제약이 아니다. Temporal 입력은 유효한 local boundary가 하나 이상 있어야 한다. 형식으로 확정되는 명시 인용 제목·상대 기간·원 요청 anchor는 보존한다. |
+| 제목·수식어 | 명시적으로 `제목`/`subject`로 표시한 인용 문자열을 보존한다. 사용 방식의 수식어를 제목·업무 anchor로 승격하거나 '메일 앞 단어' 정규식·업무 단어 사전으로 대체하지 않는다. |
+| Gmail 상태 | 현재 지원하는 명시적 `ANY`, `DRAFT`, `SENT`만 사용한다. 다른 Resource의 `OPEN` 등으로 메일 상태 필터를 만들지 않는다. |
+
+**Exact anchor와 검색 가설**
+
+`CONCEPT(concept, manifestations)`는 사용자 `business_concepts`에 결합된 탐색 가설이다. 고정 동의어 목록이나 사용자 사실을 뜻하지 않는다.
+
+| 항목 | 계획 규칙 |
+| --- | --- |
+| 가설 구성 | `RouteQueryIntentV2`의 operation·semantic constraints·`reason_codes`와 계획의 `required_information`으로 검색 목적·부족 정보·성공 조건을 표현한다. |
+| Manifestation | 새 출력은 Provider syntax 없는 서로 다른 표현을 한 검색에 1~3개 사용한다. V2 artifact의 12개 상한은 읽기 호환용이며 기존 query/hash를 잘라 재해석하지 않는다. |
+| 복합 개념 | 한 가설에는 `CONCEPT` 하나만 허용한다. 그중 한 개념을 후보 발견 축으로 삼을 수 있지만 모든 요청 개념은 Evidence·Sufficiency 검증 의무에 남는다. |
+| 확장 여부 | 원문 표현만 사용했다는 이유로 확장어를 강제하지 않는다. 확장 표현은 현재 요청과 실제 관측을 바탕으로 Planner가 선택한다. |
+| 후속 가설 | 같은 Route의 성공한 검색 관측과 미해결 Issue에 근거한다. 실패를 정상 0건 관측으로 보지 않는다. |
+| 날짜를 발견 단서로 사용 | `EVENT_TIME` 후보 부재를 관측한 경우, 원래 concept/window를 유지하며 본문 날짜 언급을 다음 가설로 사용할 수 있다. 날짜 표기·검색어를 코드의 고정 목록으로 공급하지 않는다. |
+| 사실 판정 | Concept match나 날짜 언급은 발견 신호다. 실제 관련성과 사건·날짜는 상세 Evidence로 확인한다. |
+| 금지 | 복합 개념의 무조건 AND, 요청 제약 삭제, 고정 불용 업무 단어 제거, 자동 `ALL→ANY` 완화, 날짜 문자열만의 자동 fallback. |
+
+사용자 요구 개념이 빠지면 `QUERY_USER_CONSTRAINT_MISSING`으로 구분한다. Bounded semantic revision에는 원래 모델 출력 후보만 전달하며 Application이 복원한 anchor·기간·container를 모델 출력으로 위조하지 않는다. 수정 후 동일 binding과 validator를 적용한다.
+
+**출력 계약**
 
 ```python
 class TemporalRangeConstraintV1:
@@ -297,35 +291,28 @@ class RetrievalQueryPlanV2:
     retrieval_order: list[str]
 ```
 
-`RouteQueryIntentV2`는 `operation`이 유효 branch를 결정하는 closed discriminated union이다.
+`operation`이 유효 branch를 결정한다.
 
-- `SEARCH | FREEBUSY`: `search_spec` 필수, `detail_candidate_ref=None`
-- `DETAIL_FETCH`: `search_spec=None`, current Run에서 검증된 exact selected-resource ref 또는 bounded candidate ref인 non-empty `detail_candidate_ref` 필수
-- `NEXT_PAGE`: `search_spec=None`, `detail_candidate_ref=None`; raw continuation은 Run Retrieval Cache가 소유
+| Operation | `search_spec` | `detail_candidate_ref` |
+| --- | --- | --- |
+| `SEARCH`, `FREEBUSY` | 필수 | `None` |
+| `DETAIL_FETCH` | `None` | 현재 Run의 검증된 exact selected-resource ref 또는 bounded candidate ref. Non-empty 필수. |
+| `NEXT_PAGE` | `None` | `None`. Raw continuation은 Cache가 소유한다. |
 
-서로 다른 branch의 필드를 섞은 출력은 Provider 호출 전에 `QUERY_OPERATION_FIELD_MISMATCH`로 차단하거나 bounded revision한다.
+Branch 필드를 섞으면 Provider 호출 전에 `QUERY_OPERATION_FIELD_MISMATCH`로 차단하거나 bounded revision한다.
 
-책임:
+**결정적으로 만들 수 있는 초기 계획**
 
-- 이미 허용된 IN Route 안에서 무엇을 어떤 순서로 찾을지 제안
-- 사용자 날짜·사람·선택 Resource·업무 제약을 구조화
-- Policy Precondition으로 추가된 필수 Route에서는 해당 검사 목적을 충족할 후보를 수집한다. `TASK + CREATE`의 Tasks Route는 기존 미완료 Task 중복 후보를, `CALENDAR + CREATE`의 Calendar Route는 대상 시간대의 Event/FreeBusy 충돌 근거를 확보한다.
-- Page·후보·상세 조회 Budget 제안
+| 적용 조건 | 처리 | 적용하지 않는 경우 |
+| --- | --- | --- |
+| `RESOURCE_SELECTED`, frozen IN Route 1개, Registry exact detail READ Tool 1개, current-Run 검증 Resource ref 1개 | `plan_query` LLM 없이 `DETAIL_FETCH` 계획을 만들고 동일 validator를 통과시킨다. | 복수 Route/ref, 일반 검색, follow-up |
+| 정확한 `TASK + CREATE`, 제목·Policy-required `TASK \| TASK_LIST` Route·allowlist 안의 명시적 Task List ref가 각각 하나로 고정 | 중복 확인용 초기 `SEARCH + CONTAINER_REF`를 결정적으로 만든다. 실제 Tasks READ와 Work Analysis 중복 판정은 유지한다. | 복수 Task List, 미결정 target, 일반 Task 검색, 추가 사용자 제약, follow-up |
 
-초기 `RESOURCE_SELECTED`에서 frozen IN Route가 1개이고 Registry의 exact detail READ Tool과 current-Run 검증 Resource ref가 각각 하나로 결정되면 `plan_query` LLM은 호출하지 않는다. Retrieval owner의 deterministic materialization이 `DETAIL_FETCH` plan을 만들고 동일 validator를 통과시킨다. 복수 Route·복수 ref·일반 검색·follow-up에서는 이 branch를 사용하지 않는다.
-
-정확한 `TASK + CREATE` 요청에서 제목, Policy-required `TASK | TASK_LIST` Route, allowlist 안의 명시적 단일 Task List ref가 각각 하나로 고정되면 중복 검사 목적의 초기 Query Plan은 결정적 `SEARCH + CONTAINER_REF`로 materialize하고 동일 validator를 통과시킨다. 실제 Tasks Connector READ와 Work Analysis 중복 판정은 유지한다. 복수 Task List, 미결정 target, 일반 Task 검색, 추가 사용자 제약 또는 follow-up Retrieval에는 이 branch를 사용하지 않는다.
-
-금지:
-
-- 새로운 Connector/Resource Route 추가
-- OUT Tool 선택
-- Provider-native Raw Query·시간 형식·Page Token을 임의 생성해 바로 실행. Gmail Query·RFC3339는 P0 Google Workspace의 구체 예다.
-- Write
+Planner는 새 Connector/Resource Route, OUT Tool 또는 Write를 선택하지 않는다. Provider-native Raw Query·시간 형식·Page Token을 만들어 바로 실행하지 않는다. Gmail Query·RFC3339는 결정적 Builder의 책임이다.
 
 ### 5.2 `retrieval.build_query`
 
-결정적 Application Node다.
+의미 계획을 검증하고 실제 Read 인자로 바꾸는 결정적 Application 책임이다.
 
 ```
 RetrievalQueryPlanV2 + InputToolRouteV1
@@ -340,13 +327,11 @@ RetrievalQueryPlanV2 + InputToolRouteV1
 → MCP Read Arguments
 ```
 
-- `NEXT_PAGE`에서 LLM은 Page Token을 생성·복사·수정하지 않는다.
-- 선택된 handle의 `run_id`, `route_id`, query identity/hash가 현재 frozen IN Route와 맞지 않으면 호출하지 않고 fail-closed한다.
-- continuation이 소진된 handle에 대해 같은 Page를 재요청하지 않는다.
+`NEXT_PAGE`에서 LLM은 Page Token을 생성·복사·수정하지 않는다. Handle의 Run·Route·query binding 불일치 또는 continuation 소진은 Provider 호출 전에 차단한다. 상세 pagination 규칙은 §16.2를 따른다.
 
 ### 5.2-A Semantic Constraint · changed SEARCH · `SourceFetchPlanV1`
 
-`SEARCH`의 LLM 출력 권위는 Provider Query가 아니라 **typed semantic retrieval constraint**다. Provider-native Gmail query, RFC3339 변환, MCP Arguments, raw continuation은 결정적 Builder/Executor가 소유한다.
+`SEARCH`의 LLM 출력은 **값을 가진 typed semantic constraint**다. Provider Query, RFC3339 변환, MCP Arguments, raw continuation은 결정적 Builder/Executor가 소유한다.
 
 ```python
 class SourceFetchPlanV1:
@@ -370,9 +355,12 @@ InitialSearchSpecV1.constraints
 → SourceFetchPlanV1
 ```
 
-`SourceFetchPlanV1.resource_type`은 `EMAIL | TASK | CALENDAR` 같은 별도 semantic-family vocabulary가 아니다. 해당 `route_id`의 frozen `InputToolRouteV1.resource_type`을 그대로 복사하며, 그 값은 selected/allowed `SignedToolRegistryEntryV1.resource_type`과 exact match해야 한다. 한 Input Route의 `allowed_read_tool_ids`는 모두 같은 Registry `resource_type`을 가져야 하며 서로 다른 Connector resource를 조회하려면 별도 Input Route를 사용한다. Retrieval은 Tool 이름 parsing이나 local 문자열 mapper로 resource identity를 변환하지 않는다.
-
-Initial SEARCH에서 `constraints`는 값이 포함된 semantic constraint여야 한다. constraint 이름만 반환하거나 Provider-native Query 문자열을 반환하는 것은 invalid contract다.
+| 항목 | 검증 규칙 |
+| --- | --- |
+| Constraint | 이름만 나열하거나 Provider-native Query 문자열을 반환하면 invalid contract다. |
+| `resource_type` | Frozen `InputToolRouteV1.resource_type`을 그대로 복사한다. 선택·허용된 `SignedToolRegistryEntryV1.resource_type`과 exact match해야 한다. |
+| 허용 Tool 집합 | 한 Route의 `allowed_read_tool_ids`는 모두 같은 Registry `resource_type`을 가져야 한다. 다른 Resource는 별도 Input Route가 필요하다. |
+| 금지 | `EMAIL \| TASK \| CALENDAR` 같은 별도 family로 identity를 변환하거나 Tool 이름 parsing·local 문자열 mapper로 재해석하지 않는다. |
 
 #### CHANGED SEARCH
 
@@ -386,58 +374,77 @@ prior SourceFetchPlanV1.effective_constraints
 → SourceFetchPlanV1
 ```
 
-규칙:
+**변경 가능한 것과 보존할 것**
 
-- `CHANGED`는 같은 frozen `route_id` 안의 semantic 검색 제약만 바꾼다. Connector·Resource·Tool 재선택이 아니다.
-- `upsert_constraints`는 `kind`별로 기존 값을 교체하거나 새 값을 추가한다. P0에서 같은 Route의 effective set은 동일 `kind`를 중복 보유하지 않는다.
-- `remove_constraint_kinds`는 해당 `kind` 전체를 제거한다. frozen Route 또는 Policy Precondition이 필수로 요구하는 constraint는 제거할 수 없다.
-- CHANGED merge는 기존 temporal role/window, resource/container identity, 상태, 확정 participant 및 lexical anchor 값을 보존한다. CONCEPT의 manifestation만 같은 concept 안에서 변경한다. 이름 discovery KEYWORD를 제거하려면 current-Run typed person candidate의 유일한 identity 또는 검증된 Confirmation 선택과 일치하는 exact PARTICIPANT로 전환해야 한다. LLM reason code만으로 이 예외를 승인하지 않는다.
-- follow-up Prompt의 prior attempt projection은 semantic constraint·operation·reason·결과 수·stop reason·query hash만 포함한다. 원본 QueryAttempt의 `query_spec`는 Builder/관측용이고 LLM 입력에서 제외한다.
-- 새 Gmail lexical lowering은 각 KEYWORD를 literal quote로 묶어 사용자/모델 문자열의 Provider operator 실행을 막는다. 지원하지 않는 quote/backslash/control delimiter는 Provider 호출 전에 차단한다. QueryAttempt의 retrieval config v3를 기록하되 과거 attempt/query를 수정하지 않는다. 동일 semantic constraints의 이미 수행한 검색은 lowering 표현이 달라져도 반복으로 차단하여 checkpoint 재진입이 새 검색 기회가 되지 않게 한다.
-- merge 뒤 effective constraints가 prior와 의미상 동일하면 `QUERY_UNCHANGED_AFTER_FAILURE`로 fail-closed하며 새 Retrieval Round로 인정하지 않는다.
-- 같은 delta 안에서 같은 `kind`를 upsert와 remove에 동시에 넣거나, Route가 지원하지 않는 constraint, 값 없는 constraint, 모순 temporal range는 Provider 호출 전에 차단한다.
-- 날짜/시간 문자열은 semantic local value이며 Provider RFC3339/Gmail query syntax가 아니다. `start_local/end_local`은 offset 없는 ISO local date 또는 local datetime이고 current product의 `timezone`은 `Asia/Seoul`이다. 파싱·Timezone 해석·interval 계산·Provider 표현 변환은 deterministic code가 수행하며 invalid/ambiguous local value는 Provider 호출 전에 차단한다.
-- `ParticipantConstraintV1.participants`는 역할별 identity를 함께 보존하므로 `from A + to B`처럼 서로 다른 participant role을 한 constraint 안에서 표현할 수 있다.
-- `ResourceRefConstraintV1.resource_refs`와 `ContainerRefConstraintV1.container_refs`는 현재 Run/Route에서 이미 검증된 내부 ref만 허용하며 raw Provider resource ID를 LLM이 새로 발명하는 권위가 아니다.
-- `QueryAttemptV1.added_constraints/removed_constraints` 같은 이름 목록은 관측·follow-up summary다. **다음 실행계획의 값 권위가 아니며** `SourceFetchPlanV1.effective_constraints`를 재구성하는 두 번째 source로 사용하지 않는다.
+| 항목 | 규칙 |
+| --- | --- |
+| 변경 범위 | 같은 frozen `route_id`의 검색 제약만 변경한다. Connector·Resource·Tool 재선택이 아니다. |
+| Upsert | `kind`별 기존 값을 교체하거나 추가한다. 같은 Route의 effective set에 동일 `kind`를 중복 보유하지 않는다. |
+| Remove | 해당 `kind` 전체를 제거한다. Frozen Route·Policy Precondition의 필수 constraint는 제거하지 못한다. |
+| 사용자 제약 | Temporal role/window, resource/container identity, 상태, 확정 participant, lexical anchor를 보존한다. |
+| Concept | 같은 concept 안에서 manifestation만 변경한다. |
+| 인물 탐색어 전환 | 이름 discovery KEYWORD를 제거하려면 current-Run typed person candidate의 유일한 identity 또는 검증된 Confirmation 선택과 일치하는 exact PARTICIPANT로 전환해야 한다. LLM reason code만으로 허용하지 않는다. |
+| 무변경 | Merge 뒤 의미가 같으면 `QUERY_UNCHANGED_AFTER_FAILURE`로 차단한다. 새 Round로 인정하지 않는다. |
+
+**호출 전 검증**
+
+| 항목 | 규칙 |
+| --- | --- |
+| Delta 충돌 | 같은 `kind`를 동시에 upsert/remove하거나 지원하지 않는 constraint·값 없는 constraint·모순 시간 범위를 반환하면 차단한다. |
+| Local 시간 | `start_local/end_local`은 offset 없는 ISO local date 또는 local datetime이다. 제품 timezone은 `Asia/Seoul`이다. 파싱·Timezone·interval 계산·Provider 변환은 결정적 코드가 수행하며 invalid/ambiguous 값은 차단한다. |
+| Participant | 역할별 identity를 유지한다. `from A + to B`도 하나의 constraint 안에서 구분한다. |
+| Resource·Container | `resource_refs`와 `container_refs`는 현재 Run/Route에서 검증된 ref만 허용한다. LLM이 raw Provider ID를 발명하지 않는다. |
+| Gmail lexical lowering | 각 KEYWORD를 literal quote로 묶어 Provider operator 실행을 막는다. 지원하지 않는 quote/backslash/control delimiter는 호출 전에 차단한다. |
+| Query identity | 같은 semantic constraints로 이미 수행한 검색은 lowering 표현이 달라도 반복으로 차단한다. Checkpoint 재진입이 새 검색 기회가 되지 않는다. |
+| Attempt 기록 | Gmail lexical lowering의 retrieval config v3를 기록하되 과거 attempt/query는 수정하지 않는다. |
+| 관측 필드 | `QueryAttemptV1.added_constraints/removed_constraints`는 이름 목록 요약이다. 다음 계획의 값 권위나 effective constraints를 복원하는 두 번째 source가 아니다. |
 
 #### GitHub repository container authority
 
-`connector_id="github"`, `resource_type="github_issue"`인 frozen `InputToolRouteV1`은 다음 existing current-run authority만 route-scoped `ContainerRefConstraintV1(container_refs=["owner/repository"])`로 materialize할 수 있다.
+`connector_id="github"`, `resource_type="github_issue"`인 frozen Route의 container는 다음 current-Run source만 사용한다.
 
-1. 검증된 current-run `SelectedResourceRefV1`/`ResourceRef`의 `parent_resource_id`
-2. `06`의 deterministic provenance 검증을 통과한 current `RequestIntentV2`의 explicit `owner/repository` constraint
+| 허용 source | 값 |
+| --- | --- |
+| 검증된 `SelectedResourceRefV1`/`ResourceRef` | `parent_resource_id` |
+| `06 Workflow`의 결정적 provenance 검증을 통과한 `RequestIntentV2` | 명시적 `owner/repository` constraint |
 
-- 두 source가 모두 존재하고 exact match하면 하나의 container constraint로 정규화한다. 불일치하면 어느 쪽에도 precedence를 주지 않고 기존 Confirmation 또는 fail-closed 경로로 보내며 `ConnectorReadPort` 호출은 0이다.
-- repository가 필요한 GitHub `SEARCH` Route에 검증된 source가 하나도 없으면 Source Fetch Plan을 실행하지 않고 기존 Confirmation/selection lifecycle을 사용한다. LLM, 연결 계정, organization, 최근 repository 또는 첫 Provider 검색 결과로 owner/repository를 채우지 않으며 `ConnectorReadPort` 호출은 0이다.
-- 결정적 `SourceFetchPlanBuilder`는 검증된 container constraint와 frozen Route의 `connector_id="github"`, `resource_type="github_issue"`, `allowed_read_tool_ids`를 그대로 보존하고, 등록된 `github_list_issues` argument의 `repository`로만 lower한다. Retrieval LLM은 repository나 Tool을 다시 선택하지 않는다.
-- selected GitHub Issue의 `DETAIL_FETCH`는 검증된 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`의 결합을 보존한다. 새 GitHub Retrieval DTO, Graph 또는 별도 repository authority를 만들지 않는다.
+둘이 일치하면 하나의 `ContainerRefConstraintV1(container_refs=["owner/repository"])`로 정규화한다. 불일치하면 임의 우선순위를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로로 보낸다. `ConnectorReadPort` 호출은 0이다.
+
+Repository가 필요한 `SEARCH`인데 검증된 source가 없으면 기존 Confirmation/selection 경로를 사용한다. LLM, 연결 계정, organization, 최근 repository, 첫 검색 결과로 값을 채우지 않으며 Read 호출도 하지 않는다.
+
+결정적 `SourceFetchPlanBuilder`는 container와 frozen Route의 Connector·Resource·`allowed_read_tool_ids`를 그대로 보존하고 등록된 `github_list_issues`의 `repository` 인자로만 lower한다. Selected Issue의 `DETAIL_FETCH`는 `resource_id="owner/repository#issue_number"`와 `parent_resource_id="owner/repository"`의 결합을 유지한다. 새 GitHub Retrieval DTO·Graph·repository authority를 만들지 않는다.
 
 #### Operation별 권위
 
-| Operation | LLM/Planner가 결정 | deterministic code가 결정 |
+| Operation | Planner | 결정적 코드 |
 | --- | --- | --- |
-| `SEARCH` | semantic constraint 값, reason | merge, normalize, query identity, Provider query, MCP args |
-| `NEXT_PAGE` | 추가 Page 필요성과 reason | handle binding, raw continuation resolve/injection |
-| `DETAIL_FETCH` | bounded `detail_candidate_ref`, reason | target/resource/tool binding, MCP args |
-| `FREEBUSY` | 필요한 semantic 시간 범위와 reason | timezone/RFC3339, interval arithmetic, MCP args |
+| `SEARCH` | Semantic constraint 값, reason | Merge·normalize·query identity·Provider query·MCP args |
+| `NEXT_PAGE` | 추가 Page 필요성, reason | Handle binding·continuation resolve/injection |
+| `DETAIL_FETCH` | Bounded `detail_candidate_ref`, reason | Target/resource/tool binding·MCP args |
+| `FREEBUSY` | Semantic 시간 범위, reason | Timezone/RFC3339·interval 계산·MCP args |
 
-이 절의 `RetrievalQueryPlanV2 → SourceFetchPlanV1`가 Release canonical이다. `RetrievalQueryPlanV1/RouteQueryIntentV1` 또는 name-only delta는 기존 Artifact/테스트를 읽기 위한 호환 의미일 수 있으나 새 Release planner output authority로 사용하지 않는다.
+현재 Release 계획은 `RetrievalQueryPlanV2 → SourceFetchPlanV1`이다. `RetrievalQueryPlanV1/RouteQueryIntentV1`은 기존 Artifact/테스트의 읽기 호환 범위이며 새 출력에 사용하지 않는다. Name-only delta도 새 실행계획의 권위가 아니다.
 
 ### 5.3 `retrieval.execute_read`
 
-결정적 Application Node다.
+| 항목 | 결정적 Read 처리 |
+| --- | --- |
+| Tool | `input_routes[].allowed_read_tool_ids` 안에서만 호출한다. LLM은 Tool을 다시 선택하지 않는다. |
+| 호출 순서 | Registry metadata와 Query Builder가 계획을 실제 Page·Detail·FreeBusy 호출로 변환한다. |
+| 조회 결과 | 정규화된 List/Search 결과와 continuation은 Run Retrieval Cache entry에 보관한다. Local State에는 handle과 `QueryAttemptV1` metadata만 기록한다. |
+| 다음 Page | 이전 handle을 resolve하되 같은 query·같은 continuation 상태를 반복하지 않는다. |
+| 401·429·5xx·Timeout | LLM Repair가 아니라 기존 Retry/Reauth 계약으로 처리한다. |
 
-- `input_routes[].allowed_read_tool_ids` 안의 Tool만 호출한다.
-- Retrieval LLM은 Tool을 다시 선택하지 않는다. Query Plan을 실제 Tool 호출 순서로 변환하는 것은 Registry metadata와 Query Builder의 결정적 책임이다.
-- Page·Detail Fetch·FreeBusy는 Query Plan과 Route에 따라 결정적으로 호출한다.
-- List/Search MCP Read 결과의 opaque continuation은 Adapter/Application 경계에서 정규화한 뒤 현재 Run의 Run Retrieval Cache entry에만 보관한다. Local State에는 새 `read_result_handle`과 `QueryAttemptV1` metadata만 기록한다.
-- 다음 Round의 `NEXT_PAGE`는 prior handle을 resolve해 continuation을 재사용하되, 동일 query + 동일 continuation state를 새 round로 반복하지 않는다.
-- 401·429·5xx·Timeout은 LLM Repair가 아니라 일반 Retry/Reauth 계약을 따른다.
+`NOT_FOUND`와 `PERMISSION_DENIED`는 정상 빈 조회 결과가 아니다.
+
+- Bounded 실행 결과와 Acquisition Source summary에 `FAILED` 및 정규화된 오류를 보존한다.
+- 다른 Source의 유효 Evidence/cache와 실패한 QueryAttempt 이력은 유지한다.
+- 같은 요청의 검색 반복으로 해결할 수 없는 대상·접근 실패에는 추가 검색을 요구하지 않는다.
+- READ는 확인 범위의 `PARTIAL`, 필수 pre-read가 누락된 WRITE는 기존 안전 Guard를 따른다. Credential 만료의 `REAUTH_REQUIRED`는 이 처리와 구분한다.
 
 ### 5.4 `retrieval.resolve_availability`
 
-Calendar FreeBusy 또는 Event busy interval이 필요한 요청에서만 실행하는 **Retrieval 내부 deterministic Application operation**이다. 이 책임은 availability 산술·정규화를 소유하지만 별도 Supervisor routing authority나 독립 LangGraph Edge를 만들지 않는다. `06 Workflow`의 Retrieval graph topology 안에서 현재 Route/Read 결과를 소비해 `availability_results` Local State를 채우는 결정적 책임으로 취급한다.
+Calendar FreeBusy 또는 Event busy interval이 필요한 요청에서만 가용 시간을 계산한다. Retrieval 내부의 결정적 Application operation이며 별도 Supervisor routing authority나 독립 LangGraph Edge를 만들지 않는다.
 
 ```
 사용자 시간 제약 + Timezone + busy intervals
@@ -446,18 +453,17 @@ Calendar FreeBusy 또는 Event busy interval이 필요한 요청에서만 실행
 → AvailableIntervalV1[]
 ```
 
-- LLM은 가능한 시간 구간의 산술·겹침 계산을 수행하지 않는다.
-- LLM은 `1시간`, `8월 16일 전`, `오후` 같은 의미 제약만 구조화할 수 있고 실제 시각 계산은 이 Node가 수행한다.
-- 여러 가능한 구간 중 업무 의미상 하나를 추천해야 할 때만 Work Analysis가 `AvailableIntervalV1[]`을 소비한다.
+LLM은 `1시간`, `8월 16일 전`, `오후` 같은 의미 제약만 구조화한다. 실제 산술·겹침·차집합 계산은 결정적 코드가 수행하고 결과를 `availability_results`에 둔다. 여러 구간 중 업무상 추천이 필요할 때 Work Analysis가 `AvailableIntervalV1[]`을 소비한다.
 
 ### 5.5 `retrieval.normalize_segments`
 
-- Gmail HTML 안전 텍스트 변환
-- 인용·서명 제거
-- Tasks·Calendar를 공통 WorkItem/SourceDocument/SourceSegment로 정규화
-- 모든 SourceSegment는 `SourceContentSecurityMetaV1`을 가져 Source Content가 `DATA_ONLY`인 비신뢰 입력임을 구조적으로 보존한다.
-- Chunking·Dedup
-- Attachment bytes 제외
+| 처리 | 내용 |
+| --- | --- |
+| Gmail | HTML을 안전 텍스트로 변환하고 인용·서명을 제거한다. |
+| Tasks·Calendar | 공통 WorkItem/SourceDocument/SourceSegment로 정규화한다. |
+| Segment | Chunking·dedup을 수행한다. Identity는 §10.1을 따른다. |
+| Source 신뢰 | 모든 Segment에 아래 security metadata를 부여한다. |
+| Attachment | Bytes를 제외한다. |
 
 ```python
 class SourceContentSecurityMetaV1:
@@ -467,11 +473,11 @@ class SourceContentSecurityMetaV1:
     sanitization_flags: list[str]
 ```
 
-`instruction_like_content_detected=false`도 신뢰 승격을 뜻하지 않는다. 모든 Google Source Content는 항상 비신뢰 데이터이며 이 필드는 탐지·관측·평가 보조 정보다.
+`instruction_like_content_detected=false`도 신뢰 승격이 아니다. Source Content는 항상 비신뢰 `DATA_ONLY`이며, 이 필드는 탐지·관측·평가 보조 정보다.
 
 ### 5.6 `retrieval.rag_retrieve_rerank`
 
-가져온 Segment를 사용자 요청에 대해 검색·정렬한다. Repository/Workflow mapping에서는 이 책임을 `rag_retrieve_rerank`로 통일한다.
+가져온 Segment를 사용자 요청에 대해 검색·정렬하고, 중복을 제거해 Context Budget 안의 상위 후보를 만든다. Repository/Workflow mapping의 책임 이름은 `rag_retrieve_rerank`로 유지한다.
 
 ```python
 class RagCandidateV1:
@@ -481,21 +487,11 @@ class RagCandidateV1:
     reason_codes: list[str]
 ```
 
-P0 기본:
-
-1. Exact Resource/participant/date/keyword deterministic score
-2. lexical retrieval
-3. 선택적 embedding/reranker adapter
-4. dedup
-5. Context Budget에 맞춘 top candidate
-
-RAG backend는 교체 가능하지만 **“후보 전체를 다음 LLM에 전달”하는 구조는 허용하지 않는다.**
+Exact match, lexical retrieval, embedding, reranker 등 구체적인 조합과 순위 산정 방식은 교체 가능한 구현 선택이다. 필수 결과는 **관련 후보를 제한된 Context로 선별하는 것**이며, 후보 전체를 다음 LLM에 전달하는 방식은 허용하지 않는다. 점수 설정의 범위는 §9를 따른다.
 
 ### 5.7 `retrieval.select_evidence`
 
-입력은 `request_intent + top rag candidates`다.
-
-출력:
+입력은 `request_intent + top rag candidates`다. 요청을 뒷받침하거나 반박하는 Segment를 고르며 업무 사실의 최종 해석까지 수행하지 않는다.
 
 ```python
 class EvidenceDraftV1:
@@ -510,13 +506,18 @@ class EvidenceSelectionResultV2:
     excluded_segment_ids: list[str]
 ```
 
-업무 사실의 최종 해석은 하지 않는다. 사용자의 요청을 뒷받침하거나 반박하는 관련 Segment/Evidence를 고르는 것까지만 담당한다.
+| 후보 상태 | Evidence 처리 |
+| --- | --- |
+| 본문을 읽은 후보 | 기존 semantic relevance 판정을 사용한다. |
+| Gmail 본문 없는 검색 preview | Locator의 `is_metadata_only=true`를 유지한다. 검색 일치 후보이지 확정 업무 근거가 아니다. |
+| 아직 본문을 읽지 않은 preview | `CONTEXT`로 유지하고 bounded detail fetch로 관련성을 확인한다. 제목에 핵심 단어가 없다는 이유로 본문 관련성을 부정하지 않는다. |
+| 기존 checkpoint의 marker 없는 Evidence | 기존 relevance 판단을 유지한다. |
 
-`excluded_segment_ids`는 **Retrieval 내부 Evidence selection 결과**다. Browser가 이 field를 직접 mutate하는 경로는 금지한다. 다만 current P0의 `FN-050 Context Preview`는 `run.adjust_context → ContextAdjustmentV1`이라는 validated Application 경계를 통해 사용자 주도 `EXCLUDE_EVIDENCE | RETRIEVE_MORE`를 지원한다. 이 external control은 same Run Retrieval owner로만 전달되고 Browser/Agent가 Main State나 Evidence row를 직접 수정하지 않는다.
+`excluded_segment_ids`는 Retrieval의 selection 결과다. Browser가 직접 수정하지 않으며 사용자 제외·추가 검색은 기존 `run.adjust_context → ContextAdjustmentV1`을 통해 같은 Run의 Retrieval에만 전달한다. Browser·Agent의 Main State/Evidence row 직접 변경은 금지한다. 사용자 제외의 수명은 §4.2를 따른다.
 
 ### 5.8 `retrieval.assess_sufficiency`
 
-입력은 `request_intent + selected evidence`다.
+입력은 `request_intent + selected evidence`다. 조회 진행·coverage는 같은 Run의 제한된 read-result summary로 확인한다.
 
 ```python
 class SufficiencyResultV2:
@@ -528,19 +529,21 @@ class SufficiencyResultV2:
     issues: list[SufficiencyIssueV2]
 ```
 
-새 Resource/Connector가 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`를 반환한다. 같은 Route 안에서 Query/Page/Detail을 늘리면 Local Retrieval Round로 처리한다.
+같은 Route의 Query·Page·Detail 추가는 Local Round다. 새 Resource/Connector가 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`를 반환한다. 부족 정보와 결정적 종료 Guard는 §18을 따른다.
 
-분석이나 사용자 모호성이 없는 단일 selected GitHub Issue의 UPDATE/CLOSE/REOPEN은,
-exact 대상의 required READ가 COMPLETE이고 같은 identity의 Evidence가 확보됐을 때
-기존 `assess_sufficiency`가 source 충분성을 결정적으로 확정할 수 있다.
-요청한 변경 후 title/body/state가 현재 Issue와 다르다는 사실은 source 누락이나 충돌이 아니다.
-다른 Source/Output, 부분 조회, 미해결 slot에는 이 단축을 적용하지 않는다.
-이는 Planning 진입을 위한 source 판정이며, 변경 인자의 완전성·target Evidence binding·Review·
-Approval·실행 admission·재조회 Verification을 대체하지 않는다.
+**단일 selected GitHub Issue의 결정적 충분성 판정**
+
+| 항목 | 조건 |
+| --- | --- |
+| 적용 | 분석·사용자 모호성이 없는 단일 Issue의 `UPDATE/CLOSE/REOPEN` |
+| 필수 조회 | Exact 대상의 required READ가 `COMPLETE`이고 같은 identity의 Evidence가 확보됨 |
+| 변경 값 | 요청한 title/body/state가 현재 값과 다르다는 사실은 Source 누락·충돌이 아님 |
+| 제외 | 다른 Source/Output, 부분 조회, 미해결 slot |
+| 범위 | Planning 진입을 위한 Source 충분성만 판정. 인자 완전성·target Evidence binding·Review·Approval·실행 admission·Verification을 대체하지 않음 |
 
 ### 5.9 `retrieval.finalize_retrieval`
 
-결정적 finalization 책임이다.
+검증된 Local 결과를 공식 Handoff로 조립하는 결정적 책임이다.
 
 ```
 validated source_statuses
@@ -552,17 +555,11 @@ validated source_statuses
 → optional typed WorkflowSignalV1
 ```
 
-규칙:
+새 Query·Resource·Connector·Tool을 선택하거나 Evidence를 재판단하고 RAG를 다시 수행하지 않는다. Same-route loop, route reconsideration, confirmation, partial, blocked의 의미를 임의 변경하지 않는다.
 
-- 새 Query·Resource·Connector·Tool을 선택하지 않는다.
-- Evidence를 새로 판단하거나 RAG를 다시 수행하지 않는다.
-- `assess_sufficiency`까지 검증된 Local State만 공식 `RetrievalResultV1`으로 조립한다.
-- `NEEDS_MORE_DATA`의 same-route bounded loop, `ROUTE_RECONSIDERATION_REQUIRED`, `NEEDS_CONFIRMATION`, `PARTIAL`, `BLOCKED` 의미를 임의로 바꾸지 않는다.
-- Parent에는 공식 `RetrievalResultV1`과 필요한 Typed `WorkflowSignalV1`만 반환한다.
+Parent에는 공식 `RetrievalResultV1`과 필요한 Typed `WorkflowSignalV1`만 반환한다.
 
 ## 6. Parent 반환
-
-Connector READ의 `NOT_FOUND`와 `PERMISSION_DENIED`는 정상 빈 조회 결과가 아니다. `execute_read`는 해당 실패를 bounded 실행 결과로 전달하고, 기존 Acquisition Source summary에 `FAILED`와 정규화된 오류를 보존한다. 성공한 다른 Source의 Evidence/cache와 실패한 QueryAttempt 이력은 유지한다. 동일 요청 내 검색 반복으로 해결할 수 없는 대상·접근 실패는 추가 검색을 요청하지 않으며, READ는 확인 범위의 `PARTIAL`, 필수 pre-read가 누락된 WRITE는 기존 안전 Guard를 따른다. Credential 만료의 기존 `REAUTH_REQUIRED` 계약은 이 처리에 합치지 않는다.
 
 ```python
 class MissingInformationV1:
@@ -601,79 +598,94 @@ class RetrievalResultV1:
     retrieval_rounds: int
 ```
 
-`RetrievalResultV1.excluded_segment_ids`는 current Retrieval lineage의 stable segment exclusion obligation을 공식 artifact로 보존한다. `finalize_retrieval`은 `EvidenceSelectionResultV2.excluded_segment_ids + RetrievalState.exclusion_obligation_segment_ids`를 stable dedup하여 기록한다. `RetrievalResultV1`은 다음 Work Analysis 또는 Planning이 소비할 최소 공식 Handoff다. 복수 IN Route에서는 `source_statuses`가 각 Source의 확인 성공·부분 성공·실패·미시도를 보존해야 하며, downstream은 전체 `coverage`만 보고 모든 Source를 확인했다고 추론하지 않는다. `NEEDS_MORE_DATA`, `NEEDS_CONFIRMATION`, `ROUTE_RECONSIDERATION_REQUIRED`, `BLOCKED`는 `RetrievalResultV1`의 상태값이 아니라 `SubgraphReturnV2.disposition`과 Typed `WorkflowSignalV1`로 전달한다. 이미 확보한 Evidence가 독립적으로 유효하면 `coverage=PARTIAL` 결과와 redirection signal을 함께 반환할 수 있다.
+| 항목 | 반환 의미 |
+| --- | --- |
+| 공식 Handoff | 다음 Work Analysis 또는 Planning이 소비할 최소 결과다. |
+| Source별 상태 | 복수 IN Route의 성공·부분 성공·실패·미시도를 각각 보존한다. 전체 `coverage`만으로 모든 Source가 완료됐다고 추론하지 않는다. |
+| 제외 의무 | `EvidenceSelectionResultV2.excluded_segment_ids + RetrievalState.exclusion_obligation_segment_ids`를 stable dedup하여 결과에 기록한다. |
+| 제어 신호 | `NEEDS_MORE_DATA`, `NEEDS_CONFIRMATION`, `ROUTE_RECONSIDERATION_REQUIRED`, `BLOCKED`는 결과의 coverage 값이 아니라 `SubgraphReturnV2.disposition`과 Typed `WorkflowSignalV1`로 전달한다. |
+| 부분 결과와 신호 | 확보한 Evidence가 독립적으로 유효하면 `coverage=PARTIAL`과 redirection signal을 함께 반환할 수 있다. |
 
 ## 7. 진입 방식
 
 ### RESOURCE_SELECTED
 
-- Tool Route의 IN Resource를 사용자 선택 Resource에 고정
-- 선택 ID를 검색 Query로 다시 추측하지 않고 최신 상세 GET
-- exact direct-read Tool이 Registry에 있으면 선택 Resource의 detail route만 유지하며 같은 Resource 내부 검색을 위한 추측성 dependency route를 추가하지 않는다.
-- 후보 점수와 무관하게 강제 포함
-- 추가 Resource Route가 필요하면 Tool Route 재검토 또는 사용자 확인
+사용자 선택 Resource에 IN Route를 고정하고 최신 상세 GET을 수행한다. 선택 ID를 검색 Query로 다시 추측하지 않으며 후보 점수와 관계없이 포함한다.
+
+Registry에 exact direct-read Tool이 있으면 detail Route만 유지한다. 같은 Resource 내부 검색을 위한 추측성 dependency Route는 추가하지 않는다. 다른 Resource Route가 필요하면 Tool Route 재검토 또는 사용자 확인으로 넘긴다.
 
 ### AGENT_SEARCH
 
-- `RequestIntentV2` + frozen `input_routes` + `retrieval_budget` 기반 Source-native 검색. raw `run_input.user_request`는 Retrieval Local State/Prompt에 별도 Projection하지 않는다.
-- Metadata Page에서 후보 축소
-- RAG로 관련 Segment를 재선택
-- 부족할 때만 같은 Route의 다음 Page·상세 조회 추가
+`RequestIntentV2 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. Raw `run_input.user_request`를 Local State/Prompt에 별도 투영하지 않는다.
+
+Metadata Page에서 후보를 좁히고 RAG로 관련 Segment를 고른다. 부족할 때만 같은 Route의 새 Query·Page·Detail을 선택한다. 검색 후 행동을 Round 번호별로 고정하지 않는다.
 
 ## 8. Connector·Source 전략
 
-Retrieval Core는 `connector_id + resource_type + allowed_read_tool_ids`에 따라 결정적 Query Builder와 `ConnectorReadPort`를 선택하며, Connector별 Source 전략은 Adapter/Tool 계약으로 구체화한다.
+Retrieval Core는 `connector_id + resource_type + allowed_read_tool_ids`에 따라 결정적 Query Builder와 `ConnectorReadPort`를 사용한다. Provider-native query·pagination·detail은 Connector별 Adapter/Tool 계약으로 구체화한다.
 
-P0 Google Workspace Connector:
+아래는 Source별 조회 대상과 처리다. 모든 요청에 동일한 세부 호출 순서를 강제하지 않는다.
 
-- Gmail: Thread 검색 → 참여자·제목·시각·Snippet 필터 → 상위 Thread 상세 → Message 시간순 정리 → Segment RAG
-- Tasks: Task List 결정 → 목록 → 예정일·상태·Keyword 필터 → 필요한 상세 → Segment RAG
-- Calendar: Calendar 결정 → 기간 Event 목록 → 필요한 상세 → 필요할 때 FreeBusy → Segment RAG
+| Source | 조회·정규화 대상 |
+| --- | --- |
+| Gmail | Thread 검색, 참여자·제목·시각·Snippet, 필요한 Thread 상세와 시간순 Message, Segment RAG |
+| Tasks | Task List와 목록, 예정일·상태·Keyword, 필요한 상세, Segment RAG |
+| Calendar | Calendar와 기간 Event, 필요한 상세·FreeBusy, Segment RAG |
+| GitHub Issue | 검증된 repository 범위의 Issue 목록·상세. Container binding은 §5.2-A를 따른다. |
 
-추가 Connector는 동일 Retrieval State·Evidence·Sufficiency 계약을 사용하되 Provider-native query/pagination/detail 전략만 Connector별로 확장한다.
+추가 Connector도 같은 Retrieval State·Evidence·Sufficiency 계약을 사용한다.
 
 ### Tasks 시간 의미
 
-- `TASK + CREATE`의 Policy Precondition Route는 기존 미완료 Task를 조회해 중복 판정에 필요한 후보와 Evidence를 Work Analysis에 제공한다. Retrieval 자체는 업무상 최종 중복 여부나 `action_necessity`를 확정하지 않는다.
-- Google Task `due`는 Retrieval·WorkItem에서 `scheduled_date`로 정규화한다.
-- 실제 업무 `business_deadline`은 Gmail·사용자 요청·Evidence에서 확인한 경우에만 별도 Evidence로 사용한다.
-- Task `due`를 업무 마감 Evidence로 승격하거나 둘을 자동 동일시하지 않는다.
-- 예정일 경과는 Provider 완료 상태의 근거가 아니다.
+| 항목 | 구분 |
+| --- | --- |
+| `TASK + CREATE` 필수 조회 | 기존 미완료 Task의 중복 후보와 Evidence를 Work Analysis에 제공한다. Retrieval이 최종 중복 여부나 `action_necessity`를 확정하지 않는다. |
+| Google `due` | `scheduled_date`로 정규화한다. |
+| `business_deadline` | Gmail·사용자 요청·Evidence에서 확인한 경우에만 별도 근거로 사용한다. `due`와 자동 동일시하지 않는다. |
+| 완료 상태 | 예정일 경과를 Provider 완료 상태로 해석하지 않는다. |
 
 ### Calendar Typed Query 계약
 
-Calendar Route는 §5의 Release-canonical `RouteQueryIntentV2 + SemanticRetrievalConstraintV1 → SourceFetchPlanV1`을 그대로 사용한다. 별도 `calendar_read_mode`나 `temporal_query` DTO를 current contract로 만들지 않는다.
+Calendar도 `RouteQueryIntentV2 + SemanticRetrievalConstraintV1 → SourceFetchPlanV1`을 사용한다. 별도 `calendar_read_mode`나 `temporal_query` DTO를 만들지 않는다.
 
-- Event 조회는 `RouteQueryIntentV2.operation=SEARCH|DETAIL_FETCH`, FreeBusy가 실제로 필요할 때만 `operation=FREEBUSY`를 사용한다. 한 Retrieval round에서 둘 다 필요하면 Query Planner가 typed Route intent를 순서대로 발급하고 deterministic `SourceFetchPlanBuilder`가 각각 materialize한다.
-- 시간 범위는 `TemporalRangeConstraintV1(axis=EVENT_TIME|AVAILABILITY_WINDOW, start_local, end_local, timezone)`로 표현한다. relative weekday/daypart 해석은 Request Understanding/typed intent의 bounded semantics를 소비하고 실제 RFC3339 계산·Timezone 적용·interval arithmetic은 deterministic builder가 전담한다.
-- Daypart canonical window는 `Asia/Seoul` 기준 `MORNING 06:00–12:00`, `AFTERNOON 12:00–18:00`, `EVENING 18:00–21:00`이다.
-- 다른 Resource의 `business_deadline`을 Calendar Query 기준점으로 쓰려면 Work Analysis 결과를 받아 Additional Retrieval로 재진입해야 한다.
+| 항목 | 계약 |
+| --- | --- |
+| `CALENDAR + CREATE` 필수 조회 | 대상 시간대의 Event/FreeBusy 충돌 근거를 확보한다. |
+| Event·FreeBusy | Event는 `SEARCH/DETAIL_FETCH`, 실제 FreeBusy 필요 시 `FREEBUSY`를 사용한다. 둘 다 필요하면 typed Route intent를 순서대로 발급하고 Builder가 각각 구성한다. |
+| 시간 범위 | `TemporalRangeConstraintV1(axis=EVENT_TIME\|AVAILABILITY_WINDOW, start_local, end_local, timezone)` |
+| 의미·계산 구분 | 상대 요일/daypart는 Request Understanding의 typed 의미를 소비한다. RFC3339·Timezone·interval 계산은 결정적 Builder가 소유한다. |
+| Daypart | `Asia/Seoul`: `MORNING 06:00–12:00`, `AFTERNOON 12:00–18:00`, `EVENING 18:00–21:00` |
+| 다른 Resource의 업무 마감 | Work Analysis 결과를 받아 Additional Retrieval로 재진입한 경우에만 Calendar Query 기준점으로 사용한다. |
 
-## 9. 후보 점수 초기값
+## 9. 후보 점수와 조정 가능한 설정
 
-```
-정확 Resource·Thread 관계 +40
-이메일·참여자 일치       +25
-날짜 범위 겹침           +20
-제목 정확 구문           +20
-Keyword                   최대 +15
-상태 적합성               +10
-관련 Resource Link        +15
-최신성                     최대 +10
-```
+후보 점수는 Policy나 확정 identity가 아니라 **순위 산정용 설정**이다. 구체적인 가중치·알고리즘·임계값은 중앙 Retrieval Config에서 관리하고 평가로 선택한다. 초기 가중치를 제품의 영구 계약으로 고정하지 않는다.
 
-점수는 Policy가 아니라 중앙 Retrieval Config와 평가 대상이다.
+| 고려 요소 | 내용 |
+| --- | --- |
+| 대상·관계 | 정확한 Resource·Thread 관계, 관련 Resource Link |
+| 사람 | 이메일·참여자 일치 |
+| 시간·상태 | 요청 기간과의 관계, 상태 적합성, 최신성 |
+| 표현 | 제목의 정확 구문, Keyword·의미 관련성 |
+
+Confidence Band와 낮은 점수의 처리 조건은 §16.3을 따른다.
 
 ## 10. Segment·Evidence
 
-분석·인물·주제 등 추가 조건이 없는 수신 기간 메일 목록은 provider의 timezone-aware
-수신시각과 MESSAGE_TIME 범위를 비교하여 기존 bounded 후보를 선택한다. 본문 행사일이
-검색 기간 밖이거나 뉴스레터라는 이유로 수신 조건을 만족하는 메일을 제외하지 않는다.
-본문 의미 조건이 있으면 기존 semantic relevance 선택을 사용한다.
+**시간 범위와 업무 의미를 구분해 근거를 선택한다.**
+
+| 요청·근거 | 선택 기준 |
+| --- | --- |
+| 추가 분석·인물·주제 조건 없는 수신 기간 메일 목록 | Provider의 timezone-aware 수신시각을 `MESSAGE_TIME` 범위와 비교해 bounded 후보를 선택한다. |
+| 위 수신 조건을 만족하는 뉴스레터·다른 기간 행사 메일 | 본문 행사일이 밖이거나 뉴스레터라는 이유만으로 제외하지 않는다. |
+| 본문 의미 조건이 있는 요청 | 기존 semantic relevance 판정을 사용한다. |
+| 행사 검색 | 실제 행사일과 뉴스레터 발행·집계·대상 기간을 구분한다. 수신시각이나 집계 기간을 행사일로 쓰지 않는다. |
+
+연도 미확정 행사일의 coverage와 반환은 §18을 따른다.
 
 ### 10.1 Stable SourceSegment identity
 
-`segment_id`는 UI row용 임의 UUID가 아니라 **same provider source version을 다시 normalize/chunk했을 때 동일하게 재생성되는 deterministic Evidence identity**다. `05 Retrieval`이 이 identity semantics의 단일 owner다.
+`segment_id`는 같은 Provider Source version을 다시 normalize/chunk했을 때 동일하게 생성되는 **결정적 Evidence identity**다. UI용 임의 UUID가 아니다.
 
 ```python
 class SourceSegmentIdentityV1:
@@ -688,50 +700,63 @@ class SourceSegmentIdentityV1:
     normalized_content_sha256: str
 ```
 
-`segment_id = "seg_" + SHA256(canonical_json(SourceSegmentIdentityV1))`로 생성한다. `source_version_ref`는 Provider가 stable revision/version/etag를 제공하면 사용하고, 없으면 `normalized_content_sha256 + deterministic chunk_ordinal`이 version evidence를 대신한다. Normalize/Chunk algorithm과 `chunk_schema_version`은 같은 입력에 deterministic해야 한다. Random UUID, retrieval revision 번호, query/page ordinal, process-memory handle을 `segment_id` authority로 사용하지 않는다.
+```text
+segment_id = "seg_" + SHA256(canonical_json(SourceSegmentIdentityV1))
+```
 
-`connector_id + resource_type + resource_id`가 Provider Resource의 canonical identity authority다. `source_kind`는 deterministic normalization/source-family discriminator이며 Connector identity나 `resource_type`을 재선택·재추론하거나 Tool Route를 변경하는 authority가 아니다. 관측된 Connector/Resource에서 결정적 코드가 생성하며 LLM이 만들지 않는다.
+| 항목 | Identity 규칙 |
+| --- | --- |
+| Source version | Provider의 stable revision/version/etag가 있으면 `source_version_ref`에 사용한다. 없으면 content hash와 deterministic chunk ordinal이 version evidence를 대신한다. |
+| 재생성 | 같은 Resource version·normalized content·chunk schema/boundary는 fresh Retrieval에서도 같은 ID를 만든다. Normalize/Chunk와 `chunk_schema_version`은 같은 입력에 결정적이어야 한다. |
+| 변경 | Source version/content 또는 chunk schema가 바뀌어 Evidence 의미가 달라지면 새 ID를 만든다. 과거 exclusion을 임의 승계하지 않는다. |
+| 금지 입력 | Random UUID, retrieval revision 번호, query/page ordinal, process-memory handle을 ID 권위로 사용하지 않는다. |
+| Resource identity | `connector_id + resource_type + resource_id`가 기준이다. |
+| `source_kind` | 관측된 Source의 normalization discriminator다. 결정적 코드가 생성하며 Connector/Resource identity나 Tool Route를 재선택하는 권위가 아니다. |
+| 사용자 제외 | 선택 당시 current Preview의 stable ID만 허용하고 `expected_retrieval_revision` membership을 검증한다. |
 
-GitHub Issue는 `connector_id="github"`, `resource_type="github_issue"`, `resource_id="owner/repository#issue_number"`를 계속 사용한다. `source_kind="github"`는 이 identity를 대체하지 않는다. `github_list_issues`의 각 Issue는 이 composite `resource_id`를 가진 독립 Resource observation이며 list 전체를 synthetic 단일 Resource로 만들지 않는다.
+**GitHub Issue**
 
-GitHub Issue의 Evidence 발췌는 Provider가 관측한 repository, issue number, title, state, URL을 본문과 구분해 보존한다. 본문 설명은 이 관측 identity나 존재 사실을 부정하는 authority가 아니다. Normalize는 기존 payload의 값만 표시하며 누락된 metadata를 추측하지 않는다. 이 형식 변경은 GitHub chunk schema를 갱신하고, 이전 Evidence/checkpoint는 기존 발췌와 identity 그대로 유지한다.
+`connector_id="github"`, `resource_type="github_issue"`, `resource_id="owner/repository#issue_number"`를 사용한다. `source_kind="github"`는 이를 대체하지 않는다. `github_list_issues`의 각 Issue는 독립 Resource observation이며 목록 전체를 synthetic 단일 Resource로 만들지 않는다.
 
-- 같은 Provider resource version + 같은 normalized content + 같은 chunk schema/boundary면 fresh Retrieval에서도 같은 `segment_id`를 생성한다.
-- Provider source version/content 또는 chunk schema가 바뀌어 Evidence 의미가 달라지면 새 `segment_id`를 발급한다. 과거 exclusion을 변경된 content에 임의 승계하지 않는다.
-- `EXCLUDE_EVIDENCE`는 선택 당시 current Preview의 stable `segment_id`만 허용한다. Application은 `expected_retrieval_revision` membership을 검증한다.
+Evidence 발췌에는 Provider가 관측한 repository·issue number·title·state·URL을 본문과 구분해 보존한다. 본문은 이 identity나 존재 사실을 부정하는 권위가 아니다. Normalize는 payload에 있는 값만 표시하고 누락된 metadata를 추측하지 않는다.
 
-### 10.2 Segment·Evidence size · trust boundary
+발췌 형식 변경은 GitHub chunk schema에 반영한다. 과거 Evidence/checkpoint의 발췌와 identity를 소급 변경하지 않는다.
 
-- Gmail Chunk 목표 600 Token, 최대 900 Token, Overlap 80 Token
-- Token은 Provider-independent deterministic estimated token 단위다.
-- Evidence excerpt UTF-8 8 KiB 이하
-- Source 원문은 비신뢰 데이터
-- 실제 계획에 사용된 최소 Evidence만 Domain Store에 저장
+### 10.2 Segment·Evidence 크기와 신뢰 경계
+
+| 항목 | 기준 |
+| --- | --- |
+| Gmail Chunk | 현재 설정: 목표 600 Token, 최대 900 Token, Overlap 80 Token |
+| Token 단위 | Provider-independent deterministic estimated token |
+| Evidence excerpt | UTF-8 8 KiB 이하 |
+| 신뢰 | Source 원문은 비신뢰 데이터 |
+| Domain 저장 | 실제 계획에 사용한 최소 Evidence만 저장 |
+
+Chunk 길이·overlap은 검색 품질과 Context 사용량을 평가할 구현 설정이며, Source 신뢰·identity·Evidence 보존 경계를 바꾸는 근거가 아니다.
 
 ## 11. Context Budget
 
-- System·Policy·Tool Schema 최대 15%
-- 사용자 요청·대화 최대 15%
-- 검색 Context 목표 50~55%
-- Structured Output Reserve 최소 10%
-- Safety Margin 최소 10%
+Context는 필요한 입력과 Evidence를 담되, 답변 생성·Structured Output·안전 여유를 남겨야 한다. System/Policy/Tool Schema, 현재 Run의 입력, 검색 Context, Output reserve의 비율은 호출 목적과 평가 결과에 따라 조정한다. 고정 백분율을 모든 Node에 적용하지 않는다.
 
-Node Projection 규칙 때문에 Tool Route 전체·Registry 전체·후보 전체를 모든 Retrieval LLM 호출에 반복 삽입하지 않는다.
+Node별 Projection에 필요한 필드만 사용한다. Tool Route 전체·Registry 전체·후보 전체를 매 호출에 반복 삽입하지 않으며, 화면의 과거 대화를 Retrieval 입력으로 자동 추가하지 않는다.
 
 ## 12. 추가 Retrieval
 
-```
-Round 0 정확 검색
-Round 1 같은 IN Route에서 제약 하나 완화 또는 다음 Page/Detail
-Round 2 같은 IN Route의 마지막 표적 확장
-```
+첫 결과와 미해결 조건을 관측한 뒤 다음 행동을 정한다. Round별로 '정확 검색 → 제약 완화 → 마지막 확장' 순서를 고정하지 않는다.
 
-- 같은 IN Route 내부 확장은 Retrieval Subgraph가 소유한다.
-- 사용자 지정 범위를 벗어나는 기간 확장은 확인을 우선한다.
-- 새로운 Resource/Connector가 필요하면 `RouteReconsiderationRequiredV1`과 함께 `ROUTE_RECONSIDERATION_REQUIRED`를 Parent에 반환한다.
-- 동명이인·대상 복수·사용자만 해결 가능한 정보는 추가 Google 조회보다 확인 질문을 우선한다.
+| 필요한 정보 | 같은 IN Route 안의 선택 |
+| --- | --- |
+| 현재 검색의 미확인 결과 | 유효한 continuation으로 `NEXT_PAGE` |
+| 후보의 실제 내용 | 필요한 대상의 `DETAIL_FETCH` |
+| 다른 발견 가설 | 관측된 부족 정보에 근거한 `CHANGED SEARCH` |
 
-## 13. 초기 API Budget
+추가 Retrieval은 기존 횟수·Page·Detail·LLM Budget 안에서만 수행한다. 새 Query에서도 사용자 anchor와 필수 제약은 보존한다. 세부 반복 판정은 §16.2를 따른다.
+
+사용자 범위 밖 기간 확장은 먼저 확인받는다. 새 Resource/Connector는 Local Retry로 추가하지 않고 `RouteReconsiderationRequiredV1`과 `ROUTE_RECONSIDERATION_REQUIRED`를 Parent에 반환한다. 조회로 해결할 수 있는 모호성과 사용자만 결정할 수 있는 선택은 구분하며, 후자는 추가 조회보다 Confirmation을 우선한다.
+
+## 13. API Budget
+
+API Budget은 다음 설정으로 제한한다. 검색 전략이나 재진입으로 상한을 우회하거나 사용량을 초기화하지 않는다.
 
 ```
 RETRIEVAL_PAGE_SIZE=<configured>
@@ -746,29 +771,30 @@ MAX_TOTAL_DETAIL_RESOURCES=12
 
 ## 14. Cache와 영속 경계
 
-- Sidebar Cache: React Session Memory
-- Run Retrieval Cache: 현재 Run Memory, Run 종료 시 폐기
-- Main Graph State: `RetrievalResultV1`과 Cache/Evidence Reference만 저장
-- 강제 최신 조회: RESOURCE_SELECTED 시작, Plan 확정 전, 승인 후 실행 전, 실행 후 Verification
-- 저장 금지: 전체 Sidebar 목록, **Main State·Checkpoint·Domain DB·Trace·Audit·Prompt의 Raw Provider Page Token**, 미사용 후보, Gmail 전체 원문, FreeBusy 전체 응답, RAG 후보 전체와 score 전체
+| 위치 | 보존 범위 |
+| --- | --- |
+| Sidebar Cache | React Session Memory |
+| Run Retrieval Cache | 현재 Run의 조회 원문·중간 후보. Run 종료 시 폐기. Continuation의 유일한 저장 위치와 검증은 §4.1을 따른다. |
+| Main Graph State | `RetrievalResultV1`과 Cache/Evidence Reference |
+| Domain Store | 실제 사용 ResourceRef, 최소 Evidence excerpt, Action 연결 |
 
-예외: Retrieval local pagination을 위한 raw Provider continuation은 **현재 Run의 Run Retrieval Cache read-result entry 내부에서만 memory-only**로 보관할 수 있다. Local State에는 raw token이 아니라 `read_result_handle`과 continuation state hash만 남기며 Run 종료 시 함께 폐기한다.
+전체 Sidebar 목록, 미사용 후보, Gmail 전체 원문, FreeBusy 전체 응답, RAG 후보·score 전체를 영속하거나 Main State에 복제하지 않는다. Raw Provider Page Token은 Main State·Checkpoint·Domain DB·Trace·Audit·Prompt에 저장하지 않는다.
 
-- 저장 허용: 실제 사용 ResourceRef, 최소 Evidence excerpt, Action 연결
+강제 최신 조회 시점은 `RESOURCE_SELECTED` 시작, Plan 확정 전, 승인 후 실행 전, 실행 후 Verification이다. Cache가 이 확인을 대체하지 않는다.
 
 ## 15. Evaluation consumption boundary
 
-`05 Retrieval`은 제품 Retrieval semantics와 runtime artifact만 소유한다. Dataset·Case·Fixture·Gold·`evaluation_item_id`·Candidate 비교 schema는 `13 Evaluation`이 소유하며 이 문서에서 복제하지 않는다.
+이 문서는 제품 Retrieval 의미와 runtime artifact를 소유한다. Dataset·Case·Fixture·Gold·`evaluation_item_id`·후보 비교와 채점 방식은 `13 Evaluation`에 두고 여기서 다시 정의하지 않는다.
 
-평가가 Retrieval을 비교할 때는 current owner contract의 `ToolRoutePlanV2`, `RetrievalResultV1`, `QueryAttemptV1`, Evidence/Resource reference와 configured Retrieval identity를 소비한다. Backend 비교는 동일한 입력 Route·Fixture 조건을 유지하고 비교하려는 backend/config만 변경한다. Evaluation metadata는 Product Prompt, Main State, Checkpoint, Domain DB의 새로운 authority field가 될 수 없다.
+평가는 현재 `ToolRoutePlanV2`, `RetrievalResultV1`, `QueryAttemptV1`, Evidence/Resource reference, configured Retrieval identity를 소비한다. 평가 metadata를 Product Prompt·Main State·Checkpoint·Domain DB의 새 권위 필드로 넣지 않는다.
 
 ## 16. QueryAttempt·Confidence·재검색 계약
 
-이 절은 `15 Agent Capability · Failure · Prompt` current contract를 적용한다.
+실패 분류는 `15 Prompt·Failure`의 공통 계약을 따른다.
 
 ### 16.1 QueryAttemptV1
 
-`QueryAttemptV1`은 이 문서가 소유하는 **유일한 Release current schema**다. `15 Prompt/Failure`는 이 타입을 소비·검증할 뿐 별도 `schema_version=1` payload를 정의하지 않는다.
+`QueryAttemptV1`의 현재 schema는 이 문서가 소유한다. `15 Prompt·Failure`는 이를 소비·검증하며 별도 같은 버전의 payload를 정의하지 않는다.
 
 ```python
 class ValidatedReadQuerySpecV1:
@@ -805,86 +831,112 @@ class QueryAttemptV1:
 
 ### 16.2 반복과 Pagination
 
-- 같은 Query와 새로운 Page Token을 사용하는 `NEXT_PAGE`는 정상 Pagination이다.
-- 실패 뒤 같은 Query와 같은 Page 상태로 `SEARCH`를 반복하면 `QUERY_UNCHANGED_AFTER_FAILURE`다.
-- `DETAIL_FETCH` 재호출은 Run Cache 또는 Provider 기술 재시도 규칙을 따른다.
-- 추가 Retrieval 시 최소 하나의 제약 변경 또는 같은 Route의 Page/Detail 확장이 있어야 한다.
-- 새로운 Resource Route를 Local Retry로 몰래 추가하지 않는다.
+| 상황 | 처리 |
+| --- | --- |
+| 같은 Query + 새로운 Page Token | 정상 `NEXT_PAGE`다. |
+| 실패 뒤 같은 Query + 같은 Page 상태 | `QUERY_UNCHANGED_AFTER_FAILURE`로 차단한다. |
+| `DETAIL_FETCH` 재호출 | Run Cache 또는 Provider 기술 재시도 계약을 따른다. |
+| 추가 Retrieval | 최소 하나의 유효한 제약 변경 또는 같은 Route의 Page/Detail 확장이 있어야 한다. |
+| 새로운 Resource Route | Local Retry로 추가하지 않는다. |
+
+**검색 페이지의 coverage**
+
+READ Sufficiency는 같은 Run Cache의 bounded read-result summary로 미소비 페이지를 확인한다.
+
+- Selected exact resource 조회를 제외한 검색에 미확인 페이지가 남으면 전체 확인으로 판정하지 않는다. `source_page_coverage`의 `MISSING` Issue를 유지하고 Budget 안에서 `NEXT_PAGE`를 수행한다. 예산상 불가능하면 `PARTIAL`이다.
+- 같은 Route의 Detail 조회는 검색의 미소비 페이지를 대신하지 않는다.
+- `NEXT_PAGE`는 현재 검색 제약의 query identity에 결합된 handle을 사용한다. Detail resource의 query identity나 마지막 detail handle은 pagination 권위가 아니다.
+- Query identity별 최신 page summary만 continuation 상태를 대표한다. 마지막 Page가 소진되면 이전 Page의 token을 다시 소비하지 않는다.
+- QueryAttempt 이력으로 이미 소비한 token의 재사용을 Provider 호출 전에 차단한다. Raw continuation 저장소나 Budget 권위를 추가하지 않는다.
 
 ### 16.3 저신뢰 후보
 
-- Confidence Band는 `HIGH`, `MEDIUM`, `LOW`, `NONE`으로 고정한다.
-- 실제 점수와 Threshold는 중앙 Retrieval Config가 소유한다.
-- `AGENT_SEARCH`에서 `LOW` 또는 `NONE` 후보만 존재하면 자동 확정하지 않는다.
-- `RESOURCE_SELECTED`는 사용자가 고른 Resource ID를 점수와 관계없이 상세 GET한다.
-- 후보 1위와 2위의 점수 차이가 설정된 Margin보다 작으면 확인 또는 추가 Retrieval로 전환한다.
+| 항목 | 처리 |
+| --- | --- |
+| Confidence Band | `HIGH`, `MEDIUM`, `LOW`, `NONE` |
+| 실제 점수·Threshold | 중앙 Retrieval Config에서 관리 |
+| `AGENT_SEARCH`에 `LOW/NONE`만 존재 | 자동 확정하지 않음 |
+| `RESOURCE_SELECTED` | 점수와 관계없이 선택 ID의 상세 GET |
+| 상위 1·2위 점수 차이가 설정 Margin 미만 | 확인 또는 추가 Retrieval |
 
-### 16.4 결정적 평가
+### 16.4 관측할 제약
 
-다음 항목은 LLM Judge가 아니라 코드 Grader가 우선한다.
+조회와 결과에서 다음 위반 여부를 확인할 수 있어야 한다. 채점 방식은 §15의 평가 경계를 따른다.
 
-- ToolRoute의 허용 Read Tool 밖 호출 여부
-- 사용자 날짜·사람·이메일·선택 Resource가 Query Spec에 반영됐는지
-- 같은 실패 Query가 반복됐는지
-- 추가 Retrieval 횟수와 Source Page Budget 준수
-- 저신뢰 후보를 임의로 확정했는지
-- RAG Top Candidate 밖 Evidence를 근거 없이 생성했는지
+| 항목 | 확인 대상 |
+| --- | --- |
+| 허용 범위 | ToolRoute 밖 Read Tool 호출 |
+| 요청 보존 | 날짜·사람·이메일·선택 Resource의 Query Spec 반영 |
+| 진행 | 같은 실패 Query의 반복 |
+| Budget | 추가 Retrieval 횟수·Source Page 사용량 |
+| 불확실성 | 저신뢰 후보의 임의 확정 |
+| Evidence | RAG Top Candidate 밖 근거의 무단 생성 |
 
 ## 17. Clarification · Overbroad Retrieval
 
-Retrieval의 `PersonCandidateV1(mention, identity, display_names, source_segment_ids)`는
-관측 metadata의 표시 이름↔email 결합만 보존한다. 다른 메시지의 같은 email에 붙은 별칭은
-합칠 수 있지만 surname/title만으로 서로 다른 email을 합치지 않는다. 이름만 지정한 요청은
-metadata의 동일한 전체 이름에 직급이 붙은 경우에도 후보로 연결한다. 이름의 부분 문자열이나
-성만으로 다른 전체 이름을 일치시키지 않으며, 동명이인의 email은 별도 후보로 유지한다. 이 bounded 후보는
-Retrieval local checkpoint 및 `RetrievalResultV1.person_candidates`에 보존한다. 이전 artifact에
-필드가 없으면 빈 후보로 취급하며, 후보의 source segment provenance가 제외된 경우 재사용하지 않는다.
-fresh validated Evidence assessment가 요청 의미를 SUPPORTS하는 source provenance를 후보 하나에만
-결합하면 그 관측 identity를 선택할 수 있다. SUPPORTS provenance가 복수 후보에 남거나 유일 결합이
-없으면 기존 Retrieval Confirmation 옵션으로 노출하고 선택 email은 해당 후보 집합에서만 수용한다.
-유일하게 확인된 후보 또는 사용자 선택 후 같은 frozen Route에서 exact PARTICIPANT 후속 검색을
-수행한다. 이것은 RequestIntent의 사용자 원문을 바꾸거나 LLM에게 email 생성 권한을 주지 않는다.
+### 17.1 인물 후보와 선택
 
-- 요청 자체에서 드러나는 모호성은 Request Understanding에서 확인한다.
-- Tool Route가 불명확하면 Tool Route Subgraph가 확인한다.
-- 동명이인·복수 Resource·저신뢰 후보처럼 검색 후 드러나는 모호성은 후보·차이와 함께 `NEEDS_CONFIRMATION`으로 보낸다.
-- 전체 Mailbox·장기간 무제한 원문·모든 Workspace Source 전체 조회는 `BLOCKED`다.
-- Calendar 시간 overlap은 conflict와 분리하며 관계 근거를 Work Analysis에 전달한다.
+`PersonCandidateV1(mention, identity, display_names, source_segment_ids)`는 수집한 SourceSegment의 관측 metadata와 명시적인 이름↔email 연결을 보존한다. 후보가 있다는 것과 대상이 확정됐다는 것은 다르다.
+
+| 항목 | 처리 |
+| --- | --- |
+| 별칭 병합 | 같은 email에 붙은 다른 메시지의 별칭은 합칠 수 있다. Surname/title만으로 서로 다른 email을 합치지 않는다. |
+| 이름 일치 | 요청의 전체 이름과 같은 metadata 이름에 직급이 붙은 경우 후보로 연결할 수 있다. 부분 문자열·성만으로 다른 전체 이름을 일치시키지 않는다. |
+| 동명이인 | Email별 별도 후보로 유지한다. |
+| 후보 보존 | 제한된 후보를 Retrieval local checkpoint와 `RetrievalResultV1.person_candidates`에 보존한다. 필드 없는 기존 artifact는 빈 후보로 읽는다. |
+| Selection의 `EXCLUDED` | 이것만으로 candidate를 삭제하지 않는다. 후보 목록은 보존한다. |
+| 사용자 exclusion | 제외된 source segment의 provenance를 철회한다. 철회된 provenance를 후보 근거로 재사용하지 않는다. |
+| 유일한 근거 연결 | Fresh validated Evidence assessment의 `SUPPORTS` provenance가 요청 인물 표현과 후보 하나에만 연결되면 해당 관측 identity를 선택할 수 있다. |
+| 복수·미해결 후보 | 복수 `SUPPORTS` 후보 또는 유일한 결합이 없으면 기존 Retrieval Confirmation에 후보·차이를 제시한다. 선택 email은 그 후보 집합 안에서만 수용한다. |
+| 선택 후 조회 | 유일하게 확인된 후보 또는 검증된 사용자 선택으로 같은 frozen Route에서 exact PARTICIPANT 후속 검색을 수행한다. |
+
+선택은 `selected_person_identities`로 같은 Run에 보존한다. RequestIntent의 사용자 원문을 바꾸거나 LLM에게 email 생성 권한을 주지 않는다.
+
+Planning Handoff에는 확인된 선택을 전달한다. 답변 projection은 선택되지 않은 인물만의 Evidence를 제외하되 원래 Run Evidence를 삭제하지 않는다. Optional `selected_person_identities`가 없는 기존 호출·checkpoint는 생략을 허용한다.
+
+### 17.2 확인·차단 경계
+
+| 상황 | 처리 |
+| --- | --- |
+| 요청 자체의 모호성 | Request Understanding에서 확인 |
+| Tool Route의 불명확성 | Tool Route Subgraph에서 확인 |
+| 검색 뒤 남은 동명이인·복수 Resource·저신뢰 후보 | 후보와 차이를 포함해 `NEEDS_CONFIRMATION` |
+| 전체 Mailbox·장기간 무제한 원문·모든 Workspace Source 전체 조회 | `BLOCKED` |
+| Calendar 시간 overlap | 업무 conflict와 동일시하지 않고 관계 근거를 Work Analysis에 전달 |
 
 ## 18. 정보 부족 분류와 결정적 종료 Guard
 
-시간 역할은 RequestIntent의 typed 의미를 보존한다. 수신/발송 표현이 명확한 경우만
-MESSAGE_TIME으로 보강하며, 알려진 행사 단어 목록에 없다는 이유로 EVENT_TIME을
-MESSAGE_TIME으로 바꾸지 않는다. 역할이 미해결이면 received-time lowering을 하지 않는다.
+**시간축과 검색 연도**
 
-인물 후보는 수집된 SourceSegment의 metadata와 명시적인 이름·이메일 연결을 근거로 만든다.
-Evidence EXCLUDED만으로 후보를 제거하지 않으며 candidate 목록은 보존한다. 다만 fresh validated
-Evidence assessment의 SUPPORTS source provenance가 요청의 인물 표현과 후보 하나만 결합하면
-그 identity를 `selected_person_identities`로 확인할 수 있다. 실제 복수 SUPPORTS 후보가 남으면
-단일 인물로 축소하지 않는다. 사용자 exclusion만 candidate provenance를 철회할 수 있다.
-확인된 선택은 `selected_person_identities`로 same-Run에서 보존하며 Planning의 답변
-projection은 선택되지 않은 인물만의 근거를 제외한다. 원래 Run Evidence는 삭제하지 않는다.
-분석이 필요하지 않은 날짜·인물 lookup도 선택된 근거의 의미를 Planning 답변으로 정리한다.
-Evidence 원문 dump는 답변 생성을 대체하지 않는다. 인용된 ISO offset을 임의의 오전/오후·요일로 재계산하지 않는다.
-`planning.compose_answer` V2 input의 optional `selected_person_identities`가 이 선택을
-전달한다. 기존 호출·checkpoint는 필드 생략이 가능하며 natural-language intent를 위조하지 않는다.
+RequestIntent의 typed 시간 의미를 보존한다. 명확한 수신/발송 의미는 `MESSAGE_TIME`으로 사용하되, 알려진 행사 단어 목록에 없다는 이유로 `EVENT_TIME`을 바꾸지 않는다. 시간 역할이 미해결이면 received-time lowering을 하지 않는다.
 
-행사 날짜의 연도가 원문에서 확정되지 않았으면 검색 기간의 연도를 사실로 승격하지 않는다.
-선택된 Evidence의 연도 미확정 날짜(명시적 보고·집계 기간은 제외)는
-`unresolved_event_dates`에 원문·Evidence
-참조와 함께 전달한다. 다른 resource의 검색 시간 제약을 전파하지 않는다.
-READ의 해당 날짜 범위는 PARTIAL이며 Retrieval finalization은 이를 coverage에 반영한다. Planning은 해당 근거를
-요청에 대한 요약과 연도 미확정 안내로 제시하며, 필요한 날짜 원문만 인용할 수 있다. 뉴스레터 CONTEXT의 집계 기간이나 수신시각을
-행사일로 사용하지 않는다. 구 checkpoint에서 이 선택 필드가 없으면 빈 목록으로 읽는다.
+| 요청 | 검색에 사용할 연도 |
+| --- | --- |
+| 명시 연도 | 지정한 연도를 그대로 사용 |
+| 월만 지정한 수신시각 검색 | Run-local 기준 이미 시작된 가장 최근 해당 월 |
+| 월만 지정한 행사 검색 | 인접 연도 중 Run-local 날짜에 가장 가까운 해당 기간 |
 
-READ follow-up은 기존 RunBudget 안에서 답변 outline/compose와 bounded repair 여유를
-남긴다. `analysis_requirement=REQUIRED`인 READ는 기존 Work Analysis의 여섯 semantic
-operation도 같은 상한 안에서 고려한다. 부분 결과도 확보한 답변 예산 안에서 근거를 요약하며
-전체 성공을 주장하지 않는다. 정상 no-result의 기존 결정적 projection은 유지한다.
-추가 수집이 답변 여유를 침범하면 이미 검증된 Evidence를 보존해 PARTIAL로
-닫는다. 결정적으로 종료할 수 있는 sufficiency는 LLM 호출을 요구하지 않으며 사용하지 않은
-호출을 counter/Trace에 기록하지 않는다. WRITE의 필수 Target/Argument/Policy Evidence가
-미확정인 경우 이 READ 최적화를 적용하지 않는다.
+월만 지정한 경우의 연도는 **검색 가설**이다. 이를 원문에서 생략된 행사 연도·요일의 확정 근거로 사용하지 않는다.
+
+**연도 미확정 행사일**
+
+| 항목 | 처리 |
+| --- | --- |
+| 전달 대상 | 선택된 Evidence의 연도 미확정 행사 날짜. 명시적 보고·집계 기간은 제외. |
+| 결과 | `unresolved_event_dates`에 원문·Evidence 참조와 함께 전달한다. 다른 Resource의 검색 시간 제약을 전파하지 않는다. |
+| Coverage | READ의 해당 날짜 범위는 `PARTIAL`이며 finalization에 반영한다. |
+| Downstream 사용 | 요청에 맞는 요약과 연도 미확정 안내로 제시할 수 있다. 필요한 날짜 원문은 인용하되 수신시각·집계 기간을 행사일로 대체하지 않는다. |
+| 호환 | 선택 필드가 없는 기존 checkpoint는 빈 목록으로 읽는다. |
+
+분석이 필요하지 않은 날짜·인물 lookup도 근거의 의미를 정리해야 한다. Evidence 원문 dump가 답변 생성을 대신하지 않으며, 인용된 ISO offset을 임의 오전/오후·요일로 재계산하지 않는다.
+
+**답변 예산을 남기는 READ 종료**
+
+READ follow-up은 기존 RunBudget 안에서 답변 outline/compose와 bounded repair 여유를 남긴다. `analysis_requirement=REQUIRED`이면 필요한 Work Analysis도 같은 상한 안에서 고려한다. 이 요구를 특정 operation 개수에 고정하지 않는다.
+
+추가 수집이 답변 여유를 침범하면 검증된 Evidence를 보존해 `PARTIAL`로 닫는다. 부분 답변은 확인된 근거만 요약하고 전체 성공을 주장하지 않는다. 정상 no-result의 기존 결정적 projection은 유지한다.
+
+결정적으로 종료 가능한 sufficiency에 LLM 호출을 요구하지 않으며, 수행하지 않은 호출을 counter/Trace에 기록하지 않는다. WRITE의 필수 Target/Argument/Policy Evidence가 미확정이면 이 READ 최적화를 적용하지 않는다.
 
 ### 18.1 Sufficiency Issue
 
@@ -900,15 +952,32 @@ class SufficiencyIssueV2:
     reason_codes: list[str]
 ```
 
-`CONNECTOR`는 current frozen Route가 가리키는 non-Google Connector에서 추가 deterministic Retrieval을 수행하면 해결 가능한 정보 부족을 뜻한다. Connector·Tool·Route 재선택, Provider autodiscovery 또는 새 routing authority를 허용하지 않는다. GitHub와 이후 non-Google Connector의 부족 정보는 `CONNECTOR`를 사용하며 `GOOGLE`로 표현하지 않는다.
+| Resolution source | 의미 |
+| --- | --- |
+| `GOOGLE` | 기존 Google Workspace producer·checkpoint·schema의 값으로 유지한다. |
+| `CONNECTOR` | Frozen Route의 non-Google Connector에서 추가 결정적 조회로 해결 가능한 부족 정보다. GitHub도 이 값을 사용한다. |
+| `USER` | 사용자만 해결할 수 있는 정보·선택 |
+| `POLICY` | 정책상 필요한 조건 |
+| `ROUTE` | Route 재검토가 필요한 조건 |
 
-외부 조회 부족 Issue는 `route_id`로 해당 frozen IN Route에 결합한다. source status와 Evidence도 같은 Route에 결합하며 같은 Connector의 성공 결과로 다른 Route의 실패·미시도를 덮지 않는다. 구 checkpoint의 route 없는 GOOGLE/CONNECTOR Issue는 해당 source의 frozen Route가 하나일 때만 호환 결합한다. 복수 후보 또는 Route 없는 back-edge need는 추측하지 않고 기존 ROUTE reconsideration으로 반환한다. USER/POLICY 전역 Issue는 route_id를 생략할 수 있다. policy 필수 조회의 실패·미시도는 safety-critical이며, 완료된 빈 중복/충돌 확인과 구분한다.
+`GOOGLE`을 `CONNECTOR`로 migration·rename·제거하지 않는다. 두 값의 producer 범위는 다르지만 종료 Guard에서는 현재 frozen Route의 추가 외부 조회로 해결 가능한 같은 class로 처리한다. `CONNECTOR`가 새 Tool·Route 선택이나 Provider autodiscovery 권한을 만들지는 않는다.
 
-`GOOGLE`은 기존 Google Workspace producer·checkpoint·schema compatibility value로 유지한다. 이번 확장에서 기존 Google producer를 `CONNECTOR`로 migration하거나 `GOOGLE`을 rename·deprecate·remove하지 않는다. 두 값은 producer 범위는 분리되지만 deterministic termination guard에서는 current frozen Route의 추가 external Connector Retrieval로 해결 가능한 같은 class로 처리한다.
+**Route 결합**
 
-Sufficiency/LLM-local projection에서 coarse resource category가 필요하면 GitHub Issue에는 `ISSUE`를 사용할 수 있다. `ISSUE`는 canonical Connector `resource_type`이 아니며 `github_issue`를 대체하거나 `TASK`로 변환하지 않는다. 최종 `RetrievalResultV1.source_statuses[].resource_type`은 frozen Route의 exact `github_issue`를 보존한다.
+| 대상 | 규칙 |
+| --- | --- |
+| 외부 조회 부족 | `route_id`로 해당 frozen IN Route에 결합한다. Source status·Evidence도 같은 Route에 결합한다. |
+| 다른 Route의 성공 | 같은 Connector라는 이유로 실패·미시도를 덮지 않는다. |
+| Route 없는 기존 `GOOGLE/CONNECTOR` Issue | 해당 Source의 frozen Route가 하나일 때만 호환 결합한다. |
+| 복수 후보·Route 없는 back-edge need | 추측하지 않고 기존 Route reconsideration으로 반환한다. |
+| `USER/POLICY` 전역 Issue | `route_id` 생략 가능 |
+| Policy 필수 조회 실패·미시도 | Safety-critical로 처리한다. 완료된 빈 중복/충돌 확인과 구분한다. |
+
+Sufficiency/LLM-local projection의 coarse category로 GitHub Issue에 `ISSUE`를 사용할 수 있다. 이는 canonical `resource_type`이 아니며 `github_issue`를 대체하거나 `TASK`로 변환하지 않는다. 최종 `source_statuses[].resource_type`은 frozen Route의 exact `github_issue`를 보존한다.
 
 ### 18.2 결정적 종료 Guard
+
+종료 Guard는 다음 순서로 적용한다.
 
 1. `required=true`이면서 safety-critical 또는 `resolution_source=POLICY`면 `BLOCKED`.
 2. `resolution_source=USER`면 추가 external Connector 조회보다 `NEEDS_CONFIRMATION` 우선.
@@ -921,8 +990,10 @@ LLM confidence 하나로 안전 Route를 결정하지 않는다. 모든 Graph Pr
 
 ## 19. Gmail Attachment Retrieval 경계
 
-- Gmail Message 상세의 첨부파일은 `filename`, `mime_type`, `size_bytes`, Google `attachment_id` Metadata까지만 Retrieval 후보 정보로 사용할 수 있다.
-- `gmail_get_attachment(message_id, attachment_id)`는 사용자 다운로드 또는 결정적 파일 전달 요청에서만 실행한다.
-- 첨부파일 bytes는 Retrieval Cache·SourceSegment·EvidenceDraft·ContextBundle에 넣지 않는다.
-- 첨부파일 내용을 읽어 Evidence로 만드는 기능은 P0 범위 밖이다.
-- Attachment Download는 LLM 재검색·추가 Retrieval Budget과 분리된 결정적 READ I/O다.
+| 항목 | 허용 범위 |
+| --- | --- |
+| Retrieval 후보 정보 | Message 상세의 `filename`, `mime_type`, `size_bytes`, Google `attachment_id` metadata |
+| `gmail_get_attachment(message_id, attachment_id)` | 사용자 다운로드 또는 결정적 파일 전달 요청에서만 실행 |
+| Attachment bytes | Retrieval Cache·SourceSegment·EvidenceDraft·ContextBundle에 넣지 않음 |
+| 첨부 내용 분석 | Evidence로 만드는 기능은 P0 범위 밖 |
+| Download | LLM 재검색·추가 Retrieval Budget과 분리된 결정적 READ I/O |
