@@ -10,10 +10,10 @@
 
 ### 메일 대화 1 — Orion 품질 인증서 전달
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-20 09:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:24 Asia/Seoul
 
 첨부: [orion-certificate-previous.txt](attachments/orion-certificate-previous.txt)
 
@@ -23,10 +23,10 @@
 
 ### 메일 대화 2 — Orion 갱신 인증서 안내
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-31 09:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:24 Asia/Seoul
 
 첨부: [orion-certificate-current.txt](attachments/orion-certificate-current.txt)
 
@@ -39,7 +39,7 @@
 **메시지 1** · 발신: `qhdrbdhkdwks2@gmail.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-31 11:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:06 Asia/Seoul
 
 ```text
 포장재 시험 결과를 전달합니다. 부품 품질 인증서와 별도 서류로 보관해 주세요.

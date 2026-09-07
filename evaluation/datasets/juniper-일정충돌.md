@@ -46,7 +46,7 @@ Juniper 준비 Task가 없는 초기 상태다.
 
 **사용자 입력**
 
-> Juniper 할 일과 8월 12일 일정을 보고 jjssyy0527@gmail.com에 검토 회의가 겹치는지 알릴 메일을 Gmail 초안으로 저장해줘. 보내지는 마.
+> Juniper 할 일과 8월 12일 일정을 보고 qhdrbdhkdwks@naver.com에 검토 회의가 겹치는지 알릴 메일을 Gmail 초안으로 저장해줘. 보내지는 마.
 
 **평가자 확인 — 제품 입력에 넣지 않음**
 

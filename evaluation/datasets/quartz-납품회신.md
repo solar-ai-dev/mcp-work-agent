@@ -10,10 +10,10 @@ Draft와 실제 답장 전송을 구분하고 원래 스레드를 유지한다.
 
 ### 메일 대화 1 — [Quartz] 납품 일정 확인
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 11:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:24 Asia/Seoul
 
 첨부: [quartz-delivery-confirmation.csv](attachments/quartz-delivery-confirmation.csv)
 
@@ -25,7 +25,7 @@ Quartz 납품일은 8월 21일로 확정했습니다. 일정 확인 후 이 메�
 
 이 항목은 수신 메일이 아니라 실제 임시보관 Draft로 준비한다. 외부 전송은 하지 않는다.
 
-수신: jjssyy0527@gmail.com  
+수신: qhdrbdhkdwks@naver.com  
 참조: 없음  
 제목: Quartz 납품 회신 검토  
 기존 수신 스레드의 Reply로 결속하지 않은 별도 초안
@@ -60,7 +60,7 @@ English:
 
 **사용자 입력**
 
-> Quartz 납품일 확인 메일을 새로 써서 jjssyy0527@gmail.com 앞으로 임시보관함에 저장해줘. 보내지는 말고.
+> Quartz 납품일 확인 메일을 새로 써서 qhdrbdhkdwks@naver.com 앞으로 임시보관함에 저장해줘. 보내지는 말고.
 
 **평가자 확인 — 제품 입력에 넣지 않음**
 

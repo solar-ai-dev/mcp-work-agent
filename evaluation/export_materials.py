@@ -13,7 +13,7 @@ LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")
 
 # Evaluation preparation constraint only: never import this list into Product runtime.
 ALLOWED_EMAIL_ADDRESSES = frozenset({
-    "jjssyy0527@gmail.com",
+    "qhdrbdhkdwks@naver.com",
     "bonggyulim0728@gmail.com",
     "qhdrbdhkdwks2@gmail.com",
 })

@@ -8,10 +8,10 @@
 
 ### 메일 대화 1 — [Fjord] 고객 워크숍
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 12:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:12 Asia/Seoul
 
 ```text
 Fjord 고객 워크숍은 다음 주 화요일 오후가 좋습니다. 시작 시각과 소요시간은 함께 정하면 좋겠습니다.

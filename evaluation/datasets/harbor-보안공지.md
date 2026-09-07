@@ -8,10 +8,10 @@
 
 ### 메일 대화 1 — [Harbor] 긴급 보안 공지
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 09:30 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:14 Asia/Seoul
 
 ```text
 Harbor 공급망 패치가 필요합니다. 영향 범위를 확인해 주세요.

@@ -10,10 +10,10 @@
 
 ### 메일 대화 1 — [Willow] 킥오프 준비
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 13:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:15 Asia/Seoul
 
 ```text
 Willow 킥오프 자료를 8월 18일 정오까지 미리 공유해 주세요. 참석자들이 회의 전에 읽을 수 있도록 부탁드립니다.

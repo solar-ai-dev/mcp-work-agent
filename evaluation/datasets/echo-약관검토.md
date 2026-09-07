@@ -8,10 +8,10 @@
 
 ### 메일 대화 1 — [Echo] 약관 검토 요청
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-05 10:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:03 Asia/Seoul
 
 ```text
 Echo 약관 초안을 보냅니다. 이번 금요일 업무 종료 전까지 검토 의견을 부탁드립니다.
@@ -57,15 +57,15 @@ Echo 약관 초안을 보냅니다. 이번 금요일 업무 종료 전까지 검
 
 **사용자 입력**
 
-> Echo 검토 작업이랑 8월 7일 일정 보고 jjssyy0527@gmail.com에 진행 상황을 알릴 메일을 Gmail 임시보관함에 저장해줘. 전송은 하지 마.
+> Echo 검토 작업이랑 8월 7일 일정 보고 qhdrbdhkdwks@naver.com에 진행 상황을 알릴 메일을 Gmail 임시보관함에 저장해줘. 전송은 하지 마.
 
 **같은 뜻의 다른 말투** — 각각 새 Run으로 실행한다.
 
 한국어:
-> Echo 작업과 8월 7일 일정으로 jjssyy0527@gmail.com에 진행 상황 메일을 써서 임시보관함에 저장해줘. 전송은 하지 마.
+> Echo 작업과 8월 7일 일정으로 qhdrbdhkdwks@naver.com에 진행 상황 메일을 써서 임시보관함에 저장해줘. 전송은 하지 마.
 
 English:
-> Use the Echo tasks and August 7 calendar to save a Gmail progress-update draft for jjssyy0527@gmail.com. Don't send it.
+> Use the Echo tasks and August 7 calendar to save a Gmail progress-update draft for qhdrbdhkdwks@naver.com. Don't send it.
 
 **평가자 확인 — 제품 입력에 넣지 않음**
 
@@ -89,15 +89,15 @@ English:
 
 **사용자 입력**
 
-> Echo 검토 작업과 8월 7일 바쁜 시간을 보고 jjssyy0527@gmail.com에 마감이 빠듯한지 설명하는 메일을 임시보관함에 저장해줘. 전송은 하지 마.
+> Echo 검토 작업과 8월 7일 바쁜 시간을 보고 qhdrbdhkdwks@naver.com에 마감이 빠듯한지 설명하는 메일을 임시보관함에 저장해줘. 전송은 하지 마.
 
 **같은 뜻의 다른 말투** — 각각 새 Run으로 실행한다.
 
 한국어:
-> Echo 작업이랑 8월 7일 바쁜 시간 보고 jjssyy0527@gmail.com에 마감 위험을 설명할 메일을 Gmail 초안으로 저장해줘. 전송은 하지 마.
+> Echo 작업이랑 8월 7일 바쁜 시간 보고 qhdrbdhkdwks@naver.com에 마감 위험을 설명할 메일을 Gmail 초안으로 저장해줘. 전송은 하지 마.
 
 English:
-> Check the Echo work and busy periods on August 7, then save a Gmail draft to jjssyy0527@gmail.com explaining any deadline risk. Don't send it.
+> Check the Echo work and busy periods on August 7, then save a Gmail draft to qhdrbdhkdwks@naver.com explaining any deadline risk. Don't send it.
 
 **평가자 확인 — 제품 입력에 넣지 않음**
 
@@ -207,9 +207,8 @@ English:
 
 **사용자 입력**
 
-> Echo 메일이랑 할 일, 캘린더 보고 8월 7일 17시 30분까지 최종 의견 전달할 일 만들어줘. 16~17시 정리 일정도 잡고, 준비된 내용을 jjssyy0527@gmail.com에 알릴 메일은 Gmail 초안으로 저장해줘. 보내지는 마.
+> Echo 메일이랑 할 일, 캘린더 보고 8월 7일 17시 30분까지 최종 의견 전달할 일 만들어줘. 16~17시 정리 일정도 잡고, 준비된 내용을 qhdrbdhkdwks@naver.com에 알릴 메일은 Gmail 초안으로 저장해줘. 보내지는 마.
 
 **평가자 확인 — 제품 입력에 넣지 않음**
 
-최종 의견 전달 Task CREATE, 8월 7일 16~17시 Event CREATE, jjssyy0527@gmail.com 수신 Draft CREATE 세 작업을 구분한다. 새 Task가 기존 1차 검토와 다른 후속 업무임을 목적·메모로 확인하고 업무 마감 17시 30분을 메모에 보존한다. 13~15시 Busy 이후의 실제 가용성도 확인한다. 처리 완료를 말하는 Draft는 확인된 결과만 사용하고 각각 재조회한다. 기존 Task와 무관한 Resource는 그대로이며 SEND는 없다.
-
+최종 의견 전달 Task CREATE, 8월 7일 16~17시 Event CREATE, qhdrbdhkdwks@naver.com 수신 Draft CREATE 세 작업을 구분한다. 새 Task가 기존 1차 검토와 다른 후속 업무임을 목적·메모로 확인하고 업무 마감 17시 30분을 메모에 보존한다. 13~15시 Busy 이후의 실제 가용성도 확인한다. 처리 완료를 말하는 Draft는 확인된 결과만 사용하고 각각 재조회한다. 기존 Task와 무관한 Resource는 그대로이며 SEND는 없다.

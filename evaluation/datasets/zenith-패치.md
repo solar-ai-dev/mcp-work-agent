@@ -10,10 +10,10 @@
 
 ### 메일 대화 1 — [Zenith] 보안 패치 요청
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 14:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:17 Asia/Seoul
 
 ```text
 Zenith 보안 패치를 8월 15일까지 확인해 주세요.

@@ -4,7 +4,7 @@
 
 **실제 등록 전:** [실행 안내](../README.md)의 계정·날짜·권한 준비를 따른다. 메일·초대 주소는 이 문서에 적힌 승인된 세 계정 안에서만 사용한다. 이름·부서는 가상 업무 역할이며 실제 계정 소유자의 신원이 아니다. 날짜를 옮겨야 하면 자료·질문·확인 기준을 함께 옮기고 실행 기록에 적는다. 본문에 없는 연도·소요시간·승인 사실을 채워 넣지 않는다.
 
-**주소 역할:** 기준 조회·참조 계정은 `bonggyulim0728@gmail.com`, Boreal 연락 수신함은 `jjssyy0527@gmail.com`, 소라의 회신 계정은 `qhdrbdhkdwks2@gmail.com`다. 회신 관계는 실제 To/CC와 Thread에서 확인한다. 부서 이름만으로 별도 실제 계정을 가정하지 않는다.
+**주소 역할:** 기준 조회·참조 계정은 `bonggyulim0728@gmail.com`, Boreal 연락 수신함은 `qhdrbdhkdwks@naver.com`, 소라의 회신 계정은 `qhdrbdhkdwks2@gmail.com`다. 회신 관계는 실제 To/CC와 Thread에서 확인한다. 부서 이름만으로 별도 실제 계정을 가정하지 않는다.
 
 ## 서비스에 등록할 자료
 
@@ -12,19 +12,19 @@
 
 아래 메시지는 같은 실제 스레드에서 시간순으로 이어지도록 준비한다. 서로 다른 발신자가 있으면 그 관계를 보존한다.
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: qhdrbdhkdwks2@gmail.com  
 참조: bonggyulim0728@gmail.com  
-메일 시간 기준: 2026-08-05 11:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:20 Asia/Seoul
 
 ```text
 Boreal 계약 갱신안 보내드립니다. 서명은 8월 15일까지 받는 안으로 제안합니다.
 ```
 
 **메시지 2** · 발신: 소라 <qhdrbdhkdwks2@gmail.com>  
-수신: jjssyy0527@gmail.com  
+수신: qhdrbdhkdwks@naver.com  
 참조: bonggyulim0728@gmail.com  
-메일 시간 기준: 2026-08-06 16:30 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:40 Asia/Seoul
 
 ```text
 Boreal 갱신 건은 최종 서명 기한을 8월 16일 18시로 합의했습니다. 법무 검토와 서명 연락은 소라가 담당합니다.
@@ -32,10 +32,10 @@ Boreal 갱신 건은 최종 서명 기한을 8월 16일 18시로 합의했습니
 
 ### 메일 대화 2 — [Boreal] 마케팅 갱신
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 10:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:01 Asia/Seoul
 
 ```text
 Boreal 마케팅 대행 계약 갱신안을 전달합니다. 매체 집행 항목을 검토한 뒤 의견 부탁드립니다.

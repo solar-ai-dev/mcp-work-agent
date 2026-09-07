@@ -619,12 +619,12 @@ class EmailScopeTests(unittest.TestCase):
 
     def test_exactly_three_user_supplied_accounts_are_allowed(self) -> None:
         self.assertEqual({
-            "jjssyy0527@gmail.com", "bonggyulim0728@gmail.com", "qhdrbdhkdwks2@gmail.com",
+            "qhdrbdhkdwks@naver.com", "bonggyulim0728@gmail.com", "qhdrbdhkdwks2@gmail.com",
         }, set(ALLOWED_EMAIL_ADDRESSES))
         validate_material_emails("From/To/CC/BCC: " + ", ".join(ALLOWED_EMAIL_ADDRESSES))
 
     def test_case_is_supported_without_alias_normalization(self) -> None:
-        validate_material_emails("JJSSYY0527@GMAIL.COM")
+        validate_material_emails("QHDRBDHKDWKS@NAVER.COM")
 
     def test_unlisted_account_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unapproved email"):
@@ -637,7 +637,7 @@ class EmailScopeTests(unittest.TestCase):
 
     def test_allowed_email_prefix_does_not_allow_other_domain(self) -> None:
         with self.assertRaises(ValueError):
-            validate_material_emails("jjssyy0527@gmail.com" + ".invalid")
+            validate_material_emails("qhdrbdhkdwks@naver.com" + ".invalid")
 
     def test_raw_business_payload_is_checked(self) -> None:
         invalid = "other" + "@" + "invalid.test"
@@ -700,13 +700,13 @@ class EmailScopeTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         text = extract_materials((root / "datasets" / "aster-nova-동명이인.md").read_text(encoding="utf-8"))
         senders = re.findall(r"발신 박민수 <([^>]+)>", text)
-        self.assertEqual(["jjssyy0527@gmail.com", "qhdrbdhkdwks2@gmail.com"], senders)
+        self.assertEqual(["qhdrbdhkdwks@naver.com", "qhdrbdhkdwks2@gmail.com"], senders)
 
     def test_grove_new_recipient_is_not_in_original_thread(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = (root / "datasets" / "grove-캠페인.md").read_text(encoding="utf-8")
         material = extract_materials(text)
-        self.assertIn("jjssyy0527@gmail.com", material)
+        self.assertIn("qhdrbdhkdwks@naver.com", material)
         self.assertIn("bonggyulim0728@gmail.com", material)
         self.assertNotIn("qhdrbdhkdwks2@gmail.com", material)
         self.assertIn("qhdrbdhkdwks2@gmail.com", text.split("## 시험 질문과 확인 기준", 1)[1])
@@ -714,11 +714,11 @@ class EmailScopeTests(unittest.TestCase):
     def test_aurora_two_kims_and_forward_recipient_not_merged(self) -> None:
         root = Path(__file__).resolve().parents[1]
         text = extract_materials((root / "datasets" / "오로라-현장과연수.md").read_text(encoding="utf-8"))
-        self.assertIn("발신 김하늘 대리 <jjssyy0527@gmail.com>", text)
+        self.assertIn("발신 김하늘 대리 <qhdrbdhkdwks@naver.com>", text)
         self.assertIn("발신 김바다 대리 <qhdrbdhkdwks2@gmail.com>", text)
         forward = text.split("### 메일 대화 4 — 오로라 참고 전달", 1)[1].split("### 메일 대화 5", 1)[0]
         self.assertIn("발신: 업무 취합 담당 <bonggyulim0728@gmail.com>", forward)
-        self.assertIn("수신: jjssyy0527@gmail.com", forward)
+        self.assertIn("수신: qhdrbdhkdwks@naver.com", forward)
         self.assertIn("참조: bonggyulim0728@gmail.com", forward)
 
 

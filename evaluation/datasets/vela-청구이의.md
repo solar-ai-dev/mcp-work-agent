@@ -10,10 +10,10 @@
 
 ### 메일 대화 1 — [Vela] 청구 이의 접수
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 10:30 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:15 Asia/Seoul
 
 ```text
 Vela 청구 이의가 접수됐습니다. 담당은 서현입니다. 확인에 필요한 증빙은 8월 12일 17시까지 보내 주세요.
@@ -24,7 +24,7 @@ Vela 청구 이의가 접수됐습니다. 담당은 서현입니다. 확인에 �
 **메시지 1** · 발신: `qhdrbdhkdwks2@gmail.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 11:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:06 Asia/Seoul
 
 ```text
 Vela 일반 청구 문의는 서연에게 전달해 주세요. 청구 이의 접수는 별도 창구에서 처리합니다.

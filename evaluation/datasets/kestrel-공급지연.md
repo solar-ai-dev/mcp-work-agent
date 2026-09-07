@@ -8,10 +8,10 @@
 
 ### 메일 대화 1 — [Kestrel] 공급 지연
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-06 10:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:13 Asia/Seoul
 
 ```text
 Kestrel 선적이 기존 계획보다 이틀 지연됩니다. 수정 납품일은 확인되는 대로 다시 알려드리겠습니다.
@@ -123,9 +123,8 @@ English:
 
 **사용자 입력**
 
-> Kestrel 메일이랑 할 일, 캘린더 보고 기존 대체 일정 확인 메모에 이틀 지연을 추가해줘. 8월 8일 오전 10시에 30분 점검도 잡고, 두 작업이 처리된 뒤 jjssyy0527@gmail.com에 안내할 메일을 Gmail 초안으로 저장해줘. 보내지는 마.
+> Kestrel 메일이랑 할 일, 캘린더 보고 기존 대체 일정 확인 메모에 이틀 지연을 추가해줘. 8월 8일 오전 10시에 30분 점검도 잡고, 두 작업이 처리된 뒤 qhdrbdhkdwks@naver.com에 안내할 메일을 Gmail 초안으로 저장해줘. 보내지는 마.
 
 **평가자 확인 — 제품 입력에 넣지 않음**
 
-기존 Kestrel 대체 일정 확인 Task의 메모 UPDATE, 8월 8일 10~10시 30분 Event CREATE, jjssyy0527@gmail.com 수신 Draft CREATE를 구분한다. Draft는 앞선 두 결과가 확인된 뒤에만 저장한다. 기존 Task의 예정일·상태·미요청 메모를 보존하고 각 효과를 별도로 재조회한다. 선행 실패·결과 미확정 때 성공 안내를 저장하지 않는다. 토요일 근무·충돌 조건은 실제 설정으로 확인하며 SEND는 없다.
-
+기존 Kestrel 대체 일정 확인 Task의 메모 UPDATE, 8월 8일 10~10시 30분 Event CREATE, qhdrbdhkdwks@naver.com 수신 Draft CREATE를 구분한다. Draft는 앞선 두 결과가 확인된 뒤에만 저장한다. 기존 Task의 예정일·상태·미요청 메모를 보존하고 각 효과를 별도로 재조회한다. 선행 실패·결과 미확정 때 성공 안내를 저장하지 않는다. 토요일 근무·충돌 조건은 실제 설정으로 확인하며 SEND는 없다.

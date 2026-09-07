@@ -8,10 +8,10 @@
 
 ### 메일 대화 1 — Lumen 데이터 이전 건명 변경
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-04 10:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:13 Asia/Seoul
 
 ```text
 Lumen으로 진행하던 데이터 이전 건은 이번 달부터 Aurora Migration이라는 이름으로 관리합니다. 승인 안내도 새 이름으로 발송하겠습니다.
@@ -19,10 +19,10 @@ Lumen으로 진행하던 데이터 이전 건은 이번 달부터 Aurora Migrati
 
 ### 메일 대화 2 — [Aurora Migration] 최종 승인
 
-**메시지 1** · 발신: `jjssyy0527@gmail.com`  
+**메시지 1** · 발신: `qhdrbdhkdwks@naver.com`  
 수신: bonggyulim0728@gmail.com  
 참조: 없음  
-메일 시간 기준: 2026-08-05 14:00 Asia/Seoul
+메일 시간 기준: 2026-09-07 11:14 Asia/Seoul
 
 ```text
 Aurora Migration 데이터 이전을 승인합니다. 시작은 8월 22일 22시입니다. 담당자들은 이 시간에 맞춰 준비해 주세요.
