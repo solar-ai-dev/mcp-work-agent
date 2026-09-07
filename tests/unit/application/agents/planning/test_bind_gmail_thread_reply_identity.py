@@ -65,13 +65,12 @@ def test_gmail_thread_reply__missing_rfc_identity__fails_closed() -> None:
 
 def test_new_gmail_send__thread_evidence__does_not_turn_into_reply() -> None:
     route, bound, intent = _gmail_reply_inputs()
-    intent["requested_effect_hints"] = ["SEND"]
-    intent["requested_resource_hints"] = ["GMAIL_MESSAGE"]
     result = _compose(
         route=route,
         bound=bound,
         intent=intent,
         payload_extra={"subject": "New message", "body": "Hello."},
+        target_semantics="GMAIL_MESSAGE",
     )[0]
 
     assert _result_payload(result) == {
@@ -81,6 +80,20 @@ def test_new_gmail_send__thread_evidence__does_not_turn_into_reply() -> None:
     }
 
 
+@pytest.mark.parametrize("field", ["thread_id", "in_reply_to", "references"])
+def test_new_gmail_send__model_reply_identity__fails_closed(field: str) -> None:
+    route, bound, intent = _gmail_reply_inputs()
+
+    with pytest.raises(PlanningArgumentBindingError, match="standalone Gmail SEND"):
+        _compose(
+            route=route,
+            bound=bound,
+            intent=intent,
+            payload_extra={field: "model-authored-reply-identity"},
+            target_semantics="GMAIL_MESSAGE",
+        )
+
+
 def _compose(
     *,
     route: dict[str, object],
@@ -88,6 +101,7 @@ def _compose(
     intent: dict[str, object],
     evidence: list[dict[str, object]] | None = None,
     payload_extra: dict[str, object] | None = None,
+    target_semantics: str = "GMAIL_THREAD_REPLY",
 ) -> tuple[dict[str, object], ...]:
     payload = {
         "to": ["recipient@example.com"],
@@ -104,7 +118,7 @@ def _compose(
                     "schema_version": 1,
                     "route_id": "r1",
                     "objective": "Reply to the thread",
-                    "target_semantics": "GMAIL_MESSAGE",
+                    "target_semantics": target_semantics,
                     "scope_constraints": [],
                     "evidence_refs": [],
                 }

@@ -192,7 +192,7 @@ def compose_arguments_per_output_route(
             arguments[name] = expected
         arguments, gmail_reply_evidence_refs = bind_gmail_thread_reply_identity(
             route=route,
-            request_intent=request_intent,
+            action_objective=objective,
             arguments=arguments,
             evidence=evidence,
         )

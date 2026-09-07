@@ -24,11 +24,21 @@ class AnswerDraftCandidateV2(TypedDict):
     evidence_refs: list[str]
 
 
+ActionTargetSemanticsV1 = Literal[
+    "GMAIL_MESSAGE",
+    "GMAIL_THREAD_REPLY",
+    "GMAIL_DRAFT",
+    "TASK",
+    "CALENDAR_EVENT",
+    "GITHUB_ISSUE",
+]
+
+
 class ActionObjectiveCandidateV1(TypedDict):
     schema_version: Required[Literal[1]]
     route_id: str
     objective: str
-    target_semantics: str
+    target_semantics: ActionTargetSemanticsV1
     scope_constraints: list[str]
     evidence_refs: list[str]
 

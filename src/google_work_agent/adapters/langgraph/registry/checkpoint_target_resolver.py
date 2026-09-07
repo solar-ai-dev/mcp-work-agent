@@ -39,10 +39,20 @@ class NativeCheckpointTargetResolver:
             for key, value in channels.items()
             if isinstance(key, str) and key.startswith("branch:to:") and bool(value)
         )
-        if len(runnable) != 1:
+        if len(runnable) > 1:
             return fallback
+        if runnable:
+            native_target = runnable[0]
+        else:
+            projected_target = channels.get("__target__")
+            if not isinstance(projected_target, str) or not projected_target:
+                return fallback
+            native_target = projected_target
         phase = channels.get("workflow_phase")
-        node_id = _project_entry_node_id(runnable[0], phase if isinstance(phase, str) else None)
+        node_id = _project_entry_node_id(
+            native_target,
+            phase if isinstance(phase, str) else None,
+        )
         if node_id is None:
             return fallback
         owner = RUNTIME_NODE_OWNERS[node_id]

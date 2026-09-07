@@ -1,5 +1,7 @@
 from collections.abc import Mapping
 
+import pytest
+
 from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
     draft_action_objective_per_output_route,
     requires_objective_inference,
@@ -55,7 +57,14 @@ def test_objective_prompt_is__route_bounded_and__receives_no_tool_schema() -> No
         }
 
     result = draft_action_objective_per_output_route(
-        [{"route_id": "r1", "selected_tool_id": "tasks_create_task"}],
+        [
+            {
+                "route_id": "r1",
+                "resource_type": "TASK",
+                "effect": "CREATE",
+                "selected_tool_id": "tasks_create_task",
+            }
+        ],
         user_request="Create a task",
         request_intent={"goal": "create task"},
         work_analysis=None,
@@ -64,6 +73,62 @@ def test_objective_prompt_is__route_bounded_and__receives_no_tool_schema() -> No
     )
     assert result[0]["route_id"] == "r1"
     assert result[0]["target_semantics"] == "TASK"
+
+
+@pytest.mark.parametrize("target_semantics", ["GMAIL_MESSAGE", "GMAIL_THREAD_REPLY"])
+def test_gmail_send_objective__when_planned__requires_explicit_typed_relation(
+    target_semantics: str,
+) -> None:
+    route = {
+        "route_id": "gmail-send",
+        "resource_type": "GMAIL_MESSAGE",
+        "effect": "SEND",
+        "selected_tool_id": "gmail_send",
+    }
+
+    result = draft_action_objective_per_output_route(
+        [route],
+        user_request="send a message",
+        request_intent={"goal": "send a message"},
+        work_analysis=None,
+        evidence=[],
+        invoke=lambda *_: {
+            "schema_version": 1,
+            "route_id": "gmail-send",
+            "objective": "Send the requested message",
+            "target_semantics": target_semantics,
+            "scope_constraints": [],
+            "evidence_refs": [],
+        },
+    )
+
+    assert result[0]["target_semantics"] == target_semantics
+
+
+def test_non_gmail_objective__with_reply_relation__is_rejected() -> None:
+    with pytest.raises(ValueError, match="target_semantics"):
+        draft_action_objective_per_output_route(
+            [
+                {
+                    "route_id": "task",
+                    "resource_type": "TASK",
+                    "effect": "UPDATE",
+                    "selected_tool_id": "tasks_update_task",
+                }
+            ],
+            user_request="update a task",
+            request_intent={"goal": "update a task"},
+            work_analysis=None,
+            evidence=[],
+            invoke=lambda *_: {
+                "schema_version": 1,
+                "route_id": "task",
+                "objective": "Update the task",
+                "target_semantics": "GMAIL_THREAD_REPLY",
+                "scope_constraints": [],
+                "evidence_refs": [],
+            },
+        )
 
 
 def test_exact_calendar_create__materializes_objective__without_llm() -> None:
@@ -139,6 +204,56 @@ def test_exact_task_create__materializes_objective__without_llm() -> None:
         "scheduled_date: 2026-09-11",
     ]
     assert result[0]["evidence_refs"] == ["user-message-1"]
+
+
+def test_source_derived_task_create__with_evidence__uses_semantic_objective_inference() -> None:
+    route = {
+        "route_id": "task-route",
+        "resource_type": "TASK",
+        "effect": "CREATE",
+        "selected_tool_id": "tasks_create_task",
+    }
+    request_intent = {
+        "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
+        "requested_effect_hints": ["READ", "CREATE"],
+        "ambiguity": {"requires_confirmation": False},
+        "constraints": [
+            {"kind": "RESOURCE", "field": "title", "value": "Submit report"},
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["메일의 최신 변경 내용을 메모에 반영"],
+            },
+        ],
+    }
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        assert prompt_input["request_intent"] == request_intent
+        return {
+            "schema_version": 1,
+            "route_id": "task-route",
+            "objective": "Create a task using the retrieved mail facts",
+            "target_semantics": "TASK",
+            "scope_constraints": [
+                "title: Submit report",
+                "notes: include the latest change from evidence",
+            ],
+            "evidence_refs": ["mail-1"],
+        }
+
+    result = draft_action_objective_per_output_route(
+        [route],
+        user_request="read the mail and create a task",
+        request_intent=request_intent,
+        work_analysis=None,
+        evidence=[{"evidence_ref": "mail-1", "origin_type": "CONNECTOR_READ"}],
+        invoke=invoke,
+    )
+
+    assert calls == ["planning.draft_action_objective_per_output_route"]
+    assert result[0]["evidence_refs"] == ["mail-1"]
 
 
 def test_calendar_create_objective__avoids_repeating__semantic_field_alias_work() -> None:

@@ -15,12 +15,12 @@ _TASK_FIELD_KINDS = {
 _NON_PAYLOAD_FIELDS = frozenset(
     {
         "search_terms",
-        "business_concepts",
-        "required_information",
-        "original_search_request",
         "task_list",
         "task_list_label",
     }
+)
+_REQUIRES_SEMANTIC_COMPOSITION = frozenset(
+    {"business_concepts", "required_information", "original_search_request"}
 )
 
 
@@ -36,6 +36,8 @@ def materialize_task_create_payload(
         or ambiguity.get("requires_confirmation") is not False
         or not isinstance(constraints, Sequence)
         or isinstance(constraints, (str, bytes))
+        or request_intent.get("requested_effect_hints") != ["CREATE"]
+        or request_intent.get("requested_resource_hints") != ["TASK"]
     ):
         return None
 
@@ -47,6 +49,8 @@ def materialize_task_create_payload(
         if not isinstance(field, str):
             return None
         value = _single_string(constraint.get("value"))
+        if field in _REQUIRES_SEMANTIC_COMPOSITION:
+            return None
         if field in _NON_PAYLOAD_FIELDS:
             continue
         expected_kind = _TASK_FIELD_KINDS.get(field)

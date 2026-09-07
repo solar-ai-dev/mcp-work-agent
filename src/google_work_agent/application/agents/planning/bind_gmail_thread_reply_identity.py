@@ -13,16 +13,25 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
 def bind_gmail_thread_reply_identity(
     *,
     route: Mapping[str, object],
-    request_intent: Mapping[str, object] | None,
+    action_objective: Mapping[str, object],
     arguments: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
 ) -> tuple[dict[str, object], list[str]]:
     """Preserve one retrieved Thread's current RFC reply chain in write arguments."""
-    if not _is_gmail_thread_reply(route=route, request_intent=request_intent):
+    if not _is_gmail_send_route(route):
         return dict(arguments), []
     payload = arguments.get("payload")
     if not isinstance(payload, Mapping):
-        raise PlanningArgumentBindingError("Gmail Thread Reply requires a payload")
+        raise PlanningArgumentBindingError("Gmail SEND requires a payload")
+    target_semantics = action_objective.get("target_semantics")
+    if target_semantics == "GMAIL_MESSAGE":
+        if any(name in payload for name in ("thread_id", "in_reply_to", "references")):
+            raise PlanningArgumentBindingError(
+                "standalone Gmail SEND cannot carry reply identity"
+            )
+        return dict(arguments), []
+    if target_semantics != "GMAIL_THREAD_REPLY":
+        raise PlanningArgumentBindingError("Gmail SEND target semantics are invalid")
 
     identities: dict[tuple[str, str], tuple[str | None, str | None, list[str]]] = {}
     for item in evidence:
@@ -116,26 +125,12 @@ def _gmail_reply_timestamp(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def _is_gmail_thread_reply(
-    *, route: Mapping[str, object], request_intent: Mapping[str, object] | None
-) -> bool:
-    if (
+def _is_gmail_send_route(route: Mapping[str, object]) -> bool:
+    return not (
         route.get("connector_id") != "google_workspace"
         or route.get("resource_type") != "GMAIL_MESSAGE"
         or route.get("effect") != "SEND"
         or route.get("selected_tool_id") != "gmail_send"
-        or not isinstance(request_intent, Mapping)
-    ):
-        return False
-    effects = request_intent.get("requested_effect_hints")
-    resources = request_intent.get("requested_resource_hints")
-    return (
-        isinstance(effects, Sequence)
-        and not isinstance(effects, (str, bytes))
-        and set(effects) == {"READ", "SEND"}
-        and isinstance(resources, Sequence)
-        and not isinstance(resources, (str, bytes))
-        and "GMAIL_THREAD" in resources
     )
 
 

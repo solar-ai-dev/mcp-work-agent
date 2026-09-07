@@ -157,6 +157,32 @@ def test_native_checkpoint__projection_uses_the__canonical_registry_binding() ->
     )
 
 
+def test_native_checkpoint__projection_uses_the__persisted_next_target() -> None:
+    registry = _registry()
+    fallback = registry.issue_agent_node(
+        "SIX_ROLE_BASELINE",
+        "REQUEST_UNDERSTANDING",
+        "request.identify_goal",
+        "graph-v1",
+    )
+
+    target = NativeCheckpointTargetResolver(registry)(
+        {
+            "channel_values": {
+                "__target__": "context_retriever",
+                "workflow_phase": "CONTEXT_RETRIEVAL",
+            }
+        },
+        "SIX_ROLE_BASELINE",
+        "graph-v1",
+        fallback,
+    )
+
+    assert target == registry.issue_agent_node(
+        "SIX_ROLE_BASELINE", "RETRIEVAL", "retrieval.plan_query", "graph-v1"
+    )
+
+
 def test_combined_profile__checkpoint_projection__preserves_profile_binding() -> None:
     registry = _registry()
     fallback = registry.issue_main_stage("THREE_STAGE", "RECOVERY", "graph-v1")

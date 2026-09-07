@@ -707,7 +707,7 @@ class ModifyActionHandler:
             "schema_version": 1,
             "route_id": action.id,
             "objective": "현재 태스크 미리보기에서 사용자가 요청한 필드만 수정",
-            "target_semantics": "기존 Task List 유지",
+            "target_semantics": "TASK",
             "scope_constraints": [],
             "evidence_refs": [],
         }

@@ -687,7 +687,7 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
     ] == expected_dates
 
 
-def test_new_gmail_send__result_verification_hint__keeps_only_write_scope() -> None:
+def test_new_gmail_send__ambiguous_model_scope__is_not_silently_rewritten() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -713,7 +713,7 @@ def test_new_gmail_send__result_verification_hint__keeps_only_write_scope() -> N
         prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
     )
 
-    assert candidate["requested_effect_hints"] == ["SEND"]
+    assert candidate["requested_effect_hints"] == ["READ", "SEND"]
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
 
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     ActionObjectiveCandidateV1,
+    ActionTargetSemanticsV1,
     PlanningSemanticInvoker,
 )
 from google_work_agent.application.agents.planning.materialize_task_create_payload import (
@@ -32,7 +34,16 @@ ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "schema_version": {"const": 1},
             "route_id": {"type": "string", "minLength": 1},
             "objective": {"type": "string", "minLength": 1},
-            "target_semantics": {"type": "string", "minLength": 1},
+            "target_semantics": {
+                "enum": [
+                    "GMAIL_MESSAGE",
+                    "GMAIL_THREAD_REPLY",
+                    "GMAIL_DRAFT",
+                    "TASK",
+                    "CALENDAR_EVENT",
+                    "GITHUB_ISSUE",
+                ]
+            },
             "scope_constraints": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -103,8 +114,11 @@ def draft_action_objective_per_output_route(
             raise ValueError("objective candidate requires schema_version 1")
         if candidate.get("route_id") != route_id or not isinstance(objective, str) or not objective:
             raise ValueError("objective candidate escaped its frozen output route")
-        if not isinstance(target_semantics, str) or not target_semantics:
-            raise ValueError("objective candidate requires target_semantics")
+        if not isinstance(target_semantics, str) or not _matches_route_semantics(
+            route=route,
+            target_semantics=target_semantics,
+        ):
+            raise ValueError("objective candidate target_semantics does not match its route")
         if not isinstance(scope_constraints, list) or not all(
             isinstance(item, str) and item for item in scope_constraints
         ):
@@ -118,7 +132,7 @@ def draft_action_objective_per_output_route(
                 "schema_version": 1,
                 "route_id": route_id,
                 "objective": objective,
-                "target_semantics": target_semantics,
+                "target_semantics": cast(ActionTargetSemanticsV1, target_semantics),
                 "scope_constraints": list(scope_constraints),
                 "evidence_refs": list(refs),
             }
@@ -257,6 +271,19 @@ def _deterministic_task_create_objective(
         "scope_constraints": [f"{field}: {value}" for field, value in payload.items()],
         "evidence_refs": [],
     }
+
+
+def _matches_route_semantics(
+    *, route: Mapping[str, object], target_semantics: str
+) -> bool:
+    resource_type = route.get("resource_type")
+    if (
+        resource_type == "GMAIL_MESSAGE"
+        and route.get("effect") == "SEND"
+        and route.get("selected_tool_id") == "gmail_send"
+    ):
+        return target_semantics in {"GMAIL_MESSAGE", "GMAIL_THREAD_REPLY"}
+    return target_semantics == resource_type
 
 
 __all__ = [

@@ -361,6 +361,8 @@ def test_exact_task_create__materializes_arguments__without_llm() -> None:
         explicit_container_id="@default",
     )
     request_intent = {
+        "requested_effect_hints": ["CREATE"],
+        "requested_resource_hints": ["TASK"],
         "ambiguity": {"requires_confirmation": False},
         "constraints": [
             {
@@ -391,6 +393,69 @@ def test_exact_task_create__materializes_arguments__without_llm() -> None:
             "scheduled_date": "2026-09-11",
         },
     }
+
+
+def test_source_derived_task_create__with_evidence__uses_semantic_argument_composition() -> None:
+    bound = resolve_default_container(
+        route=ROUTE,  # type: ignore[arg-type]
+        selected_tool_schema=planning_tool_argument_schema("tasks_create_task"),
+        explicit_container_id="@default",
+    )
+    request_intent = {
+        "requested_effect_hints": ["READ", "CREATE"],
+        "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
+        "ambiguity": {"requires_confirmation": False},
+        "constraints": [
+            {"kind": "RESOURCE", "field": "title", "value": "Submit report"},
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["메일의 최신 변경 내용을 메모에 반영"],
+            },
+        ],
+    }
+    objective: ActionObjectiveCandidateV1 = {
+        **OBJECTIVE,
+        "evidence_refs": ["mail-1"],
+    }
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        assert prompt_input["request_intent"] == request_intent
+        assert prompt_input["evidence"] == [
+            {"evidence_ref": "mail-1", "origin_type": "CONNECTOR_READ"}
+        ]
+        return {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": {
+                "payload": {
+                    "title": "Submit report",
+                    "notes": "메일에서 확인한 최신 변경 내용",
+                }
+            },
+            "evidence_refs": ["mail-1"],
+        }
+
+    result = compose_arguments_per_output_route(
+        [ROUTE],
+        objectives=[objective],
+        bound_tool_schemas=[bound],
+        request_intent=request_intent,
+        evidence=[{"evidence_ref": "mail-1", "origin_type": "CONNECTOR_READ"}],
+        invoke=invoke,
+    )
+
+    assert calls == ["planning.compose_arguments_per_output_route"]
+    assert result[0]["arguments"] == {
+        "task_list_id": "@default",
+        "payload": {
+            "title": "Submit report",
+            "notes": "메일에서 확인한 최신 변경 내용",
+        },
+    }
+    assert result[0]["evidence_refs"] == ["mail-1"]
 
 
 @pytest.mark.parametrize(
