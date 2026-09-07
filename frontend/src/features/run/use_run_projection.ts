@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RunContext, RunSnapshot } from "../../api/contract";
+import type { ConversationHistoryResponse, ConversationHistoryRun, RunContext, RunSnapshot } from "../../api/contract";
 import { getRunContext, getRunSnapshot } from "./api/get_run_snapshot";
 import { adjustRunContext, cancelRun, confirmRun, resumeRun } from "./api/run_commands";
 import { subscribeRunEvents } from "./api/subscribe_run_events";
@@ -23,8 +23,8 @@ type UseRunProjectionOptions = {
   beginConversationProjection: (conversationId: string) => number;
   getConversationProjection: () => ProjectionIdentity;
   isCurrentProjection: (conversationId: string, generation: number) => boolean;
-  reloadConversationHistory: (conversationId: string, generation: number) => Promise<void>;
-  selectConversationHistory: (conversationId: string, selectRun: (runId: string, conversationId?: string, generation?: number) => Promise<void>) => Promise<void>;
+  reloadConversationHistory: (conversationId: string, generation: number) => Promise<ConversationHistoryResponse | null>;
+  selectConversationHistory: (conversationId: string) => Promise<ConversationHistoryResponse | null>;
   isRunHistorySynced: (runId: string) => boolean;
   markRunHistorySynced: (runId: string) => void;
   onStatusLine: (message: string) => void;
@@ -32,20 +32,22 @@ type UseRunProjectionOptions = {
 
 export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, completeCommand, beginConversationProjection, getConversationProjection, isCurrentProjection, reloadConversationHistory, selectConversationHistory, isRunHistorySynced, markRunHistorySynced, onStatusLine }: UseRunProjectionOptions) {
   const [runSnapshot, setRunSnapshot] = useState<RunSnapshot | null>(null);
+  const [runSnapshots, setRunSnapshots] = useState<RunSnapshot[]>([]);
   const [runContext, setRunContext] = useState<RunContext | null>(null);
   const [latestRunEvent, setLatestRunEvent] = useState<RunSseEvent | null>(null);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   const [confirmationText, setConfirmationText] = useState("");
   const subscriptionRef = useRef<(() => void) | null>(null);
   const subscriptionRunIdRef = useRef<string | null>(null);
-  const snapshotVersionRef = useRef<{ runId: string; generation: number; version: number; traceCursor: number; auditCursor: number } | null>(null);
+  const snapshotVersionsRef = useRef(new Map<string, { generation: number; version: number; traceCursor: number; auditCursor: number }>());
 
   const resetRunProjection = useCallback((): void => {
     subscriptionRef.current?.();
     subscriptionRef.current = null;
     subscriptionRunIdRef.current = null;
-    snapshotVersionRef.current = null;
+    snapshotVersionsRef.current = new Map();
     setRunSnapshot(null);
+    setRunSnapshots([]);
     setRunContext(null);
     setLatestRunEvent(null);
     setPendingConfirmation(null);
@@ -57,12 +59,19 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
   const refreshRun = useCallback(async (runId: string, conversationId = getConversationProjection().conversationId, generation = getConversationProjection().generation): Promise<boolean> => {
     const [snapshot, contextResponse] = await Promise.all([getRunSnapshot(runId), getRunContext(runId)]);
     if (conversationId === null || snapshot.run.conversation_id !== conversationId || !isCurrentProjection(conversationId, generation)) return false;
-    const previous = snapshotVersionRef.current;
+    const previous = snapshotVersionsRef.current.get(runId);
     const traceCursor = snapshot.activity?.trace_cursor ?? 0;
     const auditCursor = snapshot.activity?.audit_cursor ?? 0;
-    if (previous?.runId === runId && previous.generation === generation
+    if (previous?.generation === generation
       && (previous.version > snapshot.run.version || previous.traceCursor > traceCursor || previous.auditCursor > auditCursor)) return true;
-    snapshotVersionRef.current = { runId, generation, version: snapshot.run.version, traceCursor, auditCursor };
+    snapshotVersionsRef.current.set(runId, { generation, version: snapshot.run.version, traceCursor, auditCursor });
+    setRunSnapshots((current) => {
+      const byRunId = new Map(current.map((item) => [item.run.run_id, item]));
+      byRunId.set(runId, snapshot);
+      return Array.from(byRunId.values()).sort((left, right) => (
+        left.run.started_at_ms - right.run.started_at_ms || left.run.run_id.localeCompare(right.run.run_id)
+      ));
+    });
     setRunSnapshot(snapshot);
     setRunContext(contextResponse.context);
     const pending = snapshot.pending_interrupt;
@@ -73,6 +82,38 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
     }
     return true;
   }, [getConversationProjection, isCurrentProjection, isRunHistorySynced, markRunHistorySynced, reloadConversationHistory]);
+
+  const restoreRunHistory = useCallback(async (
+    runs: ConversationHistoryRun[],
+    conversationId: string,
+    generation: number,
+  ): Promise<void> => {
+    const results = await Promise.allSettled(runs.map((run) => getRunSnapshot(run.run_id)));
+    if (!isCurrentProjection(conversationId, generation)) return;
+    const restored: RunSnapshot[] = [];
+    let failed = 0;
+    for (const result of results) {
+      if (result.status === "rejected" || result.value.run.conversation_id !== conversationId) {
+        failed += 1;
+        continue;
+      }
+      const snapshot = result.value;
+      const traceCursor = snapshot.activity?.trace_cursor ?? 0;
+      const auditCursor = snapshot.activity?.audit_cursor ?? 0;
+      snapshotVersionsRef.current.set(snapshot.run.run_id, {
+        generation,
+        version: snapshot.run.version,
+        traceCursor,
+        auditCursor,
+      });
+      restored.push(snapshot);
+    }
+    restored.sort((left, right) => (
+      left.run.started_at_ms - right.run.started_at_ms || left.run.run_id.localeCompare(right.run.run_id)
+    ));
+    setRunSnapshots(restored);
+    if (failed > 0) onStatusLine("일부 실행 이력을 불러오지 못했습니다.");
+  }, [isCurrentProjection, onStatusLine]);
 
   const activeRunId = isWorkflowExecutionActive(runSnapshot) ? runSnapshot!.run.run_id : null;
   useEffect(() => {
@@ -98,7 +139,11 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
       if (getConversationProjection().generation !== generation) return;
       const resolvedConversationId = snapshot.run.conversation_id;
       const resolvedGeneration = beginConversationProjection(resolvedConversationId);
-      await Promise.all([reloadConversationHistory(resolvedConversationId, resolvedGeneration), selectRun(runId, resolvedConversationId, resolvedGeneration)]);
+      const history = await reloadConversationHistory(resolvedConversationId, resolvedGeneration);
+      if (history !== null) {
+        await restoreRunHistory(history.runs, resolvedConversationId, resolvedGeneration);
+      }
+      await selectRun(runId, resolvedConversationId, resolvedGeneration);
       return;
     }
     if (!await refreshRun(runId, conversationId, generation)) return;
@@ -118,11 +163,23 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
       },
     });
     subscriptionRunIdRef.current = runId;
-  }, [beginConversationProjection, getConversationProjection, isCurrentProjection, onStatusLine, refreshRun, reloadConversationHistory]);
+  }, [beginConversationProjection, getConversationProjection, isCurrentProjection, onStatusLine, refreshRun, reloadConversationHistory, restoreRunHistory]);
 
   const selectConversation = useCallback(async (conversationId: string): Promise<void> => {
-    await selectConversationHistory(conversationId, selectRun);
-  }, [selectConversationHistory, selectRun]);
+    const history = await selectConversationHistory(conversationId);
+    if (history === null) return;
+    const projection = getConversationProjection();
+    if (projection.conversationId !== conversationId) return;
+    try {
+      await restoreRunHistory(history.runs, conversationId, projection.generation);
+      const latestRun = history.runs.at(-1);
+      if (latestRun) await selectRun(latestRun.run_id, conversationId, projection.generation);
+    } catch {
+      if (isCurrentProjection(conversationId, projection.generation)) {
+        onStatusLine("최근 실행 상태를 불러오지 못했습니다.");
+      }
+    }
+  }, [getConversationProjection, isCurrentProjection, onStatusLine, restoreRunHistory, selectConversationHistory, selectRun]);
 
   const handleCancelRun = useCallback(async (): Promise<void> => {
     if (!runSnapshot || busyCommand) return;
@@ -220,5 +277,5 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
     } finally { setBusyCommand(null); }
   }, [busyCommand, commandIdFor, completeCommand, confirmationText, pendingConfirmation, refreshRun, runSnapshot, setBusyCommand]);
 
-  return { runSnapshot, runContext, latestRunEvent, pendingConfirmation, confirmationText, setConfirmationText, resetRunProjection, refreshRun, selectRun, selectConversation, handleCancelRun, handleResumeRun, handleResumeAfterReauth, handleAdjustContext, handleConfirmation };
+  return { runSnapshot, runSnapshots, runContext, latestRunEvent, pendingConfirmation, confirmationText, setConfirmationText, resetRunProjection, refreshRun, selectRun, selectConversation, handleCancelRun, handleResumeRun, handleResumeAfterReauth, handleAdjustContext, handleConfirmation };
 }

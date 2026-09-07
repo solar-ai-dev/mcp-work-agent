@@ -54,30 +54,34 @@ export function useConversationHistoryProjection({
     return true;
   }, [isCurrentProjection]);
 
-  const reloadConversationHistory = useCallback(async (conversationId: string, generation: number): Promise<void> => {
+  const reloadConversationHistory = useCallback(async (
+    conversationId: string,
+    generation: number,
+  ): Promise<ConversationHistoryResponse | null> => {
     try {
-      applyConversationHistory(await getConversationHistory(conversationId), conversationId, generation);
+      const history = await getConversationHistory(conversationId);
+      return applyConversationHistory(history, conversationId, generation) ? history : null;
     } catch (error) {
       if (isCurrentProjection(conversationId, generation)) {
         onStatusLine(error instanceof ApiClientError ? error.message : "이전 대화를 복구하지 못했습니다.");
       }
+      return null;
     }
   }, [applyConversationHistory, isCurrentProjection, onStatusLine]);
 
   const selectConversation = useCallback(async (
     conversationId: string,
-    selectLatestRun: (runId: string, conversationId: string, generation: number) => Promise<void>,
-  ): Promise<void> => {
+  ): Promise<ConversationHistoryResponse | null> => {
     const generation = beginConversationProjection(conversationId);
     try {
       const history = await getConversationHistory(conversationId);
-      if (!applyConversationHistory(history, conversationId, generation)) return;
-      const latestRun = history.runs.at(-1);
-      if (latestRun) await selectLatestRun(latestRun.run_id, conversationId, generation);
+      if (!applyConversationHistory(history, conversationId, generation)) return null;
+      return history;
     } catch (error) {
       if (isCurrentProjection(conversationId, generation)) {
         onStatusLine(error instanceof ApiClientError ? error.message : "대화 실행 정보를 불러오지 못했습니다.");
       }
+      return null;
     }
   }, [applyConversationHistory, beginConversationProjection, isCurrentProjection, onStatusLine]);
 

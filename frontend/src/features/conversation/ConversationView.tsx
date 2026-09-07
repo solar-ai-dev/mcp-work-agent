@@ -15,6 +15,7 @@ export type ConversationViewModel = {
     selectedConversationId: string | null;
     historyMessages: ConversationMessage[];
     runSnapshot: RunSnapshot | null;
+    runSnapshots: RunSnapshot[];
     runContext: RunContext | null;
     latestRunEvent?: RunSseEvent | null;
     confirmationText: string;
@@ -44,7 +45,7 @@ export type ConversationViewProps = { children: ReactNode; viewModel: Conversati
 
 export function ConversationView({ children, viewModel }: ConversationViewProps): JSX.Element {
   const { controller, resourceContext, formatTime, onOpenSettings, onOpenDiagnostics } = viewModel;
-  const { selectedConversationId, historyMessages, runSnapshot, runContext, latestRunEvent, confirmationText, setConfirmationText, composerText, composerError, setComposerText, setComposerError, busyCommand, handleStartRun, handleApprove, handleSimpleAction, handleAttachDescriptors, handleCancelRun, handleResumeRun, handleAdjustContext, handleConfirmation, handleResolveRecovery } = controller;
+  const { selectedConversationId, historyMessages, runSnapshot, runSnapshots, runContext, latestRunEvent, confirmationText, setConfirmationText, composerText, composerError, setComposerText, setComposerError, busyCommand, handleStartRun, handleApprove, handleSimpleAction, handleAttachDescriptors, handleCancelRun, handleResumeRun, handleAdjustContext, handleConfirmation, handleResolveRecovery } = controller;
   const timelineMessages = mergeConversationMessages(
     historyMessages,
     runSnapshot?.messages ?? [],
@@ -63,7 +64,13 @@ export function ConversationView({ children, viewModel }: ConversationViewProps)
     previousUserId.current = lastUserId;
     if (node && (newRequest || (!node.querySelector("details[open]") && node.scrollHeight - node.scrollTop - node.clientHeight < 120))) node.scrollTop = node.scrollHeight;
   }, [selectedConversationId, lastUserId, lastMessageId, showTransientRequest]);
-  const activityMessageId = timelineMessages.find((message) => message.role === "USER" && message.run_id === runSnapshot?.run.run_id)?.id;
+  const snapshotsByRunId = new Map(runSnapshots.map((snapshot) => [snapshot.run.run_id, snapshot]));
+  if (runSnapshot) snapshotsByRunId.set(runSnapshot.run.run_id, runSnapshot);
+  const displayedRunIds = new Set(
+    timelineMessages
+      .filter((message) => message.role === "USER" && message.run_id !== null)
+      .map((message) => message.run_id!),
+  );
   const retryActionIds = new Set(runSnapshot?.error?.actions.filter((action) => action.kind === "PREPARE_RETRY" && action.action_id).map((action) => action.action_id!) ?? []);
 
   return (
@@ -77,11 +84,19 @@ export function ConversationView({ children, viewModel }: ConversationViewProps)
                 <Fragment key={message.id}>
                   {separatorLabel ? <DateSeparator label={separatorLabel} /> : null}
                   {message.role === "USER" ? <UserMessageBubble content={message.content} createdAtMs={message.created_at_ms} /> : message.role === "ASSISTANT" ? <AssistantMessageBubble content={message.content} createdAtMs={message.created_at_ms} /> : <article className="info-card"><strong>시스템 메시지</strong><p>{message.content}</p></article>}
-                  {runSnapshot && message.id === activityMessageId ? <RunProgress snapshot={runSnapshot} latestEvent={latestRunEvent} busy={busyCommand} onResume={(kind) => void handleResumeRun(kind)} /> : null}
+                  {message.role === "USER" && message.run_id && snapshotsByRunId.has(message.run_id) ? (
+                    <RunProgress
+                      snapshot={snapshotsByRunId.get(message.run_id)!}
+                      latestEvent={message.run_id === runSnapshot?.run.run_id ? latestRunEvent : null}
+                      busy={message.run_id === runSnapshot?.run.run_id ? busyCommand : null}
+                      interactive={message.run_id === runSnapshot?.run.run_id}
+                      onResume={(kind) => void handleResumeRun(kind)}
+                    />
+                  ) : null}
                 </Fragment>
               ))}
               {showTransientRequest ? <UserMessageBubble content={runContext!.request_text} /> : null}
-              {runSnapshot && !activityMessageId ? <RunProgress snapshot={runSnapshot} latestEvent={latestRunEvent} busy={busyCommand} onResume={(kind) => void handleResumeRun(kind)} /> : null}
+              {runSnapshot && !displayedRunIds.has(runSnapshot.run.run_id) ? <RunProgress snapshot={runSnapshot} latestEvent={latestRunEvent} busy={busyCommand} interactive onResume={(kind) => void handleResumeRun(kind)} /> : null}
               {!isTerminal && runSnapshot?.pending_interrupt ? <ConfirmationCard interrupt={runSnapshot.pending_interrupt} text={confirmationText} busy={busyCommand === "confirm-run"} onTextChange={setConfirmationText} onSubmit={(option) => void handleConfirmation(option)} /> : null}
               {runSnapshot && !isTerminal ? <div className="action-execution-flow"><ActionPlanCard snapshot={runSnapshot} busy={busyCommand} retryActionIds={retryActionIds} formatTime={formatTime} onApprove={(action, acknowledgements) => void handleApprove(action, acknowledgements)} onModify={(action, patch) => handleSimpleAction("modify", action, patch)} onReject={(action) => void handleSimpleAction("reject", action)} onRetry={(action) => void handleSimpleAction("retry", action)} onAttachDescriptors={(action, descriptors) => handleAttachDescriptors(action, descriptors)} /><ExecutionStatusCard snapshot={runSnapshot} /></div> : null}
               {runSnapshot && !isTerminal ? <RecoveryCard snapshot={runSnapshot} busy={busyCommand} onResolve={(kind) => void handleResolveRecovery(kind)} onErrorAction={(kind) => kind === "OPEN_DIAGNOSTICS" ? onOpenDiagnostics() : onOpenSettings()} /> : null}

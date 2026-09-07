@@ -1,14 +1,15 @@
 import type { RunSnapshot } from "../../api/contract";
 import type { RunSseEvent } from "./api/run_sse_event";
 
-export function RunProgress({ snapshot, busy, onResume }: {
+export function RunProgress({ snapshot, busy, interactive = true, onResume }: {
   snapshot: RunSnapshot;
   latestEvent?: RunSseEvent | null;
   busy: string | null;
+  interactive?: boolean;
   onResume: (resumeKind: "SAFE_CHECKPOINT_RESUME") => void;
 }): JSX.Element {
   const manuallyResumable = ["RECOVERY_REQUIRED", "FAILED", "BLOCKED"].includes(snapshot.run.status);
-  const resumeAction = manuallyResumable
+  const resumeAction = interactive && manuallyResumable
     ? snapshot.error?.actions.find((action) => action.kind === "RESUME_SAFE_CHECKPOINT" && action.resume_kind === "SAFE_CHECKPOINT_RESUME")
     : undefined;
   const rows = snapshot.activity?.schema_version === 1 ? snapshot.activity.rows : [];
@@ -25,7 +26,15 @@ export function RunProgress({ snapshot, busy, onResume }: {
             <div className="agent-activity-detail">
               <p className="helper-text">이 실행 시점의 기록입니다. 이후 수정된 현재 계획과 다를 수 있습니다.</p>
               {row.details.length === 0 ? <p>이 단계에 저장된 추가 상세가 없습니다.</p> : (
-                <dl>{row.details.map((detail, index) => <div key={index}><dt>{detail.label}</dt><dd>{detail.value}</dd></div>)}</dl>
+                <dl>{row.details.map((detail, index) => (
+                  <div key={detail.fact_id ?? `${detail.label}:${detail.value}:${index}`}>
+                    <dt>
+                      {detail.label}
+                      {detail.state ? <span className={`activity-detail-state activity-detail-state--${detail.state.toLowerCase()}`}> · {({ RUNNING: "진행 중", WAITING: "확인 대기", RECORDED: "완료", FAILED: "실패" })[detail.state]}</span> : null}
+                    </dt>
+                    <dd>{detail.value}</dd>
+                  </div>
+                ))}</dl>
               )}
             </div>
           </details>

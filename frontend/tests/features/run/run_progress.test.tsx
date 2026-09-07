@@ -62,6 +62,21 @@ test("partial and unknown results do not imply cancellation or success", () => {
   expect(screen.queryByText(/나머지는 취소/)).not.toBeInTheDocument();
 });
 
+test("child facts use the server identity and distinguish progress from completion", async () => {
+  const value = snapshot(1);
+  value.activity!.rows[0]!.details = [
+    { fact_id: "fact-running", label: "자료 조회", value: "자료를 확인하고 있습니다.", state: "RUNNING", occurred_at_ms: 2 },
+    { fact_id: "fact-recorded", label: "검색 계획", value: "검색할 조건을 확인했습니다.", state: "RECORDED", occurred_at_ms: 1 },
+  ];
+  render(<RunProgress snapshot={value} busy={null} onResume={vi.fn()} />);
+
+  await userEvent.setup().click(screen.getByTestId("run-event-progress"));
+
+  expect(screen.getByText("진행 중", { exact: false })).toBeVisible();
+  expect(screen.getByText("완료", { exact: false })).toBeVisible();
+  expect(screen.getByText("자료를 확인하고 있습니다.")).toBeVisible();
+});
+
 test("RunProgress exposes only the server-projected resume action", async () => {
   const value = snapshot(0);
   value.run.status = "BLOCKED";
@@ -71,5 +86,15 @@ test("RunProgress exposes only the server-projected resume action", async () => 
   await userEvent.setup().click(screen.getByRole("button", { name: "재개" }));
   expect(onResume).toHaveBeenCalledWith("SAFE_CHECKPOINT_RESUME");
   view.rerender(<RunProgress snapshot={{ ...value, run: { ...value.run, status: "ANALYZING" } }} busy={null} onResume={onResume} />);
+  expect(screen.queryByRole("button", { name: "재개" })).not.toBeInTheDocument();
+});
+
+test("a restored historical Run is read-only even when its snapshot has a resume action", () => {
+  const value = snapshot(0);
+  value.run.status = "BLOCKED";
+  value.error = { schema_version: 1, error_code: "BLOCKED", message: "", actions: [{ kind: "RESUME_SAFE_CHECKPOINT", resume_kind: "SAFE_CHECKPOINT_RESUME" }] };
+
+  render(<RunProgress snapshot={value} busy={null} interactive={false} onResume={vi.fn()} />);
+
   expect(screen.queryByRole("button", { name: "재개" })).not.toBeInTheDocument();
 });

@@ -43,7 +43,7 @@ type RequestComposerControllerOptions = {
   setBusyCommand: Dispatch<SetStateAction<string | null>>;
   getProjectionGeneration: () => number;
   beginConversationProjection: (conversationId: string) => number;
-  reloadConversationHistory: (conversationId: string, generation: number) => Promise<void>;
+  reloadConversationHistory: (conversationId: string, generation: number) => Promise<unknown>;
   refreshConversations: () => Promise<unknown>;
   selectRun: (runId: string, conversationId: string, generation: number) => Promise<void>;
   onStatusLine: (message: string) => void;

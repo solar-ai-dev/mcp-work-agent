@@ -680,6 +680,17 @@ main.panel .panel-header > div:first-child .muted {
   margin-left: 0.6rem;
 }
 
+.activity-detail-state {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.activity-detail-state--running { color: var(--accent); }
+.activity-detail-state--waiting { color: var(--warning); }
+.activity-detail-state--failed { color: var(--danger); }
+.activity-detail-state--recorded { color: var(--success); }
+
 .agent-status-line {
   margin: 0;
   color: var(--muted);

@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import type { RunSnapshot } from "../../../src/api/contract";
+import type { ConversationHistoryResponse, RunSnapshot } from "../../../src/api/contract";
 import { useRunProjection } from "../../../src/features/run/use_run_projection";
 import { getRunSnapshot, getRunContext } from "../../../src/features/run/api/get_run_snapshot";
 
@@ -53,4 +53,71 @@ test("a late older snapshot cannot replace newer approval state", async () => {
   await act(async () => { await result.current.refreshRun("run"); });
   await act(async () => { await result.current.refreshRun("run"); });
   expect(result.current.runSnapshot?.run.status).toBe("WAITING_APPROVAL");
+});
+
+test("restores every retained Run snapshot and keeps the latest Run interactive", async () => {
+  const snapshots = new Map([
+    ["run-a", { ...snapshot("COMPLETED", 2), run: { ...snapshot("COMPLETED", 2).run, run_id: "run-a", started_at_ms: 1, finished_at_ms: 2 } }],
+    ["run-b", { ...snapshot("WAITING_APPROVAL", 3), run: { ...snapshot("WAITING_APPROVAL", 3).run, run_id: "run-b", started_at_ms: 3 } }],
+  ]);
+  vi.mocked(getRunSnapshot).mockImplementation(async (runId) => snapshots.get(runId)!);
+  vi.mocked(getRunContext).mockResolvedValue({ context: null } as never);
+  const history = {
+    schema_version: 1,
+    conversation: { schema_version: 1, conversation_id: "conversation", title: null, latest_message_at_ms: 3, open_run_id: "run-b" },
+    messages: [],
+    runs: [
+      { schema_version: 1, run_id: "run-a", status: "COMPLETED", started_at_ms: 1, finished_at_ms: 2 },
+      { schema_version: 1, run_id: "run-b", status: "WAITING_APPROVAL", started_at_ms: 3, finished_at_ms: null },
+    ],
+    truncated: false,
+  } satisfies ConversationHistoryResponse;
+  const hookOptions = {
+    ...options(),
+    selectConversationHistory: vi.fn(async () => history),
+  };
+  const { result } = renderHook(() => useRunProjection(hookOptions));
+
+  await act(async () => { await result.current.selectConversation("conversation"); });
+
+  expect(result.current.runSnapshots.map((item) => item.run.run_id)).toEqual(["run-a", "run-b"]);
+  expect(result.current.runSnapshot?.run.run_id).toBe("run-b");
+});
+
+test("startup open-Run selection also restores earlier Runs from Conversation history", async () => {
+  const snapshots = new Map([
+    ["run-a", { ...snapshot("COMPLETED", 2), run: { ...snapshot("COMPLETED", 2).run, run_id: "run-a", started_at_ms: 1, finished_at_ms: 2 } }],
+    ["run-b", { ...snapshot("ANALYZING", 3), run: { ...snapshot("ANALYZING", 3).run, run_id: "run-b", started_at_ms: 3 } }],
+  ]);
+  vi.mocked(getRunSnapshot).mockImplementation(async (runId) => snapshots.get(runId)!);
+  vi.mocked(getRunContext).mockResolvedValue({ context: null } as never);
+  const history = {
+    schema_version: 1,
+    conversation: { schema_version: 1, conversation_id: "conversation", title: null, latest_message_at_ms: 3, open_run_id: "run-b" },
+    messages: [],
+    runs: [
+      { schema_version: 1, run_id: "run-a", status: "COMPLETED", started_at_ms: 1, finished_at_ms: 2 },
+      { schema_version: 1, run_id: "run-b", status: "ANALYZING", started_at_ms: 3, finished_at_ms: null },
+    ],
+    truncated: false,
+  } satisfies ConversationHistoryResponse;
+  let projection = { conversationId: null as string | null, generation: 1 };
+  const hookOptions = {
+    ...options(),
+    beginConversationProjection: (conversationId: string) => {
+      projection = { conversationId, generation: 2 };
+      return 2;
+    },
+    getConversationProjection: () => projection,
+    isCurrentProjection: (conversationId: string, generation: number) => (
+      projection.conversationId === conversationId && projection.generation === generation
+    ),
+    reloadConversationHistory: vi.fn(async () => history),
+  };
+  const { result } = renderHook(() => useRunProjection(hookOptions));
+
+  await act(async () => { await result.current.selectRun("run-b"); });
+
+  expect(result.current.runSnapshots.map((item) => item.run.run_id)).toEqual(["run-a", "run-b"]);
+  expect(result.current.runSnapshot?.run.run_id).toBe("run-b");
 });

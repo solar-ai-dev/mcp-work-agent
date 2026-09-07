@@ -74,6 +74,7 @@ export function useConversation({ selectedResourceHandles, onStatusLine, request
     selectedConversationId: history.selectedConversationId,
     historyMessages: history.historyMessages,
     runSnapshot: run.runSnapshot,
+    runSnapshots: run.runSnapshots,
     runContext: run.runContext,
     latestRunEvent: run.latestRunEvent,
     composerText: composer.composerText,
