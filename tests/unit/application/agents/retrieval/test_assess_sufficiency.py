@@ -71,6 +71,152 @@ def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() 
     assert runtime.calls == []
 
 
+def test_existing_gmail_thread_reply__search_candidate__requires_detail_without_llm() -> None:
+    intent = _intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = []
+    intent["requested_effect_hints"] = ["READ", "SEND"]
+    intent["requested_resource_hints"] = ["GMAIL_THREAD", "GMAIL_MESSAGE"]
+    route_plan = _tool_route_plan(
+        [
+            {
+                "route_id": "route-gmail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            }
+        ]
+    )
+    route_plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": {"artifact_id": "route-out-1", "revision": 1, "based_on": []},
+        "output_mode": "ACTION",
+        "output_routes": [
+            {
+                "route_id": "route-send",
+                "resource_type": "GMAIL_MESSAGE",
+                "connector_id": "google_workspace",
+                "effect": "SEND",
+                "selected_tool_id": "gmail_send",
+                "reason_codes": ["REGISTRY_SINGLE_CANDIDATE"],
+            }
+        ],
+    }
+
+    result = deterministic_sufficiency(
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=_acquisition_result(),
+        evidence_drafts=[],
+        retry_budget=_run_budget(used=0),
+    )
+
+    assert result is not None
+    assert result["status"] == "NEEDS_MORE_DATA"
+    assert result["issues"][0]["reason_codes"] == ["CANDIDATE_DETAIL_REQUIRED"]
+
+
+def test_existing_gmail_thread_reply__detailed_identity__is_sufficient_without_llm() -> None:
+    intent = _intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = []
+    intent["requested_effect_hints"] = ["READ", "SEND"]
+    intent["requested_resource_hints"] = ["GMAIL_THREAD", "GMAIL_MESSAGE"]
+    route_plan = _tool_route_plan(
+        [
+            {
+                "route_id": "route-gmail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            }
+        ]
+    )
+    route_plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": {"artifact_id": "route-out-1", "revision": 1, "based_on": []},
+        "output_mode": "ACTION",
+        "output_routes": [
+            {
+                "route_id": "route-send",
+                "resource_type": "GMAIL_MESSAGE",
+                "connector_id": "google_workspace",
+                "effect": "SEND",
+                "selected_tool_id": "gmail_send",
+                "reason_codes": ["REGISTRY_SINGLE_CANDIDATE"],
+            }
+        ],
+    }
+    runtime = FakeLLMRuntime()
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=_acquisition_result(),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "evidence-thread-kim",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "segment-thread-kim",
+                "kind": "excerpt",
+                "excerpt": "From: Kim\nSubject: Project\nPlease reply next week.",
+                "locator": {
+                    "thread_id": "thread-kim",
+                    "rfc822_message_id": "<message-kim@example.test>",
+                    "received_at": "2026-09-07T12:00:00+09:00",
+                },
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        retry_budget=_run_budget(used=0),
+        query_attempts=[
+            cast(
+                QueryAttemptV1,
+                {
+                    "schema_version": 1,
+                    "query_attempt_id": "attempt-detail-1",
+                    "run_id": "run-1",
+                    "route_id": "route-gmail",
+                    "round_no": 1,
+                    "attempt_no": 2,
+                    "resource_type": "GMAIL_THREAD",
+                    "connector_id": "google_workspace",
+                    "operation_kind": "DETAIL_FETCH",
+                    "normalized_intent_constraints": [],
+                    "query_spec": {
+                        "tool_id": "gmail_get_thread",
+                        "tool_schema_version": "1",
+                        "canonical_arguments": {"thread_id": "thread-kim"},
+                    },
+                    "previous_query_hash": None,
+                    "page_state_hash": None,
+                    "added_constraints": [],
+                    "removed_constraints": [],
+                    "change_reason_code": "DETAIL_REQUIRED",
+                    "candidate_count": 1,
+                    "top_score": None,
+                    "score_margin": None,
+                    "confidence_band": "HIGH",
+                    "retrieval_config_version": "1",
+                    "score_config_version": "1",
+                    "threshold_config_version": "1",
+                    "stop_reason": "DETAIL_COMPLETE",
+                },
+            )
+        ],
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    assert runtime.calls == []
+
+
 @pytest.mark.parametrize(
     "has_next,exhausted,used,expected",
     [

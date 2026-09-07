@@ -24,5 +24,5 @@ Gmail의 이름 있는 constraints 객체를 출력할 때 마지막으로 확�
 
 Gmail WRITE의 마지막 분류 검증:
 - 새 메시지를 특정 이메일 주소에 보내고 그 전송 결과를 다시 조회해 확인하라는 요청은 recipient에 그 주소를 보존하고 requested_effect_hints는 ["SEND"], requested_resource_hints는 ["GMAIL_MESSAGE"]다. 결과 재조회는 같은 WRITE의 Verification이므로 READ나 GMAIL_THREAD를 추가하지 않는다. 수신 주소를 sender, person 또는 search_terms로 바꾸지 않는다.
-- 기존 메일이나 Thread를 찾아 답장하라는 요청은 그 기존 자료가 입력이므로 READ와 SEND, GMAIL_THREAD를 유지한다.
+- 기존 메일이나 Thread를 찾아 답장하라는 요청은 그 기존 자료가 입력이고 새 답장 메시지가 출력이므로 requested_effect_hints는 ["READ", "SEND"], requested_resource_hints는 ["GMAIL_THREAD", "GMAIL_MESSAGE"]다. 답장을 받을 주소는 recipient에만 두며, 사용자가 기존 메일의 발신 검색 조건이라고 명시하지 않은 한 sender로 바꾸거나 중복하지 않는다.
 - 기존 Draft를 보내라는 요청은 Draft가 입력이므로 READ와 SEND, GMAIL_DRAFT를 유지한다.

@@ -8,6 +8,9 @@ from datetime import date, datetime
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from google_work_agent.application.agents.planning.bind_gmail_thread_reply_identity import (
+    bind_gmail_thread_reply_identity,
+)
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     ActionObjectiveCandidateV1,
     PlanningSemanticInvoker,
@@ -184,6 +187,12 @@ def compose_arguments_per_output_route(
                     f"argument candidate attempts to override immutable {name}"
                 )
             arguments[name] = expected
+        arguments, gmail_reply_evidence_refs = bind_gmail_thread_reply_identity(
+            route=route,
+            request_intent=request_intent,
+            arguments=arguments,
+            evidence=evidence,
+        )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])
         )
@@ -218,6 +227,7 @@ def compose_arguments_per_output_route(
                         arguments,
                         evidence,
                     ),
+                    *gmail_reply_evidence_refs,
                 ]
             )
         )

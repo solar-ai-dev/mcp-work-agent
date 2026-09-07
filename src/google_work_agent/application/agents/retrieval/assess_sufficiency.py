@@ -150,16 +150,16 @@ def deterministic_sufficiency(
             for draft in evidence_drafts
             if (draft["locator"] or {}).get("is_metadata_only") is True
         ]
-        if metadata_candidates:
-            detail_need = _require_gmail_candidate_details(
-                {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
-                request_intent=request_intent,
-                tool_route_plan=tool_route_plan,
-                evidence_drafts=metadata_candidates,
-                attempted_detail_candidate_refs=project_attempted_detail_refs(query_attempts),
-            )
-            if detail_need["issues"]:
-                return detail_need
+        detail_need = _require_gmail_candidate_details(
+            {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            evidence_drafts=metadata_candidates,
+            detail_candidate_refs=acquisition_result["resource_handles"],
+            attempted_detail_candidate_refs=project_attempted_detail_refs(query_attempts),
+        )
+        if detail_need["issues"]:
+            return detail_need
         source_result = _deterministic_source_sufficiency(
             request_intent=request_intent,
             tool_route_plan=tool_route_plan,
@@ -251,6 +251,14 @@ def _deterministic_source_sufficiency(
             retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(evidence_drafts),
         )
+    if _is_complete_gmail_thread_reply(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     if _is_complete_selected_gmail_read(
         request_intent=request_intent,
         tool_route_plan=tool_route_plan,
@@ -274,6 +282,67 @@ def _deterministic_source_sufficiency(
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     return None
+
+
+def _is_complete_gmail_thread_reply(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
+        or request_intent["ambiguity"]["requires_confirmation"]
+        or set(request_intent["requested_effect_hints"]) != {"READ", "SEND"}
+        or set(request_intent["requested_resource_hints"])
+        != {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+        or not evidence_drafts
+    ):
+        return False
+    input_routes = tool_route_plan["input_plan"]["input_routes"]
+    output_routes = tool_route_plan["output_plan"]["output_routes"]
+    if len(input_routes) != 1 or len(output_routes) != 1:
+        return False
+    input_route, output_route = input_routes[0], output_routes[0]
+    if (
+        input_route["connector_id"] != "google_workspace"
+        or input_route["resource_type"] != "GMAIL_THREAD"
+        or not input_route["required"]
+        or "gmail_get_thread" not in input_route["allowed_read_tool_ids"]
+        or output_route["connector_id"] != "google_workspace"
+        or output_route["resource_type"] != "GMAIL_MESSAGE"
+        or output_route["effect"] != "SEND"
+        or output_route["selected_tool_id"] != "gmail_send"
+    ):
+        return False
+    summaries = _route_summaries(input_route, input_routes, acquisition_result)
+    if not summaries or any(summary.get("status") != "COMPLETE" for summary in summaries):
+        return False
+    acquired_handles = set(acquisition_result["resource_handles"])
+    thread_ids: set[str] = set()
+    for draft in evidence_drafts:
+        locator = draft["locator"]
+        if not isinstance(locator, Mapping):
+            return False
+        thread_id = locator.get("thread_id")
+        message_id = locator.get("rfc822_message_id")
+        if (
+            not isinstance(thread_id, str)
+            or not thread_id
+            or not isinstance(message_id, str)
+            or not message_id
+            or draft["resource_handle"] != f"gmail_thread:{thread_id}"
+            or draft["resource_handle"] not in acquired_handles
+        ):
+            return False
+        thread_ids.add(thread_id)
+    return len(thread_ids) == 1
 
 
 def _is_complete_selected_github_update(
@@ -396,6 +465,7 @@ def assess_sufficiency(
         request_intent=request_intent,
         tool_route_plan=tool_route_plan,
         evidence_drafts=evidence_drafts,
+        detail_candidate_refs=acquisition_result["resource_handles"],
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
     )
     if tool_route_plan is not None and set(request_intent["requested_effect_hints"]) == {"READ"}:
@@ -1077,30 +1147,42 @@ def _require_gmail_candidate_details(
     request_intent: RequestIntentV2,
     tool_route_plan: ToolRoutePlanV2 | None,
     evidence_drafts: list[EvidenceDraftV1],
+    detail_candidate_refs: Collection[str] = (),
     attempted_detail_candidate_refs: Collection[str],
 ) -> SufficiencyResultV2:
     """Hydrate semantic matches before treating search previews as business evidence."""
 
+    requested_effects = set(request_intent["requested_effect_hints"])
+    output_routes = (
+        []
+        if tool_route_plan is None
+        or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
+        else tool_route_plan["output_plan"]["output_routes"]
+    )
+    thread_reply_requires_detail = requested_effects == {"READ", "SEND"} and any(
+        route["resource_type"] == "GMAIL_MESSAGE" and route["effect"] == "SEND"
+        for route in output_routes
+    )
+    read_requires_detail = requested_effects == {"READ"} and (
+        request_intent["analysis_requirement"] == "REQUIRED"
+        or any(
+            (draft["locator"] or {}).get("is_metadata_only") is True
+            for draft in evidence_drafts
+        )
+        or any(
+            item["kind"] == "PERSON" or item["field"] == "business_concepts"
+            for item in request_intent["constraints"]
+        )
+        or any(
+            item["field"] == "temporal_axis"
+            and "EVENT_TIME"
+            in (item["value"] if isinstance(item["value"], list) else [item["value"]])
+            for item in request_intent["constraints"]
+        )
+    )
     if (
         tool_route_plan is None
-        or not (
-            request_intent["analysis_requirement"] == "REQUIRED"
-            or any(
-                (draft["locator"] or {}).get("is_metadata_only") is True
-                for draft in evidence_drafts
-            )
-            or any(
-                item["kind"] == "PERSON" or item["field"] == "business_concepts"
-                for item in request_intent["constraints"]
-            )
-            or any(
-                item["field"] == "temporal_axis"
-                and "EVENT_TIME"
-                in (item["value"] if isinstance(item["value"], list) else [item["value"]])
-                for item in request_intent["constraints"]
-            )
-        )
-        or set(request_intent["requested_effect_hints"]) != {"READ"}
+        or not (read_requires_detail or thread_reply_requires_detail)
         or "GMAIL_THREAD" not in request_intent["requested_resource_hints"]
     ):
         return result
@@ -1113,12 +1195,17 @@ def _require_gmail_candidate_details(
     ):
         return result
     attempted = set(attempted_detail_candidate_refs)
-    missing_refs = {
+    selected_refs = {
         draft["resource_handle"]
         for draft in evidence_drafts
         if draft["resource_handle"].startswith("gmail_thread:")
-        and draft["resource_handle"] not in attempted
     }
+    reply_candidate_refs = (
+        {ref for ref in detail_candidate_refs if ref.startswith("gmail_thread:")}
+        if thread_reply_requires_detail
+        else set()
+    )
+    missing_refs = (selected_refs | reply_candidate_refs) - attempted
     if not missing_refs:
         return result
     issue: SufficiencyIssueV2 = {

@@ -22,6 +22,12 @@ REQUEST_GOAL_SLOT_KINDS = {
     "period": "DATE",
     "status": "SCOPE",
 }
+_WRITE_EFFECT_RESOURCE_TYPES = {
+    "CREATE": ["GMAIL_DRAFT", "TASK", "CALENDAR_EVENT", "GITHUB_ISSUE"],
+    "UPDATE": ["GMAIL_DRAFT", "TASK", "CALENDAR_EVENT", "GITHUB_ISSUE"],
+    "SEND": ["GMAIL_MESSAGE"],
+    "DELETE": ["TASK", "CALENDAR_EVENT"],
+}
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
@@ -106,7 +112,16 @@ _CONSTRAINT_LIST_SCHEMA = {
         },
     },
 }
-_NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = _CONSTRAINT_LIST_SCHEMA
+_ADDITIONAL_CONSTRAINT_LIST_SCHEMA = deepcopy(_CONSTRAINT_LIST_SCHEMA)
+_additional_items = cast(dict[str, object], _ADDITIONAL_CONSTRAINT_LIST_SCHEMA["items"])
+_additional_properties = cast(dict[str, object], _additional_items["properties"])
+_additional_field = cast(dict[str, object], _additional_properties["field"])
+_additional_field["pattern"] = (
+    rf"^(?!(?:{'|'.join(REQUEST_GOAL_SLOT_KINDS)})$).+"
+)
+_NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = (
+    _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
+)
 _NAMED_SEARCH_CONSTRAINTS_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -119,7 +134,7 @@ _NAMED_SEARCH_CONSTRAINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v4",
+    schema_version="request-goal-candidate-v5",
     json_schema={
         "type": "object",
         "required": [
@@ -150,6 +165,26 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "properties": {"requested_effect_hints": {"type": "array", "minItems": 1}}
                 },
             },
+            *[
+                {
+                    "if": {
+                        "properties": {
+                            "requested_effect_hints": {
+                                "contains": {"const": effect},
+                            }
+                        },
+                        "required": ["requested_effect_hints"],
+                    },
+                    "then": {
+                        "properties": {
+                            "requested_resource_hints": {
+                                "contains": {"enum": resource_types},
+                            }
+                        }
+                    },
+                }
+                for effect, resource_types in _WRITE_EFFECT_RESOURCE_TYPES.items()
+            ],
         ],
         "properties": {
             "goal": {
@@ -183,6 +218,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
             },
             "requested_effect_hints": {
                 "type": "array",
+                "uniqueItems": True,
                 "items": {"enum": ["READ", "CREATE", "UPDATE", "SEND", "DELETE"]},
                 "description": (
                     "Effects on the requested external resources only. Retrieving, summarizing, "

@@ -198,16 +198,12 @@ def _normalize_new_gmail_send_scope(
     *,
     request: WorkflowStartRequest,
 ) -> RequestGoalCandidateV1:
-    """Keep same-write verification outside the Agent's business READ scope."""
+    """Do not turn new-send result Verification into a business READ."""
     if request.entry_mode != "AGENT_SEARCH" or request.selected_resources:
         return candidate
     if set(candidate["requested_effect_hints"]) != {"READ", "SEND"}:
         return candidate
-    resources = set(candidate["requested_resource_hints"])
-    if "GMAIL_MESSAGE" not in resources or not resources <= {
-        "GMAIL_MESSAGE",
-        "GMAIL_THREAD",
-    }:
+    if set(candidate["requested_resource_hints"]) != {"GMAIL_MESSAGE"}:
         return candidate
     named_values = {
         constraint["field"]

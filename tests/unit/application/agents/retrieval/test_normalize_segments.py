@@ -222,6 +222,8 @@ def test_thread_messages__earlier_signature__keeps_later_decisions() -> None:
         {
             "message_id": f"m{index}",
             "thread_id": "thread-1",
+            "rfc822_message_id": f"<m{index}@example.com>",
+            "references": None if index == 0 else "<m0@example.com>",
             "sender_name": "김철수 대리",
             "sender_email": "kim_0728@example.com",
             "recipients": ["user@example.com"],
@@ -253,6 +255,14 @@ def test_thread_messages__earlier_signature__keeps_later_decisions() -> None:
     segments = normalize_segments(acquisition)
     assert len(segments) == 2
     assert {item.locator["message_id"] for item in segments} == {"m0", "m1"}
+    assert {item.locator["rfc822_message_id"] for item in segments} == {
+        "<m0@example.com>",
+        "<m1@example.com>",
+    }
+    assert {item.locator["references"] for item in segments} == {
+        None,
+        "<m0@example.com>",
+    }
     assert all(item.resource_id == "thread-1" for item in segments)
     text = "\n".join(item.text for item in segments)
     assert "최신 결정: 체육대회는 9월 3일" in text

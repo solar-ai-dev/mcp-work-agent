@@ -17,7 +17,6 @@ from google_work_agent.application.agents.request_understanding.finalize_intent 
 )
 from google_work_agent.application.agents.request_understanding.identify_goal import identify_goal
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
-from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
@@ -52,26 +51,27 @@ def _goal_constraints(
     }
 
 
-@pytest.mark.parametrize("kind,valid", [("RESOURCE", False), ("SCOPE", False),
-                                        ("USER_REQUIREMENT", True)])
-def test_search_semantic_fields__wrong_kind__fails_output_contract(
+@pytest.mark.parametrize(
+    "kind,valid",
+    [("RESOURCE", False), ("SCOPE", False), ("USER_REQUIREMENT", True)],
+)
+def test_normalized_search_semantic_fields__wrong_kind__fails_output_contract(
     kind: str, valid: bool
 ) -> None:
     candidate = {
         "goal": "자료 확인", "completion_conditions": ["최종 기준 확인"],
-        "constraints": _goal_constraints(
+        "constraints": [
             {"kind": kind, "field": "business_concepts", "value": ["출하"]}
-        ),
+        ],
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
         "analysis_requirement": "NONE",
     }
-    assert (
-        not validate_output_schema(
-            candidate,
-            goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema,
-        )
-    ) is valid
+    if valid:
+        goal_schema.validate_normalized_request_goal_candidate(candidate)
+    else:
+        with pytest.raises(ValueError, match="normalized request goal candidate is invalid"):
+            goal_schema.validate_normalized_request_goal_candidate(candidate)
 
 
 def test_gmail_goal__unknown_named_slot__rejects_before_routing() -> None:
@@ -698,7 +698,7 @@ def test_new_gmail_send__result_verification_hint__keeps_only_write_scope() -> N
                     subject=["[GWA E2E #197] SEND"],
                 ),
                 "requested_effect_hints": ["READ", "SEND"],
-                "requested_resource_hints": ["GMAIL_MESSAGE", "GMAIL_THREAD"],
+                "requested_resource_hints": ["GMAIL_MESSAGE"],
                 "analysis_requirement": "NONE",
             }
         ]
@@ -715,6 +715,151 @@ def test_new_gmail_send__result_verification_hint__keeps_only_write_scope() -> N
 
     assert candidate["requested_effect_hints"] == ["SEND"]
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
+
+
+def test_existing_gmail_thread_reply__thread_input_hint__is_not_collapsed() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 메일 대화에 답장한다",
+                "completion_conditions": ["같은 대화의 보낸 답장을 재조회한다"],
+                "constraints": _goal_constraints(
+                    recipient=["qhdrbdhkdwks2@gmail.com"],
+                    subject=["[GWA E2E #197] SEND"],
+                ),
+                "requested_effect_hints": ["READ", "SEND"],
+                "requested_resource_hints": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request(
+            '제목이 "[GWA E2E #197] SEND"인 기존 메일 대화를 찾아서 '
+            "qhdrbdhkdwks2@gmail.com에게 답장하고 같은 대화에서 확인해."
+        ),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert candidate["requested_effect_hints"] == ["READ", "SEND"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD", "GMAIL_MESSAGE"]
+
+
+def test_existing_gmail_thread_reply__missing_output_hint__rejects_output() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 메일 대화에 답장한다",
+                "completion_conditions": ["같은 대화의 보낸 답장을 재조회한다"],
+                "constraints": _goal_constraints(
+                    recipient=["qhdrbdhkdwks2@gmail.com"],
+                    subject=["[GWA E2E #197] SEND"],
+                ),
+                "requested_effect_hints": ["READ", "SEND"],
+                "requested_resource_hints": ["GMAIL_THREAD"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request(
+                '제목이 "[GWA E2E #197] SEND"인 기존 메일 대화를 찾아서 '
+                "qhdrbdhkdwks2@gmail.com에게 답장해."
+            ),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
+
+
+def test_identify_goal__duplicate_effect_hints__rejects_output() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 메일 대화에 답장한다",
+                "completion_conditions": ["답장을 보낸다"],
+                "constraints": _goal_constraints(
+                    recipient=["qhdrbdhkdwks2@gmail.com"],
+                    subject=["[GWA E2E #197] SEND"],
+                ),
+                "requested_effect_hints": ["READ", "SEND", "READ"],
+                "requested_resource_hints": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("기존 메일 대화를 찾아 답장해."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
+
+
+@pytest.mark.parametrize(
+    "effect,resources",
+    [
+        ("CREATE", ["GMAIL_THREAD"]),
+        ("UPDATE", ["GMAIL_THREAD"]),
+        ("SEND", ["GMAIL_THREAD"]),
+        ("DELETE", ["GMAIL_THREAD"]),
+    ],
+)
+def test_identify_goal__write_effect_without_compatible_resource__rejects_output(
+    effect: str, resources: list[str]
+) -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "외부 업무를 수행한다",
+                "completion_conditions": ["요청한 변경을 수행한다"],
+                "constraints": _goal_constraints(),
+                "requested_effect_hints": [effect],
+                "requested_resource_hints": resources,
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("외부 업무를 수행해."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
+
+
+def test_identify_goal__named_recipient_in_additional_constraints__rejects_output() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 메일 대화에 답장한다",
+                "completion_conditions": ["답장을 보낸다"],
+                "constraints": _goal_constraints(
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "recipient",
+                        "value": ["qhdrbdhkdwks2@gmail.com"],
+                    },
+                    sender=["qhdrbdhkdwks2@gmail.com"],
+                ),
+                "requested_effect_hints": ["READ", "SEND"],
+                "requested_resource_hints": ["GMAIL_THREAD"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("qhdrbdhkdwks2@gmail.com에게 답장해."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
 
 
 def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> None:

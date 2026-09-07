@@ -18,8 +18,19 @@ from google_work_agent.application.use_cases.run.guard_run_budget import build_d
 
 def _intent() -> Any:
     return {
+        "schema_version": 2,
+        "goal": "김대리 관련 자료를 조회한다.",
+        "completion_conditions": ["지원되는 인물 자료를 확인한다."],
         "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
         "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "analysis_requirement": "NONE",
+        "ambiguity": {
+            "requires_confirmation": False,
+            "reason_codes": [],
+            "missing_fields": [],
+        },
+        "meta": {"artifact_id": "intent-fixture", "revision": 1, "based_on": []},
     }
 
 
@@ -40,11 +51,25 @@ def _guard(candidates: Any, evidence_drafts: Any = None, **kwargs: Any) -> Any:
     return deterministic_sufficiency(
         request_intent=_intent(),
         tool_route_plan=None,
-        acquisition_result=cast(Any, {"source_summaries": []}),
+        acquisition_result=_empty_acquisition_result(),
         evidence_drafts=[] if evidence_drafts is None else evidence_drafts,
         retry_budget=build_default_run_budget(),
         person_candidates=candidates,
         **kwargs,
+    )
+
+
+def _empty_acquisition_result() -> Any:
+    return cast(
+        Any,
+        {
+            "schema_version": 1,
+            "status": "COMPLETE",
+            "resource_handles": [],
+            "source_summaries": [],
+            "missing_slots": [],
+            "remaining_budget": {},
+        },
     )
 
 
@@ -242,7 +267,7 @@ def test_llm_budget_exhausted__keeps_read_partial__without_relaxing_write_requir
     budget["llm_calls_used"] = budget["llm_call_limit"]
     values = dict(
         tool_route_plan=None,
-        acquisition_result=cast(Any, {"source_summaries": []}),
+        acquisition_result=_empty_acquisition_result(),
         evidence_drafts=[_evidence(None, "fixture@example.test", "s1")],
         retry_budget=budget,
     )

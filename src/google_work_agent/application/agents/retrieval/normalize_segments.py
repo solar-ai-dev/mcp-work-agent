@@ -239,11 +239,15 @@ def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
                     **raw,
                     "message_id": message["message_id"],
                     "_message_locator": {
-                        key: message[key]
-                        for key in (
-                            "message_id", "thread_id", "sender_name", "sender_email",
-                            "recipients", "received_at",
-                        )
+                        **{
+                            key: message[key]
+                            for key in (
+                                "message_id", "thread_id", "sender_name", "sender_email",
+                                "recipients", "received_at",
+                            )
+                        },
+                        "rfc822_message_id": message.get("rfc822_message_id"),
+                        "references": message.get("references"),
                     },
                     "payload": {
                         "subject": message["subject"],

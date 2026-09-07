@@ -210,6 +210,19 @@ def _exact_intent_candidate(
         )
     if request.selected_resources:
         return None
+    if (
+        len(resource_types) == 2
+        and set(resource_types) == {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+        and len(effect_values) == 2
+        and set(effect_values) == {"READ", "SEND"}
+    ):
+        return SemanticRouteCandidate(
+            input_resource_types=("GMAIL_THREAD",),
+            output_pairs=(("GMAIL_MESSAGE", EffectType.SEND),),
+            output_mode="ACTION",
+            analysis_requirement=request_intent["analysis_requirement"],
+            input_reason_codes=(("GMAIL_THREAD", "REQUESTED_INPUT"),),
+        )
     if len(resource_types) != 1:
         return None
     resource_type = resource_types[0]

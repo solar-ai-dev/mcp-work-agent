@@ -144,6 +144,9 @@ from google_work_agent.application.agents.retrieval.plan_query import (
 from google_work_agent.application.agents.retrieval.project_attempted_detail_refs import (
     project_attempted_detail_refs,
 )
+from google_work_agent.application.agents.retrieval.project_detail_candidate_refs import (
+    project_detail_candidate_refs,
+)
 from google_work_agent.application.agents.retrieval.resolve_availability import (
     AvailableIntervalV1,
     BusyIntervalV1,
@@ -926,7 +929,10 @@ class RetrievalSubgraph:
                 "unresolved_sufficiency_issues": sufficiency_result["issues"],
             },
             frozen_routes=tool_route_plan["input_plan"]["input_routes"],
-            detail_candidate_refs=self._detail_candidate_refs(state),
+            detail_candidate_refs=project_detail_candidate_refs(
+                evidence_drafts=state.get("evidence_drafts", []),
+                acquisition_result=state.get("acquisition_result"),
+            ),
             attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
         )
         sufficiency_result, retry_budget, should_plan_followup = authorize_retrieval_followup(
@@ -950,7 +956,10 @@ class RetrievalSubgraph:
                 query_attempts=cast(
                     list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])
                 ),
-                detail_candidate_refs=self._detail_candidate_refs(state),
+                detail_candidate_refs=project_detail_candidate_refs(
+                    evidence_drafts=state.get("evidence_drafts", []),
+                    acquisition_result=state.get("acquisition_result"),
+                ),
                 attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
             ),
         )
@@ -1111,7 +1120,10 @@ class RetrievalSubgraph:
         validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)
         followup = state.get(CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY)
-        detail_candidate_refs = self._detail_candidate_refs(state)
+        detail_candidate_refs = project_detail_candidate_refs(
+            evidence_drafts=state.get("evidence_drafts", []),
+            acquisition_result=state.get("acquisition_result"),
+        )
         attempted_detail_candidate_refs = self._attempted_detail_candidate_refs(state)
         prompt_input = (
             initial_retrieval_planner_input(
@@ -1184,17 +1196,6 @@ class RetrievalSubgraph:
                 else revised_retry_budget
             ),
         }
-
-    @staticmethod
-    def _detail_candidate_refs(state: ContextRetrievalLocalState) -> list[str]:
-        drafts = state.get("evidence_drafts", [])
-        return list(
-            dict.fromkeys(
-                draft["resource_handle"]
-                for draft in drafts
-                if isinstance(draft, Mapping) and isinstance(draft.get("resource_handle"), str)
-            )
-        )
 
     @staticmethod
     def _attempted_detail_candidate_refs(state: ContextRetrievalLocalState) -> list[str]:
