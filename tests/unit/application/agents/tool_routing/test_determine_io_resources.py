@@ -204,6 +204,55 @@ def test_explicit_gmail_draft_update__requires_exact_draft_read__without_llm(
     assert runtime.calls == []
 
 
+@pytest.mark.parametrize("effect_hints", [["SEND"], ["SEND", "READ"]])
+def test_new_gmail_send__message_write_intent__skips_input_retrieval(
+    effect_hints: list[str],
+) -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-send", "revision": 1, "based_on": []},
+            "goal": "send a new message and verify it",
+            "completion_conditions": ["sent message is reread"],
+            "constraints": [],
+            "requested_effect_hints": effect_hints,
+            "requested_resource_hints": ["GMAIL_MESSAGE"],
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-send",
+        conversation_id="conversation",
+        workflow_key="thread",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="send a new message and reread the sent result",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[])
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate.input_resource_types == ()
+    assert candidate.output_pairs == (("GMAIL_MESSAGE", EffectType.SEND),)
+    assert runtime.calls == []
+
+
 def test_calendar_create__uses_exact_validated_intent__without_llm() -> None:
     catalog = load_signed_tool_registry()
     intent: RequestIntentV2 = {

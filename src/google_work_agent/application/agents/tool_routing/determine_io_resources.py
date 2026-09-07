@@ -224,10 +224,13 @@ def _exact_intent_candidate(
     if len(write_effects) != 1:
         return None
     effect = EffectType(write_effects[0])
+    allows_verification_read = (
+        resource_type == "GMAIL_MESSAGE" and effect == EffectType.SEND
+    ) or (
+        resource_type == "GMAIL_DRAFT" and effect in {EffectType.UPDATE, EffectType.SEND}
+    )
     if len(effect_values) != 1 and not (
-        resource_type == "GMAIL_DRAFT"
-        and effect in {EffectType.UPDATE, EffectType.SEND}
-        and set(effect_values) == {"READ", effect.value}
+        allows_verification_read and set(effect_values) == {"READ", effect.value}
     ):
         return None
     input_reason_codes: tuple[tuple[str, str], ...] = ()

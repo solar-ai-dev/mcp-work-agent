@@ -687,6 +687,36 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
     ] == expected_dates
 
 
+def test_new_gmail_send__result_verification_hint__keeps_only_write_scope() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "새 메시지를 보내고 결과를 확인한다",
+                "completion_conditions": ["전송된 메시지를 재조회한다"],
+                "constraints": _goal_constraints(
+                    recipient=["qhdrbdhkdwks2@gmail.com"],
+                    subject=["[GWA E2E #197] SEND"],
+                ),
+                "requested_effect_hints": ["READ", "SEND"],
+                "requested_resource_hints": ["GMAIL_MESSAGE", "GMAIL_THREAD"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request(
+            'qhdrbdhkdwks2@gmail.com에게 제목 "[GWA E2E #197] SEND"로 보내고 '
+            "전송 결과를 다시 조회해 확인해."
+        ),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert candidate["requested_effect_hints"] == ["SEND"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
+
+
 def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[

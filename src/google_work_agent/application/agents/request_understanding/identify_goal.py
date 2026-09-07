@@ -68,6 +68,7 @@ def identify_goal(
         entry_mode=request.entry_mode,
     )
     candidate = _apply_selected_resource_authority(candidate, request=request)
+    candidate = _normalize_new_gmail_send_scope(candidate, request=request)
     return validate_normalized_request_goal_candidate(candidate)
 
 
@@ -189,6 +190,36 @@ def _apply_selected_resource_authority(
         "constraints": constraints,
         "requested_effect_hints": effects,
         "requested_resource_hints": resource_hints,
+    }
+
+
+def _normalize_new_gmail_send_scope(
+    candidate: RequestGoalCandidateV1,
+    *,
+    request: WorkflowStartRequest,
+) -> RequestGoalCandidateV1:
+    """Keep same-write verification outside the Agent's business READ scope."""
+    if request.entry_mode != "AGENT_SEARCH" or request.selected_resources:
+        return candidate
+    if set(candidate["requested_effect_hints"]) != {"READ", "SEND"}:
+        return candidate
+    resources = set(candidate["requested_resource_hints"])
+    if "GMAIL_MESSAGE" not in resources or not resources <= {
+        "GMAIL_MESSAGE",
+        "GMAIL_THREAD",
+    }:
+        return candidate
+    named_values = {
+        constraint["field"]
+        for constraint in candidate["constraints"]
+        if constraint["value"]
+    }
+    if not {"recipient", "subject"} <= named_values:
+        return candidate
+    return {
+        **candidate,
+        "requested_effect_hints": ["SEND"],
+        "requested_resource_hints": ["GMAIL_MESSAGE"],
     }
 
 
