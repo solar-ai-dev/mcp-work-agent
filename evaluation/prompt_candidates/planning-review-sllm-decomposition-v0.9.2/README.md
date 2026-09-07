@@ -11,3 +11,7 @@ were updated only for this ownership move; Prompt text and declared lifecycle st
 The bundle predates the current 21-slot `PromptCandidateV1` materializer contract. Keep it as
 reproducible candidate/provenance input until an explicit experiment migration or final candidate
 selection retires it. Do not treat materialization or source presence as activation evidence.
+
+## Offline integrity check
+
+The original 0.9.2 candidate manifest had six stale content/assembled hashes. The referenced source fragments concatenate byte-for-byte to the stored assembled files. Only those six hash pairs were recalculated; paths, slot IDs, schema snapshots, Prompt text, and inactive lifecycle were retained. This is not current Product compatibility or activation evidence.
