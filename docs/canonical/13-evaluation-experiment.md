@@ -18,7 +18,7 @@
 - Graph Profile·Routing·Agent Skip·Review Agent 실험
 - Stateful Multi-Connector Tool Orchestration·Human-in-the-Loop·End-state E2E 실험
 - Finalist E2E·Holdout·Stress·Robustness 평가
-- 실험 Budget·통계·Human Review·Product Decision Record
+- 실험 Budget·통계·Human Review·기존 activation evidence 연결
 
 이 문서가 소유하지 않는다.
 
@@ -55,13 +55,18 @@
 
 ### Current Evaluation Artifact Contract
 
-공식 evaluation/promotion runner는 다음 contract family가 서로 일치하는지만 사용하며 Product를 supported public HTTP API로 호출한다. Product Python internal import, private Node/Subgraph 직접 실행, fake Product adapter 결과는 공식 승격 evidence가 아니다. 이는 개발·회귀 중 production Graph/Node script 측정을 금지하는 규칙이 아니며 Artifact version/status의 공식 재현 기록은 §5와 Git history 경계를 따른다.
+현재 checked-in 평가 원본은 사람이 읽는 Markdown 업무 자료·사용자 입력·평가자 확인이다.
+오프라인 도구는 이 경계와 Prompt 후보 무결성을 검사할 뿐 공식 promotion runner나 자동 grader가
+아니다. Product Python internal import, private Node/Subgraph 직접 실행, fake Product adapter 결과는
+공식 승격 evidence가 아니다. 이는 개발·회귀 중 production Graph/Node script 측정을 금지하는
+규칙이 아니며 실제로 실행한 경계를 구분해 기록한다.
 
 | Concern | Current contract |
 | --- | --- |
-| Canonical case / gold | `CanonicalCaseV7` semantics와 current `end_state_gold` contract |
-| E2E projection | `E2EProjectionV5`; Product Episode는 `ProductEpisodeE2EProjectionV1` |
-| Grader | Safety / User Interaction / Tool Trajectory / End-state / Semantic Completion 책임 분리 |
+| 업무 자료 | 각 Markdown의 `서비스에 등록할 자료`와 연결된 텍스트 첨부 |
+| 사용자 요청 | 각 질문의 `사용자 입력`; 업무 자료·내부 Prompt와 분리 |
+| Gold | 각 질문의 `평가자 확인`과 준비 조건; Product 입력에서 격리 |
+| 검사 | UTF-8·section/fence·질문 identity·link/anchor·메일 범위·Prompt source/hash |
 | Scoring | Safety·Integrity Hard Gate 이후 BTS → Process → Efficiency → Reliability |
 | Prompt evaluation | `06/15` current PromptRef / caller / manifest / source / input-contract exact-set equality를 소비 |
 
@@ -72,7 +77,7 @@ Artifact file/version/status의 재현성은 versioned Evaluation artifact와 Gi
 | 검증 종류 | 인정 범위 | 대체하지 않는 것 |
 | --- | --- | --- |
 | 개발·회귀 production Graph script | 실제 compiled LangGraph와 production Node/Router/Application, 실제 선택 LLM을 실행해 routing·state·typed result를 측정 | 공식 promotion, Browser UI, Installed Release |
-| 공식 Evaluation/Promotion | current runner가 public Product boundary와 고정 Dataset/Gold/Grader/hash로 생성한 후보 비교·승격 evidence | Live Provider와 설치 제품 검증 |
+| 공식 Evaluation/Promotion | 이후 확정된 실행 계약으로 public Product boundary와 고정 Dataset/Gold/평가 기준을 사용한 후보 비교·승격 evidence | Live Provider와 설치 제품 검증 |
 | Browser UI validation | 실제 UI의 Local API/SSE/확인·승인·복구 상호작용 | 모델 의미 품질과 Provider end-state 단독 증명 |
 | Live Provider validation | 테스트 계정의 실제 permission·READ/WRITE·reread end-state | signed installer/startup/upgrade 검증 |
 | Installed Product/Release validation | signed bundle의 Clean VM startup·runtime artifact·migration·E2E | 개발 checkout 단독 결과 |
@@ -80,14 +85,12 @@ Artifact file/version/status의 재현성은 versioned Evaluation artifact와 Gi
 
 개발 측정도 fake LangGraph가 아니라 production compiled Graph를 사용한다. synthetic READ 또는 fault injection을 사용했다면 실제 Provider 검증과 명확히 구분하며, 어느 한 종류의 증거가 다른 종류의 미수행을 PASS로 바꾸지 않는다.
 
-### Current Main Experiment Case Budget
+### Main Experiment Case Budget
 
-- **A Model·Runtime:** `STRATIFIED_CORE_24`를 1차 Screening으로 사용한다. 12개 Core Scenario Family에서 기본 2개씩 뽑고, shortlist 후보에만 targeted Stress 6개를 추가한다. 모든 Model을 92 Case에 실행하지 않는다.
-- **B Prompt·Node Quality:** Node별 applicable Case에서 stratified DEV subset을 사용하고 Confirmation·zero-action·Repair 같은 희귀 경계는 전수 포함한다. Holdout Node Projection은 Prompt 튜닝에 사용하지 않는다.
-- **C Retrieval:** 고정 IN Route 기준 Core stratified 30을 기본으로 하고 `NO_FETCH_NEEDED`, `NEEDS_CONFIRMATION`, partial/provider failure를 반드시 포함한다. Retrieval 전용 Stress Family를 별도 실행한다.
-- **D Agent Architecture:** SINGLE/THREE/SIX 모두 `CORE_ARCH_24` Smoke를 먼저 수행하고, 상위 2개 Profile만 Core 60 전체 paired comparison으로 확장한다. 최종 선택 Profile에만 Stress 20을 실행한다.
-- **E Final Product Validation:** 최종 후보만 `Holdout 12 + Stress 20 + PRODUCT_EPISODE_EXTENSION`을 실행한다. 반복성은 사전 등록한 12 Case subset에 기본 3 Trial을 적용해 `consistent_success@3`를 보고한다.
-- Core·Stress·Holdout·Product Episode는 서로 다른 denominator다. 비용 절감을 위해 후보가 탈락한 이후 단계의 Case를 실행하지 않는다.
+현재 자료 반영 단계에서는 9B/4B 비교의 subset·반복 횟수·분모를 확정하지 않는다. 실제 실험을
+시작할 때 Markdown 질문의 기능·언어·안전 경계를 기준으로 사전 등록하고, 같은 후보 비교 안에서
+고정한다. Screening에서 탈락한 후보에 불필요한 전체 실행을 요구하지 않으며 서로 다른
+Browser/Live/Installed 경계의 결과를 한 분모로 합치지 않는다.
 
 ### 1.2 Local SLLM Responsibility Decomposition 평가 Gate
 
@@ -214,43 +217,31 @@ Evaluation Harness는 Product Runtime 계약을 관측·비교할 뿐 권한을 
 - User Simulator와 hidden decision script는 Evaluator 전용 artifact다. Simulator가 Confirmation/Approval/Reject/Cancel 자연어 응답을 만들 수는 있지만 `PolicyConfirmationReceiptV1`, Approval, Claim Token을 직접 생성하지 않는다. 실제 Application/Domain Controller가 검증한 뒤 생성한다.
 - Grader 결과를 Repair/Revision 진단에 재사용해야 할 때는 Runtime과 동일한 allowlisted `failure_record` projection만 사용한다. Grader rationale 원문, 점수, 정답 Action, Gold field를 Product Prompt에 주입하지 않는다.
 - Synthetic Multi-Connector Tool/Registry는 evaluation harness 전용 namespace에 둔다. P0 Runtime Registry, installed Connector manifest, Product Prompt artifact와 섞지 않는다.
-- `ProductEpisodeE2EProjectionV1.decision_script`와 structured `end_state_gold`는 evaluator input에만 존재한다. Product Runtime input contract에 같은 field를 추가하지 않는다.
+- 평가자 확인·숨은 결정 조건과 end-state 기대는 evaluator에게만 제공한다. Product Runtime input
+  contract에 같은 field를 추가하지 않는다.
 
 ## 3. 평가 데이터 구조
 
 평가 데이터는 실험마다 별개의 업무 세계를 새로 만드는 방식이 아니다.
 
 ```
-Canonical Case
-├─ Business Scenario
-├─ Connector Fixture Snapshot
-│  ├─ google_workspace / Gmail
-│  ├─ google_workspace / Tasks
-│  ├─ google_workspace / Calendar
-│  └─ github / Issues
-├─ Canonical User Prompt
-├─ Structured Gold
-├─ Node Input·Gold
-├─ Expected Semantic Milestones
-├─ SIX Reference Route (diagnostic only)
-├─ Expected Tool Trajectory
-└─ Expected End-state
-        ↓
-Experiment Projection
-├─ User Understanding
-├─ Tool Route
-├─ Retrieval
-├─ Analysis
-├─ Planning
-├─ Review
-├─ Routing·Trajectory
-└─ E2E
+Markdown 업무 문서
+├─ 서비스에 등록할 자료
+├─ 사용자 입력
+├─ 평가자 확인·준비 조건
+└─ 필요한 텍스트 첨부
+
+Prompt 후보
+├─ candidate metadata
+├─ 원래 slot별 source
+└─ Product-only slot을 보존한 materialized DRAFT bundle
 ```
 
-- Canonical Case가 사실과 정답의 기준점이다.
-- 각 실험은 Canonical Case에서 필요한 입력·Gold만 추출한 Projection을 사용한다.
-- Schema Repair·Review Challenge·Fault Injection처럼 좁은 목적은 별도 Micro Dataset을 사용한다.
-- 같은 Case·Fixture를 재사용하되 `evaluation_item_id`는 Projection·Candidate·Trial별로 구분한다.
+- 업무 자료가 사실의 기준점이고 각 질문의 평가자 확인이 현재 Gold다.
+- export는 서비스 등록 자료만 분리하며 질문·Gold를 포함하지 않는다.
+- 내부 Prompt 후보에는 Case ID·사용자 질문·정답 힌트를 포함하지 않는다.
+- 실제 실험 결과에는 사용한 자료/질문, Product commit, Prompt bundle, 모델과 실행 경계를 함께
+  기록하되 별도 Dataset 원본을 만들지 않는다.
 
 ## 4. 제품 평가 Suite — Main 5
 
@@ -289,7 +280,9 @@ Review Gold               → PlanReviewResultV2
 
 ## 5. Current · Reproduction Artifact 경계
 
-Current Evaluation Runner와 release decision은 이 문서의 current contract family만 사용한다. Non-current reproduction artifact는 Git history와 해당 versioned artifact에서만 해석하며 current Dataset·Gold·Grader에 자동 승격하거나 같은 aggregate에 혼합하지 않는다.
+현재 workspace 검사와 Prompt materializer는 Markdown 원본과 versioned Prompt 후보만 사용한다.
+Non-current reproduction artifact는 Git history와 해당 보존 후보에서만 해석하며 현재
+Dataset·Gold나 결과에 자동 승격하거나 같은 aggregate에 혼합하지 않는다.
 
 
 ## 6. 실험 순서
@@ -310,79 +303,39 @@ Baseline Config 고정
    - Multi-Connector/HITL diagnostic lane
    - Holdout·Stress·Human Review finalist lane
 → Local Model·GPU Finalist Lane
-→ Product Decision Record
+→ 기존 Prompt activation evidence와 Git history에 채택 근거 연결
 ```
 
 모든 실험을 모든 후보에 수행하지 않는다. Smoke·Screening에서 탈락한 후보는 다음 단계로 진입하지 않는다.
 
 ## 7. Dataset
 
-### 7.1 Canonical Case
+### 7.1 현재 자료 단위
 
-- Core 60
-- Holdout 12
-- Stress 20
-- Smoke 5, Screening 20은 Core의 고정 Subset
+- 업무 문서 34개
+- 사용자 질문 119개와 입력 없는 UI 확인 2개
+- 원본 질문 계열 아래의 한국어·영어 말투 변형 40개
+- 업무 자료와 연결된 텍스트 첨부 및 별도 구조 검사 자료
 
-Core Category 각 10:
+이 수치는 현재 workspace의 내용 설명이며 향후 Prompt slot 수나 고정 실험 분모가 아니다.
+실제 비교 subset과 반복 횟수는 실험 시작 전에 별도로 고정한다.
 
-- Source 선택·읽기
-- Tasks + Calendar → Gmail
-- Gmail + Tasks → Calendar
-- Calendar + Gmail → Tasks
-- 세 Source 복합
-- 모호성·중복·충돌·오류·Policy
-
-### 7.2 Canonical Case Schema
+### 7.2 Markdown case structure
 
 ```
-case_id
-scenario_family_id
-fixture_relation_family
-split
-dataset_version
-category
-language
-entry_mode
-user_prompt_id
-canonical_user_prompt
-fixture_snapshot_id
-expected_goal
-expected_completion_criteria
-requested_outcome
-selected_resource_handles
-required_input_routes
-optional_input_routes
-forbidden_input_routes
-required_output_routes
-forbidden_output_routes
-required_resource_ids
-hard_negative_resource_ids
-required_evidence_ids
-user_evidence
-derived_evidence
-expected_input_route_plan
-expected_output_plan
-expected_retrieval_trajectory
-expected_tool_trajectory
-policy_result
-allowed_actions
-forbidden_actions
-approval_expectation
-verification_expectation.per_action
-run_outcome_expectation
-expected_planning_result_type
-expected_interactions
-expected_semantic_milestones
-six_reference_route            # SIX reference diagnostic only
-six_reference_skipped_nodes   # SIX reference diagnostic only
-node_applicability
-human_rubric
+업무 제목과 목적
+서비스에 등록할 자료
+사용자 입력
+평가자 확인
+준비 조건 또는 연결된 첨부
 ```
 
-### 7.2-A Current evaluation artifact closed schema
+### 7.2-A 향후 구조화 자동 평가의 비활성 설계 참고
 
-아래 artifact는 **evaluation data contract**다. Python Product type을 import해 구현하는 target contract가 아니며 public API 관측값을 이 의미로 정규화할 때만 사용한다. Exact repository placement는 `16 Repository Architecture`가 소유한다.
+아래 타입은 과거 자동 평가 설계의 의미 참고이며 현재 checked-in Dataset, loader, runner 또는
+grader의 실행 계약이 아니다. 이번 Markdown 자료에서 같은 JSON 원본을 복원하거나 Product Python
+type을 import해 구현하지 않는다. 이후 자동 평가가 필요하면 현재 질문·Gold와 Product public
+boundary를 기준으로 별도 실행 계약을 확정해야 한다.
 
 ```python
 EvaluationJSONScalarV1 = str | int | float | bool | None
@@ -521,35 +474,30 @@ class NodeEvaluationItemV1:
 
 이 문서는 Evaluation artifact의 **semantic set, schema, serialization, lineage**를 소유한다. Exact repository root/path/file naming은 `16 Repository Architecture`가 소유하며 여기서 두 번째 placement authority를 만들지 않는다.
 
-Current non-Python artifact family는 다음과 같다.
+현재 사람이 관리하는 평가 원본은 Markdown 업무 문서다. 한 문서 안에서도 다음 경계는
+명시적으로 분리한다.
 
-| Artifact | Logical contract | Serialization |
+| 구분 | 현재 책임 | Product 전달 여부 |
 | --- | --- | --- |
-| Canonical Case source | `CanonicalCaseV7` | UTF-8 JSON Lines; line마다 `CanonicalCaseV7` 1개 |
-| Product API observation | public Run/API response의 semantic projection | result JSON 내부 normalized observation |
-| Product Episode Projection | `ProductEpisodeE2EProjectionV1` | UTF-8 JSON Lines; line마다 `ProductEpisodeE2EProjectionV1` 1개 |
-| Agent evaluation input | preserved semantic responsibility input; private callable target 아님 | UTF-8 JSON Lines |
-| Current Fixture Snapshot | `CurrentFixtureSnapshotV1` + scenario에 필요한 provider-specific Gmail/Tasks/Calendar/GitHub Issue source files | UTF-8 strict JSON; snapshot manifest가 포함 source와 relation을 고정 |
-| Experiment Config | candidate/config metadata | UTF-8 strict JSON |
-| Result | dataset/grader/Product hash + public observation + metrics | UTF-8 strict JSON; case/run마다 하나 |
-| Scoring contract | `scoring-contract-v1.1` | UTF-8 strict JSON |
+| 서비스에 등록할 자료 | 실제 업무 corpus와 관계 | 예 |
+| 사용자 입력 | 제품에 제출할 자연어 요청 | 예 |
+| 평가자 확인·준비 조건 | Gold와 평가 전제 | 아니요 |
+| 내부 Agent Prompt 후보 | Product caller가 사용할 DRAFT source | 업무 corpus나 사용자 입력으로 전달하지 않음 |
 
-Current runner는 checked-in Dataset을 strict load하고 외부에서 준비된 Product endpoint를 public API로 호출한 뒤 public response만 정규화한다. Fixture를 Product internal type으로 투영하거나 Node/Graph callable을 직접 실행하지 않는다. Controlled fixture가 필요한 실험은 동일 fixture-backed Product process를 Evaluation 밖에서 준비한다. Producer/consumer는 16의 ownership·dependency 문법을 따르며 exact file inventory를 이 문서에 복제하지 않는다.
+문서 export나 등록 준비 파일은 이 원본에서 필요한 부분만 분리한 파생 산출물이며 별도
+Dataset/Gold authority가 아니다. Product 관측 결과는 실제로 실행한 public API, production
+Graph·Node, Browser, Live Provider 또는 Installed Product 경계를 표시해 기록한다. 서로 다른
+경계의 결과를 같은 증거로 합치지 않는다.
 
-Current Micro Dataset logical ID set은 §7.4의 다음 six IDs와 exact equality다.
-
-```text
-resource_selected_variants
-review_challenges
-structured_output_repair
-fault_profiles
-injection_variants
-paraphrase_robustness
-```
-
-각 Micro Dataset은 UTF-8 JSON Lines를 사용하고 각 row는 `micro_case_id`와 원본 `case_id`를 반드시 포함한다. ID set을 확장하려면 13의 Evaluation contract를 먼저 갱신하고 실제 dataset loader·runner·grader와 ownership 검사를 함께 갱신한다.
+현재 저장소의 Markdown 자료 체계는 과거 JSON case/fixture/config/scoring-contract와 동일한
+시험을 주장하지 않는다. 현재 존재하지 않는 runner·grader·Experiment Plan을 구현 완료된
+authority처럼 참조하지 않으며, 실제 9B/4B 및 Live 비교를 시작할 때 필요한 실행 계약은 그
+작업에서 현재 자료와 Product caller를 기준으로 확정한다.
 
 ### 7.3 실험 Projection
+
+아래 관점은 실제 자동 평가를 구성할 때 선택할 수 있는 분석 축이며 현재 Markdown에서 자동
+생성되는 artifact 목록이 아니다.
 
 | Projection | 주요 입력 | 주요 Gold |
 | --- | --- | --- |
@@ -562,9 +510,13 @@ paraphrase_robustness
 | Routing·Trajectory | Full Trace Input | 호출 Node·Tool·Skip·Budget |
 | E2E | User Prompt + Fixture | Route·Answer·Action·End-state |
 
-Projection은 Canonical Case에서 자동 생성하되, 사람 검수된 Gold만 포함한다. `not_applicable` Node는 제외 사유를 기록한다.
+Projection을 만들 경우 현재 업무 자료와 사람 검수된 `평가자 확인`에서 필요한 내용만 사용한다.
+적용되지 않는 책임은 제외 사유를 기록한다.
 
 ### 7.4 Micro Dataset
+
+아래는 좁은 회귀를 구성할 때의 분류 예시다. 현재 repository의 exact Dataset ID나 필수 파일
+inventory가 아니다.
 
 | Dataset | 초기 권장 규모 | 생성 방식 |
 | --- | --- | --- |
@@ -575,20 +527,14 @@ Projection은 Canonical Case에서 자동 생성하되, 사람 검수된 Gold만
 | `injection_variants` | 10~15 | 서로 다른 Source 위치·공격 목적 |
 | `paraphrase_robustness` | 주요 Core 20 × 2 | Finalist 선정 후 작성 |
 
-Micro Dataset은 Canonical Case 92개를 대체하지 않으며 별도 `micro_case_id`와 원본 `case_id`를 연결한다.
+별도 회귀 자료를 만들 경우 원본 Markdown 질문과의 관계를 식별할 수 있어야 하며, 같은 내용을
+관리하는 두 번째 Gold 원본으로 만들지 않는다.
 
 ### 7.5 초기 작성 규모
 
-초기에는 Case당 Canonical User Prompt 하나만 작성한다.
-
-| Dataset | Case | 초기 User Prompt |
-| --- | --- | --- |
-| Core | 60 | 60 |
-| Holdout | 12 | 12 |
-| Stress | 20 | 20 |
-| **합계** | **92** | **92** |
-
-추가 Paraphrase는 Finalist 선정 후 주요 Core 20 Case에 추가 표현 2개씩 총 40개를 우선 작성한다.
+현재 규모는 §7.1과 같다. 문서 수·질문 수를 과거 Core/Holdout/Stress 분모에 자동 대응시키지
+않는다. 말투 변형은 원본 질문 계열과 연결된 상태로 유지하며 별도 독립 업무 증거로 중복
+집계하지 않는다.
 
 ### 7.6 Dataset 누수 방지
 
@@ -603,7 +549,8 @@ Micro Dataset은 Canonical Case 92개를 대체하지 않으며 별도 `micro_ca
 > **핵심:** Gold는 “SIX의 내부 Node 순서”가 아니라 **업무적으로 무엇이 맞아야 하는지**를 우선 표현한다. Graph Profile 비교에서 내부 토폴로지가 다른 것은 정상이다.
 ### 8.1 Canonical Gold structure
 
-Canonical Case의 권위 Gold는 다음 네 층으로 나눈다.
+현재 권위 Gold는 각 질문 아래의 `평가자 확인`과 준비 조건이다. 다음 관점은 평가자가 확인할
+업무 의미를 구분하기 위한 것이며 별도 구조화 Gold 원본을 만들라는 뜻이 아니다.
 
 1. **Business Gold** — Goal, Completion Criteria, Required/Forbidden Source, Resource, Evidence, Action, End-state.
 2. **Interaction Gold** — 한 Run에 필요한 사용자 상호작용의 **순서 목록**. `CONFIRMATION | APPROVAL | REAUTH | RECOVERY_DECISION | CANCEL_REQUEST`를 사용하며 단일 `expected_interrupt`로 축약하지 않는다.
@@ -622,7 +569,7 @@ DELETE -\> GET_ABSENT  / GET_TARGET
 ### 8.2 Projection Gold
 
 - Node Projection은 **그 Node가 실제로 알 수 있는 정보만** Gold로 가진다. 예를 들어 Request Understanding Gold에 향후 OAuth 만료나 Recovery 결과를 넣지 않는다.
-- current `E2EProjectionV5`는 채점에 필요한 Business/Interaction/Tool/Workflow/Safety/End-state Gold를 자체 포함한다. Grader가 숨은 Canonical 파일을 다시 추론해서 조합하지 않는다.
+- 구조화 Projection을 이후 만들 경우 평가에 필요한 Business/Interaction/Tool/Workflow/Safety/End-state Gold를 명시하고 숨은 파일이나 Planning Arguments에서 정답을 추론하지 않는다.
 - `ORACLE`과 `LIVE`는 동일 Gold 의미를 사용하되 입력 출처만 다르다.
 - controlled architecture comparison의 model input과 grader Gold는 물리적으로 분리한다.
 
@@ -641,20 +588,15 @@ DELETE -\> GET_ABSENT  / GET_TARGET
 
 실험 시작 전 다음을 통과해야 한다.
 
-- JSONL·Schema·ID·Reference 무결성
-- `scenario_family_id`·`fixture_relation_family` Split 누수 0
-- Required·Forbidden·Hard Negative 중복 0
-- Tool·Node Enum·Schema Version 유효
-- current `CanonicalCaseV7`와 Projection Gold 일치
-- current `E2EProjectionV5` self-contained Gold 100%
-- `expected_interactions` 순서와 실제 Route Interaction 일치
-- profile-neutral common E2E Gold에 SIX exact route 포함 0
-- Evaluator Label·정답 유도 문구 Source 포함 0
-- Human Sample Review 승인
-- LLM Judge와 Human 판정의 기준 Sample 일치도 기록
-- Deterministic Grader가 가능한 항목에 LLM Judge 단독 사용 금지
+- 모든 Markdown·Prompt source UTF-8과 section/fence 경계 유효
+- 질문 identity, local link/anchor와 텍스트 첨부 참조 무결성
+- 업무 자료 export에 사용자 질문·평가자 확인·정답 유도 문구 포함 0
+- 허용 이메일 집합 밖 주소 0
+- Prompt 후보 source 경로·slot ID·source hash·bundle hash 일치
+- Product manifest/input contract 불일치와 source overwrite 거부
+- 실제 의미·Live 결과는 사람 검수 또는 해당 실행 경계의 검증으로 별도 확인
 
-Grader가 불일치하면 후보를 평가하기 전에 Grader 또는 Dataset Issue를 먼저 수정한다.
+자료·질문·Gold가 불일치하면 후보를 평가하기 전에 원본 업무 문서의 모순을 먼저 수정한다.
 
 ## 10. Experiment Config
 
@@ -888,26 +830,31 @@ Cost·Token·Agent Invocation·LLM Call·Connector Provider API Call·p95 Latenc
 
 ### 13.7 Grader 책임 분리
 
-검색 전략 진단은 기존 `grade_case()`의 선택적 `retrieval_gold` projection으로 채점한다.
-자연어 입력·공유 Provider corpus는 Product 측에 전달할 수 있지만 Gold와 rubric은 전달하지 않는다.
-`query_trajectory`는 실제 QueryAttempt/검색 가설 관측, `provider_calls`는 외부 경계의 결과·실패를
-분리해서 기록한다. 관측이 없으면 검색 품질 PASS가 아니라 `QUERY_TRAJECTORY_MISSING` 또는
-`PROVIDER_OBSERVATION_MISSING`으로 남긴다. 의미 제약·identity·temporal lowering·근거·종료 결과와
-Resource allowlist를 함께 검사하며, allowlist 위반은 기존 Safety hard gate에도 반영한다.
-고정 Node 순서를 정답으로 삼거나 normal no-result와 Provider 실패를 합치지 않는다.
-외부 진단 observation을 기존 runner로 재채점한 결과는 `EXTERNAL_OBSERVATION_ONLY`로 표시한다.
+현재 Gold는 각 업무 문서의 `평가자 확인`이며 Product 입력이나 Provider corpus에 전달하지 않는다.
+결정적 workspace 검사는 자료/질문/Gold 경계, 링크, 허용 이메일, Prompt source·slot·hash와
+materialization 무결성을 검증한다. 이 검사를 검색 품질이나 업무 성공 grader로 사용하지 않는다.
+
+실제 검색 평가에서는 QueryAttempt·검색 가설과 Provider 호출·실패를 분리해 관측하고, 관측이
+없으면 검색 품질 PASS로 판정하지 않는다. 의미 제약·identity·temporal lowering·근거·종료
+결과와 Resource allowlist를 함께 확인한다. 고정 Node 순서를 정답으로 삼거나 normal no-result와
+Provider 실패를 합치지 않는다.
+
 스크립트의 production Graph/선택 Local LLM + synthetic 또는 명시적 Live READ 검증은 실행한 경계에 대한 유효한 개발·회귀 측정이다.
-다만 공식 runner의 public Product E2E, 별도 Browser UI, Live Provider WRITE/end-state, Installed Release, release Prompt activation evidence로 자동 승격하지 않는다.
+다만 공식 Product E2E, 별도 Browser UI, Live Provider WRITE/end-state, Installed Release, release Prompt activation evidence로 자동 승격하지 않는다.
 
 - `Safety Contract Deterministic`: Policy·승인 전 Write 금지·Claim/Argument binding·`BeginExecutionAttempt` pre-dispatch gate·UNKNOWN_RESULT no-resend·금지 Side Effect·Connector/MCP 경계를 평가한다.
 - `User Interaction Deterministic`: Confirmation·Approval·Reject·Cancel의 필요 여부와 순서를 소유한다. Safety에 직접 연결되는 위반은 Hard Gate에도 반영한다.
 - `Tool Trajectory Deterministic`: `STRICT | SET | SUBSET | CONSTRAINT_ENVELOPE` 방식으로 필요한 Tool/Phase·금지 Tool·Argument Constraint를 채점한다. 정상 Read 순서를 하나로 고정하지 않는다.
-- `End-state Deterministic`: 실제 Environment의 최종 Resource 상태를 소유한다. current `E2EProjectionV5`와 applicable `ProductEpisodeE2EProjectionV1`의 구조화 `end_state_gold`만 정답으로 사용하며, required Gold가 없는 Case에서는 End-state 판정을 생성하지 않는다.
+- `End-state Deterministic`: 실제 Environment의 최종 Resource 상태를 소유한다. 현재 질문의
+  평가자 확인에 명시된 end-state만 정답으로 사용하며, 필요한 Gold가 없는 Case에서는
+  End-state 판정을 생성하지 않는다.
 - `Semantic Completion`: 사용자 목표·완료 의미를 보조 채점한다. Human-reviewed calibration을 통과해야 Candidate 선택에 사용할 수 있고 Deterministic 실패를 뒤집을 수 없다.
-- compatibility-only grader는 current scoring 집계에 포함하지 않는다. 재현이 필요할 때만 해당 versioned Evaluation artifact와 Git history에서 별도로 사용한다.
-1. Holdout·Stress·반복성·Human Review 후 Product Decision Record 작성.
+- 과거 grader의 PASS/FAIL은 현재 Markdown 질문·Gold의 결과로 승계하지 않는다.
+1. Holdout·Stress·반복성·Human Review 후 기존 Prompt activation evidence에 결과를 연결한다.
 
-세부 기계 계약은 current `scoring-contract-v1.1` artifact와 Grader Registry v0.4을 기준으로 한다. Exact repository path/file은 `16 Repository Architecture`가 소유한다.
+구조화된 scorer나 promotion contract가 필요한 실제 실험에서는 현재 Dataset·질문·Gold와
+Product 관측 경계를 기준으로 versioned 실행 계약을 먼저 확정한다. 아직 없는 grader나 registry를
+현재 authority로 가정하지 않는다.
 
 ## 14. G01 Safety·Prompt Injection
 
@@ -957,7 +904,7 @@ Safety Gate:
 
 ## 16. Budget
 
-### Evaluation Runner configurable budget defaults
+### 향후 실험 실행 예산
 
 - Smoke: 5 Case
 - Screening: 20 Case
@@ -969,7 +916,9 @@ Safety Gate:
 - Provider별 RPM·TPM은 실제 계정 한도의 80% 이하로 설정
 - 동일 Provider·Model·Prompt·Schema·Input Hash 결과만 재사용 가능
 
-이 값들은 Evaluation Runner의 configurable defaults이며 제품 policy/architecture invariant가 아니다. Provider quota·예산·실험 규모에 따라 configuration으로 조정한다.
+이 값들은 실제 반복 실험을 시작할 때 검토할 예시이며 현재 repository에 존재하는 Runner의
+default가 아니다. 제품 policy/architecture invariant가 아니고 Provider quota·예산·실험 규모에
+따라 실행 전에 확정한다.
 
 
 `Request`라는 단일 용어를 사용하지 않고 다음을 분리한다.
@@ -1026,7 +975,9 @@ API 수직 흐름과 Runner가 안정화된 후 수행한다. 지원 Profile은 
 
 ## 18. Result Artifact
 
-Current runner는 case/run마다 작은 JSON result 하나를 생성한다. 전체 비교·Decision Record가 실제로 필요할 때만 별도 curated summary를 추가한다.
+현재는 `evaluation/실행기록.md`의 네 칸에 실제 수행한 검사와 경계를 간단히 기록한다. 향후
+반복 실험 결과를 구조화할 필요가 생기면 case/run마다 작은 result를 사용하고, 같은 내용을
+관리하는 누적 보고서나 별도 audit 문서를 만들지 않는다.
 
 ```
 Dataset version/hash
@@ -1056,23 +1007,15 @@ graph_version
 ## 19. 작성·구현 순서
 
 ```jsx
-Fixture Relation Model
-→ 12\~18 Fixture Snapshot
-→ Canonical Case 92와 Structured Gold
-→ Canonical User Prompt 92
-→ 8개 Node Projection 계약
-→ Tier A Prompt 5개 Baseline
-→ G00 Dataset·Grader Integrity
-→ 대표 Case Human Review
-→ A·B·C·D Main Experiment와 필요한 diagnostic만 실행
-→ Micro Dataset 보강
-→ G01·G02
-→ Finalist Paraphrase 40 내외
-→ E Final Product Validation(필요한 HITL·Holdout·Stress lane 포함)
-→ Local GPU Lane
+Markdown 자료·질문·평가자 확인 정합성 검사
+→ Prompt source·slot·hash 및 Product caller/schema 대조
+→ DRAFT bundle materialization
+→ 개발 composition에서 production Graph·Node 선택 확인
+→ 별도 요청에서 9B/4B 실제 비교와 필요한 Live 검증
+→ 검증된 evidence가 완전할 때만 기존 Prompt activation 절차
 ```
 
-## 20. Product Decision Record
+## 20. 후보 채택 기록
 
 채택 상태:
 
@@ -1083,9 +1026,12 @@ REJECTED
 DEFERRED
 ```
 
-Decision Record에는 Candidate Config Hash, Dataset·Projection·Grader Version, 반복 수, 품질·안전·비용·Latency, 주요 실패 Case, Node·Handoff 원인, 채택·탈락 근거를 포함한다. API candidate를 `APPROVED_FOR_API`로 채택할 때는 concrete external provider/model identity를 release-selection evidence로 고정한다. Local model 결과는 지원 모델별로 구분한다.
+채택 근거는 기존 versioned Prompt manifest/evidence와 Git history에 남긴다. 별도 Decision Record
+문서를 새 authority로 만들지 않는다. 실제 승격 시에는 Candidate/Prompt hash, Dataset·질문·Gold
+revision, 반복 수, 품질·안전·비용·Latency와 주요 실패 근거를 연결한다. Local model 결과는 지원
+모델별로 구분한다.
 
-이 `provider/model` 값은 **Release selection artifact**이지 Repository Architecture의 closed semantic owner/Port/operation identifier가 아니다. 따라서 16의 `<provider>` leaf grammar를 concrete Provider 하나로 영구 고정하지 않으며, current Product Decision Record/Release configuration에 값이 없으면 구현자가 Provider/Model을 추측하지 않는다.
+이 `provider/model` 값은 **Release selection artifact**이지 Repository Architecture의 closed semantic owner/Port/operation identifier가 아니다. 따라서 16의 `<provider>` leaf grammar를 concrete Provider 하나로 영구 고정하지 않으며, 현재 Release configuration에 값이 없으면 구현자가 Provider/Model을 추측하지 않는다.
 
 ## 21. Node Capability·Prompt 실험
 
@@ -1120,7 +1066,10 @@ final_outcome_impact
 deterministic_validator_caught
 ```
 
-### 21.3 Node Evaluation Item Contract
+### 21.3 향후 Node Evaluation Item 의미 참고
+
+아래 구조는 자동 Node evaluation을 다시 구성할 때 검토할 의미 참고이며 현재 loader가 소비하는
+checked-in schema가 아니다.
 
 ```yaml
 node_evaluation_item:
@@ -1153,6 +1102,9 @@ Dataset은 Prompt Version을 소유하지 않는다. 실제 Prompt artifact iden
 `target_node_id`는 provenance/분석용 semantic responsibility label이며 import path나 callable target이 아니다.
 
 ### 21.4 Dataset Layer
+
+아래 분류는 향후 자동 평가에서 사용할 수 있는 관점이며 현재 Markdown directory의 exact
+subdirectory나 별도 Gold 원본을 요구하지 않는다.
 
 ```
 canonical_e2e
@@ -1193,11 +1145,20 @@ Activation evidence는 Prompt Slot별 immutable artifact chain이다. Node DEV, 
 
 Prompt candidate는 `evaluation/prompt_candidates/<candidate-id>/` 아래의 versioned offline `DRAFT` artifact다. Candidate source와 current Product Prompt manifest/input contract를 합성하는 materialization은 Evaluation 소유의 artifact generation이며 Product Prompt Registry나 Runtime authority가 아니다. Product source를 덮어쓰지 않고 exact Slot set, runtime Node mapping, input/output schema version, source hash, DRAFT lifecycle을 검증한다.
 
-실험 실행 단위는 versioned `ExperimentPlanV1`이다. Plan은 Product SHA, Dataset path/hash/case IDs, existing Candidate Config path/hash, Prompt candidate identity/bundle hash, repetition/randomization/failure policy, Grader path/hash, comparison group을 잠근다. Model·Graph·Runtime parameter는 기존 `evaluation/configs/candidates/**`가 소유하고 Plan은 해당 config를 참조한다. Prompt-only comparison은 Product, Dataset/Gold, Grader, Tool Registry, Graph Profile, Model/parameter, Runtime mode, Fixture와 repetition을 고정하고 Prompt bundle만 변경한다.
+기본 materialization은 후보와 Product의 slot exact match를 요구한다. Product에만 있는 현재 slot은
+명시적 opt-in에서만 실제 source·hash·binding을 그대로 보존할 수 있으며 unknown slot이나 schema
+불일치는 거부한다. 생성된 DRAFT manifest는 기존 Product `PromptRegistry`와 개발 composition에
+명시적으로 전달해 production Graph·Node 실행에 사용할 수 있다. 기본 개발 실행과 signed release는
+각자의 manifest 선택을 유지하며, 후보 경로를 signed release 입력으로 사용할 수 없다.
 
-`evaluation/runner.py`는 one-case public HTTP execution authority로 유지한다. Batch operation은 validated Plan의 Case × repetition을 순회해 같은 `run_case()`를 호출하고 raw trial, normalized observation, Product/Candidate/Dataset/Grader provenance와 summary를 원자적으로 기록한다. `pass@k`와 `pass^k`를 모두 기록하되 한 번의 성공이나 평균 점수만으로 승격을 선언하지 않는다. Comparison은 fixed-dimension mismatch를 거부하고 case delta, hard-gate regression, pass/consistency delta만 산출한다. 새 hard-gate failure가 하나라도 생기면 `NOT_PROMOTABLE`이며 Product activation은 별도 immutable Product Decision이다.
+현재 Markdown 평가 자료에는 versioned Experiment Plan·batch runner·자동 grader가 없다. 이를
+과거 JSON 체계에서 복원하거나 존재하는 것처럼 문서화하지 않는다. 실제 비교를 시작할 때에는
+Product commit, Prompt bundle, Dataset/질문/Gold revision, 모델·parameter, Graph profile, 실행 경계,
+반복 횟수와 평가 기준을 고정한다. Prompt-only 비교에서는 그중 Prompt bundle만 바꾼다.
 
-`--validate-only`는 Product/LLM을 호출하지 않고 Plan, candidate/config, source/bundle hash, Dataset/Grader identity, Case ID, repetition과 unresolved binding을 검증한다. External development Product가 materialized Prompt manifest를 선택하는 supported launch contract가 없으면 `PENDING_DEV_LAUNCH_INTEGRATION`으로 기록하고 후보가 실제 적용됐다고 주장하지 않는다. DEV/HOLDOUT split identity가 owner Dataset에 확정되지 않았으면 임의 분할하지 않고 `NEEDS_DATASET_DECISION`으로 남긴다.
+오프라인 materialization과 개발 manifest 선택 성공은 후보가 실제 호출될 수 있음을 검증할 뿐
+모델 품질, Holdout, Live Provider, Browser 또는 Release activation evidence가 아니다. 실제로 수행한
+검증 경계를 실행 기록에 남기며 미수행 검증을 PASS로 쓰지 않는다.
 
 ## 22. Safety · Ambiguity · Implementation Alignment
 

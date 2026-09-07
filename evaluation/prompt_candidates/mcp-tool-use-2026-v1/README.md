@@ -38,6 +38,18 @@ python -m evaluation.prompt_candidates.mcp-tool-use-2026-v1.materialize_prompt_c
 
 출력은 별도의 비어 있는 임시 경로에만 만들고 기존 Product/후보 source와 겹치거나 기존 파일을 덮어쓰는 경로는 거부한다. 검증을 먼저 완료한 뒤 사본을 만들며 실패한 binding 뒤 부분 사본을 남기지 않는다. 이 명령은 제품을 실행하거나 Prompt를 활성화하지 않는다.
 
+생성된 DRAFT 묶음은 기존 Product composition의 명시적 개발 입력으로만 선택한다. 새 Registry나
+별도 Graph를 만들지 않으며, `<materialized-directory>/prompt_manifest.json`을 다음 경로에 전달한다.
+
+```text
+python -m launcher.development_entrypoint --prompt-manifest <materialized-directory>/prompt_manifest.json
+python scripts/measure_local_runtime.py --prompt-manifest <materialized-directory>/prompt_manifest.json
+```
+
+두 명령 모두 같은 Product `PromptRegistry`와 production Graph/Node caller를 사용한다. 인자를
+생략하면 기존 baseline manifest를 사용하고, signed release는 이 개발 후보 경로를 허용하지 않는다.
+개발 앱 기동이나 Graph 로딩 성공은 Prompt 품질 또는 activation PASS가 아니다.
+
 ## 실제 적용 전 확인
 
 현재 로컬의 최종 caller·입출력 schema·새 시간축 Prompt는 첨부본에 없다. 따라서 필드/enum/책임 일치와 실제 모델의 구조화 출력은 로컬에서 확인해야 한다. manifest metadata가 일치한다는 사실만으로 의미 호환을 보증하지 않는다.

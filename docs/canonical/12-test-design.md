@@ -458,54 +458,41 @@ Crash at page1→page2, detail fetch, normalize, evidence selection, sufficiency
 
 ## 14. Evaluation Harness Regression
 
-실험 Runner와 Dataset은 제품 품질 비교 전에 다음 회귀를 통과한다.
+평가 자료와 Prompt 후보 도구는 제품 품질 비교 전에 다음 회귀를 통과한다. 이 회귀는
+자료·후보의 구조 무결성을 검증하며 실제 Product 품질, Live Provider 결과 또는 Release 승격을
+증명하지 않는다.
 
 ### Dataset·Projection
 
-- Current Evaluation placement closure: checked-in Dataset/Gold는 `evaluation/datasets/{retrieval,agent,e2e}/**`, scoring contract는 `evaluation/scoring-contract-v1.1.json`, candidate metadata는 `evaluation/configs/**`, transient result는 gitignored `evaluation/results/**`에만 둔다. Top-level `experiments/`, live `evaluation/compat/`, internal Product target registry 생성/소비는 실패다.
-- Current Micro Dataset은 13의 six dataset IDs를 retrieval/agent semantic category 아래 유지한다. Unknown extra dataset ID를 current release-evaluation input으로 자동 승격하면 실패다.
-- Canonical Case → Node·Trajectory·E2E Projection 참조 무결성
-- Required·Forbidden·Hard Negative 중복 0
-- `scenario_family_id`·`fixture_relation_family` Split 누수 0
-- Holdout Gold가 Prompt 튜닝 Artifact에 포함되지 않음
-- Source 본문에 Evaluator Label·정답 유도 문구 없음
+- 사람이 관리하는 현재 원본은 `evaluation/datasets/*.md`이며 업무 자료, `사용자 입력`,
+  `평가자 확인`의 경계와 로컬 링크·anchor를 검증한다.
+- Product에 입력하거나 Provider에 등록할 자료에는 평가자 확인·정답 힌트·질문 표식이 섞이지
+  않는다. 파생 export는 준비용 산출물이며 두 번째 Dataset/Gold authority가 아니다.
+- 현재 평가 자료에서 허용한 테스트 이메일 집합과 첨부 텍스트까지 검사한다.
+- 실행 결과는 checked-in Dataset과 분리하며 오프라인 검사 결과를 과거 품질 PASS로 승계하지
+  않는다.
 
 ### Candidate Config
 
-- 비교 후보 간 의도한 독립 변수 하나만 다름
-- `candidate_config_hash` 재현 가능
-- Dataset·Fixture·Tool·Policy Version 누락 시 실행 금지
-- Budget·Stop Condition 없이 Runner 시작 금지
+- 후보 source 경로·slot ID·본문 hash와 candidate bundle hash가 일치한다.
+- 후보와 Product manifest/input contract의 Node·schema binding이 일치하지 않으면 materialization을
+  거부한다.
+- Product에만 있는 검증된 추가 slot은 명시적 opt-in에서만 source와 hash를 그대로 보존한다.
+  Unknown slot이나 schema 불일치를 이 옵션으로 무시하지 않는다.
+- materialization은 Product source와 후보 source를 덮어쓰지 않고 모든 slot을 `DRAFT`로 만든다.
+- 생성된 bundle은 기존 Product `PromptRegistry`와 개발 실행 composition이 같은 manifest를
+  선택해 읽을 수 있어야 한다. Signed Release 선택에는 개발 후보 경로를 전달할 수 없다.
 
-### Node·Handoff
+### 제품 안전·평가 경계
 
-- `ORACLE`은 Gold Upstream만 사용
-- `LIVE`는 실제 Upstream Output만 사용
-- 두 모드 결과를 같은 Metric 집계로 혼합하지 않음
-- Target Node 외 LLM 호출이 있으면 Node 단독 Run 실패
-
-### Trajectory·End-state Grader
-
-- Required·Forbidden Tool과 Argument Constraint 검증
-- 허용 경로가 여러 개인 READ는 Subset·Constraint 방식 사용
-- 승인 → ClaimExecution COMMIT → ClaimContext → BeginExecutionAttempt COMMIT → Write → GET Verification의 Strict 순서를 검증
-- Write 최종 상태를 Google Fixture End-state와 비교
-- 텍스트 성공 선언만으로 Write 성공 처리 금지
-
-### Scoring Contract
-
-- `scoring-contract-v1.1.json` 존재·Version 고정
-- Hard Gate 실패 Candidate가 aggregate PASS가 되지 않음
-- Core·Stress·Holdout 분모를 분리
-- Architecture Profile 비교에서 `six_reference_route`를 profile-neutral common BTS 조건으로 사용하지 않음
-- 비용·Latency가 BTS 실패를 상쇄하지 않음
-
-### Grader Calibration
-
-- 결정적 판정 가능 항목에 LLM Judge 단독 사용 금지
-- Human Sample과 LLM Judge 불일치 기록
-- Dataset Issue와 Candidate Failure 분리
-- Grader Version 변경 시 과거 결과와 직접 합산 금지
+- production Graph·Node script는 실제 caller·routing·typed result를 확인하는 개발·회귀
+  측정으로 사용할 수 있다.
+- Browser, Live Provider READ/WRITE, Installed Product, 공식 promotion evidence는 각각 수행한
+  경계를 별도로 기록한다.
+- Fake·Stub·controlled fault는 해당 계약의 결정적 회귀 증거이며 Live 또는 최종 제품 품질
+  증거로 승격하지 않는다.
+- Approval·Claim·BeginExecutionAttempt·Write-once·Verification·UNKNOWN_RESULT·Recovery 안전
+  테스트는 평가 자료 형식 변경과 무관하게 유지한다.
 
 ## 15. Coverage
 
@@ -545,7 +532,8 @@ Final Product Validation과 Synthetic Multi-Connector 평가 설계는 `13 Evalu
 - Safety/Integrity와 Business Outcome을 같은 Grader 결과로 합치지 않는다. Safety·Approval·Claim·UNKNOWN_RESULT·금지 Side Effect는 Hard Gate, 기대 업무 End-state는 Outcome으로 별도 채점한다.
 - Tool Trajectory는 `STRICT | SET | SUBSET | CONSTRAINT_ENVELOPE` 비교 모드를 지원해야 하며, 순서가 안전·업무 의존성에 필요한 구간만 STRICT로 강제한다.
 - Semantic Grader는 `SUPPORTING_ONLY`다. 결정적 Safety·Route/Tool·Interaction·End-state 실패를 뒤집을 수 없고 Candidate 선택에 쓰기 전 Human-reviewed calibration sample을 통과해야 한다.
-- current `E2EProjectionV5`와 applicable `ProductEpisodeE2EProjectionV1`은 End-state Grader가 필요한 Case에 구조화 `end_state_gold`를 제공해야 한다. required Gold가 없으면 해당 End-state 판정을 fail closed하고, 숨은 Canonical 파일이나 Planning Arguments에서 정답을 추론하지 않는다.
+- 자동 End-state grader를 이후 구성할 경우 필요한 Case에 명시적 end-state Gold를 제공한다.
+  해당 Gold가 없으면 숨은 파일이나 Planning Arguments에서 정답을 추론하지 않는다.
 - Finalist 반복성은 모든 Case·Candidate를 무차별 반복하지 않고 사전 등록한 reliability subset에서 기본 `consistent_success@3`를 사용한다.
 
 ### 15.3 Design Freeze deterministic boundary regression

@@ -1056,6 +1056,7 @@ class ProductionRuntimeConfig:
     configuration_source: Literal["SIGNED_RELEASE_MANIFEST", "EXPLICIT_DEVELOPMENT"]
     mcp_module_name: str | None = None
     keyring_store: SecretStorePort | None = None
+    development_prompt_manifest_path: Path | None = None
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = ()
     code_signature_verified_paths: frozenset[str] = frozenset()
 
@@ -1072,6 +1073,8 @@ class ProductionRuntimeConfig:
         if any(not value.strip() for value in values):
             raise ValueError("runtime configuration fields must be non-empty")
         if self.configuration_source == "SIGNED_RELEASE_MANIFEST":
+            if self.development_prompt_manifest_path is not None:
+                raise ValueError("signed runtime cannot select a development Prompt manifest")
             if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
                 raise ValueError("signed GitHub OAuth client ID must be non-empty")
             paths = [entry.file_path for entry in self.verified_release_files]
@@ -1106,6 +1109,7 @@ class ProductionRuntimeConfig:
         github_oauth_scope: str = "",
         mcp_module_name: str | None = None,
         keyring_store: SecretStorePort | None = None,
+        prompt_manifest_path: Path | None = None,
     ) -> ProductionRuntimeConfig:
         """Create the only explicit non-installed configuration mode."""
 
@@ -1126,6 +1130,9 @@ class ProductionRuntimeConfig:
             configuration_source="EXPLICIT_DEVELOPMENT",
             mcp_module_name=mcp_module_name,
             keyring_store=keyring_store,
+            development_prompt_manifest_path=(
+                None if prompt_manifest_path is None else prompt_manifest_path.resolve()
+            ),
         )
 
     @classmethod
@@ -2229,6 +2236,7 @@ def build_production_runtime(
     safe_mode_controller: SafeModeController | None = None,
     mcp_module_name: str | None = None,
     keyring_store: SecretStorePort | None = None,
+    development_prompt_manifest_path: Path | None = None,
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = (),
     code_signature_verified_paths: frozenset[str] = frozenset(),
     request_process_exit: Callable[[], None] | None = None,
@@ -2238,6 +2246,8 @@ def build_production_runtime(
 
     LocalBindPolicy(host=host, port=port).validate()
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
+        if development_prompt_manifest_path is not None:
+            raise CoreInitializationError("SIGNED_RUNTIME_PATH_INVALID")
         if service_instance_id is None:
             raise CoreInitializationError("SERVICE_INSTANCE_ID_REQUIRED")
         if not runtime_root.is_absolute() or not working_directory.is_absolute():
@@ -2260,7 +2270,11 @@ def build_production_runtime(
         if development_tool_registry is None
         else _write_mcp_manifest(root, development_tool_registry)
     )
-    prompt_manifest_path = default_prompt_manifest_path()
+    prompt_manifest_path = (
+        development_prompt_manifest_path.resolve()
+        if development_prompt_manifest_path is not None
+        else default_prompt_manifest_path()
+    )
     prompt_execution_scope: PromptExecutionScope = (
         PRODUCT_RELEASE if configuration_source == "SIGNED_RELEASE_MANIFEST" else DEVELOPMENT_SMOKE
     )

@@ -7,6 +7,7 @@ This is a node/runtime measurement, not a full Conversation E2E.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -65,15 +66,22 @@ class ObservedInference:
 
 
 def main() -> None:
-    _measure(mkdtemp(prefix="gwa-local-runtime-"))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prompt-manifest", type=Path)
+    arguments = parser.parse_args()
+    _measure(
+        mkdtemp(prefix="gwa-local-runtime-"),
+        prompt_manifest_path=arguments.prompt_manifest,
+    )
 
 
-def _measure(directory: str) -> None:
+def _measure(directory: str, *, prompt_manifest_path: Path | None = None) -> None:
     config = ProductionRuntimeConfig.development(
         runtime_root=Path(directory),
         working_directory=Path(__file__).resolve().parents[1],
         mcp_manifest_version="2026-08-07.p0",
         keyring_store=SessionMemorySecretStore(),
+        prompt_manifest_path=prompt_manifest_path,
     )
     container = build_production_runtime(
         **{field.name: getattr(config, field.name) for field in fields(config)},
@@ -90,7 +98,9 @@ def _measure(directory: str) -> None:
         runtime.run_context_provider = lambda: None
         observed = ObservedInference(runtime)
         prompt = load_prompt_reference(
-            "request_understanding.identify_goal", execution_scope=DEVELOPMENT_SMOKE
+            "request_understanding.identify_goal",
+            manifest_path=prompt_manifest_path,
+            execution_scope=DEVELOPMENT_SMOKE,
         )
         node = partial(
             identify_goal_node.identify_goal_node, llm_runtime=observed, prompt_ref=prompt

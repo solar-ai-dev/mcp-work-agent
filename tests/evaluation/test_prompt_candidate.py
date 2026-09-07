@@ -10,9 +10,12 @@ from evaluation.prompt_candidate import (
     materialize_prompt_candidate,
 )
 
+from google_work_agent.api.composition import ProductionRuntimeConfig
 from google_work_agent.application.prompt_runtime.prompt_registry import (
+    DEVELOPMENT_SMOKE,
     InactivePromptArtifactError,
     PromptRegistry,
+    load_prompt_reference,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -20,7 +23,7 @@ CANDIDATE = ROOT / "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.
 ACTIVE_PROMPT_ROOT = ROOT / "src/google_work_agent/application/prompt_runtime"
 
 
-def test_mcp_candidate_has__exact_current_slots_hashes_and_draft__lifecycle() -> None:
+def test_mcp_candidate_has__current_slot_subset_hashes_and_draft__lifecycle() -> None:
     bundle = load_prompt_candidate(CANDIDATE, repository_root=ROOT)
     active_manifest = json.loads(
         (ACTIVE_PROMPT_ROOT / "prompt_manifest.json").read_text(encoding="utf-8")
@@ -29,7 +32,10 @@ def test_mcp_candidate_has__exact_current_slots_hashes_and_draft__lifecycle() ->
 
     assert bundle.candidate_id == "mcp-tool-use-research-2026-v1"
     assert len(bundle.source_hashes) == 21
-    assert set(bundle.source_hashes) == active_slot_ids
+    assert set(bundle.source_hashes) < active_slot_ids
+    assert active_slot_ids - set(bundle.source_hashes) == {
+        "request_understanding.identify_temporal_scope"
+    }
     assert bundle.payload["status"] == "DRAFT"
     assert bundle.payload["activation_evidence"] == {
         "node_dev_pass": False,
@@ -42,15 +48,23 @@ def test_mcp_candidate_has__exact_current_slots_hashes_and_draft__lifecycle() ->
 def test_materialization__is_deterministic_and_evaluation_loadable__while_product_inactive(
     tmp_path: Path,
 ) -> None:
+    with pytest.raises(PromptCandidateError, match="candidate/Product slot mismatch"):
+        materialize_prompt_candidate(
+            candidate_path=CANDIDATE,
+            repository_root=ROOT,
+            output_dir=tmp_path / "default-rejected",
+        )
     first = materialize_prompt_candidate(
         candidate_path=CANDIDATE,
         repository_root=ROOT,
         output_dir=tmp_path / "first",
+        keep_extra_product_slots=True,
     )
     second = materialize_prompt_candidate(
         candidate_path=CANDIDATE,
         repository_root=ROOT,
         output_dir=tmp_path / "second",
+        keep_extra_product_slots=True,
     )
     first_files = {
         path.relative_to(first.output_dir): path.read_bytes()
@@ -63,27 +77,69 @@ def test_materialization__is_deterministic_and_evaluation_loadable__while_produc
         if path.is_file()
     }
     manifest = json.loads(first.prompt_manifest_path.read_text(encoding="utf-8"))
+    active_manifest = json.loads(
+        (ACTIVE_PROMPT_ROOT / "prompt_manifest.json").read_text(encoding="utf-8")
+    )
+    active_by_id = {slot["prompt_slot_id"]: slot for slot in active_manifest["slots"]}
+    materialized_by_id = {slot["prompt_slot_id"]: slot for slot in manifest["slots"]}
+    bundle = load_prompt_candidate(CANDIDATE, repository_root=ROOT)
     registry = PromptRegistry(first.prompt_manifest_path, first.input_contract_path)
+    development_config = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path / "runtime",
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+        prompt_manifest_path=first.prompt_manifest_path,
+    )
 
     assert first_files == second_files
     assert first.prompt_manifest_hash == second.prompt_manifest_hash
-    assert len(manifest["slots"]) == 21
+    assert set(materialized_by_id) == set(active_by_id)
+    assert len(manifest["slots"]) == 22
     assert all(slot["activation_status"] == "DRAFT" for slot in manifest["slots"])
     assert all(slot["activation_evidence"] is None for slot in manifest["slots"])
+    for slot_id in bundle.source_hashes:
+        assert materialized_by_id[slot_id]["prompt_version"] == bundle.candidate_prompt_version
+        assert materialized_by_id[slot_id]["content_hash"] == bundle.source_hashes[slot_id]
+    extra_slot_id = "request_understanding.identify_temporal_scope"
+    assert materialized_by_id[extra_slot_id] == {
+        **active_by_id[extra_slot_id],
+        "activation_status": "DRAFT",
+        "node_dev_pass": False,
+        "node_holdout_pass": False,
+        "safety_gate_pass": False,
+        "manifest_approved": False,
+        "activation_evidence": None,
+    }
+    assert (
+        first.input_contract_path.read_bytes()
+        == (ACTIVE_PROMPT_ROOT / "prompt_runtime_input_contract_v1.json").read_bytes()
+    )
+    assert (
+        first.output_dir / materialized_by_id[extra_slot_id]["source"]
+    ).read_bytes() == (
+        ACTIVE_PROMPT_ROOT / active_by_id[extra_slot_id]["source"]
+    ).read_bytes()
     for slot in manifest["slots"]:
         registry.lookup_for_evaluation(slot["prompt_slot_id"])
         with pytest.raises(InactivePromptArtifactError):
             registry.lookup_for_product_release(slot["prompt_slot_id"])
+    selected = load_prompt_reference(
+        "request_understanding.identify_goal",
+        manifest_path=development_config.development_prompt_manifest_path,
+        execution_scope=DEVELOPMENT_SMOKE,
+    )
+    assert selected.prompt_bundle_version == bundle.candidate_id
+    assert selected.content_hash == bundle.source_hashes[selected.prompt_id]
 
 
 def test_materializer_refuses__candidate_or_product_source__overwrite(tmp_path: Path) -> None:
-    with pytest.raises(PromptCandidateError, match="cannot overwrite"):
+    with pytest.raises(PromptCandidateError, match="cannot overlap source artifacts"):
         materialize_prompt_candidate(
             candidate_path=CANDIDATE,
             repository_root=ROOT,
             output_dir=ACTIVE_PROMPT_ROOT,
         )
-    with pytest.raises(PromptCandidateError, match="cannot overwrite"):
+    with pytest.raises(PromptCandidateError, match="cannot overlap source artifacts"):
         materialize_prompt_candidate(
             candidate_path=CANDIDATE,
             repository_root=ROOT,

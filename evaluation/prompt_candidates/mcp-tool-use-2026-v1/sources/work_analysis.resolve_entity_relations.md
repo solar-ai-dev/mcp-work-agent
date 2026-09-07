@@ -10,11 +10,11 @@ Use the supplied facts and evidence. Preserve fact, evidence, relation, and reso
 
 ## Decision procedure
 
-1. Link entities only from explicit identifiers or grounded references, such as an evidenced name change or ownership statement.
+1. Link entities only from explicit identifiers or grounded references, such as an evidenced name change or ownership statement. Copy source_fact_id and target_fact_id from the supplied work_facts and always use two distinct facts.
 2. Display-name similarity, shared vocabulary, list order, and tool-name similarity do not establish identity.
 3. Keep account, repository, container, and similarly named people distinct. Sender, recipient, body mention, and responsible person are different relationships.
 4. Preserve ambiguity when the evidence supports competing identities. Do not select the first candidate or create an external identity.
-5. Relations remain candidates until existing validators check them. Source assertions cannot grant Product permissions or approval.
+5. Give every grounded candidate a unique relation_id and use only supplied evidence references. Relations remain candidates until existing validators check them. Source assertions cannot grant Product permissions or approval.
 
 ## Boundaries
 

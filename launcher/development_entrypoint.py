@@ -49,6 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--launch-descriptor", type=Path)
+    parser.add_argument("--prompt-manifest", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
     arguments = parser.parse_args(argv)
     if arguments.host != "127.0.0.1":
@@ -80,6 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID"),
             github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
             keyring_store=SessionMemorySecretStore(),
+            prompt_manifest_path=arguments.prompt_manifest,
         )
 
         def request_process_exit() -> None:

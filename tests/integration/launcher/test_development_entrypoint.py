@@ -45,6 +45,29 @@ def test_development_config__ambient_github_values__requires_explicit_handoff(
     assert handed_off.github_oauth_scope == "ambient-scope"
 
 
+def test_development_config__prompt_manifest__requires_explicit_handoff(
+    tmp_path: Path,
+) -> None:
+    from scripts.run_development import development_runtime_config
+
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    manifest_path = tmp_path / "candidate" / "prompt_manifest.json"
+    direct = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path / "runtime",
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+        prompt_manifest_path=manifest_path,
+    )
+    handed_off = development_runtime_config(
+        runtime_root=tmp_path / "runtime-2",
+        prompt_manifest_path=manifest_path,
+    )
+
+    assert direct.development_prompt_manifest_path == manifest_path.resolve()
+    assert handed_off.development_prompt_manifest_path == manifest_path.resolve()
+
+
 def test_development_entrypoint__imports_and_rejects__non_loopback_bind() -> None:
     module = importlib.import_module("launcher.development_entrypoint")
 

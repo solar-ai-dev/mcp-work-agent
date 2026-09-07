@@ -25,6 +25,7 @@ def development_runtime_config(
     *,
     runtime_root: Path | None = None,
     mcp_module_name: str | None = None,
+    prompt_manifest_path: Path | None = None,
 ) -> ProductionRuntimeConfig:
     """Supply explicit development values without becoming an installed fallback."""
 
@@ -33,6 +34,7 @@ def development_runtime_config(
         working_directory=PROJECT_ROOT,
         mcp_manifest_version=MCP_MANIFEST_VERSION,
         mcp_module_name=mcp_module_name,
+        prompt_manifest_path=prompt_manifest_path,
         github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID"),
         github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
     )
@@ -54,6 +56,7 @@ def main() -> NoReturn:
     parser = argparse.ArgumentParser(description="Run the development service.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--prompt-manifest", type=Path)
     arguments = parser.parse_args()
     LocalBindPolicy(host=arguments.host, port=arguments.port).validate()
     bootstrap_secret = create_bootstrap_secret()
@@ -68,7 +71,9 @@ def main() -> NoReturn:
 
     uvicorn.run(
         create_app(
-            production_config=development_runtime_config(),
+            production_config=development_runtime_config(
+                prompt_manifest_path=arguments.prompt_manifest,
+            ),
             host=arguments.host,
             port=arguments.port,
             bootstrap_secret=bootstrap_secret,

@@ -93,6 +93,9 @@ def create_app(
                 configuration_source=production_config.configuration_source,
                 mcp_module_name=production_config.mcp_module_name,
                 keyring_store=production_config.keyring_store,
+                development_prompt_manifest_path=(
+                    production_config.development_prompt_manifest_path
+                ),
                 verified_release_files=production_config.verified_release_files,
                 code_signature_verified_paths=(production_config.code_signature_verified_paths),
                 request_process_exit=request_process_exit,

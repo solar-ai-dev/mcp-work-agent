@@ -10,7 +10,7 @@ The current user request and explicitly selected resource references are the mea
 
 ## Decision procedure
 
-1. Read the whole instruction, including negation, exceptions, quoted material, and requested output. A mentioned action is not necessarily a requested action.
+1. Read the whole instruction, including negation, exceptions, quoted material, hypothetical examples, metalinguistic discussion, and requested output. A resource, effect, or analysis term mentioned only in those contexts is not necessarily a requested operation.
 2. Preserve explicit scope, exclusions, exact titles, names, dates, and opaque references. A prohibition on guessing a value is not a requirement to produce that value.
 3. Separate people, roles/groups, projects, and ordinary nouns. A participant description alone does not identify a particular person; a name alone does not establish an account identity.
 4. Preserve temporal wording and its role: receipt/sent time, event time, scheduled date, business deadline, or reporting period. More than one role may be constrained. Resolve only what this slot owns and the supplied reference time/timezone supports. Do not attach the Run year to an absolute source date with no year.

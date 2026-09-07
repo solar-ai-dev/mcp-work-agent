@@ -178,11 +178,15 @@ def materialize_prompt_candidate(
     base_manifest = _load_object(bundle.base_prompt_manifest)
     base_contract = _load_object(bundle.base_input_contract)
     if base_manifest.get("prompt_bundle_version") != bundle.base_prompt_bundle_version:
-        raise PromptCandidateError("base Prompt bundle version mismatch; review the current binding")
+        raise PromptCandidateError(
+            "base Prompt bundle version mismatch; review the current binding"
+        )
     base_slots = _required_object_list(base_manifest, "slots")
     contract_entries = _required_object_list(base_contract, "entries")
     base_by_id = _unique_by_string_key(base_slots, "prompt_slot_id", "base Prompt slots")
-    contract_by_id = _unique_by_string_key(contract_entries, "prompt_slot_id", "Prompt input contract")
+    contract_by_id = _unique_by_string_key(
+        contract_entries, "prompt_slot_id", "Prompt input contract"
+    )
     if not base_by_id or set(contract_by_id) != set(base_by_id):
         raise PromptCandidateError("Product manifest and input contract slot sets differ")
     candidate_ids = set(bundle.source_hashes)

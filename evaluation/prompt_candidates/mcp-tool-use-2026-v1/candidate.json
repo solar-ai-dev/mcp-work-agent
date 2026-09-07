@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "candidate_id": "mcp-tool-use-research-2026-v1",
-  "candidate_version": "1.0.2",
+  "candidate_version": "1.0.3",
   "status": "DRAFT",
   "base_product_sha": "21e8e8cc26a5c5fe985f05525ee04bef50d0af9e",
   "base_prompt_bundle_version": "canonical-prompt-runtime-v1",
   "base_prompt_manifest": "src/google_work_agent/application/prompt_runtime/prompt_manifest.json",
   "base_input_contract": "src/google_work_agent/application/prompt_runtime/prompt_runtime_input_contract_v1.json",
-  "candidate_prompt_version": "1.1.0-draft.3",
+  "candidate_prompt_version": "1.1.0-draft.4",
   "prompt_slot_count": 21,
   "activation_evidence": {
     "node_dev_pass": false,
@@ -18,7 +18,7 @@
   "sources": {
     "request_understanding.identify_goal": {
       "source": "sources/request_understanding.identify_goal.md",
-      "content_hash": "b79e367ddc7edab3035c7b25302b9e6e27f3b7c523097c8d51c18e6c94a2216d"
+      "content_hash": "b37e1fdc8a6113626b9d1e19da94556152e950437e670097c5ce2b65473b8611"
     },
     "request_understanding.detect_ambiguity": {
       "source": "sources/request_understanding.detect_ambiguity.md",
@@ -50,7 +50,7 @@
     },
     "work_analysis.resolve_entity_relations": {
       "source": "sources/work_analysis.resolve_entity_relations.md",
-      "content_hash": "1373778a5dd689982ebf98b36356ba8dfa1c1db5a20726f462b68b4f8bb5e747"
+      "content_hash": "7d3d991f9a985fe3f741a287f44a1fc1e4d9bae0625ff86e08e73249f024a50f"
     },
     "work_analysis.resolve_temporal_dependencies": {
       "source": "sources/work_analysis.resolve_temporal_dependencies.md",
@@ -66,7 +66,7 @@
     },
     "work_analysis.assess_operational_risks": {
       "source": "sources/work_analysis.assess_operational_risks.md",
-      "content_hash": "487820c1c33c0a7a0d6059717fdd2ec9da5c3cadc233d7255866f86bac4b2fc7"
+      "content_hash": "bcdd4348c8dd5f8eed467660b50f39c4d0f2e381aab1a6b1a6f121bf6f50babf"
     },
     "planning.outline_answer": {
       "source": "sources/planning.outline_answer.md",
@@ -103,5 +103,5 @@
   },
   "research_basis": "research-basis.md",
   "research_basis_sha256": "22a97462f8b2ca7e137eaedc99896d6169cc87fab2dfb6aa7086d9558aeddb1f",
-  "candidate_bundle_hash": "a7acc66c198b46755baa6a55d4179fde9c6754fb5d8b7f0d2b23c31bcf7c9c1d"
+  "candidate_bundle_hash": "6e239436fff43d405fc28100aa6990ee58cb4e49baa50308dee1454ca469802e"
 }
