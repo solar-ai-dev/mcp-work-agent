@@ -68,6 +68,23 @@ ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "items": {"type": "string", "minLength": 1},
             },
         },
+        "allOf": [
+            {
+                "if": {
+                    "properties": {
+                        "action_necessity_candidate": {"const": "REQUIRED"},
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "action_necessity_reason": {
+                            "type": "string",
+                            "minLength": 1,
+                        }
+                    }
+                },
+            }
+        ],
     },
 )
 
@@ -116,6 +133,8 @@ def assess_operational_risks(
         reason = root["action_necessity_reason"]
         if reason is not None and (not isinstance(reason, str) or not reason.strip()):
             raise ValueError("action_necessity_reason must be non-empty or null")
+        if root["action_necessity_candidate"] == "REQUIRED" and reason is None:
+            raise ValueError("required action necessity candidate must include a reason")
         return value
 
     result = llm_runtime.infer(

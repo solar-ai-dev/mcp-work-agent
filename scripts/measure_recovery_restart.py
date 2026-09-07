@@ -169,7 +169,11 @@ def measure(
             create_app(container=container), base_url="http://127.0.0.1:8000", headers=API_HEADERS
         )
         client.__enter__()
-        bootstrap(client, command_suffix=suffix)
+        bootstrap(
+            client,
+            command_suffix=suffix,
+            github_repositories=("bonggyulim/search-save",) if connector == "github" else None,
+        )
         if connector == "google_workspace":
             path = root / "cache/langgraph-e2e-mcp-state.json"
             fixture = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}

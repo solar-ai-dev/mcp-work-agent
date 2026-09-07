@@ -768,7 +768,9 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
     ]
     assert "CONNECTOR" in resolution_enum
     assert route_plan == original_route_plan
-    assert missing_information_projection(result["issues"])[0]["required_for"] == "RETRIEVAL"
+    projected = missing_information_projection(result["issues"])[0]
+    assert projected["required_for"] == "RETRIEVAL"
+    assert projected["reason_codes"] == result["issues"][0]["reason_codes"]
 
 
 def test_google_insufficiency__with_existing_source__retains_google() -> None:

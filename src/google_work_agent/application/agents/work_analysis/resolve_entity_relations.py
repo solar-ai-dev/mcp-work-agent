@@ -28,6 +28,7 @@ ENTITY_RELATIONS_OUTPUT_SCHEMA = OutputSchemaDefinition(
         "properties": {
             "relation_candidates": {
                 "type": "array",
+                "uniqueItems": True,
                 "items": {
                     "type": "object",
                     "required": [
@@ -137,6 +138,20 @@ def _bound_output_schema(
         "uniqueItems": True,
         "items": {"type": "string", "enum": sorted(allowed_evidence_refs)},
     }
+    item["allOf"] = [
+        {
+            "if": {"properties": {"source_fact_id": {"const": source_fact_id}}},
+            "then": {
+                "properties": {
+                    "target_fact_id": {
+                        "type": "string",
+                        "enum": sorted(fact_ids - {source_fact_id}),
+                    }
+                }
+            },
+        }
+        for source_fact_id in sorted(fact_ids)
+    ]
     return OutputSchemaDefinition(
         schema_version=ENTITY_RELATIONS_OUTPUT_SCHEMA.schema_version,
         json_schema=json_schema,

@@ -52,6 +52,7 @@ def bootstrap(
     *,
     command_suffix: str = "initial",
     task_list_id: str = "task-list-e2e",
+    github_repositories: tuple[str, ...] | None = None,
 ) -> None:
     bootstrap = client.post(
         "/api/v1/session/bootstrap",
@@ -84,6 +85,7 @@ def bootstrap(
                 "external_llm_consent": True,
                 "selected_tasklist_ids": [task_list_id],
                 "selected_calendar_ids": ["calendar-e2e"],
+                "selected_github_repositories": github_repositories,
             },
         },
     )

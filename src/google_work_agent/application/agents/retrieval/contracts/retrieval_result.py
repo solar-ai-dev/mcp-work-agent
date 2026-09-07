@@ -155,6 +155,10 @@ class MissingInformationV1(TypedDict):
     code: str
     description: str
     required_for: MissingInformationRequiredForValue
+    # Added without invalidating persisted V1 checkpoints. Current producers
+    # always project the structured sufficiency reasons; older checkpoints may
+    # legitimately omit them.
+    reason_codes: NotRequired[list[str]]
 
 
 class RetrievalSourceStatusV1(TypedDict):

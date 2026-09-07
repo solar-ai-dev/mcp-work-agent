@@ -189,7 +189,9 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "or analyzing an existing resource is READ; producing an assistant "
                     "answer or summary is never CREATE. CREATE, UPDATE, SEND, and DELETE "
                     "apply only when the user requests that external effect, and an "
-                    "explicitly forbidden effect must not appear. Identifying or analyzing "
+                    "explicitly forbidden effect must not appear. Quoted, hypothetical, negated, "
+                    "or metalinguistic discussion of an operation does not request that effect. "
+                    "Identifying or analyzing "
                     "follow-up actions from existing material is READ unless the user also "
                     "explicitly asks to apply a write to that resource."
                 ),
@@ -214,8 +216,9 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "description": (
                     "Semantic resource concepts explicitly named or necessarily targeted. "
                     "Gmail or email lookup uses GMAIL_THREAD, Google Tasks work uses TASK, "
-                    "and Google Calendar event work uses CALENDAR_EVENT. Empty only when "
-                    "the request needs no Google Workspace resource."
+                    "and Google Calendar event work uses CALENDAR_EVENT. A resource mentioned "
+                    "only inside an example, quotation, hypothetical, negation, or explanation is "
+                    "not a target. Empty when the request needs no external Connector resource."
                 ),
             },
             "analysis_requirement": {
@@ -225,7 +228,9 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "dependencies, conflicts, duplicates, follow-up actions, or operational "
                     "risk. A simple list, lookup, direct fact extraction, read, or summary is "
                     "NONE whether the resource is selected or retrieved. REQUIRED needs an "
-                    "explicit request to analyze implications, comparisons, or next actions."
+                    "explicit request to analyze implications, comparisons, or next actions. "
+                    "A question about the meaning or usage of the word 'analysis' is not itself "
+                    "a request to analyze business evidence."
                 ),
             },
         },

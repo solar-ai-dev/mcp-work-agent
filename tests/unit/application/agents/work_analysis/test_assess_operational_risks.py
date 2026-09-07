@@ -103,3 +103,28 @@ def test_assess_operational__risks_binds_current_evidence__before_inference() ->
         "uniqueItems": True,
         "items": {"type": "string", "enum": ["ev-1", "ev-2"]},
     }
+
+
+def test_assess_operational__risks_rejects__required_candidate_without_reason() -> None:
+    runtime = WorkAnalysisRuntimeFake(
+        {
+            "risks": [],
+            "action_necessity_candidate": "REQUIRED",
+            "action_necessity_reason": None,
+            "evidence_refs": [],
+        }
+    )
+
+    with pytest.raises(ValueError, match="operational-risk schema"):
+        assess_operational_risks(
+            request_intent=intent(),
+            work_facts=[fact("f1")],
+            validated_relations=[],
+            evidence=[],
+            llm_runtime=runtime,
+            prompt_ref=prompt_ref(
+                "work_analysis.assess_operational_risks", "assess_operational_risks"
+            ),
+            allowed_evidence_refs={"ev-1"},
+            requested_mode="LOCAL_GPU",
+        )

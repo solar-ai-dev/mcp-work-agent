@@ -176,7 +176,12 @@ def test_outline_gmail_read__empty_evidence__returns_no_result_without_llm() -> 
         retrieval_result={
             "coverage": "PARTIAL",
             "source_statuses": [{"status": "COMPLETE", "failure_kind": None}],
-            "missing_information": [{"description": "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"}],
+            "missing_information": [{
+                "code": "required_source_evidence",
+                "description": "검색 결과가 없습니다.",
+                "required_for": "RETRIEVAL",
+                "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
+            }],
         },
         invoke=invoke,
     )

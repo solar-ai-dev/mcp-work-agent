@@ -183,18 +183,25 @@ def _match_goal_constraints_to_schema(
     constraints = output.get("constraints")
     if not isinstance(constraints, list):
         return
-    slots: dict[str, list[str]] = {str(field): [] for field in allowed_slots}
+    slots: dict[str, object] = {
+        str(field): [] for field in allowed_slots if field != "additional_constraints"
+    }
+    additional_constraints: list[dict[str, object]] = []
     for constraint in constraints:
         if not isinstance(constraint, Mapping):
             continue
         field = constraint.get("field")
         value = constraint.get("value")
-        if not isinstance(field, str) or field not in allowed_slots:
+        if not isinstance(field, str):
+            continue
+        if field not in slots:
+            additional_constraints.append(dict(constraint))
             continue
         values = value if isinstance(value, list) else [value]
         normalized = [item for item in values if isinstance(item, str) and item]
         if normalized:
             slots[field] = normalized
+    slots["additional_constraints"] = additional_constraints
     output["constraints"] = slots
 
 

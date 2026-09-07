@@ -163,7 +163,8 @@ def _has_source_failure(retrieval_result: Mapping[str, object]) -> bool:
 def _returned_no_resources(retrieval_result: Mapping[str, object]) -> bool:
     missing = retrieval_result.get("missing_information")
     return isinstance(missing, list) and any(
-        isinstance(item, Mapping) and "RETURNED_NO_RESOURCES" in str(item.get("description", ""))
+        isinstance(item, Mapping)
+        and "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" in _strings(item.get("reason_codes"))
         for item in missing
     )
 

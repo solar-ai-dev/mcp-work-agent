@@ -1108,6 +1108,7 @@ def missing_information_projection(
             "code": issue["slot"],
             "description": _issue_description(issue),
             "required_for": _RESOLUTION_SOURCE_TO_REQUIRED_FOR[issue["resolution_source"]],
+            "reason_codes": list(issue["reason_codes"]),
         }
         for issue in issues
     ]
