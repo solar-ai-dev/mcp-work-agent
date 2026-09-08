@@ -17,25 +17,26 @@ export function RunProgress({ snapshot, busy, interactive = true, onResume }: {
     <section className="agent-progress" aria-label="에이전트 진행">
       <div className="agent-progress-lines" aria-live="polite" key={snapshot.run.run_id}>
         {rows.length === 0 ? <p>저장된 단계 이력이 없습니다. 현재 상태와 최종 답변을 확인해 주세요.</p> : null}
-        {rows.map((row) => (
-          <details className={`agent-activity-row${row.state === "RUNNING" ? " agent-status-line--active" : ""}`} key={row.execution_id}>
+        {rows.map((row) => {
+          const visibleDetails = row.details.filter((detail) => detail.display_text);
+          return <details className={`agent-activity-row${row.state === "RUNNING" ? " agent-status-line--active" : ""}`} key={row.execution_id}>
             <summary data-testid="run-event-progress">
               <span aria-hidden="true">{({ RUNNING: "●", WAITING: "◷", RECORDED: "✓", PARTIAL: "△", FAILED: "!", INTERRUPTED: "–", UNKNOWN: "?" })[row.state]}</span>
               {" "}{row.role} · {row.label}
             </summary>
             <div className="agent-activity-detail">
               <p className="helper-text">이 실행 시점의 기록입니다. 이후 수정된 현재 계획과 다를 수 있습니다.</p>
-              {row.details.length === 0 ? <p>이 단계에 저장된 추가 상세가 없습니다.</p> : (
-                <div className="agent-activity-detail-facts">{row.details.map((detail, index) => (
+              {visibleDetails.length === 0 ? <p>이 단계에 표시할 추가 업무 사실이 없습니다.</p> : (
+                <div className="agent-activity-detail-facts">{visibleDetails.map((detail, index) => (
                   <p key={detail.fact_id ?? `${detail.label}:${detail.value}:${index}`}>
-                    {detail.display_text ?? `${detail.label}: ${detail.value}`}
+                    {detail.display_text}
                     {detail.state && detail.state !== "RECORDED" ? <span className={`activity-detail-state activity-detail-state--${detail.state.toLowerCase()}`}> · {({ RUNNING: "진행 중", WAITING: "확인 대기", FAILED: "실패" })[detail.state]}</span> : null}
                   </p>
                 ))}</div>
               )}
             </div>
-          </details>
-        ))}
+          </details>;
+        })}
         {snapshot.run.status === "FAILED" ? <p className="status-warn">작업을 완료하지 못했습니다.</p> : null}
         {snapshot.terminal_result_kind === "PARTIAL" ? <p className="status-warn">확인하거나 완료한 범위만 반영했습니다. 미완료 이유는 기록과 최종 답변을 확인해 주세요.</p> : null}
         {snapshot.run.status === "REAUTH_REQUIRED" ? <p>사용한 연결의 재인증이 필요합니다.</p> : null}

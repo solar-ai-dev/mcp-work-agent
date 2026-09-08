@@ -30,6 +30,8 @@ def test_record_activity__selects_plan_fields__without_raw_body_or_authority() -
                                 "payload": {
                                     "title": "새 계획",
                                     "scheduled_date": "2026-09-10",
+                                    "status": "needsAction",
+                                    "location": "회의실 A",
                                     "notes": "PRIVATE BODY",
                                     "access_token": "SECRET",
                                 },
@@ -44,7 +46,7 @@ def test_record_activity__selects_plan_fields__without_raw_body_or_authority() -
     )
     command = emit.call_args.args[0]
     values = [item["value"] for item in command.attributes["details"]]
-    assert "새 계획" in values and "2026-09-10" in values
+    assert {"새 계획", "2026-09-10", "needsAction", "회의실 A"} <= set(values)
     assert "PRIVATE" not in str(command.attributes) and "SECRET" not in str(command.attributes)
     assert command.attributes["state"] == "RECORDED"
     assert "성공" not in command.attributes["label"]

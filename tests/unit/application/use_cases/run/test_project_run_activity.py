@@ -385,7 +385,7 @@ def test_activity__updates_existing_wait__from_committed_reauth_and_recovery_res
         {
             "label": "복구 결정",
             "value": "확인된 부분 결과 수용",
-            "display_text": "복구 결정: 확인된 부분 결과 수용",
+            "display_text": "복구 후속 처리 결정을 적용했습니다: 확인된 부분 결과 수용.",
         }
     ]
     assert "성공" not in str(rows)
