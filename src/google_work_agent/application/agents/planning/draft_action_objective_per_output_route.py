@@ -14,6 +14,9 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.planning.materialize_task_create_payload import (
     materialize_task_create_payload,
 )
+from google_work_agent.application.agents.preserve_exact_user_literals import (
+    restore_exact_user_literals,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 PROMPT_ID = "planning.draft_action_objective_per_output_route"
@@ -162,6 +165,11 @@ def draft_action_objective_per_output_route(
             raise ValueError("objective candidate evidence_refs must be strings")
         if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
             raise ValueError("objective candidate references unavailable evidence")
+        objective = restore_exact_user_literals(objective, source_texts=[user_request])
+        scope_constraints = [
+            restore_exact_user_literals(item, source_texts=[user_request])
+            for item in scope_constraints
+        ]
         result.append(
             {
                 "schema_version": 1,

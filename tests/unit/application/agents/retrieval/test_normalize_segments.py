@@ -60,7 +60,7 @@ def test_gmail_preview__without_body__preserves_metadata_only_fact() -> None:
     assert normalize_segments(result)[0].locator["is_metadata_only"] is True
 
 
-def test_gmail_draft__keeps_full_mutable_payload_in_planning_evidence() -> None:
+def test_gmail_draft__with_mutable_payload__keeps_full_planning_evidence() -> None:
     result = _result("unused")
     resources = cast(list[dict[str, object]], result["source_summaries"][0]["resources"])
     resources[0] = {

@@ -26,9 +26,13 @@ _PLACEHOLDER_VALUES = frozenset(
     }
 )
 _EXPLICIT_SUBJECT_PATTERNS = (
-    re.compile(r"(?:제목)(?:이|가|은|는)?\s*(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"),
-    re.compile(r"(?i)(?:subject)\s*(?:is\s*)?(?:[:：]\s*)?['‘\"](?P<subject>[^'’\"]+)['’\"]"),
+    re.compile(r"(?:제목)(?:이|가|은|는|에)?\s*(?:[:：]\s*)?$"),
+    re.compile(r"(?i)(?:subject)\s*(?:is\s*)?(?:[:：]\s*)?$"),
 )
+_EXPLICIT_SUBJECT_ROLE_PATTERN = re.compile(
+    r"(?:제목)(?:이|가|은|는|에)?\b|(?i:subject)\b"
+)
+_QUOTE_PAIRS = (("'", "'"), ('"', '"'), ("‘", "’"), ("“", "”"))
 _EXPLICIT_PERIOD_PATTERN = re.compile(
     r"(?<!\d)(?:\d{4}년\s*)?(?:1[0-2]|[1-9])월(?:\s*첫째\s*주)?(?!\s*\d{1,2}\s*일)"
     r"|지난\s*주|이번\s*주|다음\s*주|지난\s*달|이번\s*달|최근|오늘|어제|그제"
@@ -45,6 +49,25 @@ _EXPLICIT_GMAIL_DRAFT_ID_PATTERN = re.compile(
 _SOURCE_OWNED_FIELDS = frozenset(
     {"search_terms", "business_concepts", "person", "sender", "recipient", "subject"}
 )
+_GMAIL_SOURCE_RESOURCE_HINTS = frozenset(
+    {"GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+)
+_EXACT_GMAIL_RESOURCE_FIELDS = frozenset(
+    {"draft_id", "thread_id", "message_id", "selected_resource_id"}
+)
+_GMAIL_SOURCE_SEARCH_FIELDS = frozenset(
+    {
+        "search_terms",
+        "business_concepts",
+        "person",
+        "sender",
+        "recipient",
+        "subject",
+        "search_criteria_subject",
+        "period",
+        "status",
+    }
+)
 
 
 def preserve_explicit_search_anchors(
@@ -58,17 +81,29 @@ def preserve_explicit_search_anchors(
     candidate = _preserve_explicit_repository(candidate, request_text=request_text)
     candidate = _preserve_explicit_gmail_draft_id(candidate, request_text=request_text)
 
-    if (
-        entry_mode != "AGENT_SEARCH"
-        or "READ" not in candidate["requested_effect_hints"]
-        or "GMAIL_THREAD" not in candidate["requested_resource_hints"]
+    if not _requires_gmail_source_search(candidate, entry_mode=entry_mode):
+        return candidate
+    if _has_exact_gmail_resource(candidate["constraints"]):
+        return candidate
+    if not any(
+        item["field"] in _GMAIL_SOURCE_SEARCH_FIELDS
+        for item in candidate["constraints"]
+    ) and not (
+        "READ" in candidate["requested_effect_hints"]
+        and bool(
+            set(candidate["requested_resource_hints"])
+            & {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+        )
     ):
         return candidate
 
     explicit_periods = _explicit_periods(request_text)
+    explicit_subjects = _explicit_subjects(request_text)
+    has_explicit_subject_role = _EXPLICIT_SUBJECT_ROLE_PATTERN.search(request_text) is not None
     constraints = _without_unstated_placeholders(candidate["constraints"], request_text)
     constraints = _retain_source_owned_values(constraints, request_text)
     constraints = _restore_source_spelling(constraints, request_text)
+    quoted_search_terms = _quoted_search_terms_from_candidate(constraints, request_text)
     constraints = [
         item
         for item in constraints
@@ -76,9 +111,21 @@ def preserve_explicit_search_anchors(
             item["kind"] == "USER_REQUIREMENT"
             and item["field"] == "original_search_request"
         )
-        and item["field"] not in {"subject", "search_criteria_subject"}
+        and (
+            has_explicit_subject_role
+            or item["field"] not in {"subject", "search_criteria_subject"}
+        )
         and not (explicit_periods and item["field"] == "period")
     ]
+    if quoted_search_terms and not has_explicit_subject_role:
+        constraints = [item for item in constraints if item["field"] != "search_terms"]
+        constraints.append(
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": quoted_search_terms,
+            }
+        )
     constraints.append(
         {
             "kind": "USER_REQUIREMENT",
@@ -88,17 +135,46 @@ def preserve_explicit_search_anchors(
     )
     if explicit_periods:
         constraints.append({"kind": "DATE", "field": "period", "value": explicit_periods})
-    explicit_subjects = _explicit_subjects(request_text)
     if explicit_subjects:
         constraints = [
             item
             for item in constraints
-            if item["field"] != "search_terms"
+            if item["field"] not in {"search_terms", "subject", "search_criteria_subject"}
         ]
         constraints.append(
             {"kind": "RESOURCE", "field": "subject", "value": explicit_subjects}
         )
+    elif has_explicit_subject_role and any(
+        item["field"] in {"subject", "search_criteria_subject"} for item in constraints
+    ):
+        constraints = [item for item in constraints if item["field"] != "search_terms"]
     return {**candidate, "constraints": constraints}
+
+
+def _requires_gmail_source_search(
+    candidate: RequestGoalCandidateV1,
+    *,
+    entry_mode: str,
+) -> bool:
+    if entry_mode != "AGENT_SEARCH":
+        return False
+    resources = set(candidate["requested_resource_hints"])
+    effects = set(candidate["requested_effect_hints"])
+    source_resources = resources & _GMAIL_SOURCE_RESOURCE_HINTS
+    if not source_resources:
+        return False
+    if effects & {"READ", "UPDATE", "DELETE"}:
+        return True
+    return "SEND" in effects and bool(source_resources & {"GMAIL_THREAD", "GMAIL_DRAFT"})
+
+
+def _has_exact_gmail_resource(constraints: list[ConstraintV1]) -> bool:
+    return any(
+        item["kind"] == "RESOURCE"
+        and item["field"] in _EXACT_GMAIL_RESOURCE_FIELDS
+        and item["value"]
+        for item in constraints
+    )
 
 
 def _preserve_explicit_gmail_draft_id(
@@ -161,18 +237,66 @@ def _preserve_explicit_repository(
 def _explicit_subjects(request_text: str) -> list[str]:
     return list(
         dict.fromkeys(
-            match.group("subject").strip()
-            for pattern in _EXPLICIT_SUBJECT_PATTERNS
-            for match in pattern.finditer(request_text)
-            if match.group("subject").strip()
+            literal.strip()
+            for literal, start, _ in _quoted_literals(request_text)
+            if literal.strip()
+            and any(
+                pattern.search(request_text[max(0, start - 40) : start])
+                for pattern in _EXPLICIT_SUBJECT_PATTERNS
+            )
         )
     )
 
 
+def _quoted_search_terms_from_candidate(
+    constraints: list[ConstraintV1], request_text: str
+) -> list[str]:
+    """Restore only quoted values already assigned to the structured search-term role."""
+
+    literals_by_compact_value: dict[str, set[str]] = {}
+    for literal, _, _ in _quoted_literals(request_text):
+        compact = re.sub(r"\s+", "", literal).casefold()
+        if compact:
+            literals_by_compact_value.setdefault(compact, set()).add(literal.strip())
+
+    restored: list[str] = []
+    for constraint in constraints:
+        if constraint["field"] != "search_terms":
+            continue
+        value = constraint["value"]
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            normalized = item.strip()
+            if len(normalized) >= 2 and (
+                normalized[0], normalized[-1]
+            ) in _QUOTE_PAIRS:
+                normalized = normalized[1:-1]
+            matches = literals_by_compact_value.get(
+                re.sub(r"\s+", "", normalized).casefold(), set()
+            )
+            if len(matches) == 1:
+                restored.append(next(iter(matches)))
+    return list(dict.fromkeys(restored))
+
+
+def _quoted_literals(request_text: str) -> list[tuple[str, int, int]]:
+    literals: list[tuple[str, int, int]] = []
+    for opening, closing in _QUOTE_PAIRS:
+        pattern = re.compile(
+            re.escape(opening) + rf"(?P<literal>[^{re.escape(closing)}]+)" + re.escape(closing)
+        )
+        literals.extend(
+            (match.group("literal"), match.start(), match.end())
+            for match in pattern.finditer(request_text)
+        )
+    return sorted(literals, key=lambda item: item[1])
+
+
 def _explicit_periods(request_text: str) -> list[str]:
-    outside_literals = request_text
-    for pattern in (re.compile(r"'[^']*'"), re.compile(r'"[^"]*"')):
-        outside_literals = pattern.sub(" ", outside_literals)
+    characters = list(request_text)
+    for _, start, end in _quoted_literals(request_text):
+        characters[start:end] = " " * (end - start)
+    outside_literals = "".join(characters)
     return list(
         dict.fromkeys(
             match.group(0).strip()
@@ -253,7 +377,12 @@ def _retain_source_owned_values(
 
 
 def _matching_source_span(value: str, request_text: str) -> str | None:
-    compact = re.sub(r"\s+", "", value)
+    normalized_value = value.strip()
+    if len(normalized_value) >= 2 and (
+        normalized_value[0], normalized_value[-1]
+    ) in _QUOTE_PAIRS:
+        normalized_value = normalized_value[1:-1]
+    compact = re.sub(r"\s+", "", normalized_value)
     if not compact:
         return None
     pattern = re.compile(r"\s*".join(re.escape(character) for character in compact), re.I)

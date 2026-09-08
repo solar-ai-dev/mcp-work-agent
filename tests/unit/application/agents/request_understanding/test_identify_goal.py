@@ -264,6 +264,41 @@ def test_identify_goal__preserves_exact_quoted__description_spacing() -> None:
     assert result["constraints"][0]["value"] == "Task와 Calendar 검증 결과를 확인합니다."
 
 
+def test_identify_goal__with_spaced_literal__restores_exact_semantic_fields() -> None:
+    exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
+    spaced_sentence = "8 월 21 일 입고 준비를 확인 중입니다."
+    runtime = FakeStructuredInferencePort(outputs=[{
+        "goal": f"초안 끝에 '{spaced_sentence}'만 추가",
+        "completion_conditions": [f"'{spaced_sentence}'가 한 번만 추가된다"],
+        "constraints": _goal_constraints(
+            search_terms=["Quartz 납품 회신 검토"],
+            required_information=[f"초안 끝에 '{spaced_sentence}'를 추가"],
+            status=["초안"],
+        ),
+        "requested_effect_hints": ["READ", "UPDATE"],
+        "requested_resource_hints": ["GMAIL_DRAFT"],
+        "analysis_requirement": "NONE",
+    }])
+
+    result = identify_goal(
+        llm_runtime=runtime,
+        request=_request(
+            '임시보관함의 “Quartz 납품 회신 검토” 초안 끝에 '
+            f'“{exact_sentence}”만 추가해줘. 보내지는 마.'
+        ),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert exact_sentence in result["goal"]
+    assert exact_sentence in result["completion_conditions"][0]
+    required_information = next(
+        item["value"] for item in result["constraints"]
+        if item["field"] == "required_information"
+    )
+    assert exact_sentence in required_information[0]
+    assert spaced_sentence not in str(result)
+
+
 def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[

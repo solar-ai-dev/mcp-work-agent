@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 
-_EXPLICIT_SUBJECT_PATTERN = re.compile(r"(?:제목|subject)(?:이|가|은|는)?\b", re.IGNORECASE)
+_EXPLICIT_SUBJECT_PATTERN = re.compile(
+    r"(?:제목)(?:이|가|은|는|에)?\b|(?:subject)\b",
+    re.IGNORECASE,
+)
 
 
 def has_explicit_gmail_subject(constraints: object) -> bool:

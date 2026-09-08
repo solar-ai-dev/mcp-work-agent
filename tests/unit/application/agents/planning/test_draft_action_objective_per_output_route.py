@@ -97,6 +97,35 @@ def test_objective_prompt_is__route_bounded_and__receives_no_tool_schema() -> No
     assert result[0]["target_semantics"] == "TASK"
 
 
+def test_action_objective__with_spaced_literal__restores_exact_value() -> None:
+    exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
+    result = draft_action_objective_per_output_route(
+        [{
+            "route_id": "draft-update",
+            "resource_type": "GMAIL_DRAFT",
+            "effect": "UPDATE",
+            "selected_tool_id": "gmail_update_draft",
+        }],
+        user_request=f'초안 끝에 “{exact_sentence}”만 추가해줘.',
+        request_intent={"goal": "초안 수정"},
+        work_analysis=None,
+        evidence=[],
+        invoke=lambda *_: {
+            "schema_version": 1,
+            "route_id": "draft-update",
+            "objective": "초안 끝에 '8 월 21 일 입고 준비를 확인 중입니다.'만 추가",
+            "target_semantics": "GMAIL_DRAFT",
+            "scope_constraints": [
+                "'8 월 21 일 입고 준비를 확인 중입니다.'를 한 번만 추가"
+            ],
+            "evidence_refs": [],
+        },
+    )
+
+    assert exact_sentence in result[0]["objective"]
+    assert exact_sentence in result[0]["scope_constraints"][0]
+
+
 @pytest.mark.parametrize("target_semantics", ["GMAIL_MESSAGE", "GMAIL_THREAD_REPLY"])
 def test_gmail_send_objective__when_planned__requires_explicit_typed_relation(
     target_semantics: str,

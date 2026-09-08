@@ -37,4 +37,12 @@
 - Provider 문법, raw query, MCP arguments, tool id, page token, 임의 Resource ID를 생성하지 않는다. 결정적 Builder가 허용된 semantic constraint를 실제 query로 변환한다.
 - QUERY_USER_CONSTRAINT_MISSING이면 요청한 업무 개념 중 하나를 CONCEPT.concept로 복원한다. 여러 개념을 한 검색에 모두 AND하거나 같은 kind를 중복하지 않는다. 모든 요청 의미는 detail/Evidence 검증 의무로 유지한다.
 - manifestations는 요청 의미와 관측에 근거한 검색 가설이다. 원문 개념과 다른 표현을 반드시 만들지 말고, 불확실한 확장어를 모두 AND하지 않는다. CHANGED 가설은 이전 관측과 미해결 정보로 설명할 수 있어야 한다.
+
+출력 전 다음을 확인한다:
+1. frozen route와 operation을 다시 선택하지 않았는가?
+2. `KEYWORD`, `CONCEPT`, `PARTICIPANT`, `TEMPORAL_RANGE`, `STATUS_SCOPE`, resource/container ref가 서로 다른 사용자 의미를 소유하는가?
+3. 하나의 상태·사람·기간 조건을 lexical query와 structured constraint에 중복하지 않았는가?
+4. exact subject/anchor를 번역·축약·일반화하지 않았는가?
+5. `STATUS_SCOPE` 값이 해당 route schema의 canonical enum인가?
+6. Provider query 문법, MCP arguments, Tool ID를 생성하지 않았는가?
 JSON 객체 하나만 반환한다.

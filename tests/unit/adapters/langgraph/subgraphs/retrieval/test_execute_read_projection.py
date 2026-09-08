@@ -175,7 +175,7 @@ def test_gmail_keyword_lowering__different_match_modes__produces_distinct_querie
     assert arguments["query"] == expected
 
 
-def test_gmail_draft_search__uses_draft_operation_inside_frozen_route() -> None:
+def test_gmail_draft_search__for_frozen_draft_route__uses_draft_operation() -> None:
     plan = cast(
         SourceFetchPlanV1,
         {

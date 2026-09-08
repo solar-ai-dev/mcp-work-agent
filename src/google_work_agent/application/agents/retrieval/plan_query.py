@@ -47,6 +47,7 @@ from google_work_agent.application.agents.retrieval.preserve_gmail_search_semant
     requested_gmail_concepts,
     requested_participant_identities,
     resolve_gmail_query_periods,
+    validate_gmail_search_role_separation,
     validate_requested_concepts,
 )
 from google_work_agent.application.agents.retrieval.select_followup_routes import (
@@ -557,18 +558,23 @@ def plan_query(
         planner_input,
         bounded_output_schema,
     )
-    candidate = preserve_gmail_search_semantics(
-        bind_required_container_constraints(
-            result.structured_output,
-            route_policies=route_policies,
-            validated_container_refs=validated_container_refs,
-        ),
-        prompt_input=prompt_input,
-        frozen_routes=frozen_routes,
-        now_ms=now_ms,
-        timezone=timezone,
-    )
     try:
+        validate_gmail_search_role_separation(
+            result.structured_output,
+            prompt_input,
+            frozen_routes,
+        )
+        candidate = preserve_gmail_search_semantics(
+            bind_required_container_constraints(
+                result.structured_output,
+                route_policies=route_policies,
+                validated_container_refs=validated_container_refs,
+            ),
+            prompt_input=prompt_input,
+            frozen_routes=frozen_routes,
+            now_ms=now_ms,
+            timezone=timezone,
+        )
         validated = validate_retrieval_query_plan_v2(
             candidate,
             frozen_routes=frozen_routes,
@@ -751,6 +757,11 @@ def _revise_plan_once(
             ),
         },
         output_schema,
+    )
+    validate_gmail_search_role_separation(
+        revision.structured_output,
+        prompt_input,
+        frozen_routes,
     )
     candidate = preserve_gmail_search_semantics(
         bind_required_container_constraints(

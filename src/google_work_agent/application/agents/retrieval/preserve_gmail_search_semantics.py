@@ -24,7 +24,9 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     InputToolRouteV1,
 )
 
-
+_GMAIL_SEARCH_RESOURCE_TYPES = frozenset(
+    {"GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+)
 def resolve_gmail_query_periods(
     *, prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
     now_ms: int | None, timezone: str | None,
@@ -40,7 +42,7 @@ def resolve_gmail_query_periods(
     return {
         route["route_id"]: bound
         for route in frozen_routes
-        if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
     }
 
 
@@ -92,7 +94,7 @@ def requested_gmail_concepts(
         return {}
     concepts = _requested_concepts(intent.get("constraints"))
     return {route["route_id"]: concepts for route in frozen_routes
-            if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"} and concepts}
+            if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES and concepts}
 
 
 def preserve_gmail_search_semantics(
@@ -109,7 +111,11 @@ def preserve_gmail_search_semantics(
     initial Gmail search, sender/recipient/subject strings already owned by
     RequestIntent are data, not a new semantic choice.
     """
-    gmail_routes = [route for route in frozen_routes if route["resource_type"] == "GMAIL_THREAD"]
+    gmail_routes = [
+        route
+        for route in frozen_routes
+        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+    ]
     if len(gmail_routes) != 1:
         return value
     request_intent = prompt_input.get("request_intent")
@@ -182,6 +188,85 @@ def preserve_gmail_search_semantics(
     return candidate
 
 
+def validate_gmail_search_role_separation(
+    value: object,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+) -> None:
+    """Reject a lexical over-constraint when status already owns that search role."""
+
+    intent = prompt_input.get("request_intent")
+    if not isinstance(intent, Mapping) or not isinstance(value, Mapping):
+        return
+    explicit_constraints = _explicit_gmail_constraints(
+        intent.get("constraints"),
+        now_ms=None,
+        timezone=None,
+    )
+    expected_keywords = next(
+        (
+            {_normalized_text(term) for term in cast(list[str], item["terms"])}
+            for item in explicit_constraints
+            if item["kind"] == "KEYWORD"
+        ),
+        set(),
+    )
+    expected_statuses = next(
+        (
+            set(cast(list[str], item["values"]))
+            for item in explicit_constraints
+            if item["kind"] == "STATUS_SCOPE"
+        ),
+        set(),
+    )
+    if not expected_keywords or not expected_statuses:
+        return
+    gmail_route_ids = {
+        route["route_id"]
+        for route in frozen_routes
+        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+    }
+    route_queries = value.get("route_queries")
+    if not isinstance(route_queries, list):
+        return
+    for query in route_queries:
+        if (
+            not isinstance(query, Mapping)
+            or query.get("route_id") not in gmail_route_ids
+            or query.get("operation") != "SEARCH"
+        ):
+            continue
+        search_spec = query.get("search_spec")
+        if not isinstance(search_spec, Mapping) or search_spec.get("mode") != "INITIAL":
+            continue
+        constraints = search_spec.get("constraints")
+        if not isinstance(constraints, list):
+            continue
+        actual_statuses = {
+            status
+            for item in constraints
+            if isinstance(item, Mapping) and item.get("kind") == "STATUS_SCOPE"
+            for status in item.get("values", [])
+            if isinstance(status, str)
+        }
+        actual_keywords = {
+            _normalized_text(term)
+            for item in constraints
+            if isinstance(item, Mapping) and item.get("kind") == "KEYWORD"
+            for term in item.get("terms", [])
+            if isinstance(term, str)
+        }
+        if actual_statuses & expected_statuses and actual_keywords - expected_keywords:
+            raise RetrievalV2ValidationError(
+                "lexical query duplicates or extends a structured Gmail status scope",
+                reason_code="RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
+                affected_field_paths=(
+                    "$.route_queries[].search_spec.constraints[?(@.kind=='KEYWORD')]",
+                    "$.route_queries[].search_spec.constraints[?(@.kind=='STATUS_SCOPE')]",
+                ),
+            )
+
+
 def validate_requested_concepts(
     value: object, prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
 ) -> None:
@@ -193,7 +278,7 @@ def validate_requested_concepts(
         return
     concepts = _requested_concepts(intent.get("constraints"))
     gmail_ids = {route["route_id"] for route in frozen_routes
-                 if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}}
+                 if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES}
     for query in value.get("route_queries", []):
         if query.get("route_id") not in gmail_ids:
             continue
@@ -278,8 +363,11 @@ def _explicit_gmail_constraints(
         elif kind == "USER_REQUIREMENT" and field == "business_concepts":
             business_concepts.extend(exact_values)
         elif kind == "SCOPE" and field == "status":
-            statuses.extend(entry.upper() for entry in exact_values
-                            if entry.upper() in {"ANY", "SENT", "DRAFT"})
+            statuses.extend(
+                canonical
+                for entry in exact_values
+                if (canonical := _canonical_gmail_status(entry)) is not None
+            )
 
     result: list[dict[str, object]] = []
     if statuses:
@@ -309,3 +397,12 @@ def _explicit_gmail_constraints(
         if temporal is not None:
             result.append(dict(temporal))
     return result
+
+
+def _canonical_gmail_status(value: str) -> str | None:
+    normalized = _normalized_text(value).upper()
+    return normalized if normalized in {"ANY", "DRAFT", "SENT"} else None
+
+
+def _normalized_text(value: str) -> str:
+    return "".join(value.split()).casefold()

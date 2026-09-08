@@ -185,6 +185,67 @@ def test_github_candidate__with_bare_project_name__does_not_infer_repository() -
     assert result is candidate
 
 
+def test_gmail_draft_source_update__with_quoted_anchor__separates_status_scope() -> None:
+    request = (
+        "임시보관함의 “Quartz 납품 회신 검토” 초안 끝에 "
+        "“8월 21일 입고 준비를 확인 중입니다.”만 추가해줘. 보내지는 마."
+    )
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": ['"임시보관함"', '"Quartz 납품 회신 검토"'],
+        },
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": ["8월 21일 입고 준비 상태"],
+        },
+        {"kind": "SCOPE", "field": "status", "value": ["초안"]},
+    ]
+    candidate["requested_effect_hints"] = ["UPDATE"]
+    candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text=request,
+        entry_mode="AGENT_SEARCH",
+    )
+
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["search_terms"] == ["Quartz 납품 회신 검토"]
+    assert fields["status"] == ["초안"]
+    assert fields["required_information"] == ["8월 21일 입고 준비 상태"]
+    assert fields["original_search_request"] == [request]
+
+
+def test_gmail_draft_source__with_status_word_as_subject__preserves_lexical_value() -> None:
+    request = "제목에 임시보관함이 들어간 초안을 찾아줘."
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {"kind": "RESOURCE", "field": "subject", "value": ["임시보관함"]},
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": ["임시보관함"],
+        },
+        {"kind": "SCOPE", "field": "status", "value": ["초안"]},
+    ]
+    candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text=request,
+        entry_mode="AGENT_SEARCH",
+    )
+
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["subject"] == ["임시보관함"]
+    assert fields["status"] == ["초안"]
+    assert "search_terms" not in fields
+
+
 def test_gmail_draft_candidate__with_explicit_id__restores_exact_anchor() -> None:
     candidate = _candidate()
     candidate["constraints"] = [

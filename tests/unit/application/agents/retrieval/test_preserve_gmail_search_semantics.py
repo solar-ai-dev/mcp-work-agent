@@ -31,6 +31,7 @@ from google_work_agent.application.agents.retrieval.plan_query import plan_query
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
+    validate_gmail_search_role_separation,
     validate_requested_concepts,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import rag_retrieve_rerank
@@ -53,6 +54,17 @@ ROUTE: InputToolRouteV1 = {
     "reason_codes": ["USER_REQUEST"],
 }
 POLICIES = {"gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+DRAFT_ROUTE: InputToolRouteV1 = {
+    "route_id": "gmail",
+    "resource_type": "GMAIL_DRAFT",
+    "connector_id": "google_workspace",
+    "allowed_read_tool_ids": ["gmail_search_drafts", "gmail_get_draft"],
+    "required": True,
+    "reason_codes": ["REQUESTED_INPUT"],
+}
+DRAFT_POLICIES = {
+    "gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "STATUS_SCOPE"}))
+}
 
 
 def test_gmail_constraint_kinds__requested_status_scope__remains_available() -> None:
@@ -99,6 +111,156 @@ def test_gmail_status__unrelated_or_changed_status__cannot_restrict_search() -> 
         },
     )[0]
     assert fetch["effective_constraints"] == [{"kind": "STATUS_SCOPE", "values": ["DRAFT"]}]
+
+
+def test_gmail_draft_source__with_structured_status__preserves_lexical_anchor() -> None:
+    intent = {
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["Quartz 납품 회신 검토"],
+            },
+            {"kind": "SCOPE", "field": "status", "value": ["DRAFT"]},
+        ]
+    }
+    planned = preserve_gmail_search_semantics(
+        _plan([]),
+        prompt_input={"request_intent": intent},
+        frozen_routes=[DRAFT_ROUTE],
+        now_ms=None,
+        timezone=None,
+    )
+
+    fetch = build_query(
+        planned,
+        frozen_routes=[DRAFT_ROUTE],
+        route_policies=DRAFT_POLICIES,
+    )[0]
+    tool, arguments = execute_read_projection.project_connector_call(
+        fetch,
+        route=DRAFT_ROUTE,
+        page_size=20,
+    )
+
+    assert tool == "gmail_search_drafts"
+    assert arguments["query"] == '"Quartz 납품 회신 검토" in:drafts'
+
+
+def test_gmail_draft_source__with_status_word_subject__preserves_lexical_value() -> None:
+    intent = {
+        "constraints": [
+            {"kind": "RESOURCE", "field": "subject", "value": ["임시보관함"]},
+            {"kind": "SCOPE", "field": "status", "value": ["DRAFT"]},
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "original_search_request",
+                "value": ["제목에 임시보관함이 들어간 초안을 찾아줘."],
+            },
+        ]
+    }
+    planned = preserve_gmail_search_semantics(
+        _plan([]),
+        prompt_input={"request_intent": intent},
+        frozen_routes=[DRAFT_ROUTE],
+        now_ms=None,
+        timezone=None,
+    )
+
+    fetch = build_query(
+        planned,
+        frozen_routes=[DRAFT_ROUTE],
+        route_policies=DRAFT_POLICIES,
+    )[0]
+    _, arguments = execute_read_projection.project_connector_call(
+        fetch,
+        route=DRAFT_ROUTE,
+        page_size=20,
+    )
+
+    assert '"임시보관함"' in str(arguments["query"])
+    assert "in:drafts" in str(arguments["query"])
+
+
+def test_gmail_draft_source__with_role_overlap__uses_bounded_revision() -> None:
+    intent = {
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["Quartz 납품 회신 검토"],
+            },
+            {"kind": "SCOPE", "field": "status", "value": ["DRAFT"]},
+        ]
+    }
+    initial = _plan(
+        [
+            {
+                "kind": "KEYWORD",
+                "terms": ["임시보관함", "Quartz 납품 회신 검토"],
+                "match_mode": "PHRASE",
+            },
+            {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
+        ]
+    )
+    revised = _plan(
+        [
+            {
+                "kind": "KEYWORD",
+                "terms": ["Quartz 납품 회신 검토"],
+                "match_mode": "PHRASE",
+            },
+            {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
+        ]
+    )
+    runtime = FakeStructuredInferencePort(outputs=[initial, revised])
+    reference = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="test",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="2",
+        output_schema_version="2",
+    )
+
+    planned, budget, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=reference,
+        revision_prompt_ref=reference,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": intent, "input_routes": [DRAFT_ROUTE]},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[DRAFT_ROUTE],
+        route_policies=DRAFT_POLICIES,
+        retry_budget=build_default_run_budget(),
+    )
+
+    failure_record = cast(dict[str, object], runtime.calls[1]["prompt_input"])[
+        "failure_record"
+    ]
+    assert cast(dict[str, object], failure_record)["failure_reason_code"] == (
+        "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID"
+    )
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+    validate_gmail_search_role_separation(planned, {"request_intent": intent}, [DRAFT_ROUTE])
+    fetch = build_query(
+        planned,
+        frozen_routes=[DRAFT_ROUTE],
+        route_policies=DRAFT_POLICIES,
+    )[0]
+    _, arguments = execute_read_projection.project_connector_call(
+        fetch,
+        route=DRAFT_ROUTE,
+        page_size=20,
+    )
+    assert '"Quartz 납품 회신 검토"' in str(arguments["query"])
+    assert "임시보관함" not in str(arguments["query"])
+    assert "in:drafts" in str(arguments["query"])
 
 
 def test_query_planner__unstructured_request_constraint__retains_bounded_discovery() -> None:

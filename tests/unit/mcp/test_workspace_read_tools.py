@@ -159,7 +159,7 @@ def test_gmail_list__enriches_current__page_thread_metadata(
     ]
 
 
-def test_gmail_draft_search__hydrates_provider_draft_identity_and_payload(
+def test_gmail_draft_search__with_listing_result__hydrates_provider_identity_and_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, dict[str, str | list[str]] | None]] = []

@@ -185,7 +185,7 @@ def test_write_adapter__normalizes_raised__transport_certainty() -> None:
     assert result.provider_request_id == "request-1"
 
 
-def test_write_adapter__preserves_structured_mcp_validation_code() -> None:
+def test_write_adapter__with_structured_mcp_error__preserves_validation_code() -> None:
     client = _Client(
         MCPToolCallResultV1(
             1,

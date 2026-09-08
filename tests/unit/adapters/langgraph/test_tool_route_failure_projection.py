@@ -20,7 +20,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 )
 
 
-def test_exhausted_route_validation__preserves_structured_failure_cause() -> None:
+def test_exhausted_route_validation__with_structured_failure__preserves_cause() -> None:
     intent = cast(
         RequestIntentV2,
         {

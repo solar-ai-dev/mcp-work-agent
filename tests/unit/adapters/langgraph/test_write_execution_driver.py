@@ -388,7 +388,7 @@ def test_not_sent__failure_does__not_begin_verification() -> None:
     assert "begin_verification" not in calls
 
 
-def test_tool_rejected__persists_invalid_argument_with_specific_safe_cause() -> None:
+def test_tool_rejected__with_invalid_argument__persists_specific_safe_cause() -> None:
     calls: list[str] = []
     mark_failed = _RecordedCall(
         name="mark_failed",

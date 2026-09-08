@@ -3,6 +3,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from google_work_agent.application.agents.preserve_exact_user_literals import (
+    quoted_user_literals,
+    restore_exact_user_literals,
+    without_quoted_user_literals,
+)
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
     is_repository_constraint,
@@ -72,12 +77,6 @@ def identify_goal(
     return validate_normalized_request_goal_candidate(candidate)
 
 
-_QUOTED_LITERAL_PATTERNS = (
-    re.compile(r"'[^']*'"),
-    re.compile(r'"[^"]*"'),
-    re.compile(r"‘[^’]*’"),
-    re.compile(r"“[^”]*”"),
-)
 _EXPLICIT_DATE_SIGNAL = re.compile(
     r"(?i)(?:"
     r"\d{1,4}\s*(?:년|[-./])\s*\d{1,2}"
@@ -96,24 +95,21 @@ def _apply_quoted_literal_authority(
 ) -> RequestGoalCandidateV1:
     """Do not reinterpret a quoted resource literal as an unstated date."""
 
-    outside_literals = request_text
-    quoted_literals: list[str] = []
-    for pattern in _QUOTED_LITERAL_PATTERNS:
-        quoted_literals.extend(pattern.findall(request_text))
-        outside_literals = pattern.sub(" ", outside_literals)
+    outside_literals = without_quoted_user_literals(request_text)
+    quoted_literals = quoted_user_literals(request_text)
     if not quoted_literals:
         return candidate
-    literal_values: dict[str, set[str]] = {}
-    for literal in quoted_literals:
-        original = literal[1:-1]
-        literal_values.setdefault(re.sub(r"\s+", "", original), set()).add(original)
     constraints = []
     for constraint in candidate["constraints"]:
         value = constraint["value"]
         if isinstance(value, str):
-            matches = literal_values.get(re.sub(r"\s+", "", value), set())
-            if len(matches) == 1:
-                constraint = {**constraint, "value": next(iter(matches))}
+            value = restore_exact_user_literals(value, source_texts=[request_text])
+        elif isinstance(value, list):
+            value = [
+                restore_exact_user_literals(item, source_texts=[request_text])
+                for item in value
+            ]
+        constraint = {**constraint, "value": value}
         constraints.append(constraint)
     outside_has_date_signal = _EXPLICIT_DATE_SIGNAL.search(outside_literals) is not None
     quoted_text = " ".join(quoted_literals)
@@ -129,7 +125,15 @@ def _apply_quoted_literal_authority(
             )
         )
     ]
-    return {**candidate, "constraints": constraints}
+    return {
+        **candidate,
+        "goal": restore_exact_user_literals(candidate["goal"], source_texts=[request_text]),
+        "completion_conditions": [
+            restore_exact_user_literals(item, source_texts=[request_text])
+            for item in candidate["completion_conditions"]
+        ],
+        "constraints": constraints,
+    }
 
 
 def _date_value_appears_in_text(value: object, text: str) -> bool:

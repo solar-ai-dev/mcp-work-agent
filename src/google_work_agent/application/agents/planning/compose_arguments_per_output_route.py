@@ -26,6 +26,9 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
     BoundSelectedToolSchemaV1,
     PlanningArgumentBindingError,
 )
+from google_work_agent.application.agents.preserve_exact_user_literals import (
+    restore_exact_user_literals,
+)
 from google_work_agent.application.use_cases.action.validate_action_arguments import (
     ValidateActionArgumentsHandler,
     ValidateActionArgumentsQueryV1,
@@ -185,7 +188,13 @@ def compose_arguments_per_output_route(
         refs = candidate.get("evidence_refs", [])
         if not isinstance(arguments, dict):
             raise ValueError("argument candidate requires business arguments")
-        arguments = dict(arguments)
+        arguments = cast(
+            dict[str, object],
+            _restore_exact_argument_literals(
+                dict(arguments),
+                source_texts=_original_request_texts(request_intent),
+            ),
+        )
         for name, expected in bound_schema["immutable_arguments"].items():
             actual = arguments.get(name)
             if actual is not None and actual != expected:
@@ -253,6 +262,38 @@ def compose_arguments_per_output_route(
             }
         )
     return tuple(candidates)
+
+
+def _original_request_texts(request_intent: Mapping[str, object] | None) -> list[str]:
+    if not isinstance(request_intent, Mapping):
+        return []
+    constraints = request_intent.get("constraints")
+    if not isinstance(constraints, list):
+        return []
+    return [
+        value
+        for item in constraints
+        if isinstance(item, Mapping) and item.get("field") == "original_search_request"
+        for value in (
+            item.get("value") if isinstance(item.get("value"), list) else [item.get("value")]
+        )
+        if isinstance(value, str)
+    ]
+
+
+def _restore_exact_argument_literals(value: object, *, source_texts: Sequence[str]) -> object:
+    if isinstance(value, str):
+        return restore_exact_user_literals(value, source_texts=source_texts)
+    if isinstance(value, list):
+        return [
+            _restore_exact_argument_literals(item, source_texts=source_texts) for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _restore_exact_argument_literals(item, source_texts=source_texts)
+            for key, item in value.items()
+        }
+    return value
 
 
 def requires_argument_inference(
