@@ -58,6 +58,7 @@ def test_github_write__rejects_invalid_claim__before_provider_access(tmp_path: P
 
         assert result.transport_status == "ERROR"
         assert result.error_code == "TOOL_REJECTED"
+        assert result.safe_error_code == "RECOVERY_FINGERPRINT_MISSING"
         assert isinstance(result.payload, dict)
         assert result.payload["delivery_certainty"] == "NOT_SENT"
     finally:

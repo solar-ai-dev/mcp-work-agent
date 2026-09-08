@@ -281,8 +281,12 @@ def _exact_intent_candidate(
             draft_id = validated_gmail_draft_anchor(request_intent)
         except RequestUnderstandingValidationError as error:
             raise ToolRouteValidationError(str(error)) from error
-        if draft_id is not None:
-            input_reason_codes = ((resource_type, "EXPLICIT_RESOURCE_ID"),)
+        input_reason_codes = (
+            (
+                resource_type,
+                "EXPLICIT_RESOURCE_ID" if draft_id is not None else "REQUESTED_INPUT",
+            ),
+        )
     return SemanticRouteCandidate(
         input_resource_types=tuple(item[0] for item in input_reason_codes),
         output_pairs=(

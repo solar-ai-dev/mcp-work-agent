@@ -29,6 +29,9 @@ from google_work_agent.adapters.connectors.google.gmail.drafts.create_draft impo
     CreateDraftOperation,
 )
 from google_work_agent.adapters.connectors.google.gmail.drafts.get_draft import GetDraftOperation
+from google_work_agent.adapters.connectors.google.gmail.drafts.search_drafts import (
+    SearchDraftsOperation,
+)
 from google_work_agent.adapters.connectors.google.gmail.drafts.update_draft import (
     UpdateDraftOperation,
 )
@@ -71,6 +74,7 @@ _OPERATIONS: dict[str, _ProviderOperation] = {
         GetMessageOperation,
         GetAttachmentOperation,
         CreateDraftOperation,
+        SearchDraftsOperation,
         UpdateDraftOperation,
         GetDraftOperation,
         SendMessageOperation,

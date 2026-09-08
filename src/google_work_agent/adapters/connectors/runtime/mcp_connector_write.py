@@ -95,6 +95,7 @@ class McpConnectorWriteAdapter(ConnectorWritePort):
             provider_request_id=_optional_string(metadata.get("request_id")),
             response_metadata=_bounded_metadata(metadata),
             error_code=response.error_code or "CONNECTOR_WRITE_FAILED",
+            safe_error_code=response.safe_error_code,
         )
 
     def _validated_claim_context(
@@ -141,6 +142,18 @@ def _transport_failure(
         provider_request_id=error.request_id,
         response_metadata={},
         error_code=error.code.value,
+        safe_error_code=_normalized_safe_error_code(str(error)),
+    )
+
+
+def _normalized_safe_error_code(value: str) -> str | None:
+    return (
+        value
+        if 0 < len(value) <= 128
+        and value[0].isalpha()
+        and value.replace("_", "").isalnum()
+        and value == value.upper()
+        else None
     )
 
 

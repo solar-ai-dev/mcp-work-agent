@@ -204,6 +204,56 @@ def test_explicit_gmail_draft_update__requires_exact_draft_read__without_llm(
     assert runtime.calls == []
 
 
+def test_named_gmail_draft_update__requires_search_read__without_llm() -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-draft", "revision": 1, "based_on": []},
+            "goal": "update the named draft",
+            "completion_conditions": ["updated without sending"],
+            "constraints": [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "search_terms",
+                    "value": ["Quartz 납품 회신 검토"],
+                }
+            ],
+            "requested_effect_hints": ["UPDATE"],
+            "requested_resource_hints": ["GMAIL_DRAFT"],
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-draft",
+        conversation_id="conversation",
+        workflow_key="thread",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="임시보관함의 Quartz 납품 회신 검토 초안을 수정해줘.",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    candidate, _ = determine_io_resources(
+        llm_runtime=FakeStructuredInferencePort(outputs=[]),
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate.input_resource_types == ("GMAIL_DRAFT",)
+    assert candidate.input_reason_codes == (("GMAIL_DRAFT", "REQUESTED_INPUT"),)
+    assert candidate.output_pairs == (("GMAIL_DRAFT", EffectType.UPDATE),)
+
+
 @pytest.mark.parametrize("effect_hints", [["SEND"], ["SEND", "READ"]])
 def test_new_gmail_send__message_write_intent__skips_input_retrieval(
     effect_hints: list[str],

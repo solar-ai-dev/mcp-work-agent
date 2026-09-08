@@ -185,6 +185,39 @@ def test_write_adapter__normalizes_raised__transport_certainty() -> None:
     assert result.provider_request_id == "request-1"
 
 
+def test_write_adapter__preserves_structured_mcp_validation_code() -> None:
+    client = _Client(
+        MCPToolCallResultV1(
+            1,
+            "gmail_send",
+            "ERROR",
+            {"request_id": "request-1", "delivery_certainty": "NOT_SENT"},
+            "TOOL_REJECTED",
+            "CLAIM_TOKEN_REUSED",
+        )
+    )
+    binding = load_signed_tool_registry().bind_required(
+        "google_workspace", "gmail_send", "SEND"
+    )
+
+    result = McpConnectorWriteAdapter(
+        runtime_registry=_registry(client), mcp_client=client
+    ).execute_write(
+        binding,
+        {"payload": {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}},
+        {
+            "connector_id": "google_workspace",
+            "mcp_process_instance_id": "process-1",
+            "signature": "application-signature",
+        },
+    )
+
+    assert result.success is False
+    assert result.error_code == "TOOL_REJECTED"
+    assert result.safe_error_code == "CLAIM_TOKEN_REUSED"
+    assert result.delivery_certainty == "NOT_SENT"
+
+
 def test_read_and__write_adapters_reject__cross_effect_binding() -> None:
     client = _Client(MCPToolCallResultV1(1, "unused", "OK", {}, None))
     registry = _registry(client)

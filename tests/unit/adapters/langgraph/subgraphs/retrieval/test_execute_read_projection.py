@@ -118,6 +118,41 @@ def test_gmail_keyword_lowering__different_match_modes__produces_distinct_querie
     assert arguments["query"] == expected
 
 
+def test_gmail_draft_search__uses_draft_operation_inside_frozen_route() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "route-draft",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_DRAFT",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {
+                    "kind": "KEYWORD",
+                    "terms": ["Quartz 납품 회신 검토"],
+                    "match_mode": "PHRASE",
+                }
+            ],
+        },
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-draft",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_DRAFT",
+            "allowed_read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
+        },
+    )
+
+    tool_id, arguments = execute_read_projection.project_connector_call(
+        plan, route=route, page_size=20
+    )
+
+    assert tool_id == "gmail_search_drafts"
+    assert arguments == {"query": '"Quartz 납품 회신 검토"', "page_size": 20}
+
+
 @pytest.mark.parametrize("axis", ["MESSAGE_TIME", "EVENT_TIME"])
 def test_gmail_temporal_lowering__event_and_receipt_dates__keeps_axes_distinct(axis: str) -> None:
     plan = cast(

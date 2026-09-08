@@ -10,6 +10,7 @@ def test_signed_manifest__matches_current_canonical__connector_rows() -> None:
         "gmail_get_thread",
         "gmail_get_message",
         "gmail_get_attachment",
+        "gmail_search_drafts",
         "gmail_create_draft",
         "gmail_update_draft",
         "gmail_get_draft",

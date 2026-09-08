@@ -8,6 +8,9 @@ from datetime import date, datetime
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from google_work_agent.application.agents.planning.bind_gmail_draft_update_identity import (
+    bind_gmail_draft_update_identity,
+)
 from google_work_agent.application.agents.planning.bind_gmail_thread_reply_identity import (
     bind_gmail_thread_reply_identity,
 )
@@ -196,6 +199,12 @@ def compose_arguments_per_output_route(
             arguments=arguments,
             evidence=evidence,
         )
+        arguments, gmail_draft_evidence_refs = bind_gmail_draft_update_identity(
+            route=route,
+            action_objective=objective,
+            arguments=arguments,
+            evidence=evidence,
+        )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])
         )
@@ -231,6 +240,7 @@ def compose_arguments_per_output_route(
                         evidence,
                     ),
                     *gmail_reply_evidence_refs,
+                    *gmail_draft_evidence_refs,
                 ]
             )
         )

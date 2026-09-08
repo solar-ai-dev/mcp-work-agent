@@ -95,6 +95,12 @@ def project_connector_call(
             and arguments["repository"] != _single_container(plan)
         ):
             raise ValueError("GitHub Issue detail differs from validated repository")
+    elif resource == "GMAIL_DRAFT":
+        tool_id = "gmail_search_drafts"
+        arguments = {
+            "query": _gmail_query(plan),
+            "page_size": page_size,
+        }
     elif resource.startswith("GMAIL_") or resource == "EMAIL":
         tool_id = "gmail_search_threads"
         arguments = {

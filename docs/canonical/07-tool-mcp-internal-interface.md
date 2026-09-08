@@ -1140,11 +1140,11 @@ Port는 abstraction이고 concrete Adapter가 아니다. FastAPI Route·Agent·D
 
 `SignedToolRegistryEntryV1.resource_type`은 Connector resource identity의 canonical vocabulary source다. 별도 Core-wide `EMAIL|TASK|CALENDAR` enum을 두지 않는다. P0 값은 아래 current Registry rows로 닫히며, 신규 Connector/resource는 concern-owned Tool contract와 Signed Tool Registry row를 추가해 확장한다. Route/Retrieval/Persistence projection은 이 문자열을 exact-copy하며 Tool 이름에서 추론하거나 별도 mapper authority를 만들지 않는다.
 
-Current Registry rows는 §26 Tool Schema Catalog의 Google Workspace 21개와 GitHub 6개 Tool이다. Canonical resource binding은 다음과 같다.
+Current Registry rows는 §26 Tool Schema Catalog의 Google Workspace 22개와 GitHub 6개 Tool이다. Canonical resource binding은 다음과 같다.
 
 ```text
 gmail_search_threads→gmail_thread; gmail_get_thread→gmail_thread; gmail_get_message→gmail_message; gmail_get_attachment→gmail_attachment
-gmail_create_draft→gmail_draft; gmail_update_draft→gmail_draft; gmail_get_draft→gmail_draft; gmail_send→gmail_message
+gmail_search_drafts→gmail_draft; gmail_create_draft→gmail_draft; gmail_update_draft→gmail_draft; gmail_get_draft→gmail_draft; gmail_send→gmail_message
 tasks_list_tasklists→task_list; tasks_list_tasks→task; tasks_get_task→task; tasks_create_task→task; tasks_update_task→task; tasks_delete_task→task
 calendar_list_calendars→calendar; calendar_list_events→calendar_event; calendar_query_freebusy→calendar_freebusy; calendar_get_event→calendar_event
 calendar_create_event→calendar_event; calendar_update_event→calendar_event; calendar_delete_event→calendar_event
@@ -1229,6 +1229,7 @@ class MCPToolCallResultV1:
     transport_status: Literal["OK", "ERROR", "TIMEOUT", "DISCONNECTED"]
     payload: JSONValue | None
     error_code: str | None
+    safe_error_code: str | None
 
 class MCPRestartResultV1:
     schema_version: Literal[1]
@@ -1689,6 +1690,7 @@ gmail_search_threads
 gmail_get_thread
 gmail_get_message
 gmail_get_attachment
+gmail_search_drafts
 gmail_create_draft
 gmail_update_draft
 gmail_get_draft
@@ -2048,6 +2050,7 @@ class ConnectorWriteResultV1:
     provider_request_id: str | None
     response_metadata: dict[str, JSONScalar] | None
     error_code: str | None
+    safe_error_code: str | None
 
 class StructuredInferenceRequestV2:
     schema_version: Literal[2]
@@ -2074,6 +2077,7 @@ AccessContextHandle = str  # opaque, process-local handle; raw OAuth token이 �
 ```
 
 - successful Connector Write에서는 `delivery_certainty=None`이며 `success=true`가 confirmed response를 뜻한다. 오류/response-loss에서는 §29의 delivery classification을 반드시 채우며 exception class만으로 값을 추론하지 않는다.
+- `error_code`는 transport/delivery 분류의 canonical code를 보존한다. `safe_error_code`는 Connector가 공개를 허용한 bounded `UPPER_SNAKE_CASE` validation/provider cause만 보존하며, generic transport 상태나 원문 예외 메시지로 대체하지 않는다.
 
 
 ### Execution · Verification · UNKNOWN_RESULT Application boundary
@@ -2932,6 +2936,7 @@ metadata
 | `gmail_get_thread` | thread_id | ThreadDetail | gmail.readonly | configured connector timeout | Read 1회 |
 | `gmail_get_message` | message_id | MessageDetail | gmail.readonly | configured connector timeout | Read 1회 |
 | `gmail_get_attachment` | message_id, attachment_id | `GmailAttachmentReadResultV1` | gmail.readonly | configured connector timeout | Read 1회 |
+| `gmail_search_drafts` | query&lt;=2048, page_token?, page_size 1..100 | DraftDetail[] | gmail.compose | configured connector timeout | Read 1회 |
 | `gmail_create_draft` | recipients&lt;=50, subject&lt;=998, body&lt;=65536, thread_id? + claim context | DraftMetadata | gmail.compose | configured connector timeout | 전달 불명 시 금지 |
 | `gmail_update_draft` | draft_id, mutable fields + claim context | DraftMetadata | gmail.compose | configured connector timeout | 전달 불명 시 금지 |
 | `gmail_get_draft` | draft_id | DraftDetail | gmail.compose | configured connector timeout | Read 1회 |

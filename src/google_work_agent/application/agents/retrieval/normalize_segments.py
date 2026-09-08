@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import ceil
 from typing import Literal, cast
@@ -310,6 +310,8 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
         return ""
     if resource_type == "calendar_freebusy":
         return format_calendar_freebusy_evidence(payload)
+    if resource_type == "gmail_draft":
+        return _gmail_draft_text(resource, payload)
     if resource_type == "github_issue":
         fields = []
         for key in ("repository", "issue_number", "title", "state", "url"):
@@ -364,6 +366,31 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
             if isinstance(value, str) and value.strip()
         )
     return "\n".join(parts)
+
+
+def _gmail_draft_text(
+    resource: Mapping[str, object], payload: Mapping[str, object]
+) -> str:
+    fields = [f"draft_id: {resource.get('resource_id', '')}"]
+    for key in (
+        "to",
+        "cc",
+        "bcc",
+        "subject",
+        "thread_id",
+        "in_reply_to",
+        "references",
+        "attachments",
+    ):
+        value = payload.get(key)
+        if isinstance(value, (str, list)) or value is None:
+            fields.append(
+                f"{key}: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}"
+            )
+    body = payload.get("body")
+    if isinstance(body, str):
+        fields.append(f"body:\n{body}")
+    return "\n".join(fields)
 
 
 def _strip_email_quote_and_signature(text: str) -> str:

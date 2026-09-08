@@ -28,6 +28,7 @@ class MCPToolCallResultV1:
     transport_status: Literal["OK", "ERROR", "TIMEOUT", "DISCONNECTED"]
     payload: JsonValue | None
     error_code: str | None
+    safe_error_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

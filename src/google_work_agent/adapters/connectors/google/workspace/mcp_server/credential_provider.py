@@ -503,7 +503,7 @@ def _build_gmail_mime(payload: dict[str, object]) -> bytes:
     if len(to) + len(cc) + len(bcc) > 50:
         raise _WorkspaceToolError("INVALID_ARGUMENT")
     subject = _text_argument(payload, "subject", maximum=998, allow_empty=True)
-    body = _text_argument(payload, "body", maximum=65536, allow_empty=True)
+    body = _gmail_body_argument(payload)
     message = EmailMessage()
     message["To"] = ", ".join(to)
     if cc:
@@ -774,6 +774,17 @@ def _text_argument(
         raise _WorkspaceToolError("INVALID_ARGUMENT")
     value = _text_value(arguments[name], maximum=maximum)
     if not value and not allow_empty:
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    return value
+
+
+def _gmail_body_argument(payload: dict[str, object]) -> str:
+    value = payload.get("body")
+    if (
+        not isinstance(value, str)
+        or len(value) > 65536
+        or any(ord(char) < 32 and char not in "\r\n\t" for char in value)
+    ):
         raise _WorkspaceToolError("INVALID_ARGUMENT")
     return value
 

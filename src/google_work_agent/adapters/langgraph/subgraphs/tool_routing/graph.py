@@ -199,6 +199,7 @@ class ToolRoutingSubgraph:
                 ),
                 "registry_snapshot_ref": self._tool_catalog.contract_version,
                 "io_resource_candidate": None,
+                "io_resource_failure": None,
                 "registry_candidates": [],
                 "bound_input_routes": [],
                 "bound_output_routes": [],
@@ -353,17 +354,23 @@ class ToolRoutingSubgraph:
             }
             origin = "scope_expansion"
         else:
+            failure = state.get("io_resource_failure")
             question = {
                 "schema_version": 1,
                 "origin_target": "tool_route.finalize",
                 "question": format_route_confirmation(
                     goal=request_intent["goal"],
                 ),
-                "affected_field_paths": [
-                    "requested_resource_hints",
-                    "requested_effect_hints",
-                ],
-                "reason_code": "TOOL_ROUTE_NEEDS_CONFIRMATION",
+                "affected_field_paths": (
+                    list(failure["affected_field_paths"])
+                    if failure is not None and failure["affected_field_paths"]
+                    else ["requested_resource_hints", "requested_effect_hints"]
+                ),
+                "reason_code": (
+                    failure["failure_reason_code"]
+                    if failure is not None
+                    else "TOOL_ROUTE_NEEDS_CONFIRMATION"
+                ),
                 "known_context_summary": request_intent["goal"],
                 "options": [],
             }

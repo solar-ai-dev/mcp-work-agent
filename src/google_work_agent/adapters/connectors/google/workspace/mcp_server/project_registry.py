@@ -371,6 +371,18 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
     )
     add("gmail_create_draft", _write_input(payload_required=True), _SNAPSHOT_ENVELOPE)
     add("gmail_get_draft", _id_input("draft_id"), _SNAPSHOT_ENVELOPE)
+    add(
+        "gmail_search_drafts",
+        _object_schema(
+            {
+                "query": _STRING,
+                "page_token": _NULLABLE_STRING,
+                "page_size": _PAGE_SIZE,
+            },
+            required=("query",),
+        ),
+        _PAGE_ENVELOPE,
+    )
     add("gmail_get_message", _id_input("message_id"), _SNAPSHOT_ENVELOPE)
     add("gmail_get_thread", _id_input("thread_id"), _SNAPSHOT_ENVELOPE)
     add(

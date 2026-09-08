@@ -1132,10 +1132,11 @@ class WriteExecutionStructuralDriver:
             "INVALID_ARGUMENT": GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
             "NOT_FOUND": GoogleWorkspaceErrorCode.NOT_FOUND,
             "TIMEOUT": GoogleWorkspaceErrorCode.TIMEOUT,
+            "TOOL_REJECTED": GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
         }.get(result.error_code or "", GoogleWorkspaceErrorCode.CONNECTION_CLOSED)
         return GoogleWorkspaceGatewayError(
             code=code,
-            message=result.error_code or "CONNECTOR_WRITE_FAILED",
+            message=result.safe_error_code or result.error_code or "CONNECTOR_WRITE_FAILED",
             delivered=certainty is not DeliveryCertainty.NOT_SENT,
             mutated=certainty is DeliveryCertainty.SENT_RESPONSE_LOST,
             mcp_request_id=result.provider_request_id,

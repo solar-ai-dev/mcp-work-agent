@@ -22,6 +22,7 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ScopeExpansionRequiredV1,
     ToolRoutePlanV2,
 )
+from google_work_agent.application.prompt_runtime.contracts.failure_record import FailureRecordV1
 from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
     PolicyConfirmationReceiptV1,
 )
@@ -53,6 +54,7 @@ class ToolRouteStateV1(ToolRoutingInputState, total=False):
 
     registry_snapshot_ref: str
     io_resource_candidate: SemanticRouteCandidate | None
+    io_resource_failure: FailureRecordV1 | None
     registry_candidates: list[BoundOutputRouteCandidateV1]
     bound_input_routes: list[InputToolRouteV1]
     bound_output_routes: list[OutputToolRouteV1]

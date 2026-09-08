@@ -1202,11 +1202,14 @@ class ToolRouteStateV1:
     request_intent: RequestIntentV2
     registry_snapshot_ref: str
     io_resource_candidate: IORouteIntentV1 | None
+    io_resource_failure: FailureRecordV1 | None
     registry_candidates: list[RegistryCandidateSetV1]
     bound_input_routes: list[InputToolRouteV1]
     bound_output_routes: list[OutputToolRouteV1]
     final_route: ToolRoutePlanV2 | None
 ```
+
+`io_resource_failure`는 `determine_io_resources`의 bounded semantic revision이 소진됐을 때 마지막 typed validation failure를 보존한다. 사용자 확인 interrupt의 reason과 affected path는 이 record에서 투영하며 generic route 상태로 덮어쓰지 않는다.
 
 #### Policy Precondition READ
 

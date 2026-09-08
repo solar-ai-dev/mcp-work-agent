@@ -318,6 +318,7 @@ class StdioMCPClientAdapter:
                     "delivery_certainty": error.delivery_certainty.value,
                 },
                 error_code=error.code.value,
+                safe_error_code=_safe_error_code(str(error)),
             )
         return MCPToolCallResultV1(
             schema_version=1,
@@ -754,3 +755,9 @@ def is_control_operation_id(operation_id: str) -> bool:
     return len(segments) >= 3 and any(
         segment in _CONTROL_OPERATION_SEGMENTS for segment in segments[1:-1]
     )
+
+
+def _safe_error_code(value: str) -> str | None:
+    """Keep only the MCP server's bounded, non-sensitive validation code."""
+
+    return value if re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", value) is not None else None

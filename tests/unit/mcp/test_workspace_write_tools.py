@@ -162,7 +162,11 @@ def test_gmail_update__draft_dispatches__with_valid_claim(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(server, "_google_api_call", google_api_call)
     state = _state()
-    payload: dict[str, object] = {"to": ["a@example.com"], "subject": "Updated", "body": "New body"}
+    payload: dict[str, object] = {
+        "to": ["a@example.com"],
+        "subject": "Updated",
+        "body": "Existing body\n\nNew body",
+    }
     payload.update(cc=[], bcc=[], attachments=[], thread_id=None, in_reply_to=None, references=None)
     claim = _build_claim(
         state=state,

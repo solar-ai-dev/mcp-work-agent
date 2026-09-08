@@ -159,6 +159,53 @@ def test_gmail_list__enriches_current__page_thread_metadata(
     ]
 
 
+def test_gmail_draft_search__hydrates_provider_draft_identity_and_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, str | list[str]] | None]] = []
+
+    def google_api(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str | list[str]] | None = None,
+    ) -> dict[str, object]:
+        calls.append((url, params))
+        if url.endswith("/drafts/draft-1"):
+            return {
+                "id": "draft-1",
+                "message": {
+                    "id": "message-1",
+                    "threadId": "thread-1",
+                    "historyId": "8",
+                    "payload": {
+                        "headers": [
+                            {"name": "To", "value": "recipient@example.com"},
+                            {"name": "Subject", "value": "Quartz 납품 회신 검토"},
+                        ]
+                    },
+                },
+            }
+        return {"drafts": [{"id": "draft-1"}], "nextPageToken": "next-1"}
+
+    monkeypatch.setattr(server, "_google_api", google_api)
+
+    payload = verified_server._tool_call(
+        _state(),
+        tool_name="gmail_search_drafts",
+        arguments={"query": 'subject:"Quartz 납품 회신 검토"', "page_size": 20},
+    )
+
+    item = cast(dict[str, object], cast(list[object], payload["items"])[0])
+    assert item["resource_type"] == "gmail_draft"
+    assert item["resource_id"] == "draft-1"
+    assert cast(dict[str, object], item["payload"])["to"] == ["recipient@example.com"]
+    assert payload["next_page_token"] == "next-1"
+    assert calls[0] == (
+        "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        {"maxResults": "20", "q": 'subject:"Quartz 납품 회신 검토"'},
+    )
+
+
 def test_gmail_metadata_hydration__uses_three_workers__and_preserves_provider_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -13,13 +13,13 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 def test_signed_registry__loads_exact__installed_connector_tool_set() -> None:
     registry = load_signed_tool_registry()
 
-    assert len(registry.entries) == 27
+    assert len(registry.entries) == 28
     assert {entry.connector_id for entry in registry.entries} == {
         "github",
         "google_workspace",
     }
     assert registry.entries_hash == (
-        "5e30e912a8a318b04d92fcd8f47d1d19453361b3df71d3f420ee76f38173e0b5"
+        "44399339803dd17f8a0c3e930225e2ac333219b15d679ecc8ca1b99e88545679"
     )
 
     github = [entry for entry in registry.entries if entry.connector_id == "github"]
