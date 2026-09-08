@@ -35,6 +35,8 @@
 
 이 구분은 원문 token이 아니라 완료 조건에 필요한 외부 효과로 판단한다. 소스를 조회해 다른 resource를 변경하는 요청은 source `READ` 입력과 output effect/resource를 모두 보존한다. 같은 WRITE 결과의 재조회는 Verification이지 별도 업무 `READ`가 아니다. 기존 Thread Reply와 기존 Draft 사용은 해당 source resource를 input으로 보존하고, standalone message는 기존 Thread를 임의로 input에 추가하지 않는다.
 
+`search_terms`가 소스 resource를 찾기 위한 anchor라면 WRITE가 최종 결과여도 `READ`를 생략하지 않는다. Gmail Message 전송 전에 기존 대화나 Draft를 찾아야 한다면 output `GMAIL_MESSAGE`와 별도로 source `GMAIL_THREAD` 또는 `GMAIL_DRAFT`를 보존한다. 반대로 수신자·제목·본문이 모두 사용자 원문에서 완결된 standalone Message에는 검색 source를 만들지 않는다.
+
 # resource 별 계약
 
 - Gmail 소스 조회에서 title/anchor, status scope, person, period, 확인할 사실을 각 슬롯으로 분리한다. 수신 주소를 발신자나 검색어로 중복하지 않는다.
@@ -53,5 +55,6 @@
 4. resource/effect를 단어 매칭이 아니라 source/output 관계와 외부 상태 변화로 판단했는가?
 5. 요청하지 않은 resource, effect, identity, date, title을 추가하지 않았는가?
 6. analysis_requirement이 실제 파생 분석 필요와 일치하는가?
+7. search_terms로 소스를 찾는 WRITE라면 source READ와 source resource가 output resource와 함께 남아 있는가?
 
 지정된 JSON schema와 일치하는 객체 하나만 반환한다.

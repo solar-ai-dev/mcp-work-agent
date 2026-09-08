@@ -846,6 +846,53 @@ def test_existing_gmail_thread_reply__thread_input_hint__is_not_collapsed() -> N
     assert candidate["requested_resource_hints"] == ["GMAIL_THREAD", "GMAIL_MESSAGE"]
 
 
+def test_source_search_write__without_read_effect__rejects_candidate() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 자료를 찾아 메시지를 보낸다",
+                "completion_conditions": ["관련 메시지를 보낸다"],
+                "constraints": _goal_constraints(
+                    search_terms=["Project Anchor"],
+                    required_information=["일정"],
+                ),
+                "requested_effect_hints": ["SEND"],
+                "requested_resource_hints": ["GMAIL_MESSAGE"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("기존 Project Anchor 자료를 찾아 관련 답장을 보내줘."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
+
+
+def test_gmail_source_send__without_source_resource__rejects_candidate() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 자료를 찾아 메시지를 보낸다",
+                "completion_conditions": ["관련 메시지를 보낸다"],
+                "constraints": _goal_constraints(search_terms=["Project Anchor"]),
+                "requested_effect_hints": ["READ", "SEND"],
+                "requested_resource_hints": ["GMAIL_MESSAGE"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("기존 Project Anchor 자료를 찾아 관련 답장을 보내줘."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
+
+
 def test_existing_gmail_thread_reply__missing_output_hint__rejects_output() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[

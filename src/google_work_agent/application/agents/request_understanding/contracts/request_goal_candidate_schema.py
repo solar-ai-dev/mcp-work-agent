@@ -165,6 +165,57 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "properties": {"requested_effect_hints": {"type": "array", "minItems": 1}}
                 },
             },
+            {
+                "if": {
+                    "properties": {
+                        "constraints": {
+                            "properties": {
+                                "search_terms": {"type": "array", "minItems": 1}
+                            },
+                            "required": ["search_terms"],
+                        },
+                        "requested_effect_hints": {
+                            "contains": {
+                                "enum": ["CREATE", "UPDATE", "SEND", "DELETE"]
+                            }
+                        },
+                    },
+                    "required": ["constraints", "requested_effect_hints"],
+                },
+                "then": {
+                    "properties": {
+                        "requested_effect_hints": {"contains": {"const": "READ"}}
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "constraints": {
+                            "properties": {
+                                "search_terms": {"type": "array", "minItems": 1}
+                            },
+                            "required": ["search_terms"],
+                        },
+                        "requested_effect_hints": {"contains": {"const": "SEND"}},
+                        "requested_resource_hints": {
+                            "contains": {"const": "GMAIL_MESSAGE"}
+                        },
+                    },
+                    "required": [
+                        "constraints",
+                        "requested_effect_hints",
+                        "requested_resource_hints",
+                    ],
+                },
+                "then": {
+                    "properties": {
+                        "requested_resource_hints": {
+                            "contains": {"enum": ["GMAIL_THREAD", "GMAIL_DRAFT"]}
+                        }
+                    }
+                },
+            },
             *[
                 {
                     "if": {
