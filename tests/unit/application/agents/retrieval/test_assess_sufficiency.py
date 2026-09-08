@@ -1076,7 +1076,7 @@ def test_google_insufficiency__with_existing_source__retains_google() -> None:
         "missing_slot",
     ],
 )
-def test_selected_github_mutation__complete_target_read__does_not_require_future_values(
+def test_selected_resource_mutation__complete_target_read__does_not_require_future_values(
     tool: str, gap: str | None
 ) -> None:
     intent = _intent()
@@ -1165,3 +1165,99 @@ def test_selected_github_mutation__complete_target_read__does_not_require_future
         assert result is None
     else:
         assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "effect", "identity", "handle", "tool"),
+    [
+        ("TASK", "UPDATE", "task-1", "task:task-1", "tasks_update_task"),
+        (
+            "CALENDAR_EVENT",
+            "UPDATE",
+            "event-1",
+            "calendar_event:event-1",
+            "calendar_update_event",
+        ),
+        (
+            "CALENDAR_EVENT",
+            "DELETE",
+            "event-1",
+            "calendar_event:event-1",
+            "calendar_delete_event",
+        ),
+    ],
+)
+def test_selected_google_resource_action__complete_detail_read__is_sufficient(
+    resource_type: str,
+    effect: Literal["UPDATE", "DELETE"],
+    identity: str,
+    handle: str,
+    tool: str,
+) -> None:
+    intent = _intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["requested_effect_hints"] = ["READ", effect]
+    intent["constraints"] = [
+        {"kind": "RESOURCE", "field": "selected_resource_id", "value": [identity]}
+    ]
+    route = {
+        "route_id": "route-selected",
+        "resource_type": resource_type,
+        "connector_id": "google_workspace",
+        "allowed_read_tool_ids": ["selected_detail_tool"],
+        "required": True,
+        "reason_codes": ["RESOURCE_SELECTED"],
+    }
+    plan = _tool_route_plan([route])
+    plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": plan["input_plan"]["meta"],
+        "output_mode": "ACTION",
+        "output_routes": [
+            {
+                "route_id": "out-selected",
+                "resource_type": resource_type,
+                "connector_id": "google_workspace",
+                "effect": effect,
+                "selected_tool_id": tool,
+                "reason_codes": [],
+            }
+        ],
+    }
+    acquisition = _acquisition_result()
+    acquisition["resource_handles"] = [handle]
+    acquisition["source_summaries"] = [
+        {
+            "route_id": "route-selected",
+            "connector_id": "google_workspace",
+            "source": "TASKS" if resource_type == "TASK" else "CALENDAR",
+            "status": "COMPLETE",
+            "resource_handles": [handle],
+            "resource_count": 1,
+        }
+    ]
+    evidence = [
+        cast(
+            EvidenceDraftV1,
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": handle,
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "current provider detail",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            },
+        )
+    ]
+
+    result = deterministic_sufficiency(
+        request_intent=intent,
+        tool_route_plan=plan,
+        acquisition_result=acquisition,
+        evidence_drafts=evidence,
+        retry_budget=_run_budget(used=0),
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}

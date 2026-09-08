@@ -173,6 +173,54 @@ def test_task_detail__with_observed_business_fields__preserves_target_and_values
     assert "recovery-fingerprint" not in text
 
 
+def test_calendar_event_detail__with_current_fields__preserves_write_evidence() -> None:
+    result = cast(
+        AcquisitionResultV1,
+        {
+            "schema_version": 1,
+            "resource_handles": ["calendar_event:event-1"],
+            "availability_results": [],
+            "source_summaries": [
+                {
+                    "connector_id": "google_workspace",
+                    "source": "CALENDAR",
+                    "resources": [
+                        {
+                            "resource_handle": "calendar_event:event-1",
+                            "resource_type": "calendar_event",
+                            "resource_id": "event-1",
+                            "parent_id": "calendar-1",
+                            "version": "etag-1",
+                            "payload": {
+                                "title": "현재 일정",
+                                "start": "2026-09-14T15:00:00+09:00",
+                                "end": "2026-09-14T15:30:00+09:00",
+                                "timezone": "Asia/Seoul",
+                                "status": "confirmed",
+                                "location": "기존 회의실",
+                                "description": "현재 설명",
+                                "attendees": [],
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    text = normalize_segments(result)[0].text
+
+    assert "calendar_id: calendar-1" in text
+    assert "event_id: event-1" in text
+    assert "title: 현재 일정" in text
+    assert "start: 2026-09-14T15:00:00+09:00" in text
+    assert "end: 2026-09-14T15:30:00+09:00" in text
+    assert "timezone: Asia/Seoul" in text
+    assert "location: 기존 회의실" in text
+    assert "description: 현재 설명" in text
+    assert "attendees: []" in text
+
+
 @pytest.mark.parametrize("overlap", [0, 20])
 def test_source_chunking__long_source__preserves_header_and_line_boundaries(overlap: int) -> None:
     text = (

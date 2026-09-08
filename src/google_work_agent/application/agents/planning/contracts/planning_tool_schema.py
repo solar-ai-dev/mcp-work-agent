@@ -94,6 +94,7 @@ _CALENDAR_CREATE_PAYLOAD = {
         "title": _NON_EMPTY_STRING,
         "start": _NON_EMPTY_STRING,
         "end": _NON_EMPTY_STRING,
+        "location": _STRING,
         "description": _STRING,
         "attendees": _ATTENDEE_LIST,
     },

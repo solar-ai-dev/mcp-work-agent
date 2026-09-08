@@ -53,6 +53,10 @@ from google_work_agent.application.use_cases.action.task_duplicates import (
     duplicate_authority,
     merge_duplicate_risk,
 )
+from google_work_agent.application.use_cases.action.validate_action_arguments import (
+    ValidateActionArgumentsHandler,
+    ValidateActionArgumentsQueryV1,
+)
 from google_work_agent.application.use_cases.action.write_persistence import (
     append_approval_revoked_audits,
     audit_event,
@@ -220,7 +224,10 @@ class ModifyActionHandler:
                     proposed = self._apply_arguments_patch(
                         loads(snapshot.arguments_json), command.arguments_patch
                     )
-                    if calculate_canonical_json_hash(proposed) != snapshot.arguments_hash:
+                    if (
+                        self._arguments_are_valid(snapshot.tool_name, proposed)
+                        and calculate_canonical_json_hash(proposed) != snapshot.arguments_hash
+                    ):
                         duplicate_arguments = proposed
             if (
                 not plan_superseded
@@ -233,7 +240,10 @@ class ModifyActionHandler:
                     proposed = self._apply_arguments_patch(
                         loads(snapshot.arguments_json), command.arguments_patch
                     )
-                    if calculate_canonical_json_hash(proposed) != snapshot.arguments_hash:
+                    if (
+                        self._arguments_are_valid(snapshot.tool_name, proposed)
+                        and calculate_canonical_json_hash(proposed) != snapshot.arguments_hash
+                    ):
                         calendar_arguments = proposed
                         feasibility_seed_risk = refresh_feasibility_input_for_arguments(
                             risk=snapshot.risk, arguments=proposed
@@ -320,6 +330,18 @@ class ModifyActionHandler:
             new_arguments = self._apply_arguments_patch(
                 loads(action.arguments_json), command.arguments_patch
             )
+            if not self._arguments_are_valid(action.tool_name, new_arguments):
+                return self._finish(
+                    unit_of_work,
+                    command,
+                    self._result(
+                        action=action,
+                        applied=False,
+                        result_code=ResultCode.SCHEMA_VIOLATION,
+                        conflict_detail="modified arguments violate the selected Tool schema",
+                    ),
+                    now_ms,
+                )
             new_arguments_hash = calculate_canonical_json_hash(new_arguments)
             if new_arguments_hash == action.arguments_hash:
                 return self._finish(
@@ -641,6 +663,13 @@ class ModifyActionHandler:
         new_payload.update(normalized_patch)
         merged["payload"] = new_payload
         return merged
+
+    @staticmethod
+    def _arguments_are_valid(tool_name: str, arguments: dict[str, object]) -> bool:
+        validation = ValidateActionArgumentsHandler()(
+            ValidateActionArgumentsQueryV1(arguments, planning_tool_argument_schema(tool_name))
+        )
+        return validation.valid
 
     def _resolve_modification(
         self, command: ModifyActionCommand

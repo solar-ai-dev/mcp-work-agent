@@ -154,8 +154,12 @@ _MODIFY_PATCHABLE_FIELDS: dict[str, frozenset[str]] = {
     "gmail_update_draft": frozenset({"to", "cc", "subject", "body", "attachments"}),
     "tasks_create_task": frozenset({"title", "notes", "due"}),
     "tasks_update_task": frozenset({"title", "notes", "due"}),
-    "calendar_create_event": frozenset({"title", "start", "end", "description"}),
-    "calendar_update_event": frozenset({"title", "start", "end", "description"}),
+    "calendar_create_event": frozenset(
+        {"title", "start", "end", "location", "description", "attendees"}
+    ),
+    "calendar_update_event": frozenset(
+        {"title", "start", "end", "location", "description", "attendees"}
+    ),
 }
 
 

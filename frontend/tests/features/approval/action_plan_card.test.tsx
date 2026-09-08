@@ -117,13 +117,38 @@ test("Modification failure retains the current preview and the user's request", 
 
 test.each([
   ["gmail_send", { payload: { to: ["to@example.com"], cc: ["cc@example.com"], bcc: ["bcc@example.com"], subject: "승인한 제목", body: "승인한 본문", thread_id: "thread-1", in_reply_to: "<source@example.com>" } }, ["to@example.com", "cc@example.com", "bcc@example.com", "승인한 제목", "승인한 본문", "thread-1", "<source@example.com>"]],
-  ["calendar_create_event", { calendar_id: "primary", payload: { title: "회의", start: "2026-09-08T10:00:00+09:00", end: "2026-09-08T11:00:00+09:00", attendees: ["test@example.com"] } }, ["기본 캘린더", "2026-09-08T10:00:00+09:00", "test@example.com"]],
+  ["calendar_create_event", { calendar_id: "primary", payload: { title: "회의", start: "2026-09-08T10:00:00+09:00", end: "2026-09-08T11:00:00+09:00", location: "회의실 A", attendees: ["test@example.com"] } }, ["기본 캘린더", "2026-09-08T10:00:00+09:00", "회의실 A", "test@example.com"]],
   ["gmail_create_draft", { payload: { to: ["test@example.com"], subject: "회신", body: "메일 본문" } }, ["test@example.com", "회신", "메일 본문"]],
   ["github_update_issue", { repository: "owner/repository", issue_number: 12, payload: { title: "이슈", body: "변경 내용" } }, ["owner/repository", "12", "변경 내용"]],
 ])("Shared preview preserves %s approval fields", (tool, args, expected) => {
   const action = { ...taskAction(), tool_name: tool as string, arguments: args as Record<string, unknown>, editable_fields: [] };
   render(<ActionPlanCard {...propsFor(action)} />);
   for (const value of expected as string[]) expect(screen.getByText(value)).toBeInTheDocument();
+});
+
+test("Calendar direct edit preserves typed attendee and explicit location removal", () => {
+  const action = {
+    ...taskAction(),
+    tool_name: "calendar_update_event",
+    effect_type: "UPDATE",
+    arguments: {
+      calendar_id: "primary",
+      event_id: "event-1",
+      payload: { location: "회의실 A", attendees: ["first@example.com"] },
+    },
+    editable_fields: ["location", "attendees"],
+  };
+  const props = propsFor(action);
+  render(<ActionPlanCard {...props} />);
+  fireEvent.change(screen.getByLabelText("장소"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("참석자"), {
+    target: { value: "first@example.com, second@example.com, first@example.com" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "이 내용으로 바꿀게요" }));
+  expect(props.onModify).toHaveBeenCalledWith(action, {
+    location: "",
+    attendees: ["first@example.com", "second@example.com"],
+  });
 });
 
 test("ActionPlanCard presents user-facing arguments and sends only explicit acknowledgement", async () => {

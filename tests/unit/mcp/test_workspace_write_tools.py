@@ -792,6 +792,7 @@ def test_calendar_create__event_dispatches__with_valid_claim(
         "title": "Review",
         "start": "2026-08-10T09:00:00+09:00",
         "end": "2026-08-10T10:00:00+09:00",
+        "location": "Room 1",
         "attendees": ["a@example.com", "b@example.com"],
     }
     claim = _build_claim(
@@ -813,6 +814,7 @@ def test_calendar_create__event_dispatches__with_valid_claim(
     assert calls[0][0] == "POST"
     body = cast(dict[str, object], calls[0][2])
     assert body["summary"] == "Review"
+    assert body["location"] == "Room 1"
     assert body["attendees"] == [{"email": "a@example.com"}, {"email": "b@example.com"}]
 
 
@@ -835,7 +837,11 @@ def test_calendar_update__event_supports__attendee_change(
 
     monkeypatch.setattr(server, "_google_api_call", google_api_call)
     state = _state()
-    payload: dict[str, object] = {"attendees": ["c@example.com"]}
+    payload: dict[str, object] = {
+        "description": "",
+        "location": "Room 2",
+        "attendees": ["c@example.com"],
+    }
     claim = _build_claim(
         state=state,
         tool_name="calendar_update_event",
@@ -854,7 +860,13 @@ def test_calendar_update__event_supports__attendee_change(
     )
 
     assert cast(dict[str, object], result["item"])["resource_id"] == "event-1"
-    assert calls == [{"attendees": [{"email": "c@example.com"}]}]
+    assert calls == [
+        {
+            "description": "",
+            "location": "Room 2",
+            "attendees": [{"email": "c@example.com"}],
+        }
+    ]
 
 
 def test_calendar_delete__event_dispatches__with_valid_claim(

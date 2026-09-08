@@ -251,7 +251,7 @@ def _select_ranked_evidence(
                 "relevance_reason": "Provider 검색 후보이며 본문 관련성은 상세 조회 전 미확정",
             } for identity in ids],
         }, retry_budget
-    deterministic_selection = _exact_selected_read_selection(
+    deterministic_selection = _exact_selected_resource_selection(
         request_intent=request_intent,
         candidates=eligible_candidates,
         exclusion_obligations=obligations,
@@ -386,18 +386,18 @@ def _receipt_listing_selection(
     }
 
 
-def _exact_selected_read_selection(
+def _exact_selected_resource_selection(
     *,
     request_intent: RequestIntentV2,
     candidates: list[RagCandidateV1],
     exclusion_obligations: Collection[str],
 ) -> EvidenceSelectionResultV2 | None:
-    """Select bounded segments from one exact selected resource without inference."""
+    """Preserve one verified exact resource whenever the request includes its read."""
 
     resource_refs = {candidate["resource_ref"] for candidate in candidates}
     if (
         request_intent["analysis_requirement"] != "NONE"
-        or set(request_intent["requested_effect_hints"]) != {"READ"}
+        or "READ" not in request_intent["requested_effect_hints"]
         or not candidates
         or len(resource_refs) != 1
         or any("EXACT_RESOURCE" not in candidate["reason_codes"] for candidate in candidates)

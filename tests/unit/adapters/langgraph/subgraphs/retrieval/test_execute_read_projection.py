@@ -77,6 +77,63 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
     assert len(hydrated["source_summaries"]) == 2
 
 
+def test_calendar_event_projection__checkpoint_sanitization__preserves_write_evidence() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "calendar-event-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+        },
+    )
+    read = ConnectorReadResultV1(
+        1,
+        "calendar_get_event",
+        "request",
+        {
+            "item": {
+                "resource_type": "calendar_event",
+                "resource_id": "event-1",
+                "parent_id": "calendar-1",
+                "version": "etag-1",
+                "related_resource_ids": ["calendar-1"],
+                "payload": {
+                    "title": "현재 일정",
+                    "start": "2026-09-14T15:00:00+09:00",
+                    "end": "2026-09-14T15:30:00+09:00",
+                    "timezone": "Asia/Seoul",
+                    "location": "기존 회의실",
+                    "description": "현재 설명",
+                    "attendees": ["existing@example.com"],
+                    "provider_internal": {"must": "not persist"},
+                },
+            }
+        },
+        None,
+        0,
+    )
+
+    acquisition = execute_read_projection.sanitize_acquisition_result(
+        execute_read_projection.project_acquisition_result([(plan, read)], remaining_budget={})
+    )
+    resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
+
+    assert resources[0]["payload"] == {
+        "title": "현재 일정",
+        "summary": None,
+        "start": "2026-09-14T15:00:00+09:00",
+        "end": "2026-09-14T15:30:00+09:00",
+        "timezone": "Asia/Seoul",
+        "status": None,
+        "event_kind": None,
+        "transparency": None,
+        "self_response_status": None,
+        "location": "기존 회의실",
+        "description": "현재 설명",
+        "attendees": ["existing@example.com"],
+    }
+
+
 @pytest.mark.parametrize(
     ("match_mode", "expected"),
     [

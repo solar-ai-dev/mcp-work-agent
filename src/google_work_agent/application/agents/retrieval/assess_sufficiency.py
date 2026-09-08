@@ -274,7 +274,7 @@ def _deterministic_source_sufficiency(
         confirmation_response=confirmation_response,
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
-    if _is_complete_selected_github_update(
+    if _is_complete_selected_resource_action(
         request_intent,
         tool_route_plan,
         acquisition_result,
@@ -345,7 +345,7 @@ def _is_complete_gmail_thread_reply(
     return len(thread_ids) == 1
 
 
-def _is_complete_selected_github_update(
+def _is_complete_selected_resource_action(
     intent: RequestIntentV2,
     plan: ToolRoutePlanV2 | None,
     acquisition: AcquisitionResultV1,
@@ -356,7 +356,6 @@ def _is_complete_selected_github_update(
         or plan["output_plan"]["output_mode"] != "ACTION"
         or intent["analysis_requirement"] != "NONE"
         or intent["ambiguity"]["requires_confirmation"]
-        or set(intent["requested_effect_hints"]) - {"READ"} != {"UPDATE"}
         or acquisition["status"] != "COMPLETE"
         or acquisition["missing_slots"]
     ):
@@ -366,23 +365,17 @@ def _is_complete_selected_github_update(
         return False
     route, output = inputs[0], outputs[0]
     if (
-        route["connector_id"] != "github"
-        or route["resource_type"] != "GITHUB_ISSUE"
+        route["connector_id"] not in {"github", "google_workspace"}
         or "RESOURCE_SELECTED" not in route["reason_codes"]
         or not route["required"]
-        or output["connector_id"] != "github"
-        or output["resource_type"] != "GITHUB_ISSUE"
-        or output["effect"] != "UPDATE"
-        or output["selected_tool_id"]
-        not in {
-            "github_update_issue",
-            "github_close_issue",
-            "github_reopen_issue",
-        }
+        or output["connector_id"] != route["connector_id"]
+        or output["resource_type"] != route["resource_type"]
+        or output["effect"] not in {"UPDATE", "DELETE"}
+        or set(intent["requested_effect_hints"]) - {"READ"} != {output["effect"]}
     ):
         return False
     selected = {
-        f"github_issue:{identity}"
+        f"{route['resource_type'].lower()}:{identity}"
         for constraint in intent["constraints"]
         if constraint["field"] == "selected_resource_id" and isinstance(constraint["value"], list)
         for identity in constraint["value"]
