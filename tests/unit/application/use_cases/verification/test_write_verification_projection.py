@@ -39,8 +39,20 @@ def test_calendar_create__unspecified_optional_fields__verifies_their_absence() 
     )
     assert expected["payload"] == {
         "title": "검토", "parent_id": "calendar-1", "status": "confirmed",
-        "description": "", "attendees": [],
+        "description": "", "location": "", "attendees": [],
     }
+
+
+def test_calendar_update__approved_location__is_part_of_verification() -> None:
+    expected = build_expected_verification_projection(
+        tool_name="calendar_update_event",
+        arguments={
+            "calendar_id": "calendar-1",
+            "event_id": "event-1",
+            "payload": {"location": "Room 2"},
+        },
+    )
+    assert expected == {"payload": {"parent_id": "calendar-1", "location": "Room 2"}}
 
 
 @dataclass

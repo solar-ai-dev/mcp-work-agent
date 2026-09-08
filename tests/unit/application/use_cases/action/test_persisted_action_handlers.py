@@ -83,7 +83,13 @@ def _handoff_dependencies(unit_of_work: MagicMock) -> dict[str, Any]:
 
 
 def _action(*, status: ActionStatusV1, version: int = 1) -> SimpleNamespace:
-    arguments = {"payload": {"subject": "old"}}
+    arguments = {
+        "payload": {
+            "to": ["test@example.com"],
+            "subject": "old",
+            "body": "old body",
+        }
+    }
     return SimpleNamespace(
         id="action-1",
         plan_id="plan-1",
@@ -208,7 +214,13 @@ def _assert_terminal_modify_regression(
         )
     )
 
-    expected_arguments = {"payload": {"subject": "new"}}
+    expected_arguments = {
+        "payload": {
+            "to": ["test@example.com"],
+            "subject": "new",
+            "body": "old body",
+        }
+    }
     assert result.applied is True
     assert result.action_status == ActionStatusV1.MODIFIED.value
     assert result.action_version == initial_version + 1
@@ -290,6 +302,61 @@ def test_modify_superseded_plan__child_has_zero_effect__and_zero_owner_io() -> N
     unit_of_work.approvals.revoke_active_by_action.assert_not_called()
     unit_of_work.plans.require_review.assert_not_called()
     assert gateway.method_calls == []
+
+
+def test_calendar_modify__invalid_attendee_patch__performs_zero_provider_reads() -> None:
+    unit_of_work = _uow()
+    arguments = {
+        "calendar_id": "primary",
+        "payload": {
+            "title": "Review",
+            "start": "2026-09-08T15:00:00+09:00",
+            "end": "2026-09-08T15:30:00+09:00",
+        },
+    }
+    action = SimpleNamespace(
+        id="action-calendar",
+        plan_id="plan-calendar",
+        connector_id="google_workspace",
+        tool_name="calendar_create_event",
+        effect_type=EffectType.CREATE.value,
+        status=ActionStatusV1.PROPOSED.value,
+        version=1,
+        arguments_json=dumps(arguments, sort_keys=True, separators=(",", ":")),
+        arguments_hash=calculate_canonical_json_hash(arguments),
+        risk={},
+        target_resource_ref_id=None,
+    )
+    unit_of_work.command_receipts.get_by_command_id.side_effect = [None, None]
+    unit_of_work.actions.get.return_value = action
+    unit_of_work.plans.load_bundle.return_value = SimpleNamespace(
+        id=action.plan_id,
+        run_id="run-calendar",
+        status=PlanStatusV1.WAITING_APPROVAL,
+    )
+    gateway = MagicMock()
+
+    result = ModifyActionHandler(
+        unit_of_work_factory=MagicMock(return_value=unit_of_work),
+        now_ms=lambda: 1800,
+        gateway=gateway,
+        tool_registry=load_signed_tool_registry(),
+        **_handoff_dependencies(unit_of_work),
+    )(
+        ModifyActionCommand(
+            command_id="cmd-calendar-invalid-attendee",
+            request_hash="hash-calendar-invalid-attendee",
+            request_id="req-calendar-invalid-attendee",
+            action_id=action.id,
+            expected_version=1,
+            arguments_patch={"attendees": "not-an-array"},
+        )
+    )
+
+    assert result.applied is False
+    assert result.result_code == ResultCode.SCHEMA_VIOLATION.value
+    assert gateway.method_calls == []
+    unit_of_work.actions.update_if_version_and_status.assert_not_called()
 
 
 def test_reject_persists__revocation_and__dependency_consequence() -> None:

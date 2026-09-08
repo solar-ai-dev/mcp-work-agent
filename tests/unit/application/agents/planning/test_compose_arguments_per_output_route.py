@@ -267,9 +267,13 @@ def test_argument_candidate__cannot_override__bound_container() -> None:
         )
 
 
-@pytest.mark.parametrize("description", [None, "검증 결과 공유"])
+@pytest.mark.parametrize(
+    ("description", "location"),
+    [(None, None), ("검증 결과 공유", None), (None, "회의실 A")],
+)
 def test_exact_calendar_create__preserves_all_constraints__in_arguments(
     description: str | None,
+    location: str | None,
 ) -> None:
     route = {
         "route_id": "calendar-route",
@@ -314,9 +318,16 @@ def test_exact_calendar_create__preserves_all_constraints__in_arguments(
             {"kind": "RESOURCE", "field": "description", "value": description}
         )
         expected_payload["description"] = description
+    if location is not None:
+        cast(list[dict[str, str]], request_intent["constraints"]).append(
+            {"kind": "RESOURCE", "field": "location", "value": location}
+        )
+        expected_payload["location"] = location
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
-        assert description is not None, "exact supported constraints need no inference"
+        assert description is not None or location is not None, (
+            "exact supported constraints need no inference"
+        )
         assert prompt_input["request_intent"] == request_intent
         calls.append(prompt_id)
         return {
@@ -340,7 +351,7 @@ def test_exact_calendar_create__preserves_all_constraints__in_arguments(
         ],
         invoke=invoke,
     )
-    assert len(calls) == (1 if description is not None else 0)
+    assert len(calls) == (1 if description is not None or location is not None else 0)
     assert result == (
         {
             "schema_version": 1,

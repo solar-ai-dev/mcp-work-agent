@@ -41,6 +41,11 @@ def _calendar_create_body(payload: dict[str, object]) -> dict[str, object]:
         description = f"{description}\n\n{marker}" if description else marker
     if description is not None:
         body["description"] = description
+    if "location" in payload:
+        location = payload["location"]
+        if not isinstance(location, str):
+            raise workspace_support._WorkspaceToolError("INVALID_ARGUMENT")
+        body["location"] = location
     attendees = workspace_support._calendar_attendees_argument(payload)
     if attendees is not None:
         body["attendees"] = attendees

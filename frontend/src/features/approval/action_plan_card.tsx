@@ -72,7 +72,7 @@ function ActionDecisionCard({ action, taskListName, approval, busy, canRetry, fo
   }, [action]);
   const requiredAcknowledgements = action.required_acknowledgements ?? [];
   const editableFields = action.editable_fields ?? [];
-  const patch = Object.fromEntries(Object.entries(editValues).filter(([, value]) => isTask || value.trim()).map(([key, value]) => [key, isTask && key === "due" && value === "" ? null : key === "notes" ? value : value.trim()]));
+  const patch = buildArgumentsPatch(action, editValues);
   const missingAcknowledgement = requiredAcknowledgements.some((item) => !acknowledgements.has(item));
   const duplicate = taskDuplicateDecision(action.risk);
   const conflict = calendarConflictDecision(action.risk);
@@ -102,7 +102,7 @@ function ActionDecisionCard({ action, taskListName, approval, busy, canRetry, fo
       {isTask && editing && action.next_allowed_commands.includes("MODIFY_ACTION") ? <div><label>어떻게 수정할까요?<textarea value={modification} maxLength={2000} placeholder="예정일을 9월 8일로 바꾸고 메모는 빼줘" onChange={(event) => setModification(event.target.value)} /></label><button className="button-secondary" type="button" disabled={busy !== null || !modification.trim()} onClick={() => void submitModification(modification)}>수정 요청</button><p className="muted">변경 내용을 검토한 뒤 새 미리보기에서 다시 승인합니다.</p></div> : null}
       {modificationError ? <p role="alert">{modificationError}</p> : null}
       {busy === `modify-${action.action_id}` ? <p role="status">수정 내용을 검토하고 있습니다…</p> : null}
-      {action.next_allowed_commands.includes("MODIFY_ACTION") && editableFields.some((field) => field !== "attachments") ? <details open={isTask ? undefined : true}><summary>직접 편집</summary><fieldset><legend>바꾸고 싶은 내용</legend>{editableFields.filter((field) => field !== "attachments").map((field) => <label key={field}>{argumentLabel(field)}<input value={editValues[field] ?? (isTask ? argumentValue(action, field) : "")} placeholder={argumentValue(action, field)} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} /></label>)}<button className="button-secondary" type="button" disabled={busy !== null || Object.keys(patch).length === 0} onClick={() => void submitModification(patch)}>이 내용으로 바꿀게요</button></fieldset></details> : null}
+      {action.next_allowed_commands.includes("MODIFY_ACTION") && editableFields.some((field) => field !== "attachments") ? <details open={isTask ? undefined : true}><summary>직접 편집</summary><fieldset><legend>바꾸고 싶은 내용</legend>{editableFields.filter((field) => field !== "attachments").map((field) => <label key={field}>{argumentLabel(field)}<input value={editValues[field] ?? (isTask || action.tool_name.startsWith("calendar_") ? argumentValue(action, field) : "")} placeholder={argumentValue(action, field)} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} /></label>)}<button className="button-secondary" type="button" disabled={busy !== null || Object.keys(patch).length === 0} onClick={() => void submitModification(patch)}>이 내용으로 바꿀게요</button></fieldset></details> : null}
       {action.attachment_allowed && action.next_allowed_commands.includes("MODIFY_ACTION") ? <AttachmentPicker disabled={busy !== null} onStaged={(descriptors) => onAttachDescriptors(action, descriptors)} /> : null}
       <div className="button-row">
         {action.next_allowed_commands.includes("APPROVE_ACTION") ? <button className="button-primary" type="button" disabled={busy !== null || missingAcknowledgement} onClick={() => onApprove(action, acknowledgements)}>{isTask && (duplicate === null || duplicate === "NOT_DUPLICATE") ? "만들기" : approvalLabel(duplicate, conflict)}</button> : null}
@@ -129,6 +129,7 @@ function actionLabel(toolName: string): string {
   if (toolName.startsWith("github_")) return toolName.includes("create") ? "이슈 만들기" : "이슈 변경";
   if (toolName.startsWith("gmail_")) return toolName.includes("send") ? "메일 보내기" : toolName.includes("draft") ? "메일 초안 만들기" : "메일 작업";
   if (toolName.startsWith("tasks_")) return toolName.includes("create") ? "태스크 만들기" : "태스크 변경";
+  if (toolName === "calendar_delete_event") return "일정 삭제";
   if (toolName.startsWith("calendar_")) return toolName.includes("create") ? "일정 만들기" : "일정 변경";
   return "요청한 작업";
 }
@@ -166,6 +167,7 @@ const ARGUMENT_LABELS: Record<string, string> = {
   due: "예정일",
   notes: "메모",
   description: "설명",
+  location: "장소",
   attendees: "참석자",
   thread_id: "답장 대화",
   in_reply_to: "답장 대상 메일",
@@ -177,7 +179,7 @@ function approvalArgumentSummary(action: RunAction, taskListName?: string): Arra
     : action.tool_name.startsWith("tasks_")
       ? ["task_list_id", "task_id", "status", "title", "due", "notes"]
       : action.tool_name.startsWith("calendar_")
-        ? ["calendar_id", "title", "start", "end", "timezone", "description", "attendees"]
+        ? ["calendar_id", "title", "start", "end", "timezone", "location", "description", "attendees"]
         : action.tool_name.startsWith("github_") ? ["repository", "issue_number", "title", "body", "state"] : action.editable_fields;
   return preferredFields.flatMap((field) => {
     const value = field === "task_list_id" && taskListName
@@ -203,6 +205,29 @@ function argumentValue(action: RunAction, field: string): string {
   if (field === "status" && value === "completed") return "완료";
   if (field === "status" && value === "needsAction") return "미완료";
   return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+function buildArgumentsPatch(action: RunAction, editValues: Record<string, string>): Record<string, unknown> {
+  const isTask = action.tool_name === "tasks_create_task";
+  const patch: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(editValues)) {
+    if (isTask) {
+      patch[field] = field === "due" && value === "" ? null : field === "notes" ? value : value.trim();
+      continue;
+    }
+    if (action.tool_name.startsWith("calendar_")) {
+      if (field === "attendees") {
+        patch[field] = [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+        continue;
+      }
+      if (field === "description" || field === "location") {
+        patch[field] = value.trim();
+        continue;
+      }
+    }
+    if (value.trim()) patch[field] = value.trim();
+  }
+  return patch;
 }
 
 function argumentLabel(field: string): string {

@@ -27,9 +27,15 @@ def _calendar_update_event(
     if "end" in payload:
         body["end"] = {"dateTime": workspace_support._text_argument(payload, "end", maximum=64)}
     if "description" in payload:
-        description = workspace_support._optional_text(payload.get("description"))
-        if description:
-            body["description"] = description
+        description = payload["description"]
+        if not isinstance(description, str):
+            raise workspace_support._WorkspaceToolError("INVALID_ARGUMENT")
+        body["description"] = description
+    if "location" in payload:
+        location = payload["location"]
+        if not isinstance(location, str):
+            raise workspace_support._WorkspaceToolError("INVALID_ARGUMENT")
+        body["location"] = location
     attendees = workspace_support._calendar_attendees_argument(payload)
     if attendees is not None:
         body["attendees"] = attendees

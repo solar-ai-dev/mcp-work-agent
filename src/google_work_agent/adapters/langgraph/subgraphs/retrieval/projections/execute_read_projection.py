@@ -250,6 +250,30 @@ def _sanitize_source_summary(summary: Mapping[str, object]) -> dict[str, object]
 
 
 def _bounded_payload(resource_type: str, payload: Mapping[str, object]) -> dict[str, object]:
+    if resource_type == ResourceType.CALENDAR_EVENT.value:
+        calendar_payload: dict[str, object] = {
+            key: value
+            for key in (
+                "title",
+                "summary",
+                "start",
+                "end",
+                "timezone",
+                "status",
+                "event_kind",
+                "transparency",
+                "self_response_status",
+                "location",
+                "description",
+            )
+            if (value := payload.get(key)) is None or isinstance(value, (str, int, float, bool))
+        }
+        attendees = payload.get("attendees")
+        if isinstance(attendees, list):
+            calendar_payload["attendees"] = [
+                value for value in attendees if isinstance(value, str)
+            ]
+        return calendar_payload
     scalar_fields: dict[str, tuple[str, ...]] = {
         ResourceType.GMAIL_THREAD.value: ("subject",),
         ResourceType.GMAIL_MESSAGE.value: ("subject",),
@@ -257,16 +281,6 @@ def _bounded_payload(resource_type: str, payload: Mapping[str, object]) -> dict[
         ResourceType.TASK_LIST.value: ("title",),
         ResourceType.TASK.value: ("title", "status", "due"),
         ResourceType.CALENDAR.value: ("title",),
-        ResourceType.CALENDAR_EVENT.value: (
-            "title",
-            "summary",
-            "start",
-            "end",
-            "status",
-            "event_kind",
-            "transparency",
-            "self_response_status",
-        ),
         "github_issue": (
             "repository",
             "issue_number",

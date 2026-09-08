@@ -12,6 +12,9 @@ from tests.support.context_retrieval import (
 )
 from tests.support.evidence_assessment import evidence_assessment_output
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    ActionEffectValue,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     ContextBudget,
@@ -414,10 +417,14 @@ def test_select_evidence__preserves_stable__exclusion_obligations() -> None:
     assert [item["segment_id"] for item in projected] == ["segment-2"]
 
 
-def test_select_evidence__sole_exact_selected_read__skips_llm() -> None:
+@pytest.mark.parametrize("requested_effect_hints", [["READ"], ["READ", "UPDATE"]])
+def test_select_evidence__sole_exact_selected_resource__skips_llm(
+    requested_effect_hints: list[str],
+) -> None:
     runtime = FakeLLMRuntime()
     intent = _intent()
     intent["analysis_requirement"] = "NONE"
+    intent["requested_effect_hints"] = cast(list[ActionEffectValue], requested_effect_hints)
     intent["constraints"] = [
         {"kind": "RESOURCE", "field": "selected_resource_id", "value": ["thread-42"]}
     ]
@@ -496,7 +503,7 @@ def test_search_candidates__all_irrelevant__excludes_without_repair_or_fabricati
     assert len(runtime.calls) == 1
 
 
-def test_exact_selected_read__with_multiple_segments__selects_top_rank_without_llm() -> None:
+def test_exact_selected_resource__with_multiple_segments__selects_top_rank_without_llm() -> None:
     runtime = FakeLLMRuntime()
     intent = _intent()
     intent["analysis_requirement"] = "NONE"

@@ -338,6 +338,25 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
                 fields.append(f"notes:\n{visible_notes.strip()}")
         if fields:
             return "\n".join(fields)
+    if resource_type == "calendar_event":
+        fields = []
+        for label, value in (
+            ("calendar_id", resource.get("parent_id")),
+            ("event_id", resource.get("resource_id")),
+            ("title", payload.get("title")),
+            ("start", payload.get("start")),
+            ("end", payload.get("end")),
+            ("timezone", payload.get("timezone")),
+            ("status", payload.get("status")),
+            ("location", payload.get("location")),
+            ("description", payload.get("description")),
+        ):
+            if isinstance(value, str) and value.strip():
+                fields.append(f"{label}: {value.strip()}")
+        attendees = payload.get("attendees")
+        if isinstance(attendees, list) and all(isinstance(value, str) for value in attendees):
+            fields.append("attendees: " + (", ".join(attendees) if attendees else "[]"))
+        return "\n".join(fields)
     parts: list[str] = []
     if resource_type in _GMAIL_RESOURCE_TYPES:
         # Metadata was acquired by the provider, not inferred from the snippet.
