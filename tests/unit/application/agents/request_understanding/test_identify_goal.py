@@ -9,6 +9,9 @@ from tests.support.fakes.llm import FakeStructuredInferencePort
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_goal_candidate_schema as goal_schema,
 )
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    validated_repository_authority,
+)
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     detect_ambiguity,
 )
@@ -339,6 +342,67 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
             "value": ["thread-42"],
         }
     ]
+
+
+def test_selected_github_issue__uses_typed_repository__without_unbound_duplicate() -> None:
+    repository = "bonggyulim/search-save"
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "선택한 GitHub Issue 조회",
+                "completion_conditions": ["현재 제목, 상태, 본문을 보여준다"],
+                "constraints": _goal_constraints(
+                    {"kind": "RESOURCE", "field": "repository", "value": repository}
+                ),
+                "requested_effect_hints": ["READ"],
+                "requested_resource_hints": ["GITHUB_ISSUE"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+    selected = SelectedResourceRef(
+        "ref-issue-2",
+        "github",
+        "github_issue",
+        f"{repository}#2",
+        repository,
+    )
+    request = WorkflowStartRequest(
+        run_id="run-selected-github",
+        conversation_id="conversation-1",
+        workflow_key="thread-1",
+        entry_mode="RESOURCE_SELECTED",
+        requested_mode="LOCAL_GPU",
+        request_text="선택한 GitHub Issue의 현재 제목, 상태, 본문을 알려줘",
+        selected_resource_ids=(selected.resource_id,),
+        selected_resources=(selected,),
+        run_budget=cast(dict[str, Any], build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+    ambiguity = detect_ambiguity(
+        llm_runtime=runtime,
+        request=request,
+        goal_candidate=candidate,
+    )
+    intent = finalize_intent(
+        candidate,
+        ambiguity,
+        artifact_id="intent-1",
+        user_request=request.request_text,
+    )
+
+    assert ambiguity["requires_confirmation"] is False
+    assert all(item["field"] != "repository" for item in intent["constraints"])
+    assert validated_repository_authority(
+        intent,
+        selected_resources=request.selected_resources,
+    ) == repository
 
 
 def test_identify_goal__workspace_effect_without_resource_hint__fails_contract() -> None:

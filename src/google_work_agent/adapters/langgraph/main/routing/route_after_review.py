@@ -40,6 +40,12 @@ def route_after_review(
         and review_complete
     ):
         target = "review_entry"
+    if (
+        target == "end"
+        and state.get("workflow_phase") == "WAITING_CONFIRMATION"
+        and isinstance(state.get("user_interrupt"), Mapping)
+    ):
+        target = "review_entry"
     if target not in ROUTE_AFTER_REVIEW_SUCCESSORS or target not in available_targets:
         raise ValueError("REVIEW returned an unregistered successor")
     return str(target)
