@@ -870,6 +870,31 @@ def test_waiting_approval__during_fresh_review__allows_domain_validation() -> No
     assert routed["target"] == SupervisorTarget.DOMAIN_VALIDATION.value
 
 
+def test_waiting_approval__during_review_confirmation__preserves_confirmation() -> None:
+    candidate = make_supervisor_decision(
+        target=SupervisorTarget.WAITING_CONFIRMATION,
+        next_phase=WorkflowPhase.WAITING_CONFIRMATION,
+        state_update={
+            "workflow_phase": WorkflowPhase.WAITING_CONFIRMATION.value,
+            "user_interrupt": {
+                "interrupt_kind": "CONFIRMATION",
+                "interrupt_id": "interrupt-1",
+            },
+        },
+        reason_code="PLAN_REVIEW_CONFIRM",
+    )
+    facts = SupervisorObservationV1(
+        run_status="WAITING_APPROVAL",
+        next_allowed_commands=(),
+        action_statuses=("MODIFIED",),
+        cancel_intent_active=False,
+    )
+
+    routed = apply_durable_priority(state=_state(), decision=candidate, facts=facts)
+
+    assert routed == candidate
+
+
 def test_recovery_owner_suspend__same_state__does_not_self_loop() -> None:
     candidate = make_supervisor_decision(
         target=SupervisorTarget.SUSPEND,

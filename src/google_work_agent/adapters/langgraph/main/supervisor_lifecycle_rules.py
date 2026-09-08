@@ -129,6 +129,7 @@ def apply_durable_priority(
         return decision
     if status == "WAITING_APPROVAL" and candidate not in {
         SupervisorTarget.WAITING_APPROVAL.value,
+        SupervisorTarget.WAITING_CONFIRMATION.value,
         SupervisorTarget.DOMAIN_VALIDATION.value,
         SupervisorTarget.PREFLIGHT.value,
         SupervisorTarget.VERIFICATION.value,

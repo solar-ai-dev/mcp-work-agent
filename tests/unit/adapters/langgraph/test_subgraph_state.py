@@ -114,3 +114,18 @@ def test_role_input_projection__does_not_expose__foreign_business_artifacts() ->
     } <= review_fields
     assert "execution_summary" not in review_fields
     assert "verification_summary" not in review_fields
+
+
+def test_confirmation_capable_inputs__with_resume_fields__carry_complete_envelope() -> None:
+    projections = (
+        RequestUnderstandingInputState,
+        ToolRoutingInputState,
+        ContextRetrievalInputState,
+        WorkAnalysisInputState,
+        PlanningInputState,
+        ReviewInputState,
+    )
+
+    for projection in projections:
+        fields = set(get_type_hints(projection, include_extras=True))
+        assert {"user_interrupt", "policy_confirmation_receipts"} <= fields

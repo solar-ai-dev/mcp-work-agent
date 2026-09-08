@@ -221,6 +221,18 @@ def _assert_terminal_modify_regression(
             "body": "old body",
         }
     }
+    expected_verification = {
+        "payload": {
+            "to": ["test@example.com"],
+            "cc": [],
+            "bcc": [],
+            "subject": "new",
+            "body": "old body",
+            "in_reply_to": None,
+            "references": None,
+            "attachments": [],
+        }
+    }
     assert result.applied is True
     assert result.action_status == ActionStatusV1.MODIFIED.value
     assert result.action_version == initial_version + 1
@@ -235,6 +247,9 @@ def _assert_terminal_modify_regression(
             "version": initial_version + 1,
             "arguments_json": dumps(expected_arguments, sort_keys=True, separators=(",", ":")),
             "arguments_hash": calculate_canonical_json_hash(expected_arguments),
+            "expected_json": dumps(
+                expected_verification, sort_keys=True, separators=(",", ":")
+            ),
             "risk_json": "{}",
         },
     )

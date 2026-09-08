@@ -7,7 +7,15 @@ from typing import Any, cast
 
 from langgraph.types import Command
 
-from google_work_agent.adapters.langgraph.main.state import GraphState, request_from_run_input_state
+from google_work_agent.adapters.langgraph.main.state import (
+    CONTEXT_CANONICAL_PLANS_KEY,
+    CONTEXT_QUERY_ATTEMPTS_KEY,
+    CONTEXT_READ_BINDINGS_KEY,
+    CONTEXT_READ_RESULT_HANDLES_KEY,
+    CONTEXT_SEGMENT_HANDLES_KEY,
+    GraphState,
+    request_from_run_input_state,
+)
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     provider_dispatch_execution_scope,
@@ -184,6 +192,13 @@ class WorkflowInvocationCoordinator:
                             "__target__": self._retrieval_node,
                             "__workflow_control__": None,
                             "acquisition_result": None,
+                            "retrieval_result": None,
+                            CONTEXT_CANONICAL_PLANS_KEY: {},
+                            CONTEXT_QUERY_ATTEMPTS_KEY: [],
+                            CONTEXT_READ_RESULT_HANDLES_KEY: [],
+                            CONTEXT_READ_BINDINGS_KEY: {},
+                            CONTEXT_SEGMENT_HANDLES_KEY: [],
+                            "exclusion_obligation_segment_ids": [],
                             "user_interrupt": None,
                         },
                         as_node=target_node,

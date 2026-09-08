@@ -788,6 +788,13 @@ class PlanningSubgraph:
         return working
 
     def _evidence(self, state: PlanningLocalState) -> list[dict[str, object]]:
+        if isinstance(state.get("__replan_from_plan_id__"), str):
+            persisted = state.get("__modify_review_evidence__")
+            if not isinstance(persisted, list) or not all(
+                isinstance(item, Mapping) for item in persisted
+            ):
+                raise ValueError("Modify replan requires persisted Plan evidence")
+            return [dict(item) for item in persisted]
         direct = state.get("evidence")
         if isinstance(direct, list):
             return [dict(item) for item in direct]

@@ -21,9 +21,12 @@
 # 검토하지 말 것
 
 - 현재 Planning은 미래 실행 제안이다. Connector 실행, Provider effect, post-write resource ID/URL, 재조회 Verification 결과를 사전 조건이나 Evidence gap으로 요구하지 않는다.
+- 사용자 값만으로 완결된 직접 CREATE에는 외부 source Evidence가 필요하지 않다. 새 Resource의 ID/URL/version은 실행 뒤 결과이며 `required_information`이나 승인 arguments로 요구하지 않는다.
+- 사용자가 WRITE 결과 재조회를 요청해도 이후 독립 Verification이 수행하므로 별도 READ Action이나 Provider 결과를 Planning에 요구하지 않는다.
 - 승인 필요, ACTION의 존재, route 일치, 정상적인 제안을 finding으로 만들지 않는다.
 - source의 BEFORE value가 요청된 AFTER value와 다른 것은 mutation의 이유이며 모순이 아니다.
 - partial UPDATE에서 생략된 mutable field는 기존 값 보존을 의미한다. 재조회를 요구하거나 Planning arguments에 복사하지 않는다.
+- `github_close_issue`와 `github_reopen_issue`는 `repository`와 `issue_number`만 받고 각각 CLOSED/OPEN으로 전이한다. 존재하지 않는 `state` argument를 요구하지 않는다.
 - 다른 Review dimension의 route/policy 판단, plan mutation, Tool 선택, 실행, 최종 disposition을 수행하지 않는다.
 
 # 출력 전 검증

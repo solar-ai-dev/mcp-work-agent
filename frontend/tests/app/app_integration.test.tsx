@@ -652,7 +652,7 @@ test("continues an existing conversation with a new run and keeps the earlier hi
       storedMessages = [...storedMessages, { id: "message-3", run_id: "run-b", role: "USER", content: "새 요청", created_at_ms: 3 }];
       return jsonResponse({ applied: true, result_code: "ACCEPTED", run_id: "run-b", conversation_id: "conversation-a", run_status: "PLANNING", run_version: 1, user_message_id: "message-3", workflow_key: "workflow-b", enqueued: true, request_replayed: false });
     }
-    if (path === "/api/v1/runs/run-a") return jsonResponse(snapshotPayload({ run_id: "run-a", conversation_id: "conversation-a", status: "COMPLETED", finished_at_ms: 2 }));
+    if (path === "/api/v1/runs/run-a") return jsonResponse(snapshotPayload({ run_id: "run-a", conversation_id: "conversation-a", status: "COMPLETED", finished_at_ms: 2, next_allowed_commands: [] }));
     if (path === "/api/v1/runs/run-b") return jsonResponse(snapshotPayload({ run_id: "run-b", conversation_id: "conversation-a", status: "PLANNING" }));
     if (path === "/api/v1/runs/run-a/context" || path === "/api/v1/runs/run-b/context") {
       return jsonResponse({ context: null, api_contract_version: "1" });

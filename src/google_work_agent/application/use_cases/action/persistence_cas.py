@@ -21,6 +21,7 @@ def update_action_record(
     updated_at_ms: int,
     arguments_json: str | None = None,
     arguments_hash: str | None = None,
+    expected_json: str | None = None,
     risk: dict[str, object] | None = None,
 ) -> Action | None:
     values: dict[str, object] = {
@@ -33,6 +34,8 @@ def update_action_record(
         values["arguments_json"] = arguments_json
     if arguments_hash is not None:
         values["arguments_hash"] = arguments_hash
+    if expected_json is not None:
+        values["expected_json"] = expected_json
     if risk is not None:
         values["risk_json"] = canonicalize_action_risk(risk)
     applied = unit_of_work.actions.update_if_version_and_status(

@@ -116,6 +116,18 @@ def test_verification_handoff__replaces_crashed_execution__only_with_durable_eff
 
 def test_cache_restart__replaces_stale__pending_retrieval_task() -> None:
     graph = _Graph()
+    graph.snapshot.values.update(
+        {
+            "acquisition_result": {"stale": True},
+            "retrieval_result": {"stale": True},
+            "__context_canonical_plans__": {"route-1": {"stale": True}},
+            "__context_query_attempts__": [{"stale": True}],
+            "__context_read_result_handles__": ["lost-handle"],
+            "__context_read_bindings__": {"lost-handle": {"stale": True}},
+            "__context_segment_handles__": ["lost-segment"],
+            "exclusion_obligation_segment_ids": ["lost-segment"],
+        }
+    )
     coordinator = _coordinator(graph)
 
     coordinator.resume(
@@ -142,6 +154,13 @@ def test_cache_restart__replaces_stale__pending_retrieval_task() -> None:
                 "__target__": "context_retriever",
                 "__workflow_control__": None,
                 "acquisition_result": None,
+                "retrieval_result": None,
+                "__context_canonical_plans__": {},
+                "__context_query_attempts__": [],
+                "__context_read_result_handles__": [],
+                "__context_read_bindings__": {},
+                "__context_segment_handles__": [],
+                "exclusion_obligation_segment_ids": [],
                 "user_interrupt": None,
             },
             "retrieval_entry",
