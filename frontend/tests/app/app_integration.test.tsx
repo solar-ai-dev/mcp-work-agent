@@ -810,7 +810,7 @@ test("shows approve button for write actions and posts approve command", async (
   const user = userEvent.setup();
   render(<App />);
 
-  const approveButton = await screen.findByRole("button", { name: "만들기" });
+  const approveButton = await screen.findByRole("button", { name: "확인" });
   await user.click(approveButton);
 
   await waitFor(() =>
@@ -986,11 +986,11 @@ test("confirms an interrupt and explicitly resolves a mismatch", async () => {
   render(<App />);
 
   await screen.findByText("Which task should be updated?");
-  expect(screen.getByLabelText("확인 응답")).toBeEnabled();
+  expect(screen.getByLabelText("답변")).toBeEnabled();
   FakeEventSource.instances[0].emit("confirmation_required", {
     interrupt_id: "interrupt-1", question: "Which task should be updated?", options: [],
   });
-  await user.type(screen.getByLabelText("확인 응답"), "Use the follow-up task");
+  await user.type(screen.getByLabelText("답변"), "Use the follow-up task");
   await user.click(screen.getByRole("button", { name: "응답 보내기" }));
   await user.click(await screen.findByRole("button", { name: "현재 결과 수용" }));
 
@@ -2765,7 +2765,7 @@ test("TST-UI-208 Gmail viewer and approval use only available projection fields"
   expect(await screen.findByText("실제 메일 본문입니다.")).toBeInTheDocument();
   expect(screen.getByText("김대리 <kim@example.com>")).toBeInTheDocument();
   expect(screen.getByText(/받는 사람 user@example.com/)).toBeInTheDocument();
-  expect(screen.getByText("무엇을 실행하나요?")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "초안을 만들까요?" })).toBeInTheDocument();
   expect(screen.queryByText("Evidence")).not.toBeInTheDocument();
 });
 
@@ -2777,7 +2777,7 @@ test("Action risk follows the SSE-refreshed snapshot without rendering raw JSON"
   installUiContractFetch(options);
   render(<App />);
 
-  await screen.findByText("무엇을 실행하나요?");
+  await screen.findByRole("heading", { name: "초안을 만들까요?" });
   expect(screen.queryByText(/서버 검증에서 확인된 위험 정보/)).not.toBeInTheDocument();
 
   options.actionRisk = {
@@ -2816,7 +2816,7 @@ test.each([
   expect(document.body.textContent).not.toContain("private-deadline");
   expect(document.body.textContent).not.toContain("PRIVATE_REASON");
   if (decision === "INFEASIBLE") {
-    expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
   }
 });
 
@@ -2858,7 +2858,7 @@ test("clear Task duplicate is blocked by default and offers an explicit override
   render(<App />);
 
   expect(await screen.findByText(/동일한 작업이 이미 있습니다/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("checkbox", { name: "중복 가능성을 확인했습니다." }));
   await user.click(screen.getByRole("button", { name: "그래도 새로 만들어 주세요" }));
 
@@ -2882,7 +2882,7 @@ test("NOT_DUPLICATE shows no warning and uses ordinary approval", async () => {
   });
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "네, 실행해 주세요" }));
+  await user.click(await screen.findByRole("button", { name: "확인" }));
   expect(screen.queryByText(/기존 작업이 있습니다/)).not.toBeInTheDocument();
   const approve = requests.find((request) => request.path.endsWith("/actions/action-1/approve"));
   expect(JSON.parse(String(approve?.init?.body))).toMatchObject({
@@ -2931,7 +2931,7 @@ test("Calendar HARD_CONFLICT offers an explicit override", async () => {
   render(<App />);
 
   expect(await screen.findByText("해당 시간에 기존 일정이 있습니다.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("checkbox", { name: "일정 충돌 가능성을 확인했습니다." }));
   await user.click(screen.getByRole("button", { name: "충돌을 알고도 실행해 주세요" }));
   const approve = requests.find((request) => request.path.endsWith("/actions/action-1/approve"));
@@ -2951,7 +2951,7 @@ test("Calendar NO_CONFLICT shows ordinary approval", async () => {
   });
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "네, 실행해 주세요" }));
+  await user.click(await screen.findByRole("button", { name: "확인" }));
   expect(screen.queryByText(/기존 일정/)).not.toBeInTheDocument();
   const approve = requests.find((request) => request.path.endsWith("/actions/action-1/approve"));
   expect(JSON.parse(String(approve?.init?.body))).toMatchObject({
@@ -3038,6 +3038,7 @@ test("stages an outbound file and modifies the Gmail draft with descriptors only
   const requests = installUiContractFetch({ action: true, actionToolName: "gmail_create_draft" });
   render(<App />);
 
+  await userEvent.setup().click(await screen.findByRole("button", { name: "수정" }));
   const input = await screen.findByLabelText("첨부파일 선택");
   await userEvent.setup().upload(input, new File(["report"], "report.txt", { type: "text/plain" }));
 
@@ -3062,13 +3063,13 @@ test("TST-UI-209 renders independent approval commands with versions and disable
   const requests = installUiContractFetch({ action: true });
   render(<App />);
 
-  await screen.findByRole("button", { name: "네, 실행해 주세요" });
-  await user.click(screen.getByRole("button", { name: "네, 실행해 주세요" }));
+  await screen.findByRole("button", { name: "확인" });
+  await user.click(screen.getByRole("button", { name: "확인" }));
   const approve = requests.find((request) => request.path.endsWith("/approve"));
   expect(JSON.parse(String(approve?.init?.body))).toMatchObject({ expected_version: 7 });
-  expect(screen.getByText("무엇을 실행하나요?")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "이 내용으로 바꿀게요" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "이번에는 실행하지 않을게요" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "초안을 만들까요?" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "수정" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "건너뛰기" })).toBeInTheDocument();
 });
 
 test("approved Action can be rejected and refreshes to a non-executable rejected state", async () => {
@@ -3076,15 +3077,15 @@ test("approved Action can be rejected and refreshes to a non-executable rejected
   const requests = installUiContractFetch({ action: true, actionStatus: "APPROVED" });
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "이번에는 실행하지 않을게요" }));
+  await user.click(await screen.findByRole("button", { name: "건너뛰기" }));
   const reject = requests.find((request) => request.path.endsWith("/reject"));
   expect(JSON.parse(String(reject?.init?.body))).toMatchObject({
     expected_version: 7,
     reason_code: null,
   });
   expect(await screen.findByText(/사용자 선택에 따라 실행하지 않았습니다/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "이번에는 실행하지 않을게요" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "건너뛰기" })).not.toBeInTheDocument();
 });
 
 test("TST-UI-210 filters conversations and shows recent execution fallback", async () => {

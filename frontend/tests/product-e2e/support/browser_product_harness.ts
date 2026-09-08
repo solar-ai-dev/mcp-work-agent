@@ -242,7 +242,7 @@ export class BrowserProductHarness {
       await acknowledgements.nth(index).check();
     }
     await card.getByRole("button", {
-      name: /^(네, 실행해 주세요|위험을 확인하고 실행해 주세요|충돌을 알고도 실행해 주세요|그래도 새로 만들어 주세요)$/,
+      name: /^(확인|위험을 확인하고 실행해 주세요|충돌을 알고도 실행해 주세요|그래도 새로 만들어 주세요)$/,
     }).click();
   }
 

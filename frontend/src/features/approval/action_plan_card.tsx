@@ -4,6 +4,15 @@ import { AttachmentPicker, type StagedAttachmentDescriptor } from "../attachment
 import { calendarConflictDecision, feasibilityDecision, hasOtherRisk, taskDuplicateDecision } from "./risk_presentation";
 import { listTaskLists } from "../resource_browser/api/list_resources";
 import { ApiClientError } from "../../api/client";
+import {
+  UserActionCard,
+  UserActionDisclosure,
+  UserActionEditor,
+  UserActionField,
+  UserActionFields,
+  UserActionNotice,
+  type UserActionGlyphName,
+} from "../../ui/user_action_card";
 
 export function ActionPlanCard({ snapshot, busy, retryActionIds, formatTime, onApprove, onModify, onReject, onRetry, onAttachDescriptors }: {
   snapshot: RunSnapshot;
@@ -43,7 +52,7 @@ export function ActionPlanCard({ snapshot, busy, retryActionIds, formatTime, onA
   if (!snapshot.current_plan || snapshot.actions.length === 0) return null;
   return (
     <section className="action-plan-conversation" aria-label="실행 계획">
-      {snapshot.current_plan.summary_text ? <p className="agent-status-line">작업 제안 · {snapshot.current_plan.summary_text}</p> : null}
+      {snapshot.current_plan.summary_text ? <p className="action-plan-summary">{snapshot.current_plan.summary_text}</p> : null}
       {snapshot.actions.map((action) => (
         <ActionDecisionCard key={action.action_id} action={action} taskListName={taskListNames[String(action.arguments.task_list_id)]} approval={snapshot.approvals.find((item) => item.action_id === action.action_id)} busy={busy} canRetry={retryActionIds.has(action.action_id)} formatTime={formatTime} onApprove={onApprove} onModify={onModify} onReject={onReject} onRetry={onRetry} onAttachDescriptors={onAttachDescriptors} />
       ))}
@@ -78,41 +87,115 @@ function ActionDecisionCard({ action, taskListName, approval, busy, canRetry, fo
   const conflict = calendarConflictDecision(action.risk);
   const feasibility = feasibilityDecision(action.risk);
   const argumentSummary = approvalArgumentSummary(action, taskListName);
-  const submitModification = async (value: Record<string, unknown> | string): Promise<void> => {
+  const previewItems = isTask
+    ? ["title", "task_list_id", "due", "notes"].map((field) => ({
+        field,
+        label: argumentLabel(field),
+        value: field === "task_list_id" && taskListName
+          ? taskListName
+          : argumentValue(action, field) || (field === "due" ? "미지정" : "없음"),
+      }))
+    : argumentSummary.filter((item) => !["thread_id", "in_reply_to"].includes(item.field));
+  const directEditFields = editableFields.filter((field) => field !== "attachments");
+  const canModify = action.next_allowed_commands.includes("MODIFY_ACTION")
+    && (isTask || directEditFields.length > 0 || action.attachment_allowed);
+  const showInlineEditor = editing && !isTask && directEditFields.length > 0;
+  const submitModification = async (value: Record<string, unknown> | string): Promise<boolean> => {
     setModificationError(null);
-    try { await onModify(action, value); }
-    catch (error) { setModificationError(error instanceof ApiClientError ? error.message : "수정하지 못했습니다. 기존 내용을 유지합니다. 다시 요청해 주세요."); }
+    try {
+      await onModify(action, value);
+      return true;
+    } catch (error) {
+      setModificationError(error instanceof ApiClientError ? error.message : "수정하지 못했습니다. 기존 내용을 유지합니다. 다시 요청해 주세요.");
+      return false;
+    }
+  };
+  const toggleEditing = async (): Promise<void> => {
+    if (!editing) {
+      setEditing(true);
+      return;
+    }
+    if (Object.keys(patch).length > 0 && !(await submitModification(patch))) return;
+    setEditing(false);
   };
   return (
-    <article className="approval-conversation" aria-label={`${actionLabel(action.tool_name)} 승인 요청`} data-tool-name={action.tool_name}>
-      <p className="approval-question">{actionLabel(action.tool_name)} 작업을 진행할까요?</p>
-      {duplicate === "SIMILAR_CANDIDATE" ? <p className="status-warn">비슷한 기존 작업이 있습니다.</p> : null}
-      {duplicate === "CLEAR_DUPLICATE" ? <p className="status-warn">동일한 작업이 이미 있습니다.</p> : null}
-      {conflict === "WARNING" ? <p className="status-warn">겹칠 가능성이 있거나 업무 시간 밖의 일정입니다.</p> : null}
-      {conflict === "HARD_CONFLICT" ? <p className="status-warn">해당 시간에 기존 일정이 있습니다.</p> : null}
-      {feasibility === "RISK" ? <p className="status-warn">현재 일정 기준으로 가능한 시간이 제한적입니다.</p> : null}
-      {feasibility === "INFEASIBLE" ? <p className="status-warn">현재 업무 시간과 일정 기준으로 마감 전에 필요한 연속 시간을 확보할 수 없습니다.</p> : null}
-      {hasOtherRisk(action.risk) ? <p className="status-warn">서버 검증에서 확인된 위험 정보가 있습니다. 승인 전에 확인해 주세요.</p> : null}
-      {isTask ? <dl className="metadata-list" aria-label="태스크 미리보기">{["title", "task_list_id", "due", "notes"].map((field) => <div key={field}><dt>{argumentLabel(field)}</dt><dd style={{ whiteSpace: "pre-wrap" }}>{field === "task_list_id" && taskListName ? taskListName : argumentValue(action, field) || (field === "due" ? "미지정" : "없음")}</dd></div>)}</dl> : <details open><summary>무엇을 실행하나요?</summary><dl className="metadata-list"><div><dt>작업</dt><dd>{actionLabel(action.tool_name)}</dd></div><div><dt>실행 방식</dt><dd>{effectLabel(action.effect_type)}</dd></div>{argumentSummary.map((item) => <div key={item.field}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}<div><dt>결과 확인</dt><dd>{verificationLabel(action.verification_policy)}</dd></div></dl></details>}
-      {isTask && beforeAction ? <details><summary>수정 전후 비교 · 다시 승인해 주세요</summary><dl className="metadata-list">{["title", "due", "notes"].filter((field) => argumentValue(beforeAction, field) !== argumentValue(action, field)).map((field) => <div key={field}><dt>{argumentLabel(field)}</dt><dd>{argumentValue(beforeAction, field) || "없음"} → {argumentValue(action, field) || "없음"}</dd></div>)}</dl></details> : null}
-      {approval ? <div className="muted">{approvalStatusLabel(approval.status)}{approval.status === "ACTIVE" ? ` · ${formatTime(approval.expires_at_ms)}까지 유효합니다.` : ""}</div> : null}
-      {requiredAcknowledgements.map((item) => (
-        <label key={item}><input type="checkbox" checked={acknowledgements.has(item)} onChange={(event) => setAcknowledgements((current) => { const next = new Set(current); if (event.target.checked) next.add(item); else next.delete(item); return next; })} /> {item === "TASK_DUPLICATE" ? "중복 가능성을 확인했습니다." : "일정 충돌 가능성을 확인했습니다."}</label>
-      ))}
-      {isTask && editing && action.next_allowed_commands.includes("MODIFY_ACTION") ? <div><label>어떻게 수정할까요?<textarea value={modification} maxLength={2000} placeholder="예정일을 9월 8일로 바꾸고 메모는 빼줘" onChange={(event) => setModification(event.target.value)} /></label><button className="button-secondary" type="button" disabled={busy !== null || !modification.trim()} onClick={() => void submitModification(modification)}>수정 요청</button><p className="muted">변경 내용을 검토한 뒤 새 미리보기에서 다시 승인합니다.</p></div> : null}
-      {modificationError ? <p role="alert">{modificationError}</p> : null}
-      {busy === `modify-${action.action_id}` ? <p role="status">수정 내용을 검토하고 있습니다…</p> : null}
-      {action.next_allowed_commands.includes("MODIFY_ACTION") && editableFields.some((field) => field !== "attachments") ? <details open={isTask ? undefined : true}><summary>직접 편집</summary><fieldset><legend>바꾸고 싶은 내용</legend>{editableFields.filter((field) => field !== "attachments").map((field) => <label key={field}>{argumentLabel(field)}<input value={editValues[field] ?? (isTask || action.tool_name.startsWith("calendar_") ? argumentValue(action, field) : "")} placeholder={argumentValue(action, field)} onChange={(event) => setEditValues((current) => ({ ...current, [field]: event.target.value }))} /></label>)}<button className="button-secondary" type="button" disabled={busy !== null || Object.keys(patch).length === 0} onClick={() => void submitModification(patch)}>이 내용으로 바꿀게요</button></fieldset></details> : null}
-      {action.attachment_allowed && action.next_allowed_commands.includes("MODIFY_ACTION") ? <AttachmentPicker disabled={busy !== null} onStaged={(descriptors) => onAttachDescriptors(action, descriptors)} /> : null}
-      <div className="button-row">
-        {action.next_allowed_commands.includes("APPROVE_ACTION") ? <button className="button-primary" type="button" disabled={busy !== null || missingAcknowledgement} onClick={() => onApprove(action, acknowledgements)}>{isTask && (duplicate === null || duplicate === "NOT_DUPLICATE") ? "만들기" : approvalLabel(duplicate, conflict)}</button> : null}
-        {isTask && action.next_allowed_commands.includes("MODIFY_ACTION") ? <button className="button-secondary" type="button" disabled={busy !== null} onClick={() => setEditing((current) => !current)}>수정</button> : null}
-        {action.next_allowed_commands.includes("REJECT_ACTION") ? <button className="button-secondary" type="button" disabled={busy !== null} onClick={() => onReject(action)}>{isTask ? "건너뛰기" : "이번에는 실행하지 않을게요"}</button> : null}
-        {canRetry ? <button className="button-secondary" type="button" disabled={busy !== null} onClick={() => onRetry(action)}>다시 준비해 주세요</button> : null}
-      </div>
-      {action.status === "UNKNOWN_RESULT" ? <p className="status-warn">실제 결과를 확인하는 중입니다. 새 쓰기 실행은 잠시 막혀 있습니다.</p> : null}
-      {isTask && action.status === "REJECTED" ? <p>건너뛴 작업입니다.</p> : null}
-    </article>
+    <UserActionCard
+      tone="approval"
+      glyph={actionGlyph(action.tool_name)}
+      title={actionQuestion(action.tool_name)}
+      description="내용을 확인한 뒤 실행 여부를 선택해 주세요."
+      ariaLabel={`${actionLabel(action.tool_name)} 승인 요청`}
+      dataToolName={action.tool_name}
+      footer={(
+        <>
+          {action.next_allowed_commands.includes("REJECT_ACTION") ? <button className="button-quiet" type="button" disabled={busy !== null} onClick={() => onReject(action)}>건너뛰기</button> : null}
+          <div className="user-action-footer-main">
+            {canModify ? <button className={editing ? "button-primary" : "button-secondary"} type="button" disabled={busy !== null} aria-expanded={editing} onClick={() => void toggleEditing()}>{editing ? "수정 완료" : "수정"}</button> : null}
+            {canRetry ? <button className="button-secondary" type="button" disabled={busy !== null} onClick={() => onRetry(action)}>다시 준비해 주세요</button> : null}
+            {action.next_allowed_commands.includes("APPROVE_ACTION") ? <button className="button-primary" type="button" disabled={editing || busy !== null || missingAcknowledgement} title={editing ? "수정 완료 후 실행할 수 있습니다." : undefined} onClick={() => onApprove(action, acknowledgements)}>{approvalPrimaryLabel(duplicate, conflict)}</button> : null}
+          </div>
+        </>
+      )}
+    >
+      {duplicate === "SIMILAR_CANDIDATE" ? <UserActionNotice>비슷한 기존 작업이 있습니다.</UserActionNotice> : null}
+      {duplicate === "CLEAR_DUPLICATE" ? <UserActionNotice>동일한 작업이 이미 있습니다.</UserActionNotice> : null}
+      {conflict === "WARNING" ? <UserActionNotice>겹칠 가능성이 있거나 업무 시간 밖의 일정입니다.</UserActionNotice> : null}
+      {conflict === "HARD_CONFLICT" ? <UserActionNotice>해당 시간에 기존 일정이 있습니다.</UserActionNotice> : null}
+      {feasibility === "RISK" ? <UserActionNotice>현재 일정 기준으로 가능한 시간이 제한적입니다.</UserActionNotice> : null}
+      {feasibility === "INFEASIBLE" ? <UserActionNotice>현재 업무 시간과 일정 기준으로 마감 전에 필요한 연속 시간을 확보할 수 없습니다.</UserActionNotice> : null}
+      {hasOtherRisk(action.risk) ? <UserActionNotice>서버 검증에서 확인된 위험 정보가 있습니다. 승인 전에 확인해 주세요.</UserActionNotice> : null}
+
+      {showInlineEditor ? <UserActionEditor title={null}>
+        <DirectEditor action={action} fields={directEditFields} values={editValues} onChange={setEditValues} />
+        {action.attachment_allowed ? <div className="user-action-attachment"><AttachmentPicker disabled={busy !== null} onStaged={(descriptors) => onAttachDescriptors(action, descriptors)} /></div> : null}
+      </UserActionEditor> : <UserActionFields label={isTask ? "태스크 미리보기" : `${actionLabel(action.tool_name)} 미리보기`}>
+        {previewItems.map((item) => <UserActionField key={item.field} label={item.label} value={item.value} multiline={isMultilineField(item.field)} hideLabel={item.field === "body"} />)}
+      </UserActionFields>}
+
+      {requiredAcknowledgements.length > 0 ? <div className="user-action-acknowledgements">{requiredAcknowledgements.map((item) => (
+        <label key={item}><input type="checkbox" checked={acknowledgements.has(item)} onChange={(event) => setAcknowledgements((current) => { const next = new Set(current); if (event.target.checked) next.add(item); else next.delete(item); return next; })} /> <span>{item === "TASK_DUPLICATE" ? "중복 가능성을 확인했습니다." : "일정 충돌 가능성을 확인했습니다."}</span></label>
+      ))}</div> : null}
+
+      {isTask && beforeAction ? <UserActionDisclosure label="수정 전후 비교 · 다시 승인해 주세요"><UserActionFields label="수정 전후 비교">{["title", "due", "notes"].filter((field) => argumentValue(beforeAction, field) !== argumentValue(action, field)).map((field) => <UserActionField key={field} label={argumentLabel(field)} value={<>{argumentValue(beforeAction, field) || "없음"} → {argumentValue(action, field) || "없음"}</>} multiline={isMultilineField(field)} />)}</UserActionFields></UserActionDisclosure> : null}
+
+      {approval ? <p className="user-action-status">{approvalStatusLabel(approval.status)}{approval.status === "ACTIVE" ? ` · ${formatTime(approval.expires_at_ms)}까지 유효합니다.` : ""}</p> : null}
+
+      {editing && canModify && isTask ? <UserActionEditor>
+        {isTask ? <div className="user-action-form"><label>어떻게 수정할까요?<textarea value={modification} maxLength={2000} rows={3} placeholder="예정일을 9월 8일로 바꾸고 메모는 빼줘" onChange={(event) => setModification(event.target.value)} /></label><div className="user-action-editor-actions"><button className="button-secondary" type="button" disabled={busy !== null || !modification.trim()} onClick={() => void submitModification(modification)}>수정 요청</button><span>변경 후 새 미리보기에서 다시 승인합니다.</span></div></div> : null}
+        {directEditFields.length > 0 ? <UserActionDisclosure label="직접 편집"><DirectEditor action={action} fields={directEditFields} values={editValues} onChange={setEditValues} /></UserActionDisclosure> : null}
+        {action.attachment_allowed ? <div className="user-action-attachment"><AttachmentPicker disabled={busy !== null} onStaged={(descriptors) => onAttachDescriptors(action, descriptors)} /></div> : null}
+      </UserActionEditor> : null}
+      {editing && canModify && !isTask && directEditFields.length === 0 && action.attachment_allowed ? <UserActionEditor title={null}><div className="user-action-attachment"><AttachmentPicker disabled={busy !== null} onStaged={(descriptors) => onAttachDescriptors(action, descriptors)} /></div></UserActionEditor> : null}
+
+      {modificationError ? <p className="user-action-error" role="alert">{modificationError}</p> : null}
+      {busy === `modify-${action.action_id}` ? <p className="user-action-status" role="status">수정 내용을 검토하고 있습니다…</p> : null}
+      {action.status === "UNKNOWN_RESULT" ? <UserActionNotice>실제 결과를 확인하는 중입니다. 새 쓰기 실행은 잠시 막혀 있습니다.</UserActionNotice> : null}
+      {isTask && action.status === "REJECTED" ? <p className="user-action-status">건너뛴 작업입니다.</p> : null}
+    </UserActionCard>
+  );
+}
+
+function DirectEditor({ action, fields, values, onChange }: {
+  action: RunAction;
+  fields: string[];
+  values: Record<string, string>;
+  onChange: (value: Record<string, string>) => void;
+}): JSX.Element {
+  return (
+    <div className="user-action-form" role="group" aria-label="바꾸고 싶은 내용">
+      {fields.map((field) => {
+        const value = values[field] ?? argumentValue(action, field);
+        const handleChange = (nextValue: string) => onChange({ ...values, [field]: nextValue });
+        return (
+          <label key={field}>
+            <span className={field === "body" ? "sr-only" : undefined}>{argumentLabel(field)}</span>
+            {isMultilineField(field)
+              ? <textarea rows={4} value={value} placeholder={argumentValue(action, field)} onChange={(event) => handleChange(event.target.value)} />
+              : <input value={value} placeholder={argumentValue(action, field)} onChange={(event) => handleChange(event.target.value)} />}
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
@@ -120,26 +203,47 @@ function approvalLabel(duplicate: ReturnType<typeof taskDuplicateDecision>, conf
   if (conflict === "HARD_CONFLICT") return "충돌을 알고도 실행해 주세요";
   if (duplicate === "CLEAR_DUPLICATE") return "그래도 새로 만들어 주세요";
   if (conflict === "WARNING" || duplicate === "SIMILAR_CANDIDATE") return "위험을 확인하고 실행해 주세요";
-  return "네, 실행해 주세요";
+  return "확인";
+}
+
+function approvalPrimaryLabel(duplicate: ReturnType<typeof taskDuplicateDecision>, conflict: ReturnType<typeof calendarConflictDecision>): string {
+  return approvalLabel(duplicate, conflict);
 }
 
 function actionLabel(toolName: string): string {
-  if (toolName === "github_close_issue") return "GitHub 이슈 닫기";
-  if (toolName === "github_reopen_issue") return "GitHub 이슈 다시 열기";
+  if (toolName === "github_close_issue") return "이슈 닫기";
+  if (toolName === "github_reopen_issue") return "이슈 다시 열기";
   if (toolName.startsWith("github_")) return toolName.includes("create") ? "이슈 만들기" : "이슈 변경";
-  if (toolName.startsWith("gmail_")) return toolName.includes("send") ? "메일 보내기" : toolName.includes("draft") ? "메일 초안 만들기" : "메일 작업";
+  if (toolName === "gmail_create_draft" || toolName === "gmail_draft") return "초안 만들기";
+  if (toolName === "gmail_update_draft") return "초안 수정";
+  if (toolName.startsWith("gmail_")) return toolName.includes("send") ? "메일 보내기" : "메일 작업";
   if (toolName.startsWith("tasks_")) return toolName.includes("create") ? "태스크 만들기" : "태스크 변경";
   if (toolName === "calendar_delete_event") return "일정 삭제";
   if (toolName.startsWith("calendar_")) return toolName.includes("create") ? "일정 만들기" : "일정 변경";
   return "요청한 작업";
 }
 
-function effectLabel(effectType: string): string {
-  return ({ CREATE: "새로 만들기", UPDATE: "내용 변경", DELETE: "삭제", SEND: "보내기" } as Record<string, string>)[effectType] ?? "요청대로 처리";
+function actionQuestion(toolName: string): string {
+  if (toolName === "gmail_create_draft" || toolName === "gmail_draft") return "초안을 만들까요?";
+  if (toolName === "gmail_update_draft") return "초안을 수정할까요?";
+  if (toolName === "gmail_send") return "메일을 보낼까요?";
+  if (toolName === "tasks_create_task") return "태스크를 만들까요?";
+  if (toolName === "tasks_update_task") return "태스크를 수정할까요?";
+  if (toolName === "calendar_create_event") return "일정을 만들까요?";
+  if (toolName === "calendar_update_event") return "일정을 수정할까요?";
+  if (toolName === "calendar_delete_event") return "일정을 삭제할까요?";
+  if (toolName === "github_close_issue") return "이슈를 닫을까요?";
+  if (toolName === "github_reopen_issue") return "이슈를 다시 열까요?";
+  if (toolName === "github_update_issue") return "이슈를 수정할까요?";
+  return "요청한 작업을 진행할까요?";
 }
 
-function verificationLabel(policy: string): string {
-  return policy === "GET_COMPARE" ? "실행 후 다시 조회해 확인" : policy === "GET_ABSENT" ? "실행 후 삭제 여부 확인" : "실행 결과 확인";
+function actionGlyph(toolName: string): UserActionGlyphName {
+  if (toolName.startsWith("gmail_")) return "mail";
+  if (toolName.startsWith("tasks_")) return "task";
+  if (toolName.startsWith("calendar_")) return "calendar";
+  if (toolName.startsWith("github_")) return "github";
+  return "action";
 }
 
 function approvalStatusLabel(status: string): string {
@@ -232,4 +336,8 @@ function buildArgumentsPatch(action: RunAction, editValues: Record<string, strin
 
 function argumentLabel(field: string): string {
   return ARGUMENT_LABELS[field] ?? field;
+}
+
+function isMultilineField(field: string): boolean {
+  return ["body", "description", "notes"].includes(field);
 }

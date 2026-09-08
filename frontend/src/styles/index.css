@@ -719,25 +719,337 @@ main.panel .panel-header > div:first-child .muted {
   to { opacity: 1; }
 }
 
-.approval-conversation {
-  display: grid;
-  gap: 0.65rem;
+.action-plan-summary {
   width: min(88%, 42rem);
-  padding: 0.9rem 1rem;
-  border: 0;
-  border-radius: 1rem 1rem 1rem 0.32rem;
-  background: color-mix(in srgb, var(--panel), var(--panel-strong) 68%);
+  margin: 0;
+  padding: 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
-.approval-conversation p,
-.approval-conversation dl {
+.user-action-card {
+  width: min(88%, 42rem);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border), transparent 14%);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--panel), var(--bg) 24%);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text), transparent 94%);
+}
+
+.user-action-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.72rem;
+  align-items: start;
+  padding: 0.9rem 1rem 0.72rem;
+}
+
+.user-action-glyph {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.58rem;
+  background: color-mix(in srgb, var(--accent), transparent 89%);
+  color: var(--accent);
+}
+
+.user-action-card--confirmation .user-action-glyph {
+  background: color-mix(in srgb, var(--accent), transparent 91%);
+}
+
+.user-action-glyph svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.user-action-header h3 {
+  margin: 0.05rem 0 0;
+  font-size: 0.98rem;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.user-action-description {
+  margin-top: 0.22rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+
+.user-action-content {
+  display: grid;
+  gap: 0.68rem;
+  padding: 0 1rem 0.85rem;
+}
+
+.user-action-content > p,
+.user-action-content > dl {
   margin-top: 0;
   margin-bottom: 0;
 }
 
-.approval-question {
-  font-weight: 700;
-  line-height: 1.5;
+.user-action-fields {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+}
+
+.user-action-field {
+  display: grid;
+  grid-template-columns: minmax(5rem, 0.26fr) minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: baseline;
+  min-width: 0;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border), transparent 48%);
+}
+
+.user-action-field:first-child { padding-top: 0.15rem; }
+.user-action-field:last-child { padding-bottom: 0.15rem; border-bottom: 0; }
+.user-action-field dt { color: var(--muted); font-size: 0.75rem; font-weight: 650; line-height: 1.45; }
+.user-action-field dd { min-width: 0; margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+
+.user-action-field--multiline {
+  grid-template-columns: 1fr;
+  gap: 0.28rem;
+  align-items: start;
+}
+
+.user-action-field--multiline dd {
+  max-height: 8.5rem;
+  padding: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.user-action-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.58rem 0.68rem;
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--warning), transparent 91%);
+  color: color-mix(in srgb, var(--warning), var(--text) 18%);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.user-action-notice-icon {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.05rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.user-action-disclosure {
+  border-top: 1px solid color-mix(in srgb, var(--border), transparent 48%);
+}
+
+.user-action-disclosure summary {
+  padding: 0.58rem 0 0.05rem;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.user-action-disclosure-content { padding: 0.6rem 0 0.1rem; }
+.user-action-disclosure-content .user-action-fields { margin: 0; }
+
+.user-action-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.user-action-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.user-action-acknowledgements {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.user-action-acknowledgements label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--panel-strong), transparent 52%);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.user-action-acknowledgements input {
+  width: 1rem;
+  min-height: 1rem;
+  margin: 0.05rem 0 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.user-action-editor {
+  display: grid;
+  gap: 0.68rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.user-action-editor h4 {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.user-action-form {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.user-action-form label,
+.user-action-input {
+  display: grid;
+  gap: 0.28rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.user-action-form input,
+.user-action-form textarea,
+.user-action-input textarea {
+  width: 100%;
+  min-height: 2.35rem;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, var(--border), transparent 5%);
+  border-radius: 0.52rem;
+  padding: 0.55rem 0.65rem;
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.user-action-form textarea,
+.user-action-input textarea { min-height: 4.6rem; max-height: 12rem; }
+
+.user-action-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.user-action-editor-actions span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.user-action-attachment {
+  padding-top: 0.62rem;
+  border-top: 1px solid color-mix(in srgb, var(--border), transparent 48%);
+}
+
+.user-action-attachment > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+}
+
+.user-action-attachment .button-secondary {
+  min-height: 2rem;
+  padding: 0.34rem 0.58rem;
+  font-size: 0.8rem;
+}
+
+.user-action-attachment > div > div.muted {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.user-action-attachment > div > p { flex-basis: 100%; }
+
+.user-action-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.72rem 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--border), transparent 35%);
+  background: color-mix(in srgb, var(--panel), var(--bg) 12%);
+}
+
+.user-action-footer-main {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.48rem;
+  margin-left: auto;
+}
+
+.user-action-footer button {
+  min-height: 2.2rem;
+  padding: 0.42rem 0.72rem;
+  font-size: 0.82rem;
+}
+
+.button-quiet {
+  min-height: 2rem;
+  border: 0;
+  padding: 0.35rem 0.45rem;
+  background: transparent;
+  color: var(--muted);
+}
+
+.button-quiet:hover { color: var(--text); }
+
+.user-action-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
+  gap: 0.48rem;
+}
+
+.user-action-option {
+  min-width: 0;
+  min-height: 2.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.58rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.user-action-option:hover {
+  border-color: color-mix(in srgb, var(--accent), var(--border) 45%);
+  background: color-mix(in srgb, var(--accent), transparent 94%);
 }
 
 .context-preview-trigger {
@@ -1124,10 +1436,19 @@ input, select {
   .shell-grid > main { border-right: 0; }
   .resource-viewer { flex-basis: auto; min-height: 12rem; }
   .selected-resource-pills { justify-content: flex-start; max-width: none; }
-  .approval-conversation { width: 100%; }
+  .action-plan-summary,
+  .user-action-card { width: 100%; }
   .context-modal-backdrop { padding: 0.75rem 0.75rem 5.8rem; }
   .context-preview-trigger { right: 0.9rem; }
   .llm-disclosure-snackbar { align-items: flex-start; flex-direction: column; gap: 0.65rem; }
+}
+
+@media (max-width: 520px) {
+  .user-action-header { padding: 0.78rem 0.8rem 0.65rem; }
+  .user-action-content { padding: 0 0.8rem 0.75rem; }
+  .user-action-field { grid-template-columns: 1fr; gap: 0.2rem; }
+  .user-action-footer { padding: 0.68rem 0.8rem; }
+  .user-action-footer-main { flex: 1 1 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

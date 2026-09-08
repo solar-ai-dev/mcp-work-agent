@@ -7,16 +7,16 @@ import { ActionPlanCard } from "../../../src/features/approval/action_plan_card"
 afterEach(() => vi.restoreAllMocks());
 
 test.each([
-  ["github_close_issue", "GitHub 이슈 닫기"],
-  ["github_reopen_issue", "GitHub 이슈 다시 열기"],
-])("%s preview distinguishes its state change before approval", (tool, label) => {
+  ["github_close_issue", "이슈를 닫을까요?"],
+  ["github_reopen_issue", "이슈를 다시 열까요?"],
+])("%s preview distinguishes its state change before approval", (tool, heading) => {
   const action = { ...taskAction(), tool_name: tool, effect_type: "UPDATE", arguments: { repository: "acme/repo", issue_number: 7 }, editable_fields: [] };
   const props = propsFor(action);
   render(<ActionPlanCard {...props} />);
-  expect(screen.getByText(label)).toBeVisible();
+  expect(screen.getByRole("heading", { name: heading })).toBeVisible();
   expect(document.body.textContent).toContain("acme/repo");
   expect(props.onApprove).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "네, 실행해 주세요" }));
+  fireEvent.click(screen.getByRole("button", { name: "확인" }));
   expect(props.onApprove).toHaveBeenCalledWith(action, expect.anything());
 });
 
@@ -62,11 +62,12 @@ function propsFor(action = taskAction()) {
 test("Task default preview is compact and natural-language modification is sent verbatim", async () => {
   const props = propsFor();
   render(<ActionPlanCard {...props} />);
-  expect(screen.getByRole("button", { name: "만들기" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
   for (const field of screen.queryAllByRole("textbox")) expect(field).not.toBeVisible();
-  expect(screen.getByText("직접 편집").closest("details")).not.toHaveAttribute("open");
+  expect(screen.queryByText("직접 편집")).not.toBeInTheDocument();
   expect(document.body.textContent).not.toContain("계획 에이전트");
   fireEvent.click(screen.getByRole("button", { name: "수정" }));
+  expect(screen.getByText("직접 편집").closest("details")).not.toHaveAttribute("open");
   const request = "예정일을 9월 8일로 바꾸고 메모는 빼줘";
   fireEvent.change(screen.getByLabelText("어떻게 수정할까요?"), { target: { value: request } });
   fireEvent.click(screen.getByRole("button", { name: "수정 요청" }));
@@ -79,9 +80,10 @@ test("Task default preview is compact and natural-language modification is sent 
 test("Direct edit distinguishes explicit memo removal from untouched title and date", () => {
   const props = propsFor();
   render(<ActionPlanCard {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "수정" }));
   fireEvent.click(screen.getByText("직접 편집"));
   fireEvent.change(screen.getByLabelText("메모"), { target: { value: "" } });
-  fireEvent.click(screen.getByRole("button", { name: "이 내용으로 바꿀게요" }));
+  fireEvent.click(screen.getByRole("button", { name: "수정 완료" }));
   expect(props.onModify).toHaveBeenCalledWith(props.snapshot.actions[0], { notes: "" });
 });
 
@@ -116,7 +118,7 @@ test("Modification failure retains the current preview and the user's request", 
 });
 
 test.each([
-  ["gmail_send", { payload: { to: ["to@example.com"], cc: ["cc@example.com"], bcc: ["bcc@example.com"], subject: "승인한 제목", body: "승인한 본문", thread_id: "thread-1", in_reply_to: "<source@example.com>" } }, ["to@example.com", "cc@example.com", "bcc@example.com", "승인한 제목", "승인한 본문", "thread-1", "<source@example.com>"]],
+  ["gmail_send", { payload: { to: ["to@example.com"], cc: ["cc@example.com"], bcc: ["bcc@example.com"], subject: "승인한 제목", body: "승인한 본문", thread_id: "thread-1", in_reply_to: "<source@example.com>" } }, ["to@example.com", "cc@example.com", "bcc@example.com", "승인한 제목", "승인한 본문"]],
   ["calendar_create_event", { calendar_id: "primary", payload: { title: "회의", start: "2026-09-08T10:00:00+09:00", end: "2026-09-08T11:00:00+09:00", location: "회의실 A", attendees: ["test@example.com"] } }, ["기본 캘린더", "2026-09-08T10:00:00+09:00", "회의실 A", "test@example.com"]],
   ["gmail_create_draft", { payload: { to: ["test@example.com"], subject: "회신", body: "메일 본문" } }, ["test@example.com", "회신", "메일 본문"]],
   ["github_update_issue", { repository: "owner/repository", issue_number: 12, payload: { title: "이슈", body: "변경 내용" } }, ["owner/repository", "12", "변경 내용"]],
@@ -124,6 +126,23 @@ test.each([
   const action = { ...taskAction(), tool_name: tool as string, arguments: args as Record<string, unknown>, editable_fields: [] };
   render(<ActionPlanCard {...propsFor(action)} />);
   for (const value of expected as string[]) expect(screen.getByText(value)).toBeInTheDocument();
+});
+
+test("Gmail technical metadata stays in the approved action without entering the visual hierarchy", () => {
+  const action = {
+    ...taskAction(),
+    tool_name: "gmail_send",
+    arguments: { payload: { to: ["to@example.com"], subject: "승인한 제목", body: "승인한 본문", thread_id: "thread-1", in_reply_to: "<source@example.com>" } },
+    editable_fields: [],
+  };
+  const props = propsFor(action);
+  render(<ActionPlanCard {...props} />);
+
+  expect(screen.queryByText("thread-1")).not.toBeInTheDocument();
+  expect(screen.queryByText("<source@example.com>")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "확인" }));
+  expect(props.onApprove).toHaveBeenCalledWith(action, expect.any(Set));
+  expect([...props.onApprove.mock.calls[0][1]]).toEqual([]);
 });
 
 test("Calendar direct edit preserves typed attendee and explicit location removal", () => {
@@ -140,11 +159,12 @@ test("Calendar direct edit preserves typed attendee and explicit location remova
   };
   const props = propsFor(action);
   render(<ActionPlanCard {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "수정" }));
   fireEvent.change(screen.getByLabelText("장소"), { target: { value: "" } });
   fireEvent.change(screen.getByLabelText("참석자"), {
     target: { value: "first@example.com, second@example.com, first@example.com" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "이 내용으로 바꿀게요" }));
+  fireEvent.click(screen.getByRole("button", { name: "수정 완료" }));
   expect(props.onModify).toHaveBeenCalledWith(action, {
     location: "",
     attendees: ["first@example.com", "second@example.com"],
@@ -172,4 +192,57 @@ test("ActionPlanCard presents user-facing arguments and sends only explicit ackn
   await user.click(approve);
   expect([...onApprove.mock.calls[0][1]]).toEqual(["TASK_DUPLICATE"]);
   expect(document.body.textContent).not.toContain("private");
+});
+
+test("Gmail draft approval is preview-first and keeps edit and attachment controls available", () => {
+  const action = {
+    ...taskAction(),
+    tool_name: "gmail_create_draft",
+    arguments: {
+      payload: {
+        to: ["recipient@example.com"],
+        subject: "Quartz 납품일 확인",
+        body: "8월 21일 입고 준비를 확인 중입니다.",
+      },
+    },
+    editable_fields: ["to", "subject", "body", "attachments"],
+    attachment_allowed: true,
+  };
+  render(<ActionPlanCard {...propsFor(action)} />);
+
+  expect(screen.getByRole("heading", { name: "초안을 만들까요?" })).toBeVisible();
+  expect(screen.getByText("recipient@example.com")).toBeVisible();
+  expect(screen.getByText("Quartz 납품일 확인")).toBeVisible();
+  expect(screen.getByText("8월 21일 입고 준비를 확인 중입니다.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.queryByText("첨부파일 선택")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "수정" }));
+  expect(screen.getByLabelText("받는 사람")).toBeVisible();
+  expect(screen.getByLabelText("제목")).toBeVisible();
+  expect(screen.getByLabelText("본문")).toBeVisible();
+  expect(screen.getByLabelText("받는 사람")).toHaveValue("recipient@example.com");
+  expect(screen.getByLabelText("제목")).toHaveValue("Quartz 납품일 확인");
+  expect(screen.getByLabelText("본문")).toHaveValue("8월 21일 입고 준비를 확인 중입니다.");
+  expect(screen.getByText("첨부파일 선택")).toBeVisible();
+  expect(screen.getByRole("button", { name: "확인" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "이 내용으로 바꿀게요" })).not.toBeInTheDocument();
+});
+
+test("Gmail draft edit submits only the field the user actually changed", () => {
+  const action = {
+    ...taskAction(),
+    tool_name: "gmail_create_draft",
+    arguments: { payload: { to: ["recipient@example.com"], subject: "기존 제목", body: "기존 본문" } },
+    editable_fields: ["to", "subject", "body"],
+  };
+  const props = propsFor(action);
+  render(<ActionPlanCard {...props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "수정" }));
+  fireEvent.change(screen.getByLabelText("제목"), { target: { value: "변경 제목" } });
+  fireEvent.click(screen.getByRole("button", { name: "수정 완료" }));
+
+  expect(props.onModify).toHaveBeenCalledWith(action, { subject: "변경 제목" });
 });
