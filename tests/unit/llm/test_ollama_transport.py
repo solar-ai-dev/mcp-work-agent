@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from email.message import Message
 from io import BytesIO
 from typing import cast
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -23,6 +23,9 @@ from google_work_agent.adapters.llm.ollama.structured_inference import (
     OllamaStructuredInferenceAdapter,
 )
 from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import (
     AvailabilityState,
     OutputSchemaDefinition,
@@ -119,6 +122,21 @@ def test_installed_model_catalog__returns_sorted__bounded_entries(
 
     assert [item.model_id for item in result] == ["qwen2.5:3b", "qwen2.5:7b"]
     assert result[0].digest == "sha256:" + "a" * 64
+
+
+def test_installed_model_catalog__when_transport_fails__reports_inspection_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(request: Request, *, timeout: int) -> _HTTPResponse:
+        del request, timeout
+        raise URLError("offline")
+
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", unavailable)
+
+    with pytest.raises(LocalModelCatalogUnavailableError) as failure:
+        OllamaHTTPClient().list_installed_models()
+
+    assert failure.value.safe_error_code == "LOCAL_MODEL_INSPECTION_FAILED"
 
 
 def test_probe_reports__unavailable_on__real_http_error(monkeypatch: pytest.MonkeyPatch) -> None:

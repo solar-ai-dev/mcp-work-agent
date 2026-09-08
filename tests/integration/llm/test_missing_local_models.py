@@ -57,3 +57,23 @@ def test_no_local_models__preserves_core_readiness__and_blocks_inference_before_
     finally:
         for close in reversed(container.shutdown_callbacks):
             close()
+
+
+def test_local_model_catalog__when_inspection_fails__distinguishes_empty_from_core_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeOllamaTransport(catalog_error_code="LOCAL_MODEL_INSPECTION_FAILED")
+    monkeypatch.setattr(composition, "OllamaHTTPClient", lambda: transport)
+    container = build_test_production_container(
+        runtime_root=tmp_path, keyring_store=SessionMemorySecretStore()
+    )
+    try:
+        status = container.structured_inference_port.status_service.get_status("LOCAL_GPU")
+
+        assert status.availability == "UNAVAILABLE"
+        assert status.error_code == "LOCAL_MODEL_INSPECTION_FAILED"
+        assert container.structured_inference_port.status_service.list_local_models() == ()
+        assert container.readiness_aggregator.evaluate().state is ReadinessState.READY
+    finally:
+        for close in reversed(container.shutdown_callbacks):
+            close()

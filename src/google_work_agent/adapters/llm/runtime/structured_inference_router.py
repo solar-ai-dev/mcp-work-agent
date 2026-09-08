@@ -10,6 +10,9 @@ from typing import Literal, cast
 
 from google_work_agent.adapters.llm.runtime.llm_credential_router import LlmCredentialRouter
 from google_work_agent.adapters.llm.runtime.llm_runtime_status_router import LlmRuntimeStatusRouter
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.runtime_selection import LlmRuntimeSelectionV1
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -54,7 +57,7 @@ class NullLLMEventRecorder:
 
 @dataclass
 class StructuredInferenceRuntimeRouter:
-    """Select API/Ollama leaves and perform the single permitted AUTO fallback."""
+    """Select API/Ollama leaves and preserve fallback only for legacy AUTO runs."""
 
     settings_service: Callable[[], SettingsViewV1]
     runtime_selection: LlmRuntimeSelectionV1
@@ -122,25 +125,22 @@ class StructuredInferenceRuntimeRouter:
     ) -> StructuredInferenceResultV1:
         settings = self.settings_service()
         requested = RequestedRuntimeMode(requested_mode)
-        api_status = self.status_service.get_status(self.api_provider_name)
-        approved_model = self.status_service.get_model_for_prompt(prompt_ref.prompt_id)
-        hardware = self.hardware_probe.probe()
-        hardware_capability = HardwareCapability(
-            cpu_arch=hardware.architecture,
-            core_summary=str(hardware.cpu_logical_cores),
-            memory_bytes=hardware.ram_total_bytes,
-            gpu_present=hardware.gpu_present,
-            gpu_vendor=None,
-            gpu_name=hardware.gpu_name,
-            gpu_memory_bytes=hardware.vram_total_bytes,
-            capability_status=(
-                HardwareCapabilityStatus.VALIDATED
-                if hardware.local_runtime_eligible
-                else HardwareCapabilityStatus.NOT_VALIDATED
-            ),
-            safe_reason_codes=hardware.local_runtime_reason_codes,
+        uses_local_runtime = requested is not RequestedRuntimeMode.API_LLM
+        uses_api_runtime = requested is not RequestedRuntimeMode.LOCAL_GPU
+        approved_model, hardware_capability = self._local_runtime_inputs(
+            prompt_id=prompt_ref.prompt_id,
+            required=uses_local_runtime,
         )
-        credential = self.credential_service.get_credential_status(self.api_provider_name)
+        api_status = (
+            self.status_service.get_status(self.api_provider_name)
+            if uses_api_runtime
+            else None
+        )
+        credential = (
+            self.credential_service.get_credential_status(self.api_provider_name)
+            if uses_api_runtime
+            else None
+        )
         decision = self.decide(
             RouteDecisionInput(
                 build_profile=self.runtime_selection.deployment_profile,
@@ -148,29 +148,34 @@ class StructuredInferenceRuntimeRouter:
                 external_llm_consent=settings.external_llm_consent,
                 api_credential_state=(
                     LLMCredentialState.KEYRING
-                    if credential.storage_mode == "KEYRING"
+                    if credential is not None and credential.storage_mode == "KEYRING"
                     else LLMCredentialState.SESSION_MEMORY
-                    if credential.storage_mode == "SESSION_ONLY"
+                    if credential is not None and credential.storage_mode == "SESSION_ONLY"
                     else LLMCredentialState.UNAVAILABLE
-                    if credential.validation_status == "UNAVAILABLE"
+                    if credential is not None and credential.validation_status == "UNAVAILABLE"
                     else LLMCredentialState.NOT_CONFIGURED
                 ),
                 api_probe=ProbeResult(
                     availability=(
                         AvailabilityState.AVAILABLE
-                        if api_status.availability == "READY"
+                        if api_status is not None and api_status.availability == "READY"
+                        else AvailabilityState.NOT_APPLICABLE
+                        if api_status is None
                         else AvailabilityState.UNAVAILABLE
                     ),
-                    safe_error_code=api_status.error_code,
+                    safe_error_code=None if api_status is None else api_status.error_code,
                 ),
                 hardware_capability=hardware_capability,
                 ollama_probe=ProbeResult(
                     availability=(
                         AvailabilityState.AVAILABLE
-                        if hardware.local_runtime_eligible
+                        if hardware_capability.capability_status
+                        is HardwareCapabilityStatus.VALIDATED
+                        else AvailabilityState.NOT_APPLICABLE
+                        if not uses_local_runtime
                         else AvailabilityState.UNAVAILABLE
                     ),
-                    safe_error_code=next(iter(hardware.local_runtime_reason_codes), None),
+                    safe_error_code=next(iter(hardware_capability.safe_reason_codes), None),
                 ),
                 approved_model=approved_model,
             )
@@ -258,6 +263,49 @@ class StructuredInferenceRuntimeRouter:
                 status="COMPLETED",
             )
             return _canonical_result(result)
+
+    def _local_runtime_inputs(
+        self,
+        *,
+        prompt_id: str,
+        required: bool,
+    ) -> tuple[ApprovedModelInfo | None, HardwareCapability]:
+        if not required:
+            return None, HardwareCapability(
+                cpu_arch="NOT_APPLICABLE",
+                core_summary="NOT_APPLICABLE",
+                memory_bytes=None,
+                gpu_present=False,
+                gpu_vendor=None,
+                gpu_name=None,
+                gpu_memory_bytes=None,
+                capability_status=HardwareCapabilityStatus.NOT_APPLICABLE,
+                safe_reason_codes=(),
+            )
+        try:
+            approved_model = self.status_service.get_model_for_prompt(prompt_id)
+            hardware = self.hardware_probe.probe()
+        except LocalModelCatalogUnavailableError as error:
+            raise LLMInvocationError(
+                LLMErrorCode.LOCAL_UNAVAILABLE,
+                error.safe_error_code,
+                runtime_prerequisite=True,
+            ) from error
+        return approved_model, HardwareCapability(
+            cpu_arch=hardware.architecture,
+            core_summary=str(hardware.cpu_logical_cores),
+            memory_bytes=hardware.ram_total_bytes,
+            gpu_present=hardware.gpu_present,
+            gpu_vendor=None,
+            gpu_name=hardware.gpu_name,
+            gpu_memory_bytes=hardware.vram_total_bytes,
+            capability_status=(
+                HardwareCapabilityStatus.VALIDATED
+                if hardware.local_runtime_eligible
+                else HardwareCapabilityStatus.NOT_VALIDATED
+            ),
+            safe_reason_codes=hardware.local_runtime_reason_codes,
+        )
 
     def discard_run(self, *, run_id: str) -> None:
         """Run budgets live in checkpointed workflow state, not this router."""

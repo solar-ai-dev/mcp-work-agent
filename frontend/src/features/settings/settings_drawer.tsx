@@ -6,12 +6,12 @@ import type { CalendarContainer, TaskListContainer } from "../../api/contract";
 import { disconnectGitHub, disconnectGoogle, getGitHubConnection, getGoogleConnection, startGitHubConnection, startGoogleConnection, type AuthorizationStart, type GitHubConnection, type GoogleConnection } from "./api/google_connection_operations";
 import { getSettings, type SettingsView } from "./api/get_settings";
 import { deleteLlmCredential, getLlmCredentialStatus, storeLlmCredential, type LlmCredentialStatus } from "./api/llm_credential_operations";
-import { updateRuntimeMode, type RuntimeMode } from "./api/update_runtime_mode";
+import { updateRuntimeMode, type RuntimeMode, type SelectableRuntimeMode } from "./api/update_runtime_mode";
 import { updateSettings } from "./api/update_settings";
 import { listRepositories, type RepositoryItem } from "./api/list_repositories";
 
 const runtimeModeLabels: Record<RuntimeMode, string> = {
-  AUTO: "자동 선택", LOCAL_GPU: "로컬 GPU", API_LLM: "외부 API 모델",
+  AUTO: "선택 필요", LOCAL_GPU: "Local AI", API_LLM: "Gemini",
 };
 const connectionStatusLabels: Record<GoogleConnection["connection_status"], string> = {
   CONNECTING: "연결 중", CONNECTED: "연결됨", DISCONNECTED: "연결되지 않음",
@@ -76,6 +76,9 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [selectedRepositories, setSelectedRepositories] = useState<string[]>([]);
+  const [selectedLocalModelId, setSelectedLocalModelId] = useState<string | null>(
+    runtime?.local_models.find((model) => model.selected)?.model_id ?? null,
+  );
   const [googleInventoryError, setGoogleInventoryError] = useState<string | null>(null);
   const repositoryRequest = useRef(0);
   const [credential, setCredential] = useState<LlmCredentialStatus | null>(null);
@@ -146,6 +149,12 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   useEffect(() => {
     void load().catch((error: unknown) => setMessage(errorMessage(error, "설정 정보를 불러오지 못했습니다.")));
   }, [load]);
+
+  useEffect(() => {
+    setSelectedLocalModelId(
+      runtime?.local_models.find((model) => model.selected)?.model_id ?? null,
+    );
+  }, [runtime?.local_models]);
 
   useEffect(() => {
     let refreshing = false;
@@ -249,10 +258,15 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
 
   async function saveSettings(): Promise<void> {
     if (!settings) return;
-    await run(`settings:update:${JSON.stringify([tab, settings.preferred_llm_mode, settings.external_llm_consent, settings.working_day_start_local, settings.working_day_end_local, settings.include_weekends, settings.calendar_buffer_minutes, settings.retention_days])}`, async (commandId) => {
+    if (settings.preferred_llm_mode === "AUTO") {
+      setMessage("Local AI 또는 Gemini 실행 방식을 선택해 주세요.");
+      return;
+    }
+    const selectedRuntimeMode = settings.preferred_llm_mode;
+    await run(`settings:update:${JSON.stringify([tab, selectedRuntimeMode, settings.external_llm_consent, settings.working_day_start_local, settings.working_day_end_local, settings.include_weekends, settings.calendar_buffer_minutes, settings.retention_days])}`, async (commandId) => {
       const updated = await updateSettings(commandId, {
         timezone: settings.timezone,
-        preferred_llm_mode: settings.preferred_llm_mode,
+        preferred_llm_mode: selectedRuntimeMode,
         external_llm_consent: settings.external_llm_consent,
         retention_days: settings.retention_days,
         working_day_start_local: settings.working_day_start_local,
@@ -261,9 +275,9 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
         calendar_buffer_minutes: settings.calendar_buffer_minutes,
       });
       setSettings(updated);
-      if (tab === "ai" && settings.preferred_llm_mode !== runtime?.runtime_mode.requested_mode) {
-        const operation = `runtime:${settings.preferred_llm_mode}`;
-        await updateRuntimeMode(commandIdFor(operation), settings.preferred_llm_mode);
+      if (tab === "ai" && selectedRuntimeMode !== runtime?.runtime_mode.requested_mode) {
+        const operation = `runtime:${selectedRuntimeMode}`;
+        await updateRuntimeMode(commandIdFor(operation), selectedRuntimeMode);
         commandIds.current.delete(operation);
       }
     }, "설정을 저장했습니다.");
@@ -357,7 +371,7 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
         </section>
         {settings ? <section className="info-card" aria-label="AI 실행 설정">
           <strong>AI 실행 방식</strong>
-          <label>사용할 모델 실행 방식<select value={settings.preferred_llm_mode} onChange={(e) => patch("preferred_llm_mode", e.target.value as RuntimeMode)}>{runtimeModes.map((mode) => <option key={mode} value={mode}>{runtimeModeLabels[mode]}</option>)}</select></label>
+          <label>사용할 모델 실행 방식<select value={settings.preferred_llm_mode === "AUTO" ? "" : settings.preferred_llm_mode} onChange={(e) => patch("preferred_llm_mode", e.target.value as SelectableRuntimeMode)}>{settings.preferred_llm_mode === "AUTO" ? <option value="" disabled>실행 방식 선택</option> : null}{runtimeModes.map((mode) => <option key={mode} value={mode}>{runtimeModeLabels[mode]}</option>)}</select></label>
           <label className="settings-check"><input type="checkbox" checked={settings.external_llm_consent} onChange={(e) => patch("external_llm_consent", e.target.checked)} />외부 AI에 업무 내용 전송 허용</label>
           <p className="muted">현재 요청 방식: {runtimeModeLabel(runtime?.runtime_mode.requested_mode)} · 실제: {runtimeModeLabel(runtime?.runtime_mode.actual_runtime)}</p>
           <button type="button" className="button-primary" disabled={busy} onClick={() => void saveSettings()}>AI 설정 저장</button>
@@ -366,9 +380,9 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
           <strong>로컬 AI</strong>
           <p className="muted">준비된 모델 하나를 선택하세요. 다음 작업부터 적용됩니다.</p>
           <fieldset className="settings-selection" disabled={busy}><legend>사용할 로컬 모델</legend>
-            {productLocalModels.map((model) => <label key={model.model_id}><input type="radio" name="local-model" checked={settings?.preferred_local_model_id ? settings.preferred_local_model_id === model.model_id : model.selected} disabled={!model.installed || !model.approved} onChange={() => void run(`settings:model:${model.model_id}`, async (id) => { await updateSettings(id, { preferred_local_model_id: model.model_id }); }, `${model.model_id} 모델을 선택했습니다.`)} /><span>{model.model_id}<small>{model.installed && model.approved ? "준비됨" : model.installed ? "사용 가능 여부 확인 필요" : "설치되지 않음"}</small></span></label>)}
+            {productLocalModels.map((model) => <label key={model.model_id}><input type="radio" name="local-model" checked={selectedLocalModelId === model.model_id} disabled={!model.installed || !model.approved} onChange={() => void run(`settings:model:${model.model_id}`, async (id) => { await updateSettings(id, { preferred_local_model_id: model.model_id }); setSelectedLocalModelId(model.model_id); }, `${model.model_id} 모델을 선택했습니다.`)} /><span>{model.model_id}<small>{model.installed && model.approved ? "준비됨" : model.installed ? "사용 가능 여부 확인 필요" : "설치되지 않음"}</small></span></label>)}
           </fieldset>
-          {!productLocalModels.length ? <p className="muted">아직 모델 상태를 확인하지 못했습니다.</p> : null}
+          {runtime?.llm_providers?.some((provider) => provider.provider === "LOCAL_GPU" && provider.error_code?.startsWith("LOCAL_MODEL_INSPECTION_")) ? <p role="alert" className="status-warn">Ollama 모델 검사를 완료하지 못했습니다. Ollama 상태를 확인한 뒤 다시 검사해 주세요.</p> : !productLocalModels.length ? <p className="muted">아직 모델 상태를 확인하지 못했습니다.</p> : null}
           {productLocalModels.length > 0 && !productLocalModels.some((model) => model.installed && model.approved) ? <p role="status">사용 가능한 로컬 모델이 없습니다. 로컬 AI 요청은 실행할 수 없습니다.</p> : null}
           <button type="button" className="button-secondary" disabled={busy} onClick={() => void run("runtime:inspect", async () => {}, "로컬 모델 검사를 마쳤습니다.")}>모델 검사</button>
         </section> : null}
@@ -392,8 +406,8 @@ export function SettingsDrawer({ runtime, theme, onThemeChange, onClose, onOpera
   );
 }
 
-function availableRuntimeModes(profile: string | undefined): RuntimeMode[] {
-  return profile === "LOCAL_CAPABLE" ? ["AUTO", "LOCAL_GPU", "API_LLM"] : ["API_LLM"];
+function availableRuntimeModes(profile: string | undefined): SelectableRuntimeMode[] {
+  return profile === "LOCAL_CAPABLE" ? ["LOCAL_GPU", "API_LLM"] : ["API_LLM"];
 }
 
 function toggleValue(values: string[], value: string, checked: boolean): string[] {

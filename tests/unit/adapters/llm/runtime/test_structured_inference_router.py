@@ -202,6 +202,41 @@ def test_local_request__uses_profile__model_for_prompt() -> None:
     assert local.calls == 1
 
 
+def test_local_request__with_explicit_mode__does_not_probe_api_status_or_credentials() -> None:
+    router = _router(
+        checkpoint=ExternalScopeCheckpoint(scope=_scope()),
+        api=_Provider(),
+    )
+    status = Mock(wraps=router.status_service)
+    credential = Mock(wraps=router.credential_service)
+    router.status_service = status
+    router.credential_service = credential
+
+    router.infer("LOCAL_GPU", PROMPT, {"user_request": "hello"}, SCHEMA)
+
+    status.get_status.assert_not_called()
+    credential.get_credential_status.assert_not_called()
+    credential.read_secret.assert_not_called()
+
+
+def test_api_request__with_explicit_mode__does_not_inspect_local_model_or_hardware() -> None:
+    api = _Provider()
+    router = _router(
+        checkpoint=ExternalScopeCheckpoint(scope=_scope()),
+        api=api,
+    )
+    status = Mock(wraps=router.status_service)
+    hardware = Mock(wraps=router.hardware_probe)
+    router.status_service = status
+    router.hardware_probe = hardware
+
+    router.infer("API_LLM", PROMPT, {"user_request": "hello"}, SCHEMA)
+
+    status.get_model_for_prompt.assert_not_called()
+    hardware.probe.assert_not_called()
+    assert api.calls == 1
+
+
 def test_local_inference_trace__actual_provider_result__includes_class_profile_and_model() -> None:
     router = _router(checkpoint=ExternalScopeCheckpoint(scope=_scope()), api=_Provider())
     router.runtime_selection = replace(

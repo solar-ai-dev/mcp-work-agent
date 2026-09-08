@@ -162,7 +162,7 @@ def test_start_run_reaches__the_durable_execution__runtime_after_core_initializa
                 "request_text": "hello",
                 "entry_mode": "AGENT_SEARCH",
                 "selected_resource_handles": [],
-                "requested_mode": "AUTO",
+                "requested_mode": "LOCAL_GPU",
             },
         )
 

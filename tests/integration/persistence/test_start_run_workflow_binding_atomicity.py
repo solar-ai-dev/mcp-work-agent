@@ -176,7 +176,7 @@ def _command() -> StartRunCommand:
         conversation_id="conversation-1",
         request_text="hello",
         entry_mode="AGENT_SEARCH",
-        requested_mode="AUTO",
+        requested_mode="LOCAL_GPU",
         api_contract_version="1",
     )
 

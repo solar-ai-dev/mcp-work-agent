@@ -387,7 +387,7 @@ class StartRunHandler:
             raise ValueError("request_text must contain 1..65536 UTF-8 bytes")
         if command.entry_mode not in {"AGENT_SEARCH", "RESOURCE_SELECTED"}:
             raise ValueError("unsupported entry_mode")
-        if command.requested_mode not in {"AUTO", "LOCAL_GPU", "API_LLM"}:
+        if command.requested_mode not in {"LOCAL_GPU", "API_LLM"}:
             raise ValueError("unsupported requested_mode")
         if command.entry_mode == "AGENT_SEARCH" and command.resolved_resource_selections:
             raise ValueError("AGENT_SEARCH cannot include resolved resource selections")

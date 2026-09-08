@@ -15,6 +15,9 @@ from google_work_agent.ports.llm.llm_runtime_status_port import (
     LlmProviderRuntimeStatus,
     LocalModelRuntimeOptionV1,
 )
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.runtime_selection import LlmRuntimeSelectionV1
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ApprovedModelInfo,
@@ -77,11 +80,17 @@ class LlmRuntimeStatusRouter:
             or self.runtime_selection.deployment_profile == "API_ONLY"
         ):
             return ()
-        return self.local_model_selection.list_options()
+        try:
+            return self.local_model_selection.list_options()
+        except LocalModelCatalogUnavailableError:
+            return ()
 
     def _ollama_status(self) -> LlmProviderRuntimeStatus:
         selection = self.runtime_selection
-        selected_model = self.get_selected_model()
+        try:
+            selected_model = self.get_selected_model()
+        except LocalModelCatalogUnavailableError as error:
+            return _status("ollama", False, "UNAVAILABLE", None, error.safe_error_code)
         if not selection.is_active or selected_model is None:
             return _status(
                 "ollama",

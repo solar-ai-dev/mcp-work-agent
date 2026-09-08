@@ -23,6 +23,7 @@ from google_work_agent.api.composition import (
 )
 from google_work_agent.api.container import ApiContainer
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptRegistry
+from google_work_agent.application.use_cases.setting.update_settings import UpdateSettingsCommand
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 from google_work_agent.ports.keyring.secret_store_port import SecretStorePort
 from google_work_agent.ports.llm.approved_model_manifest import (
@@ -49,11 +50,12 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     ProviderResponsePayload,
 )
 from google_work_agent.ports.system.hardware_probe_port import HardwareProfileV1
+from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
-WORKER_MODEL_ID = "fixture-worker:4b-q4"
-WORKER_MODEL_HASH = hashlib.sha256(b"fixture-worker-content").hexdigest()
-MODEL_ID = "fixture-reasoning:9b-q4"
-MODEL_HASH = hashlib.sha256(b"fixture-reasoning-content").hexdigest()
+ALTERNATE_MODEL_ID = "qwen3.5:4b"
+ALTERNATE_MODEL_HASH = hashlib.sha256(b"fixture-4b-content").hexdigest()
+MODEL_ID = "qwen3.5:9b"
+MODEL_HASH = hashlib.sha256(b"fixture-9b-content").hexdigest()
 RELEASE_VERSION = "1.2.3-test"
 
 
@@ -97,8 +99,8 @@ def _write_local_release_artifacts(install_root: Path) -> tuple[Path, Path, Path
         schema_version=1,
         minimum_ollama_version="0.6.0",
         approved_models=(
+            ApprovedModelEntryV1(ALTERNATE_MODEL_ID, ALTERNATE_MODEL_HASH),
             ApprovedModelEntryV1(MODEL_ID, MODEL_HASH),
-            ApprovedModelEntryV1(WORKER_MODEL_ID, WORKER_MODEL_HASH),
         ),
     )
     manifests = install_root / "manifests"
@@ -125,7 +127,7 @@ def _write_local_release_artifacts(install_root: Path) -> tuple[Path, Path, Path
         schema_version=1,
         profile_id="fixture-profile",
         runtime="OLLAMA",
-        worker_model_id=WORKER_MODEL_ID,
+        worker_model_id=MODEL_ID,
         reasoning_model_id=MODEL_ID,
         default_inference_class=LocalInferenceClass.REASONING,
         prompt_inference_classes=(),
@@ -221,7 +223,7 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
     monkeypatch.setattr(composition, "WindowsHardwareProbeAdapter", _EligibleHardwareProbe)
     local_transport = FakeOllamaTransport()
     local_transport.installed_models = (
-        InstalledLocalModelV1(WORKER_MODEL_ID, WORKER_MODEL_HASH),
+        InstalledLocalModelV1(ALTERNATE_MODEL_ID, ALTERNATE_MODEL_HASH),
         InstalledLocalModelV1(MODEL_ID, MODEL_HASH),
     )
     local_transport.queued_payloads.append(
@@ -246,6 +248,13 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
     try:
         assert container.structured_inference_port is not None
         assert container.llm_runtime_selection is not None
+        assert container.update_settings_handler is not None
+        container.update_settings_handler(
+            UpdateSettingsCommand(
+                "select-local-9b",
+                SettingsPatchV1(schema_version=1, preferred_local_model_id=MODEL_ID),
+            )
+        )
         prompt_ref = PromptRegistry(
             prompt_manifest,
             prompt_manifest.parent / "prompt_runtime_input_contract_v1.json",

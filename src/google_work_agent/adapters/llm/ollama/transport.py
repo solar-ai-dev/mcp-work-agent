@@ -11,6 +11,9 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from google_work_agent.ports.llm.local_model_catalog_port import InstalledLocalModelV1
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.runtime_selection import OLLAMA_FIXED_LOOPBACK_ENDPOINT
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ActualRuntime,
@@ -152,11 +155,13 @@ class OllamaHTTPClient(OllamaTransport):
                 path="/api/tags",
                 timeout_seconds=2,
             )
-        except (TimeoutError, HTTPError, URLError, ValueError):
-            return ()
+        except TimeoutError as error:
+            raise LocalModelCatalogUnavailableError("LOCAL_MODEL_INSPECTION_TIMEOUT") from error
+        except (HTTPError, URLError, ValueError) as error:
+            raise LocalModelCatalogUnavailableError("LOCAL_MODEL_INSPECTION_FAILED") from error
         raw_models = payload.get("models", [])
         if not isinstance(raw_models, list):
-            return ()
+            raise LocalModelCatalogUnavailableError("LOCAL_MODEL_INSPECTION_FAILED")
         models = {
             name: InstalledLocalModelV1(
                 model_id=name,

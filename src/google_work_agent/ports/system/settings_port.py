@@ -71,7 +71,7 @@ class SettingsPatchV1:
     clear_default_tasklist: bool = False
     default_github_repository: GitHubRepositoryDefaultV1 | None = None
     github_repository_supplied: bool = False
-    preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"] | None = None
+    preferred_llm_mode: Literal["LOCAL_GPU", "API_LLM"] | None = None
     external_llm_consent: bool | None = None
     retention_days: int | None = None
     theme: Literal["LIGHT", "DARK"] | None = None

@@ -10,8 +10,49 @@ from google_work_agent.api.schemas.runs.cancel_run import CancelRunRequestV2
 from google_work_agent.api.schemas.runs.confirm_run import ConfirmationResponseV1
 from google_work_agent.api.schemas.runs.resolve_recovery import ResolveRecoveryRequestV1
 from google_work_agent.api.schemas.runs.resume_run import ResumeRunRequestV2
+from google_work_agent.api.schemas.runs.start_run import StartRunRequest
+from google_work_agent.api.schemas.runtime_summaries.update_runtime_mode import (
+    UpdateRuntimeModeRequest,
+)
+from google_work_agent.api.schemas.settings.update_settings import PatchSettingsRequest
 
 VERSION = "1"
+
+
+@pytest.mark.parametrize(
+    "schema,payload",
+    (
+        (
+            StartRunRequest,
+            {
+                "command_id": "start",
+                "conversation_id": "conversation-1",
+                "request_text": "hello",
+                "entry_mode": "AGENT_SEARCH",
+                "selected_resource_handles": [],
+                "requested_mode": "AUTO",
+                "api_contract_version": VERSION,
+            },
+        ),
+        (
+            UpdateRuntimeModeRequest,
+            {"schema_version": 1, "command_id": "mode", "requested_mode": "AUTO"},
+        ),
+        (
+            PatchSettingsRequest,
+            {
+                "schema_version": 1,
+                "command_id": "settings",
+                "settings_patch": {"schema_version": 1, "preferred_llm_mode": "AUTO"},
+            },
+        ),
+    ),
+)
+def test_runtime_selection_inputs__for_new_mutations__reject_legacy_auto(
+    schema: type[BaseModel], payload: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        schema.model_validate(payload)
 
 
 @pytest.mark.parametrize(

@@ -85,6 +85,8 @@ test("SettingsDrawer loads typed non-secret settings, connection, credentials, a
   await userEvent.click(screen.getByRole("tab", { name: "AI" }));
   expect(screen.getByRole("option", { name: "PC에 안전하게 저장" })).toHaveValue("KEYRING");
   expect(screen.getByRole("option", { name: "이번 실행에서만 사용" })).toHaveValue("SESSION_ONLY");
+  expect(screen.getByRole("option", { name: "실행 방식 선택" })).toBeDisabled();
+  expect(screen.queryByRole("option", { name: "자동 선택" })).not.toBeInTheDocument();
 });
 
 test("constrains API_ONLY mode choices without exposing process controls", async () => {
@@ -94,7 +96,7 @@ test("constrains API_ONLY mode choices without exposing process controls", async
   vi.mocked(credentialApi.getLlmCredentialStatus).mockResolvedValue({ schema_version: 1, provider: "gemini", configured: false, storage_mode: null, validation_status: "NOT_CONFIGURED" });
   vi.mocked(resourceApi.listTaskLists).mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
   vi.mocked(resourceApi.listCalendars).mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
-  render(<SettingsDrawer runtime={{ deployment_profile: "API_ONLY", runtime_mode: { requested_mode: "API_LLM", actual_runtime: "API_LLM", fallback_reason: null } } as never} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn()} />);
+  render(<SettingsDrawer runtime={{ deployment_profile: "API_ONLY", runtime_mode: { requested_mode: "API_LLM", actual_runtime: "API_LLM", fallback_reason: null }, local_models: [] } as never} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn()} />);
   const mode = await screen.findByLabelText("사용할 모델 실행 방식");
   expect([...mode.querySelectorAll("option")].map((option) => option.value)).toEqual(["API_LLM"]);
   expect(screen.queryByLabelText("로컬 AI 준비")).not.toBeInTheDocument();
@@ -111,7 +113,7 @@ test("준비된 로컬 모델만 선택할 수 있고 설치 안내는 표시하
   render(<SettingsDrawer runtime={{ deployment_profile: "LOCAL_CAPABLE", runtime_mode: { requested_mode: "LOCAL_GPU", actual_runtime: "LOCAL_GPU", fallback_reason: null }, local_models: [{ schema_version: 1, model_id: "qwen3.5:4b", installed: true, approved: true, selected: true }, { schema_version: 1, model_id: "qwen3.5:9b", installed: false, approved: true, selected: true }] } as never} theme="light" onThemeChange={vi.fn()} onClose={vi.fn()} onOperationalStateChanged={vi.fn()} />);
 
   const mode = await screen.findByLabelText("사용할 모델 실행 방식");
-  expect([...mode.querySelectorAll("option")].map((option) => option.value)).toEqual(["AUTO", "LOCAL_GPU", "API_LLM"]);
+  expect([...mode.querySelectorAll("option")].map((option) => option.value)).toEqual(["LOCAL_GPU", "API_LLM"]);
   expect(screen.queryByLabelText("Local model")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("tab", { name: "AI" }));
   expect(screen.getByRole("radio", { name: /qwen3.5:4b/ })).toBeEnabled();

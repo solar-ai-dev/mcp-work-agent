@@ -25,7 +25,7 @@ class SettingsPatchPayloadV1(ApiModel):
     default_github_repository: str | None = Field(
         default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$"
     )
-    preferred_llm_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"] | None = None
+    preferred_llm_mode: Literal["LOCAL_GPU", "API_LLM"] | None = None
     external_llm_consent: bool | None = None
     retention_days: int | None = None
     theme: Literal["LIGHT", "DARK"] | None = None

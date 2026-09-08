@@ -1473,7 +1473,7 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
   await user.click(screen.getByRole("button", { name: "설정" }));
   await user.click(screen.getByRole("tab", { name: "AI" }));
   await screen.findByRole("region", { name: "AI 실행 설정" });
-  await user.selectOptions(screen.getByLabelText("사용할 모델 실행 방식"), "AUTO");
+  await user.selectOptions(screen.getByLabelText("사용할 모델 실행 방식"), "LOCAL_GPU");
   await user.click(screen.getByRole("checkbox", { name: "외부 AI에 업무 내용 전송 허용" }));
   await user.click(screen.getByRole("button", { name: "AI 설정 저장" }));
   await waitFor(() =>

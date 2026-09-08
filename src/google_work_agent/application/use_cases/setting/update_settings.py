@@ -150,6 +150,8 @@ class UpdateSettingsHandler:
         current = self._settings.get_settings()
         if patch.timezone is not None and patch.timezone != "Asia/Seoul":
             raise ValueError("시간대는 한국(Asia/Seoul)입니다.")
+        if patch.preferred_llm_mode not in (None, "LOCAL_GPU", "API_LLM"):
+            raise ValueError("AI 실행 방식은 Local AI 또는 Gemini 중에서 선택해 주세요.")
         if patch.preferred_local_model_id is not None and not reconcile:
             if (
                 patch.preferred_local_model_id != current.preferred_local_model_id

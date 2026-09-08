@@ -7,7 +7,7 @@ export function startRun(payload: {
   request_text: string;
   entry_mode: "AGENT_SEARCH" | "RESOURCE_SELECTED";
   selected_resource_handles: string[];
-  requested_mode: "AUTO" | "LOCAL_GPU" | "API_LLM";
+  requested_mode: "LOCAL_GPU" | "API_LLM";
 }): Promise<StartRunResponse> {
   return requestJson("/api/v1/runs", {
     method: "POST",

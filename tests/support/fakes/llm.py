@@ -12,6 +12,9 @@ from google_work_agent.ports.llm.llm_runtime_status_port import (
     LocalModelRuntimeOptionV1,
 )
 from google_work_agent.ports.llm.local_model_catalog_port import InstalledLocalModelV1
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ApprovedModelInfo,
@@ -137,8 +140,11 @@ class FakeOllamaTransport:
     invocations: list[dict[str, object]] = field(default_factory=list)
     queued_payloads: deque[object] = field(default_factory=deque)
     installed_models: tuple[InstalledLocalModelV1, ...] = ()
+    catalog_error_code: str | None = None
 
     def list_installed_models(self) -> tuple[InstalledLocalModelV1, ...]:
+        if self.catalog_error_code is not None:
+            raise LocalModelCatalogUnavailableError(self.catalog_error_code)
         return self.installed_models
 
     def probe(self, *, endpoint: str, model_id: str | None, timeout_seconds: int) -> ProbeResult:

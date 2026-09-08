@@ -90,11 +90,11 @@ export function FirstRunOnboardingScreen({
       const response = await getLlmCredentialStatus();
       setLLM(response);
       const updated = await updateSettings(commandIdFor("onboarding:api-mode"), {
-        preferred_llm_mode: "AUTO",
+        preferred_llm_mode: "API_LLM",
       });
       commandIds.current.delete("onboarding:api-mode");
-      await updateRuntimeMode(commandIdFor("onboarding:runtime:auto"), "AUTO");
-      commandIds.current.delete("onboarding:runtime:auto");
+      await updateRuntimeMode(commandIdFor("onboarding:runtime:api"), "API_LLM");
+      commandIds.current.delete("onboarding:runtime:api");
       setSettings(updated);
       await onRefreshConnections();
     }, true);

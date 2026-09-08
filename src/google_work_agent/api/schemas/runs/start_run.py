@@ -13,7 +13,7 @@ class StartRunRequest(ContractVersionedRequest):
     request_text: str
     entry_mode: Literal["AGENT_SEARCH", "RESOURCE_SELECTED"]
     selected_resource_handles: list[str] = Field(default_factory=list, max_length=20)
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
 
     @model_validator(mode="after")
     def validate_selection_mode(self) -> "StartRunRequest":

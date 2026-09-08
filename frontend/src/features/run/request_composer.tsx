@@ -9,7 +9,7 @@ export type SubmitNewRunInput = {
   selectionHandles: string[];
   conversationCommandId: string;
   runCommandId: string;
-  requestedMode: "AUTO" | "LOCAL_GPU" | "API_LLM";
+  requestedMode: "LOCAL_GPU" | "API_LLM";
   createConversation: (payload: { command_id: string; title: string | null }) => Promise<ConversationItem>;
 };
 
@@ -50,7 +50,7 @@ type RequestComposerControllerOptions = {
   commandIdFor: (operation: string) => string;
   completeCommand: (operation: string) => void;
   createConversation: SubmitNewRunInput["createConversation"];
-  requestedMode: SubmitNewRunInput["requestedMode"];
+  requestedMode: "AUTO" | SubmitNewRunInput["requestedMode"];
 };
 
 export function useRequestComposerController(options: RequestComposerControllerOptions) {
@@ -62,6 +62,12 @@ export function useRequestComposerController(options: RequestComposerControllerO
   const handleStartRun = useCallback(async (quickPrompt?: string): Promise<void> => {
     const requestText = quickPrompt ?? composerText;
     if (!requestText.trim() || options.busyCommand) return;
+    if (options.requestedMode === "AUTO") {
+      const message = "설정에서 Local AI 또는 Gemini 실행 방식을 먼저 선택해 주세요.";
+      options.onStatusLine(message);
+      setComposerError(message);
+      return;
+    }
     options.setBusyCommand("start-run");
     setComposerError(null);
     const normalizedHandles = [...new Set(options.selectedResourceHandles.map((handle) => handle.trim()).filter(Boolean))];

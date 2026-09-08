@@ -334,7 +334,7 @@ def _command(*, request_hash: str = "hash-1") -> StartRunCommand:
         conversation_id="conversation-1",
         request_text="hello",
         entry_mode="AGENT_SEARCH",
-        requested_mode="AUTO",
+        requested_mode="LOCAL_GPU",
         api_contract_version="v1",
     )
 
@@ -515,7 +515,7 @@ def _seed_complete_aggregate(
             langgraph_thread_id=workflow_key,
             graph_profile="SIX_ROLE_BASELINE",
             graph_version="resume-contract-v1",
-            requested_mode="AUTO",
+            requested_mode=command.requested_mode,
             resume_target=None,
         ),
         checkpoint_id=None,
@@ -539,7 +539,7 @@ def _seed_complete_aggregate(
             langgraph_thread_id=workflow_key,
             graph_profile="SIX_ROLE_BASELINE",
             graph_version="resume-contract-v1",
-            requested_mode="AUTO",
+            requested_mode=command.requested_mode,
             created_at_ms=10,
         )
     )
@@ -860,7 +860,7 @@ def test_received_receipt_with__run_and_handoff_but__no_message_fails_closed() -
             langgraph_thread_id="thread-1",
             graph_profile="SIX_ROLE_BASELINE",
             graph_version="resume-contract-v1",
-            requested_mode="AUTO",
+            requested_mode=command.requested_mode,
             resume_target=None,
         ),
         checkpoint_id=None,

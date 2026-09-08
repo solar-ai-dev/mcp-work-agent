@@ -30,7 +30,7 @@ class _Catalog:
     "installed_ids", [(), ("qwen3.5:9b",), ("qwen3.5:4b",), ("qwen3.5:9b", "qwen3.5:4b")]
 )
 @pytest.mark.parametrize("preferred", ["qwen3.5:9b", "qwen3.5:4b"])
-def test_model_catalog_matrix__preserves_explicit_choice__without_fallback(
+def test_model_catalog_matrix__uses_only_ready_model__or_preserves_valid_choice(
     installed_ids: tuple[str, ...], preferred: str
 ) -> None:
     resolver = LocalModelSelectionResolver(
@@ -45,10 +45,28 @@ def test_model_catalog_matrix__preserves_explicit_choice__without_fallback(
     )
     for prompt in ("request_understanding.identify_goal", "planning.compose_answer"):
         selected = resolver.get_model_for_prompt(prompt)
-        if preferred in installed_ids:
-            assert selected is not None and selected.model_id == preferred
-        else:
+        if not installed_ids:
             assert selected is None
+        elif len(installed_ids) == 1:
+            assert selected is not None and selected.model_id == installed_ids[0]
+        else:
+            assert selected is not None and selected.model_id == preferred
+
+
+def test_local_model_selection__with_both_ready_and_no_valid_preference__requires_user_choice() -> None:
+    resolver = LocalModelSelectionResolver(
+        _selection(),
+        _Catalog(
+            tuple(
+                InstalledLocalModelV1(model, "a" * 64)
+                for model in ("qwen3.5:9b", "qwen3.5:4b")
+            )
+        ),
+        allow_development_models=True,
+    )
+
+    assert resolver.get_selected_model() is None
+    assert not any(item.selected for item in resolver.list_options())
 
 
 def test_user_choice__uses_ready_4b_without_9b__for_both_inference_classes() -> None:
@@ -132,6 +150,7 @@ def test_signed_local_models__allow_only__manifest_models() -> None:
                 InstalledLocalModelV1("qwen3.5:9b", "b" * 64),
             )
         ),
+        preferred_model_id=lambda: "qwen3.5:9b",
     )
 
     assert [(item.model_id, item.approved, item.selected) for item in resolver.list_options()] == [
@@ -154,6 +173,7 @@ def test_development_profile__approves_only__installed_profile_models() -> None:
             )
         ),
         allow_development_models=True,
+        preferred_model_id=lambda: "qwen3.5:9b",
     )
 
     worker = resolver.get_model_for_prompt("request_understanding.identify_goal")

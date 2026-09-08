@@ -62,7 +62,7 @@ def _command() -> StartRunCommand:
         conversation_id="conversation-1",
         request_text="hello",
         entry_mode="AGENT_SEARCH",
-        requested_mode="AUTO",
+        requested_mode="LOCAL_GPU",
         api_contract_version="1",
     )
 
@@ -129,6 +129,7 @@ def test_local_request__terminates_once__and_resubmission_creates_new_run(tmp_pa
         replace(_command(), request_text=""),
         replace(_command(), request_text="가" * 21846),
         replace(_command(), entry_mode="UNKNOWN"),
+        replace(_command(), requested_mode="AUTO"),
         replace(_command(), requested_mode="UNKNOWN"),
         replace(_command(), entry_mode="RESOURCE_SELECTED"),
     ),
