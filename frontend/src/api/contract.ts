@@ -106,13 +106,12 @@ export type ApprovalSnapshot = {
 };
 
 export type ContextPreviewItem = {
-  segment_id: string;
-  role: "SUPPORTS" | "CONTRADICTS" | "CONTEXT";
-  source: "gmail" | "tasks" | "calendar" | "github";
-  resource_type: string;
-  resource_id: string;
-  display_label: string;
-  excerpt: string | null;
+  resource_identity: string;
+  category: "mail" | "task" | "calendar" | "github";
+  title: string;
+  preview: string;
+  content: string;
+  segment_ids: string[];
 };
 
 export type ContextPreview = {

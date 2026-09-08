@@ -3223,7 +3223,7 @@ test("renders snapshot context/disclosure and sends a context adjustment command
       schema_version: 1,
       run_id: "run-1",
       retrieval_revision: 4,
-      items: [{ segment_id: "segment-1", role: "SUPPORTS", source: "gmail", resource_type: "gmail_message", resource_id: "message-1", display_label: "마감 메일", excerpt: "금요일 마감" }],
+      items: [{ resource_identity: "ref-1", category: "mail", title: "마감 메일", preview: "금요일 마감", content: "금요일 마감", segment_ids: ["segment-1"] }],
       gmail_count: 1,
       tasks_count: 0,
       calendar_count: 0,

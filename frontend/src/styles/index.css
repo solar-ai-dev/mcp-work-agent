@@ -1097,6 +1097,29 @@ main.panel .panel-header > div:first-child .muted {
 
 .context-modal > header p { margin: 0.25rem 0 0; }
 
+.context-kind-switcher {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.context-kind-link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.context-kind-link:hover,
+.context-kind-link.selected {
+  background: transparent;
+  color: var(--text);
+}
+
+.context-kind-link.selected { text-decoration: underline; text-underline-offset: 0.18rem; }
+
 .context-item-list {
   display: grid;
   gap: 0.55rem;
@@ -1113,8 +1136,38 @@ main.panel .panel-header > div:first-child .muted {
 }
 
 .context-item-list input { width: auto; min-height: auto; }
-.context-item-list li > span { display: grid; gap: 0.2rem; min-width: 0; }
-.context-item-list .pill { width: max-content; }
+.context-item-list li.context-item-without-adjustment { grid-template-columns: minmax(0, 1fr); }
+
+.context-item-toggle {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.context-item-toggle:hover { background: transparent; }
+
+.context-item-preview,
+.context-item-content {
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.context-item-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.context-item-content { white-space: pre-wrap; }
 .context-retrieve-more { display: grid; gap: 0.55rem; }
 
 .llm-disclosure-snackbar {

@@ -75,7 +75,7 @@ class AdjustContextHandler:
         ):
             return AdjustContextResultV1(1, False, run_version, None)
         if command.adjustment_kind == "EXCLUDE_EVIDENCE":
-            current_ids = {item.segment_id for item in preview.items}
+            current_ids = {segment_id for item in preview.items for segment_id in item.segment_ids}
             assert command.segment_ids is not None
             if not set(command.segment_ids).issubset(current_ids):
                 return AdjustContextResultV1(1, False, run_version, None)

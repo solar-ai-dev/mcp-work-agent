@@ -68,7 +68,16 @@ def _preview() -> ProjectContextPreviewResultV1:
         1,
         "run-1",
         7,
-        (ContextPreviewItemV1("segment-1", "SUPPORTS", "tasks", "task", "1", "T", None),),
+        (
+            ContextPreviewItemV1(
+                resource_identity="ref-1",
+                category="task",
+                title="T",
+                preview="Task context",
+                content="Task context",
+                segment_ids=("segment-1", "segment-2"),
+            ),
+        ),
         0,
         1,
         0,
@@ -131,7 +140,7 @@ def test_current_selector__uses_server_plan__and_schedules_once() -> None:
         schedule_run_execution=lambda command: schedule_calls.append(command),  # type: ignore[arg-type]
     )
 
-    result = handler(_command())
+    result = handler(_command(segment_ids=("segment-2",)))
 
     assert result.accepted is True
     assert result.next_phase == "RETRIEVAL"
