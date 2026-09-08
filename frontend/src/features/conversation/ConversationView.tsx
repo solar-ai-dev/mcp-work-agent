@@ -48,6 +48,7 @@ export function ConversationView({ children, viewModel }: ConversationViewProps)
   const { selectedConversationId, historyMessages, runSnapshot, runSnapshots, runContext, latestRunEvent, confirmationText, setConfirmationText, composerText, composerError, setComposerText, setComposerError, busyCommand, handleStartRun, handleApprove, handleSimpleAction, handleAttachDescriptors, handleCancelRun, handleResumeRun, handleAdjustContext, handleConfirmation, handleResolveRecovery } = controller;
   const timelineMessages = mergeConversationMessages(
     historyMessages,
+    runSnapshots.flatMap((snapshot) => snapshot.messages ?? []),
     runSnapshot?.messages ?? [],
   );
   const showTransientRequest = Boolean(runContext?.request_text)
@@ -112,11 +113,12 @@ export function ConversationView({ children, viewModel }: ConversationViewProps)
 }
 
 export function mergeConversationMessages(
-  historyMessages: ConversationMessage[],
-  snapshotMessages: ConversationMessage[],
+  ...messageGroups: ConversationMessage[][]
 ): ConversationMessage[] {
-  const byId = new Map(historyMessages.map((message) => [message.id, message]));
-  for (const message of snapshotMessages) byId.set(message.id, message);
+  const byId = new Map<string, ConversationMessage>();
+  for (const messages of messageGroups) {
+    for (const message of messages) byId.set(message.id, message);
+  }
   return Array.from(byId.values()).sort(
     (left, right) => left.created_at_ms - right.created_at_ms || left.id.localeCompare(right.id),
   );

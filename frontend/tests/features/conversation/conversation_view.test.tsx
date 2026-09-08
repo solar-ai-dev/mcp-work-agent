@@ -132,3 +132,52 @@ test("each retained Run keeps its Activity beside its own request and final answ
   expect(screen.getByText("최종 답변 A")).toBeVisible();
   expect(screen.getByText("최종 답변 B")).toBeVisible();
 });
+
+test("retained Run snapshot messages survive a failed history refresh", () => {
+  const requestA: ConversationMessage = {
+    schema_version: 1, id: "request-a", run_id: "run-a", role: "USER", content: "요청 A", created_at_ms: 1,
+  };
+  const answerA: ConversationMessage = {
+    schema_version: 1, id: "answer-a", run_id: "run-a", role: "ASSISTANT", content: "보존된 최종 답변 A", created_at_ms: 2,
+  };
+  const snapshotA = {
+    run: {
+      run_id: "run-a", conversation_id: "conversation-1", status: "COMPLETED", version: 2,
+      entry_mode: "AGENT_SEARCH", requested_mode: "LOCAL_GPU", actual_runtime: "LOCAL_GPU",
+      started_at_ms: 1, finished_at_ms: 2, next_allowed_commands: [],
+    },
+    messages: [requestA, answerA],
+    activity: { schema_version: 1, trace_cursor: 0, audit_cursor: 0, rows: [] },
+    current_plan: null, actions: [], context_preview: null, approvals: [],
+    execution_status: { action_count: 0, terminal_action_count: 0 },
+    verification_summary: { verified_count: 0, mismatch_count: 0 },
+    recovery_summary: { unknown_result_action_count: 0 }, pending_interrupt: null,
+    recovery: null, error: null, external_llm_transfer_scope: null,
+    terminal_result_kind: "SUCCESS", projection_version: 1,
+  } as RunSnapshot;
+  const snapshotB = {
+    ...snapshotA,
+    run: { ...snapshotA.run, run_id: "run-b", status: "ANALYZING", started_at_ms: 3, finished_at_ms: null },
+    messages: [{ schema_version: 1, id: "request-b", run_id: "run-b", role: "USER", content: "요청 B", created_at_ms: 3 }],
+  } as RunSnapshot;
+  const controller = {
+    selectedConversationId: "conversation-1", historyMessages: [],
+    runSnapshot: snapshotB, runSnapshots: [snapshotA, snapshotB], runContext: null,
+    latestRunEvent: null, confirmationText: "", setConfirmationText: vi.fn(),
+    composerText: "", composerError: null, setComposerText: vi.fn(), setComposerError: vi.fn(),
+    busyCommand: null, handleStartRun: vi.fn(), handleApprove: vi.fn(),
+    handleSimpleAction: vi.fn(), handleAttachDescriptors: vi.fn(), handleCancelRun: vi.fn(),
+    handleResumeRun: vi.fn(), handleAdjustContext: vi.fn(), handleConfirmation: vi.fn(),
+    handleResolveRecovery: vi.fn(),
+  } satisfies ConversationViewModel["controller"];
+
+  render(<ConversationView viewModel={{
+    controller,
+    resourceContext: { selectedResourceIds: [], selectedResourceLabels: [], composerPrompt: "" },
+    formatTime: String, onOpenSettings: vi.fn(), onOpenDiagnostics: vi.fn(),
+  }}><div /></ConversationView>);
+
+  expect(screen.getByText("요청 A")).toBeVisible();
+  expect(screen.getByText("보존된 최종 답변 A")).toBeVisible();
+  expect(screen.getByText("요청 B")).toBeVisible();
+});

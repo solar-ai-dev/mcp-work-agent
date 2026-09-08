@@ -77,8 +77,8 @@ export function useRunProjection({ busyCommand, setBusyCommand, commandIdFor, co
     const pending = snapshot.pending_interrupt;
     setPendingConfirmation(pending ? { interruptId: pending.interrupt_id, question: pending.question, options: pending.options, responseMode: pending.response_mode } : null);
     if (snapshot.run.finished_at_ms !== null && !isRunHistorySynced(runId)) {
-      markRunHistorySynced(runId);
-      await reloadConversationHistory(conversationId, generation);
+      const history = await reloadConversationHistory(conversationId, generation);
+      if (history !== null) markRunHistorySynced(runId);
     }
     return true;
   }, [getConversationProjection, isCurrentProjection, isRunHistorySynced, markRunHistorySynced, reloadConversationHistory]);

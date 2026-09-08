@@ -121,3 +121,26 @@ test("startup open-Run selection also restores earlier Runs from Conversation hi
   expect(result.current.runSnapshots.map((item) => item.run.run_id)).toEqual(["run-a", "run-b"]);
   expect(result.current.runSnapshot?.run.run_id).toBe("run-b");
 });
+
+test("a failed terminal history reload remains retryable", async () => {
+  vi.mocked(getRunContext).mockResolvedValue({ context: null } as never);
+  vi.mocked(getRunSnapshot).mockResolvedValue({
+    ...snapshot("COMPLETED", 2),
+    run: { ...snapshot("COMPLETED", 2).run, finished_at_ms: 2 },
+  });
+  const reloadConversationHistory = vi.fn()
+    .mockResolvedValueOnce(null)
+    .mockResolvedValueOnce({} as ConversationHistoryResponse);
+  const markRunHistorySynced = vi.fn();
+  const { result } = renderHook(() => useRunProjection({
+    ...options(),
+    reloadConversationHistory,
+    markRunHistorySynced,
+  }));
+
+  await act(async () => { await result.current.refreshRun("run"); });
+  await act(async () => { await result.current.refreshRun("run"); });
+
+  expect(reloadConversationHistory).toHaveBeenCalledTimes(2);
+  expect(markRunHistorySynced).toHaveBeenCalledTimes(1);
+});

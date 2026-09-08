@@ -98,3 +98,15 @@ test("a restored historical Run is read-only even when its snapshot has a resume
 
   expect(screen.queryByRole("button", { name: "재개" })).not.toBeInTheDocument();
 });
+
+test("dynamic Activity text is rendered literally without executing markup", async () => {
+  const value = snapshot(1);
+  const dynamicValue = `<img src="invalid" onerror="alert(1)">${"긴 기록 ".repeat(80)}`;
+  value.activity!.rows[0]!.details = [{ label: "Provider 결과", value: dynamicValue }];
+
+  render(<RunProgress snapshot={value} busy={null} onResume={vi.fn()} />);
+  await userEvent.setup().click(screen.getByTestId("run-event-progress"));
+
+  expect(screen.getByText("Provider 결과").parentElement?.querySelector("dd")?.textContent).toBe(dynamicValue);
+  expect(document.querySelector("img")).toBeNull();
+});
