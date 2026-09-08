@@ -22,7 +22,7 @@ def project_run_activity_detail_texts(
 ) -> dict[int, str]:
     """Return display sentences while leaving stored facts and identity unchanged."""
 
-    projector: ActivityDetailTextProjector = {
+    projector = {
         "요청 분석": _request_display_texts,
         "자료 경로 선택": _route_display_texts,
         "자료 검색": _retrieval_display_texts,
@@ -32,8 +32,10 @@ def project_run_activity_detail_texts(
         "요청 분석·자료 검색": _stage_one_display_texts,
         "업무 분석·계획 생성": _stage_two_display_texts,
         "요청 처리": _single_workflow_display_texts,
-    }.get(role, _lifecycle_display_texts)
-    return projector(details, state)
+    }.get(role)
+    if projector is not None:
+        return projector(details, state)
+    return _lifecycle_display_texts(details, state, role=role)
 
 
 def _request_display_texts(
@@ -215,10 +217,10 @@ def _review_display_texts(
 
 
 def _lifecycle_display_texts(
-    details: Sequence[ActivityDetailTextSource], state: str
+    details: Sequence[ActivityDetailTextSource], state: str, *, role: str
 ) -> dict[int, str]:
     texts: dict[int, str] = {}
-    actual_prefix = "재조회 " if state == "RECORDED" else None
+    visible_prefixes = _lifecycle_visible_prefixes(role=role, state=state)
     hidden_targets = {
         "대상 Task List",
         "대상 Calendar",
@@ -232,9 +234,7 @@ def _lifecycle_display_texts(
         prefix, separator, field = label.partition(" ")
         if label == "복구 결정":
             texts[index] = f"복구 후속 처리 결정을 적용했습니다: {_sentence(value)}"
-        elif separator and prefix in {"승인", "기대", "재조회"} and field not in hidden_targets:
-            if actual_prefix is not None and prefix != actual_prefix.strip():
-                continue
+        elif separator and prefix in visible_prefixes and field not in hidden_targets:
             source = {
                 "승인": "승인에서 확정한",
                 "기대": "승인에서 기대한",
@@ -242,6 +242,16 @@ def _lifecycle_display_texts(
             }[prefix]
             texts[index] = f"{source} {field} 값은 {value}입니다."
     return texts
+
+
+def _lifecycle_visible_prefixes(*, role: str, state: str) -> set[str]:
+    if role == "사용자 승인":
+        return {"승인"}
+    if role in {"결과 검증", "실행 결과 복구"}:
+        return {"재조회"} if state == "RECORDED" else {"기대", "재조회"}
+    if role == "안전한 복구":
+        return {"기대", "재조회"}
+    return set()
 
 
 def _stage_one_display_texts(

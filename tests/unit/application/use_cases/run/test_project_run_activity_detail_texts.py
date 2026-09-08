@@ -102,6 +102,10 @@ def test_activity_detail_texts__with_analysis_review_and_reread__separate_verifi
         {"label": "재조회 제목", "value": "주간 프로젝트 회의"},
         {"label": "재조회 대상 Event", "value": "opaque-event-id"},
     ]
+    approval = [
+        {"label": "승인 제목", "value": "주간 프로젝트 회의"},
+        {"label": "승인 대상 Event", "value": "opaque-event-id"},
+    ]
 
     analysis_texts = project_run_activity_detail_texts(
         role="업무 분석", state="RECORDED", details=analysis
@@ -111,6 +115,12 @@ def test_activity_detail_texts__with_analysis_review_and_reread__separate_verifi
     )
     verification_texts = project_run_activity_detail_texts(
         role="결과 검증", state="RECORDED", details=verification
+    )
+    approval_texts = project_run_activity_detail_texts(
+        role="사용자 승인", state="RECORDED", details=approval
+    )
+    mismatch_texts = project_run_activity_detail_texts(
+        role="결과 검증", state="PARTIAL", details=verification
     )
 
     assert list(analysis_texts.values()) == [
@@ -125,4 +135,13 @@ def test_activity_detail_texts__with_analysis_review_and_reread__separate_verifi
     assert list(verification_texts.values()) == [
         "재조회한 제목 값은 주간 프로젝트 회의입니다."
     ]
-    assert "opaque" not in str((analysis_texts, review_texts, verification_texts))
+    assert list(approval_texts.values()) == [
+        "승인에서 확정한 제목 값은 주간 프로젝트 회의입니다."
+    ]
+    assert list(mismatch_texts.values()) == [
+        "승인에서 기대한 제목 값은 주간 프로젝트 회의입니다.",
+        "재조회한 제목 값은 주간 프로젝트 회의입니다.",
+    ]
+    assert "opaque" not in str(
+        (analysis_texts, review_texts, verification_texts, approval_texts, mismatch_texts)
+    )
