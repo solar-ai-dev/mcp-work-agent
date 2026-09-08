@@ -79,6 +79,42 @@ test("child facts use the server identity and distinguish progress from completi
   expect(screen.queryByText("검색 계획")).not.toBeInTheDocument();
 });
 
+test("only a server-running row is animated and a state update preserves expanded facts", async () => {
+  const running = snapshot(1);
+  running.activity!.rows[0]!.state = "RUNNING";
+  running.activity!.rows[0]!.details = [
+    { fact_id: "fact-started", label: "자료 조회", value: "자료 조회를 시작했습니다.", display_text: "자료 조회를 시작했습니다.", state: "RECORDED", occurred_at_ms: 1 },
+  ];
+  const view = render(<RunProgress snapshot={running} busy={null} onResume={vi.fn()} />);
+  const summary = screen.getByTestId("run-event-progress");
+  const row = summary.closest("details")!;
+
+  expect(row).toHaveClass("agent-status-line--active");
+  await userEvent.setup().click(summary);
+  expect(row).toHaveAttribute("open");
+
+  const waiting = snapshot(1);
+  waiting.activity!.rows[0]!.state = "WAITING";
+  waiting.activity!.rows[0]!.details = [
+    ...running.activity!.rows[0]!.details,
+    { fact_id: "fact-waiting", label: "사용자 결정", value: "사용자 확인을 기다리고 있습니다.", display_text: "사용자 확인을 기다리고 있습니다.", state: "WAITING", occurred_at_ms: 2 },
+  ];
+  view.rerender(<RunProgress snapshot={waiting} busy={null} onResume={vi.fn()} />);
+
+  expect(row).toHaveAttribute("open");
+  expect(row).not.toHaveClass("agent-status-line--active");
+  expect(screen.getByText("자료 조회를 시작했습니다.")).toBeVisible();
+  expect(screen.getByText(/사용자 확인을 기다리고 있습니다\./)).toBeVisible();
+
+  const failed = snapshot(1);
+  failed.activity!.rows[0]!.state = "FAILED";
+  failed.activity!.rows[0]!.details = waiting.activity!.rows[0]!.details;
+  view.rerender(<RunProgress snapshot={failed} busy={null} onResume={vi.fn()} />);
+
+  expect(row).toHaveAttribute("open");
+  expect(row).not.toHaveClass("agent-status-line--active");
+});
+
 test("RunProgress exposes only the server-projected resume action", async () => {
   const value = snapshot(0);
   value.run.status = "BLOCKED";
