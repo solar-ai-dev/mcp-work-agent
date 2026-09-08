@@ -22,21 +22,25 @@ class ActivityGraphState(TypedDict):
     round: int
 
 
-def test_graph_activity__records_real_subgraph_steps__before_agent_end() -> None:
+def test_graph_activity__records_completed_semantic_fact__before_agent_end() -> None:
     emit = Mock()
     callback = RunActivityCallback(
         RecordRunActivityHandler(emit_trace=emit, now_ms=lambda: 1, service_instance_id="test")
     )
     subgraph = StateGraph(ActivityGraphState)
-    subgraph.add_node("plan_query", lambda state: {"round": state["round"] + 1})
-    subgraph.add_node("execute_read", lambda state: {"round": state["round"] + 1})
-    subgraph.add_edge(START, "plan_query")
-    subgraph.add_edge("plan_query", "execute_read")
-    subgraph.add_edge("execute_read", END)
+    subgraph.add_node(
+        "identify_goal",
+        lambda state: {
+            "round": state["round"] + 1,
+            "goal_candidate": {"goal": "분기 보고서를 정리한다"},
+        },
+    )
+    subgraph.add_edge(START, "identify_goal")
+    subgraph.add_edge("identify_goal", END)
     graph = StateGraph(ActivityGraphState)
-    graph.add_node("context_retriever", subgraph.compile())
-    graph.add_edge(START, "context_retriever")
-    graph.add_edge("context_retriever", END)
+    graph.add_node("request_understanding", subgraph.compile())
+    graph.add_edge(START, "request_understanding")
+    graph.add_edge("request_understanding", END)
 
     graph.compile().invoke({"run_id": "r", "round": 0}, config={"callbacks": [callback]})
 
@@ -44,27 +48,21 @@ def test_graph_activity__records_real_subgraph_steps__before_agent_end() -> None
     assert [item["state"] for item in observed] == [
         "RUNNING",
         "RUNNING",
-        "RUNNING",
-        "RUNNING",
-        "RUNNING",
         "RECORDED",
     ]
     assert len({item["execution_id"] for item in observed}) == 1
     assert [item["detail_updates"][0]["state"] for item in observed if item["detail_updates"]] == [
-        "RUNNING",
-        "RECORDED",
-        "RUNNING",
         "RECORDED",
     ]
     assert [item["detail_updates"][0]["label"] for item in observed if item["detail_updates"]] == [
-        "검색 계획",
-        "검색 계획",
-        "자료 조회",
-        "자료 조회",
+        "요청 업무",
+    ]
+    assert [item["detail_updates"][0]["value"] for item in observed if item["detail_updates"]] == [
+        "분기 보고서를 정리한다",
     ]
 
 
-def test_graph_activity__deduplicates_same_step__across_restart_and_resume(
+def test_graph_activity__preserves_parent_identity__across_restart_and_resume(
     tmp_path: Path,
 ) -> None:
     emit = Mock()
@@ -103,14 +101,13 @@ def test_graph_activity__deduplicates_same_step__across_restart_and_resume(
         restarted.invoke(Command(resume="yes"), config=config)
 
     observed = [call.args[0].attributes for call in emit.call_args_list]
-    detail_updates = [item["detail_updates"][0] for item in observed if item["detail_updates"]]
-    assert [item["state"] for item in detail_updates] == [
+    assert [item["state"] for item in observed] == [
         "RUNNING",
         "WAITING",
         "RUNNING",
         "RECORDED",
     ]
-    assert len({item["fact_id"] for item in detail_updates}) == 1
+    assert all(item["detail_updates"] == [] for item in observed)
     assert len({item["execution_id"] for item in observed}) == 1
 
 
@@ -192,7 +189,8 @@ def test_product_graph_activity__retains_old_plan__after_modify_and_verified_wri
     old_plan = {item["label"]: item["value"] for item in rows[4]["details"]}
     approval = {item["label"]: item["value"] for item in rows[-3]["details"]}
     verified = {item["label"]: item["value"] for item in rows[-1]["details"]}
-    assert old_plan["예정일"] == "2026-09-11"
+    assert old_plan["실행안 1 · 예정일"] == "2026-09-11"
     assert approval["승인 예정일"] == "2026-09-08"
+    assert approval["승인 대상 Task List"] == "task-list-e2e"
     assert verified["기대 예정일"] == verified["재조회 예정일"] == "2026-09-08"
     assert measurement["stale_approval_status"] == 409

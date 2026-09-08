@@ -78,8 +78,6 @@ class RunActivityCallback(BaseCallbackHandler):
             )
             if parent_identity is not None and presentation is not None:
                 self._steps[run_id] = (parent_identity, node, presentation)
-        if parent_identity is not None and presentation is not None:
-            self._emit_step(parent_identity, node, presentation, "STEP_START")
 
     def on_chain_end(self, outputs: Any, *, run_id: UUID, **kwargs: Any) -> None:
         with self._lock:
@@ -87,7 +85,7 @@ class RunActivityCallback(BaseCallbackHandler):
             identity = self._active.pop(run_id, None)
             self._parents.pop(run_id, None)
         if step is not None:
-            self._emit_step(*step, "STEP_END")
+            self._emit_step(*step, "STEP_END", outputs)
         if identity is not None:
             self._emit(identity, "END", outputs if isinstance(outputs, Mapping) else {})
 
@@ -97,7 +95,7 @@ class RunActivityCallback(BaseCallbackHandler):
             identity = self._active.pop(run_id, None)
             self._parents.pop(run_id, None)
         observation = "STEP_WAIT" if isinstance(error, GraphInterrupt) else "STEP_ERROR"
-        if step is not None:
+        if step is not None and observation == "STEP_ERROR":
             self._emit_step(*step, observation)
         if identity is not None:
             self._emit(identity, "WAIT" if isinstance(error, GraphInterrupt) else "ERROR", {})
@@ -119,6 +117,7 @@ class RunActivityCallback(BaseCallbackHandler):
         step_key: str,
         presentation: ActivityStepPresentation,
         observation: Any,
+        output: Any = None,
     ) -> None:
         value = {
             "STEP_START": presentation.started,
@@ -129,7 +128,7 @@ class RunActivityCallback(BaseCallbackHandler):
         self._emit(
             identity,
             observation,
-            {},
+            output if isinstance(output, Mapping) else {},
             detail=(step_key, presentation.label, value),
         )
 

@@ -15,6 +15,7 @@ ActivityState = Literal[
 _STATES = {"RUNNING", "WAITING", "RECORDED", "PARTIAL", "FAILED", "INTERRUPTED", "UNKNOWN"}
 ActivityDetailState = Literal["RUNNING", "WAITING", "RECORDED", "FAILED"]
 _DETAIL_STATES = {"RUNNING", "WAITING", "RECORDED", "FAILED"}
+_MAX_ACTIVITY_DETAILS = 40
 
 
 class RunActivityDetailV1(TypedDict):
@@ -128,13 +129,14 @@ class ProjectRunActivityHandler:
                 if role == "승인 대기" and isinstance(plan_id, str):
                     waiting_plans[key] = plan_id
                 previous = rows.get(key)
-                if (
-                    previous
-                    and state == "RUNNING"
-                    and previous["state"] not in {"RUNNING", "WAITING"}
-                ):
-                    continue
                 if previous and previous["state"] not in {"RUNNING", "WAITING"}:
+                    late_updates = _detail_updates(attrs.get("detail_updates"))
+                    if state != "RUNNING" or not late_updates:
+                        continue
+                    previous["details"] = _merge_details(
+                        list(previous["details"]), late_updates, []
+                    )
+                    previous["updated_at_ms"] = event.created_at_ms
                     continue
                 started = previous["started_at_ms"] if previous else event.created_at_ms
                 details = _merge_details(
@@ -301,7 +303,7 @@ def _attributes(raw: str) -> dict[str, object]:
 def _details(value: object) -> list[RunActivityDetailV1]:
     if not isinstance(value, list):
         return []
-    return [
+    return _limit_projected_details([
         RunActivityDetailV1(label=item["label"][:512], value=item["value"][:512])
         for item in value
         if isinstance(item, dict)
@@ -309,7 +311,7 @@ def _details(value: object) -> list[RunActivityDetailV1]:
         and isinstance(item.get("value"), str)
         and item["label"].strip()
         and item["value"].strip()
-    ][:40]
+    ])
 
 
 def _detail_updates(value: object) -> list[RunActivityDetailV1]:
@@ -342,7 +344,7 @@ def _detail_updates(value: object) -> list[RunActivityDetailV1]:
                 occurred_at_ms=occurred_at_ms,
             )
         )
-    return result[:40]
+    return _limit_projected_details(result)
 
 
 def _merge_details(
@@ -367,13 +369,29 @@ def _merge_details(
             for current in existing
         ):
             existing.append(detail)
-    return existing[:40]
+    return _limit_projected_details(existing)
+
+
+def _limit_projected_details(
+    details: list[RunActivityDetailV1],
+) -> list[RunActivityDetailV1]:
+    if len(details) <= _MAX_ACTIVITY_DETAILS:
+        return details
+    return [
+        *details[: _MAX_ACTIVITY_DETAILS - 1],
+        RunActivityDetailV1(
+            label="표시 한계",
+            value="추가 핵심 업무 사실이 있습니다. 상세 이력의 보존 범위를 확인해 주세요.",
+        ),
+    ]
 
 
 def _domain_fields(prefix: str, raw: str) -> list[RunActivityDetailV1]:
     value = _attributes(raw)
     payload = value.get("payload")
-    fields = dict(payload) if isinstance(payload, Mapping) else value
+    fields = dict(value)
+    if isinstance(payload, Mapping):
+        fields.update(payload)
     result: list[RunActivityDetailV1] = []
     for key, label in {
         "title": "제목",
@@ -384,10 +402,26 @@ def _domain_fields(prefix: str, raw: str) -> list[RunActivityDetailV1]:
         "start": "시작",
         "end": "종료",
         "timezone": "시간대",
+        "task_list_id": "대상 Task List",
+        "calendar_id": "대상 Calendar",
+        "repository": "대상 Repository",
+        "to": "받는 사람",
+        "cc": "참조",
+        "bcc": "숨은 참조",
+        "attendees": "참석자",
+        "thread_id": "대상 Thread",
+        "draft_id": "대상 Draft",
+        "task_id": "대상 Task",
+        "event_id": "대상 Event",
+        "issue_number": "대상 Issue",
     }.items():
         item = fields.get(key)
         if isinstance(item, Mapping):
             item = item.get("dateTime", item.get("date"))
-        if isinstance(item, str):
+        if isinstance(item, str) and item:
             result.append({"label": f"{prefix} {label}", "value": item[:512]})
+        elif type(item) is int:
+            result.append({"label": f"{prefix} {label}", "value": str(item)})
+        elif isinstance(item, list) and item and all(isinstance(value, str) for value in item):
+            result.append({"label": f"{prefix} {label}", "value": ", ".join(item)[:512]})
     return result

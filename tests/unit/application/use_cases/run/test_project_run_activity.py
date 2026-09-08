@@ -184,6 +184,105 @@ def test_activity__accumulates_observed_facts__and_updates_same_step_in_place() 
     assert row["details"][2] == {"label": "조회 결과", "value": "관련 자료를 확인했습니다."}
 
 
+def test_activity__marks_projection_limit__instead_of_silently_dropping_facts() -> None:
+    event = PersistedTraceEventRecord(
+        1,
+        "r",
+        None,
+        "RUN_ACTIVITY_OBSERVED",
+        None,
+        None,
+        dumps(
+            {
+                "schema_version": 1,
+                "execution_id": "a" * 64,
+                "role": "업무 분석",
+                "state": "RECORDED",
+                "label": "기록됨",
+                "details": [
+                    {"label": f"업무 사실 {index}", "value": str(index)}
+                    for index in range(41)
+                ],
+            }
+        ),
+        1,
+    )
+    uow = Mock()
+    uow.traces.list_page.return_value = (event,)
+    uow.audits.list_page.return_value = ()
+
+    details = ProjectRunActivityHandler()(uow, "r", run_status="COMPLETED")["rows"][0][
+        "details"
+    ]
+
+    assert len(details) == 40
+    assert details[-1]["label"] == "표시 한계"
+
+
+def test_activity__retains_late_completed_fact__without_regressing_parent_state() -> None:
+    execution_id = "a" * 64
+    events = (
+        PersistedTraceEventRecord(
+            1,
+            "r",
+            None,
+            "RUN_ACTIVITY_OBSERVED",
+            None,
+            None,
+            dumps(
+                {
+                    "schema_version": 1,
+                    "execution_id": execution_id,
+                    "role": "자료 검색",
+                    "state": "RECORDED",
+                    "label": "자료 조회 결과를 정리했습니다.",
+                    "details": [],
+                    "detail_updates": [],
+                }
+            ),
+            1,
+        ),
+        PersistedTraceEventRecord(
+            2,
+            "r",
+            None,
+            "RUN_ACTIVITY_OBSERVED",
+            None,
+            None,
+            dumps(
+                {
+                    "schema_version": 1,
+                    "execution_id": execution_id,
+                    "role": "자료 검색",
+                    "state": "RUNNING",
+                    "label": "처리하고 있습니다.",
+                    "details": [],
+                    "detail_updates": [
+                        {
+                            "fact_id": "b" * 64,
+                            "state": "RECORDED",
+                            "label": "관련 근거",
+                            "value": "관련 근거 1건을 채택했습니다.",
+                            "occurred_at_ms": 2,
+                        }
+                    ],
+                }
+            ),
+            2,
+        ),
+    )
+    uow = Mock()
+    uow.traces.list_page.return_value = events
+    uow.audits.list_page.return_value = ()
+
+    row = ProjectRunActivityHandler()(uow, "r", run_status="COMPLETED")["rows"][0]
+
+    assert row["state"] == "RECORDED"
+    assert row["label"] == "자료 조회 결과를 정리했습니다."
+    assert row["details"][0]["value"] == "관련 근거 1건을 채택했습니다."
+    assert row["updated_at_ms"] == 2
+
+
 def test_activity__does_not_present_unconfirmed_running_row__after_worker_stops() -> None:
     event = PersistedTraceEventRecord(
         1,
