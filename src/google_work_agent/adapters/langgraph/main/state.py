@@ -211,6 +211,7 @@ class GraphState(TypedDict, total=False):
     __modify_review_plan_id__: NotRequired[str | None]
     __modify_review_version__: NotRequired[int | None]
     __modify_review_risks__: NotRequired[dict[str, dict[str, object]] | None]
+    __modify_review_changes__: NotRequired[list[dict[str, object]] | None]
     __replan_from_plan_id__: NotRequired[str]
     __reserved_corrective_plan_id__: NotRequired[str | None]
 

@@ -34,6 +34,7 @@ def inspect_constraints_and_policy_summary(
     work_analysis: Mapping[str, object] | None = None,
     evidence: Sequence[Mapping[str, object]] = (),
     confirmation_response: Mapping[str, object] | None = None,
+    user_action_modifications: Sequence[Mapping[str, object]] = (),
 ) -> ReviewInspectorResultV1:
     constraints = request_intent.get("constraints")
     if (
@@ -72,6 +73,10 @@ def inspect_constraints_and_policy_summary(
         prompt_input["evidence"] = [dict(item) for item in evidence]
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if user_action_modifications:
+        prompt_input["user_action_modifications"] = [
+            dict(item) for item in user_action_modifications
+        ]
     return validate_review_inspector_result(
         invoke(PROMPT_ID, prompt_input), expected_dimension=DIMENSION
     )

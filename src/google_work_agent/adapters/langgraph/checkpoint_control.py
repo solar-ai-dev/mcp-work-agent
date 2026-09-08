@@ -176,6 +176,7 @@ def native_resume_command(
                     "__modify_review_plan_id__": None,
                     "__modify_review_version__": None,
                     "__modify_review_risks__": None,
+                    "__modify_review_changes__": None,
                     "__replan_from_plan_id__": None,
                     "__reserved_corrective_plan_id__": None,
                 }

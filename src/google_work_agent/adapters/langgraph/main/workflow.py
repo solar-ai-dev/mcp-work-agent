@@ -68,6 +68,9 @@ from google_work_agent.adapters.langgraph.main.plan_persistence import (
     PlanPersistenceMixin,
     _connector_id_for_evidence_handle,
 )
+from google_work_agent.adapters.langgraph.main.preview_modification_projection import (
+    project_user_action_modification,
+)
 from google_work_agent.adapters.langgraph.main.resume_checkpoint import (
     ResumeCheckpointMixin,
 )
@@ -1553,11 +1556,23 @@ class _WorkflowRuntimeComposition:
         ordered_actions = sorted(actions, key=lambda item: item.position)
         if not isinstance(draft_actions, list) or len(draft_actions) != len(ordered_actions):
             raise ValueError("persisted Plan no longer matches the Planning artifact")
+        user_action_modifications: list[dict[str, object]] = []
         for action_draft, action in zip(draft_actions, ordered_actions, strict=True):
             if action_draft.get("tool_id") != action.tool_name:
                 raise ValueError("persisted Action tool no longer matches Planning")
+            previous_arguments = action_draft.get("arguments")
+            if not isinstance(previous_arguments, Mapping):
+                raise ValueError("Planning Action arguments must be an object")
+            current_arguments = cast(dict[str, object], loads(action.arguments_json))
+            modification = project_user_action_modification(
+                action_id=action.id,
+                previous_arguments=previous_arguments,
+                current_arguments=current_arguments,
+            )
+            if modification is not None:
+                user_action_modifications.append(cast(dict[str, object], modification))
             action_draft["action_id"] = action.id
-            action_draft["arguments"] = cast(dict[str, object], loads(action.arguments_json))
+            action_draft["arguments"] = current_arguments
             action_draft["depends_on_action_ids"] = list(dependencies[action.id])
 
         return {
@@ -1568,6 +1583,7 @@ class _WorkflowRuntimeComposition:
             "__modify_review_plan_id__": plan_id,
             "__modify_review_version__": review_version,
             "__modify_review_risks__": {action.id: action.risk for action in actions},
+            "__modify_review_changes__": user_action_modifications,
             "__target__": "review_entry",
             "__logical_target__": "review_entry",
             "workflow_phase": WorkflowPhase.PLAN_REVIEW.value,

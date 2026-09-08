@@ -59,3 +59,15 @@ def test_retrieval_followup_projection__matches_the_canonical__plural_attempt_fi
 
     assert "prior_query_attempts" in entry.optional_root_fields
     assert "prior_query_attempt" not in entry.optional_root_fields
+
+
+def test_review_contracts__accept_current_preview__user_modification_projection() -> None:
+    contract = load_prompt_input_contract()
+
+    for slot_id in (
+        "review.inspect_goal_and_evidence",
+        "review.inspect_action_scope_and_route",
+        "review.inspect_constraints_and_policy_summary",
+        "review.recheck_affected_dimensions",
+    ):
+        assert "user_action_modifications" in contract.entry(slot_id).optional_root_fields

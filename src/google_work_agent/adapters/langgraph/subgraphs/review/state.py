@@ -86,6 +86,7 @@ class ReviewInputState(AgentSubgraphInputEnvelope, total=False):
     __modify_review_plan_id__: str | None
     __modify_review_version__: int | None
     __modify_review_risks__: dict[str, dict[str, object]] | None
+    __modify_review_changes__: list[dict[str, object]] | None
 
 
 class ReviewState(GraphState, total=False):
@@ -95,6 +96,7 @@ class ReviewState(GraphState, total=False):
     evidence: NotRequired[list[ActionEvidenceDraftV1]]
     policy_summary: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[ConfirmationResponseProjectionV1]
+    user_action_modifications: NotRequired[list[dict[str, object]]]
     review_phase: NotRequired[Literal["INITIAL", "RECHECK"]]
     review_artifact_id: NotRequired[str]
     review_revision: NotRequired[int]

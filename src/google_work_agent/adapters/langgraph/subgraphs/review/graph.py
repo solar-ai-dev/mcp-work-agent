@@ -417,6 +417,15 @@ class ReviewSubgraph:
                 ConfirmationResponseProjectionV1, dict(raw_response)
             )
         working["prompt_context"] = context
+        raw_modifications = state.get("__modify_review_changes__")
+        if raw_modifications is not None:
+            if not isinstance(raw_modifications, list) or not all(
+                isinstance(item, Mapping) for item in raw_modifications
+            ):
+                raise ValueError("Modify Review changes must be an array of objects")
+            working["user_action_modifications"] = [
+                dict(item) for item in raw_modifications
+            ]
         raw_planning_result: object = state.get("planning_result")
         if not isinstance(raw_planning_result, Mapping):
             raise ValueError("Review requires a validated Planning artifact")

@@ -32,6 +32,7 @@ def inspect_action_scope_and_route(
     invoke: ReviewSemanticInvoker,
     work_analysis: Mapping[str, object] | None = None,
     confirmation_response: Mapping[str, object] | None = None,
+    user_action_modifications: Sequence[Mapping[str, object]] = (),
 ) -> ReviewInspectorResultV1:
     if confirmation_response is None and (
         is_exact_calendar_create_plan(
@@ -57,6 +58,10 @@ def inspect_action_scope_and_route(
         prompt_input["work_analysis"] = dict(work_analysis)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if user_action_modifications:
+        prompt_input["user_action_modifications"] = [
+            dict(item) for item in user_action_modifications
+        ]
     return validate_review_inspector_result(
         invoke(PROMPT_ID, prompt_input), expected_dimension=DIMENSION
     )

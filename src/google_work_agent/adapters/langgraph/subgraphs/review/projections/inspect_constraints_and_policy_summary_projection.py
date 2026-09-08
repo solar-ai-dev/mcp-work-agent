@@ -13,6 +13,7 @@ class InspectConstraintsAndPolicySummaryInputV1(TypedDict):
     work_analysis: NotRequired[dict[str, object]]
     evidence: NotRequired[list[dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
+    user_action_modifications: NotRequired[list[dict[str, object]]]
 
 
 def project_inspect_constraints_and_policy_summary_input(
@@ -43,6 +44,11 @@ def project_inspect_constraints_and_policy_summary_input(
         if not isinstance(confirmation, Mapping):
             raise ValueError("confirmation_response must be an object")
         result["confirmation_response"] = dict(confirmation)
+    modifications = state.get("user_action_modifications")
+    if modifications is not None:
+        result["user_action_modifications"] = _objects(
+            modifications, "user_action_modifications"
+        )
     return result
 
 
@@ -51,6 +57,14 @@ def _mapping(state: Mapping[str, object], key: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{key} is required")
     return value
+
+
+def _objects(value: object, label: str) -> list[dict[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+        raise ValueError(f"{label} must be a sequence")
+    if not all(isinstance(item, Mapping) for item in value):
+        raise ValueError(f"{label} items must be objects")
+    return [dict(item) for item in value]
 
 
 __all__ = [

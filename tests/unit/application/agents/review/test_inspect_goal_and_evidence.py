@@ -55,6 +55,34 @@ def test_inspect_goal_and__evidence_uses_only__its_minimum_projection() -> None:
     assert "status" not in result
 
 
+def test_inspect_goal_and_evidence__passes_current_preview_edit__as_user_authority() -> None:
+    calls: list[dict[str, object]] = []
+
+    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(dict(prompt_input))
+        return {"schema_version": 1, "dimension": DIMENSION, "findings": []}
+
+    inspect_goal_and_evidence(
+        request_intent={"goal": "original"},
+        planning_result={"schema_version": 2, "actions": []},
+        evidence=[],
+        user_action_modifications=[
+            {
+                "action_id": "action-1",
+                "argument_overrides": {"subject": "After", "body": "After body"},
+            }
+        ],
+        invoke=invoke,
+    )
+
+    assert calls[0]["user_action_modifications"] == [
+        {
+            "action_id": "action-1",
+            "argument_overrides": {"subject": "After", "body": "After body"},
+        }
+    ]
+
+
 @pytest.mark.parametrize("dimension", ["GOAL_EVIDENCE", "review.unknown"])
 def test_inspect_goal__and_evidence__rejects_noncanonical_dimension(dimension: str) -> None:
     with pytest.raises(ValueError, match="invalid dimension"):

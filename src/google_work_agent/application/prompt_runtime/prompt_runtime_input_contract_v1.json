@@ -183,7 +183,7 @@
       "runtime_node_id": "review.inspect_goal_and_evidence",
       "input_schema_version": 1,
       "required_root_fields": ["request_intent", "planning_result", "evidence"],
-      "optional_root_fields": ["work_analysis", "confirmation_response"],
+      "optional_root_fields": ["work_analysis", "confirmation_response", "user_action_modifications"],
       "output_schema_version": 1
     },
     {
@@ -191,7 +191,7 @@
       "runtime_node_id": "review.inspect_action_scope_route",
       "input_schema_version": 1,
       "required_root_fields": ["request_intent", "tool_route_plan", "planning_result", "evidence"],
-      "optional_root_fields": ["work_analysis", "confirmation_response"],
+      "optional_root_fields": ["work_analysis", "confirmation_response", "user_action_modifications"],
       "output_schema_version": 1
     },
     {
@@ -199,7 +199,7 @@
       "runtime_node_id": "review.inspect_constraints_policy",
       "input_schema_version": 1,
       "required_root_fields": ["request_intent", "planning_result", "policy_summary"],
-      "optional_root_fields": ["work_analysis", "evidence", "confirmation_response"],
+      "optional_root_fields": ["work_analysis", "evidence", "confirmation_response", "user_action_modifications"],
       "output_schema_version": 1
     },
     {
@@ -207,7 +207,7 @@
       "runtime_node_id": "review.recheck",
       "input_schema_version": 1,
       "required_root_fields": ["affected_dimensions", "request_intent", "planning_result"],
-      "optional_root_fields": ["affected_action_ids", "affected_route_ids", "tool_route_plan", "work_analysis", "evidence", "policy_summary", "confirmation_response"],
+      "optional_root_fields": ["affected_action_ids", "affected_route_ids", "tool_route_plan", "work_analysis", "evidence", "policy_summary", "confirmation_response", "user_action_modifications"],
       "output_schema_version": 1
     }
   ]

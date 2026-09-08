@@ -20,6 +20,9 @@ def test_recheck_projection__and_router__are_exact() -> None:
         "evidence": [],
         "policy_summary": {},
         "confirmation_response": {},
+        "user_action_modifications": [
+            {"action_id": "action-1", "argument_overrides": {"subject": "After"}}
+        ],
         "prior_review_findings": [{"code": "must-not-cross"}],
     }
     projected = recheck_projection.project_recheck_affected_dimensions_input(state)
