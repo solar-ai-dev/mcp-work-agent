@@ -3,9 +3,31 @@ from collections.abc import Mapping
 import pytest
 
 from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
+    action_objective_candidate_output_schema,
     draft_action_objective_per_output_route,
     requires_objective_inference,
 )
+
+
+def test_action_objective_schema__binds_current_evidence__identities() -> None:
+    schema = action_objective_candidate_output_schema(
+        {
+            "evidence": [
+                {"evidence_ref": "evidence-2"},
+                {"evidence_id": "evidence-1"},
+            ]
+        }
+    ).json_schema
+
+    evidence_refs = schema["properties"]["evidence_refs"]
+    assert evidence_refs["uniqueItems"] is True
+    assert evidence_refs["items"]["enum"] == ["evidence-1", "evidence-2"]
+
+
+def test_action_objective_schema__requires_empty_refs__without_evidence() -> None:
+    schema = action_objective_candidate_output_schema({"evidence": []}).json_schema
+
+    assert schema["properties"]["evidence_refs"]["maxItems"] == 0
 
 
 def test_exact_github_create__reuses_validated_goal__without_fabricated_evidence() -> None:

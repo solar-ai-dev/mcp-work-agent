@@ -96,6 +96,7 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 )
 from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
     ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA,
+    action_objective_candidate_output_schema,
     requires_objective_inference,
 )
 from google_work_agent.application.agents.planning.outline_answer import (
@@ -705,6 +706,8 @@ class PlanningSubgraph:
                 )
                 self._prompt_refs[prompt_id] = prompt_ref
             output_schema = schemas.get(prompt_id)
+            if prompt_id == "planning.draft_action_objective_per_output_route":
+                output_schema = action_objective_candidate_output_schema(prompt_input)
             if prompt_id == "planning.compose_arguments_per_output_route":
                 output_schema = tool_argument_candidate_output_schema(prompt_input)
             if prompt_id == "planning.outline_answer":

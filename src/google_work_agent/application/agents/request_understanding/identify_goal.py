@@ -5,6 +5,7 @@ from pathlib import Path
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
+    is_repository_constraint,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
@@ -157,6 +158,24 @@ def _apply_selected_resource_authority(
 
     resource_ids = list(dict.fromkeys(ref.resource_id for ref in request.selected_resources))
     constraints = list(candidate["constraints"])
+    selected_repositories = {
+        ref.parent_resource_id
+        for ref in request.selected_resources
+        if ref.connector_id == "github"
+        and ref.resource_type == "github_issue"
+        and ref.parent_resource_id is not None
+    }
+    if len(selected_repositories) == 1:
+        selected_repository = next(iter(selected_repositories))
+        constraints = [
+            constraint
+            for constraint in constraints
+            if not (
+                is_repository_constraint(constraint)
+                and constraint["value"] == selected_repository
+                and selected_repository not in request.request_text
+            )
+        ]
     constrained_resource_ids = {
         str(item)
         for constraint in constraints

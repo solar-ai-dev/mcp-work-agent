@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
@@ -55,6 +56,40 @@ ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
         },
     },
 )
+
+
+def action_objective_candidate_output_schema(
+    prompt_input: Mapping[str, object],
+) -> OutputSchemaDefinition:
+    """Bind objective citations to evidence supplied for the current route."""
+
+    evidence = prompt_input.get("evidence")
+    if not isinstance(evidence, list):
+        raise ValueError("action objective requires evidence")
+    allowed_refs = sorted(
+        {
+            ref
+            for item in evidence
+            if isinstance(item, Mapping)
+            for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+            if isinstance(ref, str) and ref
+        }
+    )
+    schema = deepcopy(ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], schema["properties"])
+    evidence_refs = cast(dict[str, object], properties["evidence_refs"])
+    evidence_refs["uniqueItems"] = True
+    evidence_refs["items"] = {
+        "type": "string",
+        "minLength": 1,
+        "enum": allowed_refs,
+    }
+    if not allowed_refs:
+        evidence_refs["maxItems"] = 0
+    return OutputSchemaDefinition(
+        schema_version=ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA.schema_version,
+        json_schema=schema,
+    )
 
 
 def draft_action_objective_per_output_route(
@@ -288,6 +323,7 @@ def _matches_route_semantics(
 
 __all__ = [
     "ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA",
+    "action_objective_candidate_output_schema",
     "draft_action_objective_per_output_route",
     "requires_objective_inference",
 ]
