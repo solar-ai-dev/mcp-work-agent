@@ -14,3 +14,10 @@ def test_activity_step__resolves_direct_and_composite__semantic_owner() -> None:
 
 def test_activity_step__does_not_invent__unknown_work() -> None:
     assert resolve_activity_step("context_retriever", "unobserved_step") is None
+
+
+def test_activity_step__build_query_validation__is_observable() -> None:
+    result = resolve_activity_step("context_retriever", "build_query")
+
+    assert result is not None
+    assert result.label == "검색 조건 검증"

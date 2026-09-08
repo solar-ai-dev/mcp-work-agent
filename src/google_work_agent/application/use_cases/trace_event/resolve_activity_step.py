@@ -33,6 +33,7 @@ _STEPS: dict[tuple[str, str], ActivityStepPresentation] = {
     ("tool_route", "select_tool_if_needed"): _step("자료 경로", "사용할 자료 경로를"),
     ("tool_route", "validate_route"): _step("경로 검증", "선택한 자료 경로를"),
     ("context_retriever", "plan_query"): _step("검색 계획", "검색할 조건과 범위를"),
+    ("context_retriever", "build_query"): _step("검색 조건 검증", "검색 조건의 연속성을"),
     ("context_retriever", "execute_read"): _step("자료 조회", "허용된 범위의 자료를"),
     ("context_retriever", "select_evidence"): _step("관련 근거", "업무에 관련된 근거를"),
     ("context_retriever", "assess_sufficiency"): _step(

@@ -341,16 +341,7 @@ def _resolution_responsibilities(
     goal_candidate: RequestGoalCandidateV1,
     request: WorkflowStartRequest,
 ) -> dict[str, object]:
-    connector_owned = [
-        {
-            "constraint_path": f"$.goal_candidate.constraints[{index}]",
-            "information": information,
-            "owner": "CONNECTOR",
-        }
-        for index, constraint in enumerate(goal_candidate["constraints"])
-        if constraint["field"] == "required_information"
-        for information in _constraint_values(constraint["value"])
-    ]
+    connector_owned = _connector_owned_information(goal_candidate)
     resolved = [
         {
             "resource_ref_id": item.resource_ref_id,
@@ -371,16 +362,42 @@ def _overlaps_connector_owned_information(
     goal_candidate: RequestGoalCandidateV1,
 ) -> bool:
     connector_information = [
-        information
-        for constraint in goal_candidate["constraints"]
-        if constraint["field"] == "required_information"
-        for information in _constraint_values(constraint["value"])
+        item["information"] for item in _connector_owned_information(goal_candidate)
     ]
     return any(
         _same_information_need(missing, owned)
         for missing in missing_fields
         for owned in connector_information
     )
+
+
+def _connector_owned_information(
+    goal_candidate: RequestGoalCandidateV1,
+) -> list[dict[str, str]]:
+    responsibilities = goal_candidate.get("resource_responsibilities")
+    if responsibilities:
+        return [
+            {
+                "responsibility_path": (
+                    f"$.goal_candidate.resource_responsibilities.source_reads[{index}]"
+                ),
+                "information": information,
+                "resource_type": item["resource_type"],
+                "owner": "CONNECTOR",
+            }
+            for index, item in enumerate(responsibilities["source_reads"])
+            for information in item["required_information"]
+        ]
+    return [
+        {
+            "constraint_path": f"$.goal_candidate.constraints[{index}]",
+            "information": information,
+            "owner": "CONNECTOR",
+        }
+        for index, constraint in enumerate(goal_candidate["constraints"])
+        if constraint["field"] == "required_information"
+        for information in _constraint_values(constraint["value"])
+    ]
 
 
 def _constraint_values(value: str | list[str]) -> list[str]:

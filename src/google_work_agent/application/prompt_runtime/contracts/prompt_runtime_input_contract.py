@@ -59,7 +59,7 @@ class PromptRuntimeInputContractEntryV1:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
         output_version = {
             "retrieval.select_evidence": 3,
-            "request_understanding.identify_goal": 6,
+            "request_understanding.identify_goal": 8,
         }.get(self.prompt_slot_id, 1)
         input_versions = {3, 4} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}
         if (

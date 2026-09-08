@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    SOURCE_STATUS_VALUES_BY_RESOURCE,
+    WRITE_EFFECT_RESOURCE_TYPES,
+    ConstraintProvenanceSource,
+    ConstraintV1,
     RequestGoalCandidateV1,
+    RequestUnderstandingValidationError,
+)
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    requires_resource_responsibilities,
+    validate_resource_responsibilities,
 )
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
@@ -22,12 +32,18 @@ REQUEST_GOAL_SLOT_KINDS = {
     "period": "DATE",
     "status": "SCOPE",
 }
-_WRITE_EFFECT_RESOURCE_TYPES = {
-    "CREATE": ["GMAIL_DRAFT", "TASK", "CALENDAR_EVENT", "GITHUB_ISSUE"],
-    "UPDATE": ["GMAIL_DRAFT", "TASK", "CALENDAR_EVENT", "GITHUB_ISSUE"],
-    "SEND": ["GMAIL_MESSAGE"],
-    "DELETE": ["TASK", "CALENDAR_EVENT"],
-}
+_RESOURCE_TYPES = [
+    "GMAIL_THREAD",
+    "GMAIL_MESSAGE",
+    "GMAIL_DRAFT",
+    "GMAIL_ATTACHMENT",
+    "TASK_LIST",
+    "TASK",
+    "CALENDAR",
+    "CALENDAR_EVENT",
+    "CALENDAR_FREEBUSY",
+    "GITHUB_ISSUE",
+]
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
@@ -59,11 +75,54 @@ for _field, _description in {
     "recipient": "누가 받았는지 명시된 경우만 두고 본문에 등장하는 사람과 구분한다.",
     "subject": "사용자가 제목이라고 명시한 값만 둔다. 추정 제목을 만들지 않는다.",
     "period": "날짜가 제한하는 대상의 원문 기간을 보존하고 시간축이나 연도를 추측하지 않는다.",
-    "status": "원문에 명시된 대상 Resource의 상태만 둔다.",
+    "status": "원문에 명시된 source Resource의 상태만 둔다.",
 }.items():
     cast(dict[str, object], _NAMED_SEARCH_CONSTRAINT_PROPERTIES[_field])["description"] = (
         _description
     )
+_NAMED_SEARCH_CONSTRAINT_PROPERTIES["status"] = {
+    "type": "array",
+    "maxItems": 8,
+    "uniqueItems": True,
+    "description": (
+        "원문에 명시된 source Resource 상태만 둔다. normalized value와 원문 표현을 "
+        "분리하고 output effect나 완료 후 상태를 source scope로 사용하지 않는다."
+    ),
+    "items": {
+        "type": "object",
+        "required": ["value", "source_resource_type", "source", "source_text"],
+        "additionalProperties": False,
+        "properties": {
+            "value": {
+                "enum": sorted(
+                    {
+                        status
+                        for statuses in SOURCE_STATUS_VALUES_BY_RESOURCE.values()
+                        for status in statuses
+                    }
+                )
+            },
+            "source_resource_type": {
+                "enum": sorted(SOURCE_STATUS_VALUES_BY_RESOURCE)
+            },
+            "source": {"enum": ["USER_REQUEST", "CONFIRMATION_RESPONSE"]},
+            "source_text": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+        },
+    },
+}
+
+
+class RequestGoalSemanticValidationError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        affected_field_paths: Sequence[str],
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.affected_field_paths = tuple(affected_field_paths)
 _CONSTRAINT_LIST_SCHEMA = {
     "type": "array",
     "items": {
@@ -84,6 +143,30 @@ _CONSTRAINT_LIST_SCHEMA = {
                     }
                 },
                 "then": {"properties": {"kind": {"const": "USER_REQUIREMENT"}}},
+            },
+            {
+                "if": {
+                    "properties": {
+                        "kind": {"const": "SCOPE"},
+                        "field": {"const": "status"},
+                    },
+                    "required": ["kind", "field"],
+                },
+                "then": {
+                    "required": ["source_resource_type", "provenance"],
+                    "properties": {
+                        "value": {
+                            "enum": sorted(
+                                {
+                                    status
+                                    for statuses in SOURCE_STATUS_VALUES_BY_RESOURCE.values()
+                                    for status in statuses
+                                }
+                            )
+                        },
+                        "provenance": {"required": ["source_text"]},
+                    },
+                },
             },
         ],
         "properties": {
@@ -109,12 +192,26 @@ _CONSTRAINT_LIST_SCHEMA = {
                     },
                 ]
             },
+            "source_resource_type": {"type": "string", "minLength": 1},
+            "provenance": {
+                "type": "object",
+                "required": ["source", "start_offset", "end_offset"],
+                "additionalProperties": False,
+                "properties": {
+                    "source": {"enum": ["USER_REQUEST", "CONFIRMATION_RESPONSE"]},
+                    "start_offset": {"type": "integer", "minimum": 0},
+                    "end_offset": {"type": "integer", "minimum": 1},
+                    "source_text": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+                },
+            },
         },
     },
 }
 _ADDITIONAL_CONSTRAINT_LIST_SCHEMA = deepcopy(_CONSTRAINT_LIST_SCHEMA)
 _additional_items = cast(dict[str, object], _ADDITIONAL_CONSTRAINT_LIST_SCHEMA["items"])
 _additional_properties = cast(dict[str, object], _additional_items["properties"])
+_additional_properties.pop("source_resource_type")
+_additional_properties.pop("provenance")
 _additional_field = cast(dict[str, object], _additional_properties["field"])
 _additional_field["pattern"] = (
     rf"^(?!(?:{'|'.join(REQUEST_GOAL_SLOT_KINDS)})$).+"
@@ -132,9 +229,54 @@ _NAMED_SEARCH_CONSTRAINTS_SCHEMA = {
         "그 밖의 명시적 실행 값은 additional_constraints에 둔다."
     ),
 }
+_RESOURCE_RESPONSIBILITY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["source_reads", "outputs"],
+    "description": (
+        "두 개 이상의 Resource를 READ+Write로 연결할 때 source와 output 책임을 "
+        "명시한다. SOURCE는 Connector가 조회할 기존 사실/identity, OUTPUT은 사용자가 "
+        "요청한 외부 Write다."
+    ),
+    "properties": {
+        "source_reads": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["resource_type", "required_information"],
+                "properties": {
+                    "resource_type": {"enum": _RESOURCE_TYPES},
+                    "required_information": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": True,
+                        "items": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+                    },
+                },
+            },
+        },
+        "outputs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["resource_type", "effect"],
+                "properties": {
+                    "resource_type": {"enum": _RESOURCE_TYPES},
+                    "effect": {"enum": ["CREATE", "UPDATE", "SEND", "DELETE"]},
+                },
+            },
+        },
+    },
+}
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v6",
+    schema_version="request-goal-candidate-v8",
     json_schema={
         "type": "object",
         "required": [
@@ -169,6 +311,22 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "if": {
                     "properties": {
                         "constraints": {
+                            "properties": {"status": {"type": "array", "minItems": 1}},
+                            "required": ["status"],
+                        }
+                    },
+                    "required": ["constraints"],
+                },
+                "then": {
+                    "properties": {
+                        "requested_effect_hints": {"contains": {"const": "READ"}}
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {
+                        "constraints": {
                             "properties": {
                                 "required_information": {"type": "array", "minItems": 1}
                             },
@@ -196,13 +354,32 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "then": {
                         "properties": {
                             "requested_resource_hints": {
-                                "contains": {"enum": resource_types},
+                                "contains": {"enum": sorted(resource_types)},
                             }
                         }
                     },
                 }
-                for effect, resource_types in _WRITE_EFFECT_RESOURCE_TYPES.items()
+                for effect, resource_types in WRITE_EFFECT_RESOURCE_TYPES.items()
             ],
+            {
+                "if": {
+                    "properties": {
+                        "requested_effect_hints": {
+                            "allOf": [
+                                {"contains": {"const": "READ"}},
+                                {
+                                    "contains": {
+                                        "enum": sorted(WRITE_EFFECT_RESOURCE_TYPES)
+                                    }
+                                },
+                            ]
+                        },
+                        "requested_resource_hints": {"minItems": 2},
+                    },
+                    "required": ["requested_effect_hints", "requested_resource_hints"],
+                },
+                "then": {"required": ["resource_responsibilities"]},
+            },
             {
                 "if": {
                     "properties": {
@@ -276,18 +453,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "requested_resource_hints": {
                 "type": "array",
                 "items": {
-                    "enum": [
-                        "GMAIL_THREAD",
-                        "GMAIL_MESSAGE",
-                        "GMAIL_DRAFT",
-                        "GMAIL_ATTACHMENT",
-                        "TASK_LIST",
-                        "TASK",
-                        "CALENDAR",
-                        "CALENDAR_EVENT",
-                        "CALENDAR_FREEBUSY",
-                        "GITHUB_ISSUE",
-                    ]
+                    "enum": _RESOURCE_TYPES
                 },
                 "uniqueItems": True,
                 "description": (
@@ -298,6 +464,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "not a target. Empty when the request needs no external Connector resource."
                 ),
             },
+            "resource_responsibilities": _RESOURCE_RESPONSIBILITY_SCHEMA,
             "analysis_requirement": {
                 "enum": ["NONE", "REQUIRED"],
                 "description": (
@@ -319,6 +486,7 @@ def validate_request_goal_candidate(
     value: object,
     *,
     schema: OutputSchemaDefinition = IDENTIFY_GOAL_OUTPUT_SCHEMA,
+    provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
 ) -> RequestGoalCandidateV1:
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
@@ -329,13 +497,102 @@ def validate_request_goal_candidate(
     normalized_constraints = [
         {"kind": REQUEST_GOAL_SLOT_KINDS[field], "field": field, "value": values}
         for field, values in slots.items()
-        if field in REQUEST_GOAL_SLOT_KINDS and values
+        if field in REQUEST_GOAL_SLOT_KINDS and field != "status" and values
     ]
+    normalized_constraints.extend(
+        _normalize_status_constraints(
+            slots["status"],
+            root=root,
+            provenance_sources=provenance_sources,
+        )
+    )
+    effects = cast(list[str], root["requested_effect_hints"])
+    resources = cast(list[str], root["requested_resource_hints"])
+    try:
+        responsibilities = validate_resource_responsibilities(
+            root.get("resource_responsibilities"),
+            effects=effects,
+            resource_hints=resources,
+            constraints=cast(list[ConstraintV1], normalized_constraints + additional),
+            required=requires_resource_responsibilities(
+                effects=effects,
+                resource_hints=resources,
+            ),
+        )
+    except RequestUnderstandingValidationError as error:
+        raise RequestGoalSemanticValidationError(
+            str(error),
+            reason_code="REQUEST_RESOURCE_RESPONSIBILITY_MISMATCH",
+            affected_field_paths=(
+                "$.resource_responsibilities",
+                "$.requested_effect_hints",
+                "$.requested_resource_hints",
+                "$.constraints.required_information",
+            ),
+        ) from error
     value = {
         **root,
         "constraints": normalized_constraints + additional,
+        **(
+            {"resource_responsibilities": responsibilities}
+            if responsibilities is not None
+            else {}
+        ),
     }
     return cast(RequestGoalCandidateV1, value)
+
+
+def _normalize_status_constraints(
+    value: object,
+    *,
+    root: Mapping[str, object],
+    provenance_sources: Mapping[ConstraintProvenanceSource, str] | None,
+) -> list[dict[str, object]]:
+    bindings = cast(list[Mapping[str, object]], value)
+    if not bindings:
+        return []
+    if provenance_sources is None:
+        raise ValueError("source status requires current-Run provenance sources")
+    effects = cast(list[str], root["requested_effect_hints"])
+    resources = set(cast(list[str], root["requested_resource_hints"]))
+    if "READ" not in effects:
+        raise ValueError("source status requires a READ effect")
+    normalized: list[dict[str, object]] = []
+    identities: set[tuple[str, str, str, str]] = set()
+    for binding in bindings:
+        status = cast(str, binding["value"])
+        resource_type = cast(str, binding["source_resource_type"])
+        source = cast(ConstraintProvenanceSource, binding["source"])
+        source_text = cast(str, binding["source_text"])
+        if resource_type not in resources:
+            raise ValueError("source status resource is not present in requested resource hints")
+        if status not in SOURCE_STATUS_VALUES_BY_RESOURCE.get(resource_type, frozenset()):
+            raise ValueError("source status is not valid for its bound resource")
+        source_value = provenance_sources.get(source)
+        if source_value is None:
+            raise ValueError("source status provenance source is unavailable")
+        start_offset = source_value.find(source_text)
+        if start_offset < 0:
+            raise ValueError("source status text has no current-Run source binding")
+        identity = (status, resource_type, source, source_text)
+        if identity in identities:
+            raise ValueError("source status binding is duplicated")
+        identities.add(identity)
+        normalized.append(
+            {
+                "kind": "SCOPE",
+                "field": "status",
+                "value": status,
+                "source_resource_type": resource_type,
+                "provenance": {
+                    "source": source,
+                    "start_offset": start_offset,
+                    "end_offset": start_offset + len(source_text),
+                    "source_text": source_text,
+                },
+            }
+        )
+    return normalized
 
 
 def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCandidateV1:
@@ -353,6 +610,7 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
 
 __all__ = [
     "IDENTIFY_GOAL_OUTPUT_SCHEMA",
+    "RequestGoalSemanticValidationError",
     "REQUEST_GOAL_SLOT_KINDS",
     "validate_normalized_request_goal_candidate",
     "validate_request_goal_candidate",

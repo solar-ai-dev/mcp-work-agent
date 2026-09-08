@@ -150,6 +150,36 @@ def test_record_activity__no_op_ambiguity_step__emits_no_child_fact() -> None:
     assert emit.call_count == 0
 
 
+def test_record_activity__query_rejection__preserves_specific_safe_cause() -> None:
+    emit = Mock()
+    handler = RecordRunActivityHandler(
+        emit_trace=emit, now_ms=lambda: 7, service_instance_id="test"
+    )
+
+    handler(
+        RecordRunActivityCommand(
+            "run",
+            "retrieval:task",
+            "context_retriever",
+            "STEP_END",
+            {
+                "__context_agent_local__": {
+                    "failure_record": {
+                        "reason_code": "QUERY_PROTECTED_CONSTRAINT_CHANGED",
+                        "diagnostic": "CHANGED SEARCH changes protected STATUS_SCOPE anchor",
+                    }
+                }
+            },
+            detail=("build_query", "검색 조건 검증", "검색 조건의 연속성을 확인했습니다."),
+        )
+    )
+
+    update = emit.call_args.args[0].attributes["detail_updates"][0]
+    assert update["label"] == "검색 변경 거절 원인"
+    assert "QUERY_PROTECTED_CONSTRAINT_CHANGED" in update["value"]
+    assert "STATUS_SCOPE" in update["value"]
+
+
 def test_record_activity__request_and_route_artifacts__preserve_values_and_roles() -> None:
     emit = Mock()
     handler = RecordRunActivityHandler(

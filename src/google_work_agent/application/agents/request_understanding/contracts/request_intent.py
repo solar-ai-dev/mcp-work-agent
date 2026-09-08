@@ -20,12 +20,28 @@ ConstraintKindValue = Literal[
 ]
 ActionEffectValue = Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]
 ConstraintProvenanceSource = Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
+SOURCE_STATUS_VALUES_BY_RESOURCE: dict[str, frozenset[str]] = {
+    "GMAIL_THREAD": frozenset({"ANY", "DRAFT", "SENT"}),
+    "GMAIL_MESSAGE": frozenset({"ANY", "DRAFT", "SENT"}),
+    "GMAIL_DRAFT": frozenset({"ANY", "DRAFT"}),
+    "TASK": frozenset({"ANY", "INCOMPLETE", "COMPLETED"}),
+    "CALENDAR": frozenset({"ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"}),
+    "CALENDAR_EVENT": frozenset({"ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"}),
+    "GITHUB_ISSUE": frozenset({"ANY", "OPEN", "CLOSED"}),
+}
+WRITE_EFFECT_RESOURCE_TYPES: dict[str, frozenset[str]] = {
+    "CREATE": frozenset({"GMAIL_DRAFT", "TASK", "CALENDAR_EVENT", "GITHUB_ISSUE"}),
+    "UPDATE": frozenset({"GMAIL_DRAFT", "TASK", "CALENDAR_EVENT", "GITHUB_ISSUE"}),
+    "SEND": frozenset({"GMAIL_MESSAGE"}),
+    "DELETE": frozenset({"TASK", "CALENDAR_EVENT"}),
+}
 
 
 class ConstraintProvenanceV1(TypedDict):
     source: ConstraintProvenanceSource
     start_offset: int
     end_offset: int
+    source_text: NotRequired[str]
 
 
 class ConstraintV1(TypedDict):
@@ -33,6 +49,7 @@ class ConstraintV1(TypedDict):
     field: str
     value: str | list[str]
     provenance: NotRequired[ConstraintProvenanceV1]
+    source_resource_type: NotRequired[str]
 
 
 class AmbiguityV1(TypedDict):
@@ -41,12 +58,28 @@ class AmbiguityV1(TypedDict):
     missing_fields: list[str]
 
 
+class SourceResourceResponsibilityV1(TypedDict):
+    resource_type: str
+    required_information: list[str]
+
+
+class OutputResourceResponsibilityV1(TypedDict):
+    resource_type: str
+    effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+
+
+class ResourceResponsibilitiesV1(TypedDict):
+    source_reads: list[SourceResourceResponsibilityV1]
+    outputs: list[OutputResourceResponsibilityV1]
+
+
 class RequestGoalCandidateV1(TypedDict):
     goal: str
     completion_conditions: list[str]
     constraints: list[ConstraintV1]
     requested_effect_hints: list[ActionEffectValue]
     requested_resource_hints: list[str]
+    resource_responsibilities: NotRequired[ResourceResponsibilitiesV1]
     analysis_requirement: Literal["NONE", "REQUIRED"]
 
 
@@ -58,6 +91,10 @@ class RequestIntentCandidateV1(RequestGoalCandidateV1):
 class RequestIntentV2(RequestIntentCandidateV1):
     meta: StateArtifactMetaV1
     repository_default: NotRequired[dict[str, object]]
+
+
+def is_source_status_constraint(constraint: ConstraintV1) -> bool:
+    return constraint["kind"] == "SCOPE" and constraint["field"] == "status"
 
 
 def validated_repository_authority(

@@ -349,6 +349,67 @@ def test_existing_gmail_thread_reply__thread_input_hint__routes_through_retrieva
     assert runtime.calls == []
 
 
+def test_cross_resource_responsibilities__deterministically_project_input_and_output() -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-source-output", "revision": 1, "based_on": []},
+            "goal": "use an existing message fact to create a task",
+            "completion_conditions": ["task is created from the retrieved fact"],
+            "constraints": [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "required_information",
+                    "value": ["follow-up owner"],
+                }
+            ],
+            "requested_effect_hints": ["READ", "CREATE"],
+            "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
+            "resource_responsibilities": {
+                "source_reads": [
+                    {
+                        "resource_type": "GMAIL_THREAD",
+                        "required_information": ["follow-up owner"],
+                    }
+                ],
+                "outputs": [{"resource_type": "TASK", "effect": "CREATE"}],
+            },
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-source-output",
+        conversation_id="conversation",
+        workflow_key="thread",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="find the owner in the mail and create a task",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[])
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate.input_resource_types == ("GMAIL_THREAD",)
+    assert candidate.output_pairs == (("TASK", EffectType.CREATE),)
+    assert runtime.calls == []
+
+
 def test_calendar_create__uses_exact_validated_intent__without_llm() -> None:
     catalog = load_signed_tool_registry()
     intent: RequestIntentV2 = {

@@ -1543,8 +1543,11 @@ class RetrievalSubgraph:
                 )
             )
             canonical_plans = cast(list[SourceFetchPlanV1], patch["source_fetch_plans"])
-        except RetrievalV2ValidationError:
-            return self._close_unmaterializable_followup(state)
+        except RetrievalV2ValidationError as error:
+            return self._close_unmaterializable_followup(
+                state,
+                validation_error=error,
+            )
         operations = {plan["operation_kind"] for plan in canonical_plans}
         if operations == {"NEXT_PAGE"}:
             return {
@@ -1586,6 +1589,8 @@ class RetrievalSubgraph:
     def _close_unmaterializable_followup(
         self,
         state: ContextRetrievalLocalState,
+        *,
+        validation_error: RetrievalV2ValidationError | None = None,
     ) -> ContextRetrievalLocalState:
         """Close a planned follow-up that cannot produce a distinct read."""
 
@@ -1600,8 +1605,22 @@ class RetrievalSubgraph:
         current_round_no = working_state[CONTEXT_CURRENT_ROUND_NO_KEY]
         if working_state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True:
             current_round_no = max(0, current_round_no - 1)
+        local_state = cast(AgentLocalStateV1, working_state[CONTEXT_AGENT_LOCAL_KEY])
+        updated_local = dict(local_state)
+        if validation_error is not None:
+            updated_local["node_state"] = "QUERY_BUILD_REJECTED"
+            updated_local["candidate_output"] = cast(
+                dict[str, object], working_state.get("query_plan")
+            )
+            updated_local["failure_record"] = {
+                "schema_version": 1,
+                "reason_code": validation_error.reason_code,
+                "diagnostic": str(validation_error),
+                "retryable": False,
+            }
         return {
             **working_state,
+            CONTEXT_AGENT_LOCAL_KEY: cast(AgentLocalStateV1, updated_local),
             CONTEXT_SUFFICIENCY_OUTPUT_KEY: sufficiency,
             "sufficiency": sufficiency,
             "retry_budget": retry_budget,

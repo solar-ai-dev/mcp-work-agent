@@ -125,6 +125,7 @@ def preserve_gmail_search_semantics(
         request_intent.get("constraints"),
         now_ms=now_ms,
         timezone=timezone,
+        source_resource_type=gmail_routes[0]["resource_type"],
     )
     concepts = _requested_concepts(request_intent.get("constraints"))
     if (not explicit_constraints and not concepts) or not isinstance(value, Mapping):
@@ -198,31 +199,8 @@ def validate_gmail_search_role_separation(
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping) or not isinstance(value, Mapping):
         return
-    explicit_constraints = _explicit_gmail_constraints(
-        intent.get("constraints"),
-        now_ms=None,
-        timezone=None,
-    )
-    expected_keywords = next(
-        (
-            {_normalized_text(term) for term in cast(list[str], item["terms"])}
-            for item in explicit_constraints
-            if item["kind"] == "KEYWORD"
-        ),
-        set(),
-    )
-    expected_statuses = next(
-        (
-            set(cast(list[str], item["values"]))
-            for item in explicit_constraints
-            if item["kind"] == "STATUS_SCOPE"
-        ),
-        set(),
-    )
-    if not expected_keywords or not expected_statuses:
-        return
-    gmail_route_ids = {
-        route["route_id"]
+    gmail_routes = {
+        route["route_id"]: route
         for route in frozen_routes
         if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
     }
@@ -232,9 +210,34 @@ def validate_gmail_search_role_separation(
     for query in route_queries:
         if (
             not isinstance(query, Mapping)
-            or query.get("route_id") not in gmail_route_ids
+            or query.get("route_id") not in gmail_routes
             or query.get("operation") != "SEARCH"
         ):
+            continue
+        route = gmail_routes[cast(str, query["route_id"])]
+        explicit_constraints = _explicit_gmail_constraints(
+            intent.get("constraints"),
+            now_ms=None,
+            timezone=None,
+            source_resource_type=route["resource_type"],
+        )
+        expected_keywords = next(
+            (
+                {_normalized_text(term) for term in cast(list[str], item["terms"])}
+                for item in explicit_constraints
+                if item["kind"] == "KEYWORD"
+            ),
+            set(),
+        )
+        expected_statuses = next(
+            (
+                set(cast(list[str], item["values"]))
+                for item in explicit_constraints
+                if item["kind"] == "STATUS_SCOPE"
+            ),
+            set(),
+        )
+        if not expected_keywords or not expected_statuses:
             continue
         search_spec = query.get("search_spec")
         if not isinstance(search_spec, Mapping) or search_spec.get("mode") != "INITIAL":
@@ -313,6 +316,7 @@ def _explicit_gmail_constraints(
     *,
     now_ms: int | None,
     timezone: str | None,
+    source_resource_type: str | None = None,
 ) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
@@ -363,6 +367,13 @@ def _explicit_gmail_constraints(
         elif kind == "USER_REQUIREMENT" and field == "business_concepts":
             business_concepts.extend(exact_values)
         elif kind == "SCOPE" and field == "status":
+            bound_resource_type = item.get("source_resource_type")
+            if (
+                source_resource_type is not None
+                and isinstance(bound_resource_type, str)
+                and bound_resource_type != source_resource_type
+            ):
+                continue
             statuses.extend(
                 canonical
                 for entry in exact_values

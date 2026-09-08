@@ -722,17 +722,31 @@ class ConstraintProvenanceV1:
     source: Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
     start_offset: int
     end_offset: int
+    source_text: str | None = None
 
 class ConstraintV1:
     kind: Literal["PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"]
     field: str
     value: str | list[str]
     provenance: ConstraintProvenanceV1 | None = None
+    source_resource_type: str | None = None
 
 class AmbiguityV1:
     requires_confirmation: bool
     reason_codes: list[str]
     missing_fields: list[str]
+
+class SourceResourceResponsibilityV1:
+    resource_type: str
+    required_information: list[str]
+
+class OutputResourceResponsibilityV1:
+    resource_type: str
+    effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+
+class ResourceResponsibilitiesV1:
+    source_reads: list[SourceResourceResponsibilityV1]
+    outputs: list[OutputResourceResponsibilityV1]
 
 class RequestIntentV2:
     schema_version: Literal[2]
@@ -742,6 +756,7 @@ class RequestIntentV2:
     constraints: list[ConstraintV1]
     requested_effect_hints: list[Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]]
     requested_resource_hints: list[str]
+    resource_responsibilities: ResourceResponsibilitiesV1 | None = None
     analysis_requirement: Literal["NONE", "REQUIRED"]
     ambiguity: AmbiguityV1
 ```
@@ -749,6 +764,7 @@ class RequestIntentV2:
 | 필드·상황 | 해석 |
 | --- | --- |
 | requested hints | 사용자 요청의 의미적 힌트다. Registry Tool 이름이 아니며 목표·완료조건·제약 밖의 Route나 Arguments를 허용하지 않는다. |
+| resource_responsibilities | 기존 source를 조회해 다른 output에 Write하는 교차-Resource 요청에서만 source/output 해결 책임을 보존한다. `source_reads`는 Connector가 해결할 required_information을, `outputs`는 사용자 요청의 Write effect를 가진다. 같은 Resource type을 양쪽에 중복하지 않으며 requested hints와 정확히 일치해야 한다. |
 | ambiguity candidate | `missing_information_owner: NONE \| USER \| CONNECTOR`를 반환한다. CONNECTOR는 Retrieval로 해소하고 USER만 Confirmation으로 보낸다. candidate-only 분류를 확정 AmbiguityV1에 저장하지 않는다. |
 | RESOURCE_SELECTED | 검증된 selected_resource_refs를 identify_goal·detect_ambiguity에 동일하게 전달한다. READ로 얻을 수 있는 본문·제목·발신자는 user-owned missing choice가 아니다. |
 | 실제 사용자 선택 | recipient·시간·범위 등 사용자만 결정할 값은 선택 Resource가 있어도 자동 보완하지 않는다. Write의 필수 선택 누락은 Confirmation을 유지한다. |
@@ -761,6 +777,15 @@ class RequestIntentV2:
 - Provider identity로 사용되는 constraint는 finalized `RequestIntentV2`에 들어가기 전에 `request.finalize`의 기존 `finalize_intent → validate_intent` 단계에서 deterministic provenance 검증을 통과해야 한다. LLM은 constraint와 source span 후보를 제안할 수 있을 뿐 `provenance`를 확정하는 authority가 아니다.
 
 - `start_offset:end_offset`은 `source`가 가리키는 현재 Run의 정확한 사용자 요청 또는 동일 Run Confirmation 응답 문자열에 대한 half-open span이다. 결정적 validator가 범위와 exact source slice를 constraint 값에 대조한 뒤에만 `ConstraintProvenanceV1`을 부여한다. 대조되지 않은 LLM 선언은 authority가 아니며 identity-bearing constraint로 사용할 수 없다.
+- 정규화 값과 원문 표현이 다른 source scope는 `source_text`로 정확한 원문 span을 보존한다. 특히 `SCOPE.status`는 `source_resource_type`을 함께 가져야 하며, 원문 또는 동일 Run Confirmation에 명시된 source Resource 상태만 허용한다. Output effect·완료 후 기대 상태·다른 Resource 상태는 source search scope의 provenance가 아니다. LLM이 제안한 `source_text`와 Resource binding은 `finalize_intent → validate_intent`가 현재 Run source와 대조하며, 단순한 canonical status 문자열 포함 검사로 대체하지 않는다.
+
+#### Source/output resolution responsibility
+
+- 두 개 이상의 Resource가 `READ + Write`로 결합되는 요청은 `resource_responsibilities` 없이 확정하지 않는다. 평면 resource/effect 목록을 downstream이 다시 source/output으로 분류하게 두지 않는다.
+- `source_reads`의 각 항목은 `resource_type`과 Connector가 해결할 기존 사실 또는 exact resource identity인 `required_information`을 가진다. Retrieval 전 부재는 user-owned missing choice가 아니다.
+- `outputs`의 각 항목은 `resource_type`과 `CREATE | UPDATE | SEND | DELETE` 중 하나인 `effect`를 가진다. 같은 Write 결과의 Verification reread는 별도 source read 책임으로 만들지 않는다.
+- source/output 책임을 투영한 Resource와 Effect 집합은 `requested_resource_hints`와 `requested_effect_hints`에 정확히 일치해야 한다. 불일치·중복 역할·SOURCE/OUTPUT 의미 충돌은 Provider 호출 전 Request Understanding validator가 거절한다.
+- Tool Route는 검증된 책임을 IN Resource와 OUT Resource/Effect로 결정적으로 투영한다. Tool 이름과 Registry binding은 계속 Tool Route owner가 소유한다.
 
 **GitHub repository와 선택 Issue**
 
@@ -1158,6 +1183,7 @@ class RequestGoalCandidateV1:
     constraints: list[ConstraintV1]
     requested_effect_hints: list[Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]]
     requested_resource_hints: list[str]
+    resource_responsibilities: ResourceResponsibilitiesV1 | None
     analysis_requirement: Literal["NONE", "REQUIRED"]
 
 class RequestUnderstandingStateV2:

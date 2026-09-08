@@ -147,6 +147,37 @@ def test_gmail_draft_source__with_structured_status__preserves_lexical_anchor() 
     assert arguments["query"] == '"Quartz 납품 회신 검토" in:drafts'
 
 
+def test_gmail_status__bound_to_other_source_resource__does_not_cross_routes() -> None:
+    intent = {
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["Quartz"],
+            },
+            {
+                "kind": "SCOPE",
+                "field": "status",
+                "value": "DRAFT",
+                "source_resource_type": "GMAIL_DRAFT",
+            },
+        ]
+    }
+
+    planned = preserve_gmail_search_semantics(
+        _plan([]),
+        prompt_input={"request_intent": intent},
+        frozen_routes=[ROUTE],
+        now_ms=None,
+        timezone=None,
+    )
+    constraints = planned["route_queries"][0]["search_spec"]["constraints"]
+
+    assert constraints == [
+        {"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "PHRASE"}
+    ]
+
+
 def test_gmail_draft_source__with_status_word_subject__preserves_lexical_value() -> None:
     intent = {
         "constraints": [

@@ -595,6 +595,23 @@ def _step_details(
         if isinstance(plan, Mapping) and _is_validated_artifact("tool_route_plan", plan):
             return _artifact_details("tool_route_plan", plan)
         return []
+    if step_key == "build_query":
+        local_state = output.get("__context_agent_local__")
+        if not isinstance(local_state, Mapping):
+            return []
+        failure = local_state.get("failure_record")
+        if not isinstance(failure, Mapping) or not isinstance(
+            failure.get("reason_code"), str
+        ):
+            return []
+        diagnostic = failure.get("diagnostic")
+        suffix = f": {diagnostic}" if isinstance(diagnostic, str) and diagnostic else ""
+        return [
+            {
+                "label": "검색 변경 거절 원인",
+                "value": f"{failure['reason_code']}{suffix}"[:512],
+            }
+        ]
     if step_key == "execute_read":
         execution = output.get("read_execution")
         if not isinstance(execution, RetrievalReadExecutionV1):

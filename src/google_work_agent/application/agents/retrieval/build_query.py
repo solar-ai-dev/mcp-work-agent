@@ -273,7 +273,12 @@ def _validate_anchor_continuity(
             }:
                 continue
         raise RetrievalV2ValidationError(
-            f"CHANGED SEARCH changes protected {previous['kind']} anchor"
+            f"CHANGED SEARCH changes protected {previous['kind']} anchor",
+            reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraint_delta",
+                f"$.source_fetch_plans[].effective_constraints[?(@.kind=='{previous['kind']}')]",
+            ),
         )
 
 

@@ -99,7 +99,7 @@ def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
     }
 
 
-def test_connector_owned_information__proceeds_without_confirmation() -> None:
+def test_connector_owned_information__before_retrieval__proceeds_without_confirmation() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -150,7 +150,7 @@ def test_connector_owned_information__proceeds_without_confirmation() -> None:
     }
 
 
-def test_connector_need_reclassified_as_user__uses_bounded_semantic_revision() -> None:
+def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_revision() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {

@@ -216,6 +216,9 @@ def _exact_intent_candidate(
 ) -> SemanticRouteCandidate | None:
     if request_intent["ambiguity"]["requires_confirmation"]:
         return None
+    responsibility_candidate = _resource_responsibility_candidate(request_intent)
+    if responsibility_candidate is not None:
+        return responsibility_candidate
     resource_types = tuple(dict.fromkeys(request_intent["requested_resource_hints"]))
     effect_values = tuple(dict.fromkeys(request_intent["requested_effect_hints"]))
     selected_types = _selected_input_resource_types(request)
@@ -298,6 +301,30 @@ def _exact_intent_candidate(
         output_mode="ACTION",
         analysis_requirement=request_intent["analysis_requirement"],
         input_reason_codes=input_reason_codes,
+    )
+
+
+def _resource_responsibility_candidate(
+    request_intent: RequestIntentV2,
+) -> SemanticRouteCandidate | None:
+    responsibilities = request_intent.get("resource_responsibilities")
+    if not responsibilities:
+        return None
+    input_resources = tuple(
+        item["resource_type"] for item in responsibilities["source_reads"]
+    )
+    output_pairs = tuple(
+        (item["resource_type"], EffectType(item["effect"]))
+        for item in responsibilities["outputs"]
+    )
+    return SemanticRouteCandidate(
+        input_resource_types=input_resources,
+        output_pairs=output_pairs,
+        output_mode="ACTION" if output_pairs else "ANSWER",
+        analysis_requirement=request_intent["analysis_requirement"],
+        input_reason_codes=tuple(
+            (resource_type, "REQUESTED_INPUT") for resource_type in input_resources
+        ),
     )
 
 

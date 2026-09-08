@@ -382,6 +382,7 @@ prior SourceFetchPlanV1.effective_constraints
 | Upsert | `kind`별 기존 값을 교체하거나 추가한다. 같은 Route의 effective set에 동일 `kind`를 중복 보유하지 않는다. |
 | Remove | 해당 `kind` 전체를 제거한다. Frozen Route·Policy Precondition의 필수 constraint는 제거하지 못한다. |
 | 사용자 제약 | Temporal role/window, resource/container identity, 상태, 확정 participant, lexical anchor를 보존한다. |
+| 보호 제약 변경 | Follow-up이 provenance-validated 상태·identity·lexical anchor를 제거하거나 다른 역할로 바꾸면 `QUERY_PROTECTED_CONSTRAINT_CHANGED`로 차단하고 구체 affected path를 Trace에 보존한다. |
 | Concept | 같은 concept 안에서 manifestation만 변경한다. |
 | 인물 탐색어 전환 | 이름 discovery KEYWORD를 제거하려면 current-Run typed person candidate의 유일한 identity 또는 검증된 Confirmation 선택과 일치하는 exact PARTICIPANT로 전환해야 한다. LLM reason code만으로 허용하지 않는다. |
 | 무변경 | Merge 뒤 의미가 같으면 `QUERY_UNCHANGED_AFTER_FAILURE`로 차단한다. 새 Round로 인정하지 않는다. |

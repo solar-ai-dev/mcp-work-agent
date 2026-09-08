@@ -175,8 +175,10 @@ def test_build_query__changed_search__protects_anchor_values(kind: str, remove: 
         "upsert_constraints": [] if remove else [cast(SemanticRetrievalConstraintV1, changed)],
         "remove_constraint_kinds": [kind] if remove else [],
     }}
-    with pytest.raises(RetrievalV2ValidationError, match="protected"):
+    with pytest.raises(RetrievalV2ValidationError, match="protected") as raised:
         build_query(plan, prior_plans={"r": prior}, **kwargs)
+    assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
+    assert raised.value.affected_field_paths
 
 
 @pytest.mark.parametrize("provenance,identity,allowed", [

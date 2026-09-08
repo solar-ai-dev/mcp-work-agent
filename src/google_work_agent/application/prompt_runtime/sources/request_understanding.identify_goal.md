@@ -20,10 +20,28 @@
 - `sender`, `recipient`: 명시된 발신자·수신자 역할
 - `subject`: 사용자가 제목임을 명시한 exact value
 - `period`: 원문 기간. message/event 시간축은 이 호출에서 결정하지 않는다.
-- `status`: 소스 resource의 상태·scope. Gmail은 schema의 canonical value `ANY`, `DRAFT`, `SENT`만 사용한다.
+- `status`: 소스 resource의 상태·scope. 각 항목은 schema가 요구하는 객체로 작성한다.
+  - `value`: source 상태를 schema의 canonical value로 정규화한 값
+  - `source_resource_type`: 이 상태가 검색 범위를 제한하는 source Resource
+  - `source`: 근거가 나온 현재 Run 입력
+  - `source_text`: 상태·scope를 실제로 표현한 근거 입력의 exact phrase
 - `additional_constraints`: 이름 있는 슬롯에 해당하지 않는 명시적 실행 값만 `kind/field/value`로 둔다.
 
 같은 사실을 두 역할에 중복하지 않는다. 상태·scope는 `status`, 사람은 `person/sender/recipient`, 기간은 `period`, 명시적 제목은 `subject`가 소유한다. 업무 대상과 확인할 속성은 `business_concepts`와 `required_information`으로 나눈다. 일반 역할명이나 집합 명사를 PERSON identity로 만들지 않는다.
+
+# resource_responsibilities 역할
+
+기존 source Resource를 READ해서 다른 output Resource에 Write하는 교차-Resource 요청은 `resource_responsibilities` 객체로 역할을 분리한다.
+
+- `source_reads`: 각 항목은 `resource_type`과 그 Resource에서 조회할 기존 사실 또는 exact identity인 `required_information`만 가진다.
+- `outputs`: 각 항목은 `resource_type`과 사용자가 요청한 `CREATE | UPDATE | SEND | DELETE`인 `effect`만 가진다.
+- SOURCE의 required_information 전체는 constraints.required_information과 같아야 한다.
+- 모든 responsibility의 resource_type/effect를 합친 집합은 requested_resource_hints/requested_effect_hints와 같아야 한다.
+- source와 output을 같은 Resource type으로 중복 지정하지 않는다. 한 type으로 두 역할을 구분할 수 없는 복합 요청은 임의로 합치지 않는다.
+
+교차-Resource가 아닌 요청에서는 이 필드를 생략할 수 있다. Write 결과를 독립적으로 다시 읽는 Verification은 SOURCE가 아니다.
+
+`status.source_text`는 canonical `value`의 문자열을 찾는 용도가 아니다. 입력에서 source 상태나 검색 scope를 실제로 표현한 구간을 그대로 복사한다. 프로젝트명·제목·출력 행동·원하는 완료 상태를 상태 근거로 사용하지 않는다. 현재 Run 입력에 source 상태 표현이 없으면 `status`는 `[]`다. selected resource ref는 source identity를 근거로 제공하지만, 그 자체만으로 언급되지 않은 상태를 만들지는 않는다.
 
 # resource/effect 의미
 
@@ -34,6 +52,8 @@
 - `DELETE`: 기존 외부 resource 제거가 필요하다.
 
 이 구분은 원문 token이 아니라 완료 조건에 필요한 외부 효과로 판단한다. 소스를 조회해 다른 resource를 변경하는 요청은 source `READ` 입력과 output effect/resource를 모두 보존한다. 같은 WRITE 결과의 재조회는 Verification이지 별도 업무 `READ`가 아니다. 기존 Thread Reply와 기존 Draft 사용은 해당 source resource를 input으로 보존하고, standalone message는 기존 Thread를 임의로 input에 추가하지 않는다.
+
+`CREATE`는 실행 뒤 별도의 새 외부 resource가 지속되어야 할 때만 사용한다. `SEND`할 message payload를 내부에서 작성하는 과정은 외부 resource `CREATE`가 아니며, 별도 Draft 저장 요청이 없다면 `GMAIL_DRAFT`를 추가하지 않는다. 기존 resource의 사실이나 reply identity가 필요한 전송은 source `READ`와 해당 source resource, output `SEND`와 `GMAIL_MESSAGE`를 함께 보존한다.
 
 `required_information`에 Connector가 해결할 사실 또는 source identity가 있으면 WRITE가 최종 결과여도 `READ`를 생략하지 않는다. Gmail Message 전송 전에 기존 대화나 Draft를 찾아야 한다면 output `GMAIL_MESSAGE`와 별도로 source `GMAIL_THREAD` 또는 `GMAIL_DRAFT`를 보존한다. 반대로 수신자·제목·본문이 모두 사용자 원문에서 완결된 standalone Message에는 `required_information`, source `READ`, 기존 Thread binding을 만들지 않는다.
 
@@ -49,6 +69,8 @@
 
 # 출력 전 검증
 
+입력이 `base_projection`, `candidate_output`, `failure_record`를 포함한 semantic revision이면 failure_record의 affected fields만 수정한다. 최초 후보가 이미 Connector-owned source fact/identity를 `required_information` 또는 `source_reads`로 식별했다면 이를 삭제해 standalone 요청으로 축소하지 않는다. 잘못 추가한 output effect/resource는 제거할 수 있지만, source need와 READ 책임은 올바른 source Resource에 다시 결합한다.
+
 1. goal과 completion_conditions가 사용자가 요청한 결과만 담는가?
 2. 각 constraint가 하나의 의미 역할에만 배치되었는가?
 3. 따옴표 literal과 명시적 identity가 원문과 정확히 같은가?
@@ -56,5 +78,8 @@
 5. 요청하지 않은 resource, effect, identity, date, title을 추가하지 않았는가?
 6. analysis_requirement이 실제 파생 분석 필요와 일치하는가?
 7. required_information이 있는 WRITE라면 source READ와 source resource가 output resource와 함께 남아 있는가?
+8. 각 status가 source Resource와 exact source_text에 결합되어 있으며 output effect나 desired state를 source scope로 전이하지 않았는가?
+9. SEND payload 작성 자체를 CREATE로 중복 계산하거나, 기존 source의 사실·identity가 필요한데 READ/source resource를 누락하지 않았는가?
+10. 교차-Resource READ+Write라면 resource_responsibilities가 SOURCE/OUTPUT을 분리하고 평면 hints 및 required_information과 정확히 일치하는가?
 
 지정된 JSON schema와 일치하는 객체 하나만 반환한다.
