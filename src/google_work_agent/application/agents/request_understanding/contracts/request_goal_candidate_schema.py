@@ -134,7 +134,7 @@ _NAMED_SEARCH_CONSTRAINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v5",
+    schema_version="request-goal-candidate-v6",
     json_schema={
         "type": "object",
         "required": [
@@ -185,6 +185,29 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 }
                 for effect, resource_types in _WRITE_EFFECT_RESOURCE_TYPES.items()
             ],
+            {
+                "if": {
+                    "properties": {
+                        "constraints": {
+                            "properties": {
+                                "additional_constraints": {
+                                    "contains": {
+                                        "properties": {"field": {"const": "repository"}},
+                                        "required": ["field"],
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "requested_resource_hints": {
+                            "contains": {"const": "GITHUB_ISSUE"}
+                        }
+                    }
+                },
+            },
         ],
         "properties": {
             "goal": {

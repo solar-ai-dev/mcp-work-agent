@@ -74,6 +74,33 @@ test("Task List discovery failure is not an empty list and refresh can recover",
   await screen.findByText("사용 가능한 태스크 목록이 없습니다.");
 });
 
+test("Task refresh replaces a selected resource handle without duplicating its identity", async () => {
+  let currentHandle = "stale-handle";
+  vi.spyOn(resourceApi, "getResourceCount").mockResolvedValue({ schema_version: 1, source: "gmail", exact_count: 0, as_of_ms: 1 });
+  vi.spyOn(resourceApi, "listTaskLists").mockResolvedValue({ schema_version: 1, items: [], next_page_token: null });
+  vi.spyOn(resourceApi, "listResources").mockImplementation(async (request) => request.source === "tasks" && request.statusScope !== "completed"
+    ? { ...emptyPage, total_count: 1, items: [{ ...taskItem("task-1", "list-1"), selection_handle: currentHandle }] }
+    : emptyPage);
+  const onProjectionChange = vi.fn();
+  render(<ResourceSidebar {...sidebarProps({ onProjectionChange })} />);
+  fireEvent.click(screen.getByRole("tab", { name: /태스크/ }));
+  const selection = await screen.findByRole("checkbox", { name: "task-1 선택" });
+  fireEvent.click(selection);
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    selectedContext: expect.objectContaining({ selectionHandles: ["stale-handle"] }),
+  })));
+
+  currentHandle = "current-handle";
+  fireEvent.click(screen.getByRole("button", { name: "현재 목록 새로고침" }));
+
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    selectedContext: expect.objectContaining({
+      resourceIds: ["task-1"],
+      selectionHandles: ["current-handle"],
+    }),
+  })));
+});
+
 test("Account change discards stale Task List discovery and selected container", async () => {
   mockBrowse();
   let resolveOld!: (value: Awaited<ReturnType<typeof resourceApi.listTaskLists>>) => void;

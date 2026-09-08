@@ -30,6 +30,27 @@ test("Task preview resolves the actual Task List name across continuation pages"
   expect(fetchMock.mock.calls[1][0]).toContain("page_token=next");
 });
 
+test("Task completion preview shows the exact target, list, and requested status", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ tasklist_id: "target", title: "검증용 목록" }], next_page_token: null }), { status: 200, headers: { "content-type": "application/json" } }));
+  const action = {
+    ...taskAction(),
+    tool_name: "tasks_update_task",
+    effect_type: "UPDATE",
+    arguments: {
+      task_list_id: "target",
+      task_id: "task-1",
+      payload: { status: "completed" },
+    },
+    editable_fields: [],
+  };
+
+  render(<ActionPlanCard {...propsFor(action)} />);
+
+  expect(await screen.findByText("검증용 목록")).toBeVisible();
+  expect(screen.getByText("task-1")).toBeVisible();
+  expect(screen.getByText("완료")).toBeVisible();
+});
+
 function taskAction(): RunAction {
   return { action_id: "task", tool_name: "tasks_create_task", arguments: { task_list_id: "@default", payload: { title: "회의록 공유", notes: "기존 메모", scheduled_date: "2026-09-11" } }, status: "PROPOSED", version: 0, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: {}, next_allowed_commands: ["APPROVE_ACTION", "MODIFY_ACTION", "REJECT_ACTION"], required_acknowledgements: [], editable_fields: ["title", "notes", "due"], attachment_allowed: false, delivery_certainty: null };
 }

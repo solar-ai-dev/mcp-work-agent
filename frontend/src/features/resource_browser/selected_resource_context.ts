@@ -7,17 +7,31 @@ export type SelectedResourceContext = {
   labels: string[];
 };
 
+export function isSameResourceIdentity(left: ResourceItem, right: ResourceItem): boolean {
+  return left.source === right.source
+    && left.resource_type === right.resource_type
+    && left.resource_id === right.resource_id
+    && (left.parent_id ?? null) === (right.parent_id ?? null);
+}
+
 export function buildSelectedResourceContext(
   items: ResourceItem[],
   labelFor: (item: ResourceItem) => string = (item) => item.title,
 ): SelectedResourceContext {
+  const selectedByIdentity = new Map<string, ResourceItem>();
+  for (const item of items) {
+    const identity = [item.source, item.resource_type, item.parent_id ?? "", item.resource_id]
+      .join("\u0000");
+    const handle = item.selection_handle.trim();
+    if (!handle || (!selectedByIdentity.has(identity) && selectedByIdentity.size >= 20)) continue;
+    selectedByIdentity.set(identity, { ...item, selection_handle: handle });
+  }
   const selected: ResourceItem[] = [];
   const seenHandles = new Set<string>();
-  for (const item of items) {
-    const handle = item.selection_handle.trim();
-    if (!handle || seenHandles.has(handle) || selected.length >= 20) continue;
-    seenHandles.add(handle);
-    selected.push({ ...item, selection_handle: handle });
+  for (const item of selectedByIdentity.values()) {
+    if (seenHandles.has(item.selection_handle)) continue;
+    seenHandles.add(item.selection_handle);
+    selected.push(item);
   }
   return {
     items: selected,

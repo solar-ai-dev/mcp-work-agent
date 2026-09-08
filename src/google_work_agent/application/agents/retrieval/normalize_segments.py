@@ -19,6 +19,9 @@ from google_work_agent.application.agents.retrieval.contracts.segment_identity i
 from google_work_agent.application.agents.retrieval.format_calendar_freebusy_evidence import (
     format_calendar_freebusy_evidence,
 )
+from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
+    strip_resource_recovery_marker,
+)
 from google_work_agent.ports.connector.contracts.gmail_message_evidence import (
     MAX_THREAD_EVIDENCE_MESSAGES,
 )
@@ -319,6 +322,22 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
         if isinstance(description, str) and description.strip():
             fields.append(f"description:\n{description.strip()}")
         return "\n".join(fields)
+    if resource_type == "task":
+        fields = []
+        parent_id = resource.get("parent_id")
+        if isinstance(parent_id, str) and parent_id.strip():
+            fields.append(f"task_list_id: {parent_id.strip()}")
+        for key in ("title", "status", "due"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                fields.append(f"{key}: {value.strip()}")
+        notes = payload.get("notes")
+        if isinstance(notes, str):
+            visible_notes = strip_resource_recovery_marker(notes)
+            if visible_notes is not None and visible_notes.strip():
+                fields.append(f"notes:\n{visible_notes.strip()}")
+        if fields:
+            return "\n".join(fields)
     parts: list[str] = []
     if resource_type in _GMAIL_RESOURCE_TYPES:
         # Metadata was acquired by the provider, not inferred from the snippet.

@@ -25,3 +25,13 @@ test("buildSelectedResourceContext keeps only ordered opaque handles and present
   expect(result.resourceIds).toEqual(["provider-id-a", "provider-id-c"]);
   expect(result.labels).toEqual(["label:provider-id-a", "label:provider-id-c"]);
 });
+
+test("buildSelectedResourceContext keeps the newest handle for one resource identity", () => {
+  const result = buildSelectedResourceContext([
+    item("provider-id-a", "stale-handle"),
+    item("provider-id-a", "current-handle"),
+  ]);
+
+  expect(result.resourceIds).toEqual(["provider-id-a"]);
+  expect(result.selectionHandles).toEqual(["current-handle"]);
+});

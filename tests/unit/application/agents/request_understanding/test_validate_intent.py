@@ -11,6 +11,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     validated_repository_authority,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
+    repository_authority_requires_confirmation,
     validate_intent,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
@@ -79,10 +80,6 @@ def test_repository_default__settings_provenance__yields_to_explicit_and_selecte
 
 
 def test_repository_default__bare_explicit_name__still_requires_confirmation() -> None:
-    from google_work_agent.application.agents.request_understanding.validate_intent import (
-        repository_authority_requires_confirmation,
-    )
-
     default = GitHubRepositoryDefaultV1("default/project", 1, "github:2")
     assert repository_authority_requires_confirmation(
         [{"kind": "RESOURCE", "field": "repository", "value": "project"}],
@@ -99,6 +96,16 @@ def test_repository_default__bare_explicit_name__still_requires_confirmation() -
         selected_resources=[],
         repository_required=True,
         repository_default=default,
+    )
+
+
+def test_repository_confirmation__for_non_github_target__does_not_apply() -> None:
+    assert not repository_authority_requires_confirmation(
+        [{"kind": "RESOURCE", "field": "repository", "value": "invented-name"}],
+        user_request="선택한 할 일을 수정해줘",
+        confirmation_response_text=None,
+        selected_resources=[],
+        repository_required=False,
     )
 
 

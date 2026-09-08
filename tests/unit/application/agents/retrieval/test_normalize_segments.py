@@ -100,6 +100,50 @@ def test_github_issue__preserves_observed_metadata__separately_from_description(
     assert normalize_segments(result)[0].segment_id == segment.segment_id
 
 
+def test_task_detail__with_observed_business_fields__preserves_target_and_values() -> None:
+    result = cast(
+        AcquisitionResultV1,
+        {
+            "schema_version": 1,
+            "resource_handles": ["task:task-1"],
+            "availability_results": [],
+            "source_summaries": [
+                {
+                    "connector_id": "google_workspace",
+                    "source": "TASKS",
+                    "resources": [
+                        {
+                            "resource_handle": "task:task-1",
+                            "resource_type": "task",
+                            "resource_id": "task-1",
+                            "parent_id": "list-1",
+                            "version": "v1",
+                            "payload": {
+                                "title": "현재 제목",
+                                "status": "needsAction",
+                                "due": "2026-09-15T00:00:00.000Z",
+                                "notes": (
+                                    "현재 업무 메모\n\n"
+                                    "\u200bgwa-recovery-fingerprint:internal-marker"
+                                ),
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    text = normalize_segments(result)[0].text
+
+    assert "task_list_id: list-1" in text
+    assert "title: 현재 제목" in text
+    assert "status: needsAction" in text
+    assert "due: 2026-09-15T00:00:00.000Z" in text
+    assert "notes:\n현재 업무 메모" in text
+    assert "recovery-fingerprint" not in text
+
+
 @pytest.mark.parametrize("overlap", [0, 20])
 def test_source_chunking__long_source__preserves_header_and_line_boundaries(overlap: int) -> None:
     text = (

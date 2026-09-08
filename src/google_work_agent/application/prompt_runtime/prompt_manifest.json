@@ -20,7 +20,7 @@
       "node_state": "INITIAL",
       "purpose": "identify_goal",
       "input_schema_version": 1,
-      "output_schema_version": 5,
+      "output_schema_version": 6,
       "source": "sources/request_understanding.identify_goal.md",
       "activation_evidence": null
     },

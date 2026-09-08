@@ -17,7 +17,7 @@ export function ActionPlanCard({ snapshot, busy, retryActionIds, formatTime, onA
   onAttachDescriptors: (action: RunAction, descriptors: StagedAttachmentDescriptor[]) => Promise<void> | void;
 }): JSX.Element | null {
   const [taskListNames, setTaskListNames] = useState<Record<string, string>>({});
-  const taskListIds = snapshot.actions.filter((action) => action.tool_name === "tasks_create_task").map((action) => String(action.arguments.task_list_id ?? "")).sort().join("|");
+  const taskListIds = snapshot.actions.filter((action) => action.tool_name.startsWith("tasks_")).map((action) => String(action.arguments.task_list_id ?? "")).sort().join("|");
   useEffect(() => {
     let active = true;
     setTaskListNames({});
@@ -77,7 +77,7 @@ function ActionDecisionCard({ action, taskListName, approval, busy, canRetry, fo
   const duplicate = taskDuplicateDecision(action.risk);
   const conflict = calendarConflictDecision(action.risk);
   const feasibility = feasibilityDecision(action.risk);
-  const argumentSummary = approvalArgumentSummary(action);
+  const argumentSummary = approvalArgumentSummary(action, taskListName);
   const submitModification = async (value: Record<string, unknown> | string): Promise<void> => {
     setModificationError(null);
     try { await onModify(action, value); }
@@ -157,6 +157,8 @@ const ARGUMENT_LABELS: Record<string, string> = {
   calendar_id: "캘린더",
   task_list_id: "태스크 목록",
   tasklist_id: "태스크 목록",
+  task_id: "태스크",
+  status: "상태",
   title: "제목",
   start: "시작",
   end: "종료",
@@ -169,16 +171,18 @@ const ARGUMENT_LABELS: Record<string, string> = {
   in_reply_to: "답장 대상 메일",
 };
 
-function approvalArgumentSummary(action: RunAction): Array<{ field: string; label: string; value: string }> {
+function approvalArgumentSummary(action: RunAction, taskListName?: string): Array<{ field: string; label: string; value: string }> {
   const preferredFields = action.tool_name.startsWith("gmail_")
     ? ["to", "cc", "bcc", "subject", "body", "thread_id", "in_reply_to"]
     : action.tool_name.startsWith("tasks_")
-      ? ["task_list_id", "title", "due", "notes"]
+      ? ["task_list_id", "task_id", "status", "title", "due", "notes"]
       : action.tool_name.startsWith("calendar_")
         ? ["calendar_id", "title", "start", "end", "timezone", "description", "attendees"]
         : action.tool_name.startsWith("github_") ? ["repository", "issue_number", "title", "body", "state"] : action.editable_fields;
   return preferredFields.flatMap((field) => {
-    const value = argumentValue(action, field);
+    const value = field === "task_list_id" && taskListName
+      ? taskListName
+      : argumentValue(action, field);
     return value ? [{ field, label: argumentLabel(field), value }] : [];
   });
 }
@@ -196,6 +200,8 @@ function argumentValue(action: RunAction, field: string): string {
   if (value === null || value === undefined) return "";
   if (field === "task_list_id" && value === "@default") return "내 할 일 목록";
   if (field === "calendar_id" && value === "primary") return "기본 캘린더";
+  if (field === "status" && value === "completed") return "완료";
+  if (field === "status" && value === "needsAction") return "미완료";
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 

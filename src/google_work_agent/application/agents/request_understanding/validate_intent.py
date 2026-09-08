@@ -243,6 +243,8 @@ def repository_authority_requires_confirmation(
     repository_required: bool = False,
     repository_default: GitHubRepositoryDefaultV1 | None = None,
 ) -> bool:
+    if not repository_required:
+        return False
     repository_constraints = [item for item in constraints if is_repository_constraint(item)]
     try:
         materialized = materialize_validated_constraint_provenance(

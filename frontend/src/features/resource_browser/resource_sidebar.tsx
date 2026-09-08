@@ -9,7 +9,7 @@ import { useCalendar } from "./calendar_controller";
 import { useGmail } from "./gmail_controller";
 import { useGitHubIssues } from "./github_controller";
 import { useTasks } from "./tasks_controller";
-import { buildSelectedResourceContext, type SelectedResourceContext } from "./selected_resource_context";
+import { buildSelectedResourceContext, isSameResourceIdentity, type SelectedResourceContext } from "./selected_resource_context";
 
 export type ResourceSource = "gmail" | "tasks" | "calendar" | "github";
 
@@ -71,7 +71,40 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
     () => buildSelectedResourceContext(selectedItems, (item) => presentResource(item).title ?? "제목 없음"),
     [selectedItems],
   );
-  const focusedItemSelected = focusedItem !== null && selectedContext.selectionHandles.includes(focusedItem.selection_handle);
+  const focusedItemSelected = focusedItem !== null
+    && selectedContext.items.some((item) => isSameResourceIdentity(item, focusedItem));
+
+  useEffect(() => {
+    const availableItems = source === "gmail"
+      ? gmail.items
+      : source === "tasks"
+        ? [...tasks.items, ...tasks.completed.items]
+        : source === "calendar"
+          ? calendar.items
+          : source === "github"
+            ? github.items
+            : [];
+    if (availableItems.length === 0) return;
+    setSelectedItems((current) => {
+      let changed = false;
+      const next = current.map((selected) => {
+        const replacement = availableItems.find((item) => isSameResourceIdentity(item, selected));
+        if (replacement === undefined || replacement.selection_handle === selected.selection_handle) {
+          return selected;
+        }
+        changed = true;
+        return replacement;
+      });
+      return changed ? next : current;
+    });
+    setFocusedItem((current) => {
+      if (current === null) return current;
+      const replacement = availableItems.find((item) => isSameResourceIdentity(item, current));
+      return replacement !== undefined && replacement.selection_handle !== current.selection_handle
+        ? replacement
+        : current;
+    });
+  }, [calendar.items, github.items, gmail.items, source, tasks.completed.items, tasks.items]);
 
   useEffect(() => {
     setGitHubRepository((current) => current && githubRepositories.includes(current)
@@ -133,8 +166,8 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
   }, [googleAccountId, googleConnected, scopeKey, source]);
 
   const toggleItem = useCallback((item: ResourceItem): void => {
-    setSelectedItems((current) => current.some((selected) => selected.selection_handle === item.selection_handle)
-      ? current.filter((selected) => selected.selection_handle !== item.selection_handle)
+    setSelectedItems((current) => current.some((selected) => isSameResourceIdentity(selected, item))
+      ? current.filter((selected) => !isSameResourceIdentity(selected, item))
       : [...current, item]);
   }, []);
   const toggleByResourceId = useCallback((resourceId: string, items: ResourceItem[]): void => {

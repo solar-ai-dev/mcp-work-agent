@@ -862,6 +862,30 @@ def test_identify_goal__named_recipient_in_additional_constraints__rejects_outpu
         )
 
 
+def test_identify_goal__repository_constraint_without_github_target__rejects_output() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "선택한 할 일을 수정한다",
+                "completion_conditions": ["할 일 제목과 메모를 수정한다"],
+                "constraints": _goal_constraints(
+                    {"kind": "RESOURCE", "field": "repository", "value": "GWA E2E"}
+                ),
+                "requested_effect_hints": ["READ", "UPDATE"],
+                "requested_resource_hints": ["TASK"],
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        identify_goal(
+            llm_runtime=runtime,
+            request=_request("선택한 실제 테스트 할 일을 수정해줘."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        )
+
+
 def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
