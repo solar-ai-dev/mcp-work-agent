@@ -2,6 +2,8 @@
 
 from typing import Literal
 
+from pydantic import Field
+
 from google_work_agent.api.schemas.model import ApiModel
 from google_work_agent.api.schemas.runs.confirm_run import PendingInterruptResponseV1
 from google_work_agent.api.schemas.runs.recovery import RecoveryUiProjectionV1
@@ -34,6 +36,7 @@ class RunSnapshotActionResponseV1(ApiModel):
     action_id: str
     tool_name: str
     arguments: dict[str, object]
+    target_display: dict[str, str] = Field(default_factory=dict)
     status: str
     version: int
     effect_type: str

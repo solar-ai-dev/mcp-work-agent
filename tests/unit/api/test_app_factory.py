@@ -401,6 +401,7 @@ def test_run_snapshot__rest_projection_includes__structured_action_risk() -> Non
                 action_id="action-1",
                 tool_name="tasks_create_task",
                 arguments={"payload": {"title": "Ship report"}},
+                target_display={},
                 status="PROPOSED",
                 version=0,
                 effect_type="CREATE",

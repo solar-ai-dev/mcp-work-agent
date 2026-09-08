@@ -21,6 +21,7 @@ _MAX_ACTIVITY_DETAILS = 40
 class RunActivityDetailV1(TypedDict):
     label: str
     value: str
+    display_text: NotRequired[str]
     fact_id: NotRequired[str]
     state: NotRequired[ActivityDetailState]
     occurred_at_ms: NotRequired[int]
@@ -258,6 +259,7 @@ class ProjectRunActivityHandler:
         result = sorted(rows.values(), key=lambda row: order[row["execution_id"]])
         for index, row in enumerate(result):
             row["sequence"] = index + 1
+            row["details"] = [_with_display_text(detail) for detail in row["details"]]
             waiting_plan = waiting_plans.get(row["execution_id"])
             if waiting_plan is not None and row["state"] in {"WAITING", "RUNNING"}:
                 bundle = unit_of_work.plans.load_bundle(waiting_plan)
@@ -384,6 +386,43 @@ def _limit_projected_details(
             value="추가 핵심 업무 사실이 있습니다. 상세 이력의 보존 범위를 확인해 주세요.",
         ),
     ]
+
+
+def _with_display_text(detail: RunActivityDetailV1) -> RunActivityDetailV1:
+    label, value = detail["label"], detail["value"]
+    if label in {
+        "요청 업무",
+        "완료 조건",
+        "자료 조회",
+        "조회 결과",
+        "부족한 정보",
+        "자료 조회 한계",
+        "검토 요약",
+        "검토 내용",
+        "판단 근거",
+        "검색 진행",
+        "자료 상세",
+        "선택 근거 제목",
+        "표시 한계",
+    }:
+        text = value
+    elif label == "요청 작업":
+        text = f"요청한 작업은 {value}입니다."
+    elif label == "요청 대상":
+        text = f"요청 대상은 {value}입니다."
+    elif label == "외부 실행 필요":
+        text = (
+            "외부 실행이 필요합니다."
+            if value == "필요함"
+            else "외부 실행이 필요하지 않습니다."
+        )
+    elif label == "검토 결과":
+        text = f"검토 결과는 {value}입니다."
+    elif label == "계획 종류":
+        text = value
+    else:
+        text = f"{label}: {value}"
+    return RunActivityDetailV1(**detail, display_text=text[:1024])
 
 
 def _domain_fields(prefix: str, raw: str) -> list[RunActivityDetailV1]:

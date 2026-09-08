@@ -25,6 +25,9 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     RunBudgetV2,
     validate_run_budget_v2,
 )
+from google_work_agent.application.use_cases.run.project_action_target_display import (
+    project_action_target_display,
+)
 from google_work_agent.application.use_cases.run.project_context_preview import (
     ProjectContextPreviewHandler,
     ProjectContextPreviewQueryV1,
@@ -101,6 +104,7 @@ class ActionSnapshotResult:
     action_id: str
     tool_name: str
     arguments: dict[str, object]
+    target_display: dict[str, str]
     status: str
     version: int
     effect_type: str
@@ -231,6 +235,14 @@ class GetRunSnapshotHandler:
                     ),
                     tool_registry=self._tool_registry,
                     delivery_certainty=project_latest_delivery_certainty(unit_of_work, action.id),
+                    target_display=project_action_target_display(
+                        resource_ref=(
+                            None
+                            if action.target_resource_ref_id is None
+                            else unit_of_work.resource_refs.get(action.target_resource_ref_id)
+                        ),
+                        evidence=unit_of_work.evidence.list_for_action(action.id),
+                    ),
                 )
                 for action in action_records
             )
@@ -429,6 +441,7 @@ def _action_snapshot(
     approval_allowed: bool,
     tool_registry: SignedToolRegistry | None,
     delivery_certainty: DeliveryCertaintyV1 | None,
+    target_display: dict[str, str],
 ) -> ActionSnapshotResult:
     status = ActionStatusV1(action.status)
     effect_type = EffectType(action.effect_type)
@@ -445,6 +458,7 @@ def _action_snapshot(
         action_id=action.id,
         tool_name=action.tool_name,
         arguments=arguments,
+        target_display=target_display,
         status=status.value,
         version=action.version,
         effect_type=effect_type.value,

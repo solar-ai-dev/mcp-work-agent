@@ -672,12 +672,8 @@ main.panel .panel-header > div:first-child .muted {
   overflow-wrap: anywhere;
 }
 
-.agent-activity-detail dl > div {
+.agent-activity-detail-facts > p {
   margin-block: 0.4rem;
-}
-
-.agent-activity-detail dd {
-  margin-left: 0.6rem;
 }
 
 .activity-detail-state {

@@ -89,11 +89,11 @@ function ActionDecisionCard({ action, taskListName, approval, busy, canRetry, fo
   const argumentSummary = approvalArgumentSummary(action, taskListName);
   const previewItems = isTask
     ? ["title", "task_list_id", "due", "notes"].map((field) => ({
-        field,
-        label: argumentLabel(field),
-        value: field === "task_list_id" && taskListName
-          ? taskListName
-          : argumentValue(action, field) || (field === "due" ? "미지정" : "없음"),
+      field,
+      label: argumentLabel(field),
+      value: field === "task_list_id"
+          ? taskListDisplayName(action, taskListName)
+          : displayArgumentValue(action, field) || (field === "due" ? "미지정" : "없음"),
       }))
     : argumentSummary.filter((item) => !["thread_id", "in_reply_to"].includes(item.field));
   const directEditFields = editableFields.filter((field) => field !== "attachments");
@@ -232,6 +232,7 @@ function actionQuestion(toolName: string): string {
   if (toolName === "calendar_create_event") return "일정을 만들까요?";
   if (toolName === "calendar_update_event") return "일정을 수정할까요?";
   if (toolName === "calendar_delete_event") return "일정을 삭제할까요?";
+  if (toolName === "github_create_issue") return "이슈를 만들까요?";
   if (toolName === "github_close_issue") return "이슈를 닫을까요?";
   if (toolName === "github_reopen_issue") return "이슈를 다시 열까요?";
   if (toolName === "github_update_issue") return "이슈를 수정할까요?";
@@ -278,19 +279,101 @@ const ARGUMENT_LABELS: Record<string, string> = {
 };
 
 function approvalArgumentSummary(action: RunAction, taskListName?: string): Array<{ field: string; label: string; value: string }> {
+  if (action.tool_name.startsWith("calendar_")) return calendarApprovalSummary(action);
+  if (action.tool_name.startsWith("github_")) return githubApprovalSummary(action);
+  if (action.tool_name.startsWith("tasks_")) return taskApprovalSummary(action, taskListName);
   const preferredFields = action.tool_name.startsWith("gmail_")
     ? ["to", "cc", "bcc", "subject", "body", "thread_id", "in_reply_to"]
-    : action.tool_name.startsWith("tasks_")
-      ? ["task_list_id", "task_id", "status", "title", "due", "notes"]
-      : action.tool_name.startsWith("calendar_")
-        ? ["calendar_id", "title", "start", "end", "timezone", "location", "description", "attendees"]
-        : action.tool_name.startsWith("github_") ? ["repository", "issue_number", "title", "body", "state"] : action.editable_fields;
+    : action.editable_fields;
   return preferredFields.flatMap((field) => {
     const value = field === "task_list_id" && taskListName
       ? taskListName
-      : argumentValue(action, field);
+      : displayArgumentValue(action, field);
     return value ? [{ field, label: argumentLabel(field), value }] : [];
   });
+}
+
+function taskApprovalSummary(action: RunAction, taskListName?: string): Array<{ field: string; label: string; value: string }> {
+  return [
+    { field: "task_list_id", label: "태스크 목록", value: taskListDisplayName(action, taskListName) },
+    { field: "title", label: "제목", value: displayArgumentValue(action, "title") },
+    { field: "due", label: "예정일", value: displayArgumentValue(action, "due") },
+    { field: "status", label: "상태", value: displayArgumentValue(action, "status") },
+    { field: "notes", label: "메모", value: displayArgumentValue(action, "notes") },
+  ].filter((item) => item.value);
+}
+
+function taskListDisplayName(action: RunAction, taskListName?: string): string {
+  if (taskListName) return taskListName;
+  return argumentValue(action, "task_list_id") === "내 할 일 목록" ? "내 할 일 목록" : "";
+}
+
+function calendarApprovalSummary(action: RunAction): Array<{ field: string; label: string; value: string }> {
+  const start = displayArgumentValue(action, "start");
+  const end = displayArgumentValue(action, "end");
+  const schedule = formatCalendarSchedule(start, end);
+  return [
+    { field: "title", label: "제목", value: displayArgumentValue(action, "title") },
+    { field: "schedule", label: "일시", value: schedule },
+    { field: "location", label: "장소", value: displayArgumentValue(action, "location") },
+    { field: "description", label: "설명", value: displayArgumentValue(action, "description") },
+    { field: "attendees", label: "참석자", value: displayArgumentValue(action, "attendees") },
+  ].filter((item) => item.value);
+}
+
+function githubApprovalSummary(action: RunAction): Array<{ field: string; label: string; value: string }> {
+  const repository = argumentValue(action, "repository");
+  const issueNumber = argumentValue(action, "issue_number");
+  const isCreate = action.tool_name === "github_create_issue";
+  const target = !isCreate && repository && issueNumber
+    ? `${repository} #${issueNumber}`
+    : repository;
+  return [
+    { field: isCreate ? "repository" : "issue", label: isCreate ? "저장소" : "이슈", value: target },
+    { field: "title", label: "제목", value: displayArgumentValue(action, "title") },
+    { field: "state", label: "상태", value: githubTargetState(action) },
+    { field: "body", label: "본문", value: displayArgumentValue(action, "body") },
+  ].filter((item) => item.value);
+}
+
+function githubTargetState(action: RunAction): string {
+  if (action.tool_name === "github_close_issue") return "닫힘";
+  if (action.tool_name === "github_reopen_issue") return "열림";
+  return displayArgumentValue(action, "state");
+}
+
+function displayArgumentValue(action: RunAction, field: string): string {
+  const current = argumentValue(action, field);
+  const value = current || action.target_display?.[field] || "";
+  if (field === "status" && value === "completed") return "완료";
+  if (field === "status" && value === "needsAction") return "미완료";
+  if (field === "state" && value === "open") return "열림";
+  if (field === "state" && value === "closed") return "닫힘";
+  return value;
+}
+
+function formatCalendarSchedule(start: string, end: string): string {
+  if (!start) return end;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) return `${formatCalendarDate(start)} · 하루 종일`;
+  const startDate = new Date(start);
+  const endDate = end ? new Date(end) : null;
+  if (Number.isNaN(startDate.getTime())) return end ? `${start} ~ ${end}` : start;
+  const date = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "long", day: "numeric", weekday: "short",
+  }).format(startDate);
+  const time = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", hour: "numeric", minute: "2-digit", hour12: true,
+  });
+  if (!endDate || Number.isNaN(endDate.getTime())) return `${date} ${time.format(startDate)}`;
+  return `${date} ${time.format(startDate)} ~ ${time.format(endDate)}`;
+}
+
+function formatCalendarDate(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "long", day: "numeric", weekday: "short",
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }
 
 function argumentValue(action: RunAction, field: string): string {

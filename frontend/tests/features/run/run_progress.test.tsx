@@ -12,7 +12,7 @@ function snapshot(count = 1): RunSnapshot {
     terminal_result_kind: "NONE",
     activity: { schema_version: 1, trace_cursor: count, audit_cursor: 0, rows: Array.from({ length: count }, (_, i) => ({
       execution_id: `row-${i}`, sequence: i + 1, role: "계획 생성", state: "RECORDED",
-      label: `계획 ${i} 기록`, details: [{ label: "제목", value: `그 시점 제목 ${i}` }],
+      label: `계획 ${i} 기록`, details: [{ label: "제목", value: `그 시점 제목 ${i}`, display_text: `제목: 그 시점 제목 ${i}` }],
       started_at_ms: i, updated_at_ms: i,
     })) },
   } as RunSnapshot;
@@ -26,7 +26,7 @@ test("retains more than twelve server rows and expands in place without requests
   const first = screen.getAllByTestId("run-event-progress")[0]!;
   await userEvent.setup().click(first);
   expect(first.closest("details")).toHaveAttribute("open");
-  expect(screen.getByText("그 시점 제목 0")).toBeVisible();
+  expect(screen.getByText("제목: 그 시점 제목 0")).toBeVisible();
   view.rerender(<RunProgress snapshot={{ ...value, run: { ...value.run, version: 4 } }} busy={null} onResume={vi.fn()} />);
   expect(first.closest("details")).toHaveAttribute("open");
   expect(fetchSpy).not.toHaveBeenCalled();
@@ -65,16 +65,18 @@ test("partial and unknown results do not imply cancellation or success", () => {
 test("child facts use the server identity and distinguish progress from completion", async () => {
   const value = snapshot(1);
   value.activity!.rows[0]!.details = [
-    { fact_id: "fact-running", label: "자료 조회", value: "자료를 확인하고 있습니다.", state: "RUNNING", occurred_at_ms: 2 },
-    { fact_id: "fact-recorded", label: "검색 계획", value: "검색할 조건을 확인했습니다.", state: "RECORDED", occurred_at_ms: 1 },
+    { fact_id: "fact-running", label: "자료 조회", value: "자료를 확인하고 있습니다.", display_text: "자료를 확인하고 있습니다.", state: "RUNNING", occurred_at_ms: 2 },
+    { fact_id: "fact-recorded", label: "검색 계획", value: "검색할 조건을 확인했습니다.", display_text: "검색할 조건을 확인했습니다.", state: "RECORDED", occurred_at_ms: 1 },
   ];
   render(<RunProgress snapshot={value} busy={null} onResume={vi.fn()} />);
 
   await userEvent.setup().click(screen.getByTestId("run-event-progress"));
 
   expect(screen.getByText("진행 중", { exact: false })).toBeVisible();
-  expect(screen.getByText("완료", { exact: false })).toBeVisible();
-  expect(screen.getByText("자료를 확인하고 있습니다.")).toBeVisible();
+  expect(screen.getByText(/자료를 확인하고 있습니다\./)).toBeVisible();
+  expect(screen.getByText("검색할 조건을 확인했습니다.")).toBeVisible();
+  expect(screen.queryByText("완료", { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText("검색 계획")).not.toBeInTheDocument();
 });
 
 test("RunProgress exposes only the server-projected resume action", async () => {
@@ -102,11 +104,12 @@ test("a restored historical Run is read-only even when its snapshot has a resume
 test("dynamic Activity text is rendered literally without executing markup", async () => {
   const value = snapshot(1);
   const dynamicValue = `<img src="invalid" onerror="alert(1)">${"긴 기록 ".repeat(80)}`;
-  value.activity!.rows[0]!.details = [{ label: "Provider 결과", value: dynamicValue }];
+  value.activity!.rows[0]!.details = [{ label: "Provider 결과", value: dynamicValue, display_text: dynamicValue }];
 
   render(<RunProgress snapshot={value} busy={null} onResume={vi.fn()} />);
   await userEvent.setup().click(screen.getByTestId("run-event-progress"));
 
-  expect(screen.getByText("Provider 결과").parentElement?.querySelector("dd")?.textContent).toBe(dynamicValue);
+  expect(document.querySelector(".agent-activity-detail-facts p")?.textContent).toBe(dynamicValue);
+  expect(screen.queryByText("Provider 결과")).not.toBeInTheDocument();
   expect(document.querySelector("img")).toBeNull();
 });

@@ -26,15 +26,12 @@ export function RunProgress({ snapshot, busy, interactive = true, onResume }: {
             <div className="agent-activity-detail">
               <p className="helper-text">이 실행 시점의 기록입니다. 이후 수정된 현재 계획과 다를 수 있습니다.</p>
               {row.details.length === 0 ? <p>이 단계에 저장된 추가 상세가 없습니다.</p> : (
-                <dl>{row.details.map((detail, index) => (
-                  <div key={detail.fact_id ?? `${detail.label}:${detail.value}:${index}`}>
-                    <dt>
-                      {detail.label}
-                      {detail.state ? <span className={`activity-detail-state activity-detail-state--${detail.state.toLowerCase()}`}> · {({ RUNNING: "진행 중", WAITING: "확인 대기", RECORDED: "완료", FAILED: "실패" })[detail.state]}</span> : null}
-                    </dt>
-                    <dd>{detail.value}</dd>
-                  </div>
-                ))}</dl>
+                <div className="agent-activity-detail-facts">{row.details.map((detail, index) => (
+                  <p key={detail.fact_id ?? `${detail.label}:${detail.value}:${index}`}>
+                    {detail.display_text ?? `${detail.label}: ${detail.value}`}
+                    {detail.state && detail.state !== "RECORDED" ? <span className={`activity-detail-state activity-detail-state--${detail.state.toLowerCase()}`}> · {({ RUNNING: "진행 중", WAITING: "확인 대기", FAILED: "실패" })[detail.state]}</span> : null}
+                  </p>
+                ))}</div>
               )}
             </div>
           </details>

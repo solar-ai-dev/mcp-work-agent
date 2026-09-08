@@ -7,14 +7,16 @@ import { ActionPlanCard } from "../../../src/features/approval/action_plan_card"
 afterEach(() => vi.restoreAllMocks());
 
 test.each([
-  ["github_close_issue", "이슈를 닫을까요?"],
-  ["github_reopen_issue", "이슈를 다시 열까요?"],
-])("%s preview distinguishes its state change before approval", (tool, heading) => {
-  const action = { ...taskAction(), tool_name: tool, effect_type: "UPDATE", arguments: { repository: "acme/repo", issue_number: 7 }, editable_fields: [] };
+  ["github_close_issue", "이슈를 닫을까요?", "닫힘"],
+  ["github_reopen_issue", "이슈를 다시 열까요?", "열림"],
+])("%s preview distinguishes its state change before approval", (tool, heading, targetState) => {
+  const action = { ...taskAction(), tool_name: tool, effect_type: "UPDATE", arguments: { repository: "acme/repo", issue_number: 7 }, target_display: { title: "배포 체크리스트", state: "open" }, editable_fields: [] };
   const props = propsFor(action);
   render(<ActionPlanCard {...props} />);
   expect(screen.getByRole("heading", { name: heading })).toBeVisible();
-  expect(document.body.textContent).toContain("acme/repo");
+  expect(screen.getByText("acme/repo #7")).toBeVisible();
+  expect(screen.getByText("배포 체크리스트")).toBeVisible();
+  expect(screen.getByText(targetState)).toBeVisible();
   expect(props.onApprove).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "확인" }));
   expect(props.onApprove).toHaveBeenCalledWith(action, expect.anything());
@@ -41,14 +43,17 @@ test("Task completion preview shows the exact target, list, and requested status
       task_id: "task-1",
       payload: { status: "completed" },
     },
+    target_display: { title: "회의 후속자료", due: "2026-09-15", status: "needsAction" },
     editable_fields: [],
   };
 
   render(<ActionPlanCard {...propsFor(action)} />);
 
   expect(await screen.findByText("검증용 목록")).toBeVisible();
-  expect(screen.getByText("task-1")).toBeVisible();
+  expect(screen.getByText("회의 후속자료")).toBeVisible();
+  expect(screen.getByText("2026-09-15")).toBeVisible();
   expect(screen.getByText("완료")).toBeVisible();
+  expect(screen.queryByText("task-1")).not.toBeInTheDocument();
 });
 
 function taskAction(): RunAction {
@@ -119,13 +124,50 @@ test("Modification failure retains the current preview and the user's request", 
 
 test.each([
   ["gmail_send", { payload: { to: ["to@example.com"], cc: ["cc@example.com"], bcc: ["bcc@example.com"], subject: "승인한 제목", body: "승인한 본문", thread_id: "thread-1", in_reply_to: "<source@example.com>" } }, ["to@example.com", "cc@example.com", "bcc@example.com", "승인한 제목", "승인한 본문"]],
-  ["calendar_create_event", { calendar_id: "primary", payload: { title: "회의", start: "2026-09-08T10:00:00+09:00", end: "2026-09-08T11:00:00+09:00", location: "회의실 A", attendees: ["test@example.com"] } }, ["기본 캘린더", "2026-09-08T10:00:00+09:00", "회의실 A", "test@example.com"]],
+  ["calendar_create_event", { calendar_id: "primary", payload: { title: "회의", start: "2026-09-08T10:00:00+09:00", end: "2026-09-08T11:00:00+09:00", location: "회의실 A", attendees: ["test@example.com"] } }, ["회의", "2026년 9월 8일", "오전 10:00", "오전 11:00", "회의실 A", "test@example.com"]],
   ["gmail_create_draft", { payload: { to: ["test@example.com"], subject: "회신", body: "메일 본문" } }, ["test@example.com", "회신", "메일 본문"]],
-  ["github_update_issue", { repository: "owner/repository", issue_number: 12, payload: { title: "이슈", body: "변경 내용" } }, ["owner/repository", "12", "변경 내용"]],
+  ["github_update_issue", { repository: "owner/repository", issue_number: 12, payload: { title: "이슈", body: "변경 내용" } }, ["owner/repository #12", "이슈", "변경 내용"]],
 ])("Shared preview preserves %s approval fields", (tool, args, expected) => {
   const action = { ...taskAction(), tool_name: tool as string, arguments: args as Record<string, unknown>, editable_fields: [] };
   render(<ActionPlanCard {...propsFor(action)} />);
-  for (const value of expected as string[]) expect(screen.getByText(value)).toBeInTheDocument();
+  for (const value of expected as string[]) expect(document.body.textContent).toContain(value);
+});
+
+test("GitHub create preview identifies the repository and proposed issue", () => {
+  const action = { ...taskAction(), tool_name: "github_create_issue", arguments: { repository: "acme/repo", payload: { title: "배포 체크리스트", body: "릴리스 전 확인" } }, editable_fields: [] };
+  render(<ActionPlanCard {...propsFor(action)} />);
+  expect(screen.getByRole("heading", { name: "이슈를 만들까요?" })).toBeVisible();
+  expect(screen.getByText("acme/repo")).toBeVisible();
+  expect(screen.getByText("배포 체크리스트")).toBeVisible();
+});
+
+test("Calendar update preview uses observed schedule and hides opaque Provider identity", () => {
+  const action = {
+    ...taskAction(),
+    tool_name: "calendar_update_event",
+    effect_type: "UPDATE",
+    arguments: {
+      calendar_id: "opaque-calendar-id",
+      event_id: "opaque-event-id",
+      payload: { location: "회의실 B" },
+    },
+    target_display: {
+      title: "주간 프로젝트 회의",
+      start: "2026-09-14T15:00:00+09:00",
+      end: "2026-09-14T15:30:00+09:00",
+    },
+    editable_fields: ["location"],
+  };
+
+  render(<ActionPlanCard {...propsFor(action)} />);
+
+  expect(screen.getByText("주간 프로젝트 회의")).toBeVisible();
+  expect(document.body.textContent).toContain("2026년 9월 14일");
+  expect(document.body.textContent).toContain("오후 3:00");
+  expect(document.body.textContent).toContain("오후 3:30");
+  expect(screen.getByText("회의실 B")).toBeVisible();
+  expect(document.body.textContent).not.toContain("opaque-calendar-id");
+  expect(document.body.textContent).not.toContain("opaque-event-id");
 });
 
 test("Gmail technical metadata stays in the approved action without entering the visual hierarchy", () => {

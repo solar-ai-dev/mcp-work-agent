@@ -83,6 +83,7 @@ export type RunAction = {
   action_id: string;
   tool_name: string;
   arguments: Record<string, unknown>;
+  target_display?: Record<string, string>;
   status: string;
   version: number;
   effect_type: string;
@@ -165,6 +166,7 @@ export type RunSnapshot = {
       details: {
         label: string;
         value: string;
+        display_text?: string;
         fact_id?: string;
         state?: "RUNNING" | "WAITING" | "RECORDED" | "FAILED";
         occurred_at_ms?: number;

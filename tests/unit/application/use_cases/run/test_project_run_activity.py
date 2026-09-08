@@ -181,7 +181,11 @@ def test_activity__accumulates_observed_facts__and_updates_same_step_in_place() 
     assert row["details"][0]["state"] == "RECORDED"
     assert row["details"][0]["occurred_at_ms"] == 3
     assert row["details"][1]["occurred_at_ms"] == 4
-    assert row["details"][2] == {"label": "조회 결과", "value": "관련 자료를 확인했습니다."}
+    assert row["details"][2] == {
+        "label": "조회 결과",
+        "value": "관련 자료를 확인했습니다.",
+        "display_text": "관련 자료를 확인했습니다.",
+    }
 
 
 def test_activity__marks_projection_limit__instead_of_silently_dropping_facts() -> None:
@@ -377,7 +381,13 @@ def test_activity__updates_existing_wait__from_committed_reauth_and_recovery_res
     assert len(rows) == 2
     assert all(row["state"] == "RECORDED" for row in rows)
     assert rows[0]["started_at_ms"] == 0 and rows[0]["updated_at_ms"] == 1
-    assert rows[1]["details"] == [{"label": "복구 결정", "value": "확인된 부분 결과 수용"}]
+    assert rows[1]["details"] == [
+        {
+            "label": "복구 결정",
+            "value": "확인된 부분 결과 수용",
+            "display_text": "복구 결정: 확인된 부분 결과 수용",
+        }
+    ]
     assert "성공" not in str(rows)
 
 
