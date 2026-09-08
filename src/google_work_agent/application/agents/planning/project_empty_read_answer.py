@@ -41,7 +41,7 @@ def project_empty_read_answer(
     statuses = retrieval_result.get("source_statuses", [])
     github_access_failure = isinstance(statuses, list) and any(
         isinstance(item, Mapping)
-        and item.get("resource_type") == "GITHUB_ISSUE"
+        and item.get("resource_type") == "github_issue"
         and item.get("status") == "FAILED"
         and item.get("failure_kind") in {"NOT_FOUND", "SCOPE"}
         for item in statuses

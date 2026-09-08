@@ -18,7 +18,7 @@ def test_github_access_failure__requires_access_action__never_claims_empty_issue
         retrieval_result={
             "source_statuses": [
                 {
-                    "resource_type": "GITHUB_ISSUE",
+                    "resource_type": "github_issue",
                     "status": "FAILED",
                     "failure_kind": failure_kind,
                 }
@@ -29,6 +29,7 @@ def test_github_access_failure__requires_access_action__never_claims_empty_issue
     assert result is not None
     assert "GitHub App 설치" in result.draft["answer"]
     assert "이슈가 없다는 뜻은 아닙니다" in result.draft["answer"]
+    assert "GitHub 연결 상태" not in result.draft["answer"]
     assert failure_kind not in result.draft["answer"]
 
 
