@@ -133,6 +133,7 @@ class SqliteActionRepository:
             "updated_at_ms",
             "arguments_json",
             "arguments_hash",
+            "expected_json",
             "risk_json",
         }
         if not set(values).issubset(allowed_columns):

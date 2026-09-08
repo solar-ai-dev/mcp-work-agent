@@ -814,7 +814,7 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
 
 
 def sufficiency_output_schema(tool_route_plan: ToolRoutePlanV2 | None) -> OutputSchemaDefinition:
-    """Constrain route references before inference to the current frozen route set."""
+    """Constrain route references and source ownership to the frozen route set."""
     schema = deepcopy(SUFFICIENCY_OUTPUT_SCHEMA.json_schema)
     routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
     properties = cast(dict[str, object], schema["properties"])
@@ -823,6 +823,18 @@ def sufficiency_output_schema(tool_route_plan: ToolRoutePlanV2 | None) -> Output
     fields = cast(dict[str, object], item["properties"])
     if routes:
         fields["route_id"] = {"type": "string", "enum": [route["route_id"] for route in routes]}
+        resolution_source = cast(dict[str, object], fields["resolution_source"])
+        allowed_sources = cast(list[str], resolution_source["enum"])
+        has_google_route = any(route["connector_id"] == "google_workspace" for route in routes)
+        has_other_connector_route = any(
+            route["connector_id"] != "google_workspace" for route in routes
+        )
+        resolution_source["enum"] = [
+            source
+            for source in allowed_sources
+            if (source != "GOOGLE" or has_google_route)
+            and (source != "CONNECTOR" or has_other_connector_route)
+        ]
     else:
         fields.pop("route_id", None)
     return OutputSchemaDefinition(

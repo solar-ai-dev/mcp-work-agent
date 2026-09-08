@@ -18,10 +18,28 @@ def review_entry_node(
     control = state.get("__workflow_control__")
     if isinstance(control, Mapping) and control.get("stage") == "REVIEW_PENDING_SETTLEMENT":
         settled = settle_persisted_review(state)
-        return {
+        patch = {
             **{key: value for key, value in settled.items() if state.get(key) != value},
             "__workflow_control__": None,
         }
+        plan_review = settled.get("plan_review")
+        if (
+            isinstance(plan_review, Mapping)
+            and plan_review.get("status") == "CONFIRM"
+            and isinstance(settled.get("user_interrupt"), Mapping)
+        ):
+            patch.update(
+                {
+                    "__target__": review_node,
+                    "__logical_target__": review_logical_node or review_node,
+                    "workflow_phase": "PLAN_REVIEW",
+                    "__workflow_control__": {
+                        "schema_version": 1,
+                        "stage": "REVIEW_PENDING_SETTLEMENT",
+                    },
+                }
+            )
+        return patch
 
     published = isinstance(state.get("approved_plan_id"), str) and not isinstance(
         state.get("__replan_from_plan_id__"), str

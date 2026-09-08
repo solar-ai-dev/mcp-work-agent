@@ -18,6 +18,7 @@ from google_work_agent.adapters.langgraph.activity_callback import RunActivityCa
 from google_work_agent.adapters.langgraph.invocation import WorkflowInvocationCoordinator
 from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
     project_current_action_evidence,
+    project_persisted_plan_evidence_for_review,
 )
 from google_work_agent.adapters.langgraph.main.application_services import (
     WorkflowApplicationServices,
@@ -608,6 +609,7 @@ class _WorkflowRuntimeComposition:
             graph_profile=self._graph_profile,
             merge_decision=self._merge_decision,
             evidence_store=self._evidence_store,
+            load_persisted_evidence=self._load_persisted_modify_review_evidence,
             confirm_inline=cast(Any, self._confirm_review_inline),
             resume_target_registry=self._resume_target_registry,
         ).build()
@@ -1318,10 +1320,22 @@ class _WorkflowRuntimeComposition:
             routes = typed_state.get("tool_route_plan")
             if routes is not None and routes["input_plan"]["input_routes"]:
                 _require_state_value(typed_state.get("retrieval_result"), "retrieval_result")
-            evidence_drafts = project_current_action_evidence(
-                state=typed_state,
-                evidence_store=self._evidence_store,
-            )
+            persisted_review_evidence = typed_state.get("__modify_review_evidence__")
+            if isinstance(typed_state.get("__modify_review_plan_id__"), str):
+                if persisted_review_evidence is None:
+                    persisted_review_evidence = self._load_persisted_modify_review_evidence(
+                        typed_state
+                    )
+                if not isinstance(persisted_review_evidence, list) or not all(
+                    isinstance(item, Mapping) for item in persisted_review_evidence
+                ):
+                    raise ValueError("Modify Review requires persisted Plan evidence")
+                evidence_drafts = [dict(item) for item in persisted_review_evidence]
+            else:
+                evidence_drafts = project_current_action_evidence(
+                    state=typed_state,
+                    evidence_store=self._evidence_store,
+                )
             with self._unit_of_work_factory() as unit_of_work:
                 resource_refs = {
                     _resource_handle_for_ref(item): item
@@ -1574,6 +1588,13 @@ class _WorkflowRuntimeComposition:
             action_draft["action_id"] = action.id
             action_draft["arguments"] = current_arguments
             action_draft["depends_on_action_ids"] = list(dependencies[action.id])
+        persisted_review_evidence = self._load_persisted_modify_review_evidence(
+            {
+                **state,
+                "planning_result": draft,
+                "__modify_review_plan_id__": plan_id,
+            }
+        )
 
         return {
             **state,
@@ -1584,11 +1605,57 @@ class _WorkflowRuntimeComposition:
             "__modify_review_version__": review_version,
             "__modify_review_risks__": {action.id: action.risk for action in actions},
             "__modify_review_changes__": user_action_modifications,
+            "__modify_review_evidence__": persisted_review_evidence,
             "__target__": "review_entry",
             "__logical_target__": "review_entry",
             "workflow_phase": WorkflowPhase.PLAN_REVIEW.value,
             "retry_budget": budget["run_budget"],
         }
+
+    def _load_persisted_modify_review_evidence(
+        self,
+        state: Mapping[str, object],
+    ) -> list[dict[str, object]]:
+        plan_id = self._required_string(
+            state.get("__modify_review_plan_id__") or state.get("approved_plan_id"),
+            "modify review plan_id",
+        )
+        planning_result = state.get("planning_result")
+        if not isinstance(planning_result, Mapping):
+            raise ValueError("Modify Review requires the Planning artifact")
+        draft_actions = planning_result.get("actions")
+        if not isinstance(draft_actions, list):
+            raise ValueError("Modify Review Planning actions must be an array")
+        with self._unit_of_work_factory() as unit_of_work:
+            bundle = unit_of_work.plans.load_bundle(plan_id)
+            if bundle is None:
+                raise LookupError(f"plan not found: {plan_id}")
+            ordered_actions = sorted(bundle.actions, key=lambda item: item.position)
+            if len(draft_actions) != len(ordered_actions):
+                raise ValueError("persisted Plan no longer matches the Planning artifact")
+            logical_evidence_refs_by_action: dict[str, tuple[str, ...]] = {}
+            for action_draft, action in zip(draft_actions, ordered_actions, strict=True):
+                if not isinstance(action_draft, Mapping):
+                    raise ValueError("Modify Review Planning Action must be an object")
+                raw_evidence_refs = action_draft.get("evidence_refs")
+                if not isinstance(raw_evidence_refs, list) or not all(
+                    isinstance(item, str) and item for item in raw_evidence_refs
+                ):
+                    raise ValueError("Planning Action evidence_refs must be non-empty strings")
+                logical_evidence_refs_by_action[action.id] = tuple(raw_evidence_refs)
+            resource_refs_by_id = {
+                item.id: item
+                for item in unit_of_work.resource_refs.list_for_run_bounded(
+                    bundle.plan.run_id, limit=1000
+                )
+            }
+        return project_persisted_plan_evidence_for_review(
+            run_id=bundle.plan.run_id,
+            evidence_by_id={item.id: item for item in bundle.evidence},
+            action_evidence=bundle.action_evidence,
+            logical_evidence_refs_by_action=logical_evidence_refs_by_action,
+            resource_refs_by_id=resource_refs_by_id,
+        )
 
     def _settle_persisted_review(self, state: Mapping[str, object]) -> GraphState:
         reviewed = cast(GraphState, state)
@@ -1687,6 +1754,12 @@ class _WorkflowRuntimeComposition:
             reviewed["__modify_review_plan_id__"] = None
             reviewed["__modify_review_version__"] = None
             reviewed["__modify_review_risks__"] = None
+            decision = route_supervisor(
+                phase=WorkflowPhase.PLAN_REVIEW,
+                state=reviewed,
+                result=review,
+            )
+            return self._merge_decision(reviewed, {}, decision)
         return reviewed
 
     @staticmethod
@@ -1715,13 +1788,32 @@ class _WorkflowRuntimeComposition:
             action_versions = {
                 action.id: action.version for action in unit_of_work.actions.list_for_plan(plan_id)
             }
+        review = state.get("plan_review")
+        review_meta = review.get("meta") if isinstance(review, Mapping) else None
+        review_artifact_id = (
+            review_meta.get("artifact_id") if isinstance(review_meta, Mapping) else None
+        )
+        review_artifact_revision = (
+            review_meta.get("revision") if isinstance(review_meta, Mapping) else None
+        )
+        if not isinstance(review_artifact_id, str) or not review_artifact_id:
+            review_artifact_id = f"{plan.id}:review:{review_version}"
+        if not isinstance(review_artifact_revision, int) or review_artifact_revision < 1:
+            review_artifact_revision = review_version
+        command_operation = "record_review"
+        if plan.review_disposition is not None:
+            command_operation = f"record_review:{plan.id}:{review_artifact_id}"
         result = self._record_review_result(
             RecordReviewResultCommandV1(
-                command_id=self._phase_command_id(plan.run_id, "record_review", review_version),
+                command_id=self._phase_command_id(
+                    plan.run_id,
+                    command_operation,
+                    review_artifact_revision,
+                ),
                 plan_id=plan.id,
                 expected_plan_version=plan.revision_no,
                 expected_review_version=review_version,
-                review_artifact_id=f"{plan.id}:review:{review_version}",
+                review_artifact_id=review_artifact_id,
                 review_version=review_version,
                 disposition=review_disposition,
                 based_on_action_versions=action_versions,

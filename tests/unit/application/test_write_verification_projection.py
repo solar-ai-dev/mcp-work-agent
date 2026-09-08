@@ -149,6 +149,7 @@ def test_calendar_expected_preserves__approved_description__and_attendees() -> N
             "start": "2026-08-20T09:00:00+09:00",
             "end": "2026-08-20T10:00:00+09:00",
             "description": "Deep work",
+            "location": "",
             "attendees": ["a@example.com"],
         }
     }

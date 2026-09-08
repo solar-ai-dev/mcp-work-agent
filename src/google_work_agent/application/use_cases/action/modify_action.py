@@ -77,6 +77,9 @@ from google_work_agent.application.use_cases.run.resume_confirmation import Resu
 from google_work_agent.application.use_cases.run.schedule_run_execution import (
     ScheduleRunExecutionCommand,
 )
+from google_work_agent.application.use_cases.verification.write_verification_projection import (
+    build_expected_verification_projection,
+)
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.action.model import (
     ActionCommand,
@@ -357,6 +360,10 @@ class ModifyActionHandler:
                     ),
                     now_ms,
                 )
+            new_expected = build_expected_verification_projection(
+                tool_name=action.tool_name,
+                arguments=new_arguments,
+            )
 
             action_evidence = tuple(unit_of_work.evidence.list_for_action(action.id))
             validate_evidence_policy(
@@ -417,6 +424,7 @@ class ModifyActionHandler:
                     updated_at_ms=now_ms,
                     arguments_json=canonicalize_json_value(new_arguments),
                     arguments_hash=new_arguments_hash,
+                    expected_json=canonicalize_json_value(new_expected),
                     risk=updated_risk,
                 )
                 is None

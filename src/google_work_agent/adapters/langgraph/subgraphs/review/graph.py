@@ -15,6 +15,7 @@ from google_work_agent.adapters.langgraph.agent_kernel import (
     merge_trace_context,
 )
 from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    ActionEvidenceDraftV1,
     project_current_action_evidence,
 )
 from google_work_agent.adapters.langgraph.main.confirmation_projection import (
@@ -156,6 +157,10 @@ class ReviewSubgraph:
         graph_profile: GraphProfile | None = None,
         merge_decision: MergeDecision | None = None,
         evidence_store: RunScopedEvidenceStore | None = None,
+        load_persisted_evidence: Callable[
+            [Mapping[str, object]], list[ActionEvidenceDraftV1]
+        ]
+        | None = None,
         confirm_inline: ConfirmInline | None = None,
         resume_target_registry: ResumeTargetRegistry | None = None,
     ) -> None:
@@ -167,6 +172,7 @@ class ReviewSubgraph:
         self._graph_profile = graph_profile
         self._merge_decision = merge_decision
         self._evidence_store = evidence_store
+        self._load_persisted_evidence = load_persisted_evidence
         self._confirm_inline = confirm_inline
         self._resume_target_registry = resume_target_registry
         self._prompt_manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -183,6 +189,7 @@ class ReviewSubgraph:
                 self._graph_profile,
                 self._merge_decision,
                 self._evidence_store,
+                self._load_persisted_evidence,
                 self._confirm_inline,
                 self._resume_target_registry,
             )
@@ -479,6 +486,17 @@ class ReviewSubgraph:
         return working
 
     def _evidence(self, state: ReviewState) -> list[Any]:
+        persisted = state.get("__modify_review_evidence__")
+        if persisted is None and isinstance(state.get("__modify_review_plan_id__"), str):
+            if self._load_persisted_evidence is None:
+                raise ValueError("Modify Review persisted evidence loader is unavailable")
+            persisted = self._load_persisted_evidence(state)
+        if persisted is not None:
+            if not isinstance(persisted, list) or not all(
+                isinstance(item, Mapping) for item in persisted
+            ):
+                raise ValueError("Modify Review evidence must be an array of objects")
+            return [dict(item) for item in persisted]
         direct = state.get("evidence")
         if isinstance(direct, list):
             return list(direct)

@@ -36,6 +36,10 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ScopeExpansionRequiredV1,
     ToolRoutePlanV2,
 )
+from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
+    PolicyConfirmationReceiptV1,
+)
+from google_work_agent.ports.system.contracts.confirmation import UserInterruptV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
     RetrievalRequiredV1,
@@ -53,6 +57,8 @@ class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
     )
     acquisition_result: AcquisitionResultV1 | None
     retrieval_result: RetrievalResultV1 | None
+    user_interrupt: UserInterruptV1 | None
+    policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
     exclusion_obligation_segment_ids: list[str]
     pending_user_retrieval_need: RetrievalNeedV1 | None
     __context_canonical_plans__: dict[str, SourceFetchPlanV1]

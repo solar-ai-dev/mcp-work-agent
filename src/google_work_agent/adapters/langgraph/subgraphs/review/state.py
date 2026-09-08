@@ -83,10 +83,13 @@ class ReviewInputState(AgentSubgraphInputEnvelope, total=False):
     work_analysis_result: WorkAnalysisResultV2 | None
     planning_result: PlanningResultV2 | None
     plan_review: PlanReviewResultV2 | None
+    user_interrupt: UserInterruptV1 | None
+    policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
     __modify_review_plan_id__: str | None
     __modify_review_version__: int | None
     __modify_review_risks__: dict[str, dict[str, object]] | None
     __modify_review_changes__: list[dict[str, object]] | None
+    __modify_review_evidence__: list[ActionEvidenceDraftV1] | None
 
 
 class ReviewState(GraphState, total=False):

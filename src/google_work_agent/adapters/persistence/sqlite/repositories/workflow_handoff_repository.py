@@ -157,6 +157,22 @@ class SqliteWorkflowHandoffRepository:
                             'CREATED', 'ANALYZING', 'RETRIEVING', 'PLANNING',
                             'EXECUTING', 'VERIFYING', 'CANCEL_REQUESTED'
                         )
+                        OR (
+                            workflow_handoffs.status = 'CONSUMED'
+                            AND workflow_handoffs.applied_checkpoint_id IS NOT NULL
+                            AND runs.status = 'WAITING_APPROVAL'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM plans
+                                WHERE plans.run_id = runs.id
+                                  AND plans.review_status = 'REQUIRED'
+                                  AND plans.revision_no = (
+                                      SELECT MAX(current_plan.revision_no)
+                                      FROM plans AS current_plan
+                                      WHERE current_plan.run_id = runs.id
+                                  )
+                            )
+                        )
                     )
             )
             SELECT * FROM ranked

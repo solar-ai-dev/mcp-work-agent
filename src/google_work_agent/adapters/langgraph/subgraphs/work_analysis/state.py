@@ -34,6 +34,7 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
 from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
     PolicyConfirmationReceiptV1,
 )
+from google_work_agent.ports.system.contracts.confirmation import UserInterruptV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
 )
@@ -45,6 +46,7 @@ class WorkAnalysisInputState(AgentSubgraphInputEnvelope, total=False):
     request_intent: RequestIntentV2 | None
     tool_route_plan: ToolRoutePlanV2 | None
     retrieval_result: RetrievalResultV1 | None
+    user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
 
 

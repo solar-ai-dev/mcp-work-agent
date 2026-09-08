@@ -19,7 +19,6 @@ from google_work_agent.adapters.langgraph.subgraphs.retrieval.nodes.assess_suffi
     assess_sufficiency_node,
 )
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
-    SUFFICIENCY_OUTPUT_SCHEMA,
     assess_sufficiency,
     authorize_retrieval_followup,
     deterministic_sufficiency,
@@ -34,6 +33,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ActionOutputPlanV1,
 )
+from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 
 def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() -> None:
@@ -1018,7 +1018,8 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
 
     prompt_input = cast(dict[str, object], runtime.calls[0]["prompt_input"])
     source_statuses = cast(list[dict[str, object]], prompt_input["source_statuses"])
-    schema_properties = cast(dict[str, object], SUFFICIENCY_OUTPUT_SCHEMA.json_schema["properties"])
+    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    schema_properties = cast(dict[str, object], output_schema.json_schema["properties"])
     issues_schema = cast(dict[str, object], schema_properties["issues"])
     issue_schema = cast(dict[str, object], issues_schema["items"])
     issue_properties = cast(dict[str, object], issue_schema["properties"])
@@ -1035,6 +1036,7 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
         }
     ]
     assert "CONNECTOR" in resolution_enum
+    assert "GOOGLE" not in resolution_enum
     assert route_plan == original_route_plan
     projected = missing_information_projection(result["issues"])[0]
     assert projected["required_for"] == "RETRIEVAL"
@@ -1057,6 +1059,15 @@ def test_google_insufficiency__with_existing_source__retains_google() -> None:
 
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][0]["resolution_source"] == "GOOGLE"
+    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    schema_properties = cast(dict[str, object], output_schema.json_schema["properties"])
+    issues_schema = cast(dict[str, object], schema_properties["issues"])
+    issue_schema = cast(dict[str, object], issues_schema["items"])
+    issue_properties = cast(dict[str, object], issue_schema["properties"])
+    resolution_schema = cast(dict[str, object], issue_properties["resolution_source"])
+    resolution_enum = cast(list[str], resolution_schema["enum"])
+    assert "GOOGLE" in resolution_enum
+    assert "CONNECTOR" not in resolution_enum
 
 
 @pytest.mark.parametrize(
