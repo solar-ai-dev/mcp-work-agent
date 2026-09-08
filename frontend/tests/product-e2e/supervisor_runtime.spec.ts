@@ -98,6 +98,7 @@ test("SUPERVISOR_E2E_004_CREATE_SUSPENDS_BEFORE_WRITE", async () => {
 });
 
 test("SUPERVISOR_E2E_005_REAUTH_PREEMPTS_NEW_WORK", async () => {
+  await harness.selectTaskListAllowlist("task-list-e2e");
   const baseline = await harness.productState("missing-run");
   const { runId } = await harness.startNewRun(
     "E2E:REAUTH 재인증이 필요하면 멈추고 태스크를 만들어줘",
@@ -117,7 +118,7 @@ test("SUPERVISOR_E2E_005_REAUTH_PREEMPTS_NEW_WORK", async () => {
   ).toBe(planningCalls);
   expect(harness.writeCount(reauth) - harness.writeCount(baseline)).toBe(1);
   expect(harness.effectCount(reauth) - harness.effectCount(baseline)).toBe(0);
-  await expect(page.getByText(/재인증이 필요합니다/)).toBeVisible();
+  await expect(page.getByText("사용한 연결의 재인증이 필요합니다.", { exact: true })).toBeVisible();
   await expect(page.getByText("REAUTH_REQUIRED", { exact: true })).toHaveCount(0);
 });
 

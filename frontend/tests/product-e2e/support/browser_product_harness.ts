@@ -154,6 +154,22 @@ export class BrowserProductHarness {
     return this.startRun(requestText);
   }
 
+  async selectTaskListAllowlist(taskListId: string): Promise<void> {
+    this.runtimeModeSequence += 1;
+    const response = await this.context.request.put(`${baseURL}/api/v1/settings`, {
+      headers: requestHeaders,
+      data: {
+        schema_version: 1,
+        command_id: `browser-e2e-task-list-selection-${this.runtimeModeSequence}`,
+        settings_patch: {
+          schema_version: 1,
+          selected_tasklist_ids: [taskListId],
+        },
+      },
+    });
+    expect(response.ok()).toBe(true);
+  }
+
   async startRun(requestText: string): Promise<StartedRun> {
     const composer = this.page.getByRole("textbox", {
       name: /선택한 .*업무를 요청하세요/,
@@ -344,6 +360,18 @@ export class BrowserProductHarness {
 
   private async selectDeterministicFakeRuntime(): Promise<void> {
     this.runtimeModeSequence += 1;
+    const settingsResponse = await this.context.request.put(`${baseURL}/api/v1/settings`, {
+      headers: requestHeaders,
+      data: {
+        schema_version: 1,
+        command_id: `browser-e2e-api-consent-${this.runtimeModeSequence}`,
+        settings_patch: {
+          schema_version: 1,
+          external_llm_consent: true,
+        },
+      },
+    });
+    expect(settingsResponse.ok()).toBe(true);
     const response = await this.context.request.post(`${baseURL}/api/v1/runtime/mode`, {
       headers: requestHeaders,
       data: {

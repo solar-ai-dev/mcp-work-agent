@@ -3265,6 +3265,23 @@ test("resumes a REAUTH_REQUIRED run after the Google connection is restored", as
   expect(JSON.parse(String(request?.init?.body))).toMatchObject({ resume_kind: "REAUTH_COMPLETED" });
 });
 
+test("keeps checking Google reauthentication until the same Run can resume", async () => {
+  const requests = installUiContractFetch({
+    googleConnectionStates: ["REAUTH_REQUIRED", "REAUTH_REQUIRED", "CONNECTED"],
+    status: "REAUTH_REQUIRED",
+  });
+  render(<App />);
+
+  await waitFor(() => expect(
+    requests.filter((request) => request.path === "/api/v1/connections/google/status"),
+  ).toHaveLength(3), { timeout: 3_000 });
+  await waitFor(() => expect(
+    requests.filter((request) => request.path === "/api/v1/runs/run-1/resume"),
+  ).toHaveLength(1));
+  const request = requests.find((item) => item.path === "/api/v1/runs/run-1/resume");
+  expect(JSON.parse(String(request?.init?.body))).toMatchObject({ resume_kind: "REAUTH_COMPLETED" });
+});
+
 test("does not resume a REAUTH_REQUIRED run from a stale connected projection", async () => {
   const requests = installUiContractFetch({
     googleConnectionStates: ["CONNECTED", "REAUTH_REQUIRED"],

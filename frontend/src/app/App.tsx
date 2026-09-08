@@ -79,7 +79,6 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
     handleResolveRecovery,
   } = conversation;
   const restoredOpenRunRef = useRef(false);
-  const reauthConnectionCheckRef = useRef<string | null>(null);
   const reauthResumeAttemptRef = useRef<string | null>(null);
   const operationalCommandIds = useRef(new Map<string, string>());
   const githubRepositories = useMemo(
@@ -157,11 +156,11 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
 
   useEffect(() => {
     if (runSnapshot?.run.status !== "REAUTH_REQUIRED") {
-      reauthConnectionCheckRef.current = null;
       reauthResumeAttemptRef.current = null;
       return;
     }
     const identity = `${runSnapshot.run.run_id}:${runSnapshot.run.version}`;
+    if (reauthResumeAttemptRef.current === identity) return;
     const reauthAction = runSnapshot.error?.actions.find((action) =>
       action.kind === "REAUTHENTICATE_CONNECTOR" || action.kind === "REAUTHENTICATE_GOOGLE"
     );
@@ -175,28 +174,14 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
         setStatusLine(error instanceof ApiClientError ? error.message : "재인증 후 작업을 재개하지 못했습니다.");
       });
     };
-    if (connectorId !== "github") {
-      if (reauthConnectionCheckRef.current !== identity) {
-        reauthConnectionCheckRef.current = identity;
-        void getGoogleConnection().then((freshConnection) => {
-          setGoogle(freshConnection);
-          if (freshConnection.connection_status === "CONNECTED") {
-            resumeAfterFreshConnection();
-          }
-        }).catch((error: unknown) => {
-          setStatusLine(error instanceof ApiClientError ? error.message : "Google 재인증 상태를 확인하지 못했습니다.");
-        });
-        return;
-      }
-      if (google.connection_status === "CONNECTED") resumeAfterFreshConnection();
-      return;
-    }
     let cancelled = false;
     let timer: number | undefined;
     const checkConnection = (): void => {
-      void getGitHubConnection().then((freshConnection) => {
+      const readConnection = connectorId === "github" ? getGitHubConnection : getGoogleConnection;
+      void readConnection().then((freshConnection) => {
         if (cancelled) return;
-        setGitHub(freshConnection);
+        if (connectorId === "github") setGitHub(freshConnection);
+        else setGoogle(freshConnection);
         if (freshConnection.connection_status === "CONNECTED") {
           resumeAfterFreshConnection();
           return;
@@ -204,7 +189,10 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
         timer = window.setTimeout(checkConnection, 2_000);
       }).catch((error: unknown) => {
         if (cancelled) return;
-        setStatusLine(error instanceof ApiClientError ? error.message : "재인증 상태를 확인하지 못했습니다.");
+        const fallback = connectorId === "github"
+          ? "GitHub 재인증 상태를 확인하지 못했습니다."
+          : "Google 재인증 상태를 확인하지 못했습니다.";
+        setStatusLine(error instanceof ApiClientError ? error.message : fallback);
         timer = window.setTimeout(checkConnection, 2_000);
       });
     };
@@ -213,7 +201,7 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [google.connection_status, handleResumeAfterReauth, runSnapshot]);
+  }, [handleResumeAfterReauth, runSnapshot]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

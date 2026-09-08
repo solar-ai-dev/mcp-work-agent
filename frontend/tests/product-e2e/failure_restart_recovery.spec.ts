@@ -174,6 +174,7 @@ test("F_E2E_005_APPROVAL_RESTART_PASS", async () => {
 });
 
 test("F_E2E_006_REAUTH_PASS", async () => {
+  await harness.selectTaskListAllowlist("task-list-e2e");
   const baseline = await harness.productState("missing-run");
   const { runId } = await harness.startNewRun(
     "E2E:REAUTH 재인증 후 태스크를 만들어줘",
@@ -187,7 +188,11 @@ test("F_E2E_006_REAUTH_PASS", async () => {
   expect(reauth.plans[0].id).toBe(originalPlanId);
   expect(reauth.actions[0].id).toBe(originalActionId);
   expect(harness.effectCount(reauth) - harness.effectCount(baseline)).toBe(0);
-  await expect(page.getByText(/Google 연결이 만료되어 작업을 계속하려면 재인증이 필요합니다/)).toBeVisible();
+  await expect(page.getByText(
+    "이 요청을 계속하려면 Google 인증을 다시 연결해야 합니다.",
+    { exact: true },
+  )).toBeVisible();
+  await expect(page.getByRole("button", { name: "Google 재인증", exact: true })).toBeVisible();
   await expect(page.getByText("REAUTH_REQUIRED", { exact: true })).toHaveCount(0);
 
   await harness.completeReauthFault();
