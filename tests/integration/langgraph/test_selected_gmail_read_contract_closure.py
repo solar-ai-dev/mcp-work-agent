@@ -19,7 +19,7 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_goal_candidate_schema as goal_schema,
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
-    detect_ambiguity,
+    detect_ambiguity as _detect_ambiguity_with_budget,
 )
 from google_work_agent.application.agents.request_understanding.finalize_intent import (
     finalize_intent,
@@ -105,11 +105,12 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         request=request,
         prompt_ref=_prompt("request_understanding.identify_goal"),
     )
-    ambiguity = detect_ambiguity(
+    ambiguity, _ = _detect_ambiguity_with_budget(
         llm_runtime=runtime,
         request=request,
         goal_candidate=goal,
         prompt_ref=_prompt("request_understanding.detect_ambiguity"),
+        retry_budget=build_default_run_budget(),
     )
     intent = finalize_intent(
         goal,

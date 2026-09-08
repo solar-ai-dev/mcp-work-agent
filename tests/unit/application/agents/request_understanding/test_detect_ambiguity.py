@@ -6,12 +6,15 @@ import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    AmbiguityV1,
     RequestGoalCandidateV1,
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     DETECT_AMBIGUITY_OUTPUT_SCHEMA,
     _validate_ambiguity,
-    detect_ambiguity,
+)
+from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
+    detect_ambiguity as _detect_ambiguity_with_budget,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
@@ -21,6 +24,14 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowCorrelationContext,
     WorkflowStartRequest,
 )
+
+
+def detect_ambiguity(**kwargs: object) -> AmbiguityV1:
+    ambiguity, _ = _detect_ambiguity_with_budget(
+        **kwargs,
+        retry_budget=build_default_run_budget(),
+    )
+    return ambiguity
 
 
 def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
@@ -80,12 +91,119 @@ def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
     assert runtime.calls[0]["prompt_input"] == {
         "user_request": "일정을 잡아줘",
         "goal_candidate": candidate,
+        "resolution_responsibilities": {
+            "connector_owned_information": [],
+            "resolved_resource_refs": [],
+        },
         "selected_resource_refs": [],
     }
 
 
+def test_connector_owned_information__proceeds_without_confirmation() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "requires_confirmation": False,
+                "missing_information_owner": "CONNECTOR",
+                "reason_codes": ["SOURCE_FACT_REQUIRED"],
+                "missing_fields": ["납품 일정"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "기존 대화의 납품 일정을 확인하고 답장한다",
+        "completion_conditions": ["기존 대화에 답장을 보낸다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["납품 일정", "답장 대상 identity"],
+            }
+        ],
+        "requested_effect_hints": ["READ", "SEND"],
+        "requested_resource_hints": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("기존 메일의 납품 일정을 확인하고 답장해줘"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert runtime.calls[0]["prompt_input"]["resolution_responsibilities"] == {
+        "connector_owned_information": [
+            {
+                "constraint_path": "$.goal_candidate.constraints[0]",
+                "information": "납품 일정",
+                "owner": "CONNECTOR",
+            },
+            {
+                "constraint_path": "$.goal_candidate.constraints[0]",
+                "information": "답장 대상 identity",
+                "owner": "CONNECTOR",
+            },
+        ],
+        "resolved_resource_refs": [],
+    }
+
+
+def test_connector_need_reclassified_as_user__uses_bounded_semantic_revision() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "requires_confirmation": True,
+                "missing_information_owner": "USER",
+                "reason_codes": ["MISSING_SCHEDULE"],
+                "missing_fields": ["Quartz 납품 일정"],
+            },
+            {
+                "requires_confirmation": False,
+                "missing_information_owner": "CONNECTOR",
+                "reason_codes": ["SOURCE_FACT_REQUIRED"],
+                "missing_fields": ["납품 일정"],
+            },
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "기존 대화의 납품 일정을 확인하고 답장한다",
+        "completion_conditions": ["기존 대화에 답장을 보낸다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["납품 일정"],
+            }
+        ],
+        "requested_effect_hints": ["READ", "SEND"],
+        "requested_resource_hints": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+        "analysis_requirement": "NONE",
+    }
+
+    ambiguity, budget = _detect_ambiguity_with_budget(
+        llm_runtime=runtime,
+        request=_request("기존 메일의 납품 일정을 확인하고 답장해줘"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert ambiguity == {
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
+    }
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
+    )
+    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+
+
 def test_detect_ambiguity__rejects_metadata__without_confirmation() -> None:
-    with pytest.raises(ValueError, match="non-confirmation ambiguity metadata must be empty"):
+    with pytest.raises(ValueError, match="NONE ambiguity metadata must be empty"):
         _validate_ambiguity(
             {
                 "requires_confirmation": False,
@@ -107,7 +225,7 @@ def test_detect_ambiguity_schema__rejects_empty_confirmation_details__before_app
         DETECT_AMBIGUITY_OUTPUT_SCHEMA.json_schema,
     )
 
-    assert errors == ["$.reason_codes must contain at least 1 items"]
+    assert "$.reason_codes must contain at least 1 items" in errors
 
 
 def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -> None:

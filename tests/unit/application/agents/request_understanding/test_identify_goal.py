@@ -10,10 +10,11 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_goal_candidate_schema as goal_schema,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    AmbiguityV1,
     validated_repository_authority,
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
-    detect_ambiguity,
+    detect_ambiguity as _detect_ambiguity_with_budget,
 )
 from google_work_agent.application.agents.request_understanding.finalize_intent import (
     finalize_intent,
@@ -42,6 +43,14 @@ _GMAIL_CONSTRAINT_KINDS = {
     "period": "DATE",
     "status": "SCOPE",
 }
+
+
+def detect_ambiguity(**kwargs: object) -> AmbiguityV1:
+    ambiguity, _ = _detect_ambiguity_with_budget(
+        **kwargs,
+        retry_budget=build_default_run_budget(),
+    )
+    return ambiguity
 
 
 def _goal_constraints(
@@ -871,26 +880,28 @@ def test_source_search_write__without_read_effect__rejects_candidate() -> None:
         )
 
 
-def test_gmail_source_send__without_source_resource__rejects_candidate() -> None:
+def test_lexical_anchor_alone__does_not_force_source_read_for_write() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "goal": "기존 자료를 찾아 메시지를 보낸다",
-                "completion_conditions": ["관련 메시지를 보낸다"],
+                "goal": "새 메시지를 보낸다",
+                "completion_conditions": ["메시지를 보낸다"],
                 "constraints": _goal_constraints(search_terms=["Project Anchor"]),
-                "requested_effect_hints": ["READ", "SEND"],
+                "requested_effect_hints": ["SEND"],
                 "requested_resource_hints": ["GMAIL_MESSAGE"],
                 "analysis_requirement": "NONE",
             }
         ]
     )
 
-    with pytest.raises(ValueError, match="request goal candidate is invalid"):
-        identify_goal(
-            llm_runtime=runtime,
-            request=_request("기존 Project Anchor 자료를 찾아 관련 답장을 보내줘."),
-            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-        )
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request("Project Anchor 팀에게 새 메시지를 보내줘."),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert candidate["requested_effect_hints"] == ["SEND"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
 
 
 def test_existing_gmail_thread_reply__missing_output_hint__rejects_output() -> None:

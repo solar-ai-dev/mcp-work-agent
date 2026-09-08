@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from google_work_agent.adapters.langgraph.agent_kernel import (
-    consume_llm_call_budget,
-    ensure_llm_call_budget,
-)
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state import (
     RequestUnderstandingStateV2,
 )
@@ -44,15 +40,16 @@ def detect_ambiguity_node(
         patch["prerequisite_message"] = prerequisites.user_message
         if prerequisites.user_message is not None:
             return patch
-    ensure_llm_call_budget(state)
+    ambiguity_candidate, retry_budget = detect_ambiguity(
+        llm_runtime=llm_runtime,
+        request=projection["request"],
+        goal_candidate=projection["goal_candidate"],
+        prompt_ref=prompt_ref,
+        confirmation_response=projection.get("confirmation_response"),
+        retry_budget=projection["retry_budget"],
+    )
     return {
         **patch,
-        "ambiguity_candidate": detect_ambiguity(
-            llm_runtime=llm_runtime,
-            request=projection["request"],
-            goal_candidate=projection["goal_candidate"],
-            prompt_ref=prompt_ref,
-            confirmation_response=projection.get("confirmation_response"),
-        ),
-        "retry_budget": consume_llm_call_budget(state),
+        "ambiguity_candidate": ambiguity_candidate,
+        "retry_budget": retry_budget,
     }

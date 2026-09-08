@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 _QUOTED_LITERAL = re.compile(
     r"'(?P<single>[^']*)'|\"(?P<double>[^\"]*)\"|"
@@ -44,8 +44,15 @@ def restore_exact_user_literals(text: str, *, source_texts: Sequence[str]) -> st
     for literal in unambiguous_literals:
         compact = re.sub(r"\s+", "", literal)
         flexible = re.compile(r"\s*".join(re.escape(character) for character in compact))
-        restored = flexible.sub(lambda _, exact=literal: exact, restored)
+        restored = flexible.sub(_literal_replacement(literal), restored)
     return restored
+
+
+def _literal_replacement(literal: str) -> Callable[[re.Match[str]], str]:
+    def replace(_: re.Match[str]) -> str:
+        return literal
+
+    return replace
 
 
 __all__ = [

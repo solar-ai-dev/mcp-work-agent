@@ -54,7 +54,7 @@
       "prompt_slot_id": "request_understanding.detect_ambiguity",
       "runtime_node_id": "request.detect_ambiguity",
       "input_schema_version": 1,
-      "required_root_fields": ["user_request", "goal_candidate", "selected_resource_refs"],
+      "required_root_fields": ["user_request", "goal_candidate", "resolution_responsibilities", "selected_resource_refs"],
       "optional_root_fields": ["confirmation_response"],
       "output_schema_version": 1
     },
