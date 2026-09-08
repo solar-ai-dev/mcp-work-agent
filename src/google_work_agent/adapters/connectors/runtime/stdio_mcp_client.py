@@ -39,6 +39,7 @@ from google_work_agent.ports.system.artifact_signature_verifier import (
 JsonObject = dict[str, object]
 PROTOCOL_VERSION = "2026-08-07.p0"
 MANIFEST_MESSAGE_LIMIT_BYTES = 64 * 1024
+MCP_RESPONSE_MESSAGE_LIMIT_BYTES = 8 * 1024 * 1024
 SESSION_KEY_BYTES = 32
 _CONTROL_OPERATION_SEGMENTS = frozenset({"oauth", "connection", "device_flow", "repositories"})
 
@@ -691,7 +692,7 @@ class StdioMCPClientAdapter:
         if process is None or process.stdout is None:
             return
         for line in process.stdout:
-            if len(line.encode("utf-8")) > MANIFEST_MESSAGE_LIMIT_BYTES:
+            if len(line.encode("utf-8")) > MCP_RESPONSE_MESSAGE_LIMIT_BYTES:
                 self._last_safe_error_code = MCPClientPortErrorCode.MALFORMED_RESPONSE.value
                 continue
             try:
