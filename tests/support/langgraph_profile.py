@@ -7,6 +7,7 @@ from google_work_agent.adapters.langgraph.main.graph import (
     GraphNodeBindings,
     MainControlNodeBindings,
 )
+from google_work_agent.adapters.langgraph.main.state import GraphState
 
 
 def profile_build_arguments() -> tuple[
@@ -16,19 +17,22 @@ def profile_build_arguments() -> tuple[
     Any,
     set[str],
 ]:
-    node = object()
+    def node(state: GraphState) -> dict[str, object]:
+        del state
+        return {}
+
     bindings = GraphNodeBindings(
-        request_understanding=object(),
-        tool_route=object(),
-        context_retriever=object(),
-        work_analysis=object(),
-        planning=object(),
-        review=object(),
-        single_workflow=object(),
-        waiting_approval=object(),
-        stage_one=object(),
-        stage_two=object(),
-        stage_three=object(),
+        request_understanding=node,
+        tool_route=node,
+        context_retriever=node,
+        work_analysis=node,
+        planning=node,
+        review=node,
+        single_workflow=node,
+        waiting_approval=node,
+        stage_one=node,
+        stage_two=node,
+        stage_three=node,
     )
     controls = MainControlNodeBindings(
         initialize=node,

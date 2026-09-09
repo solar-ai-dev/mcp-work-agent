@@ -32,8 +32,10 @@ from google_work_agent.application.use_cases.action.task_duplicates import (
     TASK_CREATE_TOOL,
     evidence_duplicate_risk,
 )
+from google_work_agent.application.use_cases.plan.publish_plan import PublishPlanHandler
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultCommandV1,
+    RecordReviewResultHandler,
 )
 from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
     RunScopedResourceIdentityReader,
@@ -205,8 +207,8 @@ class PlanPersistenceMixin:
         _evidence_store: Any
         _unit_of_work_factory: Callable[[], UnitOfWork]
         _save_write_plan: Callable[[SaveWritePlanCommand], Any]
-        _publish_write_plan: Callable[[PublishWritePlanCommand], Any]
-        _record_review_result: Callable[[RecordReviewResultCommandV1], Any]
+        _publish_write_plan: PublishPlanHandler
+        _record_review_result: RecordReviewResultHandler
 
         def _current_run_version(self, run_id: str) -> int: ...
 

@@ -59,9 +59,16 @@ from google_work_agent.adapters.langgraph.langsmith_workflow_trace_callback impo
     LangSmithWorkflowTraceCallback,
     create_langsmith_workflow_trace_callback,
 )
-from google_work_agent.adapters.langgraph.main.application_services import (
-    WorkflowApplicationServices,
-    WorkflowRuntimeHooks,
+from google_work_agent.adapters.langgraph.main.application_handler_bindings import (
+    ReadExecutionHandlerBindings,
+    RunLifecycleHandlerBindings,
+    VerificationRecoveryHandlerBindings,
+    WorkflowApplicationHandlerBindings,
+    WorkflowControlHandlerBindings,
+    WriteExecutionHandlerBindings,
+)
+from google_work_agent.adapters.langgraph.main.cancel_resolution_runtime_callbacks import (
+    CancelResolutionRuntimeCallbacks,
 )
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
     RESUME_CONTRACT_VERSION,
@@ -616,7 +623,7 @@ def _build_require_recovery(
     )
 
 
-def _build_workflow_application_services(
+def _build_workflow_application_handler_bindings(
     *,
     unit_of_work_factory: Callable[[], UnitOfWork],
     get_run_snapshot: GetRunSnapshotHandler,
@@ -628,13 +635,13 @@ def _build_workflow_application_services(
     service_instance_id: str,
     checkpoint: CheckpointPort,
     resume_target_registry: ResumeTargetRegistry,
-    runtime_hooks: WorkflowRuntimeHooks,
+    cancel_resolution_callbacks: CancelResolutionRuntimeCallbacks,
     claim_context_signer: Callable[[str, dict[str, object]], str] | None,
     work_hours_provider: Callable[[], CalendarWorkHours],
     sse_event_buffer: SseEventBufferPort | None,
     environment: str,
     release_version: str,
-) -> WorkflowApplicationServices:
+) -> WorkflowApplicationHandlerBindings:
     start_analysis = StartAnalysisHandler(
         unit_of_work_factory=unit_of_work_factory,
         now_ms=now_ms,
@@ -770,121 +777,125 @@ def _build_workflow_application_services(
         now_ms=now_ms,
     )
     resolve_resource_ref = ResolveResourceRefHandler(unit_of_work_factory=unit_of_work_factory)
-    return WorkflowApplicationServices(
-        start_analysis=start_analysis,
-        get_run_snapshot=get_run_snapshot,
-        get_supervisor_observation=get_supervisor_observation,
-        build_terminal_message=build_terminal_message,
-        emit_terminal_trace=emit_terminal_trace,
-        project_terminal_event=project_terminal_event,
-        begin_retrieval=begin_retrieval,
-        begin_planning=begin_planning,
-        request_confirmation=request_confirmation,
-        domain_validation=ValidatePlanForPublicationHandler(
-            tool_registry=tool_catalog,
-            validate_action_arguments=ValidateActionArgumentsHandler(),
+    return WorkflowApplicationHandlerBindings(
+        run_lifecycle=RunLifecycleHandlerBindings(
+            start_analysis=start_analysis,
+            get_run_snapshot=get_run_snapshot,
+            get_supervisor_observation=get_supervisor_observation,
+            build_terminal_message=build_terminal_message,
+            emit_terminal_trace=emit_terminal_trace,
+            project_terminal_event=project_terminal_event,
+            begin_retrieval=begin_retrieval,
+            begin_planning=begin_planning,
+            request_confirmation=request_confirmation,
+            complete_answer_only=complete_answer_only,
+            complete_read_only_run=complete_read_only_run,
+            complete_write_run=complete_write_run,
+            block_run=block_run,
         ),
-        persist_resource_ref=PersistResourceRefHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            tool_registry=tool_catalog,
+        read_execution=ReadExecutionHandlerBindings(
+            domain_validation=ValidatePlanForPublicationHandler(
+                tool_registry=tool_catalog,
+                validate_action_arguments=ValidateActionArgumentsHandler(),
+            ),
+            persist_resource_ref=PersistResourceRefHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                tool_registry=tool_catalog,
+            ),
+            publish_read_plan=publish_read_plan,
+            claim_read=claim_read,
+            complete_read=complete_read,
+            finalize_read=finalize_read,
+            fail_read=fail_read,
         ),
-        complete_answer_only=complete_answer_only,
-        complete_read_only_run=complete_read_only_run,
-        complete_write_run=complete_write_run,
-        block_run=block_run,
-        publish_read_plan=publish_read_plan,
-        claim_read=claim_read,
-        complete_read=complete_read,
-        finalize_read=finalize_read,
-        fail_read=fail_read,
-        publish_write_plan=publish_write_plan,
-        build_claim_context=build_claim_context,
-        begin_execution_attempt=begin_execution_attempt,
-        abort_claimed_execution=abort_claimed_execution,
-        classify_dispatch_result=ClassifyDispatchResultHandler(),
-        expire_approval=expire_approval,
-        refresh_expired_action=refresh_expired_action,
-        claim_execution=claim_execution,
-        store_write_success=StoreSuccessHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            now_ms=now_ms,
-            tool_registry=tool_catalog,
+        write_execution=WriteExecutionHandlerBindings(
+            publish_write_plan=publish_write_plan,
+            build_claim_context=build_claim_context,
+            begin_execution_attempt=begin_execution_attempt,
+            abort_claimed_execution=abort_claimed_execution,
+            classify_dispatch_result=ClassifyDispatchResultHandler(),
+            expire_approval=expire_approval,
+            refresh_expired_action=refresh_expired_action,
+            claim_execution=claim_execution,
+            store_write_success=StoreSuccessHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                now_ms=now_ms,
+                tool_registry=tool_catalog,
+            ),
+            mark_write_failed=MarkFailedHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
+            mark_write_unknown=MarkUnknownResultHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
         ),
-        mark_write_failed=MarkFailedHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        mark_write_unknown=MarkUnknownResultHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        verify_effect=VerifyEffectHandler(
-            connector_read=connector_reader.connector_reader,
-            tool_registry=tool_catalog,
-            unit_of_work_factory=unit_of_work_factory,
+        verification_recovery=VerificationRecoveryHandlerBindings(
+            verify_effect=VerifyEffectHandler(
+                connector_read=connector_reader.connector_reader,
+                tool_registry=tool_catalog,
+                unit_of_work_factory=unit_of_work_factory,
+                resolve_resource_ref=resolve_resource_ref,
+            ),
+            store_verification=StoreVerificationHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
+            require_recovery=require_recovery,
+            resolve_recovery=ResolveRecoveryHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                checkpoint_port=checkpoint,
+                now_ms=now_ms,
+                next_id=id_factory,
+                resume_target_registry=resume_target_registry,
+            ),
+            require_write_reauth=RequireReauthHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                checkpoint_port=checkpoint,
+                now_ms=now_ms,
+            ),
+            lookup_unknown_result=LookupUnknownResultHandler(
+                connector_read=connector_reader.connector_reader,
+                tool_registry=tool_catalog,
+                recovery_search_binding=google_workspace_internal_read_binding(
+                    "search_by_recovery_fingerprint"
+                ),
+                recovery_search_bindings={
+                    GITHUB_CONNECTOR_ID: github_internal_read_binding(
+                        "search_by_recovery_fingerprint"
+                    )
+                },
+                unit_of_work_factory=unit_of_work_factory,
+            ),
+            recover_existing_result=RecoverExistingResultHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                now_ms=now_ms,
+                tool_registry=tool_catalog,
+            ),
+            resolve_as_failed=ResolveAsFailedHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
+            begin_write_verification=begin_write_verification,
             resolve_resource_ref=resolve_resource_ref,
         ),
-        store_verification=StoreVerificationHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        require_recovery=require_recovery,
-        resolve_recovery=ResolveRecoveryHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            checkpoint_port=checkpoint,
-            now_ms=now_ms,
-            next_id=id_factory,
-            resume_target_registry=resume_target_registry,
-        ),
-        require_write_reauth=RequireReauthHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            checkpoint_port=checkpoint,
-            now_ms=now_ms,
-        ),
-        lookup_unknown_result=LookupUnknownResultHandler(
-            connector_read=connector_reader.connector_reader,
-            tool_registry=tool_catalog,
-            recovery_search_binding=google_workspace_internal_read_binding(
-                "search_by_recovery_fingerprint"
+        workflow_control=WorkflowControlHandlerBindings(
+            cancel_pending_action=CancelPendingActionHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
             ),
-            recovery_search_bindings={
-                GITHUB_CONNECTOR_ID: github_internal_read_binding("search_by_recovery_fingerprint")
-            },
-            unit_of_work_factory=unit_of_work_factory,
-        ),
-        recover_existing_result=RecoverExistingResultHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            now_ms=now_ms,
-            tool_registry=tool_catalog,
-        ),
-        resolve_as_failed=ResolveAsFailedHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        begin_write_verification=begin_write_verification,
-        resolve_resource_ref=resolve_resource_ref,
-        cancel_pending_action=CancelPendingActionHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        finalize_cancel=FinalizeCancelHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            checkpoint_port=checkpoint,
-            now_ms=now_ms,
-        ),
-        continue_cancel_resolution=ContinueCancelResolutionHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            settle_pending_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_settle_pending_cancel_action", *args, **kwargs
+            finalize_cancel=FinalizeCancelHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                checkpoint_port=checkpoint,
+                now_ms=now_ms,
             ),
-            reconcile_inflight_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_reconcile_cancelling_action", *args, **kwargs
+            continue_cancel_resolution=ContinueCancelResolutionHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                settle_pending_action=cancel_resolution_callbacks.settle_pending_action,
+                reconcile_inflight_action=(cancel_resolution_callbacks.reconcile_inflight_action),
+                verify_executed_action=cancel_resolution_callbacks.verify_executed_action,
+                resolve_unknown_action=cancel_resolution_callbacks.resolve_unknown_action,
+                finalize_cancel=None,
             ),
-            verify_executed_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_verify_cancelling_action", *args, **kwargs
-            ),
-            resolve_unknown_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_resolve_cancelling_unknown_action", *args, **kwargs
-            ),
-            finalize_cancel=None,
+            record_review_result=record_review_result,
+            validate_action_arguments=ValidateActionArgumentsHandler(),
         ),
-        record_review_result=record_review_result,
-        validate_action_arguments=ValidateActionArgumentsHandler(),
     )
 
 
@@ -2674,8 +2685,8 @@ def build_production_runtime(
             end=settings.working_day_end_local,
         )
 
-    runtime_hooks = WorkflowRuntimeHooks()
-    workflow_application_services = _build_workflow_application_services(
+    cancel_resolution_callbacks = CancelResolutionRuntimeCallbacks()
+    workflow_application_handlers = _build_workflow_application_handler_bindings(
         unit_of_work_factory=unit_of_work_factory,
         get_run_snapshot=get_run_snapshot_handler,
         get_supervisor_observation=get_supervisor_observation_handler,
@@ -2686,7 +2697,7 @@ def build_production_runtime(
         service_instance_id=service_instance_id,
         checkpoint=checkpoint,
         resume_target_registry=resume_target_registry,
-        runtime_hooks=runtime_hooks,
+        cancel_resolution_callbacks=cancel_resolution_callbacks,
         claim_context_signer=connector_bundle.runtime_registry.sign_claim_context,
         work_hours_provider=work_hours_provider,
         sse_event_buffer=event_publisher,
@@ -2712,8 +2723,8 @@ def build_production_runtime(
             id_factory=id_generator.new_uuid,
             signing_secret=secrets.token_hex(32),
             service_instance_id=service_instance_id,
-            application_services=workflow_application_services,
-            runtime_hooks=runtime_hooks,
+            application_handlers=workflow_application_handlers,
+            cancel_resolution_callbacks=cancel_resolution_callbacks,
             claim_context_signer=connector_bundle.runtime_registry.sign_claim_context,
             mcp_process_instance_id=lambda connector_id: (
                 connector_bundle.runtime_registry.process_instance_id(connector_id)

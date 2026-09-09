@@ -20,12 +20,14 @@ from google_work_agent.adapters.langgraph.main.action_evidence_projection import
     project_current_action_evidence,
     project_persisted_plan_evidence_for_review,
 )
-from google_work_agent.adapters.langgraph.main.application_services import (
-    WorkflowApplicationServices,
-    WorkflowRuntimeHooks,
+from google_work_agent.adapters.langgraph.main.application_handler_bindings import (
+    WorkflowApplicationHandlerBindings,
 )
 from google_work_agent.adapters.langgraph.main.artifact_freshness import (
     ArtifactFreshnessMixin,
+)
+from google_work_agent.adapters.langgraph.main.cancel_resolution_runtime_callbacks import (
+    CancelResolutionRuntimeCallbacks,
 )
 from google_work_agent.adapters.langgraph.main.confirmation_controller import (
     ConfirmationControllerMixin,
@@ -390,8 +392,8 @@ class _WorkflowRuntimeComposition:
         signing_secret: str,
         service_instance_id: str,
         checkpoint_port: CheckpointPort,
-        application_services: WorkflowApplicationServices,
-        runtime_hooks: WorkflowRuntimeHooks,
+        application_handlers: WorkflowApplicationHandlerBindings,
+        cancel_resolution_callbacks: CancelResolutionRuntimeCallbacks,
         retrieval_cache: InMemoryRunRetrievalCache | None = None,
         claim_context_signer: Callable[[str, dict[str, object]], str] | None = None,
         mcp_process_instance_id: Callable[[str], str] | None = None,
@@ -434,56 +436,65 @@ class _WorkflowRuntimeComposition:
         self._cancel_signal_lock = Lock()
         self._cancel_signals: set[str] = set()
         self._checkpointer = self._checkpoint_port
-        runtime_hooks.bind(self)
-        services = application_services
-        self._start_analysis_handler = services.start_analysis
-        self._get_run_snapshot_handler = services.get_run_snapshot
-        self._get_supervisor_observation_handler = services.get_supervisor_observation
-        self._build_terminal_message = services.build_terminal_message
-        self._emit_terminal_trace = services.emit_terminal_trace
-        self._project_terminal_event = services.project_terminal_event
-        self._begin_retrieval_handler = services.begin_retrieval
-        self._begin_planning_handler = services.begin_planning
-        self._request_confirmation_handler = services.request_confirmation
+        cancel_resolution_callbacks.bind(
+            settle_pending_action=self._settle_pending_cancel_action,
+            reconcile_inflight_action=self._reconcile_cancelling_action,
+            verify_executed_action=self._verify_cancelling_action,
+            resolve_unknown_action=self._resolve_cancelling_unknown_action,
+        )
+        run_handlers = application_handlers.run_lifecycle
+        read_handlers = application_handlers.read_execution
+        write_handlers = application_handlers.write_execution
+        recovery_handlers = application_handlers.verification_recovery
+        control_handlers = application_handlers.workflow_control
+        self._start_analysis_handler = run_handlers.start_analysis
+        self._get_run_snapshot_handler = run_handlers.get_run_snapshot
+        self._get_supervisor_observation_handler = run_handlers.get_supervisor_observation
+        self._build_terminal_message = run_handlers.build_terminal_message
+        self._emit_terminal_trace = run_handlers.emit_terminal_trace
+        self._project_terminal_event = run_handlers.project_terminal_event
+        self._begin_retrieval_handler = run_handlers.begin_retrieval
+        self._begin_planning_handler = run_handlers.begin_planning
+        self._request_confirmation_handler = run_handlers.request_confirmation
         self._read_result_cache = retrieval_cache or InMemoryRunRetrievalCache()
         self._evidence_store = RunScopedEvidenceStore()
-        self._canonical_domain_validation = services.domain_validation
-        self._persist_resource_ref = services.persist_resource_ref
-        self._complete_answer_only = services.complete_answer_only
-        self._complete_read_only_run = services.complete_read_only_run
-        self._complete_write_run = services.complete_write_run
-        self._block_run = services.block_run
-        self._publish_read_plan = services.publish_read_plan
+        self._canonical_domain_validation = read_handlers.domain_validation
+        self._persist_resource_ref = read_handlers.persist_resource_ref
+        self._complete_answer_only = run_handlers.complete_answer_only
+        self._complete_read_only_run = run_handlers.complete_read_only_run
+        self._complete_write_run = run_handlers.complete_write_run
+        self._block_run = run_handlers.block_run
+        self._publish_read_plan = read_handlers.publish_read_plan
         self._save_read_plan = self._publish_read_plan.save
-        self._claim_read = services.claim_read
-        self._complete_read = services.complete_read
+        self._claim_read = read_handlers.claim_read
+        self._complete_read = read_handlers.complete_read
         self._execute_read = self._complete_read.execute
-        self._finalize_read = services.finalize_read
-        self._fail_read = services.fail_read
-        self._publish_write_plan = services.publish_write_plan
+        self._finalize_read = read_handlers.finalize_read
+        self._fail_read = read_handlers.fail_read
+        self._publish_write_plan = write_handlers.publish_write_plan
         self._save_write_plan = self._publish_write_plan.save
-        self._build_claim_context = services.build_claim_context
-        self._begin_execution_attempt = services.begin_execution_attempt
-        self._abort_claimed_execution = services.abort_claimed_execution
-        self._classify_dispatch_result = services.classify_dispatch_result
-        self._expire_approval = services.expire_approval
-        self._refresh_expired_action = services.refresh_expired_action
-        self._claim_execution = services.claim_execution
+        self._build_claim_context = write_handlers.build_claim_context
+        self._begin_execution_attempt = write_handlers.begin_execution_attempt
+        self._abort_claimed_execution = write_handlers.abort_claimed_execution
+        self._classify_dispatch_result = write_handlers.classify_dispatch_result
+        self._expire_approval = write_handlers.expire_approval
+        self._refresh_expired_action = write_handlers.refresh_expired_action
+        self._claim_execution = write_handlers.claim_execution
         self._preflight_write = self._claim_execution.preflight
-        self._store_write_success = services.store_write_success
-        self._mark_write_failed = services.mark_write_failed
-        self._mark_write_unknown = services.mark_write_unknown
-        self._verify_effect = services.verify_effect
-        self._store_verification = services.store_verification
-        self._require_recovery = services.require_recovery
-        self._resolve_recovery = services.resolve_recovery
-        self._require_write_reauth = services.require_write_reauth
-        self._lookup_unknown_result = services.lookup_unknown_result
-        self._recover_existing_result = services.recover_existing_result
-        self._resolve_as_failed = services.resolve_as_failed
-        self._begin_write_verification = services.begin_write_verification
-        self._record_review_result = services.record_review_result
-        self._validate_action_arguments = services.validate_action_arguments
+        self._store_write_success = write_handlers.store_write_success
+        self._mark_write_failed = write_handlers.mark_write_failed
+        self._mark_write_unknown = write_handlers.mark_write_unknown
+        self._verify_effect = recovery_handlers.verify_effect
+        self._store_verification = recovery_handlers.store_verification
+        self._require_recovery = recovery_handlers.require_recovery
+        self._resolve_recovery = recovery_handlers.resolve_recovery
+        self._require_write_reauth = recovery_handlers.require_write_reauth
+        self._lookup_unknown_result = recovery_handlers.lookup_unknown_result
+        self._recover_existing_result = recovery_handlers.recover_existing_result
+        self._resolve_as_failed = recovery_handlers.resolve_as_failed
+        self._begin_write_verification = recovery_handlers.begin_write_verification
+        self._record_review_result = control_handlers.record_review_result
+        self._validate_action_arguments = control_handlers.validate_action_arguments
         self._write_execution_phase = WriteExecutionStructuralDriver(
             id_factory=id_factory,
             request_hash=self._request_hash,
@@ -549,9 +560,9 @@ class _WorkflowRuntimeComposition:
             ),
             latest_attempt_id=self._latest_attempt_id,
         )
-        self._cancel_pending_action = services.cancel_pending_action
-        self._finalize_cancel = services.finalize_cancel
-        self._continue_cancel_resolution = services.continue_cancel_resolution
+        self._cancel_pending_action = control_handlers.cancel_pending_action
+        self._finalize_cancel = control_handlers.finalize_cancel
+        self._continue_cancel_resolution = control_handlers.continue_cancel_resolution
         entry_subgraphs = build_pre_analysis_subgraphs(
             connector_prerequisites=connector_prerequisites,
             repository_access=repository_access,

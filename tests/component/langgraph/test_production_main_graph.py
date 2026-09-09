@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
 from typing import cast
 
 import pytest
+from langgraph.graph.state import StateNode
 
 from google_work_agent.adapters.langgraph.main.graph import (
     GraphNodeBindings,
@@ -102,15 +102,17 @@ def _state(profile: GraphProfile, *, initial_target: str) -> GraphState:
     )
 
 
-def _target_node(target: str) -> Callable[[Mapping[str, object]], dict[str, object]]:
-    def node(_state: Mapping[str, object]) -> dict[str, object]:
+def _target_node(target: str) -> StateNode[GraphState]:
+    def node(state: GraphState) -> dict[str, object]:
+        del state
         return {"__target__": target}
 
     return node
 
 
 def _controls(initial_target: str) -> MainControlNodeBindings:
-    def no_update(_state: Mapping[str, object]) -> dict[str, object]:
+    def no_update(state: GraphState) -> dict[str, object]:
+        del state
         return {}
 
     return MainControlNodeBindings(
@@ -132,7 +134,7 @@ def _controls(initial_target: str) -> MainControlNodeBindings:
 
 
 def _bindings(
-    physical_node: Callable[[Mapping[str, object]], dict[str, object]],
+    physical_node: StateNode[GraphState],
 ) -> GraphNodeBindings:
     return GraphNodeBindings(
         request_understanding=physical_node,
@@ -153,7 +155,7 @@ def _composition(
     profile: GraphProfile,
     *,
     initial_target: str,
-    physical_node: Callable[[Mapping[str, object]], dict[str, object]] | None = None,
+    physical_node: StateNode[GraphState] | None = None,
 ) -> WorkflowGraphComposition:
     builder = get_graph_profile_builder(profile)
     return cast(
@@ -245,8 +247,9 @@ def test_physical_profile_subgraphs__with_semantic_nodes__compile_and_invoke() -
 def test_main_graph__physical_back_edge__is_bounded_and_reaches_terminal() -> None:
     visits = 0
 
-    def physical_node(_state: Mapping[str, object]) -> dict[str, object]:
+    def physical_node(state: GraphState) -> dict[str, object]:
         nonlocal visits
+        del state
         visits += 1
         return {
             "__target__": "single_workflow" if visits == 1 else "response_synthesis"

@@ -11,6 +11,7 @@ from google_work_agent.adapters.langgraph.main.graph import (
     MainControlNodeBindings,
     WorkflowGraphComposition,
 )
+from google_work_agent.adapters.langgraph.main.state import GraphState
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -44,12 +45,15 @@ CONDITIONAL_STAGES = frozenset(
 
 
 def _composition(profile: GraphProfile, topology: tuple[str, ...]) -> WorkflowGraphComposition:
-    node = object()
+    def node(state: GraphState) -> dict[str, object]:
+        del state
+        return {}
+
     return WorkflowGraphComposition(
         profile=profile,
         topology=topology,
-        bindings=GraphNodeBindings(*([node] * 11)),
-        control_bindings=MainControlNodeBindings(*([node] * 14)),
+        bindings=GraphNodeBindings(*((node,) * 11)),
+        control_bindings=MainControlNodeBindings(*((node,) * 14)),
         should_stop_for_cancel=lambda _run_id: False,
         checkpointer=None,
     )
