@@ -79,8 +79,16 @@ def _task_title(item: Mapping[str, object]) -> str | None:
     excerpt = item.get("excerpt")
     if not isinstance(excerpt, str):
         return None
-    title = next((line.strip() for line in excerpt.splitlines() if line.strip()), "")
-    return title or None
+    lines = [line.strip() for line in excerpt.splitlines() if line.strip()]
+    structured_title = next(
+        (line.partition(":")[2].strip() for line in lines if line.startswith("title:")),
+        "",
+    )
+    if structured_title:
+        return structured_title
+    if any(":" in line for line in lines):
+        return None
+    return lines[0] if lines else None
 
 
 __all__ = ["TaskReadAnswerProjection", "project_task_read_answer"]

@@ -53,3 +53,34 @@ def test_task_read_answer__analytical_or_mixed_request__does_not_replace() -> No
         )
         is None
     )
+
+
+def test_task_read_answer__structured_excerpt__uses_title_not_task_list_id() -> None:
+    result = project_task_read_answer(
+        user_request="현재 할 일을 알려줘.",
+        request_intent={
+            "requested_effect_hints": ["READ"],
+            "requested_resource_hints": ["TASK"],
+            "analysis_requirement": "NONE",
+        },
+        evidence=[
+            {
+                "evidence_id": "e-task",
+                "resource_handle": "task:42",
+                "excerpt": (
+                    "task_list_id: private-list\n"
+                    "title: Quartz 입고 준비\n"
+                    "status: needsAction"
+                ),
+            },
+            {
+                "evidence_id": "e-task-without-title",
+                "resource_handle": "task:43",
+                "excerpt": "task_list_id: private-list\nstatus: needsAction",
+            },
+        ],
+    )
+
+    assert result is not None
+    assert "- Quartz 입고 준비" in result.draft["answer"]
+    assert "private-list" not in result.draft["answer"]
