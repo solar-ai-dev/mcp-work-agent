@@ -20,6 +20,18 @@ from google_work_agent.ports.llm.structured_inference_contracts import LLMInvoca
 _LOGGER = logging.getLogger(__name__)
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 _SAFE_FIELD_PATH = re.compile(r"[$A-Za-z0-9_.\[\]-]{1,160}")
+_TRACE_BINDING_KEYS = frozenset(
+    {
+        "code_sha",
+        "experiment_id",
+        "model_digest",
+        "model_id",
+        "prompt_content_hash",
+        "prompt_id",
+        "prompt_version",
+        "question_id",
+    }
+)
 type _LangSmithRunType = Literal[
     "tool",
     "chain",
@@ -52,11 +64,18 @@ class _LangSmithClient(Protocol):
 class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
     """Record graph and node timing without exporting workflow inputs or outputs."""
 
-    def __init__(self, *, client: _LangSmithClient, project_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: _LangSmithClient,
+        project_name: str,
+        trace_binding: Mapping[str, str] | None = None,
+    ) -> None:
         if not _SAFE_VALUE.fullmatch(project_name):
             raise ValueError("LangSmith project name must be a safe opaque identifier")
         self._client = client
         self._project_name = project_name
+        self._trace_binding = _validated_trace_binding(trace_binding or {})
         self._parents: dict[UUID, UUID] = {}
         self._active: dict[UUID, tuple[UUID, UUID | None, dict[str, object]]] = {}
         self._lock = Lock()
@@ -74,8 +93,8 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
     ) -> None:
         del serialized, inputs
         safe_metadata = self._safe_metadata(metadata or {})
-        product_run_id = safe_metadata.get("product_run_id")
-        if product_run_id is None:
+        domain_run_id = safe_metadata.get("domain_run_id")
+        if domain_run_id is None:
             return
         node = safe_metadata.get("graph_node")
         is_root = parent_run_id is None
@@ -144,14 +163,17 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
             metadata["error_type"] = (
                 error_type if _SAFE_VALUE.fullmatch(error_type) else "Exception"
             )
-            if isinstance(error, LLMInvocationError):
-                metadata["safe_error_code"] = error.code.value
-                metadata["provider_dispatch_occurred"] = error.provider_dispatch_occurred
+            safe_error_code = _safe_error_code(error)
+            if safe_error_code is not None:
+                metadata["safe_error_code"] = safe_error_code
+            affected_field_paths = _safe_affected_field_paths(error)
+            if affected_field_paths:
                 metadata["affected_field_path_hashes"] = [
                     sha256(path.encode("utf-8")).hexdigest()[:16]
-                    for path in error.affected_field_paths[:16]
-                    if _SAFE_FIELD_PATH.fullmatch(path)
+                    for path in affected_field_paths
                 ]
+            if isinstance(error, LLMInvocationError):
+                metadata["provider_dispatch_occurred"] = error.provider_dispatch_occurred
             tags.append("failed")
             safe_error = f"SAFE_ERROR_TYPE:{metadata['error_type']}"
         try:
@@ -205,12 +227,14 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
             current = self._parents.get(current)
         return None
 
-    @staticmethod
-    def _safe_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
+    def _safe_metadata(self, metadata: Mapping[str, object]) -> dict[str, object]:
         product_run_id = metadata.get("product_run_id")
         if not isinstance(product_run_id, str) or not _SAFE_VALUE.fullmatch(product_run_id):
             return {}
-        result: dict[str, object] = {"product_run_id": product_run_id}
+        result: dict[str, object] = {
+            "domain_run_id": product_run_id,
+            **self._trace_binding,
+        }
         for source, target in (
             ("graph_profile", "graph_profile"),
             ("graph_version", "graph_version"),
@@ -228,7 +252,10 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
 
 
 def create_langsmith_workflow_trace_callback(
-    *, api_key: str, project_name: str
+    *,
+    api_key: str,
+    project_name: str,
+    trace_binding: Mapping[str, str] | None = None,
 ) -> LangSmithWorkflowTraceCallback:
     """Build the only LangSmith client with raw payload export disabled."""
 
@@ -242,7 +269,42 @@ def create_langsmith_workflow_trace_callback(
         hide_outputs=True,
         omit_traced_runtime_info=True,
     )
-    return LangSmithWorkflowTraceCallback(client=client, project_name=project_name)
+    return LangSmithWorkflowTraceCallback(
+        client=client,
+        project_name=project_name,
+        trace_binding=trace_binding,
+    )
+
+
+def _validated_trace_binding(value: Mapping[str, str]) -> dict[str, str]:
+    if not value:
+        return {}
+    if set(value) != _TRACE_BINDING_KEYS:
+        raise ValueError("LangSmith trace binding must contain the complete safe field set")
+    result = dict(value)
+    if any(not _SAFE_VALUE.fullmatch(item) for item in result.values()):
+        raise ValueError("LangSmith trace binding values must be safe opaque identifiers")
+    return result
+
+
+def _safe_error_code(error: BaseException) -> str | None:
+    if isinstance(error, LLMInvocationError):
+        return error.code.value
+    reason_code = getattr(error, "reason_code", None)
+    if isinstance(reason_code, str) and _SAFE_VALUE.fullmatch(reason_code):
+        return reason_code
+    return None
+
+
+def _safe_affected_field_paths(error: BaseException) -> tuple[str, ...]:
+    value = getattr(error, "affected_field_paths", ())
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(
+        path
+        for path in value[:16]
+        if isinstance(path, str) and _SAFE_FIELD_PATH.fullmatch(path)
+    )
 
 
 __all__ = [

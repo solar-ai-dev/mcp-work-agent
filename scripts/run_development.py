@@ -33,7 +33,11 @@ def development_runtime_config(
 ) -> ProductionRuntimeConfig:
     """Supply explicit development values without becoming an installed fallback."""
 
-    langsmith_api_key, langsmith_project_name = read_development_langsmith_environment()
+    (
+        langsmith_api_key,
+        langsmith_project_name,
+        langsmith_trace_binding,
+    ) = read_development_langsmith_environment()
     return ProductionRuntimeConfig.development(
         runtime_root=(runtime_root or PROJECT_ROOT / "runtime" / "development").resolve(),
         working_directory=PROJECT_ROOT,
@@ -46,6 +50,7 @@ def development_runtime_config(
         github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
         langsmith_api_key=langsmith_api_key,
         langsmith_project_name=langsmith_project_name,
+        langsmith_trace_binding=langsmith_trace_binding,
     )
 
 

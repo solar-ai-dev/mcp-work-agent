@@ -98,6 +98,7 @@ def create_app(
                 ),
                 langsmith_api_key=production_config.langsmith_api_key,
                 langsmith_project_name=production_config.langsmith_project_name,
+                langsmith_trace_binding=production_config.langsmith_trace_binding,
                 verified_release_files=production_config.verified_release_files,
                 code_signature_verified_paths=(production_config.code_signature_verified_paths),
                 request_process_exit=request_process_exit,

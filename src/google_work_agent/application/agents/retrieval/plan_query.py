@@ -490,6 +490,12 @@ def plan_query(
         detail_candidate_refs=detail_candidate_refs,
         next_page_route_ids=next_page_route_ids,
     )
+    if not any(route_operations.values()):
+        raise RetrievalV2ValidationError(
+            "no executable retrieval operation is available for the frozen routes",
+            reason_code="QUERY_OPERATION_UNAVAILABLE",
+            affected_field_paths=("$.input_routes[].allowed_read_tool_ids",),
+        )
     planner_input = _project_route_constraint_policies(
         prompt_input,
         route_policies,

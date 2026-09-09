@@ -31,6 +31,16 @@ from launcher.readiness import ServiceReadiness, wait_for_service_ready
 
 DEVELOPMENT_GITHUB_APP_CLIENT_ID = "Iv23liYV2mScbAiVwc5Y"
 DEVELOPMENT_LANGSMITH_PROJECT = "google-work-agent-development"
+DEVELOPMENT_LANGSMITH_TRACE_ENVIRONMENT = {
+    "code_sha": "GWA_LANGSMITH_CODE_SHA",
+    "experiment_id": "GWA_LANGSMITH_EXPERIMENT_ID",
+    "model_digest": "GWA_LANGSMITH_MODEL_DIGEST",
+    "model_id": "GWA_LANGSMITH_MODEL_ID",
+    "prompt_content_hash": "GWA_LANGSMITH_PROMPT_CONTENT_HASH",
+    "prompt_id": "GWA_LANGSMITH_PROMPT_ID",
+    "prompt_version": "GWA_LANGSMITH_PROMPT_VERSION",
+    "question_id": "GWA_LANGSMITH_QUESTION_ID",
+}
 
 MCP_MANIFEST_VERSION = "2026-08-07.p0"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +57,7 @@ class _ThreadServiceProbe:
 
 def read_development_langsmith_environment(
     environment: Mapping[str, str] | None = None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, dict[str, str]]:
     """Read an explicit safe tracing opt-in without enabling LangChain auto tracing."""
 
     values = os.environ if environment is None else environment
@@ -56,14 +66,20 @@ def read_development_langsmith_environment(
     ):
         raise ValueError("automatic LangSmith tracing is not permitted by the Product boundary")
     if not _boolean_environment(values, "GWA_LANGSMITH_ENABLED"):
-        return None, None
+        return None, None, {}
     api_key = values.get("LANGSMITH_API_KEY", "").strip()
     if not api_key:
         raise ValueError("GWA_LANGSMITH_ENABLED requires LANGSMITH_API_KEY")
     project_name = values.get("LANGSMITH_PROJECT", DEVELOPMENT_LANGSMITH_PROJECT).strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", project_name):
         raise ValueError("LANGSMITH_PROJECT must be a safe opaque identifier")
-    return api_key, project_name
+    trace_binding = {
+        key: values.get(environment_name, "").strip()
+        for key, environment_name in DEVELOPMENT_LANGSMITH_TRACE_ENVIRONMENT.items()
+    }
+    if any(not value for value in trace_binding.values()):
+        raise ValueError("GWA LangSmith tracing requires the complete experiment binding")
+    return api_key, project_name, trace_binding
 
 
 def _boolean_environment(environment: Mapping[str, str], name: str) -> bool:
@@ -107,7 +123,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     thread: threading.Thread | None = None
     exit_code = [1]
     try:
-        langsmith_api_key, langsmith_project_name = read_development_langsmith_environment()
+        (
+            langsmith_api_key,
+            langsmith_project_name,
+            langsmith_trace_binding,
+        ) = read_development_langsmith_environment()
         production_config = ProductionRuntimeConfig.development(
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
@@ -120,6 +140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prompt_manifest_path=arguments.prompt_manifest,
             langsmith_api_key=langsmith_api_key,
             langsmith_project_name=langsmith_project_name,
+            langsmith_trace_binding=langsmith_trace_binding,
         )
 
         def request_process_exit() -> None:

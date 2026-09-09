@@ -21,17 +21,48 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_development_langsmith__explicit_safe_configuration__is_required() -> None:
-    assert read_development_langsmith_environment({}) == (None, None)
+    trace_environment = {
+        "GWA_LANGSMITH_CODE_SHA": "a" * 40,
+        "GWA_LANGSMITH_EXPERIMENT_ID": "issue251-read-only-6run",
+        "GWA_LANGSMITH_MODEL_DIGEST": "b" * 64,
+        "GWA_LANGSMITH_MODEL_ID": "qwen3.5:9b",
+        "GWA_LANGSMITH_PROMPT_CONTENT_HASH": "c" * 64,
+        "GWA_LANGSMITH_PROMPT_ID": "request_understanding.identify_goal",
+        "GWA_LANGSMITH_PROMPT_VERSION": "1.0.50",
+        "GWA_LANGSMITH_QUESTION_ID": "Q1",
+    }
+    assert read_development_langsmith_environment({}) == (None, None, {})
     assert read_development_langsmith_environment(
         {
             "GWA_LANGSMITH_ENABLED": "true",
             "LANGSMITH_API_KEY": "secret-key",
             "LANGSMITH_PROJECT": "quality-development",
+            **trace_environment,
         }
-    ) == ("secret-key", "quality-development")
+    ) == (
+        "secret-key",
+        "quality-development",
+        {
+            "code_sha": "a" * 40,
+            "experiment_id": "issue251-read-only-6run",
+            "model_digest": "b" * 64,
+            "model_id": "qwen3.5:9b",
+            "prompt_content_hash": "c" * 64,
+            "prompt_id": "request_understanding.identify_goal",
+            "prompt_version": "1.0.50",
+            "question_id": "Q1",
+        },
+    )
 
     with pytest.raises(ValueError, match="requires LANGSMITH_API_KEY"):
         read_development_langsmith_environment({"GWA_LANGSMITH_ENABLED": "true"})
+    with pytest.raises(ValueError, match="complete experiment binding"):
+        read_development_langsmith_environment(
+            {
+                "GWA_LANGSMITH_ENABLED": "true",
+                "LANGSMITH_API_KEY": "secret-key",
+            }
+        )
     with pytest.raises(ValueError, match="automatic LangSmith tracing"):
         read_development_langsmith_environment({"LANGSMITH_TRACING": "true"})
     with pytest.raises(ValueError, match="automatic LangSmith tracing"):
@@ -74,10 +105,21 @@ def test_development_config__langsmith_secret__requires_explicit_complete_handof
         mcp_manifest_version="test",
         langsmith_api_key=" secret-key ",
         langsmith_project_name=" quality-development ",
+        langsmith_trace_binding={
+            "code_sha": "a" * 40,
+            "experiment_id": "issue251-read-only-6run",
+            "model_digest": "b" * 64,
+            "model_id": "qwen3.5:9b",
+            "prompt_content_hash": "c" * 64,
+            "prompt_id": "request_understanding.identify_goal",
+            "prompt_version": "1.0.50",
+            "question_id": "Q1",
+        },
     )
 
     assert config.langsmith_api_key == "secret-key"
     assert config.langsmith_project_name == "quality-development"
+    assert dict(config.langsmith_trace_binding)["question_id"] == "Q1"
     assert "secret-key" not in repr(config)
     with pytest.raises(ValueError, match="configured together"):
         ProductionRuntimeConfig.development(

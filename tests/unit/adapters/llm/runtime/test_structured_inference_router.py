@@ -262,6 +262,8 @@ def test_local_inference_trace__actual_provider_result__includes_class_profile_a
     assert started["inference_class"] == completed["inference_class"] == "REASONING"
     assert started["local_model_profile_id"] == completed["local_model_profile_id"] == "single-9b"
     assert started["selected_model_id"] == completed["selected_model_id"] == "qwen3.5:9b"
+    assert started["operation"] == completed["operation"] == "INFER_STRUCTURED"
+    assert started["output_schema_id"] == completed["output_schema_id"] == SCHEMA.schema_version
     assert completed["model"] == result.model
 
 
@@ -298,9 +300,10 @@ def test_local_inference_failure__traces_selected_model__without_unsafe_detail()
     assert failed["safe_error_code"] == LLMErrorCode.OUTPUT_SCHEMA_INVALID.value
     assert failed["output_schema_id"] == SCHEMA.schema_version
     assert failed["error_type"] == "LLMInvocationError"
-    assert failed["affected_field_paths"] == ["$.route_queries[0].operation"]
+    assert failed["affected_field_paths"] == []
     assert failed["provider_dispatch_occurred"] is True
     assert "unsafe validator detail" not in repr(failed)
+    assert "route_queries" not in repr(failed)
 
 
 def test_schema_failure_trace__field_path__omits_output_value() -> None:

@@ -1067,6 +1067,7 @@ class ProductionRuntimeConfig:
     development_prompt_manifest_path: Path | None = None
     langsmith_api_key: str | None = field(default=None, repr=False)
     langsmith_project_name: str | None = None
+    langsmith_trace_binding: tuple[tuple[str, str], ...] = ()
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = ()
     code_signature_verified_paths: frozenset[str] = frozenset()
 
@@ -1085,7 +1086,11 @@ class ProductionRuntimeConfig:
         if self.configuration_source == "SIGNED_RELEASE_MANIFEST":
             if self.development_prompt_manifest_path is not None:
                 raise ValueError("signed runtime cannot select a development Prompt manifest")
-            if self.langsmith_api_key is not None or self.langsmith_project_name is not None:
+            if (
+                self.langsmith_api_key is not None
+                or self.langsmith_project_name is not None
+                or self.langsmith_trace_binding
+            ):
                 raise ValueError("signed runtime cannot enable external development observability")
             if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
                 raise ValueError("signed GitHub OAuth client ID must be non-empty")
@@ -1096,6 +1101,8 @@ class ProductionRuntimeConfig:
                 raise ValueError("signed runtime code signature proof is invalid")
         if (self.langsmith_api_key is None) != (self.langsmith_project_name is None):
             raise ValueError("LangSmith API key and project name must be configured together")
+        if self.langsmith_trace_binding and self.langsmith_api_key is None:
+            raise ValueError("LangSmith trace binding requires an enabled LangSmith client")
 
     def verified_frontend_site(self) -> _VerifiedFrontendSite | None:
         """Project only release-indexed frontend assets before deferred core startup."""
@@ -1126,6 +1133,7 @@ class ProductionRuntimeConfig:
         prompt_manifest_path: Path | None = None,
         langsmith_api_key: str | None = None,
         langsmith_project_name: str | None = None,
+        langsmith_trace_binding: Mapping[str, str] | None = None,
     ) -> ProductionRuntimeConfig:
         """Create the only explicit non-installed configuration mode."""
 
@@ -1151,6 +1159,7 @@ class ProductionRuntimeConfig:
             ),
             langsmith_api_key=(langsmith_api_key or "").strip() or None,
             langsmith_project_name=(langsmith_project_name or "").strip() or None,
+            langsmith_trace_binding=tuple(sorted((langsmith_trace_binding or {}).items())),
         )
 
     @classmethod
@@ -2257,6 +2266,7 @@ def build_production_runtime(
     development_prompt_manifest_path: Path | None = None,
     langsmith_api_key: str | None = None,
     langsmith_project_name: str | None = None,
+    langsmith_trace_binding: tuple[tuple[str, str], ...] = (),
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = (),
     code_signature_verified_paths: frozenset[str] = frozenset(),
     request_process_exit: Callable[[], None] | None = None,
@@ -2266,7 +2276,9 @@ def build_production_runtime(
 
     LocalBindPolicy(host=host, port=port).validate()
     if configuration_source != "EXPLICIT_DEVELOPMENT" and (
-        langsmith_api_key is not None or langsmith_project_name is not None
+        langsmith_api_key is not None
+        or langsmith_project_name is not None
+        or langsmith_trace_binding
     ):
         raise CoreInitializationError("EXTERNAL_DEVELOPMENT_OBSERVABILITY_FORBIDDEN")
     langsmith_callback: LangSmithWorkflowTraceCallback | None = None
@@ -2274,6 +2286,7 @@ def build_production_runtime(
         langsmith_callback = create_langsmith_workflow_trace_callback(
             api_key=langsmith_api_key,
             project_name=langsmith_project_name,
+            trace_binding=dict(langsmith_trace_binding),
         )
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
         if development_prompt_manifest_path is not None:

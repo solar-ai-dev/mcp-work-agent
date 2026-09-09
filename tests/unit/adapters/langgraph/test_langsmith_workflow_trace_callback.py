@@ -71,6 +71,11 @@ class _GraphState(TypedDict):
     value: int
 
 
+class _SemanticValidationError(ValueError):
+    reason_code = "SEMANTIC_FIELD_INVALID"
+    affected_field_paths = ("$.resource_responsibilities.outputs", "unsafe@email")
+
+
 def _metadata(**extra: object) -> dict[str, object]:
     return {
         "product_run_id": "run-123",
@@ -80,11 +85,25 @@ def _metadata(**extra: object) -> dict[str, object]:
     }
 
 
+def _trace_binding() -> dict[str, str]:
+    return {
+        "code_sha": "a" * 40,
+        "experiment_id": "issue251-read-only-6run",
+        "model_digest": "b" * 64,
+        "model_id": "qwen3.5:9b",
+        "prompt_content_hash": "c" * 64,
+        "prompt_id": "request_understanding.identify_goal",
+        "prompt_version": "1.0.50",
+        "question_id": "Q1",
+    }
+
+
 def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> None:
     client = _Client()
     callback = LangSmithWorkflowTraceCallback(
         client=client,
         project_name="quality-development",
+        trace_binding=_trace_binding(),
     )
     graph_run_id = uuid4()
     internal_run_id = uuid4()
@@ -132,7 +151,8 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
     assert client.created[1]["parent_run_id"] == graph_run_id
     node_metadata = client.created[1]["extra"]["metadata"]
     assert node_metadata == {
-        "product_run_id": "run-123",
+        "domain_run_id": "run-123",
+        **_trace_binding(),
         "graph_profile": "SIX_ROLE_BASELINE",
         "graph_version": "resume-contract-v2",
         "graph_node": "request_understanding",
@@ -194,7 +214,9 @@ def test_callback__exports_typed_failure_code__without_error_message() -> None:
     update = client.updated[0][1]
     assert update["error"] == "SAFE_ERROR_TYPE:LLMInvocationError"
     assert update["extra"]["metadata"] == {
-        **_metadata(),
+        "domain_run_id": "run-123",
+        "graph_profile": "SIX_ROLE_BASELINE",
+        "graph_version": "resume-contract-v2",
         "error_type": "LLMInvocationError",
         "safe_error_code": "OUTPUT_SCHEMA_INVALID",
         "provider_dispatch_occurred": True,
@@ -203,6 +225,22 @@ def test_callback__exports_typed_failure_code__without_error_message() -> None:
     assert "private provider output" not in repr(update)
     assert "secret@example.com" not in repr(update)
     assert "$.valid[0].field" not in repr(update)
+
+
+def test_callback__semantic_failure__exports_reason_and_safe_field_hash_only() -> None:
+    client = _Client()
+    callback = LangSmithWorkflowTraceCallback(client=client, project_name="quality")
+    run_id = uuid4()
+    callback.on_chain_start(None, {}, run_id=run_id, metadata=_metadata(), name="graph")
+
+    callback.on_chain_error(_SemanticValidationError("private model output"), run_id=run_id)
+
+    update = client.updated[0][1]
+    metadata = update["extra"]["metadata"]
+    assert metadata["safe_error_code"] == "SEMANTIC_FIELD_INVALID"
+    assert metadata["affected_field_path_hashes"] == ["f7d52e4f92f5570b"]
+    assert "private model output" not in repr(update)
+    assert "unsafe@email" not in repr(update)
 
 
 def test_callback__records_interrupt_without_failure__and_never_breaks_workflow() -> None:
@@ -242,6 +280,7 @@ def test_callback_factory__payload_hiding_and_idempotent_close__are_forced(
     callback = create_langsmith_workflow_trace_callback(
         api_key=" secret-key ",
         project_name="quality",
+        trace_binding=_trace_binding(),
     )
     built_client = clients[0]
     assert built_client.constructor == {
@@ -284,3 +323,18 @@ def test_invocation_config__product_run_correlation__excludes_thread_key() -> No
         "graph_version": "graph-v1",
     }
     assert "private-workflow-key" not in repr(config["metadata"])
+
+
+def test_callback__partial_or_unsafe_trace_binding__is_rejected() -> None:
+    with pytest.raises(ValueError, match="complete safe field set"):
+        LangSmithWorkflowTraceCallback(
+            client=_Client(),
+            project_name="quality",
+            trace_binding={"question_id": "Q1"},
+        )
+    with pytest.raises(ValueError, match="safe opaque identifiers"):
+        LangSmithWorkflowTraceCallback(
+            client=_Client(),
+            project_name="quality",
+            trace_binding={**_trace_binding(), "question_id": "unsafe value"},
+        )

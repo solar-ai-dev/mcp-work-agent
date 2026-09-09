@@ -466,6 +466,7 @@ class StructuredInferenceRuntimeRouter:
                 severity=Severity.ERROR,
                 correlation=trace_context,
                 attributes={
+                    "operation": "INFER_STRUCTURED",
                     "prompt_id": prompt_ref.prompt_id,
                     "prompt_version": prompt_ref.prompt_version,
                     "prompt_content_hash": prompt_ref.content_hash,
@@ -476,7 +477,9 @@ class StructuredInferenceRuntimeRouter:
                     "output_schema_id": output_schema.schema_version,
                     "safe_error_code": error.code.value,
                     "error_type": type(error).__name__,
-                    "affected_field_paths": list(error.affected_field_paths),
+                    "affected_field_paths": list(
+                        _safe_schema_field_paths(error.affected_field_paths, output_schema)
+                    ),
                     "provider_dispatch_occurred": error.provider_dispatch_occurred,
                     "fallback_reason": fallback_reason,
                 },
@@ -521,6 +524,7 @@ class StructuredInferenceRuntimeRouter:
             severity=Severity.INFO,
             correlation=trace_context,
             attributes={
+                "operation": "INFER_STRUCTURED",
                 "prompt_id": prompt_ref.prompt_id,
                 "prompt_version": prompt_ref.prompt_version,
                 "prompt_content_hash": prompt_ref.content_hash,
@@ -528,6 +532,7 @@ class StructuredInferenceRuntimeRouter:
                 "actual_runtime": provider.runtime.value,
                 "provider": provider.provider_name,
                 "selected_model_id": selected_model_id,
+                "output_schema_id": output_schema.schema_version,
                 **profile_attributes,
             },
             result_code="STARTED",
@@ -599,6 +604,7 @@ class StructuredInferenceRuntimeRouter:
             severity=Severity.INFO,
             correlation=trace_context,
             attributes={
+                "operation": "INFER_STRUCTURED",
                 "prompt_id": prompt_ref.prompt_id,
                 "prompt_version": prompt_ref.prompt_version,
                 "prompt_content_hash": prompt_ref.content_hash,
@@ -607,6 +613,7 @@ class StructuredInferenceRuntimeRouter:
                 "provider": result.provider,
                 "model": result.model,
                 "selected_model_id": selected_model_id,
+                "output_schema_id": output_schema.schema_version,
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "total_tokens": result.total_tokens,
@@ -851,6 +858,25 @@ def _validation_error_paths(errors: list[str]) -> tuple[str, ...]:
             }
         )
     )
+
+
+def _safe_schema_field_paths(
+    paths: tuple[str, ...], output_schema: OutputSchemaDefinition
+) -> tuple[str, ...]:
+    properties = output_schema.json_schema.get("properties")
+    allowed_roots = frozenset(properties) if isinstance(properties, Mapping) else frozenset()
+    safe_paths: list[str] = []
+    for path in paths:
+        match = _JSON_PATH_PREFIX.fullmatch(path)
+        if match is None:
+            continue
+        if path == "$":
+            safe_paths.append(path)
+            continue
+        root = path[2:].split(".", 1)[0].split("[", 1)[0]
+        if root in allowed_roots:
+            safe_paths.append(path)
+    return tuple(sorted(set(safe_paths)))
 
 
 def _sum_tokens(input_tokens: int | None, output_tokens: int | None) -> int | None:

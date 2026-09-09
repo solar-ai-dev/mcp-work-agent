@@ -36,14 +36,21 @@ def project_task_read_answer(
     ]
     evidence_refs = [ref for item in citation_items if (ref := _evidence_ref(item)) is not None]
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
-    titles = [title for item in task_items if (title := _task_title(item)) is not None]
-    if titles:
+    titles = [_task_title(item) for item in task_items]
+    if task_items:
         lead = (
-            f"Google Tasks에서 확인된 현재 할 일은 {len(titles)}개입니다."
+            f"Google Tasks에서 확인된 현재 할 일은 {len(task_items)}개입니다."
             if korean
-            else f"I found {len(titles)} current item(s) in Google Tasks."
+            else f"I found {len(task_items)} current item(s) in Google Tasks."
         )
-        answer = f"{lead}\n\n" + "\n".join(f"- {title}" for title in titles)
+        unavailable_title = (
+            "제목을 표시할 수 없는 할 일"
+            if korean
+            else "Task title unavailable"
+        )
+        answer = f"{lead}\n\n" + "\n".join(
+            f"- {title or unavailable_title}" for title in titles
+        )
         section = "현재 Google Tasks 할 일" if korean else "Current Google Tasks items"
     else:
         answer = (
@@ -80,14 +87,25 @@ def _task_title(item: Mapping[str, object]) -> str | None:
     if not isinstance(excerpt, str):
         return None
     lines = [line.strip() for line in excerpt.splitlines() if line.strip()]
-    structured_title = next(
-        (line.partition(":")[2].strip() for line in lines if line.startswith("title:")),
-        "",
-    )
-    if structured_title:
-        return structured_title
-    if any(":" in line for line in lines):
-        return None
+    metadata_keys = {
+        "completed",
+        "due",
+        "notes",
+        "position",
+        "status",
+        "task_id",
+        "task_list_id",
+        "title",
+        "updated",
+    }
+    structured_fields = {
+        key.strip(): value.strip()
+        for line in lines
+        for key, separator, value in (line.partition(":"),)
+        if separator and key.strip() in metadata_keys
+    }
+    if structured_fields:
+        return structured_fields.get("title") or None
     return lines[0] if lines else None
 
 
