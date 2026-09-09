@@ -169,6 +169,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 run_id,
                 trace_id=active.trace_id,
                 dotted_order=active.dotted_order,
+                parent_run_id=active.parent_run_id,
                 end_time=datetime.now(UTC),
                 outputs={},
             )
@@ -209,6 +210,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 run_id,
                 trace_id=active.trace_id,
                 dotted_order=active.dotted_order,
+                parent_run_id=active.parent_run_id,
                 end_time=datetime.now(UTC),
                 error=safe_error,
                 outputs={},

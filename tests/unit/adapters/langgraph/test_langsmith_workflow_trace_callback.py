@@ -177,6 +177,13 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
         update[1]["dotted_order"] == created_dotted_order[update[0]]
         for update in client.updated
     )
+    created_parent = {
+        entry["id"]: entry["parent_run_id"] for entry in client.created
+    }
+    assert all(
+        update[1]["parent_run_id"] == created_parent[update[0]]
+        for update in client.updated
+    )
 
 
 def test_callback__receives_metadata_from_compiled_langgraph__without_state_payload() -> None:
