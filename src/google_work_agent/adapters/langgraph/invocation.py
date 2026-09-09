@@ -54,6 +54,11 @@ class WorkflowInvocationCoordinator:
         now_ms: Callable[[], int] = lambda: 0,
         retrieval_node: str = "context_retriever",
         callbacks: Sequence[Any] = (),
+        update_run_budget: Callable[
+            [str, Callable[[Mapping[str, object]], Mapping[str, object]]],
+            Mapping[str, object],
+        ]
+        | None = None,
     ) -> None:
         self._graph = graph
         self._graph_profile = graph_profile
@@ -72,6 +77,7 @@ class WorkflowInvocationCoordinator:
         self._now_ms = now_ms
         self._retrieval_node = retrieval_node
         self._callbacks = callbacks
+        self._update_run_budget = update_run_budget
 
     def prepare_start(self, request: WorkflowStartRequest) -> None:
         """Durably materialize input state without invoking the first owner node."""
@@ -90,7 +96,11 @@ class WorkflowInvocationCoordinator:
         )
 
     def start(self, request: WorkflowStartRequest) -> WorkflowInvocationResult:
-        with provider_dispatch_execution_scope(run_id=request.run_id, now_ms=self._now_ms):
+        with provider_dispatch_execution_scope(
+            run_id=request.run_id,
+            now_ms=self._now_ms,
+            durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
+        ):
             config = self.config_for_thread(request.workflow_key)
             snapshot = self._graph.get_state(config)
             if snapshot.values or snapshot.next:
@@ -112,7 +122,11 @@ class WorkflowInvocationCoordinator:
             )
 
     def resume(self, request: WorkflowResumeRequest) -> WorkflowInvocationResult:
-        with provider_dispatch_execution_scope(run_id=request.run_id, now_ms=self._now_ms):
+        with provider_dispatch_execution_scope(
+            run_id=request.run_id,
+            now_ms=self._now_ms,
+            durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
+        ):
             config = self.config_for_thread(request.workflow_key)
             snapshot = self._graph.get_state(config)
             if not snapshot.values and not snapshot.next:
@@ -322,7 +336,11 @@ class WorkflowInvocationCoordinator:
         )
 
     def recover_open_run(self, request: WorkflowRecoveryRequest) -> WorkflowInvocationResult:
-        with provider_dispatch_execution_scope(run_id=request.run_id, now_ms=self._now_ms):
+        with provider_dispatch_execution_scope(
+            run_id=request.run_id,
+            now_ms=self._now_ms,
+            durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
+        ):
             config = self.config_for_thread(request.workflow_key)
             snapshot = self._graph.get_state(config)
             if not snapshot.values and not snapshot.next:
@@ -362,6 +380,19 @@ class WorkflowInvocationCoordinator:
                 workflow_key=request.workflow_key,
                 run_id=request.run_id,
             )
+
+    def _dispatch_accountant(
+        self, run_id: str
+    ) -> (
+        Callable[
+            [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+        ]
+        | None
+    ):
+        update_run_budget = self._update_run_budget
+        if update_run_budget is None:
+            return None
+        return lambda update: update_run_budget(run_id, update)
 
     def _continue_from_domain_facts(
         self,

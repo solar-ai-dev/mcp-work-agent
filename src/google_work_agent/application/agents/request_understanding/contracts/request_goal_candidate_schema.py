@@ -47,7 +47,7 @@ _RESOURCE_TYPES = [
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
-    "pattern": r".*[^\s\[\]{}].*",
+    "pattern": r"^[\s\S]*[^\s\[\]{}][\s\S]*$",
 }
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES: dict[str, object] = {
     field: {
@@ -213,8 +213,8 @@ _additional_properties = cast(dict[str, object], _additional_items["properties"]
 _additional_properties.pop("source_resource_type")
 _additional_properties.pop("provenance")
 _additional_field = cast(dict[str, object], _additional_properties["field"])
-_additional_field["pattern"] = (
-    rf"^(?!(?:{'|'.join(REQUEST_GOAL_SLOT_KINDS)})$).+"
+_additional_field["description"] = (
+    "명명된 검색 슬롯 밖의 명시적 실행 필드. 예약 슬롯 이름은 허용하지 않는다."
 )
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = (
     _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
@@ -494,6 +494,15 @@ def validate_request_goal_candidate(
     root = cast(dict[str, object], value)
     slots = cast(dict[str, object], root["constraints"])
     additional = cast(list[object], slots["additional_constraints"])
+    reserved_additional_fields = [
+        str(cast(dict[str, object], constraint)["field"])
+        for constraint in additional
+        if str(cast(dict[str, object], constraint)["field"]) in REQUEST_GOAL_SLOT_KINDS
+    ]
+    if reserved_additional_fields:
+        raise ValueError(
+            "request goal candidate is invalid: additional constraint uses reserved field"
+        )
     normalized_constraints = [
         {"kind": REQUEST_GOAL_SLOT_KINDS[field], "field": field, "value": values}
         for field, values in slots.items()

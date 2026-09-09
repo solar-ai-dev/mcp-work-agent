@@ -349,7 +349,7 @@ def test_existing_gmail_thread_reply__thread_input_hint__routes_through_retrieva
     assert runtime.calls == []
 
 
-def test_cross_resource_responsibilities__deterministically_project_input_and_output() -> None:
+def test_cross_resource_responsibilities__project_deterministically__to_input_and_output() -> None:
     intent = cast(
         RequestIntentV2,
         {

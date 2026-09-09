@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import pytest
 
@@ -8,7 +8,6 @@ from google_work_agent.application.prompt_runtime.dispatch_guarded_prompt import
     PromptInputGuardedProvider,
 )
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
-    consume_dispatch_budget,
     current_provider_dispatch_budget,
     current_provider_dispatch_run_id,
     provider_dispatch_budget_scope,
@@ -16,6 +15,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     build_default_run_budget,
+    validate_run_budget_v2,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ActualRuntime,
@@ -37,12 +37,15 @@ def test_paused_accounting__counts_failure_and_retry__then_blocks_exhausted_disp
     provider = _FakeProvider(fail_structured=True)
     guarded = PromptInputGuardedProvider(provider, _RecordingValidator())
 
-    def account() -> None:
+    def account(
+        update: Callable[[Mapping[str, object]], Mapping[str, object]]
+    ) -> Mapping[str, object]:
         nonlocal budget
-        budget = consume_dispatch_budget(run_id="run", run_budget=budget, now_ms=0)
+        budget = validate_run_budget_v2(dict(update(budget)))
         calls.append(budget["llm_calls_used"])
+        return budget
 
-    with provider_dispatch_execution_scope(run_id="run", paused_dispatch_accountant=account):
+    with provider_dispatch_execution_scope(run_id="run", durable_dispatch_accountant=account):
         for _ in range(2):
             with pytest.raises(TimeoutError):
                 _invoke_structured(guarded)

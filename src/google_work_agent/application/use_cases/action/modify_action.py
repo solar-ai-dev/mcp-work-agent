@@ -69,10 +69,8 @@ from google_work_agent.application.use_cases.plan.persistence_projection import 
     load_plan_record,
 )
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
-    consume_dispatch_budget,
     provider_dispatch_execution_scope,
 )
-from google_work_agent.application.use_cases.run.guard_run_budget import validate_run_budget_v2
 from google_work_agent.application.use_cases.run.resume_confirmation import ResumeTargetIssuer
 from google_work_agent.application.use_cases.run.schedule_run_execution import (
     ScheduleRunExecutionCommand,
@@ -760,19 +758,12 @@ class ModifyActionHandler:
 
         try:
 
-            def consume_budget(current: Mapping[str, object]) -> Mapping[str, object]:
-                budget = validate_run_budget_v2(dict(current))
-                return dict(
-                    consume_dispatch_budget(run_id=run.id, run_budget=budget, now_ms=self._now_ms())
-                )
-
-            def account_paused_dispatch() -> None:
-                self._checkpoint_port.update_paused_run_budget(run.id, consume_budget)
-
             with provider_dispatch_execution_scope(
                 run_id=run.id,
                 now_ms=self._now_ms,
-                paused_dispatch_accountant=account_paused_dispatch,
+                durable_dispatch_accountant=lambda update: self._checkpoint_port.update_run_budget(
+                    run.id, update
+                ),
             ):
                 candidates = compose_arguments_per_output_route(
                     [route],

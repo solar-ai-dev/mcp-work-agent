@@ -18,9 +18,9 @@ class InitialWorkflowBindingPort(Protocol):
 
 
 class CheckpointPort(Protocol):
-    def update_paused_run_budget(
+    def update_run_budget(
         self, run_id: str, update: Callable[[Mapping[str, object]], Mapping[str, object]]
-    ) -> None: ...
+    ) -> Mapping[str, object]: ...
 
     def create_workflow_binding(self, binding: WorkflowBindingV1) -> None: ...
 

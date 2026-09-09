@@ -697,6 +697,7 @@ class _WorkflowRuntimeComposition:
                     )
                 ),
             ),
+            update_run_budget=self._checkpoint_port.update_run_budget,
         )
 
     def start(self, request: WorkflowStartRequest) -> WorkflowInvocationResult:

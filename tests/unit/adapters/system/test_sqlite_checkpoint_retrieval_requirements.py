@@ -125,9 +125,21 @@ def test_nested_retrieval__requirements_overlay_latest__root_resume_checkpoint(
     assert loaded.retrieval_cache_requirements[0].read_result_handle == "read-1"
 
 
-@pytest.mark.parametrize("blocking", [None, "EXECUTING", "admission", "PENDING"])
-def test_paused_budget__updates_only_budget__or_rejects_active_execution(
-    tmp_path: Path, blocking: str | None
+@pytest.mark.parametrize(
+    ("run_status", "handoff_status", "has_admission", "allowed"),
+    [
+        ("WAITING_APPROVAL", None, False, True),
+        ("EXECUTING", None, False, False),
+        ("EXECUTING", "CONSUMED", True, True),
+        ("EXECUTING", "PENDING", False, False),
+    ],
+)
+def test_run_budget__updates_only_budget__for_settled_or_active_execution(
+    tmp_path: Path,
+    run_status: str,
+    handoff_status: str | None,
+    has_admission: bool,
+    allowed: bool,
 ) -> None:
     path = tmp_path / "paused.db"
     adapter = SqliteCheckpointAdapter(path, now_ms=lambda: 0)
@@ -150,14 +162,14 @@ def test_paused_budget__updates_only_budget__or_rejects_active_execution(
         )
         db.execute(
             "INSERT INTO runs VALUES ('run', ?)",
-            (blocking if blocking == "EXECUTING" else "WAITING_APPROVAL",),
+            (run_status,),
         )
-        if blocking in {"admission", "PENDING"}:
+        if handoff_status is not None:
             db.execute(
                 "INSERT INTO workflow_handoffs VALUES ('run', ?, ?)",
                 (
-                    "PENDING" if blocking == "PENDING" else "CONSUMED",
-                    "{}" if blocking == "admission" else None,
+                    handoff_status,
+                    "{}" if has_admission else None,
                 ),
             )
         db.execute(
@@ -178,14 +190,16 @@ def test_paused_budget__updates_only_budget__or_rejects_active_execution(
         return {**current, "llm_calls_used": llm_calls_used + 1}
 
     try:
-        if blocking:
+        if not allowed:
             with pytest.raises(ValueError):
-                adapter.update_paused_run_budget("run", update)
+                adapter.update_run_budget("run", update)
             assert calls == []
         else:
-            adapter.update_paused_run_budget("run", update)
-            adapter.update_paused_run_budget("run", update)
+            first = adapter.update_run_budget("run", update)
+            second = adapter.update_run_budget("run", update)
             assert len(calls) == 2
+            assert first["llm_calls_used"] == 1
+            assert second["llm_calls_used"] == 2
     finally:
         adapter.close()
     reopened = SqliteCheckpointAdapter(path, now_ms=lambda: 0)
@@ -194,7 +208,7 @@ def test_paused_budget__updates_only_budget__or_rejects_active_execution(
         assert restored == {
             **native,
             "channel_values": {
-                "retry_budget": {**budget, "llm_calls_used": 0 if blocking else 2},
+                "retry_budget": {**budget, "llm_calls_used": 2 if allowed else 0},
                 "evidence": ["keep"],
             },
         }

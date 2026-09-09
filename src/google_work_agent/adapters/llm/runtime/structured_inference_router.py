@@ -191,6 +191,12 @@ class StructuredInferenceRuntimeRouter:
             trace_context=trace_context,
             requested_mode=requested,
             decision=decision,
+            selected_model_id=(
+                approved_model.model_id
+                if decision.primary_runtime is ActualRuntime.LOCAL_GPU
+                and approved_model is not None
+                else None
+            ),
         )
         if decision.safe_reason_code == LLMErrorCode.RUNTIME_MODE_BLOCKED.value:
             raise LLMInvocationError(
@@ -215,6 +221,12 @@ class StructuredInferenceRuntimeRouter:
                 fallback_reason=None,
                 semantic_validate=None,
                 external_transfer_scope=external_transfer_scope,
+                selected_model_id=(
+                    approved_model.model_id
+                    if decision.primary_runtime is ActualRuntime.LOCAL_GPU
+                    and approved_model is not None
+                    else None
+                ),
             )
             return _canonical_result(result)
 
@@ -247,6 +259,7 @@ class StructuredInferenceRuntimeRouter:
                 fallback_reason=error.code.value,
                 semantic_validate=None,
                 external_transfer_scope=external_transfer_scope,
+                selected_model_id=None,
             )
             self.event_recorder.record(
                 event_name="LLM_FALLBACK_COMPLETED",
@@ -430,6 +443,7 @@ class StructuredInferenceRuntimeRouter:
         fallback_reason: str | None,
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
+        selected_model_id: str | None,
     ) -> StructuredLLMResult:
         self.before_runtime_dispatch(provider.runtime)
         try:
@@ -443,8 +457,27 @@ class StructuredInferenceRuntimeRouter:
                 fallback_reason=fallback_reason,
                 semantic_validate=semantic_validate,
                 external_transfer_scope=external_transfer_scope,
+                selected_model_id=selected_model_id,
             )
         except LLMInvocationError as error:
+            self.event_recorder.record(
+                event_name="LLM_CALL_FAILED",
+                severity=Severity.ERROR,
+                correlation=trace_context,
+                attributes={
+                    "prompt_id": prompt_ref.prompt_id,
+                    "prompt_version": prompt_ref.prompt_version,
+                    "prompt_content_hash": prompt_ref.content_hash,
+                    "requested_mode": requested_mode.value,
+                    "actual_runtime": provider.runtime.value,
+                    "provider": provider.provider_name,
+                    "selected_model_id": selected_model_id,
+                    "safe_error_code": error.code.value,
+                    "fallback_reason": fallback_reason,
+                },
+                result_code=error.code.value,
+                status="FAILED",
+            )
             self.record_runtime_result(provider.runtime, error.code.value)
             raise
         self.record_runtime_result(provider.runtime, None)
@@ -462,6 +495,7 @@ class StructuredInferenceRuntimeRouter:
         fallback_reason: str | None,
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
+        selected_model_id: str | None,
     ) -> StructuredLLMResult:
         if provider.runtime is ActualRuntime.API_LLM:
             self._require_external_call(external_transfer_scope)
@@ -488,6 +522,7 @@ class StructuredInferenceRuntimeRouter:
                 "requested_mode": requested_mode.value,
                 "actual_runtime": provider.runtime.value,
                 "provider": provider.provider_name,
+                "selected_model_id": selected_model_id,
                 **profile_attributes,
             },
             result_code="STARTED",
@@ -554,6 +589,7 @@ class StructuredInferenceRuntimeRouter:
                 "actual_runtime": result.actual_runtime.value,
                 "provider": result.provider,
                 "model": result.model,
+                "selected_model_id": selected_model_id,
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "total_tokens": result.total_tokens,
@@ -666,6 +702,7 @@ class StructuredInferenceRuntimeRouter:
         trace_context: ObservabilityContext,
         requested_mode: RequestedRuntimeMode,
         decision: RouteDecision,
+        selected_model_id: str | None,
     ) -> None:
         self.event_recorder.record(
             event_name="LLM_RUNTIME_SELECTED",
@@ -682,6 +719,7 @@ class StructuredInferenceRuntimeRouter:
                 if decision.fallback_target is None
                 else decision.fallback_target.value,
                 "safe_error_code": decision.safe_reason_code,
+                "selected_model_id": selected_model_id,
             },
             result_code="ROUTED",
             status="COMPLETED",

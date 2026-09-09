@@ -270,7 +270,7 @@ def test_cross_resource_read_write__without_typed_responsibility__rejects_before
         )
 
 
-def test_cross_resource_read_write__responsibility_must_match_flat_hints() -> None:
+def test_cross_resource_read_write__validates_responsibility__against_flat_hints() -> None:
     runtime = FakeStructuredInferencePort(outputs=[{
         "goal": "기존 자료를 근거로 메시지 전송",
         "completion_conditions": ["메시지를 보낸다"],
@@ -294,7 +294,7 @@ def test_cross_resource_read_write__responsibility_must_match_flat_hints() -> No
         )
 
 
-def test_cross_resource_read_write__bounded_revision_repairs_responsibility_mismatch() -> None:
+def test_cross_resource_read_write__uses_bounded_revision__for_responsibility_mismatch() -> None:
     request = _request("기존 자료에서 일정을 확인해 관련 메시지를 보내줘.")
     corrected = {
         "goal": "기존 자료를 근거로 메시지 전송",

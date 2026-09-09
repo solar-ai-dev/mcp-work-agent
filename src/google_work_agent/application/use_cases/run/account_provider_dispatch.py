@@ -20,7 +20,7 @@ need a narrower boundary can use :func:`provider_dispatch_budget_scope`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import cast
@@ -48,8 +48,11 @@ _CURRENT_RUN_ID: ContextVar[str | None] = ContextVar(
 _CURRENT_NOW_MS: ContextVar[Callable[[], int] | None] = ContextVar(
     "google_work_agent_current_provider_dispatch_clock", default=None
 )
-_PAUSED_DISPATCH_ACCOUNTANT: ContextVar[Callable[[], None] | None] = ContextVar(
-    "google_work_agent_paused_dispatch_accountant", default=None
+_DURABLE_DISPATCH_ACCOUNTANT: ContextVar[
+    Callable[[Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]]
+    | None
+] = ContextVar(
+    "google_work_agent_durable_dispatch_accountant", default=None
 )
 
 
@@ -94,7 +97,10 @@ def provider_dispatch_execution_scope(
     *,
     run_id: str = "direct-provider-dispatch",
     now_ms: Callable[[], int] = lambda: 0,
-    paused_dispatch_accountant: Callable[[], None] | None = None,
+    durable_dispatch_accountant: Callable[
+        [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+    ]
+    | None = None,
 ) -> Iterator[None]:
     """Bound the provider-budget ContextVar to one graph invocation.
 
@@ -108,29 +114,43 @@ def provider_dispatch_execution_scope(
     _CURRENT_RUN_BUDGET.set(None)
     _CURRENT_RUN_ID.set(run_id)
     _CURRENT_NOW_MS.set(now_ms)
-    _PAUSED_DISPATCH_ACCOUNTANT.set(paused_dispatch_accountant)
+    _DURABLE_DISPATCH_ACCOUNTANT.set(durable_dispatch_accountant)
     try:
         yield
     finally:
         _CURRENT_NOW_MS.set(None)
         _CURRENT_RUN_ID.set(None)
         _CURRENT_RUN_BUDGET.set(None)
-        _PAUSED_DISPATCH_ACCOUNTANT.set(None)
+        _DURABLE_DISPATCH_ACCOUNTANT.set(None)
 
 
 def account_provider_dispatch() -> None:
     """Consume exactly one provider call immediately before external dispatch."""
 
-    paused_accountant = _PAUSED_DISPATCH_ACCOUNTANT.get()
-    if paused_accountant is not None:
-        paused_accountant()
-        return
     run_budget = _CURRENT_RUN_BUDGET.get()
+    run_id = _CURRENT_RUN_ID.get()
+    now_ms = _CURRENT_NOW_MS.get()
+    durable_accountant = _DURABLE_DISPATCH_ACCOUNTANT.get()
+    if durable_accountant is not None:
+        if run_id is None or now_ms is None:
+            raise RuntimeError("provider dispatch budget is missing execution context")
+
+        def update(current: Mapping[str, object]) -> Mapping[str, object]:
+            return consume_dispatch_budget(
+                run_id=run_id,
+                run_budget=validate_run_budget_v2(dict(current)),
+                now_ms=now_ms(),
+            )
+
+        updated = validate_run_budget_v2(dict(durable_accountant(update)))
+        if run_budget is not None:
+            mutable = cast(dict[str, object], run_budget)
+            mutable.clear()
+            mutable.update(updated)
+        return
     if run_budget is None:
         # Non-Run diagnostic/connection probes intentionally have no RunBudget.
         return
-    run_id = _CURRENT_RUN_ID.get()
-    now_ms = _CURRENT_NOW_MS.get()
     if run_id is None or now_ms is None:
         raise RuntimeError("provider dispatch budget is missing execution context")
     updated = consume_dispatch_budget(run_id=run_id, run_budget=run_budget, now_ms=now_ms())

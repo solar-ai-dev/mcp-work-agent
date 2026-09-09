@@ -261,7 +261,41 @@ def test_local_inference_trace__actual_provider_result__includes_class_profile_a
     )
     assert started["inference_class"] == completed["inference_class"] == "REASONING"
     assert started["local_model_profile_id"] == completed["local_model_profile_id"] == "single-9b"
+    assert started["selected_model_id"] == completed["selected_model_id"] == "qwen3.5:9b"
     assert completed["model"] == result.model
+
+
+def test_local_inference_failure__traces_selected_model__without_unsafe_detail() -> None:
+    local = _Provider(
+        runtime=ActualRuntime.LOCAL_GPU,
+        failure=LLMInvocationError(
+            LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+            "unsafe validator detail must not be traced",
+        ),
+    )
+    router = _router(
+        checkpoint=ExternalScopeCheckpoint(scope=_scope()),
+        api=_Provider(),
+        local=local,
+    )
+    recorder = Mock()
+    router.event_recorder = recorder
+    prompt = replace(PROMPT, prompt_id="request_understanding.identify_goal")
+
+    with pytest.raises(LLMInvocationError) as raised:
+        router.infer("LOCAL_GPU", prompt, {"user_request": "hello"}, SCHEMA)
+
+    assert raised.value.code is LLMErrorCode.OUTPUT_SCHEMA_INVALID
+    calls = [call.kwargs for call in recorder.record.call_args_list]
+    selected = next(
+        call["attributes"] for call in calls if call["event_name"] == "LLM_RUNTIME_SELECTED"
+    )
+    started = next(call["attributes"] for call in calls if call["event_name"] == "LLM_CALL_STARTED")
+    failed = next(call["attributes"] for call in calls if call["event_name"] == "LLM_CALL_FAILED")
+    assert selected["selected_model_id"] == "qwen3.5:4b"
+    assert started["selected_model_id"] == failed["selected_model_id"] == "qwen3.5:4b"
+    assert failed["safe_error_code"] == LLMErrorCode.OUTPUT_SCHEMA_INVALID.value
+    assert "unsafe validator detail" not in repr(failed)
 
 
 @pytest.mark.parametrize("published", [None, _scope(scope_hash="different")])

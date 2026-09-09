@@ -22,7 +22,7 @@ def test_identify_goal_node__uses_exact_operation__projection_and_router() -> No
     projection = OWNER / "projections/identify_goal_projection.py"
     router = OWNER / "routing/route_after_identify_goal.py"
 
-    assert {"project_identify_goal_input", "identify_goal"} <= _calls(node)
+    assert {"project_identify_goal_input", "identify_goal_with_budget"} <= _calls(node)
     assert "request_from_run_input_state" in _calls(projection)
     assert "route_after_identify_goal" in router.read_text(encoding="utf-8")
 

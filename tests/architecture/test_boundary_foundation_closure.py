@@ -38,7 +38,7 @@ PORT_METHODS = {
     "ports/llm/llm_runtime_status_port.py": {"get_status", "list_local_models"},
     "ports/keyring/secret_store_port.py": {"put", "get", "delete"},
     "ports/system/checkpoint_port.py": {
-        "update_paused_run_budget",
+        "update_run_budget",
         "create_workflow_binding",
         "load_workflow_binding",
         "store_same_run_checkpoint",
