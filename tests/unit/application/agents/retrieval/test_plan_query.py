@@ -897,6 +897,169 @@ def test_exact_task_create_precondition__materializes_duplicate_reads__without_l
         }
 
 
+def test_exact_task_create_precondition__extra_source_route__uses_semantic_planner() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[RuntimeError("semantic query path reached")])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "tasks",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasks"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            },
+            {
+                "route_id": "task-lists",
+                "resource_type": "TASK_LIST",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasklists"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            },
+            {
+                "route_id": "source-mail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="semantic query path reached"):
+        plan_query(
+            llm_runtime=runtime,
+            prompt_ref=prompt_ref,
+            revision_prompt_ref=prompt_ref,
+            output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+            prompt_input={
+                "request_intent": {
+                    "requested_effect_hints": ["READ", "CREATE"],
+                    "requested_resource_hints": ["GMAIL_THREAD", "TASK_LIST", "TASK"],
+                    "constraints": [
+                        {"kind": "RESOURCE", "field": "title", "value": "Submit report"}
+                    ],
+                },
+                "input_routes": frozen_routes,
+            },
+            requested_mode="LOCAL_GPU",
+            frozen_routes=frozen_routes,
+            route_policies={
+                "tasks": RouteConstraintPolicy(frozenset({"CONTAINER_REF"})),
+                "task-lists": RouteConstraintPolicy(frozenset({"CONTAINER_REF"})),
+                "source-mail": RouteConstraintPolicy(frozenset({"KEYWORD"})),
+            },
+            retry_budget=build_default_run_budget(),
+            validated_container_refs={"tasks": ["@default"], "task-lists": ["@default"]},
+        )
+
+    assert len(runtime.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("constraints", "container_refs"),
+    [
+        ([], {"tasks": ["@default"], "task-lists": ["@default"]}),
+        (
+            [
+                {"kind": "RESOURCE", "field": "title", "value": "Submit report"},
+                {"kind": "RESOURCE", "field": "title", "value": "Second title"},
+            ],
+            {"tasks": ["@default"], "task-lists": ["@default"]},
+        ),
+        (
+            [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
+            {"task-lists": ["@default"]},
+        ),
+        (
+            [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
+            {"tasks": ["list-a", "list-b"], "task-lists": ["@default"]},
+        ),
+    ],
+)
+def test_exact_task_create_precondition__invalid_title_or_container__uses_semantic_planner(
+    constraints: list[dict[str, object]],
+    container_refs: dict[str, list[str]],
+) -> None:
+    runtime = FakeStructuredInferencePort(outputs=[RuntimeError("semantic query path reached")])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "tasks",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasks"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            },
+            {
+                "route_id": "task-lists",
+                "resource_type": "TASK_LIST",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasklists"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            },
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="semantic query path reached"):
+        plan_query(
+            llm_runtime=runtime,
+            prompt_ref=prompt_ref,
+            revision_prompt_ref=prompt_ref,
+            output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+            prompt_input={
+                "request_intent": {
+                    "requested_effect_hints": ["CREATE"],
+                    "requested_resource_hints": ["TASK"],
+                    "constraints": constraints,
+                },
+                "input_routes": frozen_routes,
+            },
+            requested_mode="LOCAL_GPU",
+            frozen_routes=frozen_routes,
+            route_policies={
+                "tasks": RouteConstraintPolicy(frozenset({"CONTAINER_REF"})),
+                "task-lists": RouteConstraintPolicy(frozenset({"CONTAINER_REF"})),
+            },
+            retry_budget=build_default_run_budget(),
+            validated_container_refs=container_refs,
+        )
+
+    assert len(runtime.calls) == 1
+
+
 def test_calendar_route__without_validated_container__does_not_offer_container_ref() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[

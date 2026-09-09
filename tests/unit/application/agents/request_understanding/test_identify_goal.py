@@ -719,6 +719,61 @@ def test_semantic_revision__invented_source_need__may_be_removed() -> None:
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
+def test_semantic_revision__user_required_source__remains_after_output_correction() -> None:
+    request = _request(
+        "기존 Project Anchor 메일에서 납품 주소를 확인하고 "
+        "그 내용을 바탕으로 person@example.test에게 답장해줘."
+    )
+    runtime = FakeStructuredInferencePort(outputs=[
+        {
+            "goal": "기존 메일을 확인해 답장",
+            "completion_conditions": ["확인한 납품 주소를 반영해 답장한다"],
+            "constraints": _goal_constraints(search_terms=["Project Anchor"]),
+            "resource_responsibilities": _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["기존 메일의 납품 주소"],
+                output_type="GMAIL_THREAD",
+                output_effect="SEND",
+            ),
+            "analysis_requirement": "NONE",
+        },
+        {
+            "goal": "기존 메일을 확인해 답장",
+            "completion_conditions": ["확인한 납품 주소를 반영해 답장한다"],
+            "constraints": _goal_constraints(search_terms=["Project Anchor"]),
+            "resource_responsibilities": _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["기존 메일의 납품 주소"],
+                output_type="GMAIL_MESSAGE",
+                output_effect="SEND",
+            ),
+            "analysis_requirement": "NONE",
+        },
+    ])
+
+    candidate, _ = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate["requested_effect_hints"] == ["READ", "SEND"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD", "GMAIL_MESSAGE"]
+    assert candidate["resource_responsibilities"]["source_reads"] == [
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": ["기존 메일의 납품 주소"],
+        }
+    ]
+    assert len(runtime.calls) == 2
+    revision_input = runtime.calls[1]["prompt_input"]
+    assert revision_input["base_projection"] == {
+        "user_request": request.request_text,
+        "selected_resource_refs": [],
+    }
+
+
 def test_semantic_revision__validated_selected_resource__remains_bound() -> None:
     selected = SelectedResourceRef(
         "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
