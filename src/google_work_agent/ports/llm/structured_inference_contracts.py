@@ -240,12 +240,16 @@ class LLMInvocationError(RuntimeError):
         retryable: bool = False,
         fallback_reason: str | None = None,
         runtime_prerequisite: bool = False,
+        affected_field_paths: tuple[str, ...] = (),
+        provider_dispatch_occurred: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.fallback_reason = fallback_reason
         self.runtime_prerequisite = runtime_prerequisite
+        self.affected_field_paths = affected_field_paths
+        self.provider_dispatch_occurred = provider_dispatch_occurred
 
 
 class StructuredLLMProvider(Protocol):

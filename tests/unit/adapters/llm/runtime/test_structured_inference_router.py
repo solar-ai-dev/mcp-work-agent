@@ -271,6 +271,7 @@ def test_local_inference_failure__traces_selected_model__without_unsafe_detail()
         failure=LLMInvocationError(
             LLMErrorCode.OUTPUT_SCHEMA_INVALID,
             "unsafe validator detail must not be traced",
+            affected_field_paths=("$.route_queries[0].operation",),
         ),
     )
     router = _router(
@@ -295,7 +296,35 @@ def test_local_inference_failure__traces_selected_model__without_unsafe_detail()
     assert selected["selected_model_id"] == "qwen3.5:4b"
     assert started["selected_model_id"] == failed["selected_model_id"] == "qwen3.5:4b"
     assert failed["safe_error_code"] == LLMErrorCode.OUTPUT_SCHEMA_INVALID.value
+    assert failed["output_schema_id"] == SCHEMA.schema_version
+    assert failed["error_type"] == "LLMInvocationError"
+    assert failed["affected_field_paths"] == ["$.route_queries[0].operation"]
+    assert failed["provider_dispatch_occurred"] is True
     assert "unsafe validator detail" not in repr(failed)
+
+
+def test_schema_failure_trace__field_path__omits_output_value() -> None:
+    local = _Provider(runtime=ActualRuntime.LOCAL_GPU, content={"answer": 42})
+    router = _router(
+        checkpoint=ExternalScopeCheckpoint(scope=_scope()),
+        api=_Provider(),
+        local=local,
+    )
+    recorder = Mock()
+    router.event_recorder = recorder
+
+    with pytest.raises(LLMInvocationError) as raised:
+        router.infer("LOCAL_GPU", PROMPT, {"user_request": "hello"}, SCHEMA)
+
+    assert raised.value.affected_field_paths == ("$.answer",)
+    failed = next(
+        call.kwargs["attributes"]
+        for call in recorder.record.call_args_list
+        if call.kwargs["event_name"] == "LLM_CALL_FAILED"
+    )
+    assert failed["affected_field_paths"] == ["$.answer"]
+    assert failed["provider_dispatch_occurred"] is True
+    assert "42" not in repr(failed)
 
 
 @pytest.mark.parametrize("published", [None, _scope(scope_hash="different")])

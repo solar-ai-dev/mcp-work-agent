@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -472,7 +473,11 @@ class StructuredInferenceRuntimeRouter:
                     "actual_runtime": provider.runtime.value,
                     "provider": provider.provider_name,
                     "selected_model_id": selected_model_id,
+                    "output_schema_id": output_schema.schema_version,
                     "safe_error_code": error.code.value,
+                    "error_type": type(error).__name__,
+                    "affected_field_paths": list(error.affected_field_paths),
+                    "provider_dispatch_occurred": error.provider_dispatch_occurred,
                     "fallback_reason": fallback_reason,
                 },
                 result_code=error.code.value,
@@ -534,8 +539,10 @@ class StructuredInferenceRuntimeRouter:
             else None
         )
         api_key = None if api_key_bytes is None else api_key_bytes.decode("utf-8")
+        provider_dispatch_occurred = False
         try:
             self.before_provider_dispatch()
+            provider_dispatch_occurred = True
             payload = provider.invoke_structured(
                 prompt_ref=prompt_ref,
                 prompt_input=prompt_input,
@@ -554,11 +561,21 @@ class StructuredInferenceRuntimeRouter:
                 semantic_validate=semantic_validate,
                 external_transfer_scope=external_transfer_scope,
             )
+        except LLMInvocationError as error:
+            error.provider_dispatch_occurred = provider_dispatch_occurred
+            raise
         except ValueError as error:
-            raise LLMInvocationError(LLMErrorCode.INVALID_PROVIDER_RESPONSE, str(error)) from error
+            raise LLMInvocationError(
+                LLMErrorCode.INVALID_PROVIDER_RESPONSE,
+                str(error),
+                provider_dispatch_occurred=provider_dispatch_occurred,
+            ) from error
         except TimeoutError as error:
             raise LLMInvocationError(
-                LLMErrorCode.PROVIDER_TIMEOUT, "LLM invocation timed out", retryable=True
+                LLMErrorCode.PROVIDER_TIMEOUT,
+                "LLM invocation timed out",
+                retryable=True,
+                provider_dispatch_occurred=provider_dispatch_occurred,
             ) from error
         duration_ms = int((time.perf_counter() - started) * 1000)
         result = StructuredLLMResult(
@@ -628,7 +645,9 @@ class StructuredInferenceRuntimeRouter:
             return candidate, 1
         if self.schema_repairer is None or self.runtime_policy.structured_output_repair_budget < 1:
             raise LLMInvocationError(
-                LLMErrorCode.OUTPUT_SCHEMA_INVALID, "structured output did not satisfy schema"
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "structured output did not satisfy schema",
+                affected_field_paths=_validation_error_paths(errors),
             )
         if provider.runtime is ActualRuntime.API_LLM:
             self._require_external_call(external_transfer_scope)
@@ -651,6 +670,7 @@ class StructuredInferenceRuntimeRouter:
             raise LLMInvocationError(
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
                 "schema repair did not produce a valid payload: " + "; ".join(repair_errors[-8:]),
+                affected_field_paths=_validation_error_paths(repair_errors),
             )
         return repaired, 2
 
@@ -816,6 +836,21 @@ def _collect_validation_errors(
     except ValueError as error:
         return [str(error)]
     return []
+
+
+_JSON_PATH_PREFIX = re.compile(r"^\$[\w.\[\]]*")
+
+
+def _validation_error_paths(errors: list[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                match.group(0)
+                for message in errors
+                if (match := _JSON_PATH_PREFIX.match(message)) is not None
+            }
+        )
+    )
 
 
 def _sum_tokens(input_tokens: int | None, output_tokens: int | None) -> int | None:
