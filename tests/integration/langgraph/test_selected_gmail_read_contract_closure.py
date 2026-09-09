@@ -91,11 +91,22 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         "goal": "선택한 메일 읽기",
         "completion_conditions": ["선택한 메일을 요약한다"],
         "constraints": {
-            **dict.fromkeys(goal_schema.REQUEST_GOAL_SLOT_KINDS, []),
+            **dict.fromkeys(
+                (
+                    field
+                    for field in goal_schema.REQUEST_GOAL_SLOT_KINDS
+                    if field != "required_information"
+                ),
+                [],
+            ),
             "additional_constraints": [],
         },
-        "requested_effect_hints": ["READ"],
-        "requested_resource_hints": ["GMAIL_THREAD"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {"resource_type": "GMAIL_THREAD", "required_information": []}
+            ],
+            "outputs": [],
+        },
         "analysis_requirement": "NONE",
     }
     runtime = FakeStructuredInferencePort(outputs=[goal_output])

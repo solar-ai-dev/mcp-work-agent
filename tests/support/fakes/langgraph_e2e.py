@@ -219,14 +219,7 @@ def _respond(
             "goal": request_text,
             "completion_conditions": ["E2E terminal outcome"],
             "constraints": [],
-            "requested_effect_hints": (
-                []
-                if scenario == "ANSWER_ONLY"
-                else ["READ", "SEND"]
-                if scenario == "GMAIL_REPLY"
-                else [_effect_for(scenario)]
-            ),
-            "requested_resource_hints": _resource_hints(scenario),
+            "resource_responsibilities": _goal_resource_responsibilities(scenario),
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
     if prompt_id == "request_understanding.detect_ambiguity":
@@ -476,20 +469,34 @@ def _effect_for(scenario: str) -> str:
     return "CREATE"
 
 
-def _resource_hints(scenario: str) -> list[str]:
-    if scenario.startswith("GITHUB_"):
-        return ["GITHUB_ISSUE"]
-    if scenario in {"GMAIL_SEND", "GMAIL_CONFIRMATION"}:
-        return ["GMAIL_MESSAGE"]
-    if scenario == "GMAIL_DRAFT_CREATE":
-        return ["GMAIL_DRAFT"]
-    inputs, outputs, _ = _route_semantics(scenario)
+def _goal_resource_responsibilities(scenario: str) -> dict[str, object]:
+    inputs, outputs, effects = _route_semantics(scenario)
     aliases = {
         "EMAIL": "GMAIL_THREAD",
+        "ISSUE": "GITHUB_ISSUE",
         "TASK": "TASK",
         "CALENDAR": "CALENDAR_EVENT",
     }
-    return list(dict.fromkeys(aliases[item] for item in [*inputs, *outputs]))
+    source_types = list(dict.fromkeys(aliases[item] for item in inputs))
+    if scenario in {"GMAIL_DRAFT_CREATE", "GMAIL_SEND", "GMAIL_CONFIRMATION"}:
+        source_types = []
+    elif scenario == "GMAIL_DRAFT_UPDATE":
+        source_types = ["GMAIL_DRAFT"]
+    output_types = [aliases[item] for item in outputs]
+    if scenario == "GMAIL_DRAFT_CREATE" or scenario == "GMAIL_DRAFT_UPDATE":
+        output_types = ["GMAIL_DRAFT"]
+    elif scenario in {"GMAIL_SEND", "GMAIL_REPLY", "GMAIL_CONFIRMATION"}:
+        output_types = ["GMAIL_MESSAGE"]
+    return {
+        "source_reads": [
+            {"resource_type": resource_type, "required_information": []}
+            for resource_type in source_types
+        ],
+        "outputs": [
+            {"resource_type": resource_type, "effect": effect}
+            for resource_type, effect in zip(output_types, effects, strict=True)
+        ],
+    }
 
 
 def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:

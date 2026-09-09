@@ -40,7 +40,7 @@
       "input_schema_version": 1,
       "required_root_fields": ["user_request", "selected_resource_refs"],
       "optional_root_fields": ["confirmation_response"],
-      "output_schema_version": 8
+      "output_schema_version": 9
     },
     {
       "prompt_slot_id": "request_understanding.identify_temporal_scope",

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from pathlib import Path
-from typing import cast
 
 from google_work_agent.application.agents.preserve_exact_user_literals import (
     quoted_user_literals,
@@ -13,6 +11,8 @@ from google_work_agent.application.agents.preserve_exact_user_literals import (
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     ConstraintProvenanceSource,
     RequestGoalCandidateV1,
+    ResourceResponsibilitiesV1,
+    SourceResourceResponsibilityV1,
     is_repository_constraint,
 )
 from google_work_agent.application.prompt_runtime.contracts.failure_record import (
@@ -33,7 +33,6 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     build_semantic_failure_signature_v1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
-    OutputSchemaDefinition,
     PromptReference,
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
@@ -45,6 +44,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
     RequestGoalSemanticValidationError,
+    derive_requested_resource_fields,
     validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
 )
@@ -136,7 +136,7 @@ def identify_goal_with_budget(
                         failure_context_ids=[str(error)],
                     ),
                 },
-                _semantic_revision_output_schema(source_information),
+                IDENTIFY_GOAL_OUTPUT_SCHEMA,
             )
             candidate = _validated_candidate(
                 revised.structured_output,
@@ -154,13 +154,8 @@ def identify_goal_with_budget(
 def _candidate_source_information(value: object) -> list[str]:
     if not isinstance(value, dict):
         return []
-    constraints = value.get("constraints")
     responsibilities = value.get("resource_responsibilities")
     values: list[str] = []
-    if isinstance(constraints, dict):
-        required_information = constraints.get("required_information")
-        if isinstance(required_information, list):
-            values.extend(item for item in required_information if isinstance(item, str))
     if isinstance(responsibilities, dict):
         source_reads = responsibilities.get("source_reads")
         if isinstance(source_reads, list):
@@ -171,45 +166,6 @@ def _candidate_source_information(value: object) -> list[str]:
                 if isinstance(information, list):
                     values.extend(item for item in information if isinstance(item, str))
     return list(dict.fromkeys(value for value in values if value.strip()))
-
-
-def _semantic_revision_output_schema(
-    source_information: list[str],
-) -> OutputSchemaDefinition:
-    schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
-    required = cast(list[str], schema["required"])
-    if "resource_responsibilities" not in required:
-        required.append("resource_responsibilities")
-    all_of = cast(list[object], schema["allOf"])
-    all_of.append(
-        {
-            "properties": {
-                "requested_effect_hints": {"contains": {"const": "READ"}},
-                "requested_resource_hints": {"minItems": 2},
-                "constraints": {
-                    "properties": {
-                        "required_information": {
-                            "allOf": [
-                                {"contains": {"const": information}}
-                                for information in source_information
-                            ],
-                        }
-                    },
-                    "required": ["required_information"],
-                },
-            },
-            "required": [
-                "requested_effect_hints",
-                "requested_resource_hints",
-                "constraints",
-                "resource_responsibilities",
-            ],
-        }
-    )
-    return OutputSchemaDefinition(
-        schema_version=IDENTIFY_GOAL_OUTPUT_SCHEMA.schema_version,
-        json_schema=schema,
-    )
 
 
 def _validate_semantic_revision_continuity(
@@ -230,7 +186,6 @@ def _validate_semantic_revision_continuity(
             reason_code="REQUEST_SEMANTIC_REVISION_SCOPE_EXCEEDED",
             affected_field_paths=(
                 "$.resource_responsibilities.source_reads",
-                "$.constraints.required_information",
             ),
         )
 
@@ -342,6 +297,17 @@ def _apply_quoted_literal_authority(
             )
         )
     ]
+    responsibilities = candidate["resource_responsibilities"]
+    source_reads: list[SourceResourceResponsibilityV1] = [
+        SourceResourceResponsibilityV1(
+            resource_type=source["resource_type"],
+            required_information=[
+                restore_exact_user_literals(item, source_texts=[request_text])
+                for item in source["required_information"]
+            ],
+        )
+        for source in responsibilities["source_reads"]
+    ]
     return {
         **candidate,
         "goal": restore_exact_user_literals(candidate["goal"], source_texts=[request_text]),
@@ -350,6 +316,10 @@ def _apply_quoted_literal_authority(
             for item in candidate["completion_conditions"]
         ],
         "constraints": constraints,
+        "resource_responsibilities": ResourceResponsibilitiesV1(
+            source_reads=source_reads,
+            outputs=responsibilities["outputs"],
+        ),
     }
 
 
@@ -417,18 +387,23 @@ def _apply_selected_resource_authority(
             }
         )
 
-    effects = list(candidate["requested_effect_hints"])
-    if "READ" not in effects:
-        effects.insert(0, "READ")
-    resource_hints = list(candidate["requested_resource_hints"])
+    responsibilities = candidate["resource_responsibilities"]
+    source_reads = list(responsibilities["source_reads"])
+    source_resource_types = {source["resource_type"] for source in source_reads}
     for hint in _selected_resource_hints(request):
-        if hint not in resource_hints:
-            resource_hints.append(hint)
+        if hint not in source_resource_types:
+            source_reads.append({"resource_type": hint, "required_information": []})
+    responsibilities = ResourceResponsibilitiesV1(
+        source_reads=source_reads,
+        outputs=responsibilities["outputs"],
+    )
+    effects, resource_hints, _ = derive_requested_resource_fields(responsibilities)
     return {
         **candidate,
         "constraints": constraints,
         "requested_effect_hints": effects,
         "requested_resource_hints": resource_hints,
+        "resource_responsibilities": responsibilities,
     }
 
 

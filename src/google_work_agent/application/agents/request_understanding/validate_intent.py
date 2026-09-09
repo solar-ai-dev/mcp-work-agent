@@ -432,10 +432,6 @@ def validate_resource_responsibilities(
         )
     source_reads = _list(root.get("source_reads"), "$.resource_responsibilities.source_reads")
     outputs = _list(root.get("outputs"), "$.resource_responsibilities.outputs")
-    if not source_reads or not outputs:
-        raise RequestUnderstandingValidationError(
-            "$.resource_responsibilities requires source_reads and outputs"
-        )
     normalized_sources = []
     source_information: list[str] = []
     source_resources: set[str] = set()
@@ -448,9 +444,9 @@ def validate_resource_responsibilities(
         information = _string_list(
             source.get("required_information"), f"{path}.required_information"
         )
-        if not information or resource_type in source_resources:
+        if resource_type in source_resources:
             raise RequestUnderstandingValidationError(
-                "$.resource_responsibilities source read is empty or duplicated"
+                "$.resource_responsibilities contains a duplicate source read"
             )
         source_resources.add(resource_type)
         source_information.extend(information)
@@ -488,11 +484,8 @@ def validate_resource_responsibilities(
                 "effect": cast(Literal["CREATE", "UPDATE", "SEND", "DELETE"], effect),
             }
         )
-    if source_resources & output_resources:
-        raise RequestUnderstandingValidationError(
-            "$.resource_responsibilities cannot assign one resource type to both roles"
-        )
-    if {"READ", *output_effects} != set(effects) or (
+    derived_effects = ({"READ"} if normalized_sources else set()) | output_effects
+    if derived_effects != set(effects) or (
         source_resources | output_resources
     ) != set(resource_hints):
         raise RequestUnderstandingValidationError(

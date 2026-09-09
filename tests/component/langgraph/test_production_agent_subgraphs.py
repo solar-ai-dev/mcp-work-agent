@@ -145,7 +145,6 @@ class _ComponentInferencePort:
                 "constraints": {
                     "search_terms": [],
                     "business_concepts": [],
-                    "required_information": [],
                     "person": [],
                     "sender": [],
                     "recipient": [],
@@ -154,8 +153,23 @@ class _ComponentInferencePort:
                     "status": [],
                     "additional_constraints": [],
                 },
-                "requested_effect_hints": ["CREATE"] if needs_action else [],
-                "requested_resource_hints": ["CALENDAR_EVENT"] if needs_action else [],
+                "resource_responsibilities": (
+                    {
+                        "source_reads": [],
+                        "outputs": [
+                            {"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}
+                        ],
+                    }
+                    if needs_action
+                    else {
+                        "source_reads": (
+                            [{"resource_type": "GITHUB_ISSUE", "required_information": []}]
+                            if self.github_retrieval
+                            else []
+                        ),
+                        "outputs": [],
+                    }
+                ),
                 "analysis_requirement": "NONE",
             }
         if prompt_id == "request_understanding.detect_ambiguity":
