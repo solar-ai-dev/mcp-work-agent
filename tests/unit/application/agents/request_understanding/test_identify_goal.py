@@ -393,7 +393,7 @@ def test_gmail_goal__empty_array_text__cannot_become_a_person(
             identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
 
 
-def test_request_goal_schema__avoids_unsupported_ollama_patterns() -> None:
+def test_request_goal_schema__for_ollama_output__contains_no_patterns() -> None:
     def collect_patterns(value: object) -> list[str]:
         if isinstance(value, dict):
             return [
@@ -407,7 +407,7 @@ def test_request_goal_schema__avoids_unsupported_ollama_patterns() -> None:
     assert collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema) == []
 
 
-def test_request_goal_validator__rejects_semantically_empty_responsibility_text() -> None:
+def test_request_goal_validator__with_empty_responsibility_text__rejects_candidate() -> None:
     candidate = {
         "goal": "메일을 확인해 태스크 생성",
         "completion_conditions": ["태스크 Preview 준비"],
