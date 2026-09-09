@@ -394,11 +394,17 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
             try:
                 self._connection.execute("BEGIN IMMEDIATE;")
                 run = self._connection.execute(
-                    "SELECT status FROM runs WHERE id=?;", (run_id,)
+                    "SELECT status, budget_json FROM runs WHERE id=?;", (run_id,)
                 ).fetchone()
                 active_admission = self._connection.execute(
                     """SELECT 1 FROM workflow_handoffs WHERE run_id=?
                     AND execution_admission_json IS NOT NULL LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                consumed_execution = self._connection.execute(
+                    """SELECT 1 FROM workflow_handoffs WHERE run_id=?
+                    AND status='CONSUMED' AND applied_checkpoint_id IS NOT NULL
+                    AND applied_checkpoint_generation IS NOT NULL LIMIT 1;""",
                     (run_id,),
                 ).fetchone()
                 unsettled_handoff = self._connection.execute(
@@ -406,12 +412,27 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
                     AND status IN ('PENDING', 'MATERIALIZED') LIMIT 1;""",
                     (run_id,),
                 ).fetchone()
-                if run is None or (
-                    active_admission is None
-                    and (
-                        run["status"] != "WAITING_APPROVAL"
-                        or unsettled_handoff is not None
-                    )
+                admitted_execution = active_admission is not None or (
+                    consumed_execution is not None and unsettled_handoff is None
+                )
+                settled_approval_wait = (
+                    run is not None
+                    and run["status"] == "WAITING_APPROVAL"
+                    and unsettled_handoff is None
+                )
+                preempting_status = run is not None and run["status"] in {
+                    "COMPLETED",
+                    "CANCEL_REQUESTED",
+                    "CANCELLED",
+                    "REAUTH_REQUIRED",
+                    "RECOVERY_REQUIRED",
+                    "FAILED",
+                    "BLOCKED",
+                }
+                if (
+                    run is None
+                    or preempting_status
+                    or not (admitted_execution or settled_approval_wait)
                 ):
                     raise ValueError(
                         "provider inference requires an active admission or settled approval wait"
@@ -428,7 +449,10 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
                 if row is None:
                     raise ValueError("provider inference requires a root checkpoint")
                 checkpoint = self.serde.loads_typed((row["type"], bytes(row["checkpoint"])))
-                budget = checkpoint["channel_values"].get("retry_budget")
+                try:
+                    budget = json.loads(str(run["budget_json"]))
+                except (TypeError, ValueError) as error:
+                    raise ValueError("provider inference requires a persisted RunBudget") from error
                 if not isinstance(budget, dict):
                     raise ValueError("provider inference requires a persisted RunBudget")
                 updated_budget = dict(update(budget))
@@ -438,6 +462,10 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
                     """UPDATE checkpoints SET type=?, checkpoint=?
                     WHERE thread_id=? AND checkpoint_ns='' AND checkpoint_id=?;""",
                     (kind, blob, row["thread_id"], row["checkpoint_id"]),
+                )
+                self._connection.execute(
+                    "UPDATE runs SET budget_json=? WHERE id=?;",
+                    (json.dumps(updated_budget, sort_keys=True), run_id),
                 )
                 self._connection.commit()
                 return updated_budget

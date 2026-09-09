@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
@@ -131,7 +132,10 @@ def test_nested_retrieval__requirements_overlay_latest__root_resume_checkpoint(
         ("WAITING_APPROVAL", None, False, True),
         ("EXECUTING", None, False, False),
         ("EXECUTING", "CONSUMED", True, True),
+        ("CREATED", "CONSUMED", False, True),
         ("EXECUTING", "PENDING", False, False),
+        ("RECOVERY_REQUIRED", "CONSUMED", False, False),
+        ("COMPLETED", "CONSUMED", False, False),
     ],
 )
 def test_run_budget__updates_only_budget__for_settled_or_active_execution(
@@ -155,21 +159,26 @@ def test_run_budget__updates_only_budget__for_settled_or_active_execution(
     }
     kind, blob = adapter.serde.dumps_typed(native)
     with sqlite3.connect(path) as db:
-        db.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT)")
         db.execute(
-            "CREATE TABLE workflow_handoffs "
-            "(run_id TEXT, status TEXT, execution_admission_json TEXT)"
+            "CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT, budget_json TEXT)"
         )
         db.execute(
-            "INSERT INTO runs VALUES ('run', ?)",
-            (run_status,),
+            "CREATE TABLE workflow_handoffs "
+            "(run_id TEXT, status TEXT, execution_admission_json TEXT, "
+            "applied_checkpoint_id TEXT, applied_checkpoint_generation INTEGER)"
+        )
+        db.execute(
+            "INSERT INTO runs VALUES ('run', ?, ?)",
+            (run_status, json.dumps(budget, sort_keys=True)),
         )
         if handoff_status is not None:
             db.execute(
-                "INSERT INTO workflow_handoffs VALUES ('run', ?, ?)",
+                "INSERT INTO workflow_handoffs VALUES ('run', ?, ?, ?, ?)",
                 (
                     handoff_status,
                     "{}" if has_admission else None,
+                    "checkpoint" if handoff_status == "CONSUMED" else None,
+                    1 if handoff_status == "CONSUMED" else None,
                 ),
             )
         db.execute(
@@ -216,5 +225,10 @@ def test_run_budget__updates_only_budget__for_settled_or_active_execution(
         assert envelope is not None
         assert envelope.checkpoint_generation == 1
         assert envelope.checkpoint_id == "checkpoint"
+        with sqlite3.connect(path) as db:
+            persisted_budget = json.loads(
+                db.execute("SELECT budget_json FROM runs WHERE id='run'").fetchone()[0]
+            )
+        assert persisted_budget["llm_calls_used"] == (2 if allowed else 0)
     finally:
         reopened.close()
