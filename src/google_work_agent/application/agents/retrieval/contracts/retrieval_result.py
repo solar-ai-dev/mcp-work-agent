@@ -41,11 +41,20 @@ MissingInformationRequiredForValue = Literal[
 ]
 
 
+AcquisitionStatusValue = Literal[
+    "COMPLETE",
+    "PARTIAL",
+    "NOT_ATTEMPTED",
+    "AUTH_REQUIRED",
+    "RATE_LIMITED",
+    "BUDGET_EXHAUSTED",
+    "FAILED",
+]
+
+
 class AcquisitionResultV1(TypedDict):
     schema_version: Required[Literal[1]]
-    status: Literal[
-        "COMPLETE", "PARTIAL", "AUTH_REQUIRED", "RATE_LIMITED", "BUDGET_EXHAUSTED", "FAILED"
-    ]
+    status: AcquisitionStatusValue
     resource_handles: list[str]
     source_summaries: list[dict[str, object]]
     missing_slots: list[str]
@@ -166,6 +175,9 @@ class RetrievalSourceStatusV1(TypedDict):
     resource_type: str
     status: Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_ATTEMPTED"]
     evidence_refs: list[str]
+    # Current producers include the actual provider result cardinality. Older
+    # persisted checkpoints may omit it and remain readable.
+    observed_resource_count: NotRequired[int]
     failure_kind: (
         Literal[
             "AUTH", "SCOPE", "RATE_LIMIT", "TIMEOUT", "PROVIDER", "NOT_FOUND", "BUDGET", "OTHER"

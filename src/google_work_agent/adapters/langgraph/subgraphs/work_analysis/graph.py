@@ -85,6 +85,9 @@ from .nodes.extract_work_facts_node import extract_work_facts_node
 from .nodes.resolve_entity_relations_node import resolve_entity_relations_node
 from .nodes.resolve_temporal_dependencies_node import resolve_temporal_dependencies_node
 from .nodes.validate_relations_node import validate_relations_node
+from .projections.task_duplicate_review_requirement_projection import (
+    project_task_duplicate_review_requirement,
+)
 from .routing.route_after_assemble_work_analysis import route_after_assemble_work_analysis
 from .routing.route_after_assess_information_gaps import route_after_assess_information_gaps
 from .routing.route_after_assess_operational_risks import route_after_assess_operational_risks
@@ -258,7 +261,6 @@ class WorkAnalysisSubgraph:
                 "availability_results": []
                 if retrieval_result is None
                 else list(retrieval_result["availability_results"]),
-                "current_source_relations": [],
             },
         )
         confirmation_response = self._confirmation_response(state)
@@ -277,7 +279,6 @@ class WorkAnalysisSubgraph:
             "evidence": working["evidence"],
             "evidence_refs": working["evidence_refs"],
             "availability_results": working["availability_results"],
-            "current_source_relations": working["current_source_relations"],
         }
         if confirmation_response is not None:
             owner_inputs["confirmation_response"] = confirmation_response
@@ -299,15 +300,29 @@ class WorkAnalysisSubgraph:
             {
                 **owner_inputs,
                 **patch,
-                "retry_budget": consume_llm_call_budget(working),
+                "retry_budget": patch["retry_budget"],
                 "trace_context": self._trace(
-                    working, "extract_facts", self._prompt_refs["extract_work_facts"], first
+                    working,
+                    "extract_facts",
+                    self._prompt_refs["extract_work_facts"],
+                    first,
+                    llm_call_increment=(
+                        patch["retry_budget"]["llm_calls_used"]
+                        - working["retry_budget"]["llm_calls_used"]
+                    ),
                 ),
             },
         )
         returned["entity_relation_candidates"] = []
         returned["temporal_dependency_candidates"] = []
         returned["duplicate_conflict_candidates"] = []
+        returned["duplicate_conflict_assessment"] = {
+            "relation_candidates": [],
+            "requested_work_status": "NOT_APPLICABLE",
+            "requested_work_reason": None,
+            "matched_fact_ids": [],
+            "evidence_refs": [],
+        }
         return returned
 
     def _resolve_entity_relations_node(
@@ -360,7 +375,8 @@ class WorkAnalysisSubgraph:
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
         llm_required = duplicate_candidates.duplicate_conflict_candidate_llm_required(
-            state.get("fact_candidates", [])
+            state.get("fact_candidates", []),
+            task_duplicate_review_required=project_task_duplicate_review_requirement(state),
         )
         if llm_required:
             ensure_llm_call_budget(state)
@@ -454,38 +470,6 @@ class WorkAnalysisSubgraph:
             prompt_ref=self._prompt_refs["assess_operational_risks"],
             requested_mode=request_from_state(state).requested_mode,
         )
-        assessment = patch.get("__analysis_operational_risk_assessment__")
-        if isinstance(assessment, Mapping):
-            override_kind = required_override_confirmation_kind(
-                validated_relations=cast(list[Any], state.get("validated_relations", [])),
-                action_necessity_candidate=cast(Any, assessment["action_necessity_candidate"]),
-                policy_confirmation_receipts=cast(
-                    list[PolicyConfirmationReceiptV1],
-                    state.get("policy_confirmation_receipts", []),
-                ),
-                based_on=self._based_on(state),
-            )
-            if override_kind is not None:
-                cast(dict[str, Any], patch).update(
-                    self._confirmation_patch(
-                        state,
-                        origin_target="analysis.assess_operational_risks",
-                        question=(
-                            "조회한 자료에서 중복된 업무 또는 일정 충돌이 확인됐습니다. "
-                            "이를 감안하여 작업 제안을 계속 준비할까요? "
-                            "실제 실행은 별도로 승인받습니다."
-                        ),
-                        reason_code=f"{override_kind}_REQUIRED",
-                        options=[
-                            {"option_id": "APPROVED", "label": "계속 준비해 주세요"},
-                            {"option_id": "DECLINED", "label": "진행하지 않을게요"},
-                        ],
-                        policy_confirmation={
-                            "confirmation_kind": override_kind,
-                            "based_on": self._based_on(state),
-                        },
-                    )
-                )
         return cast(
             WorkAnalysisLocalState,
             {
@@ -504,14 +488,14 @@ class WorkAnalysisSubgraph:
         if isinstance(gap_assessment, Mapping) and gap_assessment.get("disposition") != "COMPLETE":
             return self._resolve_gap_disposition(state, gap_assessment)
 
-        risk_assessment = _require_state_value(
+        _require_state_value(
             state.get("__analysis_operational_risk_assessment__"),
             "operational risk assessment",
         )
         based_on = self._based_on(state)
         override_kind = required_override_confirmation_kind(
             validated_relations=cast(list[Any], state.get("validated_relations", [])),
-            action_necessity_candidate=cast(Any, risk_assessment["action_necessity_candidate"]),
+            action_route_required=_action_route_required(state),
             policy_confirmation_receipts=cast(
                 list[PolicyConfirmationReceiptV1],
                 state.get("policy_confirmation_receipts", []),
@@ -846,6 +830,7 @@ class WorkAnalysisSubgraph:
         node: str,
         prompt_ref: PromptReference | None = None,
         first: bool = False,
+        llm_call_increment: int | None = None,
     ) -> dict[str, object]:
         return cast(
             dict[str, object],
@@ -860,7 +845,9 @@ class WorkAnalysisSubgraph:
                 llm_call_id=(f"{state['run_id']}:analysis.{node}" if prompt_ref else None),
                 prompt_ref=prompt_ref,
                 agent_invocation_increment=1 if first else 0,
-                llm_call_increment=1 if prompt_ref else 0,
+                llm_call_increment=(
+                    (1 if prompt_ref else 0) if llm_call_increment is None else llm_call_increment
+                ),
             ),
         )
 
@@ -882,6 +869,12 @@ class WorkAnalysisSubgraph:
     @staticmethod
     def _has_invocation(state: WorkAnalysisLocalState) -> bool:
         return isinstance(state.get(ANALYSIS_AGENT_LOCAL_KEY), Mapping)
+
+
+def _action_route_required(state: WorkAnalysisLocalState) -> bool:
+    plan = state.get("tool_route_plan")
+    output = plan.get("output_plan") if isinstance(plan, Mapping) else None
+    return isinstance(output, Mapping) and output.get("output_mode") == "ACTION"
 
 
 __all__ = ["WorkAnalysisSubgraph"]

@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Literal, cast
 
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
+)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     StateArtifactMetaV1,
     StateArtifactRefV1,
@@ -54,8 +57,8 @@ def assemble_work_analysis(
     ambiguities: Iterable[WorkAmbiguityV1],
     risks: Iterable[WorkRiskV1],
     evidence_refs: Iterable[str],
-    action_necessity_candidate: ActionNecessityV1,
-    action_necessity_reason: str | None,
+    action_route_required: bool,
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1,
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1],
 ) -> WorkAnalysisResultV2:
     """Assemble validated inputs; guarded relation truth overrides LLM necessity."""
@@ -68,8 +71,8 @@ def assemble_work_analysis(
     valid_receipts = _current_receipts(policy_confirmation_receipts, based_on=base_refs)
     necessity, reason, used_receipts = _resolve_action_necessity(
         relations=relations,
-        candidate=action_necessity_candidate,
-        candidate_reason=action_necessity_reason,
+        action_route_required=action_route_required,
+        duplicate_conflict_assessment=duplicate_conflict_assessment,
         receipts=valid_receipts,
     )
     receipt_refs: list[StateArtifactRefV1] = [
@@ -101,28 +104,26 @@ def assemble_work_analysis(
 def required_override_confirmation_kind(
     *,
     validated_relations: Sequence[WorkRelationV1],
-    action_necessity_candidate: ActionNecessityV1,
+    action_route_required: bool,
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1],
     based_on: Sequence[StateArtifactRefV1],
 ) -> Literal["DUPLICATE_OVERRIDE", "CONFLICT_OVERRIDE"] | None:
     """Return the missing override receipt kind before final assembly."""
 
-    if action_necessity_candidate != "REQUIRED":
+    if not action_route_required:
         return None
     receipts = _current_receipts(policy_confirmation_receipts, based_on=based_on)
     kinds = {relation["kind"] for relation in validated_relations}
     if "CONFLICTS_WITH" in kinds and not _has_decision(receipts, "CONFLICT_OVERRIDE"):
         return "CONFLICT_OVERRIDE"
-    if "DUPLICATES" in kinds and not _has_decision(receipts, "DUPLICATE_OVERRIDE"):
-        return "DUPLICATE_OVERRIDE"
     return None
 
 
 def _resolve_action_necessity(
     *,
     relations: Sequence[WorkRelationV1],
-    candidate: ActionNecessityV1,
-    candidate_reason: str | None,
+    action_route_required: bool,
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1,
     receipts: Sequence[PolicyConfirmationReceiptV1],
 ) -> tuple[ActionNecessityV1, str | None, list[PolicyConfirmationReceiptV1]]:
     kinds = {relation["kind"] for relation in relations}
@@ -135,19 +136,14 @@ def _resolve_action_necessity(
                 return "REQUIRED", "CONFLICT_OVERRIDE_APPROVED", used
             return "NOT_REQUIRED", "CONFLICT_OVERRIDE_DECLINED", used
         return "UNDETERMINED", "CONFLICT_OVERRIDE_REQUIRED", used
-    if "DUPLICATES" in kinds:
-        receipt = _decision_receipt(receipts, "DUPLICATE_OVERRIDE")
-        if receipt is not None:
-            used.append(receipt)
-            if receipt["decision"] == "APPROVED":
-                return "REQUIRED", "DUPLICATE_OVERRIDE_APPROVED", used
-            return "NOT_REQUIRED", "DUPLICATE_OVERRIDE_DECLINED", used
-        if candidate == "REQUIRED":
-            return "UNDETERMINED", "DUPLICATE_OVERRIDE_REQUIRED", used
+    status = duplicate_conflict_assessment["requested_work_status"]
+    if status == "SATISFIED":
         return "NOT_REQUIRED", "EXACT_DUPLICATE_ALREADY_SATISFIES_REQUEST", used
-    if candidate == "NOT_REQUIRED":
-        return "UNDETERMINED", "NO_ACTION_DECISION_REQUIRES_DETERMINISTIC_GROUNDING", used
-    return candidate, _normalized_reason(candidate_reason), used
+    if action_route_required and status == "UNDETERMINED":
+        return "UNDETERMINED", "DUPLICATE_REVIEW_UNDETERMINED", used
+    if action_route_required:
+        return "REQUIRED", "FROZEN_ACTION_ROUTE_REQUIRES_EXECUTION", used
+    return "UNDETERMINED", None, used
 
 
 def _current_receipts(
@@ -193,14 +189,6 @@ def _decision_receipt(
     receipts: Sequence[PolicyConfirmationReceiptV1], kind: str
 ) -> PolicyConfirmationReceiptV1 | None:
     return next((item for item in reversed(receipts) if item["confirmation_kind"] == kind), None)
-
-
-def _normalized_reason(value: str | None) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("action_necessity_reason must be non-empty or null")
-    return value.strip()
 
 
 def _unique_strings(values: Iterable[str]) -> list[str]:

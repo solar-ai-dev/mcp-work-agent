@@ -39,8 +39,9 @@ def test_load_prompt__input_contract_closes__exact_slot_set() -> None:
 def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> None:
     payload = _payload()
     entries = cast(list[dict[str, object]], payload["entries"])
-    entry = next(item for item in entries
-                 if item["prompt_slot_id"] == "request_understanding.identify_goal")
+    entry = next(
+        item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
+    )
     assert entry["output_schema_version"] == 9
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
@@ -77,6 +78,45 @@ def test_compose_arguments_contract__accepts_current__request_intent_projection(
             "request_intent": {},
             "work_analysis": {},
             "evidence": [],
+            "run_reference_time": {
+                "captured_at": "2026-09-10T10:00:00+09:00",
+                "timezone": "Asia/Seoul",
+            },
+        },
+    )
+
+
+def test_work_analysis_contracts__accept_current__observation_projections() -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        "work_analysis.detect_duplicate_conflict_candidates",
+        {
+            "request_intent": {},
+            "work_facts": [],
+            "entity_relations": [],
+            "evidence": [],
+            "source_state": {"source_statuses": []},
+            "task_duplicate_review_required": True,
+        },
+    )
+    contract.validate_projection(
+        "work_analysis.assess_information_gaps",
+        {
+            "request_intent": {},
+            "work_facts": [],
+            "evidence": [],
+            "source_statuses": [],
+        },
+    )
+    contract.validate_projection(
+        "work_analysis.assess_operational_risks",
+        {
+            "request_intent": {},
+            "work_facts": [],
+            "validated_relations": [],
+            "evidence": [],
+            "source_statuses": [],
         },
     )
 

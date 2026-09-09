@@ -28,26 +28,13 @@ ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
         "additionalProperties": False,
         "required": [
             "schema_version",
-            "route_id",
             "objective",
-            "target_semantics",
             "scope_constraints",
             "evidence_refs",
         ],
         "properties": {
             "schema_version": {"const": 1},
-            "route_id": {"type": "string", "minLength": 1},
             "objective": {"type": "string", "minLength": 1},
-            "target_semantics": {
-                "enum": [
-                    "GMAIL_MESSAGE",
-                    "GMAIL_THREAD_REPLY",
-                    "GMAIL_DRAFT",
-                    "TASK",
-                    "CALENDAR_EVENT",
-                    "GITHUB_ISSUE",
-                ]
-            },
             "scope_constraints": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -80,6 +67,13 @@ def action_objective_candidate_output_schema(
     )
     schema = deepcopy(ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA.json_schema)
     properties = cast(dict[str, object], schema["properties"])
+    route = prompt_input.get("output_route")
+    if not isinstance(route, Mapping):
+        raise ValueError("action objective requires one frozen output route")
+    if _requires_delivery_semantics(route):
+        required = cast(list[str], schema["required"])
+        required.append("target_semantics")
+        properties["target_semantics"] = {"enum": ["GMAIL_MESSAGE", "GMAIL_THREAD_REPLY"]}
     evidence_refs = cast(dict[str, object], properties["evidence_refs"])
     evidence_refs["uniqueItems"] = True
     evidence_refs["items"] = {
@@ -143,7 +137,25 @@ def draft_action_objective_per_output_route(
             }
             if work_analysis is not None:
                 prompt_input["work_analysis"] = dict(work_analysis)
-            candidate = invoke(PROMPT_ID, prompt_input)
+            model_candidate = invoke(PROMPT_ID, prompt_input)
+            expected_fields = {
+                "schema_version",
+                "objective",
+                "scope_constraints",
+                "evidence_refs",
+            }
+            if _requires_delivery_semantics(route):
+                expected_fields.add("target_semantics")
+            if set(model_candidate) != expected_fields:
+                raise ValueError("objective candidate contains non-owned route fields")
+            candidate = {
+                **model_candidate,
+                "route_id": route_id,
+                "target_semantics": _target_semantics_for_route(
+                    route=route,
+                    model_candidate=model_candidate,
+                ),
+            }
         objective = candidate.get("objective")
         target_semantics = candidate.get("target_semantics")
         scope_constraints = candidate.get("scope_constraints")
@@ -316,9 +328,7 @@ def _deterministic_task_create_objective(
     }
 
 
-def _matches_route_semantics(
-    *, route: Mapping[str, object], target_semantics: str
-) -> bool:
+def _matches_route_semantics(*, route: Mapping[str, object], target_semantics: str) -> bool:
     resource_type = route.get("resource_type")
     if (
         resource_type == "GMAIL_MESSAGE"
@@ -327,6 +337,35 @@ def _matches_route_semantics(
     ):
         return target_semantics in {"GMAIL_MESSAGE", "GMAIL_THREAD_REPLY"}
     return target_semantics == resource_type
+
+
+def _requires_delivery_semantics(route: Mapping[str, object]) -> bool:
+    return (
+        route.get("resource_type") == "GMAIL_MESSAGE"
+        and route.get("effect") == "SEND"
+        and route.get("selected_tool_id") == "gmail_send"
+    )
+
+
+def _target_semantics_for_route(
+    *,
+    route: Mapping[str, object],
+    model_candidate: Mapping[str, object],
+) -> ActionTargetSemanticsV1:
+    if _requires_delivery_semantics(route):
+        value = model_candidate.get("target_semantics")
+        if value not in {"GMAIL_MESSAGE", "GMAIL_THREAD_REPLY"}:
+            raise ValueError("objective candidate requires valid delivery semantics")
+        return cast(ActionTargetSemanticsV1, value)
+    resource_type = route.get("resource_type")
+    if resource_type not in {
+        "GMAIL_DRAFT",
+        "TASK",
+        "CALENDAR_EVENT",
+        "GITHUB_ISSUE",
+    }:
+        raise ValueError("output route has no supported target semantics")
+    return cast(ActionTargetSemanticsV1, resource_type)
 
 
 __all__ = [

@@ -36,7 +36,6 @@ def plan_candidate_detail(
     attempted = set(attempted_detail_candidate_refs)
     candidates = tuple(dict.fromkeys(detail_candidate_refs))
     route_queries: list[dict[str, object]] = []
-    retrieval_order: list[str] = []
     for route in select_followup_routes(prompt_input, frozen_routes):
         if route_operation_tool_id(route, "DETAIL_FETCH") is None:
             continue
@@ -56,7 +55,6 @@ def plan_candidate_detail(
                 "detail_candidate_ref": candidate,
             }
         )
-        retrieval_order.append(route["route_id"])
     if not route_queries:
         return None
     return cast(
@@ -64,8 +62,6 @@ def plan_candidate_detail(
         {
             "schema_version": 2,
             "route_queries": route_queries,
-            "required_information": ["candidate resource detail required by sufficiency"],
-            "retrieval_order": retrieval_order,
         },
     )
 

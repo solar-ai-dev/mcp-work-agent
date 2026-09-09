@@ -38,8 +38,6 @@ ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA = OutputSchemaDefinition(
         "type": "object",
         "required": [
             "risks",
-            "action_necessity_candidate",
-            "action_necessity_reason",
             "evidence_refs",
         ],
         "additionalProperties": False,
@@ -61,30 +59,11 @@ ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     },
                 },
             },
-            "action_necessity_candidate": {"enum": ["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]},
-            "action_necessity_reason": {"type": ["string", "null"]},
             "evidence_refs": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
             },
         },
-        "allOf": [
-            {
-                "if": {
-                    "properties": {
-                        "action_necessity_candidate": {"const": "REQUIRED"},
-                    }
-                },
-                "then": {
-                    "properties": {
-                        "action_necessity_reason": {
-                            "type": "string",
-                            "minLength": 1,
-                        }
-                    }
-                },
-            }
-        ],
     },
 )
 
@@ -101,6 +80,7 @@ def assess_operational_risks(
     requested_mode: RequestedModeV1,
     policy_summary: dict[str, object] | None = None,
     confirmation_response: dict[str, object] | None = None,
+    source_statuses: Sequence[Mapping[str, object]] = (),
 ) -> OperationalRiskAssessmentV1:
     """Propose risks/action necessity without assuming Policy or Approval authority."""
 
@@ -109,6 +89,7 @@ def assess_operational_risks(
         "work_facts": [dict(fact) for fact in work_facts],
         "validated_relations": [dict(relation) for relation in validated_relations],
         "evidence": list(evidence),
+        "source_statuses": [dict(item) for item in source_statuses],
     }
     if policy_summary is not None:
         prompt_input["policy_summary"] = dict(policy_summary)
@@ -130,11 +111,6 @@ def assess_operational_risks(
                 allowed_evidence_refs
             ):
                 raise ValueError("risk evidence is outside current RetrievalResultV1")
-        reason = root["action_necessity_reason"]
-        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-            raise ValueError("action_necessity_reason must be non-empty or null")
-        if root["action_necessity_candidate"] == "REQUIRED" and reason is None:
-            raise ValueError("required action necessity candidate must include a reason")
         return value
 
     result = llm_runtime.infer(

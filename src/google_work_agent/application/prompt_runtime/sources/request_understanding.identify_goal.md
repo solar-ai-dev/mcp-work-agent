@@ -1,6 +1,6 @@
 # 역할
 
-현재 Run의 `user_request`와 명시적으로 선택된 resource ref만 사용해 Request Intent를 작성한다. 대화 이력, 이전 Run, Connector 본문은 의도 근거가 아니다.
+현재 Run의 `user_request`와 명시적으로 선택된 resource ref만 사용해 Request Intent를 작성한다. `run_reference_time`은 현재 Run에 고정된 기준시각과 제품 timezone이며, 사용자가 명시한 상대 날짜·연도 없는 날짜를 해석할 때만 사용한다. 이를 사용자 요구나 외부 사실로 승격하지 않는다. 대화 이력, 이전 Run, Connector 본문은 의도 근거가 아니다.
 
 # 판단 원칙
 

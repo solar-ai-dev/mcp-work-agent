@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypedDict, cast
 
-from google_work_agent.application.agents.work_analysis.assemble_work_analysis import (
-    ActionNecessityV1,
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     StateArtifactRefV1,
@@ -25,8 +25,8 @@ class AssembleWorkAnalysisInput(TypedDict):
     ambiguities: list[WorkAmbiguityV1]
     risks: list[WorkRiskV1]
     evidence_refs: list[str]
-    action_necessity_candidate: ActionNecessityV1
-    action_necessity_reason: str | None
+    action_route_required: bool
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
 
 
@@ -40,11 +40,10 @@ def project_assemble_work_analysis_input(
         "ambiguity_candidates",
         "operational_risk_candidates",
         "evidence_refs",
-        "__analysis_operational_risk_assessment__",
+        "duplicate_conflict_assessment",
     )
     if any(key not in state for key in required):
         raise ValueError("missing typed input projection for analysis.finalize")
-    assessment = cast(Mapping[str, object], state["__analysis_operational_risk_assessment__"])
     based_on: list[StateArtifactRefV1] = []
     route_plan = state.get("tool_route_plan")
     route_artifacts = (
@@ -68,10 +67,14 @@ def project_assemble_work_analysis_input(
         "ambiguities": cast(list[WorkAmbiguityV1], state["ambiguity_candidates"]),
         "risks": cast(list[WorkRiskV1], state["operational_risk_candidates"]),
         "evidence_refs": list(cast(list[str], state["evidence_refs"])),
-        "action_necessity_candidate": cast(
-            ActionNecessityV1, assessment["action_necessity_candidate"]
+        "action_route_required": (
+            isinstance(route_plan, Mapping)
+            and isinstance(route_plan.get("output_plan"), Mapping)
+            and route_plan["output_plan"].get("output_mode") == "ACTION"
         ),
-        "action_necessity_reason": cast(str | None, assessment["action_necessity_reason"]),
+        "duplicate_conflict_assessment": cast(
+            DuplicateConflictAssessmentV1, state["duplicate_conflict_assessment"]
+        ),
         "policy_confirmation_receipts": cast(
             list[PolicyConfirmationReceiptV1], state.get("policy_confirmation_receipts", [])
         ),

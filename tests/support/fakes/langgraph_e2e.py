@@ -138,7 +138,6 @@ class LangGraphE2EGeminiTransport:
                         )
                     queries.append(query)
                 output["route_queries"] = queries
-                output["retrieval_order"] = [q["route_id"] for q in queries]
         if (
             self.gmail_arguments is not None
             and prompt_id == "planning.compose_arguments_per_output_route"
@@ -268,7 +267,7 @@ def _respond(
         ]
         is_followup = "current_round_no" in base
         planned_routes = (
-            [route for route in searchable_routes if _supports_keyword_expansion(route)]
+            [route for route in searchable_routes if _supports_semantic_expansion(route)]
             if is_followup
             else searchable_routes
         )
@@ -291,8 +290,6 @@ def _respond(
         return {
             "schema_version": 2,
             "route_queries": route_queries,
-            "required_information": ["E2E evidence"],
-            "retrieval_order": route_ids,
         }
     if prompt_id == "retrieval.select_evidence":
         ranked = cast(list[Mapping[str, object]], base.get("ranked_segments", []))
@@ -310,13 +307,49 @@ def _respond(
     if prompt_id == "retrieval.assess_sufficiency":
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     if prompt_id == "work_analysis.extract_work_facts":
+        task_refs = _task_evidence_refs(base)
+        if scenario == "TASK_DUPLICATE_REEVALUATION" and call_no == 1:
+            return {"fact_candidates": []}
+        if task_refs:
+            return {
+                "fact_candidates": [
+                    {
+                        "kind": "TASK",
+                        "subject": "Existing E2E task",
+                        "value": "E2E task",
+                        "derivation": "EXPLICIT",
+                        "evidence_refs": [task_refs[0]],
+                    }
+                ]
+            }
         return {"fact_candidates": []}
     if prompt_id in {
         "work_analysis.resolve_entity_relations",
         "work_analysis.resolve_temporal_dependencies",
-        "work_analysis.detect_duplicate_conflict_candidates",
     }:
         return {"relation_candidates": []}
+    if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
+        required = base.get("task_duplicate_review_required") is True
+        if scenario == "TASK_DUPLICATE_NO_ACTION":
+            facts = cast(list[Mapping[str, object]], base["work_facts"])
+            fact = facts[0]
+            refs = cast(list[str], fact["evidence_refs"])
+            return {
+                "relation_candidates": [],
+                "requested_work_status": "SATISFIED",
+                "requested_work_reason": "The current Task already fulfils the request",
+                "matched_fact_ids": [str(fact["fact_id"])],
+                "evidence_refs": refs,
+            }
+        return {
+            "relation_candidates": [],
+            "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
+            "requested_work_reason": (
+                "Observed tasks do not satisfy the request" if required else None
+            ),
+            "matched_fact_ids": [],
+            "evidence_refs": [],
+        }
     if prompt_id == "work_analysis.assess_information_gaps":
         return {
             "disposition": "COMPLETE",
@@ -327,8 +360,6 @@ def _respond(
     if prompt_id == "work_analysis.assess_operational_risks":
         return {
             "risks": [],
-            "action_necessity_candidate": "REQUIRED",
-            "action_necessity_reason": "User requested an E2E write",
             "evidence_refs": [],
         }
     if prompt_id == "planning.outline_answer":
@@ -343,14 +374,19 @@ def _respond(
         }
     if prompt_id == "planning.draft_action_objective_per_output_route":
         route = cast(Mapping[str, object], base["output_route"])
-        return {
+        output = {
             "schema_version": 1,
-            "route_id": str(route["route_id"]),
             "objective": f"E2E {scenario}",
-            "target_semantics": str(route["resource_type"]),
             "scope_constraints": ["Use only the frozen output route"],
             "evidence_refs": _evidence_refs(base),
         }
+        if (
+            route.get("resource_type") == "GMAIL_MESSAGE"
+            and route.get("effect") == "SEND"
+            and route.get("selected_tool_id") == "gmail_send"
+        ):
+            output["target_semantics"] = "GMAIL_MESSAGE"
+        return output
     if prompt_id == "planning.compose_arguments_per_output_route":
         route = cast(Mapping[str, object], base["output_route"])
         return {
@@ -416,6 +452,9 @@ def _scenario(value: object) -> str:
         "MAIL_CALENDAR_CREATE",
         "CALENDAR_CONFIRMATION",
         "MAIL_TASK_CREATE",
+        "TASK_DUPLICATE_NO_ACTION",
+        "TASK_DUPLICATE_REEVALUATION",
+        "TASK_NONDUPLICATE_PREVIEW",
         "EVIDENCE_BACK_EDGE",
         "ANALYTICAL_READ",
         "RETRIEVAL_CACHE_LOSS",
@@ -452,6 +491,7 @@ def _answer_for(scenario: str) -> str:
         "GMAIL_READ": "선택한 메일의 핵심 내용은 deterministic Gmail evidence입니다.",
         "TASKS_READ": "확인한 태스크의 핵심 내용은 E2E task입니다.",
         "CALENDAR_READ": "확인한 일정의 핵심 내용은 E2E event입니다.",
+        "TASK_DUPLICATE_NO_ACTION": "같은 할 일이 이미 있어 새로 만들지 않았습니다.",
     }.get(scenario, f"E2E 결과를 정리했습니다: {scenario}")
 
 
@@ -552,19 +592,20 @@ def _select_tool(resource_type: str, effect: str, candidates: list[str]) -> str:
 def _route_query(route: Mapping[str, object], *, is_followup: bool = False) -> dict[str, object]:
     resource_type = str(route["resource_type"])
     if resource_type == "EMAIL":
-        constraint: dict[str, object] = (
-            {
+        supported_kinds = cast(list[str], route.get("supported_constraint_kinds", []))
+        constraint: dict[str, object]
+        if is_followup and "CONCEPT" in supported_kinds:
+            constraint = {
                 "kind": "CONCEPT",
                 "concept": "additional deterministic evidence",
                 "manifestations": ["E2E follow-up"],
             }
-            if is_followup
-            else {
+        else:
+            constraint = {
                 "kind": "KEYWORD",
-                "terms": ["E2E"],
+                "terms": ["E2E follow-up" if is_followup else "E2E"],
                 "match_mode": "ANY",
             }
-        )
     else:
         container_refs = cast(list[str], route.get("container_refs", []))
         if not container_refs:
@@ -594,9 +635,9 @@ def _has_search_tool(route: Mapping[str, object]) -> bool:
     return any("search" in tool or "list" in tool for tool in tools)
 
 
-def _supports_keyword_expansion(route: Mapping[str, object]) -> bool:
+def _supports_semantic_expansion(route: Mapping[str, object]) -> bool:
     kinds = route.get("supported_constraint_kinds", [])
-    return isinstance(kinds, list) and {"CONCEPT", "KEYWORD"}.issubset(kinds)
+    return isinstance(kinds, list) and bool({"CONCEPT", "KEYWORD"}.intersection(kinds))
 
 
 def _evidence_refs(prompt_input: Mapping[str, object]) -> list[str]:
@@ -604,6 +645,17 @@ def _evidence_refs(prompt_input: Mapping[str, object]) -> list[str]:
     return [
         str(ref)
         for item in evidence
+        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+        if isinstance(ref, str) and ref
+    ]
+
+
+def _task_evidence_refs(prompt_input: Mapping[str, object]) -> list[str]:
+    evidence = cast(list[Mapping[str, object]], prompt_input.get("evidence", []))
+    return [
+        str(ref)
+        for item in evidence
+        if str(item.get("resource_handle", "")).startswith("task:")
         for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
         if isinstance(ref, str) and ref
     ]

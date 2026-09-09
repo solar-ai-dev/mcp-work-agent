@@ -293,9 +293,7 @@ def test_explicit_resource_id__materializes_detail_fetch__without_llm() -> None:
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
         route_policies={"route-draft": RouteConstraintPolicy(frozenset({"RESOURCE_REF"}))},
         retry_budget=build_default_run_budget(),
-        validated_resource_refs={
-            "route-draft": ["gmail_draft:r976635311795334843"]
-        },
+        validated_resource_refs={"route-draft": ["gmail_draft:r976635311795334843"]},
     )
 
     assert llm_invoked is False
@@ -388,8 +386,6 @@ def test_retrieval_followup__no_required_google_issue__keeps_query_planning_llm(
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["more candidates"],
-        "retrieval_order": ["route-1"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -431,6 +427,96 @@ def test_retrieval_followup__no_required_google_issue__keeps_query_planning_llm(
 
     assert llm_invoked is True
     assert len(runtime.calls) == 1
+
+
+def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() -> None:
+    output = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["INSUFFICIENT_EVIDENCE"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {
+                                "kind": "CONCEPT",
+                                "concept": "delivery schedule",
+                                "manifestations": ["납품 일정"],
+                            }
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[output])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = [
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        }
+    ]
+    prior_keyword = {
+        "kind": "KEYWORD",
+        "terms": ["Quartz"],
+        "match_mode": "PHRASE",
+    }
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {
+                "constraints": [{"kind": "RESOURCE", "field": "title", "value": "Quartz"}]
+            },
+            "input_routes": frozen_routes,
+            "current_round_no": 1,
+            "prior_query_attempts": [
+                {
+                    "route_id": "route-1",
+                    "operation_kind": "SEARCH",
+                    "round_no": 0,
+                    "normalized_intent_constraints": [prior_keyword],
+                }
+            ],
+            "unresolved_sufficiency_issues": [{"required": True, "resolution_source": "GOOGLE"}],
+            "read_result_summaries": [],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
+        route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))},
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert llm_invoked is True
+    assert result == output
+    projected_input = cast(dict[str, object], runtime.calls[0]["prompt_input"])
+    projected_routes = cast(list[dict[str, object]], projected_input["input_routes"])
+    assert projected_routes[0]["supported_constraint_kinds"] == ["CONCEPT", "KEYWORD"]
 
 
 @pytest.mark.parametrize("terms", [["회의 관련 메일"], ["프로젝트", "일정"]])
@@ -486,8 +572,6 @@ def test_general_search__with_semantic_choice__keeps_query_planning_llm() -> Non
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["matching threads"],
-        "retrieval_order": ["route-1"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -551,8 +635,6 @@ def test_query_planner__with_get_only_route__searches_supported_route() -> None:
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["matching mail"],
-        "retrieval_order": ["thread-search"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -617,7 +699,6 @@ def test_query_planner__with_get_only_route__searches_supported_route() -> None:
     invalid = {
         **output,
         "route_queries": [{**output["route_queries"][0], "route_id": "message-detail"}],
-        "retrieval_order": ["message-detail"],
     }
     assert validate_output_schema(invalid, schema.json_schema)
 
@@ -679,8 +760,6 @@ def test_initial_query__invalid_next_page__repairs_before_materialization() -> N
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["current tasks"],
-        "retrieval_order": ["route-1"],
     }
     repaired = {
         "schema_version": 2,
@@ -696,8 +775,6 @@ def test_initial_query__invalid_next_page__repairs_before_materialization() -> N
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["current tasks"],
-        "retrieval_order": ["route-1"],
     }
     runtime = FakeStructuredInferencePort(outputs=[invalid_initial, repaired])
     prompt_ref = PromptReference(
@@ -769,8 +846,6 @@ def test_calendar_route__projects_existing__route_constraint_policy() -> None:
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["calendar conflicts in requested window"],
-        "retrieval_order": ["calendar-read"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -911,7 +986,11 @@ def test_exact_calendar_create_precondition__materializes_all_policy_reads__with
 
     assert llm_invoked is False
     assert runtime.calls == []
-    assert result["retrieval_order"] == ["calendar-list", "event-list", "freebusy"]
+    assert [item["route_id"] for item in result["route_queries"]] == [
+        "calendar-list",
+        "event-list",
+        "freebusy",
+    ]
     assert [item["operation"] for item in result["route_queries"]] == [
         "SEARCH",
         "SEARCH",
@@ -1017,7 +1096,7 @@ def test_exact_task_create_precondition__materializes_duplicate_reads__without_l
 
     assert llm_invoked is False
     assert runtime.calls == []
-    assert result["retrieval_order"] == ["tasks", "task-lists"]
+    assert [item["route_id"] for item in result["route_queries"]] == ["tasks", "task-lists"]
     assert [item["operation"] for item in result["route_queries"]] == [
         "SEARCH",
         "SEARCH",
@@ -1217,8 +1296,6 @@ def test_calendar_route__without_validated_container__does_not_offer_container_r
                         "detail_candidate_ref": None,
                     }
                 ],
-                "required_information": ["calendar conflicts"],
-                "retrieval_order": ["calendar-read"],
             }
         ]
     )
@@ -1287,8 +1364,6 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["matching threads"],
-        "retrieval_order": ["route-1"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -1371,8 +1446,6 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["matching threads"],
-        "retrieval_order": ["route-1"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -1456,8 +1529,6 @@ def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["matching threads"],
-        "retrieval_order": ["route-1"],
     }
     runtime = FakeStructuredInferencePort(outputs=[output])
     prompt_ref = PromptReference(
@@ -1597,8 +1668,6 @@ class _OmittingRepositoryInference:
                         "detail_candidate_ref": None,
                     }
                 ],
-                "required_information": ["issues"],
-                "retrieval_order": ["route-1"],
             },
             provider="fake",
             model="fake",

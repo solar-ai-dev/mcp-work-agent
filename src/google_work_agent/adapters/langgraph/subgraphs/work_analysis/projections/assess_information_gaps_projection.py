@@ -10,6 +10,8 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
     WorkFactV1,
 )
 
+from .retrieval_source_statuses_projection import project_retrieval_source_statuses
+
 
 class AssessInformationGapsInput(TypedDict):
     request_intent: RequestIntentV2
@@ -17,6 +19,7 @@ class AssessInformationGapsInput(TypedDict):
     evidence: list[dict[str, object]]
     allowed_evidence_refs: set[str]
     confirmation_response: dict[str, object] | None
+    source_statuses: list[dict[str, object]]
 
 
 def project_assess_information_gaps_input(
@@ -32,6 +35,7 @@ def project_assess_information_gaps_input(
         "evidence": [dict(item) for item in cast(list[dict[str, object]], state["evidence"])],
         "allowed_evidence_refs": set(cast(list[str], state["evidence_refs"])),
         "confirmation_response": dict(response) if isinstance(response, Mapping) else None,
+        "source_statuses": project_retrieval_source_statuses(state),
     }
 
 

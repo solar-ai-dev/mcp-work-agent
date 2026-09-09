@@ -14,7 +14,10 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
+    BudgetProfile,
+    approve_planning_revision,
     build_default_run_budget,
+    promote_run_budget_profile,
     validate_run_budget_v2,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -38,7 +41,7 @@ def test_paused_accounting__counts_failure_and_retry__then_blocks_exhausted_disp
     guarded = PromptInputGuardedProvider(provider, _RecordingValidator())
 
     def account(
-        update: Callable[[Mapping[str, object]], Mapping[str, object]]
+        update: Callable[[Mapping[str, object]], Mapping[str, object]],
     ) -> Mapping[str, object]:
         nonlocal budget
         budget = validate_run_budget_v2(dict(update(budget)))
@@ -57,6 +60,67 @@ def test_paused_accounting__counts_failure_and_retry__then_blocks_exhausted_disp
     with pytest.raises(TimeoutError):
         _invoke_structured(guarded)
     assert len(calls) == 2
+
+
+def test_durable_accounting__preserves_graph_profile_promotion__before_dispatch() -> None:
+    durable_budget = build_default_run_budget()
+    durable_budget["llm_calls_used"] = durable_budget["llm_call_limit"]
+    graph_budget = promote_run_budget_profile(dict(durable_budget), BudgetProfile.RETRIEVAL_HEAVY)
+    provider = _FakeProvider()
+    guarded = PromptInputGuardedProvider(provider, _RecordingValidator())
+
+    def account(
+        update: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        nonlocal durable_budget
+        durable_budget = validate_run_budget_v2(dict(update(durable_budget)))
+        return durable_budget
+
+    with (
+        provider_dispatch_execution_scope(
+            run_id="retrieval-run",
+            durable_dispatch_accountant=account,
+        ),
+        provider_dispatch_budget_scope(graph_budget),
+    ):
+        _invoke_structured(guarded)
+
+    assert provider.structured_dispatches == 1
+    assert durable_budget["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
+    assert durable_budget["llm_calls_used"] == 15
+    assert graph_budget == durable_budget
+
+
+def test_durable_accounting__recalculates_limit__after_merging_revision_progress() -> None:
+    durable_budget = build_default_run_budget()
+    durable_budget["llm_calls_used"] = durable_budget["llm_call_limit"]
+    graph_budget = promote_run_budget_profile(dict(durable_budget), BudgetProfile.RETRIEVAL_HEAVY)
+    graph_budget = approve_planning_revision(graph_budget)["run_budget"]
+    provider = _FakeProvider()
+    guarded = PromptInputGuardedProvider(provider, _RecordingValidator())
+
+    def account(
+        update: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        nonlocal durable_budget
+        durable_budget = validate_run_budget_v2(dict(update(durable_budget)))
+        return durable_budget
+
+    with (
+        provider_dispatch_execution_scope(
+            run_id="revision-run",
+            durable_dispatch_accountant=account,
+        ),
+        provider_dispatch_budget_scope(graph_budget),
+    ):
+        _invoke_structured(guarded)
+
+    assert provider.structured_dispatches == 1
+    assert durable_budget["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
+    assert durable_budget["planning_revisions_used"] == 1
+    assert durable_budget["llm_call_limit"] == durable_budget["absolute_llm_call_limit"]
+    assert durable_budget["llm_calls_used"] == 15
+    assert graph_budget == durable_budget
 
 
 class _RecordingValidator:

@@ -24,12 +24,14 @@ def detect_duplicate_conflict_candidates_node(
     requested_mode: RequestedModeV1,
     confirmation_response: dict[str, object] | None = None,
 ) -> WorkAnalysisStateV2:
+    assessment = _detect_duplicate_conflicts(
+        **project_detect_duplicate_conflict_candidates_input(state),
+        llm_runtime=llm_runtime,
+        prompt_ref=prompt_ref,
+        requested_mode=requested_mode,
+        confirmation_response=confirmation_response,
+    )
     return {
-        "duplicate_conflict_candidates": _detect_duplicate_conflicts(
-            **project_detect_duplicate_conflict_candidates_input(state),
-            llm_runtime=llm_runtime,
-            prompt_ref=prompt_ref,
-            requested_mode=requested_mode,
-            confirmation_response=confirmation_response,
-        )
+        "duplicate_conflict_candidates": assessment["relation_candidates"],
+        "duplicate_conflict_assessment": assessment,
     }

@@ -124,7 +124,10 @@ def finalize_retrieval(
 def _coverage(
     status: str, acquisition_result: AcquisitionResultV1
 ) -> Literal["SUFFICIENT", "PARTIAL", "NO_FETCH_NEEDED"]:
-    if status == "SUFFICIENT" and not acquisition_result["resource_handles"]:
+    attempted = any(
+        item.get("status") != "NOT_ATTEMPTED" for item in acquisition_result["source_summaries"]
+    )
+    if status == "SUFFICIENT" and not acquisition_result["resource_handles"] and not attempted:
         return "NO_FETCH_NEEDED"
     return "SUFFICIENT" if status == "SUFFICIENT" else "PARTIAL"
 
@@ -157,6 +160,7 @@ def _source_statuses(
                 for draft in evidence_drafts
                 if draft["resource_handle"] in handles_by_route.get(str(item["route_id"]), set())
             ],
+            "observed_resource_count": len(handles_by_route.get(str(item["route_id"]), set())),
             "failure_kind": _failure_kind(item["failure_kind"]),
         }
         for item in source_statuses_prompt_projection(

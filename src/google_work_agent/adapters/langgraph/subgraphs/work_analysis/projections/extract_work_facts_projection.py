@@ -7,6 +7,10 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
     WorkAnalysisSemanticInputV1,
 )
 
+from .task_duplicate_review_requirement_projection import (
+    project_task_duplicate_review_requirement,
+)
+
 
 class ExtractWorkFactsInput(TypedDict):
     semantic_input: WorkAnalysisSemanticInputV1
@@ -22,6 +26,7 @@ def project_extract_work_facts_input(state: WorkAnalysisLocalState) -> ExtractWo
         "request_intent": cast(dict[str, object], state["request_intent"]),
         "evidence": [dict(item) for item in state["evidence"]],
         "availability_results": list(state.get("availability_results", [])),
+        "task_duplicate_review_required": project_task_duplicate_review_requirement(state),
     }
     if "confirmation_response" in state:
         semantic_input["confirmation_response"] = dict(state["confirmation_response"])

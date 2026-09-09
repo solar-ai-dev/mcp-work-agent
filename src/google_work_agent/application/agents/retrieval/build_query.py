@@ -82,13 +82,19 @@ def build_query(
             policy=route_policies[route_id],
             prior_plan=prior_plans.get(route_id),
             prior_read_result_handle=prior_read_result_handles.get(route_id),
-            person_candidates=(person_candidates if route_by_id[route_id]["resource_type"] in {
-                "GMAIL_THREAD", "GMAIL_MESSAGE",
-            } else ()),
+            person_candidates=(
+                person_candidates
+                if route_by_id[route_id]["resource_type"]
+                in {
+                    "GMAIL_THREAD",
+                    "GMAIL_MESSAGE",
+                }
+                else ()
+            ),
             selected_person_identities=selected_person_identities or {},
             read_result_summaries=read_result_summaries,
         )
-        for route_id in validated["retrieval_order"]
+        for route_id in (query["route_id"] for query in validated["route_queries"])
     ]
 
 
@@ -156,7 +162,8 @@ def _build_one(
     )
     if prior_plan is not None and operation in {"SEARCH", "FREEBUSY"}:
         _validate_anchor_continuity(
-            prior_plan["effective_constraints"], effective,
+            prior_plan["effective_constraints"],
+            effective,
             person_candidates=person_candidates,
             selected_person_identities=selected_person_identities,
         )
@@ -171,7 +178,8 @@ def _build_one(
         )
         if read_result_summaries is not None:
             pending = [
-                summary["read_result_handle"] for summary in read_result_summaries
+                summary["read_result_handle"]
+                for summary in read_result_summaries
                 if summary.get("route_id") == route["route_id"]
                 and summary.get("query_identity_hash") == query_identity
                 and summary.get("has_next_page") is True
@@ -241,8 +249,11 @@ def _validate_anchor_continuity(
     if participant is not None and participant["kind"] == "PARTICIPANT":
         hard_identities = {item["identity"] for item in participant["participants"]}
         for mention in {item["mention"] for item in person_candidates}:
-            identities = {item["identity"] for item in person_candidates
-                          if item["mention"] == mention and item["source_segment_ids"]}
+            identities = {
+                item["identity"]
+                for item in person_candidates
+                if item["mention"] == mention and item["source_segment_ids"]
+            }
             selected = selected_person_identities.get(mention)
             if selected not in identities:
                 selected = next(iter(identities)) if len(identities) == 1 else None
@@ -253,23 +264,31 @@ def _validate_anchor_continuity(
         if following == previous:
             continue
         if previous["kind"] == "CONCEPT":
-            if following and following["kind"] == "CONCEPT" and (
-                previous["concept"] == following["concept"]
+            if (
+                following
+                and following["kind"] == "CONCEPT"
+                and (previous["concept"] == following["concept"])
             ):
                 continue
-        elif (previous["kind"] == "PARTICIPANT" and following
-              and following["kind"] == "PARTICIPANT"):
+        elif previous["kind"] == "PARTICIPANT" and following and following["kind"] == "PARTICIPANT":
             # Exact identities cannot be dropped or an AND weakened to OR.
-            if (all(item in following["participants"] for item in previous["participants"])
-                    and (following["match_mode"] == previous["match_mode"]
-                         or len(previous["participants"]) == 1)
-                    and (following["match_mode"] == "ALL"
-                         or following["participants"] == previous["participants"])):
+            if (
+                all(item in following["participants"] for item in previous["participants"])
+                and (
+                    following["match_mode"] == previous["match_mode"]
+                    or len(previous["participants"]) == 1
+                )
+                and (
+                    following["match_mode"] == "ALL"
+                    or following["participants"] == previous["participants"]
+                )
+            ):
                 continue
         elif previous["kind"] == "KEYWORD" and resolved_terms:
             remaining = [term for term in previous["terms"] if term not in resolved_terms]
             if (not remaining and following is None) or following == {
-                **previous, "terms": remaining,
+                **previous,
+                "terms": remaining,
             }:
                 continue
         raise RetrievalV2ValidationError(
@@ -358,18 +377,29 @@ def build_query_attempt(
     change_reason_code: str | None,
 ) -> QueryAttemptV1:
     """Record validated read meaning without raw provider continuation."""
-    previous = next((attempt for attempt in reversed(prior_query_attempts)
-                     if attempt["run_id"] == run_id
-                     and attempt["route_id"] == plan["route_id"]), None)
+    previous = next(
+        (
+            attempt
+            for attempt in reversed(prior_query_attempts)
+            if attempt["run_id"] == run_id and attempt["route_id"] == plan["route_id"]
+        ),
+        None,
+    )
     previous_constraints = {
-        item["kind"]: item for item in
-        ([] if previous is None else previous["normalized_intent_constraints"])
+        item["kind"]: item
+        for item in ([] if previous is None else previous["normalized_intent_constraints"])
     }
     current_constraints = {item["kind"]: item for item in plan["effective_constraints"]}
-    added: list[str] = sorted(kind for kind, value in current_constraints.items()
-                   if previous_constraints.get(kind) != value)
-    removed: list[str] = sorted(kind for kind, value in previous_constraints.items()
-                     if current_constraints.get(kind) != value)
+    added: list[str] = sorted(
+        kind
+        for kind, value in current_constraints.items()
+        if previous_constraints.get(kind) != value
+    )
+    removed: list[str] = sorted(
+        kind
+        for kind, value in previous_constraints.items()
+        if current_constraints.get(kind) != value
+    )
     return {
         "schema_version": 1,
         "query_attempt_id": query_attempt_id,
@@ -413,11 +443,24 @@ def followup_planner_projection(
     return {
         "current_round_no": current_round_no,
         "prior_query_attempts": [
-            {key: cast(Mapping[str, object], attempt)[key] for key in (
-                "query_attempt_id", "route_id", "round_no", "attempt_no", "operation_kind",
-                "normalized_intent_constraints", "previous_query_hash", "added_constraints",
-                "removed_constraints", "change_reason_code", "candidate_count", "stop_reason",
-            ) if key in attempt}
+            {
+                key: cast(Mapping[str, object], attempt)[key]
+                for key in (
+                    "query_attempt_id",
+                    "route_id",
+                    "round_no",
+                    "attempt_no",
+                    "operation_kind",
+                    "normalized_intent_constraints",
+                    "previous_query_hash",
+                    "added_constraints",
+                    "removed_constraints",
+                    "change_reason_code",
+                    "candidate_count",
+                    "stop_reason",
+                )
+                if key in attempt
+            }
             for attempt in prior_query_attempts
         ],
         "unresolved_sufficiency_issues": [dict(issue) for issue in unresolved_sufficiency_issues],

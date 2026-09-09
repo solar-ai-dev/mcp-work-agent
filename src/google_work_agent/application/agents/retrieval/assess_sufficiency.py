@@ -298,8 +298,7 @@ def _is_complete_gmail_thread_reply(
         or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
         or request_intent["ambiguity"]["requires_confirmation"]
         or set(request_intent["requested_effect_hints"]) != {"READ", "SEND"}
-        or set(request_intent["requested_resource_hints"])
-        != {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+        or set(request_intent["requested_resource_hints"]) != {"GMAIL_THREAD", "GMAIL_MESSAGE"}
         or acquisition_result["status"] != "COMPLETE"
         or acquisition_result["missing_slots"]
         or not evidence_drafts
@@ -443,7 +442,7 @@ def assess_sufficiency(
         sufficiency_output_schema(tool_route_plan),
     )
     validated = validate_sufficiency_result_v2(result.structured_output)
-    validated = _remove_unowned_read_confirmations(
+    validated = _remove_unverified_model_user_issues(
         validated,
         request_intent=request_intent,
     )
@@ -554,12 +553,17 @@ def _guard_event_year(
     return result
 
 
-def _remove_unowned_read_confirmations(
+def _remove_unverified_model_user_issues(
     result: SufficiencyResultV2,
     *,
     request_intent: RequestIntentV2,
 ) -> SufficiencyResultV2:
-    """Keep user-choice authority in Request Understanding for read-only runs."""
+    """Reject model-authored USER ownership not established by a typed owner.
+
+    Evidence-derived person ambiguity is projected deterministically before
+    this LLM path.  Provider-resolvable facts remain Connector-owned; the
+    model cannot turn them into a user question merely by writing USER.
+    """
 
     if (
         set(request_intent["requested_effect_hints"]) != {"READ"}
@@ -1160,8 +1164,7 @@ def _require_gmail_candidate_details(
     requested_effects = set(request_intent["requested_effect_hints"])
     output_routes = (
         []
-        if tool_route_plan is None
-        or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
+        if tool_route_plan is None or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
         else tool_route_plan["output_plan"]["output_routes"]
     )
     thread_reply_requires_detail = requested_effects == {"READ", "SEND"} and any(
@@ -1171,8 +1174,7 @@ def _require_gmail_candidate_details(
     read_requires_detail = requested_effects == {"READ"} and (
         request_intent["analysis_requirement"] == "REQUIRED"
         or any(
-            (draft["locator"] or {}).get("is_metadata_only") is True
-            for draft in evidence_drafts
+            (draft["locator"] or {}).get("is_metadata_only") is True for draft in evidence_drafts
         )
         or any(
             item["kind"] == "PERSON" or item["field"] == "business_concepts"

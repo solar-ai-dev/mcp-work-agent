@@ -274,9 +274,123 @@ def test_approved_write_executes__claims_and_verifies__through_real_mcp(
     assert "tool_routing.select_tool_if_needed" not in invoked
     assert "retrieval.plan_query" in invoked
     assert "work_analysis.extract_work_facts" in invoked
-    assert "work_analysis.detect_duplicate_conflict_candidates" not in invoked
+    assert "work_analysis.detect_duplicate_conflict_candidates" in invoked
     assert "review.inspect_action_scope_and_route" in invoked
     assert "review.inspect_constraints_and_policy_summary" not in invoked
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_status"),
+    [
+        ("TASK_DUPLICATE_NO_ACTION", "COMPLETED"),
+        ("TASK_NONDUPLICATE_PREVIEW", "WAITING_APPROVAL"),
+    ],
+)
+@pytest.mark.parametrize("profile", tuple(GraphProfile))
+def test_task_duplicate_observation__controls_no_action_or_preview__through_real_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    expected_status: str,
+    profile: GraphProfile,
+) -> None:
+    runtime_root = tmp_path / scenario.lower() / profile.value
+    transport = LangGraphE2EGeminiTransport()
+    container = _build_container(
+        runtime_root,
+        transport=transport,
+        monkeypatch=monkeypatch,
+        profile=profile,
+    )
+    with TestClient(
+        create_app(container),
+        base_url="http://127.0.0.1:8000",
+        headers=_API_HEADERS,
+    ) as client:
+        _bootstrap(client)
+        run_id = _start_run(
+            client,
+            _create_conversation(client, scenario.lower()),
+            f"E2E:{scenario} create task",
+        )
+        snapshot = _wait_for_status(client, run_id, {expected_status})
+
+    events = _mcp_events(runtime_root)
+    names = [event["tool_name"] for event in events]
+    assert names.count("tasks_list_tasks") == 1
+    assert "tasks_create_task" not in names
+    invocation = next(
+        item
+        for item in transport.invocations
+        if item.get("prompt_id") == "work_analysis.detect_duplicate_conflict_candidates"
+    )
+    prompt_input = cast(dict[str, object], invocation["prompt_input"])
+    assert prompt_input["task_duplicate_review_required"] is True
+    assert cast(list[object], prompt_input["work_facts"])
+    source_state = cast(dict[str, object], prompt_input["source_state"])
+    assert cast(list[dict[str, object]], source_state["source_statuses"])[0]["status"] == (
+        "COMPLETE"
+    )
+    if scenario == "TASK_DUPLICATE_NO_ACTION":
+        assert snapshot["terminal_result_kind"] == "SUCCESS"
+        assert snapshot["actions"] == []
+        assert any(
+            "이미 있어 새로 만들지 않았습니다" in str(message["content"])
+            for message in cast(list[dict[str, object]], snapshot["messages"])
+            if message["role"] == "ASSISTANT"
+        )
+    else:
+        actions = cast(list[dict[str, object]], snapshot["actions"])
+        assert len(actions) == 1
+        assert actions[0]["tool_name"] == "tasks_create_task"
+        assert actions[0]["status"] == "PROPOSED"
+
+
+def test_unrepresented_task_observation__is_revised__before_duplicate_analysis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "task-duplicate-reevaluation"
+    transport = LangGraphE2EGeminiTransport()
+    container = _build_container(
+        runtime_root,
+        transport=transport,
+        monkeypatch=monkeypatch,
+        profile=GraphProfile.SINGLE_BASELINE,
+    )
+    with TestClient(
+        create_app(container),
+        base_url="http://127.0.0.1:8000",
+        headers=_API_HEADERS,
+    ) as client:
+        _bootstrap(client)
+        run_id = _start_run(
+            client,
+            _create_conversation(client, "task-duplicate-reevaluation"),
+            "E2E:TASK_DUPLICATE_REEVALUATION create task",
+        )
+        snapshot = _wait_for_status(client, run_id, {"WAITING_APPROVAL"})
+
+    extraction_calls = [
+        item
+        for item in transport.invocations
+        if item.get("prompt_id") == "work_analysis.extract_work_facts"
+    ]
+    duplicate_calls = [
+        item
+        for item in transport.invocations
+        if item.get("prompt_id") == "work_analysis.detect_duplicate_conflict_candidates"
+    ]
+    assert len(extraction_calls) == 2
+    assert len(duplicate_calls) == 1
+    duplicate_input = cast(dict[str, object], duplicate_calls[0]["prompt_input"])
+    assert cast(list[object], duplicate_input["work_facts"])
+    assert [event["tool_name"] for event in _mcp_events(runtime_root)].count(
+        "tasks_list_tasks"
+    ) == 1
+    actions = cast(list[dict[str, object]], snapshot["actions"])
+    assert len(actions) == 1
+    assert actions[0]["tool_name"] == "tasks_create_task"
 
 
 @pytest.mark.parametrize("profile", tuple(GraphProfile))

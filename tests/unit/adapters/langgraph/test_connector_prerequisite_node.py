@@ -44,7 +44,6 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
                 "constraints": {
                     "search_terms": [],
                     "business_concepts": [],
-                    "required_information": [],
                     "person": [],
                     "sender": [],
                     "recipient": [],
@@ -53,8 +52,15 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
                     "status": [],
                     "additional_constraints": [],
                 },
-                "requested_effect_hints": ["READ"],
-                "requested_resource_hints": ["GITHUB_ISSUE"],
+                "resource_responsibilities": {
+                    "source_reads": [
+                        {
+                            "resource_type": "GITHUB_ISSUE",
+                            "required_information": [],
+                        }
+                    ],
+                    "outputs": [],
+                },
                 "analysis_requirement": "NONE",
             }
         ]

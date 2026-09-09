@@ -6,6 +6,7 @@ from typing import Literal, NotRequired, TypedDict
 
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkAmbiguityV1,
+    WorkRelationV1,
     WorkRiskV1,
 )
 from google_work_agent.ports.system.contracts.workflow_signal import (
@@ -19,15 +20,14 @@ class WorkAnalysisSemanticInputV1(TypedDict):
     evidence: list[dict[str, object]]
     availability_results: NotRequired[list[dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
+    task_duplicate_review_required: NotRequired[bool]
 
 
-class CurrentSourceRelationV1(TypedDict):
-    """Deterministically validated current-Source relation truth."""
-
-    relation_id: str
-    kind: Literal["DUPLICATES", "CONFLICTS_WITH"]
-    source_fact_id: str
-    target_fact_id: str
+class DuplicateConflictAssessmentV1(TypedDict):
+    relation_candidates: list[WorkRelationV1]
+    requested_work_status: Literal["NOT_APPLICABLE", "SATISFIED", "NOT_SATISFIED", "UNDETERMINED"]
+    requested_work_reason: str | None
+    matched_fact_ids: list[str]
     evidence_refs: list[str]
 
 
@@ -49,6 +49,4 @@ class InformationGapAssessmentV1(TypedDict):
 
 class OperationalRiskAssessmentV1(TypedDict):
     risks: list[WorkRiskV1]
-    action_necessity_candidate: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
-    action_necessity_reason: str | None
     evidence_refs: list[str]

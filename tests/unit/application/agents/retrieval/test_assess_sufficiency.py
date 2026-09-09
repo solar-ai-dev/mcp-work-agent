@@ -960,6 +960,40 @@ def test_assess_sufficiency__read_only_connector_gap__cannot_become_user_confirm
     assert {issue["resolution_source"] for issue in result["issues"]} == {"GOOGLE"}
 
 
+def test_observed_person_candidates__introduce_user_choice__after_clear_request() -> None:
+    intent = _intent()
+    intent["ambiguity"] = {
+        "requires_confirmation": False,
+        "missing_fields": [],
+        "ambiguous_fields": [],
+    }
+    candidates = [
+        {
+            "mention": "김대리",
+            "identity": identity,
+            "display_names": [display],
+            "source_segment_ids": [segment],
+        }
+        for identity, display, segment in (
+            ("first@example.test", "김민수", "segment-1"),
+            ("second@example.test", "김민지", "segment-2"),
+        )
+    ]
+
+    result = deterministic_sufficiency(
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        evidence_drafts=[],
+        retry_budget=_run_budget(used=0),
+        person_candidates=candidates,
+    )
+
+    assert result is not None
+    assert result["status"] == "NEEDS_CONFIRMATION"
+    assert result["issues"][0]["reason_codes"] == ["PERSON_IDENTITY_AMBIGUOUS"]
+
+
 def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None:
     issue = {
         "slot": "issue details",

@@ -75,8 +75,6 @@ def _query(status: str) -> RetrievalQueryPlanV2:
         RetrievalQueryPlanV2,
         {
             "schema_version": 2,
-            "required_information": ["issues"],
-            "retrieval_order": ["github"],
             "route_queries": [
                 {
                     "route_id": "github",
@@ -153,8 +151,6 @@ def test_gmail_search__then_detail__reaches_only_supported_connector_ports() -> 
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["matching mail detail"],
-            "retrieval_order": ["gmail"],
         },
     )
     runtime = FakeStructuredInferencePort(outputs=[output], validate_schema=True)
@@ -295,7 +291,8 @@ def test_connector_followup__page_and_detail__select_only_deficient_route() -> N
         detail_candidate_refs=["gmail_thread:known", "github_issue:acme/repo#7"],
     )
     assert page is not None and detail is not None
-    assert page["retrieval_order"] == detail["retrieval_order"] == ["github"]
+    assert [item["route_id"] for item in page["route_queries"]] == ["github"]
+    assert [item["route_id"] for item in detail["route_queries"]] == ["github"]
     assert page["route_queries"][0]["operation"] == "NEXT_PAGE"
     assert detail["route_queries"][0]["detail_candidate_ref"] == "github_issue:acme/repo#7"
     assert (

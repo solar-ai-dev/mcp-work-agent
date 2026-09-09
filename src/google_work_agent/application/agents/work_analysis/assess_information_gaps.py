@@ -10,6 +10,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
     InformationGapAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
@@ -103,6 +104,7 @@ def assess_information_gaps(
     allowed_evidence_refs: set[str],
     requested_mode: RequestedModeV1,
     confirmation_response: dict[str, object] | None = None,
+    source_statuses: Sequence[Mapping[str, object]] = (),
 ) -> InformationGapAssessmentV1:
     """Identify only missing information and its legal workflow disposition."""
 
@@ -110,6 +112,7 @@ def assess_information_gaps(
         "request_intent": dict(request_intent),
         "work_facts": [dict(fact) for fact in work_facts],
         "evidence": list(evidence),
+        "source_statuses": [dict(item) for item in source_statuses],
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
@@ -200,6 +203,36 @@ def combine_information_gap_assessment(
     return cast(InformationGapAssessmentV1, {**assessment, "ambiguities": ambiguities})
 
 
+def require_resolution_for_undetermined_duplicate_review(
+    *,
+    assessment: InformationGapAssessmentV1,
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1,
+) -> InformationGapAssessmentV1:
+    """Route an owning duplicate decision back to Retrieval before Planning consumes it."""
+
+    if (
+        duplicate_conflict_assessment["requested_work_status"] != "UNDETERMINED"
+        or assessment["disposition"] != "COMPLETE"
+    ):
+        return assessment
+    return cast(
+        InformationGapAssessmentV1,
+        {
+            **assessment,
+            "disposition": "NEEDS_MORE_DATA",
+            "retrieval_needs": [
+                {
+                    "required_information": (
+                        "current Tasks needed to complete the duplicate review"
+                    ),
+                    "reason_codes": ["TASK_DUPLICATE_REVIEW_UNDETERMINED"],
+                }
+            ],
+            "reason_codes": ["TASK_DUPLICATE_REVIEW_UNDETERMINED"],
+        },
+    )
+
+
 def _bound_output_schema(allowed_evidence_refs: set[str]) -> OutputSchemaDefinition:
     """Express current evidence and disposition invariants at the repair boundary."""
 
@@ -228,18 +261,16 @@ def _bound_output_schema(allowed_evidence_refs: set[str]) -> OutputSchemaDefinit
     )
 
 
-def _disposition_schema(
-    base_schema: Mapping[str, object], disposition: str
-) -> dict[str, object]:
+def _disposition_schema(base_schema: Mapping[str, object], disposition: str) -> dict[str, object]:
     """Build one complete object branch for Ollama's structured-output grammar."""
 
     branch = cast(dict[str, object], deepcopy(base_schema))
     properties = cast(dict[str, object], branch["properties"])
     properties["disposition"] = {"const": disposition}
     retrieval_needs = cast(dict[str, object], properties["retrieval_needs"])
-    retrieval_needs[
-        "minItems" if disposition == "NEEDS_MORE_DATA" else "maxItems"
-    ] = 1 if disposition == "NEEDS_MORE_DATA" else 0
+    retrieval_needs["minItems" if disposition == "NEEDS_MORE_DATA" else "maxItems"] = (
+        1 if disposition == "NEEDS_MORE_DATA" else 0
+    )
     if disposition == "NEEDS_CONFIRMATION":
         required = cast(list[str], branch["required"])
         required.extend(["question", "reason_codes"])
@@ -256,4 +287,5 @@ __all__ = [
     "ASSESS_INFORMATION_GAPS_OUTPUT_SCHEMA",
     "assess_information_gaps",
     "combine_information_gap_assessment",
+    "require_resolution_for_undetermined_duplicate_review",
 ]

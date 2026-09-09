@@ -62,9 +62,7 @@ DRAFT_ROUTE: InputToolRouteV1 = {
     "required": True,
     "reason_codes": ["REQUESTED_INPUT"],
 }
-DRAFT_POLICIES = {
-    "gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "STATUS_SCOPE"}))
-}
+DRAFT_POLICIES = {"gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "STATUS_SCOPE"}))}
 
 
 def test_gmail_constraint_kinds__requested_status_scope__remains_available() -> None:
@@ -173,9 +171,7 @@ def test_gmail_status__bound_to_other_source_resource__does_not_cross_routes() -
     )
     constraints = planned["route_queries"][0]["search_spec"]["constraints"]
 
-    assert constraints == [
-        {"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "PHRASE"}
-    ]
+    assert constraints == [{"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "PHRASE"}]
 
 
 def test_gmail_draft_source__with_status_word_subject__preserves_lexical_value() -> None:
@@ -271,9 +267,7 @@ def test_gmail_draft_source__with_role_overlap__uses_bounded_revision() -> None:
         retry_budget=build_default_run_budget(),
     )
 
-    failure_record = cast(dict[str, object], runtime.calls[1]["prompt_input"])[
-        "failure_record"
-    ]
+    failure_record = cast(dict[str, object], runtime.calls[1]["prompt_input"])["failure_record"]
     assert cast(dict[str, object], failure_record)["failure_reason_code"] == (
         "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID"
     )
@@ -479,8 +473,6 @@ def _plan(constraints: list[object]) -> dict[str, object]:
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["관련 메일의 실제 업무 내용"],
-        "retrieval_order": ["gmail"],
     }
 
 

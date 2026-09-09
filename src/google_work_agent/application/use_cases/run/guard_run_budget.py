@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Required, TypedDict, cast
@@ -415,6 +416,45 @@ def promote_run_budget_profile(run_budget: object, requested_profile: object) ->
     return _promote(validate_run_budget_v2(run_budget), _require_profile(requested_profile))
 
 
+def merge_run_budget_progress(current_budget: object, observed_budget: object) -> RunBudgetV2:
+    """Merge monotonic progress and recalculate the active profile's effective limit."""
+
+    current = validate_run_budget_v2(current_budget)
+    observed = validate_run_budget_v2(observed_budget)
+    current_values: Mapping[str, object] = current
+    observed_values: Mapping[str, object] = observed
+    updated: dict[str, object] = dict(current)
+    for field in (
+        "llm_calls_used",
+        "connector_calls_used",
+        "source_page_calls_used",
+        "detail_fetches_used",
+        "context_tokens_used",
+        "retry_attempts_used",
+        "planning_revisions_used",
+        "review_rechecks_used",
+        "additional_retrieval_rounds_used",
+    ):
+        updated[field] = max(
+            cast(int, current_values[field]),
+            cast(int, observed_values[field]),
+        )
+    for field in (
+        "schema_repairs_used_by_node",
+        "semantic_revisions_used_by_failure",
+    ):
+        current_counts = cast(dict[str, int], current_values[field])
+        observed_counts = cast(dict[str, int], observed_values[field])
+        updated[field] = {
+            key: max(current_counts.get(key, 0), observed_counts.get(key, 0))
+            for key in current_counts.keys() | observed_counts.keys()
+        }
+    profile = promote_budget_profile(current["profile"], observed["profile"])
+    updated["profile"] = profile.value
+    updated["llm_call_limit"] = _effective_profile_limit(profile, updated)
+    return validate_run_budget_v2(updated)
+
+
 def _promote(budget: RunBudgetV2, requested: BudgetProfile) -> RunBudgetV2:
     updated = dict(budget)
     profile = promote_budget_profile(budget["profile"], requested)
@@ -507,6 +547,7 @@ __all__ = [
     "build_semantic_failure_signature_v1",
     "check_llm_call_budget",
     "consume_llm_provider_calls",
+    "merge_run_budget_progress",
     "promote_budget_profile",
     "promote_run_budget_profile",
     "validate_run_budget_v2",

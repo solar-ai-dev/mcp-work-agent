@@ -11,6 +11,8 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
     WorkRelationV1,
 )
 
+from .retrieval_source_statuses_projection import project_retrieval_source_statuses
+
 
 class AssessOperationalRisksInput(TypedDict):
     request_intent: RequestIntentV2
@@ -20,6 +22,7 @@ class AssessOperationalRisksInput(TypedDict):
     allowed_evidence_refs: set[str]
     policy_summary: dict[str, object] | None
     confirmation_response: dict[str, object] | None
+    source_statuses: list[dict[str, object]]
 
 
 def project_assess_operational_risks_input(
@@ -44,6 +47,7 @@ def project_assess_operational_risks_input(
         "allowed_evidence_refs": set(cast(list[str], state["evidence_refs"])),
         "policy_summary": dict(summary) if isinstance(summary, Mapping) else None,
         "confirmation_response": dict(response) if isinstance(response, Mapping) else None,
+        "source_statuses": project_retrieval_source_statuses(state),
     }
 
 

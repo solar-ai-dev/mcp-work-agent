@@ -20,7 +20,7 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ToolRoutePlanV2,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
-    CurrentSourceRelationV1,
+    DuplicateConflictAssessmentV1,
     InformationGapAssessmentV1,
     OperationalRiskAssessmentV1,
 )
@@ -58,11 +58,11 @@ class WorkAnalysisLocalState(GraphState):
     evidence_refs: NotRequired[list[str]]
     availability_results: NotRequired[list[dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
-    current_source_relations: NotRequired[list[CurrentSourceRelationV1]]
     fact_candidates: NotRequired[list[WorkFactV1]]
     entity_relation_candidates: NotRequired[list[WorkRelationV1]]
     temporal_dependency_candidates: NotRequired[list[WorkRelationV1]]
     duplicate_conflict_candidates: NotRequired[list[WorkRelationV1]]
+    duplicate_conflict_assessment: NotRequired[DuplicateConflictAssessmentV1]
     validated_relations: NotRequired[list[WorkRelationV1]]
     relation_validation_ambiguities: NotRequired[list[WorkAmbiguityV1]]
     ambiguity_candidates: NotRequired[list[WorkAmbiguityV1]]
@@ -77,7 +77,7 @@ class WorkAnalysisLocalState(GraphState):
 
 
 class WorkAnalysisStateV2(TypedDict, total=False):
-    """The exact thirteen owner-local fields defined by Workflow 06."""
+    """The exact fourteen owner-local fields for the Work Analysis capability."""
 
     user_request: str
     request_intent: RequestIntentV2
@@ -86,6 +86,7 @@ class WorkAnalysisStateV2(TypedDict, total=False):
     entity_relation_candidates: list[WorkRelationV1]
     temporal_dependency_candidates: list[WorkRelationV1]
     duplicate_conflict_candidates: list[WorkRelationV1]
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1
     validated_relations: list[WorkRelationV1]
     relation_validation_ambiguities: list[WorkAmbiguityV1]
     ambiguity_candidates: list[WorkAmbiguityV1]

@@ -22,6 +22,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
+    AcquisitionStatusValue,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
@@ -203,9 +204,21 @@ def project_acquisition_result(
             }
         )
     failed = any(summary["status"] == "FAILED" for summary in summaries)
+    status = cast(
+        AcquisitionStatusValue,
+        (
+            "PARTIAL"
+            if failed and results
+            else "FAILED"
+            if failed
+            else "COMPLETE"
+            if results
+            else "NOT_ATTEMPTED"
+        ),
+    )
     return {
         "schema_version": 1,
-        "status": ("PARTIAL" if results else "FAILED") if failed else "COMPLETE",
+        "status": status,
         "resource_handles": handles,
         "source_summaries": summaries,
         "missing_slots": [],
@@ -274,9 +287,7 @@ def _bounded_payload(resource_type: str, payload: Mapping[str, object]) -> dict[
         }
         attendees = payload.get("attendees")
         if isinstance(attendees, list):
-            calendar_payload["attendees"] = [
-                value for value in attendees if isinstance(value, str)
-            ]
+            calendar_payload["attendees"] = [value for value in attendees if isinstance(value, str)]
         return calendar_payload
     scalar_fields: dict[str, tuple[str, ...]] = {
         ResourceType.GMAIL_THREAD.value: ("subject",),

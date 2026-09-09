@@ -249,8 +249,6 @@ def _github_search_plan(constraints: list[dict[str, object]]) -> RetrievalQueryP
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["issues"],
-            "retrieval_order": ["route-1"],
         },
     )
 

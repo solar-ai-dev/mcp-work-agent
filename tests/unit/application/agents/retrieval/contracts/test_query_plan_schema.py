@@ -53,8 +53,6 @@ def test_temporal_range__partial_or_empty_bounds__preserves_contract(
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["received mail"],
-        "retrieval_order": ["gmail"],
     }
     assert (not validate_output_schema(candidate, schema.json_schema)) is valid
     candidate["route_queries"][0]["search_spec"]["constraints"] = [{"start_local": start}]
@@ -89,14 +87,11 @@ def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     candidate: dict[str, Any] = {
         "schema_version": 2,
         "route_queries": [query],
-        "required_information": ["일정 근거"],
-        "retrieval_order": ["gmail"],
     }
     assert validate_output_schema(candidate, schema.json_schema) == []
     query["search_spec"]["constraints"][0]["start_local"] = "2025-09-01"
     assert validate_output_schema(candidate, schema.json_schema)
     query["route_id"] = "calendar"
-    candidate["retrieval_order"] = ["calendar"]
     assert validate_output_schema(candidate, schema.json_schema) == []
     query["search_spec"]["constraints"] = [
         {"kind": "KEYWORD", "terms": ["일정"], "match_mode": "ANY"},
@@ -138,8 +133,6 @@ def test_bound_concept_hypothesis__current_meaning__rejects_unbounded_or_differe
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["source text"],
-        "retrieval_order": ["gmail"],
     }
     assert validate_output_schema(candidate, schema.json_schema) == []
     concept["manifestations"] = ["하나", "둘", "셋", "넷"]
@@ -187,8 +180,6 @@ def test_bound_query_schema__container_alias_is_not__a_participant(
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["메일 내용"],
-        "retrieval_order": ["gmail"],
     }
     assert (not validate_output_schema(candidate, schema.json_schema)) is valid
 
@@ -206,8 +197,6 @@ def test_v2_output__schema_rejects_legacy__v1_planner_shape() -> None:
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["invoice"],
-            "retrieval_order": ["route-1"],
         },
         RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema,
     )
@@ -233,8 +222,6 @@ def test_v2_output__schema_accepts__v2_root_shape() -> None:
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["invoice"],
-            "retrieval_order": ["route-1"],
         },
         RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema,
     )
@@ -254,8 +241,6 @@ def test_v2_output_schema__empty_initial_constraints__rejects() -> None:
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["invoice"],
-        "retrieval_order": ["route-1"],
     }
 
     assert validate_output_schema(candidate, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema)
@@ -287,8 +272,6 @@ def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> 
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["invoice"],
-        "retrieval_order": ["route-1"],
     }
 
     assert validate_output_schema(candidate, schema.json_schema) == []
@@ -329,8 +312,6 @@ def test_constraint_union__rejects_extra_fields__for_declared_kind() -> None:
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["calendar conflicts"],
-            "retrieval_order": ["calendar-read"],
         },
         RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema,
     )
@@ -362,8 +343,6 @@ def test_runtime_binding__rejects_unvalidated__container_ref() -> None:
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["calendar conflicts"],
-        "retrieval_order": ["calendar-read"],
     }
 
     assert validate_output_schema(candidate, schema.json_schema)
@@ -398,8 +377,6 @@ def test_runtime_binding__query_round__accepts_only_current_mode(is_followup: bo
     candidate = {
         "schema_version": 2,
         "route_queries": [query],
-        "required_information": ["read"],
-        "retrieval_order": ["r"],
     }
     assert validate_output_schema(candidate, schema.json_schema) == []
     query["search_spec"] = initial if is_followup else changed
@@ -429,8 +406,6 @@ def test_temporal_constraint__rejects_offset_bearing__local_value() -> None:
                 "detail_candidate_ref": None,
             }
         ],
-        "required_information": ["calendar conflicts"],
-        "retrieval_order": ["calendar-read"],
     }
 
     assert validate_output_schema(candidate, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema)
@@ -463,8 +438,6 @@ def test_operation_union__with_mismatched_fields__rejects_candidate(
                     "detail_candidate_ref": detail_candidate_ref,
                 }
             ],
-            "required_information": ["mail"],
-            "retrieval_order": ["route-1"],
         },
         RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema,
     )

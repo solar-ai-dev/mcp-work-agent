@@ -91,7 +91,6 @@ class _RepairingAgent:
             "constraints": {
                 "search_terms": [],
                 "business_concepts": [],
-                "required_information": [],
                 "person": [],
                 "sender": [],
                 "recipient": [],
@@ -100,8 +99,10 @@ class _RepairingAgent:
                 "status": [],
                 "additional_constraints": [],
             },
-            "requested_effect_hints": ["READ"],
-            "requested_resource_hints": ["TASK"],
+            "resource_responsibilities": {
+                "source_reads": [{"resource_type": "TASK", "required_information": []}],
+                "outputs": [],
+            },
             "analysis_requirement": "REQUIRED",
         }
         return result

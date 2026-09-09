@@ -39,7 +39,7 @@
       "runtime_node_id": "request.identify_goal",
       "input_schema_version": 1,
       "required_root_fields": ["user_request", "selected_resource_refs"],
-      "optional_root_fields": ["confirmation_response"],
+      "optional_root_fields": ["confirmation_response", "run_reference_time"],
       "output_schema_version": 9
     },
     {
@@ -101,8 +101,8 @@
     {
       "prompt_slot_id": "work_analysis.extract_work_facts",
       "runtime_node_id": "analysis.extract_facts",
-      "input_schema_version": 1,
-      "required_root_fields": ["user_request", "request_intent", "evidence"],
+      "input_schema_version": 2,
+      "required_root_fields": ["user_request", "request_intent", "evidence", "task_duplicate_review_required"],
       "optional_root_fields": ["availability_results", "confirmation_response"],
       "output_schema_version": 1
     },
@@ -126,15 +126,15 @@
       "prompt_slot_id": "work_analysis.detect_duplicate_conflict_candidates",
       "runtime_node_id": "analysis.detect_duplicate_conflict_candidates",
       "input_schema_version": 1,
-      "required_root_fields": ["work_facts", "entity_relations", "evidence"],
-      "optional_root_fields": ["source_state", "confirmation_response"],
-      "output_schema_version": 1
+      "required_root_fields": ["request_intent", "work_facts", "entity_relations", "evidence", "source_state", "task_duplicate_review_required"],
+      "optional_root_fields": ["confirmation_response"],
+      "output_schema_version": 2
     },
     {
       "prompt_slot_id": "work_analysis.assess_information_gaps",
       "runtime_node_id": "analysis.assess_information_gaps",
       "input_schema_version": 1,
-      "required_root_fields": ["request_intent", "work_facts", "evidence"],
+      "required_root_fields": ["request_intent", "work_facts", "evidence", "source_statuses"],
       "optional_root_fields": ["confirmation_response"],
       "output_schema_version": 1
     },
@@ -142,9 +142,9 @@
       "prompt_slot_id": "work_analysis.assess_operational_risks",
       "runtime_node_id": "analysis.assess_operational_risks",
       "input_schema_version": 1,
-      "required_root_fields": ["request_intent", "work_facts", "validated_relations", "evidence"],
+      "required_root_fields": ["request_intent", "work_facts", "validated_relations", "evidence", "source_statuses"],
       "optional_root_fields": ["policy_summary", "confirmation_response"],
-      "output_schema_version": 1
+      "output_schema_version": 2
     },
     {
       "prompt_slot_id": "planning.outline_answer",
@@ -175,7 +175,7 @@
       "runtime_node_id": "planning.compose_arguments_per_output_route",
       "input_schema_version": 1,
       "required_root_fields": ["output_route", "action_objective", "tool_schema"],
-      "optional_root_fields": ["request_intent", "work_analysis", "evidence", "confirmation_response", "modification"],
+      "optional_root_fields": ["request_intent", "work_analysis", "evidence", "confirmation_response", "run_reference_time", "modification"],
       "output_schema_version": 1
     },
     {

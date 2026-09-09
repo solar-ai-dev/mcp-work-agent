@@ -111,3 +111,26 @@ def test_extract_work_facts__empty_evidence__does_not_prove_creation() -> None:
         },
         schema,
     )
+
+
+def test_task_duplicate_review__requires_selected_task_observation__to_be_represented() -> None:
+    runtime = WorkAnalysisRuntimeFake({"fact_candidates": []})
+
+    with pytest.raises(ValueError, match="selected Task observation"):
+        extract_work_facts(
+            semantic_input={
+                "user_request": "태스크를 만들어줘",
+                "request_intent": {"requested_effect_hints": ["CREATE"]},
+                "evidence": [
+                    {
+                        "evidence_id": "ev-task",
+                        "resource_handle": "task:existing",
+                    }
+                ],
+                "task_duplicate_review_required": True,
+            },
+            llm_runtime=runtime,
+            prompt_ref=prompt_ref("work_analysis.extract_work_facts", "extract_work_facts"),
+            allowed_evidence_refs={"ev-task"},
+            requested_mode="LOCAL_GPU",
+        )

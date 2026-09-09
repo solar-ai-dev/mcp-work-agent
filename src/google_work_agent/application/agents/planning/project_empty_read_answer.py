@@ -161,11 +161,26 @@ def _has_source_failure(retrieval_result: Mapping[str, object]) -> bool:
 
 
 def _returned_no_resources(retrieval_result: Mapping[str, object]) -> bool:
+    statuses = retrieval_result.get("source_statuses")
+    observed_empty_scope = (
+        isinstance(statuses, list)
+        and bool(statuses)
+        and all(
+            isinstance(item, Mapping)
+            and item.get("status") == "COMPLETE"
+            and item.get("failure_kind") is None
+            for item in statuses
+        )
+    )
     missing = retrieval_result.get("missing_information")
-    return isinstance(missing, list) and any(
-        isinstance(item, Mapping)
-        and "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" in _strings(item.get("reason_codes"))
-        for item in missing
+    return (
+        observed_empty_scope
+        and isinstance(missing, list)
+        and any(
+            isinstance(item, Mapping)
+            and "REQUIRED_SOURCE_RETURNED_NO_RESOURCES" in _strings(item.get("reason_codes"))
+            for item in missing
+        )
     )
 
 

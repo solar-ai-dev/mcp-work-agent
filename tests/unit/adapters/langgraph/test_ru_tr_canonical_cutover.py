@@ -54,15 +54,16 @@ def _called_names(path: Path) -> set[str]:
 
 
 def test_request_understanding_has__four_runtime_nodes__for_five_operations() -> None:
-    for operation in (
-        "identify_goal",
-        "identify_temporal_scope",
-        "detect_ambiguity",
-        "finalize_intent",
-    ):
+    operation_callers = {
+        "identify_goal": "identify_goal_with_budget",
+        "identify_temporal_scope": "identify_temporal_scope",
+        "detect_ambiguity": "detect_ambiguity",
+        "finalize_intent": "finalize_intent",
+    }
+    for operation, caller in operation_callers.items():
         path = RU / "nodes" / f"{operation}_node.py"
         assert path.is_file()
-        assert operation in _called_names(path)
+        assert caller in _called_names(path)
     assert "validate_intent" in _called_names(
         SRC / "application/agents/request_understanding/finalize_intent.py"
     )

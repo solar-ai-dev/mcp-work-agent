@@ -12,10 +12,15 @@ from google_work_agent.application.agents.planning.draft_action_objective_per_ou
 def test_action_objective_schema__binds_current_evidence__identities() -> None:
     schema = action_objective_candidate_output_schema(
         {
+            "output_route": {
+                "resource_type": "TASK",
+                "effect": "CREATE",
+                "selected_tool_id": "tasks_create_task",
+            },
             "evidence": [
                 {"evidence_ref": "evidence-2"},
                 {"evidence_id": "evidence-1"},
-            ]
+            ],
         }
     ).json_schema
 
@@ -25,7 +30,16 @@ def test_action_objective_schema__binds_current_evidence__identities() -> None:
 
 
 def test_action_objective_schema__requires_empty_refs__without_evidence() -> None:
-    schema = action_objective_candidate_output_schema({"evidence": []}).json_schema
+    schema = action_objective_candidate_output_schema(
+        {
+            "output_route": {
+                "resource_type": "TASK",
+                "effect": "CREATE",
+                "selected_tool_id": "tasks_create_task",
+            },
+            "evidence": [],
+        }
+    ).json_schema
 
     assert schema["properties"]["evidence_refs"]["maxItems"] == 0
 
@@ -71,9 +85,7 @@ def test_objective_prompt_is__route_bounded_and__receives_no_tool_schema() -> No
         assert isinstance(route, Mapping)
         return {
             "schema_version": 1,
-            "route_id": route["route_id"],
             "objective": "Create the requested task",
-            "target_semantics": "TASK",
             "scope_constraints": ["create only"],
             "evidence_refs": ["e1"],
         }
@@ -100,24 +112,22 @@ def test_objective_prompt_is__route_bounded_and__receives_no_tool_schema() -> No
 def test_action_objective__with_spaced_literal__restores_exact_value() -> None:
     exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
     result = draft_action_objective_per_output_route(
-        [{
-            "route_id": "draft-update",
-            "resource_type": "GMAIL_DRAFT",
-            "effect": "UPDATE",
-            "selected_tool_id": "gmail_update_draft",
-        }],
-        user_request=f'초안 끝에 “{exact_sentence}”만 추가해줘.',
+        [
+            {
+                "route_id": "draft-update",
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "UPDATE",
+                "selected_tool_id": "gmail_update_draft",
+            }
+        ],
+        user_request=f"초안 끝에 “{exact_sentence}”만 추가해줘.",
         request_intent={"goal": "초안 수정"},
         work_analysis=None,
         evidence=[],
         invoke=lambda *_: {
             "schema_version": 1,
-            "route_id": "draft-update",
             "objective": "초안 끝에 '8 월 21 일 입고 준비를 확인 중입니다.'만 추가",
-            "target_semantics": "GMAIL_DRAFT",
-            "scope_constraints": [
-                "'8 월 21 일 입고 준비를 확인 중입니다.'를 한 번만 추가"
-            ],
+            "scope_constraints": ["'8 월 21 일 입고 준비를 확인 중입니다.'를 한 번만 추가"],
             "evidence_refs": [],
         },
     )
@@ -145,7 +155,6 @@ def test_gmail_send_objective__when_planned__requires_explicit_typed_relation(
         evidence=[],
         invoke=lambda *_: {
             "schema_version": 1,
-            "route_id": "gmail-send",
             "objective": "Send the requested message",
             "target_semantics": target_semantics,
             "scope_constraints": [],
@@ -156,8 +165,8 @@ def test_gmail_send_objective__when_planned__requires_explicit_typed_relation(
     assert result[0]["target_semantics"] == target_semantics
 
 
-def test_non_gmail_objective__with_reply_relation__is_rejected() -> None:
-    with pytest.raises(ValueError, match="target_semantics"):
+def test_non_gmail_objective__with_model_owned_target_semantics__is_rejected() -> None:
+    with pytest.raises(ValueError, match="non-owned route fields"):
         draft_action_objective_per_output_route(
             [
                 {
@@ -173,7 +182,6 @@ def test_non_gmail_objective__with_reply_relation__is_rejected() -> None:
             evidence=[],
             invoke=lambda *_: {
                 "schema_version": 1,
-                "route_id": "task",
                 "objective": "Update the task",
                 "target_semantics": "GMAIL_THREAD_REPLY",
                 "scope_constraints": [],
@@ -284,9 +292,7 @@ def test_source_derived_task_create__with_evidence__uses_semantic_objective_infe
         assert prompt_input["request_intent"] == request_intent
         return {
             "schema_version": 1,
-            "route_id": "task-route",
             "objective": "Create a task using the retrieved mail facts",
-            "target_semantics": "TASK",
             "scope_constraints": [
                 "title: Submit report",
                 "notes: include the latest change from evidence",

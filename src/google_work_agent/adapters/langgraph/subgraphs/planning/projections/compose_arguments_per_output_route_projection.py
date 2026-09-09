@@ -6,6 +6,10 @@ from collections.abc import Mapping, Sequence
 from typing import NotRequired, TypedDict, cast
 
 from google_work_agent.adapters.langgraph.main.state import request_from_state
+from google_work_agent.application.agents.project_run_reference_time import (
+    RunReferenceTimeV1,
+    project_run_reference_time,
+)
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
@@ -20,6 +24,7 @@ class ComposeArgumentsInputV1(TypedDict):
     selected_resources: list[SelectedResourceRef]
     work_analysis: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[dict[str, object]]
+    run_reference_time: NotRequired[RunReferenceTimeV1]
 
 
 def project_compose_arguments_per_output_route_input(
@@ -47,6 +52,13 @@ def project_compose_arguments_per_output_route_input(
         "request_intent": cast(RequestIntentV2, request_intent),
         "selected_resources": _selected_resources(state),
     }
+    try:
+        request = request_from_state(state)
+    except TypeError:
+        request = None
+    reference_time = None if request is None else project_run_reference_time(request.run_budget)
+    if reference_time is not None:
+        result["run_reference_time"] = reference_time
     work_analysis = state.get("work_analysis")
     confirmation = state.get("confirmation_response")
     if work_analysis is not None:

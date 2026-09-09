@@ -248,6 +248,7 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
             "resource_type": "github_issue",
             "status": "COMPLETE",
             "evidence_refs": ["evidence-segment-7"],
+            "observed_resource_count": 2,
             "failure_kind": None,
         }
     ]
@@ -296,3 +297,57 @@ def test_finalize_retrieval__with_google_resources__retains_exact_resource_types
         )
 
         assert result["source_statuses"][0]["resource_type"] == exact_type
+
+
+def test_finalize_retrieval__complete_empty_read__is_observed_sufficient_coverage() -> None:
+    acquisition = _acquisition_result()
+    acquisition["status"] = "COMPLETE"
+    acquisition["resource_handles"] = []
+    acquisition["source_summaries"][0]["status"] = "COMPLETE"
+    acquisition["source_summaries"][0]["resource_handles"] = []
+    acquisition["source_summaries"][0]["resources"] = []
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-empty",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        selection_result={
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": [],
+        },
+        evidence_drafts=[],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=0,
+    )
+
+    assert result["coverage"] == "SUFFICIENT"
+
+
+def test_finalize_retrieval__no_fetch_needed__requires_not_attempted_sources() -> None:
+    acquisition = _acquisition_result()
+    acquisition["status"] = "NOT_ATTEMPTED"
+    acquisition["resource_handles"] = []
+    acquisition["source_summaries"][0]["status"] = "NOT_ATTEMPTED"
+    acquisition["source_summaries"][0]["resource_handles"] = []
+    acquisition["source_summaries"][0]["resources"] = []
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-not-attempted",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        selection_result={
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": [],
+        },
+        evidence_drafts=[],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=0,
+    )
+
+    assert result["coverage"] == "NO_FETCH_NEEDED"

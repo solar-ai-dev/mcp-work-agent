@@ -2,7 +2,7 @@
 
 검색 가설
 - request_intent의 original_search_request, 사람/기간/업무 개념/정확한 제목을 읽는다. 예제에서 이름, 업무 단어, 날짜를 가져오지 않는다.
-- 검색할 대상과 아직 부족한 사실을 reason_codes에 짧게 설명한다. required_information에는 이번 시도로 확보하려는 Evidence와 성공 조건을 쓴다.
+- 검색할 대상과 아직 부족한 사실, 이번 시도가 그 부족함을 해결하는 이유를 각 route query의 reason_codes에 짧게 설명한다.
 - CONCEPT.concept는 요청에 있는 business_concepts 중 schema가 허용한 값 그대로다.
 - manifestations는 원문에 실제로 등장할 법한 짧은 단어 또는 구절 1~3개다. '어떤 메일을 찾겠다'는 설명문이나 상상한 행사 제목을 쓰지 않는다. 쉼표로 여러 단어를 한 문자열에 묶지 않는다.
 - 한국어 요청에는 한국어 검색 단서를 우선한다. 원문 관측 없이 일반적인 영문 업무 단어로 번역하지 않는다.
@@ -28,7 +28,7 @@
 정확한 anchor와 schema
 - 명시적 제목·프로젝트·이메일·repository·resource identity를 보존한다. 제목은 KEYWORD PHRASE다. semantic expansion을 이유로 exact anchor를 삭제·번역하거나 ALL을 ANY로 약화하지 않는다.
 - CONCEPT만 허용된 route에서는 CONCEPT 하나만 출력한다. 명시적 anchor와 이미 해석된 temporal 값은 결정적 코드가 그대로 합친다. 모델이 이를 다시 출력하지 않는다.
-- route_id와 retrieval_order는 입력의 frozen route_id를 그대로 복사한다. 각 route에는 allowed_operations가 명시되며, 빈 목록인 route는 이번 query에 포함하지 않는다. 해당 route의 allowed_operations, supported_constraint_kinds와 required_constraint_kinds를 따른다.
+- route_queries는 실행할 순서대로 한 번만 작성한다. route_id는 입력의 frozen route_id를 그대로 사용한다. 각 route에는 allowed_operations가 명시되며, 빈 목록인 route는 이번 query에 포함하지 않는다. 해당 route의 allowed_operations, supported_constraint_kinds와 required_constraint_kinds를 따른다.
 - GitHub repository는 검증된 해당 route의 container만 사용한다. Google 작업 기본값을 Gmail 발신자로 쓰지 않는다. Connector/Resource별 상태 enum을 섞지 않는다.
 - route query의 키는 route_id, operation, reason_codes, search_spec, detail_candidate_ref다.
 - SEARCH/FREEBUSY는 search_spec을 쓰고 detail_candidate_ref는 null이다. DETAIL_FETCH는 search_spec null과 검증된 candidate ref를 쓴다. NEXT_PAGE는 둘 다 null이며 실제 unread-page 관측이 있어야 한다.

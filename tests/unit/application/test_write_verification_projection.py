@@ -249,6 +249,46 @@ def test_calendar_verification__with_equal_timezone_instants__is_verified() -> N
     assert result.actual_normalized["start"] == "2026-08-20T00:00:00Z"
 
 
+def test_calendar_verification__with_absent_optional_fields__normalizes_empty_values() -> None:
+    expected = build_expected_verification_projection(
+        tool_name="calendar_create_event",
+        arguments={
+            "calendar_id": "calendar-1",
+            "payload": {
+                "title": "Focus",
+                "start": "2026-08-20T09:00:00+09:00",
+                "end": "2026-08-20T10:00:00+09:00",
+            },
+        },
+    )
+    result = VerifyEffectHandler(
+        connector_read=_CalendarRead({"status": "confirmed"}),
+        tool_registry=load_signed_tool_registry(),
+    )(
+        VerifyEffectQueryV1(
+            "run-1",
+            "action-1",
+            "attempt-1",
+            "CREATE",
+            expected,
+            SelectedResourceRefV1(
+                1,
+                "resource-ref-1",
+                "google_workspace",
+                "calendar_event",
+                "event-1",
+                "calendar-1",
+            ),
+        )
+    )
+
+    assert result.status == "VERIFIED"
+    assert result.actual_normalized is not None
+    assert result.actual_normalized["description"] == ""
+    assert result.actual_normalized["location"] == ""
+    assert result.actual_normalized["attendees"] == []
+
+
 def test_delete_expected__is_absence__only() -> None:
     assert build_expected_verification_projection(
         tool_name="tasks_delete_task",

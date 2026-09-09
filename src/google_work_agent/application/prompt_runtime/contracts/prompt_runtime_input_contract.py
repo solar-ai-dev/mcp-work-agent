@@ -60,6 +60,8 @@ class PromptRuntimeInputContractEntryV1:
         output_version = {
             "retrieval.select_evidence": 3,
             "request_understanding.identify_goal": 9,
+            "work_analysis.detect_duplicate_conflict_candidates": 2,
+            "work_analysis.assess_operational_risks": 2,
         }.get(self.prompt_slot_id, 1)
         input_versions = {3, 4} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}
         if (

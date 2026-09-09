@@ -414,7 +414,7 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
         # Do not add these defaults to a partial UPDATE expectation.
         business = {"notes": "", "due": None, **business}
     if normalizer_tool_name == "calendar_update_event" and "resource_id" in actual:
-        business = {"description": "", "attendees": [], **business}
+        business = {"description": "", "location": "", "attendees": [], **business}
     if normalizer_tool_name in {"gmail_update_draft", "gmail_send"} and "resource_id" in actual:
         business = {"in_reply_to": None, "references": None, **business}
     if normalizer_tool_name == "github_update_issue":

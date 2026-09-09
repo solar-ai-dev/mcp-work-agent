@@ -5,6 +5,7 @@ import pytest
 from google_work_agent.application.agents.work_analysis.assess_information_gaps import (
     assess_information_gaps,
     combine_information_gap_assessment,
+    require_resolution_for_undetermined_duplicate_review,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     InformationGapAssessmentV1,
@@ -167,3 +168,32 @@ def test_write_gap__user_owned_choice__preserves_confirmation() -> None:
         )
         == assessment
     )
+
+
+def test_undetermined_duplicate_review__returns_to_retrieval__without_user_confirmation() -> None:
+    assessment: InformationGapAssessmentV1 = {
+        "disposition": "COMPLETE",
+        "ambiguities": [],
+        "retrieval_needs": [],
+        "evidence_refs": [],
+    }
+
+    result = require_resolution_for_undetermined_duplicate_review(
+        assessment=assessment,
+        duplicate_conflict_assessment={
+            "relation_candidates": [],
+            "requested_work_status": "UNDETERMINED",
+            "requested_work_reason": "observed tasks were not represented",
+            "matched_fact_ids": [],
+            "evidence_refs": [],
+        },
+    )
+
+    assert result["disposition"] == "NEEDS_MORE_DATA"
+    assert result["retrieval_needs"] == [
+        {
+            "required_information": "current Tasks needed to complete the duplicate review",
+            "reason_codes": ["TASK_DUPLICATE_REVIEW_UNDETERMINED"],
+        }
+    ]
+    assert "question" not in result

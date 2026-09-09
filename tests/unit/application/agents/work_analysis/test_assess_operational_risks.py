@@ -22,8 +22,6 @@ def test_assess_operational__risks_uses__canonical_risk_vocabulary() -> None:
                 "evidence_refs": ["ev-1"],
             }
         ],
-        "action_necessity_candidate": "REQUIRED",
-        "action_necessity_reason": "REQUEST_REQUIRES_ACTION",
         "evidence_refs": ["ev-1"],
     }
     runtime = WorkAnalysisRuntimeFake(output)
@@ -53,8 +51,6 @@ def test_assess_operational__risks_rejects__legacy_severity() -> None:
                     "evidence_refs": ["ev-1"],
                 }
             ],
-            "action_necessity_candidate": "UNDETERMINED",
-            "action_necessity_reason": None,
             "evidence_refs": ["ev-1"],
         }
     )
@@ -77,8 +73,6 @@ def test_assess_operational__risks_binds_current_evidence__before_inference() ->
     runtime = WorkAnalysisRuntimeFake(
         {
             "risks": [],
-            "action_necessity_candidate": "NOT_REQUIRED",
-            "action_necessity_reason": None,
             "evidence_refs": [],
         }
     )
@@ -108,12 +102,11 @@ def test_assess_operational__risks_binds_current_evidence__before_inference() ->
     }
 
 
-def test_assess_operational__risks_rejects__required_candidate_without_reason() -> None:
+def test_assess_operational__risks_rejects__duplicate_action_decision_field() -> None:
     runtime = WorkAnalysisRuntimeFake(
         {
             "risks": [],
             "action_necessity_candidate": "REQUIRED",
-            "action_necessity_reason": None,
             "evidence_refs": [],
         }
     )

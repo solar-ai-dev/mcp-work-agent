@@ -149,8 +149,6 @@ class RouteQueryIntentV2(TypedDict):
 class RetrievalQueryPlanV2(TypedDict):
     schema_version: Required[Literal[2]]
     route_queries: Required[list[RouteQueryIntentV2]]
-    required_information: Required[list[str]]
-    retrieval_order: Required[list[str]]
 
 
 class SourceFetchPlanV1(TypedDict):
@@ -182,8 +180,13 @@ class RetrievalV2ValidationError(ValueError):
 
 _KINDS = frozenset(
     {
-        "TEMPORAL_RANGE", "PARTICIPANT", "KEYWORD", "CONCEPT",
-        "RESOURCE_REF", "CONTAINER_REF", "STATUS_SCOPE",
+        "TEMPORAL_RANGE",
+        "PARTICIPANT",
+        "KEYWORD",
+        "CONCEPT",
+        "RESOURCE_REF",
+        "CONTAINER_REF",
+        "STATUS_SCOPE",
     }
 )
 CONCEPT_MANIFESTATION_LIMIT = 12
@@ -242,6 +245,7 @@ def status_scope_values(route: InputToolRouteV1) -> tuple[str, ...]:
         return ()
     return _STATUS_SCOPE_BY_RESOURCE.get(resource_type, ())
 
+
 CONCEPT_LITERAL_PATTERN = r'^[^\r\n:"{}()\\]+$'
 _FORBIDDEN_AUTHORITY_FIELDS = frozenset(
     {
@@ -268,26 +272,13 @@ def validate_retrieval_query_plan_v2(
 ) -> RetrievalQueryPlanV2:
     """Validate a V2 plan without translating it to provider syntax."""
     root = _mapping(value, "plan")
-    _exact_keys(
-        root, {"schema_version", "route_queries", "required_information", "retrieval_order"}, "plan"
-    )
+    _exact_keys(root, {"schema_version", "route_queries"}, "plan")
     if root["schema_version"] != 2:
         raise RetrievalV2ValidationError("plan.schema_version must be 2")
     routes = _route_map(frozen_routes)
     route_queries = root["route_queries"]
-    required_information = root["required_information"]
-    retrieval_order = root["retrieval_order"]
     if not isinstance(route_queries, list) or not route_queries:
         raise RetrievalV2ValidationError("plan.route_queries must be non-empty")
-    if not _non_empty_strings(required_information):
-        raise RetrievalV2ValidationError("plan.required_information must be non-empty strings")
-    if not _non_empty_strings(retrieval_order):
-        raise RetrievalV2ValidationError("plan.retrieval_order must contain unique route ids")
-    retrieval_order_values = cast(list[str], retrieval_order)
-    if len(set(retrieval_order_values)) != len(retrieval_order_values):
-        raise RetrievalV2ValidationError("plan.retrieval_order must contain unique route ids")
-    if not set(retrieval_order_values).issubset(routes):
-        raise RetrievalV2ValidationError("plan.retrieval_order contains an unknown route")
 
     validated_queries = [
         validate_route_query_intent_v2(
@@ -300,13 +291,12 @@ def validate_retrieval_query_plan_v2(
         )
         for item in route_queries
     ]
-    if set(retrieval_order_values) != {query["route_id"] for query in validated_queries}:
-        raise RetrievalV2ValidationError("plan.retrieval_order must cover route_queries exactly")
+    query_route_ids = [query["route_id"] for query in validated_queries]
+    if len(query_route_ids) != len(set(query_route_ids)):
+        raise RetrievalV2ValidationError("plan.route_queries must contain unique route ids")
     return {
         "schema_version": 2,
         "route_queries": validated_queries,
-        "required_information": cast(list[str], required_information),
-        "retrieval_order": retrieval_order_values,
     }
 
 
@@ -362,7 +352,8 @@ def validate_route_query_intent_v2(
             validated_container_refs=(validated_container_refs or {}).get(route_id),
         )
         constraints = (
-            validated_spec["constraints"] if validated_spec["mode"] == "INITIAL"
+            validated_spec["constraints"]
+            if validated_spec["mode"] == "INITIAL"
             else validated_spec["constraint_delta"]["upsert_constraints"]
         )
         for constraint in constraints:

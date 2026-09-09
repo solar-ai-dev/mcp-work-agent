@@ -13,10 +13,9 @@ def is_exact_task_create_plan(
     tool_route_plan: Mapping[str, object] | None = None,
 ) -> bool:
     """Return true only for an exact title create with a clean duplicate analysis."""
-    if (
-        request_intent.get("requested_resource_hints") != ["TASK"]
-        or request_intent.get("requested_effect_hints") != ["CREATE"]
-    ):
+    if request_intent.get("requested_resource_hints") != ["TASK"] or request_intent.get(
+        "requested_effect_hints"
+    ) != ["CREATE"]:
         return False
     ambiguity = request_intent.get("ambiguity")
     if not isinstance(ambiguity, Mapping) or ambiguity.get("requires_confirmation") is not False:
@@ -90,9 +89,9 @@ def _has_clean_duplicate_analysis(
     action_refs = action.get("evidence_refs")
     return (
         isinstance(evidence_refs, list)
-        and bool(evidence_refs)
         and all(isinstance(ref, str) and ref for ref in evidence_refs)
         and isinstance(action_refs, list)
+        and all(isinstance(ref, str) and ref for ref in action_refs)
         and set(evidence_refs).issubset(action_refs)
     )
 

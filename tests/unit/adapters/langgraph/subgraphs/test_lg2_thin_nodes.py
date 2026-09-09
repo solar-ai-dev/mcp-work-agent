@@ -61,7 +61,6 @@ def test_work_analysis__projection_is__operation_allowlisted() -> None:
             "entity_relation_candidates": [],
             "temporal_dependency_candidates": [],
             "duplicate_conflict_candidates": [],
-            "current_source_relations": [],
             "evidence_refs": [],
             "planning": {"x": 1},
         },
@@ -71,6 +70,5 @@ def test_work_analysis__projection_is__operation_allowlisted() -> None:
         "entity_relation_candidates": [],
         "temporal_dependency_candidates": [],
         "duplicate_conflict_candidates": [],
-        "current_source_relations": [],
         "allowed_evidence_refs": set(),
     }

@@ -38,7 +38,7 @@ def _route() -> InputToolRouteV1:
         "route_id": "route-1",
         "connector_id": "google_workspace",
         "resource_type": "EMAIL",
-        "allowed_read_tool_ids": ["gmail_search"],
+        "allowed_read_tool_ids": ["gmail_search_threads"],
         "required": True,
         "reason_codes": ["USER_REQUEST"],
     }
@@ -67,8 +67,6 @@ def test_build_query__preserves_frozen_connector__and_materializes_hash() -> Non
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["mail"],
-            "retrieval_order": ["route-1"],
         },
     )
     result = build_query(
@@ -131,8 +129,6 @@ def test_build_query__rejects_unchanged__changed_search() -> None:
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["mail"],
-            "retrieval_order": ["route-1"],
         },
     )
     with pytest.raises(QueryUnchangedAfterFailureError):

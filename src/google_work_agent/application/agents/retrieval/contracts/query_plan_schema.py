@@ -26,9 +26,7 @@ _CONSTRAINT_KINDS = [
     "STATUS_SCOPE",
 ]
 _NON_EMPTY_STRING = {"type": "string", "minLength": 1}
-_LOCAL_ISO_PATTERN = (
-    r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
-)
+_LOCAL_ISO_PATTERN = r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 
 _CONSTRAINT_SCHEMA = {
     "oneOf": [
@@ -49,7 +47,8 @@ _CONSTRAINT_SCHEMA = {
                     "maxItems": PLANNER_CONCEPT_MANIFESTATION_LIMIT,
                     "uniqueItems": True,
                     "items": {
-                        "type": "string", "minLength": 1,
+                        "type": "string",
+                        "minLength": 1,
                         "pattern": CONCEPT_LITERAL_PATTERN.replace(":", ":,;，；"),
                     },
                 },
@@ -253,25 +252,13 @@ RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA = OutputSchemaDefinition(
     json_schema={
         "type": "object",
         "additionalProperties": False,
-        "required": ["schema_version", "route_queries", "required_information", "retrieval_order"],
+        "required": ["schema_version", "route_queries"],
         "properties": {
             "schema_version": {"type": "integer", "enum": [2]},
             "route_queries": {
                 "type": "array",
                 "minItems": 1,
                 "items": _ROUTE_QUERY_SCHEMA,
-            },
-            "required_information": {
-                "type": "array",
-                "minItems": 1,
-                "items": _NON_EMPTY_STRING,
-                "description": "이번 가설의 성공 조건과 detail에서 검증할 원래 요청의 의미.",
-            },
-            "retrieval_order": {
-                "type": "array",
-                "minItems": 1,
-                "uniqueItems": True,
-                "items": _NON_EMPTY_STRING,
             },
         },
     },
@@ -300,9 +287,7 @@ def bind_retrieval_query_plan_output_schema(
     json_schema = deepcopy(base_schema.json_schema)
     properties = cast(dict[str, object], json_schema["properties"])
     route_queries = cast(dict[str, object], properties["route_queries"])
-    retrieval_order = cast(dict[str, object], properties["retrieval_order"])
     allowed_route_ids = sorted(set(route_ids))
-    retrieval_order["items"] = {"type": "string", "enum": allowed_route_ids}
 
     operation_templates = cast(
         list[dict[str, object]], cast(dict[str, object], route_queries["items"])["oneOf"]
@@ -317,8 +302,11 @@ def bind_retrieval_query_plan_output_schema(
             operation = cast(dict[str, object], fields["operation"])["const"]
             if operation not in allowed_operations:
                 continue
-            if (operation == "NEXT_PAGE" and next_page_route_ids is not None
-                    and route_id not in next_page_route_ids):
+            if (
+                operation == "NEXT_PAGE"
+                and next_page_route_ids is not None
+                and route_id not in next_page_route_ids
+            ):
                 continue
             _bind_route_operation(
                 operation_schema,
@@ -334,12 +322,11 @@ def bind_retrieval_query_plan_output_schema(
                 allowed_participant_identities=allowed_participant_identities,
             )
             if route_status_values is not None:
-                _bind_status_scope_values(
-                    operation_schema, route_status_values.get(route_id, ())
-                )
+                _bind_status_scope_values(operation_schema, route_status_values.get(route_id, ()))
             if concepts:
                 _bind_concept_hypothesis(
-                    operation_schema, concepts,
+                    operation_schema,
+                    concepts,
                     prior_manifestations=(prior_concept_manifestations or {}).get(route_id, ()),
                 )
             bound_operations.append(operation_schema)
@@ -351,13 +338,14 @@ def bind_retrieval_query_plan_output_schema(
 
 
 def _bind_concept_hypothesis(
-    value: object, concepts: Collection[str], *,
+    value: object,
+    concepts: Collection[str],
+    *,
     prior_manifestations: Collection[str],
 ) -> None:
     if isinstance(value, list):
         for item in value:
-            _bind_concept_hypothesis(item, concepts,
-                                     prior_manifestations=prior_manifestations)
+            _bind_concept_hypothesis(item, concepts, prior_manifestations=prior_manifestations)
     elif isinstance(value, dict):
         properties = value.get("properties")
         if isinstance(properties, dict) and properties.get("kind") == {"const": "CONCEPT"}:
@@ -365,14 +353,14 @@ def _bind_concept_hypothesis(
             if prior_manifestations:
                 previous = "|".join(re.escape(term) for term in sorted(prior_manifestations))
                 properties["manifestations"]["contains"] = {
-                    "type": "string", "pattern": f"^(?!(?:{previous})$).+",
+                    "type": "string",
+                    "pattern": f"^(?!(?:{previous})$).+",
                 }
                 properties["manifestations"]["description"] += (
                     " At least one term must differ from previously attempted manifestations."
                 )
         for child in value.values():
-            _bind_concept_hypothesis(child, concepts,
-                                     prior_manifestations=prior_manifestations)
+            _bind_concept_hypothesis(child, concepts, prior_manifestations=prior_manifestations)
 
 
 def _bind_status_scope_values(value: object, allowed_values: Collection[str]) -> None:
@@ -383,16 +371,22 @@ def _bind_status_scope_values(value: object, allowed_values: Collection[str]) ->
         properties = value.get("properties")
         if isinstance(properties, dict) and properties.get("kind") == {"const": "STATUS_SCOPE"}:
             cast(dict[str, object], properties["values"])["items"] = {
-                "type": "string", "enum": sorted(allowed_values),
+                "type": "string",
+                "enum": sorted(allowed_values),
             }
         for child in value.values():
             _bind_status_scope_values(child, allowed_values)
 
 
 def _bind_route_operation(
-    operation_schema: dict[str, object], *, route_id: str, is_followup: bool,
-    detail_candidate_refs: Collection[str], allowed_constraint_kinds: set[str],
-    allowed_resource_refs: list[str], allowed_container_refs: list[str],
+    operation_schema: dict[str, object],
+    *,
+    route_id: str,
+    is_followup: bool,
+    detail_candidate_refs: Collection[str],
+    allowed_constraint_kinds: set[str],
+    allowed_resource_refs: list[str],
+    allowed_container_refs: list[str],
     temporal_constraint: TemporalRangeConstraintV1 | None,
     allowed_participant_identities: Collection[str] | None,
 ) -> None:
@@ -480,7 +474,8 @@ def _bind_constraint_ref_values(
             item = cast(dict[str, object], participants["items"])
             fields = cast(dict[str, object], item["properties"])
             fields["identity"] = {
-                "type": "string", "minLength": 1,
+                "type": "string",
+                "minLength": 1,
                 "pattern": PARTICIPANT_EMAIL_PATTERN,
                 "description": (
                     "An exact requested email or evidence-resolved email only. "

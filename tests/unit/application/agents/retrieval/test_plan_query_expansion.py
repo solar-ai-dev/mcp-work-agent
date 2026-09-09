@@ -14,22 +14,32 @@ def test_plan_query_expansion__page_summary__continues_only_unexhausted_route(
 ) -> None:
     result = plan_query_expansion(
         prompt_input={
-            "current_round_no": 2, "unresolved_sufficiency_issues": [
+            "current_round_no": 2,
+            "unresolved_sufficiency_issues": [
                 {"required": True, "resolution_source": "CONNECTOR", "route_id": "issues"},
-            ], "read_result_summaries": [
+            ],
+            "read_result_summaries": [
                 {"route_id": "issues", "has_next_page": True, "exhausted": exhausted},
                 {"route_id": "issues", "has_next_page": False, "exhausted": False},
             ],
-        }, frozen_routes=[cast(InputToolRouteV1, {
-            "route_id": "issues", "connector_id": "github", "resource_type": "GITHUB_ISSUE",
-            "allowed_read_tool_ids": ["github_list_issues"],
-        })],
+        },
+        frozen_routes=[
+            cast(
+                InputToolRouteV1,
+                {
+                    "route_id": "issues",
+                    "connector_id": "github",
+                    "resource_type": "GITHUB_ISSUE",
+                    "allowed_read_tool_ids": ["github_list_issues"],
+                },
+            )
+        ],
     )
     if exhausted:
         assert result is None
     else:
         assert result is not None
-        assert result["retrieval_order"] == ["issues"]
+        assert [item["route_id"] for item in result["route_queries"]] == ["issues"]
         assert result["route_queries"][0]["operation"] == "NEXT_PAGE"
 
 

@@ -80,13 +80,21 @@ def select_evidence(
     evidence_reassessment_issues: Sequence[SufficiencyIssueV2] = (),
 ) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
     """Reassess hydrated sources without discarding unchanged acquired evidence."""
-    retained = None if evidence_reassessment_issues else retain_unchanged_evidence(
-        prior_selection, source_fetch_plans=source_fetch_plans, segments=segments,
+    retained = (
+        None
+        if evidence_reassessment_issues
+        else retain_unchanged_evidence(
+            prior_selection,
+            source_fetch_plans=source_fetch_plans,
+            segments=segments,
+        )
     )
     if retained is not None:
         retained = _apply_exclusions(retained, exclusion_obligation_segment_ids)
-    retained_ids = set() if retained is None else set(
-        retained["selected_segment_ids"] + retained["excluded_segment_ids"]
+    retained_ids = (
+        set()
+        if retained is None
+        else set(retained["selected_segment_ids"] + retained["excluded_segment_ids"])
     )
     reassessment = [item for item in rag_candidates if item["segment_id"] not in retained_ids]
     remaining = context_budget.max_evidence - (
@@ -99,9 +107,14 @@ def select_evidence(
         reassessment = rag_candidates
         remaining = context_budget.max_evidence
     selected, revised_budget = _select_ranked_evidence(
-        llm_runtime=llm_runtime, prompt_ref=prompt_ref, revision_prompt_ref=revision_prompt_ref,
-        requested_mode=requested_mode, request_intent=request_intent,
-        rag_candidates=reassessment, segments=segments, retry_budget=retry_budget,
+        llm_runtime=llm_runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=revision_prompt_ref,
+        requested_mode=requested_mode,
+        request_intent=request_intent,
+        rag_candidates=reassessment,
+        segments=segments,
+        retry_budget=retry_budget,
         context_budget=replace(context_budget, max_evidence=remaining),
         exclusion_obligation_segment_ids=exclusion_obligation_segment_ids,
         query_attempts=query_attempts,
@@ -121,7 +134,8 @@ def select_evidence(
 
 
 def _guard_temporal_roles(
-    selection: EvidenceSelectionResultV2, segments: Sequence[SourceSegment],
+    selection: EvidenceSelectionResultV2,
+    segments: Sequence[SourceSegment],
     attempts: Sequence[QueryAttemptV1],
 ) -> EvidenceSelectionResultV2:
     if not any(
@@ -129,23 +143,33 @@ def _guard_temporal_roles(
     ):
         return selection
     reporting_ids = {
-        item.segment_id for item in segments
-        if has_only_reporting_period_dates(item.text) and any(
+        item.segment_id
+        for item in segments
+        if has_only_reporting_period_dates(item.text)
+        and any(
             constraint["axis"] == "EVENT_TIME"
-            for constraint in project_query_temporal_constraints([
-                attempt for attempt in attempts
-                if attempt["resource_type"].lower() == item.resource_type.lower()
-            ])
+            for constraint in project_query_temporal_constraints(
+                [
+                    attempt
+                    for attempt in attempts
+                    if attempt["resource_type"].lower() == item.resource_type.lower()
+                ]
+            )
         )
     }
     outside_ids: set[str] = set()
     dates_by_resource: dict[str, list[EventDateCandidateV1]] = {}
     for segment in segments:
         dates = [
-            date for constraint in project_query_temporal_constraints([
-                attempt for attempt in attempts
-                if attempt["resource_type"].lower() == segment.resource_type.lower()
-            ]) if constraint["axis"] == "EVENT_TIME"
+            date
+            for constraint in project_query_temporal_constraints(
+                [
+                    attempt
+                    for attempt in attempts
+                    if attempt["resource_type"].lower() == segment.resource_type.lower()
+                ]
+            )
+            if constraint["axis"] == "EVENT_TIME"
             for date in project_event_date_candidates(segment.text, constraint)
         ]
         dates_by_resource.setdefault(segment.resource_handle, []).extend(dates)
@@ -160,21 +184,27 @@ def _guard_temporal_roles(
         and all(item["year_explicit"] and not item["date_intersects_window"] for item in dates)
     }
     outside_ids.update(
-        segment.segment_id
-        for segment in segments
-        if segment.resource_handle in outside_resources
+        segment.segment_id for segment in segments if segment.resource_handle in outside_resources
     )
-    return {**selection, "evidence_drafts": [
-        {**item, "role": "CONTEXT", "relevance_reason": "보고·집계 기간이며 확정 행사일이 아님"}
-        if item["segment_id"] in reporting_ids else item
-        for item in selection["evidence_drafts"]
-        if item["segment_id"] not in outside_ids
-    ], "selected_segment_ids": [
-        value for value in selection["selected_segment_ids"] if value not in outside_ids
-    ], "excluded_segment_ids": _stable_unique([
-        *selection["excluded_segment_ids"],
-        *(value for value in selection["selected_segment_ids"] if value in outside_ids),
-    ])}
+    return {
+        **selection,
+        "evidence_drafts": [
+            {**item, "role": "CONTEXT", "relevance_reason": "보고·집계 기간이며 확정 행사일이 아님"}
+            if item["segment_id"] in reporting_ids
+            else item
+            for item in selection["evidence_drafts"]
+            if item["segment_id"] not in outside_ids
+        ],
+        "selected_segment_ids": [
+            value for value in selection["selected_segment_ids"] if value not in outside_ids
+        ],
+        "excluded_segment_ids": _stable_unique(
+            [
+                *selection["excluded_segment_ids"],
+                *(value for value in selection["selected_segment_ids"] if value in outside_ids),
+            ]
+        ),
+    }
 
 
 def _select_ranked_evidence(
@@ -205,18 +235,24 @@ def _select_ranked_evidence(
     )
     if not eligible_candidates:
         return {
-            "schema_version": 2, "evidence_drafts": [],
-            "selected_segment_ids": [], "excluded_segment_ids": obligations,
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": obligations,
         }, retry_budget
     receipt_selection = _receipt_listing_selection(
-        request_intent, eligible_candidates, segments, query_attempts, obligations,
+        request_intent,
+        eligible_candidates,
+        segments,
+        query_attempts,
+        obligations,
     )
     if receipt_selection is not None:
         return receipt_selection, retry_budget
     detailed_handles = {
-        segment.resource_handle for segment in segments
-        if segment.locator.get("message_id")
-        or segment.locator.get("is_metadata_only") is False
+        segment.resource_handle
+        for segment in segments
+        if segment.locator.get("message_id") or segment.locator.get("is_metadata_only") is False
     }
     segment_by_id = {segment.segment_id: segment for segment in segments}
     eligible_candidates = [
@@ -232,7 +268,8 @@ def _select_ranked_evidence(
     if not eligible_candidates:
         return _empty_selection(obligations), retry_budget
     metadata_ids = {
-        segment.segment_id for segment in segments
+        segment.segment_id
+        for segment in segments
         if segment.resource_type == "gmail_thread"
         and segment.locator.get("is_metadata_only") is True
         and segment.resource_handle not in detailed_handles
@@ -246,10 +283,14 @@ def _select_ranked_evidence(
             "schema_version": 2,
             "selected_segment_ids": ids,
             "excluded_segment_ids": obligations,
-            "evidence_drafts": [{
-                "segment_id": identity, "role": "CONTEXT",
-                "relevance_reason": "Provider 검색 후보이며 본문 관련성은 상세 조회 전 미확정",
-            } for identity in ids],
+            "evidence_drafts": [
+                {
+                    "segment_id": identity,
+                    "role": "CONTEXT",
+                    "relevance_reason": "Provider 검색 후보이며 본문 관련성은 상세 조회 전 미확정",
+                }
+                for identity in ids
+            ],
         }, retry_budget
     deterministic_selection = _exact_selected_resource_selection(
         request_intent=request_intent,
@@ -352,37 +393,57 @@ def _select_ranked_evidence(
 
 
 def _receipt_listing_selection(
-    intent: RequestIntentV2, candidates: list[RagCandidateV1], segments: Sequence[SourceSegment],
-    attempts: Sequence[QueryAttemptV1], exclusions: list[str],
+    intent: RequestIntentV2,
+    candidates: list[RagCandidateV1],
+    segments: Sequence[SourceSegment],
+    attempts: Sequence[QueryAttemptV1],
+    exclusions: list[str],
 ) -> EvidenceSelectionResultV2 | None:
     """Receipt-only listing relevance is fixed by provider timestamps, not event prose."""
     if (
-        intent["analysis_requirement"] != "NONE" or intent["requested_effect_hints"] != ["READ"]
+        intent["analysis_requirement"] != "NONE"
+        or intent["requested_effect_hints"] != ["READ"]
         or intent["requested_resource_hints"] != ["GMAIL_THREAD"]
-        or any((item["kind"], item["field"]) not in {
-            ("DATE", "period"), ("TIME", "temporal_axis"),
-            ("USER_REQUIREMENT", "original_search_request"),
-        } for item in intent["constraints"])
+        or any(
+            (item["kind"], item["field"])
+            not in {
+                ("DATE", "period"),
+                ("TIME", "temporal_axis"),
+                ("USER_REQUIREMENT", "original_search_request"),
+            }
+            for item in intent["constraints"]
+        )
     ):
         return None
     constraints = project_query_temporal_constraints(attempts)
     if len(constraints) != 1 or constraints[0]["axis"] != "MESSAGE_TIME":
         return None
     by_id = {item.segment_id: item for item in segments}
-    selected = [item["segment_id"] for item in candidates if (
-        item["segment_id"] in by_id
-        and match_temporal_evidence(by_id[item["segment_id"]], constraints[0])
-    )]
+    selected = [
+        item["segment_id"]
+        for item in candidates
+        if (
+            item["segment_id"] in by_id
+            and match_temporal_evidence(by_id[item["segment_id"]], constraints[0])
+        )
+    ]
     return {
         "schema_version": 2,
-        "evidence_drafts": [{"segment_id": identity, "role": "SUPPORTS",
-                             "relevance_reason": "PROVIDER_RECEIPT_IN_REQUESTED_WINDOW"}
-                            for identity in selected],
+        "evidence_drafts": [
+            {
+                "segment_id": identity,
+                "role": "SUPPORTS",
+                "relevance_reason": "PROVIDER_RECEIPT_IN_REQUESTED_WINDOW",
+            }
+            for identity in selected
+        ],
         "selected_segment_ids": selected,
-        "excluded_segment_ids": _stable_unique([
-            *exclusions, *(item["segment_id"] for item in candidates
-                           if item["segment_id"] not in selected),
-        ]),
+        "excluded_segment_ids": _stable_unique(
+            [
+                *exclusions,
+                *(item["segment_id"] for item in candidates if item["segment_id"] not in selected),
+            ]
+        ),
     }
 
 
@@ -420,7 +481,10 @@ def _exact_selected_resource_selection(
 
 
 def _bounded_prompt_candidates(
-    candidates: list[RagCandidateV1], *, requested_resource_hints: Collection[str], limit: int,
+    candidates: list[RagCandidateV1],
+    *,
+    requested_resource_hints: Collection[str],
+    limit: int,
 ) -> list[RagCandidateV1]:
     """Apply the declared context cap without starving another requested source."""
     groups = required_resource_segments(
@@ -441,7 +505,8 @@ def _bounded_prompt_candidates(
 
 
 def _ranked_segments_projection(
-    candidates: list[RagCandidateV1], segments: list[SourceSegment],
+    candidates: list[RagCandidateV1],
+    segments: list[SourceSegment],
     temporal_constraints: Sequence[TemporalRangeConstraintV1],
 ) -> list[dict[str, object]]:
     by_id = {segment.segment_id: segment for segment in segments}
@@ -455,10 +520,13 @@ def _ranked_segments_projection(
             if constraint["axis"] != "EVENT_TIME":
                 continue
             mentions = project_event_date_candidates(segment.text, constraint)
-            temporal_dates.append({
-                "target_index": index, "date_mentions": mentions[:12],
-                "date_mentions_truncated": len(mentions) > 12,
-            })
+            temporal_dates.append(
+                {
+                    "target_index": index,
+                    "date_mentions": mentions[:12],
+                    "date_mentions_truncated": len(mentions) > 12,
+                }
+            )
         result.append(
             {
                 "segment_id": candidate["segment_id"],

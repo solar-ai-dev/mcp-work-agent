@@ -81,7 +81,8 @@ def tool_argument_candidate_output_schema(
     output = deepcopy(TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA.json_schema)
     properties = cast(dict[str, object], output["properties"])
     properties["route_id"] = {"const": route["route_id"]}
-    argument_variants = [deepcopy(dict(schema))]
+    model_schema = _model_owned_argument_schema(route=route, schema=schema)
+    argument_variants = [model_schema]
     for name, field in cast(Mapping[str, object], schema.get("properties", {})).items():
         if not isinstance(field, Mapping) or "const" not in field:
             continue
@@ -111,6 +112,23 @@ def tool_argument_candidate_output_schema(
     )
 
 
+def _model_owned_argument_schema(
+    *, route: Mapping[str, object], schema: Mapping[str, object]
+) -> dict[str, object]:
+    projected = deepcopy(dict(schema))
+    if route.get("selected_tool_id") != "gmail_update_draft":
+        return projected
+    properties = cast(dict[str, object], projected.get("properties", {}))
+    properties.pop("draft_id", None)
+    projected["required"] = ["payload"]
+    payload = properties.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("Gmail Draft UPDATE requires a payload schema")
+    payload["required"] = []
+    payload["minProperties"] = 1
+    return projected
+
+
 def compose_arguments_per_output_route(
     output_routes: Sequence[Mapping[str, object]],
     *,
@@ -121,6 +139,7 @@ def compose_arguments_per_output_route(
     evidence: Sequence[Mapping[str, object]] = (),
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
+    run_reference_time: Mapping[str, object] | None = None,
     modification: Mapping[str, object] | None = None,
 ) -> tuple[ToolArgumentCandidateV1, ...]:
     """Execute exactly one canonical semantic path for every frozen output route."""
@@ -179,6 +198,8 @@ def compose_arguments_per_output_route(
                 prompt_input["work_analysis"] = dict(work_analysis)
             if confirmation_response is not None:
                 prompt_input["confirmation_response"] = dict(confirmation_response)
+            if run_reference_time is not None:
+                prompt_input["run_reference_time"] = dict(run_reference_time)
             if modification is not None:
                 prompt_input["modification"] = dict(modification)
             candidate = invoke(PROMPT_ID, prompt_input)
@@ -270,24 +291,21 @@ def _original_request_texts(request_intent: Mapping[str, object] | None) -> list
     constraints = request_intent.get("constraints")
     if not isinstance(constraints, list):
         return []
-    return [
-        value
-        for item in constraints
-        if isinstance(item, Mapping) and item.get("field") == "original_search_request"
-        for value in (
-            item.get("value") if isinstance(item.get("value"), list) else [item.get("value")]
-        )
-        if isinstance(value, str)
-    ]
+    values: list[str] = []
+    for item in constraints:
+        if not isinstance(item, Mapping) or item.get("field") != "original_search_request":
+            continue
+        raw_value = item.get("value")
+        candidates = raw_value if isinstance(raw_value, list) else [raw_value]
+        values.extend(value for value in candidates if isinstance(value, str))
+    return values
 
 
 def _restore_exact_argument_literals(value: object, *, source_texts: Sequence[str]) -> object:
     if isinstance(value, str):
         return restore_exact_user_literals(value, source_texts=source_texts)
     if isinstance(value, list):
-        return [
-            _restore_exact_argument_literals(item, source_texts=source_texts) for item in value
-        ]
+        return [_restore_exact_argument_literals(item, source_texts=source_texts) for item in value]
     if isinstance(value, dict):
         return {
             key: _restore_exact_argument_literals(item, source_texts=source_texts)
@@ -303,21 +321,30 @@ def requires_argument_inference(
 
 
 def _selected_github_target_evidence_refs(
-    route: Mapping[str, object], intent: Mapping[str, object] | None,
-    bound_schema: BoundSelectedToolSchemaV1, arguments: Mapping[str, object],
+    route: Mapping[str, object],
+    intent: Mapping[str, object] | None,
+    bound_schema: BoundSelectedToolSchemaV1,
+    arguments: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
 ) -> list[str]:
     if (
-        intent is None or route.get("connector_id") != "github"
-        or route.get("resource_type") != "GITHUB_ISSUE" or route.get("effect") != "UPDATE"
-        or route.get("selected_tool_id") not in {
-            "github_update_issue", "github_close_issue", "github_reopen_issue",
+        intent is None
+        or route.get("connector_id") != "github"
+        or route.get("resource_type") != "GITHUB_ISSUE"
+        or route.get("effect") != "UPDATE"
+        or route.get("selected_tool_id")
+        not in {
+            "github_update_issue",
+            "github_close_issue",
+            "github_reopen_issue",
         }
     ):
         return []
     repository, number = arguments.get("repository"), arguments.get("issue_number")
     if (
-        not isinstance(repository, str) or type(number) is not int or number < 1
+        not isinstance(repository, str)
+        or type(number) is not int
+        or number < 1
         or bound_schema["immutable_arguments"].get("repository") != repository
     ):
         return []
@@ -325,14 +352,17 @@ def _selected_github_target_evidence_refs(
     if not isinstance(constraints, list):
         return []
     selected = [
-        item.get("value") for item in constraints if isinstance(item, Mapping)
-        and item.get("field") == "selected_resource_id"
+        item.get("value")
+        for item in constraints
+        if isinstance(item, Mapping) and item.get("field") == "selected_resource_id"
     ]
     identity = f"{repository}#{number}"
     if selected != [[identity]]:
         return []
     return [
-        ref for item in evidence if item.get("resource_handle") == f"github_issue:{identity}"
+        ref
+        for item in evidence
+        if item.get("resource_handle") == f"github_issue:{identity}"
         for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
         if isinstance(ref, str) and ref
     ]

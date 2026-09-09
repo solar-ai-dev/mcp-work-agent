@@ -160,14 +160,13 @@ def validate_work_analysis(
         receipt = receipts_by_ref.get(ref)
         if receipt is None or receipt["semantic_owner_id"] != "WORK_ANALYSIS":
             raise ValueError("confirmation receipt ref is not current Work Analysis proof")
-    if necessity == "REQUIRED" and "DUPLICATES" in relation_kinds:
-        _require_approved(receipt_refs, receipts_by_ref, "DUPLICATE_OVERRIDE")
     if necessity == "REQUIRED" and "CONFLICTS_WITH" in relation_kinds:
         _require_approved(receipt_refs, receipts_by_ref, "CONFLICT_OVERRIDE")
-    if necessity == "NOT_REQUIRED" and not (
-        "DUPLICATES" in relation_kinds or reason == "CONFLICT_OVERRIDE_DECLINED"
-    ):
-        raise ValueError("NOT_REQUIRED requires deterministic duplicate/conflict grounding")
+    if necessity == "NOT_REQUIRED" and reason not in {
+        "EXACT_DUPLICATE_ALREADY_SATISFIES_REQUEST",
+        "CONFLICT_OVERRIDE_DECLINED",
+    }:
+        raise ValueError("NOT_REQUIRED requires the owning Work Analysis decision")
     return cast(WorkAnalysisResultV2, root)
 
 

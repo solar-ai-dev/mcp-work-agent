@@ -31,6 +31,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     RunBudgetDeltaV1,
     RunBudgetV2,
     consume_llm_provider_calls,
+    merge_run_budget_progress,
     validate_run_budget_v2,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -49,11 +50,8 @@ _CURRENT_NOW_MS: ContextVar[Callable[[], int] | None] = ContextVar(
     "google_work_agent_current_provider_dispatch_clock", default=None
 )
 _DURABLE_DISPATCH_ACCOUNTANT: ContextVar[
-    Callable[[Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]]
-    | None
-] = ContextVar(
-    "google_work_agent_durable_dispatch_accountant", default=None
-)
+    Callable[[Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]] | None
+] = ContextVar("google_work_agent_durable_dispatch_accountant", default=None)
 
 
 def bind_provider_dispatch_budget(run_budget: RunBudgetV2) -> RunBudgetV2:
@@ -136,9 +134,14 @@ def account_provider_dispatch() -> None:
             raise RuntimeError("provider dispatch budget is missing execution context")
 
         def update(current: Mapping[str, object]) -> Mapping[str, object]:
+            dispatch_budget = (
+                validate_run_budget_v2(dict(current))
+                if run_budget is None
+                else merge_run_budget_progress(current, run_budget)
+            )
             return consume_dispatch_budget(
                 run_id=run_id,
-                run_budget=validate_run_budget_v2(dict(current)),
+                run_budget=dispatch_budget,
                 now_ms=now_ms(),
             )
 

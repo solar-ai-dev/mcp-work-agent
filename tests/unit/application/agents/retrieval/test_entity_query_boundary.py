@@ -29,8 +29,11 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 ROUTE: InputToolRouteV1 = {
-    "route_id": "g", "resource_type": "GMAIL_THREAD", "connector_id": "google_workspace",
-    "allowed_read_tool_ids": ["gmail_search_threads"], "required": True,
+    "route_id": "g",
+    "resource_type": "GMAIL_THREAD",
+    "connector_id": "google_workspace",
+    "allowed_read_tool_ids": ["gmail_search_threads"],
+    "required": True,
     "reason_codes": ["USER_REQUEST"],
 }
 POLICIES = {"g": RouteConstraintPolicy(frozenset({"KEYWORD", "PARTICIPANT"}))}
@@ -38,14 +41,25 @@ POLICIES = {"g": RouteConstraintPolicy(frozenset({"KEYWORD", "PARTICIPANT"}))}
 
 def _plan(identity: str) -> dict[str, object]:
     return {
-        "schema_version": 2, "required_information": ["관련 메일"], "retrieval_order": ["g"],
-        "route_queries": [{
-            "route_id": "g", "operation": "SEARCH", "reason_codes": ["USER_REQUEST"],
-            "detail_candidate_ref": None, "search_spec": {"mode": "INITIAL", "constraints": [{
-                "kind": "PARTICIPANT", "participants": [{"role": "SENDER", "identity": identity}],
-                "match_mode": "ALL",
-            }]},
-        }],
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "g",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "detail_candidate_ref": None,
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "PARTICIPANT",
+                            "participants": [{"role": "SENDER", "identity": identity}],
+                            "match_mode": "ALL",
+                        }
+                    ],
+                },
+            }
+        ],
     }
 
 
@@ -57,33 +71,52 @@ def test_participant_validation__unresolved_or_unsafe__rejects_schema_builder_an
     assert validate_output_schema(plan, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema)
     with pytest.raises(RetrievalV2ValidationError):
         build_query(plan, frozen_routes=[ROUTE], route_policies=POLICIES)
-    legacy = cast(SourceFetchPlanV1, {
-        "resource_type": "GMAIL_THREAD", "operation_kind": "SEARCH", "effective_constraints": [{
-            "kind": "PARTICIPANT", "participants": [{"role": "SENDER", "identity": identity}],
-            "match_mode": "ALL",
-        }],
-    })
+    legacy = cast(
+        SourceFetchPlanV1,
+        {
+            "resource_type": "GMAIL_THREAD",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {
+                    "kind": "PARTICIPANT",
+                    "participants": [{"role": "SENDER", "identity": identity}],
+                    "match_mode": "ALL",
+                }
+            ],
+        },
+    )
     with pytest.raises(RetrievalV2ValidationError):
         execute_read_projection.project_connector_call(legacy, route=ROUTE, page_size=20)
 
 
-@pytest.mark.parametrize(("mention", "discovery_query"), [
-    ("김대리", '"대리" "박람회"'),
-    ("이과장", '"과장" "박람회"'),
-    ("박 팀장", '"박람회" "팀장"'),
-    ("정수진 부장", '"박람회" "정수진"'),
-    ("Alex Morgan", '"Alex Morgan" "박람회"'),
-])
+@pytest.mark.parametrize(
+    ("mention", "discovery_query"),
+    [
+        ("김대리", '"대리" "박람회"'),
+        ("이과장", '"과장" "박람회"'),
+        ("박 팀장", '"박람회" "팀장"'),
+        ("정수진 부장", '"박람회" "정수진"'),
+        ("Alex Morgan", '"Alex Morgan" "박람회"'),
+    ],
+)
 def test_person_discovery__unresolved_mention__does_not_invent_email(
-    mention: str, discovery_query: str,
+    mention: str,
+    discovery_query: str,
 ) -> None:
-    prompt_input = {"request_intent": {"constraints": [
-        {"kind": "PERSON", "field": "person", "value": mention},
-        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["박람회"]},
-    ]}}
+    prompt_input = {
+        "request_intent": {
+            "constraints": [
+                {"kind": "PERSON", "field": "person", "value": mention},
+                {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["박람회"]},
+            ]
+        }
+    }
     repaired = preserve_gmail_search_semantics(
-        _plan("invented@example.com"), prompt_input=prompt_input, frozen_routes=[ROUTE],
-        now_ms=None, timezone=None,
+        _plan("invented@example.com"),
+        prompt_input=prompt_input,
+        frozen_routes=[ROUTE],
+        now_ms=None,
+        timezone=None,
     )
     fetch = build_query(repaired, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)
@@ -93,9 +126,13 @@ def test_person_discovery__unresolved_mention__does_not_invent_email(
 
 
 def test_model_participant__current_request_email__rejects_invented_email() -> None:
-    prompt_input = {"request_intent": {"constraints": [
-        {"kind": "EMAIL", "field": "sender", "value": "kim@example.com"},
-    ]}}
+    prompt_input = {
+        "request_intent": {
+            "constraints": [
+                {"kind": "EMAIL", "field": "sender", "value": "kim@example.com"},
+            ]
+        }
+    }
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["g"],
         route_operations={"g": ["SEARCH"]},
@@ -104,7 +141,8 @@ def test_model_participant__current_request_email__rejects_invented_email() -> N
     assert validate_output_schema(_plan("kim@example.com"), schema.json_schema) == []
     assert validate_output_schema(_plan("invented@example.com"), schema.json_schema)
     unresolved_schema = bind_retrieval_query_plan_output_schema(
-        route_ids=["g"], route_operations={"g": ["SEARCH"]},
+        route_ids=["g"],
+        route_operations={"g": ["SEARCH"]},
         allowed_participant_identities=[],
     )
     assert validate_output_schema(_plan("invented@example.com"), unresolved_schema.json_schema)

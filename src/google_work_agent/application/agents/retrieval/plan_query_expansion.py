@@ -43,7 +43,6 @@ def plan_query_expansion(
     attempts = _query_attempts(prompt_input)
     summaries = _read_summaries(prompt_input)
     route_queries: list[dict[str, object]] = []
-    retrieval_order: list[str] = []
     for route in select_followup_routes(prompt_input, frozen_routes):
         route_id = route["route_id"]
         if "gmail_search_threads" in route[
@@ -72,49 +71,70 @@ def plan_query_expansion(
                     for constraint in attempt["normalized_intent_constraints"]
                 ):
                     continue
-                prior_participant = next((
-                    constraint for constraint in prior_searches[-1]["normalized_intent_constraints"]
-                    if constraint["kind"] == "PARTICIPANT"
-                ), None)
+                prior_participant = next(
+                    (
+                        constraint
+                        for constraint in prior_searches[-1]["normalized_intent_constraints"]
+                        if constraint["kind"] == "PARTICIPANT"
+                    ),
+                    None,
+                )
                 if (
-                    prior_participant is not None and prior_participant["match_mode"] == "ANY"
+                    prior_participant is not None
+                    and prior_participant["match_mode"] == "ANY"
                     and len(prior_participant["participants"]) > 1
                 ):
                     # This schema cannot express (A OR B) AND the newly resolved identity.
                     continue
-                upserts: list[SemanticRetrievalConstraintV1] = [{
-                    "kind": "PARTICIPANT", "participants": [
-                        *(prior_participant["participants"] if prior_participant else []),
-                        {"role": "ANY", "identity": chosen},
-                    ],
-                    "match_mode": "ALL",
-                }]
+                upserts: list[SemanticRetrievalConstraintV1] = [
+                    {
+                        "kind": "PARTICIPANT",
+                        "participants": [
+                            *(prior_participant["participants"] if prior_participant else []),
+                            {"role": "ANY", "identity": chosen},
+                        ],
+                        "match_mode": "ALL",
+                    }
+                ]
                 remove = []
                 for constraint in prior_searches[-1]["normalized_intent_constraints"]:
                     if constraint["kind"] != "KEYWORD":
                         continue
-                    terms = [term for term in constraint["terms"]
-                             if term not in {mention, person_discovery_term(mention)}]
+                    terms = [
+                        term
+                        for term in constraint["terms"]
+                        if term not in {mention, person_discovery_term(mention)}
+                    ]
                     if terms:
                         upserts.append({**constraint, "terms": terms})
                     else:
                         remove.append("KEYWORD")
-                return cast(RetrievalQueryPlanV2, {
-                    "schema_version": 2, "route_queries": [{
-                        "route_id": route_id, "operation": "SEARCH",
-                        "reason_codes": ["PERSON_IDENTITY_SEARCH_REQUIRED"],
-                        "search_spec": {"mode": "CHANGED", "constraint_delta": {
-                            "upsert_constraints": upserts, "remove_constraint_kinds": remove,
-                        }}, "detail_candidate_ref": None,
-                    }], "required_information": ["resolved participant evidence"],
-                    "retrieval_order": [route_id],
-                })
+                return cast(
+                    RetrievalQueryPlanV2,
+                    {
+                        "schema_version": 2,
+                        "route_queries": [
+                            {
+                                "route_id": route_id,
+                                "operation": "SEARCH",
+                                "reason_codes": ["PERSON_IDENTITY_SEARCH_REQUIRED"],
+                                "search_spec": {
+                                    "mode": "CHANGED",
+                                    "constraint_delta": {
+                                        "upsert_constraints": upserts,
+                                        "remove_constraint_kinds": remove,
+                                    },
+                                },
+                                "detail_candidate_ref": None,
+                            }
+                        ],
+                    },
+                )
         summary = summaries.get(route_id)
         if summary is None:
             continue
         if summary.get("has_next_page") is True and summary.get("exhausted") is not True:
             route_queries.append(_route_query(route_id, "NEXT_PAGE"))
-            retrieval_order.append(route_id)
             continue
     if not route_queries:
         return None
@@ -123,8 +143,6 @@ def plan_query_expansion(
         {
             "schema_version": 2,
             "route_queries": route_queries,
-            "required_information": ["additional evidence from a distinct bounded query"],
-            "retrieval_order": retrieval_order,
         },
     )
 
@@ -151,8 +169,10 @@ def _read_summaries(prompt_input: Mapping[str, object]) -> dict[str, Mapping[str
     return {
         cast(str, item["route_id"]): item
         for item in value
-        if isinstance(item, Mapping) and isinstance(item.get("route_id"), str)
-        and item.get("has_next_page") is True and item.get("exhausted") is not True
+        if isinstance(item, Mapping)
+        and isinstance(item.get("route_id"), str)
+        and item.get("has_next_page") is True
+        and item.get("exhausted") is not True
     }
 
 

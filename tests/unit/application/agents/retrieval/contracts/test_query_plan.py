@@ -47,8 +47,6 @@ def test_route_operation__when_resource_type_mismatches__rejects_before_adapter(
                         "detail_candidate_ref": None,
                     }
                 ],
-                "required_information": ["calendar conflicts"],
-                "retrieval_order": ["calendar-route"],
             },
             frozen_routes=[route],
             supported_constraint_kinds={"calendar-route": []},
@@ -86,8 +84,6 @@ def test_get_only_message_route__with_search__rejects_before_adapter() -> None:
                         "detail_candidate_ref": None,
                     }
                 ],
-                "required_information": ["matching message"],
-                "retrieval_order": ["message-detail"],
             },
             frozen_routes=[route],
             supported_constraint_kinds={"message-detail": ["KEYWORD"]},

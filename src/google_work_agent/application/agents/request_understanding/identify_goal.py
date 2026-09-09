@@ -8,6 +8,9 @@ from google_work_agent.application.agents.preserve_exact_user_literals import (
     restore_exact_user_literals,
     without_quoted_user_literals,
 )
+from google_work_agent.application.agents.project_run_reference_time import (
+    project_run_reference_time,
+)
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     ConstraintProvenanceSource,
     RequestGoalCandidateV1,
@@ -164,6 +167,9 @@ def _prompt_input(
             for ref in request.selected_resources
         ],
     }
+    reference_time = project_run_reference_time(request.run_budget)
+    if reference_time is not None:
+        prompt_input["run_reference_time"] = reference_time
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
     return prompt_input
@@ -234,8 +240,7 @@ def _apply_quoted_literal_authority(
             value = restore_exact_user_literals(value, source_texts=[request_text])
         elif isinstance(value, list):
             value = [
-                restore_exact_user_literals(item, source_texts=[request_text])
-                for item in value
+                restore_exact_user_literals(item, source_texts=[request_text]) for item in value
             ]
         constraint = {**constraint, "value": value}
         constraints.append(constraint)

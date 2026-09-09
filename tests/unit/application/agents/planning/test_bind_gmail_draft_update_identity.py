@@ -4,6 +4,7 @@ import pytest
 
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     compose_arguments_per_output_route,
+    tool_argument_candidate_output_schema,
 )
 from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
     planning_tool_argument_schema,
@@ -12,6 +13,7 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
     BoundSelectedToolSchemaV1,
     PlanningArgumentBindingError,
 )
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 ROUTE = {
     "route_id": "r1",
@@ -41,6 +43,38 @@ def test_gmail_draft_update__with_retrieved_evidence__binds_exact_identity() -> 
     assert result["evidence_refs"] == ["draft-evidence"]
 
 
+def test_gmail_draft_update__patch_preserves__unrequested_observed_values() -> None:
+    result = _compose(
+        model_draft_id=None,
+        payload={"body": "기존 본문\n추가 문장"},
+    )[0]
+
+    assert result["arguments"] == {"draft_id": "draft-actual", "payload": PAYLOAD}
+
+
+def test_gmail_draft_update__model_schema_accepts_patch__and_rejects_source_identity() -> None:
+    schema = tool_argument_candidate_output_schema(
+        {
+            "output_route": ROUTE,
+            "tool_schema": planning_tool_argument_schema("gmail_update_draft"),
+            "evidence": [{"evidence_id": "draft-evidence"}],
+        }
+    )
+    candidate = {
+        "schema_version": 1,
+        "route_id": "r1",
+        "arguments": {"payload": {"body": "변경 본문"}},
+        "evidence_refs": ["draft-evidence"],
+    }
+
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    candidate["arguments"] = {
+        "draft_id": "invented",
+        "payload": {"body": "변경 본문"},
+    }
+    assert validate_output_schema(candidate, schema.json_schema)
+
+
 def test_gmail_draft_update__with_model_authored_identity__rejects_target() -> None:
     with pytest.raises(PlanningArgumentBindingError, match="cannot override"):
         _compose(model_draft_id="intent-artifact-id")
@@ -62,11 +96,13 @@ def test_gmail_draft_update__with_spaced_literal__restores_exact_value() -> None
         model_draft_id=None,
         payload=payload,
         request_intent={
-            "constraints": [{
-                "kind": "USER_REQUIREMENT",
-                "field": "original_search_request",
-                "value": [f'초안 끝에 “{exact_sentence}”만 추가해줘.'],
-            }],
+            "constraints": [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "original_search_request",
+                    "value": [f"초안 끝에 “{exact_sentence}”만 추가해줘."],
+                }
+            ],
         },
     )[0]
 
@@ -109,7 +145,13 @@ def _compose(
             bound_tool_schemas=[bound],
             request_intent=request_intent or {},
             evidence=(
-                [{"evidence_id": "draft-evidence", "resource_handle": "gmail_draft:draft-actual"}]
+                [
+                    {
+                        "evidence_id": "draft-evidence",
+                        "resource_handle": "gmail_draft:draft-actual",
+                        "locator": {"draft_snapshot": {**PAYLOAD, "body": "기존 본문"}},
+                    }
+                ]
                 if evidence is None
                 else evidence
             ),

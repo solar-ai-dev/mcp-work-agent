@@ -156,9 +156,7 @@ class _ComponentInferencePort:
                 "resource_responsibilities": (
                     {
                         "source_reads": [],
-                        "outputs": [
-                            {"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}
-                        ],
+                        "outputs": [{"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}],
                     }
                     if needs_action
                     else {
@@ -242,8 +240,6 @@ class _ComponentInferencePort:
                         "detail_candidate_ref": None,
                     }
                 ],
-                "required_information": ["status"],
-                "retrieval_order": ["route-1"],
             }
         if prompt_id == "retrieval.select_evidence":
             ranked = cast(list[Mapping[str, object]], projection.get("ranked_segments", []))
@@ -294,9 +290,19 @@ class _ComponentInferencePort:
         if prompt_id in {
             "work_analysis.resolve_entity_relations",
             "work_analysis.resolve_temporal_dependencies",
-            "work_analysis.detect_duplicate_conflict_candidates",
         }:
             return {"relation_candidates": []}
+        if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
+            required = projection.get("task_duplicate_review_required") is True
+            return {
+                "relation_candidates": [],
+                "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
+                "requested_work_reason": (
+                    "Observed tasks do not satisfy the request" if required else None
+                ),
+                "matched_fact_ids": [],
+                "evidence_refs": [],
+            }
         if prompt_id == "work_analysis.assess_information_gaps":
             return {
                 "disposition": "COMPLETE",
@@ -307,8 +313,6 @@ class _ComponentInferencePort:
         if prompt_id == "work_analysis.assess_operational_risks":
             return {
                 "risks": [],
-                "action_necessity_candidate": "NOT_REQUIRED",
-                "action_necessity_reason": "Answer only",
                 "evidence_refs": [],
             }
         raise AssertionError(f"unexpected component Prompt: {prompt_id}")
@@ -1191,6 +1195,16 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     retrieval = _retrieval_result()
     retrieval["coverage"] = "SUFFICIENT"
     retrieval["evidence_refs"] = ["task-evidence"]
+    retrieval["source_statuses"] = [
+        {
+            "route_id": "input-task-route",
+            "resource_type": "TASK",
+            "status": "COMPLETE",
+            "evidence_refs": ["task-evidence"],
+            "observed_resource_count": 2,
+            "failure_kind": None,
+        }
+    ]
     state["retrieval_result"] = cast(Any, retrieval)
     evidence_store = RunScopedEvidenceStore()
     evidence_store.put(
@@ -1587,6 +1601,7 @@ def test_retrieval__github_repository_authority__reaches_connector_read(
             "resource_type": "github_issue",
             "status": "COMPLETE",
             "evidence_refs": result["retrieval_result"]["evidence_refs"],
+            "observed_resource_count": 2,
             "failure_kind": None,
         }
     ]

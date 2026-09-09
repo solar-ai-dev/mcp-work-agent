@@ -122,8 +122,6 @@ def exact_resource_detail_plan(
                 "detail_candidate_ref": resource_ref,
             }
         ],
-        "required_information": ["exact resource detail"],
-        "retrieval_order": [route["route_id"]],
     }
 
 
@@ -243,7 +241,6 @@ def _exact_calendar_conflict_check_plan(
         return None
 
     route_queries: list[dict[str, object]] = []
-    retrieval_order: list[str] = []
     for route in frozen_routes:
         route_id = route["route_id"]
         policy = route_policies.get(route_id)
@@ -272,18 +269,11 @@ def _exact_calendar_conflict_check_plan(
                 "detail_candidate_ref": None,
             }
         )
-        retrieval_order.append(route_id)
     return cast(
         RetrievalQueryPlanV2,
         {
             "schema_version": 2,
             "route_queries": route_queries,
-            "required_information": [
-                "calendar identity",
-                "events in the requested time range",
-                "availability in the requested time range",
-            ],
-            "retrieval_order": retrieval_order,
         },
     )
 
@@ -320,7 +310,6 @@ def _exact_task_duplicate_check_plan(
         return None
 
     route_queries: list[dict[str, object]] = []
-    retrieval_order: list[str] = []
     for route in frozen_routes:
         route_id = route["route_id"]
         policy = route_policies.get(route_id)
@@ -345,14 +334,11 @@ def _exact_task_duplicate_check_plan(
                 "detail_candidate_ref": None,
             }
         )
-        retrieval_order.append(route_id)
     return cast(
         RetrievalQueryPlanV2,
         {
             "schema_version": 2,
             "route_queries": route_queries,
-            "required_information": ["existing tasks in the bound task list"],
-            "retrieval_order": retrieval_order,
         },
     )
 
@@ -371,10 +357,7 @@ def _exact_task_title(value: object) -> str | None:
         return None
     constraint = title_constraints[0]
     title = constraint.get("value")
-    if (
-        not isinstance(title, str)
-        or not title
-    ):
+    if not isinstance(title, str) or not title:
         return None
     return title
 
@@ -457,20 +440,30 @@ def plan_query(
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2, bool]:
     """Plan provider-neutral retrieval intent against already-frozen input routes."""
     for route_id, policy in route_policies.items():
-        if "CONTAINER_REF" in policy.required_kinds and len(
-            set((validated_container_refs or {}).get(route_id, ()))
-        ) != 1:
+        if (
+            "CONTAINER_REF" in policy.required_kinds
+            and len(set((validated_container_refs or {}).get(route_id, ()))) != 1
+        ):
             raise RetrievalV2ValidationError(f"route {route_id} requires one validated container")
     supported_kinds = _applicable_constraint_kinds(
         route_policies,
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
     )
+    is_followup = "current_round_no" in prompt_input
     meaningful_kinds = gmail_planner_constraint_kinds(prompt_input)
     if meaningful_kinds is not None:
         supported_kinds = {
             route["route_id"]: (
-                frozenset(supported_kinds[route["route_id"]]).intersection(meaningful_kinds)
+                frozenset(supported_kinds[route["route_id"]]).intersection(
+                    meaningful_kinds
+                    | (
+                        {"CONCEPT"}
+                        if is_followup
+                        and "CONCEPT" in route_policies[route["route_id"]].supported_kinds
+                        else set()
+                    )
+                )
                 | route_policies[route["route_id"]].required_kinds
                 if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
                 else supported_kinds[route["route_id"]]
@@ -482,7 +475,6 @@ def plan_query(
         route_id: ({"CONCEPT"} if concepts_by_route.get(route_id) else kinds)
         for route_id, kinds in supported_kinds.items()
     }
-    is_followup = "current_round_no" in prompt_input
     next_page_route_ids = _next_page_route_ids(prompt_input)
     route_operations = _route_operations(
         frozen_routes,
@@ -518,12 +510,16 @@ def plan_query(
         next_page_route_ids=next_page_route_ids,
         prior_concept_manifestations={
             route["route_id"]: {
-                term for attempt in cast(list[QueryAttemptV1],
-                                         prompt_input.get("prior_query_attempts", []))
+                term
+                for attempt in cast(
+                    list[QueryAttemptV1], prompt_input.get("prior_query_attempts", [])
+                )
                 if attempt["route_id"] == route["route_id"]
                 for constraint in attempt["normalized_intent_constraints"]
-                if constraint["kind"] == "CONCEPT" for term in constraint["manifestations"]
-            } for route in frozen_routes
+                if constraint["kind"] == "CONCEPT"
+                for term in constraint["manifestations"]
+            }
+            for route in frozen_routes
         },
         allowed_participant_identities=requested_participant_identities(prompt_input),
         resolved_temporal_constraints=resolve_gmail_query_periods(
@@ -648,11 +644,16 @@ def _validate_query_plan_round(
                 reason_code="QUERY_OPERATION_FIELD_MISMATCH",
                 affected_field_paths=("$.route_queries[].search_spec.mode",),
             )
-        constraints = (search_spec["constraints"] if search_spec["mode"] == "INITIAL"
-                       else search_spec["constraint_delta"]["upsert_constraints"])
-        if any(item["kind"] == "CONCEPT"
-               and len(item["manifestations"]) > PLANNER_CONCEPT_MANIFESTATION_LIMIT
-               for item in constraints):
+        constraints = (
+            search_spec["constraints"]
+            if search_spec["mode"] == "INITIAL"
+            else search_spec["constraint_delta"]["upsert_constraints"]
+        )
+        if any(
+            item["kind"] == "CONCEPT"
+            and len(item["manifestations"]) > PLANNER_CONCEPT_MANIFESTATION_LIMIT
+            for item in constraints
+        ):
             raise RetrievalV2ValidationError(
                 "one search hypothesis allows at most 3 manifestations"
             )
@@ -673,7 +674,8 @@ def _project_route_constraint_policies(
         result["prior_query_attempts"] = followup_planner_projection(
             current_round_no=0,
             prior_query_attempts=cast(list[QueryAttemptV1], result["prior_query_attempts"]),
-            unresolved_sufficiency_issues=[], read_result_summaries=[],
+            unresolved_sufficiency_issues=[],
+            read_result_summaries=[],
         )["prior_query_attempts"]
     routes = result.get("input_routes")
     if not isinstance(routes, list):
@@ -794,8 +796,6 @@ def _revise_plan_once(
                 affected_field_paths=list(affected_field_paths)
                 or [
                     "$.route_queries",
-                    "$.required_information",
-                    "$.retrieval_order",
                 ],
                 failure_context_ids=[failure_detail],
             ),
@@ -831,8 +831,6 @@ def _revise_plan_once(
         _validate_query_plan_round(validated, is_followup=is_followup),
         decision["run_budget"],
     )
-
-
 
 
 # Preserved planner-input construction is owned by this query-planning operation.
@@ -872,9 +870,15 @@ def has_retrieval_followup_path(
     """Return whether the frozen route can produce information not read yet."""
 
     routes = tool_route_plan["input_plan"]["input_routes"]
-    eligible_route_ids = {route["route_id"] for route in select_followup_routes({
-        "unresolved_sufficiency_issues": list(unresolved_sufficiency_issues),
-    }, routes)}
+    eligible_route_ids = {
+        route["route_id"]
+        for route in select_followup_routes(
+            {
+                "unresolved_sufficiency_issues": list(unresolved_sufficiency_issues),
+            },
+            routes,
+        )
+    }
     return deterministic_query_plan(
         prompt_input={
             "request_intent": request_intent,
@@ -897,13 +901,16 @@ def has_retrieval_followup_path(
             attempt["operation_kind"] == "SEARCH"
             and attempt["route_id"] in eligible_route_ids
             and attempt.get("stop_reason") == "COMPLETE"
-            and not any(other["route_id"] == attempt["route_id"]
-                        and other.get("stop_reason") not in {"COMPLETE", None}
-                        for other in query_attempts)
+            and not any(
+                other["route_id"] == attempt["route_id"]
+                and other.get("stop_reason") not in {"COMPLETE", None}
+                for other in query_attempts
+            )
             and sum(
                 other["operation_kind"] == "SEARCH" and other["route_id"] == attempt["route_id"]
                 for other in query_attempts
-            ) < 3
+            )
+            < 3
             and any(item["kind"] == "CONCEPT" for item in attempt["normalized_intent_constraints"])
             for attempt in query_attempts
         )

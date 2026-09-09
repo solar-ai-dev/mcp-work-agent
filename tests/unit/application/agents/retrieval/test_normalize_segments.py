@@ -63,30 +63,33 @@ def test_gmail_preview__without_body__preserves_metadata_only_fact() -> None:
 def test_gmail_draft__with_mutable_payload__keeps_full_planning_evidence() -> None:
     result = _result("unused")
     resources = cast(list[dict[str, object]], result["source_summaries"][0]["resources"])
+    payload = {
+        "to": ["recipient@example.com"],
+        "cc": [],
+        "bcc": [],
+        "subject": "Quartz 납품 회신 검토",
+        "body": "기존 본문",
+        "thread_id": None,
+        "in_reply_to": None,
+        "references": None,
+        "attachments": [],
+    }
     resources[0] = {
         "resource_handle": "gmail_draft:draft-1",
         "resource_type": "gmail_draft",
         "resource_id": "draft-1",
         "version": "v1",
-        "payload": {
-            "to": ["recipient@example.com"],
-            "cc": [],
-            "bcc": [],
-            "subject": "Quartz 납품 회신 검토",
-            "body": "기존 본문",
-            "thread_id": None,
-            "in_reply_to": None,
-            "references": None,
-            "attachments": [],
-        },
+        "payload": payload,
     }
 
-    text = normalize_segments(result)[0].text
+    segment = normalize_segments(result)[0]
+    text = segment.text
 
     assert "draft_id: draft-1" in text
     assert 'to: ["recipient@example.com"]' in text
     assert 'subject: "Quartz 납품 회신 검토"' in text
     assert "body:\n기존 본문" in text
+    assert segment.locator["draft_snapshot"] == payload
 
 
 def test_github_issue__preserves_observed_metadata__separately_from_description() -> None:

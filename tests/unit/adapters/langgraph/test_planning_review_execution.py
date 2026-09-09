@@ -118,9 +118,7 @@ def test_compiled_planning__action_executes_exact__four_node_path() -> None:
         if prompt_id.endswith("draft_action_objective_per_output_route"):
             return {
                 "schema_version": 1,
-                "route_id": "r1",
                 "objective": "Create draft",
-                "target_semantics": "GMAIL_DRAFT",
                 "scope_constraints": ["draft only"],
                 "evidence_refs": ["e1"],
             }

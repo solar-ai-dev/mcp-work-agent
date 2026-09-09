@@ -69,6 +69,7 @@ def test_work_analysis__graph_and__state_are_exact() -> None:
         "entity_relation_candidates",
         "temporal_dependency_candidates",
         "duplicate_conflict_candidates",
+        "duplicate_conflict_assessment",
         "validated_relations",
         "relation_validation_ambiguities",
         "ambiguity_candidates",

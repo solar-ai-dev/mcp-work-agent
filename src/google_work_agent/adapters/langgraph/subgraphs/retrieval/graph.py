@@ -648,9 +648,9 @@ class RetrievalSubgraph:
             prompt_ref=self._select_prompt_ref,
             revision_prompt_ref=self._select_prompt_ref,
             source_fetch_plans=[
-                state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
-                for route_id in _require_state_value(state["query_plan"], "query_plan")[
-                    "retrieval_order"
+                state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
+                for query in _require_state_value(state["query_plan"], "query_plan")[
+                    "route_queries"
                 ]
             ],
             requested_mode=request.requested_mode,
@@ -711,10 +711,10 @@ class RetrievalSubgraph:
                             "preferred_segment_ids": preferred_detail_evidence_ids(
                                 state.get("evidence_selection"),
                                 [
-                                    state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
-                                    for route_id in _require_state_value(
+                                    state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
+                                    for query in _require_state_value(
                                         state["query_plan"], "query_plan"
-                                    )["retrieval_order"]
+                                    )["route_queries"]
                                 ],
                             ),
                         }
@@ -826,7 +826,8 @@ class RetrievalSubgraph:
         prior_result = state.get("retrieval_result")
         prior_candidates = [] if prior_result is None else prior_result.get("person_candidates", [])
         person_candidates = project_person_candidates(
-            _require_state_value(state["request_intent"], "request_intent"), evidence_drafts,
+            _require_state_value(state["request_intent"], "request_intent"),
+            evidence_drafts,
             state.get("person_candidates", prior_candidates),
             state.get("exclusion_obligation_segment_ids", []),
             source_segments=self._normalized_segments(state),
@@ -841,9 +842,9 @@ class RetrievalSubgraph:
                 evidence_drafts,
                 state.get(
                     "selected_person_identities",
-                    {} if prior_result is None else prior_result.get(
-                        "selected_person_identities", {}
-                    ),
+                    {}
+                    if prior_result is None
+                    else prior_result.get("selected_person_identities", {}),
                 ),
             ),
             "trace_context": merge_trace_context(
@@ -946,7 +947,8 @@ class RetrievalSubgraph:
             detail_fetch_count=len(detail_followup["route_queries"]) if detail_followup else 0,
             can_acquire_new_information=any(
                 item["slot"] == "person_identity_search" for item in sufficiency_result["issues"]
-            ) or has_retrieval_followup_path(
+            )
+            or has_retrieval_followup_path(
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
                 tool_route_plan=tool_route_plan,
                 route_policies=_runtime_route_constraint_policies(
@@ -995,11 +997,13 @@ class RetrievalSubgraph:
                 node_name="assess_sufficiency",
                 llm_call_id=(
                     f"{request_from_state(state).run_id}:retrieval.assess_sufficiency"
-                    if llm_provider_result.get("structured_output_attempts", 0) else None
+                    if llm_provider_result.get("structured_output_attempts", 0)
+                    else None
                 ),
                 prompt_ref=(
                     self._sufficiency_prompt_ref
-                    if llm_provider_result.get("structured_output_attempts", 0) else None
+                    if llm_provider_result.get("structured_output_attempts", 0)
+                    else None
                 ),
                 llm_call_increment=cast(
                     int, llm_provider_result.get("structured_output_attempts", 0)
@@ -1022,7 +1026,8 @@ class RetrievalSubgraph:
             # across finalize's node-replay.
             request_intent = _require_state_value(state["request_intent"], "request_intent")
             user_interrupt, confirmation_interrupt = self._materialize_confirmation_interrupt(
-                result=sufficiency_result, request_intent=request_intent,
+                result=sufficiency_result,
+                request_intent=request_intent,
                 person_candidates=state.get("person_candidates", []),
                 selected_person_identities=state.get("selected_person_identities", {}),
             )
@@ -1219,9 +1224,9 @@ class RetrievalSubgraph:
         plans = cast(
             list[SourceFetchPlanV1],
             [
-                state[CONTEXT_CANONICAL_PLANS_KEY][route_id]
-                for route_id in _require_state_value(state.get("query_plan"), "query_plan")[
-                    "retrieval_order"
+                state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
+                for query in _require_state_value(state.get("query_plan"), "query_plan")[
+                    "route_queries"
                 ]
             ],
         )
@@ -1640,7 +1645,10 @@ class RetrievalSubgraph:
         return "finalize"
 
     def _materialize_confirmation_interrupt(
-        self, *, result: SufficiencyResultV2, request_intent: RequestIntentV2,
+        self,
+        *,
+        result: SufficiencyResultV2,
+        request_intent: RequestIntentV2,
         person_candidates: Sequence[PersonCandidateV1] = (),
         selected_person_identities: Mapping[str, str] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
@@ -1688,10 +1696,13 @@ class RetrievalSubgraph:
                 question["question"] = (
                     f"‘{mention}’에 해당할 수 있는 사람이 여러 명입니다. 누구를 찾으시나요?"
                 )
-                question["options"] = [{
-                    "option_id": item["identity"],
-                    "label": f"{' / '.join(item['display_names'])} ({item['identity']})",
-                } for item in candidates]
+                question["options"] = [
+                    {
+                        "option_id": item["identity"],
+                        "label": f"{' / '.join(item['display_names'])} ({item['identity']})",
+                    }
+                    for item in candidates
+                ]
                 break
         interrupt_id = self._id_factory()
         user_interrupt = {
@@ -1732,7 +1743,8 @@ class RetrievalSubgraph:
                 # task for that round.
                 request_intent = _require_state_value(state["request_intent"], "request_intent")
                 user_interrupt, confirmation_interrupt = self._materialize_confirmation_interrupt(
-                    result=result, request_intent=request_intent,
+                    result=result,
+                    request_intent=request_intent,
                     person_candidates=state.get("person_candidates", []),
                     selected_person_identities=state.get("selected_person_identities", {}),
                 )
@@ -1782,9 +1794,11 @@ class RetrievalSubgraph:
             "free_text"
         )
         current_interrupt = state.get("user_interrupt")
-        offered = set() if current_interrupt is None else {
-            item["option_id"] for item in current_interrupt["options"]
-        }
+        offered = (
+            set()
+            if current_interrupt is None
+            else {item["option_id"] for item in current_interrupt["options"]}
+        )
         if selection in offered:
             selected = dict(state.get("selected_person_identities", {}))
             for item in candidates:
@@ -1965,16 +1979,14 @@ class RetrievalSubgraph:
             raw_items = output.get("items", [])
             count = len(raw_items) if isinstance(raw_items, list) else 1 if "item" in output else 0
             summaries[(route_id, query_hash)] = {
-                    "read_result_handle": handle,
-                    "route_id": route_id,
-                    "query_identity_hash": query_hash,
-                    "has_next_page": token is not None,
-                    "exhausted": resolution.status == "EXHAUSTED",
-                    "result_count": count,
-                    "page_state_hash": None
-                    if token is None
-                    else sha256(token.encode()).hexdigest(),
-                }
+                "read_result_handle": handle,
+                "route_id": route_id,
+                "query_identity_hash": query_hash,
+                "has_next_page": token is not None,
+                "exhausted": resolution.status == "EXHAUSTED",
+                "result_count": count,
+                "page_state_hash": None if token is None else sha256(token.encode()).hexdigest(),
+            }
         return list(summaries.values())
 
 
