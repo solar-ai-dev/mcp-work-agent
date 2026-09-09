@@ -11,7 +11,7 @@ import sqlite3
 import sys
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
@@ -54,6 +54,10 @@ from google_work_agent.adapters.keyring.os_keyring_secret_store import (
 )
 from google_work_agent.adapters.langgraph.checkpoint_control import (
     LangGraphCheckpointControlAdapter,
+)
+from google_work_agent.adapters.langgraph.langsmith_workflow_trace_callback import (
+    LangSmithWorkflowTraceCallback,
+    create_langsmith_workflow_trace_callback,
 )
 from google_work_agent.adapters.langgraph.main.application_services import (
     WorkflowApplicationServices,
@@ -1061,6 +1065,8 @@ class ProductionRuntimeConfig:
     mcp_module_name: str | None = None
     keyring_store: SecretStorePort | None = None
     development_prompt_manifest_path: Path | None = None
+    langsmith_api_key: str | None = field(default=None, repr=False)
+    langsmith_project_name: str | None = None
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = ()
     code_signature_verified_paths: frozenset[str] = frozenset()
 
@@ -1079,6 +1085,8 @@ class ProductionRuntimeConfig:
         if self.configuration_source == "SIGNED_RELEASE_MANIFEST":
             if self.development_prompt_manifest_path is not None:
                 raise ValueError("signed runtime cannot select a development Prompt manifest")
+            if self.langsmith_api_key is not None or self.langsmith_project_name is not None:
+                raise ValueError("signed runtime cannot enable external development observability")
             if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
                 raise ValueError("signed GitHub OAuth client ID must be non-empty")
             paths = [entry.file_path for entry in self.verified_release_files]
@@ -1086,6 +1094,8 @@ class ProductionRuntimeConfig:
                 raise ValueError("signed runtime release file set is invalid")
             if not self.code_signature_verified_paths.issubset(paths):
                 raise ValueError("signed runtime code signature proof is invalid")
+        if (self.langsmith_api_key is None) != (self.langsmith_project_name is None):
+            raise ValueError("LangSmith API key and project name must be configured together")
 
     def verified_frontend_site(self) -> _VerifiedFrontendSite | None:
         """Project only release-indexed frontend assets before deferred core startup."""
@@ -1114,6 +1124,8 @@ class ProductionRuntimeConfig:
         mcp_module_name: str | None = None,
         keyring_store: SecretStorePort | None = None,
         prompt_manifest_path: Path | None = None,
+        langsmith_api_key: str | None = None,
+        langsmith_project_name: str | None = None,
     ) -> ProductionRuntimeConfig:
         """Create the only explicit non-installed configuration mode."""
 
@@ -1137,6 +1149,8 @@ class ProductionRuntimeConfig:
             development_prompt_manifest_path=(
                 None if prompt_manifest_path is None else prompt_manifest_path.resolve()
             ),
+            langsmith_api_key=(langsmith_api_key or "").strip() or None,
+            langsmith_project_name=(langsmith_project_name or "").strip() or None,
         )
 
     @classmethod
@@ -2241,6 +2255,8 @@ def build_production_runtime(
     mcp_module_name: str | None = None,
     keyring_store: SecretStorePort | None = None,
     development_prompt_manifest_path: Path | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_project_name: str | None = None,
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = (),
     code_signature_verified_paths: frozenset[str] = frozenset(),
     request_process_exit: Callable[[], None] | None = None,
@@ -2249,6 +2265,16 @@ def build_production_runtime(
     """Assemble the local service from authenticated or explicit development inputs."""
 
     LocalBindPolicy(host=host, port=port).validate()
+    if configuration_source != "EXPLICIT_DEVELOPMENT" and (
+        langsmith_api_key is not None or langsmith_project_name is not None
+    ):
+        raise CoreInitializationError("EXTERNAL_DEVELOPMENT_OBSERVABILITY_FORBIDDEN")
+    langsmith_callback: LangSmithWorkflowTraceCallback | None = None
+    if langsmith_api_key is not None and langsmith_project_name is not None:
+        langsmith_callback = create_langsmith_workflow_trace_callback(
+            api_key=langsmith_api_key,
+            project_name=langsmith_project_name,
+        )
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
         if development_prompt_manifest_path is not None:
             raise CoreInitializationError("SIGNED_RUNTIME_PATH_INVALID")
@@ -2693,6 +2719,9 @@ def build_production_runtime(
                 "calendar", DEFAULT_CALENDAR_ID
             ),
             attachment_verifier=attachment_staging,
+            observability_callbacks=(
+                () if langsmith_callback is None else (langsmith_callback,)
+            ),
             resume_target_registry=resume_target_registry,
             sse_event_buffer=event_publisher,
             environment=oauth_environment.value,
@@ -3018,7 +3047,11 @@ def build_production_runtime(
             await_coordinator=_await_workflow_drain,
         ),
         workflow_runtime=_ShutdownComponent(flush_runtime=checkpoint.flush),
-        observability=_ShutdownComponent(),
+        observability=_ShutdownComponent(
+            flush_observability=(
+                (lambda: None) if langsmith_callback is None else langsmith_callback.flush
+            )
+        ),
         persistence=_ShutdownComponent(checkpoint_persistence=_checkpoint_domain_wal),
         mcp_transport=_ShutdownComponent(close_component=connector_registry.close_all),
         sessions=_ShutdownComponent(invalidate_sessions=session_manager.invalidate_all),
@@ -3447,6 +3480,7 @@ def build_production_runtime(
         shutdown_callbacks=(
             _stop_workflow_handoff_runtime,
             workflow_runtime.close,
+            (lambda: None) if langsmith_callback is None else langsmith_callback.close,
             connector_registry.close_all,
         ),
     )

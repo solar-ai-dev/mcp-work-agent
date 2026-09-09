@@ -96,6 +96,8 @@ def create_app(
                 development_prompt_manifest_path=(
                     production_config.development_prompt_manifest_path
                 ),
+                langsmith_api_key=production_config.langsmith_api_key,
+                langsmith_project_name=production_config.langsmith_project_name,
                 verified_release_files=production_config.verified_release_files,
                 code_signature_verified_paths=(production_config.code_signature_verified_paths),
                 request_process_exit=request_process_exit,

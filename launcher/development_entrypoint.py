@@ -10,7 +10,7 @@ import socket
 import subprocess
 import sys
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 
@@ -30,6 +30,7 @@ from launcher.open_product_ui import build_product_ui_url, open_product_ui
 from launcher.readiness import ServiceReadiness, wait_for_service_ready
 
 DEVELOPMENT_GITHUB_APP_CLIENT_ID = "Iv23liYV2mScbAiVwc5Y"
+DEVELOPMENT_LANGSMITH_PROJECT = "google-work-agent-development"
 
 MCP_MANIFEST_VERSION = "2026-08-07.p0"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,36 @@ class _ThreadServiceProbe:
 
     def poll(self) -> int | None:
         return None if self._thread.is_alive() else self._exit_code[0]
+
+
+def read_development_langsmith_environment(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Read an explicit safe tracing opt-in without enabling LangChain auto tracing."""
+
+    values = os.environ if environment is None else environment
+    if _boolean_environment(values, "LANGSMITH_TRACING") or _boolean_environment(
+        values, "LANGCHAIN_TRACING_V2"
+    ):
+        raise ValueError("automatic LangSmith tracing is not permitted by the Product boundary")
+    if not _boolean_environment(values, "GWA_LANGSMITH_ENABLED"):
+        return None, None
+    api_key = values.get("LANGSMITH_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("GWA_LANGSMITH_ENABLED requires LANGSMITH_API_KEY")
+    project_name = values.get("LANGSMITH_PROJECT", DEVELOPMENT_LANGSMITH_PROJECT).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", project_name):
+        raise ValueError("LANGSMITH_PROJECT must be a safe opaque identifier")
+    return api_key, project_name
+
+
+def _boolean_environment(environment: Mapping[str, str], name: str) -> bool:
+    value = environment.get(name, "").strip().lower()
+    if value in {"", "0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(f"{name} must be a boolean value")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -76,6 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     thread: threading.Thread | None = None
     exit_code = [1]
     try:
+        langsmith_api_key, langsmith_project_name = read_development_langsmith_environment()
         production_config = ProductionRuntimeConfig.development(
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
@@ -86,6 +118,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
             keyring_store=SessionMemorySecretStore(),
             prompt_manifest_path=arguments.prompt_manifest,
+            langsmith_api_key=langsmith_api_key,
+            langsmith_project_name=langsmith_project_name,
         )
 
         def request_process_exit() -> None:

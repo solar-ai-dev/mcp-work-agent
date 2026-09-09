@@ -78,6 +78,8 @@ def test_service_composition__projects_closed__signed_launcher_handoff(tmp_path:
     assert config.github_oauth_client_id == "github-client-id"
     assert config.github_oauth_scope == "repo"
     assert config.configuration_source == "SIGNED_RELEASE_MANIFEST"
+    assert config.langsmith_api_key is None
+    assert config.langsmith_project_name is None
 
 
 def test_service_composition_rejects__unknown_or_secret__signed_handoff_field(

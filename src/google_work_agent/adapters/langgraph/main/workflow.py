@@ -409,6 +409,7 @@ class _WorkflowRuntimeComposition:
         release_version: str = "test",
         repository_access: GetRepositoryAccessHandler | None = None,
         connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
+        observability_callbacks: tuple[Any, ...] = (),
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._tool_catalog = tool_catalog
@@ -696,6 +697,7 @@ class _WorkflowRuntimeComposition:
                         service_instance_id=self._service_instance_id,
                     )
                 ),
+                *observability_callbacks,
             ),
             update_run_budget=self._checkpoint_port.update_run_budget,
         )

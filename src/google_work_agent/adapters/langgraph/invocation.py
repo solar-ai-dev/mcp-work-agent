@@ -81,7 +81,10 @@ class WorkflowInvocationCoordinator:
 
     def prepare_start(self, request: WorkflowStartRequest) -> None:
         """Durably materialize input state without invoking the first owner node."""
-        config = self.config_for_thread(request.workflow_key)
+        config = self.config_for_thread(
+            request.workflow_key,
+            product_run_id=request.run_id,
+        )
         snapshot = self._graph.get_state(config)
         if snapshot.values or snapshot.next:
             if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(
@@ -101,7 +104,10 @@ class WorkflowInvocationCoordinator:
             now_ms=self._now_ms,
             durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
         ):
-            config = self.config_for_thread(request.workflow_key)
+            config = self.config_for_thread(
+                request.workflow_key,
+                product_run_id=request.run_id,
+            )
             snapshot = self._graph.get_state(config)
             if snapshot.values or snapshot.next:
                 if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(
@@ -127,7 +133,10 @@ class WorkflowInvocationCoordinator:
             now_ms=self._now_ms,
             durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
         ):
-            config = self.config_for_thread(request.workflow_key)
+            config = self.config_for_thread(
+                request.workflow_key,
+                product_run_id=request.run_id,
+            )
             snapshot = self._graph.get_state(config)
             if not snapshot.values and not snapshot.next:
                 return WorkflowInvocationResult(
@@ -341,7 +350,10 @@ class WorkflowInvocationCoordinator:
             now_ms=self._now_ms,
             durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
         ):
-            config = self.config_for_thread(request.workflow_key)
+            config = self.config_for_thread(
+                request.workflow_key,
+                product_run_id=request.run_id,
+            )
             snapshot = self._graph.get_state(config)
             if not snapshot.values and not snapshot.next:
                 return WorkflowInvocationResult(
@@ -430,8 +442,21 @@ class WorkflowInvocationCoordinator:
             return None
         return self._resume_reauth_execution(values), "action_execution"
 
-    def config_for_thread(self, workflow_key: str) -> dict[str, object]:
-        return {"configurable": {"thread_id": workflow_key}, "callbacks": list(self._callbacks)}
+    def config_for_thread(
+        self,
+        workflow_key: str,
+        *,
+        product_run_id: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "configurable": {"thread_id": workflow_key},
+            "callbacks": list(self._callbacks),
+            "metadata": {
+                "product_run_id": product_run_id,
+                "graph_profile": self._graph_profile.value,
+                "graph_version": self._graph_version,
+            },
+        }
 
     def workflow_result_from_state(
         self,

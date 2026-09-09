@@ -15,9 +15,27 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 import pytest
-from launcher.development_entrypoint import main
+from launcher.development_entrypoint import main, read_development_langsmith_environment
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_development_langsmith__explicit_safe_configuration__is_required() -> None:
+    assert read_development_langsmith_environment({}) == (None, None)
+    assert read_development_langsmith_environment(
+        {
+            "GWA_LANGSMITH_ENABLED": "true",
+            "LANGSMITH_API_KEY": "secret-key",
+            "LANGSMITH_PROJECT": "quality-development",
+        }
+    ) == ("secret-key", "quality-development")
+
+    with pytest.raises(ValueError, match="requires LANGSMITH_API_KEY"):
+        read_development_langsmith_environment({"GWA_LANGSMITH_ENABLED": "true"})
+    with pytest.raises(ValueError, match="automatic LangSmith tracing"):
+        read_development_langsmith_environment({"LANGSMITH_TRACING": "true"})
+    with pytest.raises(ValueError, match="automatic LangSmith tracing"):
+        read_development_langsmith_environment({"LANGCHAIN_TRACING_V2": "1"})
 
 
 def test_development_config__ambient_github_values__requires_explicit_handoff(
@@ -43,6 +61,31 @@ def test_development_config__ambient_github_values__requires_explicit_handoff(
     handed_off = development_runtime_config(runtime_root=tmp_path)
     assert handed_off.github_oauth_client_id == "ambient-client"
     assert handed_off.github_oauth_scope == "ambient-scope"
+
+
+def test_development_config__langsmith_secret__requires_explicit_complete_handoff(
+    tmp_path: Path,
+) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    config = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path,
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+        langsmith_api_key=" secret-key ",
+        langsmith_project_name=" quality-development ",
+    )
+
+    assert config.langsmith_api_key == "secret-key"
+    assert config.langsmith_project_name == "quality-development"
+    assert "secret-key" not in repr(config)
+    with pytest.raises(ValueError, match="configured together"):
+        ProductionRuntimeConfig.development(
+            runtime_root=tmp_path,
+            working_directory=ROOT,
+            mcp_manifest_version="test",
+            langsmith_api_key="secret-key",
+        )
 
 
 def test_development_script__missing_github_environment__uses_repository_app_identity(

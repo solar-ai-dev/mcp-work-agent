@@ -10,7 +10,10 @@ from typing import NoReturn
 
 from fastapi import FastAPI
 from launcher.bootstrap_secret import create_bootstrap_secret
-from launcher.development_entrypoint import DEVELOPMENT_GITHUB_APP_CLIENT_ID
+from launcher.development_entrypoint import (
+    DEVELOPMENT_GITHUB_APP_CLIENT_ID,
+    read_development_langsmith_environment,
+)
 
 from google_work_agent.api.app import create_app
 from google_work_agent.api.composition import ProductionRuntimeConfig
@@ -30,6 +33,7 @@ def development_runtime_config(
 ) -> ProductionRuntimeConfig:
     """Supply explicit development values without becoming an installed fallback."""
 
+    langsmith_api_key, langsmith_project_name = read_development_langsmith_environment()
     return ProductionRuntimeConfig.development(
         runtime_root=(runtime_root or PROJECT_ROOT / "runtime" / "development").resolve(),
         working_directory=PROJECT_ROOT,
@@ -40,6 +44,8 @@ def development_runtime_config(
             "GITHUB_APP_CLIENT_ID", DEVELOPMENT_GITHUB_APP_CLIENT_ID
         ),
         github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
+        langsmith_api_key=langsmith_api_key,
+        langsmith_project_name=langsmith_project_name,
     )
 
 
