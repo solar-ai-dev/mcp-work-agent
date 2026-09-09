@@ -47,7 +47,6 @@ _RESOURCE_TYPES = [
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
-    "pattern": r"^[\s\S]*[^\s\[\]{}][\s\S]*$",
 }
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES: dict[str, object] = {
     field: {
@@ -493,6 +492,7 @@ def validate_request_goal_candidate(
         raise ValueError(f"request goal candidate is invalid: {'; '.join(errors)}")
     root = cast(dict[str, object], value)
     slots = cast(dict[str, object], root["constraints"])
+    _validate_semantic_constraint_text(slots, root=root)
     additional = cast(list[object], slots["additional_constraints"])
     reserved_additional_fields = [
         str(cast(dict[str, object], constraint)["field"])
@@ -549,6 +549,64 @@ def validate_request_goal_candidate(
         ),
     }
     return cast(RequestGoalCandidateV1, value)
+
+
+def _validate_semantic_constraint_text(
+    slots: Mapping[str, object],
+    *,
+    root: Mapping[str, object],
+) -> None:
+    for field in REQUEST_GOAL_SLOT_KINDS:
+        if field == "status":
+            continue
+        values = cast(list[str], slots[field])
+        for index, text_value in enumerate(values):
+            _require_semantic_text(text_value, f"$.constraints.{field}[{index}]")
+
+    status_values = cast(list[Mapping[str, object]], slots["status"])
+    for index, status_value in enumerate(status_values):
+        _require_semantic_text(
+            cast(str, status_value["source_text"]),
+            f"$.constraints.status[{index}].source_text",
+        )
+
+    additional = cast(list[Mapping[str, object]], slots["additional_constraints"])
+    for index, additional_value in enumerate(additional):
+        constraint_value = additional_value["value"]
+        additional_values = (
+            [constraint_value]
+            if isinstance(constraint_value, str)
+            else constraint_value
+        )
+        for value_index, value in enumerate(cast(Sequence[str], additional_values)):
+            _require_semantic_text(
+                value,
+                f"$.constraints.additional_constraints[{index}].value[{value_index}]",
+            )
+        provenance = additional_value.get("provenance")
+        if isinstance(provenance, Mapping) and "source_text" in provenance:
+            _require_semantic_text(
+                cast(str, provenance["source_text"]),
+                f"$.constraints.additional_constraints[{index}].provenance.source_text",
+            )
+
+    responsibilities = root.get("resource_responsibilities")
+    if not isinstance(responsibilities, Mapping):
+        return
+    source_reads = cast(Sequence[Mapping[str, object]], responsibilities["source_reads"])
+    for source_index, source in enumerate(source_reads):
+        information = cast(Sequence[str], source["required_information"])
+        for information_index, information_value in enumerate(information):
+            _require_semantic_text(
+                information_value,
+                "$.resource_responsibilities.source_reads"
+                f"[{source_index}].required_information[{information_index}]",
+            )
+
+
+def _require_semantic_text(value: str, path: str) -> None:
+    if not any(not character.isspace() and character not in "[]{}" for character in value):
+        raise ValueError(f"request goal candidate is invalid: {path} has no semantic text")
 
 
 def _normalize_status_constraints(

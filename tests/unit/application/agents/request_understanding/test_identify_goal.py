@@ -393,6 +393,40 @@ def test_gmail_goal__empty_array_text__cannot_become_a_person(
             identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
 
 
+def test_request_goal_schema__avoids_unsupported_ollama_patterns() -> None:
+    def collect_patterns(value: object) -> list[str]:
+        if isinstance(value, dict):
+            return [
+                *([cast(str, value["pattern"])] if "pattern" in value else []),
+                *(pattern for item in value.values() for pattern in collect_patterns(item)),
+            ]
+        if isinstance(value, list):
+            return [pattern for item in value for pattern in collect_patterns(item)]
+        return []
+
+    assert collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema) == []
+
+
+def test_request_goal_validator__rejects_semantically_empty_responsibility_text() -> None:
+    candidate = {
+        "goal": "메일을 확인해 태스크 생성",
+        "completion_conditions": ["태스크 Preview 준비"],
+        "constraints": _goal_constraints(required_information=["[]"]),
+        "requested_effect_hints": ["READ", "CREATE"],
+        "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
+        "resource_responsibilities": _resource_responsibilities(
+            source_type="GMAIL_THREAD",
+            required_information=["[]"],
+            output_type="TASK",
+            output_effect="CREATE",
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    with pytest.raises(ValueError, match="has no semantic text"):
+        goal_schema.validate_request_goal_candidate(candidate)
+
+
 def test_default_repository__stays_system_owned__without_user_constraint_or_confirmation() -> None:
     request = replace(
         _request("열린 이슈 보여줘"),
