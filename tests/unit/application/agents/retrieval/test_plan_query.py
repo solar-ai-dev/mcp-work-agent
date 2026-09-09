@@ -533,6 +533,93 @@ def test_general_search__with_semantic_choice__keeps_query_planning_llm() -> Non
     projected_routes = cast(list[dict[str, object]], projected_input["input_routes"])
     assert projected_routes[0]["supported_constraint_kinds"] == ["KEYWORD"]
     assert projected_routes[0]["required_constraint_kinds"] == []
+    assert projected_routes[0]["allowed_operations"] == ["SEARCH"]
+
+
+def test_query_planner__with_get_only_route__searches_supported_route() -> None:
+    output = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "thread-search",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "ANY"}],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+        "required_information": ["matching mail"],
+        "retrieval_order": ["thread-search"],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[output])
+    prompt_ref = PromptReference(
+        "test",
+        "retrieval.plan_query",
+        "1",
+        "hash",
+        "retrieval",
+        "retrieval",
+        "plan_query",
+        "INITIAL",
+        "plan_query",
+        "v2",
+        "v2",
+    )
+    frozen_routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "message-detail",
+                "resource_type": "GMAIL_MESSAGE",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_get_message"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+            {
+                "route_id": "thread-search",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+        ],
+    )
+
+    result, _, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": {}, "input_routes": frozen_routes},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=frozen_routes,
+        route_policies={
+            route["route_id"]: RouteConstraintPolicy(frozenset({"KEYWORD"}))
+            for route in frozen_routes
+        },
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert result == output
+    call = runtime.calls[0]
+    projected_routes = {
+        route["route_id"]: route
+        for route in cast(list[dict[str, object]], call["prompt_input"]["input_routes"])
+    }
+    assert projected_routes["message-detail"]["allowed_operations"] == []
+    assert projected_routes["thread-search"]["allowed_operations"] == ["SEARCH"]
+    schema = cast(OutputSchemaDefinition, call["output_schema"])
+    invalid = {
+        **output,
+        "route_queries": [{**output["route_queries"][0], "route_id": "message-detail"}],
+        "retrieval_order": ["message-detail"],
+    }
+    assert validate_output_schema(invalid, schema.json_schema)
 
 
 def test_initial_query__invalid_next_page__repairs_before_materialization() -> None:

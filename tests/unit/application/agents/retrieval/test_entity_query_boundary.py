@@ -98,12 +98,14 @@ def test_model_participant__current_request_email__rejects_invented_email() -> N
     ]}}
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["g"],
+        route_operations={"g": ["SEARCH"]},
         allowed_participant_identities=requested_participant_identities(prompt_input),
     )
     assert validate_output_schema(_plan("kim@example.com"), schema.json_schema) == []
     assert validate_output_schema(_plan("invented@example.com"), schema.json_schema)
     unresolved_schema = bind_retrieval_query_plan_output_schema(
-        route_ids=["g"], allowed_participant_identities=[],
+        route_ids=["g"], route_operations={"g": ["SEARCH"]},
+        allowed_participant_identities=[],
     )
     assert validate_output_schema(_plan("invented@example.com"), unresolved_schema.json_schema)
 

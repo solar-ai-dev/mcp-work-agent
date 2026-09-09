@@ -23,8 +23,10 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     PLANNER_CONCEPT_MANIFESTATION_LIMIT,
     RetrievalConstraintKindV1,
+    RetrievalOperationV2,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
+    route_operation_tool_id,
     status_scope_values,
     validate_retrieval_query_plan_v2,
 )
@@ -76,17 +78,6 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.workflow_handoff import RequestedModeV1
 
-_DIRECT_DETAIL_TOOL_BY_RESOURCE_TYPE = {
-    "EMAIL": "gmail_get_thread",
-    "GMAIL_THREAD": "gmail_get_thread",
-    "GMAIL_MESSAGE": "gmail_get_message",
-    "GMAIL_DRAFT": "gmail_get_draft",
-    "GMAIL_ATTACHMENT": "gmail_get_attachment",
-    "TASK": "tasks_get_task",
-    "CALENDAR_EVENT": "calendar_get_event",
-    "GITHUB_ISSUE": "github_get_issue",
-}
-
 
 def exact_resource_detail_plan(
     *,
@@ -108,8 +99,7 @@ def exact_resource_detail_plan(
     )
     if exact_reason is None:
         return None
-    detail_tool = _DIRECT_DETAIL_TOOL_BY_RESOURCE_TYPE.get(route["resource_type"])
-    if detail_tool is None or detail_tool not in route["allowed_read_tool_ids"]:
+    if route_operation_tool_id(route, "DETAIL_FETCH") is None:
         return None
     resource_refs = tuple((validated_resource_refs or {}).get(route["route_id"], ()))
     if len(resource_refs) != 1:
@@ -492,13 +482,24 @@ def plan_query(
         route_id: ({"CONCEPT"} if concepts_by_route.get(route_id) else kinds)
         for route_id, kinds in supported_kinds.items()
     }
-    planner_input = _project_route_constraint_policies(
-        prompt_input, route_policies, supported_kinds=planner_kinds
-    )
     is_followup = "current_round_no" in prompt_input
+    next_page_route_ids = _next_page_route_ids(prompt_input)
+    route_operations = _route_operations(
+        frozen_routes,
+        validated_resource_refs=validated_resource_refs,
+        detail_candidate_refs=detail_candidate_refs,
+        next_page_route_ids=next_page_route_ids,
+    )
+    planner_input = _project_route_constraint_policies(
+        prompt_input,
+        route_policies,
+        supported_kinds=planner_kinds,
+        route_operations=route_operations,
+    )
     bounded_output_schema = bind_retrieval_query_plan_output_schema(
         base_schema=output_schema,
         route_ids=supported_kinds,
+        route_operations=route_operations,
         route_status_values={
             route["route_id"]: status_scope_values(route) for route in frozen_routes
         },
@@ -508,11 +509,7 @@ def plan_query(
         detail_candidate_refs=detail_candidate_refs,
         is_followup=is_followup,
         requested_concepts=concepts_by_route,
-        next_page_route_ids={
-            str(summary["route_id"]) for summary in cast(list[Mapping[str, object]],
-                prompt_input.get("read_result_summaries", []))
-            if summary.get("has_next_page") is True and summary.get("exhausted") is not True
-        },
+        next_page_route_ids=next_page_route_ids,
         prior_concept_manifestations={
             route["route_id"]: {
                 term for attempt in cast(list[QueryAttemptV1],
@@ -661,6 +658,7 @@ def _project_route_constraint_policies(
     route_policies: Mapping[str, RouteConstraintPolicy],
     *,
     supported_kinds: Mapping[str, Collection[RetrievalConstraintKindV1]],
+    route_operations: Mapping[str, Collection[RetrievalOperationV2]],
 ) -> dict[str, object]:
     """Expose the existing deterministic route policy to the semantic planner."""
 
@@ -683,9 +681,46 @@ def _project_route_constraint_policies(
         policy = route_policies.get(route_id)
         if policy is None:
             continue
+        route["allowed_operations"] = sorted(route_operations.get(route_id, ()))
         route["supported_constraint_kinds"] = sorted(supported_kinds.get(route_id, ()))
         route["required_constraint_kinds"] = sorted(policy.required_kinds)
     return result
+
+
+def _next_page_route_ids(prompt_input: Mapping[str, object]) -> set[str]:
+    return {
+        str(summary["route_id"])
+        for summary in cast(
+            list[Mapping[str, object]], prompt_input.get("read_result_summaries", [])
+        )
+        if summary.get("has_next_page") is True and summary.get("exhausted") is not True
+    }
+
+
+def _route_operations(
+    frozen_routes: Sequence[InputToolRouteV1],
+    *,
+    validated_resource_refs: Mapping[str, Collection[str]] | None,
+    detail_candidate_refs: Collection[str],
+    next_page_route_ids: Collection[str],
+) -> dict[str, tuple[RetrievalOperationV2, ...]]:
+    operations: dict[str, tuple[RetrievalOperationV2, ...]] = {}
+    for route in frozen_routes:
+        route_id = route["route_id"]
+        allowed: list[RetrievalOperationV2] = []
+        if route_operation_tool_id(route, "SEARCH") is not None:
+            allowed.append("SEARCH")
+        if route_operation_tool_id(route, "FREEBUSY") is not None:
+            allowed.append("FREEBUSY")
+        if route_id in next_page_route_ids and route_operation_tool_id(route, "NEXT_PAGE"):
+            allowed.append("NEXT_PAGE")
+        has_detail_ref = bool((validated_resource_refs or {}).get(route_id)) or any(
+            ref.startswith(f"{route['resource_type'].lower()}:") for ref in detail_candidate_refs
+        )
+        if has_detail_ref and route_operation_tool_id(route, "DETAIL_FETCH") is not None:
+            allowed.append("DETAIL_FETCH")
+        operations[route_id] = tuple(allowed)
+    return operations
 
 
 def _applicable_constraint_kinds(

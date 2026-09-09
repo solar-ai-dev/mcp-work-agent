@@ -7,6 +7,7 @@ from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalQueryPlanV2,
+    route_operation_tool_id,
 )
 from google_work_agent.application.agents.retrieval.select_followup_routes import (
     select_followup_routes,
@@ -14,17 +15,6 @@ from google_work_agent.application.agents.retrieval.select_followup_routes impor
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
-
-_DETAIL_TOOL_BY_RESOURCE_TYPE = {
-    "EMAIL": "gmail_get_thread",
-    "GMAIL_THREAD": "gmail_get_thread",
-    "GMAIL_MESSAGE": "gmail_get_message",
-    "GMAIL_DRAFT": "gmail_get_draft",
-    "GMAIL_ATTACHMENT": "gmail_get_attachment",
-    "TASK": "tasks_get_task",
-    "CALENDAR_EVENT": "calendar_get_event",
-    "GITHUB_ISSUE": "github_get_issue",
-}
 
 
 def plan_candidate_detail(
@@ -48,8 +38,7 @@ def plan_candidate_detail(
     route_queries: list[dict[str, object]] = []
     retrieval_order: list[str] = []
     for route in select_followup_routes(prompt_input, frozen_routes):
-        detail_tool = _DETAIL_TOOL_BY_RESOURCE_TYPE.get(route["resource_type"])
-        if detail_tool is None or detail_tool not in route["allowed_read_tool_ids"]:
+        if route_operation_tool_id(route, "DETAIL_FETCH") is None:
             continue
         prefix = f"{route['resource_type'].lower()}:"
         candidate = next(

@@ -11,6 +11,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     CONCEPT_LITERAL_PATTERN,
     PARTICIPANT_EMAIL_PATTERN,
     PLANNER_CONCEPT_MANIFESTATION_LIMIT,
+    RetrievalOperationV2,
     TemporalRangeConstraintV1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
@@ -281,6 +282,7 @@ def bind_retrieval_query_plan_output_schema(
     *,
     base_schema: OutputSchemaDefinition = RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
     route_ids: Collection[str],
+    route_operations: Mapping[str, Collection[RetrievalOperationV2]],
     route_status_values: Mapping[str, Collection[str]] | None = None,
     supported_constraint_kinds: Mapping[str, Collection[str]] | None = None,
     validated_resource_refs: Mapping[str, Collection[str]] | None = None,
@@ -308,10 +310,13 @@ def bind_retrieval_query_plan_output_schema(
     bound_operations: list[dict[str, object]] = []
     for route_id in allowed_route_ids:
         concepts = (requested_concepts or {}).get(route_id, ())
+        allowed_operations = set(route_operations.get(route_id, ()))
         for template in operation_templates:
             operation_schema = deepcopy(template)
             fields = cast(dict[str, object], operation_schema["properties"])
             operation = cast(dict[str, object], fields["operation"])["const"]
+            if operation not in allowed_operations:
+                continue
             if (operation == "NEXT_PAGE" and next_page_route_ids is not None
                     and route_id not in next_page_route_ids):
                 continue

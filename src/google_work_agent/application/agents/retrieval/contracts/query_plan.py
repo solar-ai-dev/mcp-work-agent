@@ -198,6 +198,41 @@ _STATUS_SCOPE_BY_RESOURCE = {
     "GITHUB_ISSUE": ("ANY", "OPEN", "CLOSED"),
 }
 
+_SEARCH_TOOL_BY_RESOURCE_TYPE = {
+    "EMAIL": "gmail_search_threads",
+    "GMAIL_THREAD": "gmail_search_threads",
+    "GMAIL_MESSAGE": "gmail_search_threads",
+    "GMAIL_DRAFT": "gmail_search_drafts",
+    "TASK_LIST": "tasks_list_tasklists",
+    "TASK": "tasks_list_tasks",
+    "CALENDAR": "calendar_list_calendars",
+    "CALENDAR_EVENT": "calendar_list_events",
+    "GITHUB_ISSUE": "github_list_issues",
+}
+_DETAIL_TOOL_BY_RESOURCE_TYPE = {
+    "EMAIL": "gmail_get_thread",
+    "GMAIL_THREAD": "gmail_get_thread",
+    "GMAIL_MESSAGE": "gmail_get_message",
+    "GMAIL_DRAFT": "gmail_get_draft",
+    "GMAIL_ATTACHMENT": "gmail_get_attachment",
+    "TASK": "tasks_get_task",
+    "CALENDAR_EVENT": "calendar_get_event",
+    "GITHUB_ISSUE": "github_get_issue",
+}
+
+
+def route_operation_tool_id(route: InputToolRouteV1, operation: RetrievalOperationV2) -> str | None:
+    """Resolve one semantic READ operation against the frozen route capability."""
+
+    resource_type = route["resource_type"]
+    if operation in {"SEARCH", "NEXT_PAGE"}:
+        tool_id = _SEARCH_TOOL_BY_RESOURCE_TYPE.get(resource_type)
+    elif operation == "DETAIL_FETCH":
+        tool_id = _DETAIL_TOOL_BY_RESOURCE_TYPE.get(resource_type)
+    else:
+        tool_id = "calendar_query_freebusy" if resource_type == "CALENDAR_FREEBUSY" else None
+    return tool_id if tool_id in route["allowed_read_tool_ids"] else None
+
 
 def status_scope_values(route: InputToolRouteV1) -> tuple[str, ...]:
     resource_type = route["resource_type"].upper()
@@ -300,10 +335,10 @@ def validate_route_query_intent_v2(
             reason_code="QUERY_OPERATION_FIELD_MISMATCH",
             affected_field_paths=("$.route_queries[].operation",),
         )
-    resource_type = frozen_routes[route_id]["resource_type"]
-    if (resource_type == "CALENDAR_FREEBUSY") != (operation == "FREEBUSY"):
+    route = frozen_routes[route_id]
+    if route_operation_tool_id(route, cast(RetrievalOperationV2, operation)) is None:
         raise RetrievalV2ValidationError(
-            "route_query.operation does not match the frozen route resource type",
+            "route_query.operation is not supported by the frozen route tools",
             reason_code="QUERY_OPERATION_FIELD_MISMATCH",
             affected_field_paths=("$.route_queries[].operation",),
         )

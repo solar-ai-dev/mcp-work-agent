@@ -14,8 +14,10 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     ParticipantConstraintV1,
+    RetrievalOperationV2,
     RetrievalV2ValidationError,
     SourceFetchPlanV1,
+    route_operation_tool_id,
     validate_participant_identity,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
@@ -82,10 +84,16 @@ def project_connector_call(
     has_resource_ref = any(
         constraint["kind"] == "RESOURCE_REF" for constraint in plan["effective_constraints"]
     )
+    effective_operation: RetrievalOperationV2 = "DETAIL_FETCH" if has_resource_ref else operation
+    tool_id = route_operation_tool_id(route, effective_operation)
+    if tool_id is None:
+        raise PermissionError("read operation is outside the frozen input route")
     if operation == "DETAIL_FETCH" or has_resource_ref:
         if detail_resource is None:
             raise ValueError("detail read requires a validated resource")
-        tool_id, arguments = _detail_call(resource, detail_resource)
+        detail_tool_id, arguments = _detail_call(resource, detail_resource)
+        if detail_tool_id != tool_id:
+            raise RetrievalV2ValidationError("detail tool differs from operation authority")
         if (
             resource == "GITHUB_ISSUE"
             and any(
@@ -96,23 +104,19 @@ def project_connector_call(
         ):
             raise ValueError("GitHub Issue detail differs from validated repository")
     elif resource == "GMAIL_DRAFT":
-        tool_id = "gmail_search_drafts"
         arguments = {
             "query": _gmail_query(plan),
             "page_size": page_size,
         }
     elif resource.startswith("GMAIL_") or resource == "EMAIL":
-        tool_id = "gmail_search_threads"
         arguments = {
             "query": _gmail_query(plan),
             "page_size": page_size,
             "include_thread_metadata": True,
         }
     elif resource == "TASK_LIST":
-        tool_id = "tasks_list_tasklists"
         arguments = {"page_size": page_size}
     elif resource == "TASK":
-        tool_id = "tasks_list_tasks"
         arguments = {
             "task_list_id": _single_container(plan),
             "page_size": page_size,
@@ -125,13 +129,10 @@ def project_connector_call(
             "repository": _single_container(plan),
             "state": _github_issue_state(plan),
         }
-        tool_id = "github_list_issues"
     elif resource == "CALENDAR":
-        tool_id = "calendar_list_calendars"
         arguments = {"page_size": page_size}
     elif resource.startswith("CALENDAR"):
         if operation == "FREEBUSY" or resource == "CALENDAR_FREEBUSY":
-            tool_id = "calendar_query_freebusy"
             start, end = _temporal_bounds(plan)
             arguments = {
                 "calendar_ids": [_single_container(plan)],
@@ -139,7 +140,6 @@ def project_connector_call(
                 "time_max": end,
             }
         else:
-            tool_id = "calendar_list_events"
             arguments = {
                 "calendar_id": _single_container(plan),
                 "page_size": page_size,
@@ -151,8 +151,6 @@ def project_connector_call(
                 arguments["time_min"], arguments["time_max"] = temporal
     else:
         raise ValueError(f"unsupported retrieval resource_type: {resource}")
-    if tool_id not in route["allowed_read_tool_ids"]:
-        raise PermissionError("read tool is outside the frozen input route")
     return tool_id, cast(dict[str, JsonValue], arguments)
 
 

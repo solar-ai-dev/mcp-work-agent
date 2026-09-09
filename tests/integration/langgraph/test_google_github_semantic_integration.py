@@ -126,6 +126,134 @@ def test_github_status__real_schema_and_planner__reaches_connector(
     assert (tool, arguments) == ("github_list_issues", {"repository": "acme/repo", "state": status})
 
 
+def test_gmail_search__then_detail__reaches_only_supported_connector_ports() -> None:
+    message_route: InputToolRouteV1 = {
+        "route_id": "message-detail",
+        "connector_id": "google_workspace",
+        "resource_type": "GMAIL_MESSAGE",
+        "allowed_read_tool_ids": ["gmail_get_message"],
+        "required": True,
+        "reason_codes": ["USER_REQUEST"],
+    }
+    output = cast(
+        RetrievalQueryPlanV2,
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "gmail",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "ANY"}
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+            "required_information": ["matching mail detail"],
+            "retrieval_order": ["gmail"],
+        },
+    )
+    runtime = FakeStructuredInferencePort(outputs=[output], validate_schema=True)
+    policy = RouteConstraintPolicy(frozenset({"KEYWORD"}))
+    plan, _, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=replace(SUFFICIENCY_PROMPT_REF, prompt_id="retrieval.plan_query"),
+        revision_prompt_ref=SUFFICIENCY_PROMPT_REF,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"input_routes": [message_route, GOOGLE]},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[message_route, GOOGLE],
+        route_policies={"message-detail": policy, "gmail": policy},
+        retry_budget=build_default_run_budget(),
+    )
+    search_fetch = build_query(
+        plan,
+        frozen_routes=[message_route, GOOGLE],
+        route_policies={"message-detail": policy, "gmail": policy},
+    )[0]
+    search_tool, search_args = execute_read_projection.project_connector_call(
+        search_fetch, route=GOOGLE, page_size=20
+    )
+
+    class Reader:
+        def __init__(self) -> None:
+            self.tools: list[str] = []
+
+        def execute_read(self, binding: Any, arguments: dict[str, Any]) -> ConnectorReadResultV1:
+            del arguments
+            self.tools.append(binding.tool_id)
+            output_value: dict[str, JsonValue] = (
+                {"items": [{"resource_id": "thread-1"}]}
+                if binding.tool_id == "gmail_search_threads"
+                else {"item": {"resource_id": "thread-1"}}
+            )
+            return ConnectorReadResultV1(1, binding.tool_id, "request", output_value, None, 1)
+
+    registry = load_signed_tool_registry()
+    reader = Reader()
+    cache = InMemoryRunRetrievalCache()
+    budget = build_default_run_budget()
+    search_result = execute_read(
+        plan=search_fetch,
+        run_id="run-gmail",
+        binding=registry.bind_required("google_workspace", search_tool, "READ"),
+        tool_arguments=search_args,
+        connector_reader=reader,
+        read_result_cache=cache,
+        read_result_handle="search-result",
+        run_budget=budget,
+        now_ms=1,
+        prior_query_attempts=[],
+    )
+    detail_plan = plan_candidate_detail(
+        prompt_input={
+            "current_round_no": 1,
+            "unresolved_sufficiency_issues": [
+                {"route_id": "gmail", "required": True, "resolution_source": "GOOGLE"}
+            ],
+        },
+        frozen_routes=[message_route, GOOGLE],
+        detail_candidate_refs=["gmail_thread:thread-1"],
+    )
+    assert detail_plan is not None
+    detail_fetch = build_query(
+        detail_plan,
+        frozen_routes=[message_route, GOOGLE],
+        route_policies={"message-detail": policy, "gmail": policy},
+        detail_candidate_refs=["gmail_thread:thread-1"],
+    )[0]
+    detail_tool, detail_args = execute_read_projection.project_connector_call(
+        detail_fetch,
+        route=GOOGLE,
+        page_size=20,
+        detail_resource={
+            "resource_type": "gmail_thread",
+            "resource_id": "thread-1",
+            "parent_id": None,
+        },
+    )
+    detail_result = execute_read(
+        plan=detail_fetch,
+        run_id="run-gmail",
+        binding=registry.bind_required("google_workspace", detail_tool, "READ"),
+        tool_arguments=detail_args,
+        connector_reader=reader,
+        read_result_cache=cache,
+        read_result_handle="detail-result",
+        run_budget=budget,
+        now_ms=2,
+        prior_query_attempts=[],
+    )
+
+    assert search_result.provider_called is True
+    assert detail_result.provider_called is True
+    assert reader.tools == ["gmail_search_threads", "gmail_get_thread"]
+
+
 @pytest.mark.parametrize("status", ["COMPLETED", "INCOMPLETE", "DRAFT", "CONFIRMED"])
 def test_google_status__github_query__fails_closed(status: str) -> None:
     with pytest.raises(RetrievalV2ValidationError):

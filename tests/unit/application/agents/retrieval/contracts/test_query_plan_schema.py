@@ -28,6 +28,7 @@ def test_temporal_range__partial_or_empty_bounds__preserves_contract(
 ) -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
         supported_constraint_kinds={"gmail": ["TEMPORAL_RANGE"]},
     )
     candidate: dict[str, Any] = {
@@ -70,6 +71,7 @@ def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     }
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["gmail", "calendar"],
+        route_operations={"gmail": ["SEARCH"], "calendar": ["SEARCH"]},
         supported_constraint_kinds={
             "gmail": ["TEMPORAL_RANGE", "KEYWORD"],
             "calendar": ["TEMPORAL_RANGE", "CONTAINER_REF"],
@@ -108,6 +110,7 @@ def test_bound_concept_hypothesis__current_meaning__rejects_unbounded_or_differe
 ) -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
         supported_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
         requested_concepts={"gmail": ["업무 개념"]},
         is_followup=changed,
@@ -161,6 +164,7 @@ def test_bound_query_schema__container_alias_is_not__a_participant(
 ) -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
         supported_constraint_kinds={"gmail": ["PARTICIPANT"]},
     )
     candidate = {
@@ -260,6 +264,7 @@ def test_v2_output_schema__empty_initial_constraints__rejects() -> None:
 def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["route-1"],
+        route_operations={"route-1": ["SEARCH"]},
         supported_constraint_kinds={"route-1": ["KEYWORD"]},
         is_followup=True,
     )
@@ -337,6 +342,7 @@ def test_constraint_union__rejects_extra_fields__for_declared_kind() -> None:
 def test_runtime_binding__rejects_unvalidated__container_ref() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["calendar-read"],
+        route_operations={"calendar-read": ["SEARCH"]},
         supported_constraint_kinds={"calendar-read": ["TEMPORAL_RANGE", "CONTAINER_REF"]},
         validated_container_refs={"calendar-read": ["primary"]},
     )
@@ -369,6 +375,7 @@ def test_runtime_binding__rejects_unvalidated__container_ref() -> None:
 def test_runtime_binding__query_round__accepts_only_current_mode(is_followup: bool) -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["r"],
+        route_operations={"r": ["SEARCH"]},
         supported_constraint_kinds={"r": ["KEYWORD"]},
         is_followup=is_followup,
     )
