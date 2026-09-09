@@ -11,7 +11,6 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     DETECT_AMBIGUITY_OUTPUT_SCHEMA,
-    _validate_ambiguity,
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     detect_ambiguity as _detect_ambiguity_with_budget,
@@ -203,15 +202,42 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
 
 
 def test_detect_ambiguity__rejects_metadata__without_confirmation() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[{
+        "requires_confirmation": False,
+        "missing_information_owner": "NONE",
+        "reason_codes": ["MISSING_PROJECT_NAME"],
+        "missing_fields": ["project_name"],
+    }])
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "새 할 일 생성",
+        "completion_conditions": ["할 일을 생성한다"],
+        "constraints": [],
+        "requested_effect_hints": ["CREATE"],
+        "requested_resource_hints": ["TASK"],
+        "analysis_requirement": "NONE",
+    }
+
     with pytest.raises(ValueError, match="NONE ambiguity metadata must be empty"):
-        _validate_ambiguity(
-            {
-                "requires_confirmation": False,
-                "missing_information_owner": "NONE",
-                "reason_codes": ["MISSING_PROJECT_NAME"],
-                "missing_fields": ["project_name"],
-            }
+        detect_ambiguity(
+            llm_runtime=runtime,
+            request=_request("Google Tasks에 새 할 일을 만들어줘"),
+            goal_candidate=candidate,
+            prompt_ref=_prompt_ref(),
         )
+
+
+def test_detect_ambiguity_schema__connector_owned_gap__passes_output_contract() -> None:
+    errors = validate_output_schema(
+        {
+            "requires_confirmation": False,
+            "missing_information_owner": "CONNECTOR",
+            "reason_codes": ["MISSING_SOURCE_FACT"],
+            "missing_fields": ["source_fact"],
+        },
+        DETECT_AMBIGUITY_OUTPUT_SCHEMA.json_schema,
+    )
+
+    assert errors == []
 
 
 def test_detect_ambiguity_schema__rejects_empty_confirmation_details__before_application() -> None:

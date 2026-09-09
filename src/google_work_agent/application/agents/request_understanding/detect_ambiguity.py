@@ -119,7 +119,8 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "type": "boolean",
                 "description": (
                     "False unless an explicit user-owned choice is genuinely missing. "
-                    "When false, owner must be NONE and both arrays must be empty."
+                    "When false, owner is NONE with empty details or CONNECTOR with "
+                    "non-empty retrievable details."
                 ),
             },
             "missing_information_owner": {
@@ -132,12 +133,16 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "reason_codes": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Empty whenever requires_confirmation is false.",
+                "description": (
+                    "Empty for NONE; non-empty for USER or CONNECTOR-owned missing information."
+                ),
             },
             "missing_fields": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Empty whenever requires_confirmation is false.",
+                "description": (
+                    "Empty for NONE; non-empty for USER or CONNECTOR-owned missing information."
+                ),
             },
         },
     },
@@ -422,24 +427,6 @@ def _same_information_need(left: str, right: str) -> bool:
 
 def _normalize_information_need(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-
-
-def _validate_ambiguity(value: object) -> AmbiguityV1:
-    """Compatibility helper for tests that validate a candidate without source needs."""
-
-    return _finalize_ambiguity_candidate(
-        _validate_ambiguity_candidate(
-            value,
-            goal_candidate={
-                "goal": "compatibility validation",
-                "completion_conditions": [],
-                "constraints": [],
-                "requested_effect_hints": [],
-                "requested_resource_hints": [],
-                "analysis_requirement": "NONE",
-            },
-        )
-    )
 
 
 def _is_retrieval_first_read(*, goal_candidate: RequestGoalCandidateV1) -> bool:

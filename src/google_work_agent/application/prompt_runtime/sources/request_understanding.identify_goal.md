@@ -68,7 +68,7 @@
 
 # 출력 전 검증
 
-입력이 `base_projection`, `candidate_output`, `failure_record`를 포함한 semantic revision이면 failure_record의 affected fields만 수정한다. 최초 후보가 이미 Connector-owned source fact/identity를 `source_reads`로 식별했다면 이를 삭제해 standalone 요청으로 축소하지 않는다. 잘못 추가한 output effect/resource는 제거할 수 있지만, source need는 올바른 source Resource에 다시 결합한다.
+입력이 `base_projection`, `candidate_output`, `failure_record`를 포함한 semantic revision이면 failure_record의 affected fields만 다시 판단한다. 현재 사용자 원문, 검증된 선택 Resource, 확인 응답, 명시 literal과 금지 표현이 권위이며 최초 후보 자체는 권위가 아니다. 최초 후보가 발명한 source need는 제거할 수 있고 잘못 표현한 need나 source Resource는 현재 입력에 맞게 고칠 수 있다. 반대로 현재 입력이 실제로 요구하는 source fact/identity를 생략하거나 주소·ID를 발명하지 않는다.
 
 1. goal과 completion_conditions가 사용자가 요청한 결과만 담는가?
 2. 각 constraint가 하나의 의미 역할에만 배치되었는가?

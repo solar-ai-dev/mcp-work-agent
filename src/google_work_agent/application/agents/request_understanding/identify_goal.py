@@ -112,7 +112,6 @@ def identify_goal_with_budget(
                 confirmation_response=confirmation_response,
             )
         except RequestGoalSemanticValidationError as error:
-            source_information = _candidate_source_information(result.structured_output)
             signature = build_semantic_failure_signature_v1(
                 node_id="request.identify_goal",
                 failure_reason_codes=[error.reason_code],
@@ -143,51 +142,8 @@ def identify_goal_with_budget(
                 request=request,
                 confirmation_response=confirmation_response,
             )
-            _validate_semantic_revision_continuity(
-                candidate,
-                source_information=source_information,
-            )
             retry_budget = decision["run_budget"]
         return candidate, merge_provider_dispatch_usage(retry_budget)
-
-
-def _candidate_source_information(value: object) -> list[str]:
-    if not isinstance(value, dict):
-        return []
-    responsibilities = value.get("resource_responsibilities")
-    values: list[str] = []
-    if isinstance(responsibilities, dict):
-        source_reads = responsibilities.get("source_reads")
-        if isinstance(source_reads, list):
-            for source in source_reads:
-                if not isinstance(source, dict):
-                    continue
-                information = source.get("required_information")
-                if isinstance(information, list):
-                    values.extend(item for item in information if isinstance(item, str))
-    return list(dict.fromkeys(value for value in values if value.strip()))
-
-
-def _validate_semantic_revision_continuity(
-    candidate: RequestGoalCandidateV1,
-    *,
-    source_information: list[str],
-) -> None:
-    revised_information = {
-        information
-        for responsibility in candidate.get("resource_responsibilities", {}).get(
-            "source_reads", []
-        )
-        for information in responsibility["required_information"]
-    }
-    if not set(source_information).issubset(revised_information):
-        raise RequestGoalSemanticValidationError(
-            "semantic revision removed a Connector-owned source need",
-            reason_code="REQUEST_SEMANTIC_REVISION_SCOPE_EXCEEDED",
-            affected_field_paths=(
-                "$.resource_responsibilities.source_reads",
-            ),
-        )
 
 
 def _prompt_input(

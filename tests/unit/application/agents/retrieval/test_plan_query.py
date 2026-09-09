@@ -801,7 +801,16 @@ def test_exact_calendar_create_precondition__materializes_all_policy_reads__with
         assert temporal["timezone"] == "Asia/Seoul"
 
 
-def test_exact_task_create_precondition__materializes_duplicate_reads__without_llm() -> None:
+@pytest.mark.parametrize(
+    ("requested_effects", "requested_resources"),
+    [
+        (["CREATE"], ["TASK"]),
+        (["READ", "CREATE"], ["TASK_LIST", "TASK"]),
+    ],
+)
+def test_exact_task_create_precondition__materializes_duplicate_reads__without_llm(
+    requested_effects: list[str], requested_resources: list[str]
+) -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(
         prompt_bundle_version="test",
@@ -853,8 +862,8 @@ def test_exact_task_create_precondition__materializes_duplicate_reads__without_l
         output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
         prompt_input={
             "request_intent": {
-                "requested_effect_hints": ["CREATE"],
-                "requested_resource_hints": ["TASK"],
+                "requested_effect_hints": requested_effects,
+                "requested_resource_hints": requested_resources,
                 "constraints": [
                     {
                         "kind": "RESOURCE",

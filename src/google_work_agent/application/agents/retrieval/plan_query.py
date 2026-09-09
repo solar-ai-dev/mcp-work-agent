@@ -319,9 +319,12 @@ def _exact_task_duplicate_check_plan(
     request_intent = prompt_input.get("request_intent")
     if not isinstance(request_intent, Mapping):
         return None
+    requested_effects = _string_collection(request_intent.get("requested_effect_hints"))
+    requested_resources = _string_collection(request_intent.get("requested_resource_hints"))
     if (
-        request_intent.get("requested_effect_hints") != ["CREATE"]
-        or request_intent.get("requested_resource_hints") != ["TASK"]
+        requested_effects not in {frozenset({"CREATE"}), frozenset({"READ", "CREATE"})}
+        or "TASK" not in requested_resources
+        or not requested_resources.issubset({"TASK", "TASK_LIST"})
         or _exact_task_title(request_intent.get("constraints")) is None
     ):
         return None

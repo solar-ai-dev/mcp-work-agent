@@ -21,6 +21,7 @@ from google_work_agent.application.agents.request_understanding.finalize_intent 
 )
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal,
+    identify_goal_with_budget,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -674,6 +675,91 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
             "field": "selected_resource_id",
             "value": ["thread-42"],
         }
+    ]
+
+
+def test_semantic_revision__invented_source_need__may_be_removed() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[
+        {
+            "goal": "새 메일 전송", "completion_conditions": ["새 메시지를 보낸다"],
+            "constraints": _goal_constraints(
+                recipient=["person@example.test"], subject=["안내"]
+            ),
+            "resource_responsibilities": _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["발명된 기존 대화 identity"],
+                output_type="GMAIL_THREAD",
+                output_effect="SEND",
+            ),
+            "analysis_requirement": "NONE",
+        },
+        {
+            "goal": "새 메일 전송", "completion_conditions": ["새 메시지를 보낸다"],
+            "constraints": _goal_constraints(
+                recipient=["person@example.test"], subject=["안내"]
+            ),
+            "resource_responsibilities": _resource_responsibilities(
+                output_type="GMAIL_MESSAGE", output_effect="SEND"
+            ),
+            "analysis_requirement": "NONE",
+        },
+    ])
+
+    candidate, budget = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=_request('person@example.test에게 제목은 "안내"로 새 메일을 보내줘.'),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate["requested_effect_hints"] == ["SEND"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
+    assert candidate["resource_responsibilities"]["source_reads"] == []
+    assert len(runtime.calls) == 2
+    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+
+
+def test_semantic_revision__validated_selected_resource__remains_bound() -> None:
+    selected = SelectedResourceRef(
+        "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
+    )
+    request = replace(
+        _request("선택한 메일을 읽고 요약해줘"),
+        entry_mode="RESOURCE_SELECTED",
+        selected_resource_ids=(selected.resource_id,),
+        selected_resources=(selected,),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[
+        {
+            "goal": "선택한 메일 요약", "completion_conditions": ["요약을 답한다"],
+            "constraints": _goal_constraints(),
+            "resource_responsibilities": _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["선택한 메일 내용"],
+                output_type="GMAIL_THREAD",
+                output_effect="SEND",
+            ),
+            "analysis_requirement": "NONE",
+        },
+        {
+            "goal": "선택한 메일 요약", "completion_conditions": ["요약을 답한다"],
+            "constraints": _goal_constraints(),
+            "resource_responsibilities": _resource_responsibilities(),
+            "analysis_requirement": "NONE",
+        },
+    ])
+
+    candidate, _ = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate["requested_effect_hints"] == ["READ"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD"]
+    assert candidate["resource_responsibilities"]["source_reads"] == [
+        {"resource_type": "GMAIL_THREAD", "required_information": []}
     ]
 
 
