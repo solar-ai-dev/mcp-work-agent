@@ -147,6 +147,13 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
         "node:request_understanding",
     ]
     assert all(entry["inputs"] == {} for entry in client.created)
+    root_trace = client.created[0]
+    node_trace = client.created[1]
+    assert root_trace["trace_id"] == graph_run_id
+    assert root_trace["parent_run_id"] is None
+    assert root_trace["dotted_order"].endswith(str(graph_run_id))
+    assert node_trace["dotted_order"].startswith(f"{root_trace['dotted_order']}.")
+    assert node_trace["dotted_order"].endswith(str(node_run_id))
     assert client.created[1]["trace_id"] == graph_run_id
     assert client.created[1]["parent_run_id"] == graph_run_id
     node_metadata = client.created[1]["extra"]["metadata"]
@@ -163,6 +170,13 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
     assert "private-model-output" not in exported
     assert "private/checkpoint/namespace" not in exported
     assert all(update[1]["outputs"] == {} for update in client.updated)
+    created_dotted_order = {
+        entry["id"]: entry["dotted_order"] for entry in client.created
+    }
+    assert all(
+        update[1]["dotted_order"] == created_dotted_order[update[0]]
+        for update in client.updated
+    )
 
 
 def test_callback__receives_metadata_from_compiled_langgraph__without_state_payload() -> None:

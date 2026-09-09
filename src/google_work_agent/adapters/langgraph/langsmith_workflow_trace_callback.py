@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from hashlib import sha256
 from threading import Lock
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -41,6 +41,19 @@ type _LangSmithRunType = Literal[
     "prompt",
     "parser",
 ]
+
+
+class _ActiveTrace(NamedTuple):
+    trace_id: UUID
+    parent_run_id: UUID | None
+    metadata: dict[str, object]
+    dotted_order: str
+
+
+class _NearestActiveTrace(NamedTuple):
+    trace_id: UUID
+    run_id: UUID
+    dotted_order: str
 
 
 class _LangSmithClient(Protocol):
@@ -77,7 +90,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         self._project_name = project_name
         self._trace_binding = _validated_trace_binding(trace_binding or {})
         self._parents: dict[UUID, UUID] = {}
-        self._active: dict[UUID, tuple[UUID, UUID | None, dict[str, object]]] = {}
+        self._active: dict[UUID, _ActiveTrace] = {}
         self._lock = Lock()
         self._closed = False
 
@@ -99,6 +112,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         node = safe_metadata.get("graph_node")
         is_root = parent_run_id is None
         is_node = isinstance(node, str) and kwargs.get("name") == node
+        start_time = datetime.now(UTC)
         with self._lock:
             if self._closed:
                 return
@@ -107,8 +121,15 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
             if not is_root and not is_node:
                 return
             parent_trace = self._nearest_active(parent_run_id)
-            trace_id = run_id if parent_trace is None else parent_trace[0]
-            traced_parent_id = None if parent_trace is None else parent_trace[1]
+            trace_id = run_id if parent_trace is None else parent_trace.trace_id
+            traced_parent_id = None if parent_trace is None else parent_trace.run_id
+            dotted_order = _dotted_order(
+                start_time=start_time,
+                run_id=run_id,
+                parent_dotted_order=(
+                    None if parent_trace is None else parent_trace.dotted_order
+                ),
+            )
         name = "production_langgraph" if is_root else f"node:{node}"
         tags = ["google-work-agent", "development-observability", "langgraph"]
         tags.append("graph" if is_root else "node")
@@ -119,9 +140,10 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 "chain",
                 id=run_id,
                 trace_id=trace_id,
+                dotted_order=dotted_order,
                 parent_run_id=traced_parent_id,
                 project_name=self._project_name,
-                start_time=datetime.now(UTC),
+                start_time=start_time,
                 extra={"metadata": safe_metadata},
                 tags=tags,
             )
@@ -130,7 +152,12 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
             return
         with self._lock:
             if not self._closed:
-                self._active[run_id] = (trace_id, traced_parent_id, safe_metadata)
+                self._active[run_id] = _ActiveTrace(
+                    trace_id=trace_id,
+                    parent_run_id=traced_parent_id,
+                    metadata=safe_metadata,
+                    dotted_order=dotted_order,
+                )
 
     def on_chain_end(self, outputs: Any, *, run_id: UUID, **kwargs: Any) -> None:
         del outputs, kwargs
@@ -140,7 +167,8 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         try:
             self._client.update_run(
                 run_id,
-                trace_id=active[0],
+                trace_id=active.trace_id,
+                dotted_order=active.dotted_order,
                 end_time=datetime.now(UTC),
                 outputs={},
             )
@@ -152,7 +180,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         active = self._finish_tracking(run_id)
         if active is None:
             return
-        metadata = dict(active[2])
+        metadata = dict(active.metadata)
         tags = ["google-work-agent", "development-observability", "langgraph"]
         if isinstance(error, GraphInterrupt):
             metadata["outcome"] = "INTERRUPTED"
@@ -179,7 +207,8 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         try:
             self._client.update_run(
                 run_id,
-                trace_id=active[0],
+                trace_id=active.trace_id,
+                dotted_order=active.dotted_order,
                 end_time=datetime.now(UTC),
                 error=safe_error,
                 outputs={},
@@ -211,19 +240,23 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
 
     def _finish_tracking(
         self, run_id: UUID
-    ) -> tuple[UUID, UUID | None, dict[str, object]] | None:
+    ) -> _ActiveTrace | None:
         with self._lock:
             self._parents.pop(run_id, None)
             return self._active.pop(run_id, None)
 
-    def _nearest_active(self, run_id: UUID | None) -> tuple[UUID, UUID] | None:
+    def _nearest_active(self, run_id: UUID | None) -> _NearestActiveTrace | None:
         current = run_id
         visited: set[UUID] = set()
         while current is not None and current not in visited:
             visited.add(current)
             active = self._active.get(current)
             if active is not None:
-                return active[0], current
+                return _NearestActiveTrace(
+                    trace_id=active.trace_id,
+                    run_id=current,
+                    dotted_order=active.dotted_order,
+                )
             current = self._parents.get(current)
         return None
 
@@ -305,6 +338,18 @@ def _safe_affected_field_paths(error: BaseException) -> tuple[str, ...]:
         for path in value[:16]
         if isinstance(path, str) and _SAFE_FIELD_PATH.fullmatch(path)
     )
+
+
+def _dotted_order(
+    *,
+    start_time: datetime,
+    run_id: UUID,
+    parent_dotted_order: str | None,
+) -> str:
+    current = start_time.strftime("%Y%m%dT%H%M%S%fZ") + str(run_id)
+    if parent_dotted_order is None:
+        return current
+    return f"{parent_dotted_order}.{current}"
 
 
 __all__ = [
