@@ -83,6 +83,25 @@ def read_development_langsmith_environment(
     return api_key, project_name, trace_binding
 
 
+def read_development_sampling_environment(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[float | None, int | None]:
+    """Read optional finite-measurement sampling controls for development only."""
+
+    values = os.environ if environment is None else environment
+    temperature_value = values.get("GWA_DEVELOPMENT_LLM_TEMPERATURE", "").strip()
+    seed_value = values.get("GWA_DEVELOPMENT_LLM_SEED", "").strip()
+    try:
+        temperature = None if not temperature_value else float(temperature_value)
+    except ValueError as error:
+        raise ValueError("GWA_DEVELOPMENT_LLM_TEMPERATURE must be numeric") from error
+    try:
+        seed = None if not seed_value else int(seed_value)
+    except ValueError as error:
+        raise ValueError("GWA_DEVELOPMENT_LLM_SEED must be an integer") from error
+    return temperature, seed
+
+
 def _boolean_environment(environment: Mapping[str, str], name: str) -> bool:
     value = environment.get(name, "").strip().lower()
     if value in {"", "0", "false", "no", "off"}:
@@ -129,6 +148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             langsmith_project_name,
             langsmith_trace_binding,
         ) = read_development_langsmith_environment()
+        sampling_temperature, sampling_seed = read_development_sampling_environment()
         production_config = ProductionRuntimeConfig.development(
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
@@ -145,6 +165,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             langsmith_api_key=langsmith_api_key,
             langsmith_project_name=langsmith_project_name,
             langsmith_trace_binding=langsmith_trace_binding,
+            sampling_temperature=sampling_temperature,
+            sampling_seed=sampling_seed,
         )
 
         def request_process_exit() -> None:

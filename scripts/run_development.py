@@ -14,6 +14,7 @@ from launcher.development_entrypoint import (
     DEVELOPMENT_GITHUB_APP_CLIENT_ID,
     DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID,
     read_development_langsmith_environment,
+    read_development_sampling_environment,
 )
 
 from google_work_agent.api.app import create_app
@@ -24,26 +25,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MCP_MANIFEST_VERSION = "2026-08-07.p0"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-
-
-def _optional_sampling_temperature() -> float | None:
-    value = os.environ.get("GWA_DEVELOPMENT_LLM_TEMPERATURE", "").strip()
-    if not value:
-        return None
-    try:
-        return float(value)
-    except ValueError as error:
-        raise ValueError("GWA_DEVELOPMENT_LLM_TEMPERATURE must be numeric") from error
-
-
-def _optional_sampling_seed() -> int | None:
-    value = os.environ.get("GWA_DEVELOPMENT_LLM_SEED", "").strip()
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError as error:
-        raise ValueError("GWA_DEVELOPMENT_LLM_SEED must be an integer") from error
 
 
 def development_runtime_config(
@@ -59,6 +40,7 @@ def development_runtime_config(
         langsmith_project_name,
         langsmith_trace_binding,
     ) = read_development_langsmith_environment()
+    sampling_temperature, sampling_seed = read_development_sampling_environment()
     return ProductionRuntimeConfig.development(
         runtime_root=(runtime_root or PROJECT_ROOT / "runtime" / "development").resolve(),
         working_directory=PROJECT_ROOT,
@@ -75,8 +57,8 @@ def development_runtime_config(
         langsmith_api_key=langsmith_api_key,
         langsmith_project_name=langsmith_project_name,
         langsmith_trace_binding=langsmith_trace_binding,
-        sampling_temperature=_optional_sampling_temperature(),
-        sampling_seed=_optional_sampling_seed(),
+        sampling_temperature=sampling_temperature,
+        sampling_seed=sampling_seed,
     )
 
 

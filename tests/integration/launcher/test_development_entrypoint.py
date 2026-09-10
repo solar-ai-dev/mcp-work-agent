@@ -15,7 +15,11 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 import pytest
-from launcher.development_entrypoint import main, read_development_langsmith_environment
+from launcher.development_entrypoint import (
+    main,
+    read_development_langsmith_environment,
+    read_development_sampling_environment,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -205,6 +209,20 @@ def test_development_config__sampling_policy__requires_explicit_handoff(
     assert direct.development_sampling_seed is None
     assert handed_off.development_sampling_temperature == 0.2
     assert handed_off.development_sampling_seed == 1729
+
+
+def test_development_sampling_environment__parses_only_explicit_values() -> None:
+    assert read_development_sampling_environment({}) == (None, None)
+    assert read_development_sampling_environment(
+        {
+            "GWA_DEVELOPMENT_LLM_TEMPERATURE": " 0.2 ",
+            "GWA_DEVELOPMENT_LLM_SEED": " 1729 ",
+        }
+    ) == (0.2, 1729)
+    with pytest.raises(ValueError, match="temperature"):
+        read_development_sampling_environment({"GWA_DEVELOPMENT_LLM_TEMPERATURE": "warm"})
+    with pytest.raises(ValueError, match="seed"):
+        read_development_sampling_environment({"GWA_DEVELOPMENT_LLM_SEED": "fixed"})
 
 
 def test_development_config__sampling_policy__rejects_invalid_values(tmp_path: Path) -> None:
