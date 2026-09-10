@@ -14,3 +14,9 @@
 ## Production Graph 통제 회귀
 
 production compiled Graph와 통제 LLM/MCP를 사용한 대표 경로 30건이 통과했다. 상세 범위는 [graph-controlled-regression.md](graph-controlled-regression.md)에 기록했다.
+
+## READ-only Live
+
+| 질문 | 모델 | 최초 실패 노드 | 결과 | 기록 |
+|---|---|---|---|---|
+| Q1 Nimbus 날짜 | qwen3.5:9b | `retrieval.select_evidence` / `retrieval.assess_sufficiency` | FAIL — 첫 검색 후보 2건을 Evidence로 연결하지 못했고 제한 재조회는 0건 | [live-q1-9b.md](live-q1-9b.md) |
