@@ -20,7 +20,9 @@ class RunScopedEvidenceStore:
     def __init__(self) -> None:
         self._lock = Lock()
         self._by_run: dict[str, dict[str, EvidenceDraftV1]] = {}
-        self._snapshots_by_run: dict[str, dict[str, dict[str, object]]] = {}
+        self._snapshots_by_run: dict[
+            str, dict[str, dict[str, dict[str, object]]]
+        ] = {}
 
     def put(self, *, run_id: str, evidence_drafts: list[EvidenceDraftV1]) -> None:
         with self._lock:
@@ -47,24 +49,34 @@ class RunScopedEvidenceStore:
         *,
         run_id: str,
         resource_handle: str,
+        source_version_ref: str,
         snapshot: Mapping[str, object],
     ) -> None:
+        if not source_version_ref:
+            raise EvidenceResolutionError("resource snapshot version is required")
         with self._lock:
-            entries = self._snapshots_by_run.setdefault(run_id, {})
+            entries = self._snapshots_by_run.setdefault(run_id, {}).setdefault(
+                resource_handle, {}
+            )
             projected = dict(snapshot)
-            existing = entries.get(resource_handle)
+            existing = entries.get(source_version_ref)
             if existing is not None and existing != projected:
                 raise EvidenceResolutionError("conflicting resource snapshot in retrieval run")
-            entries[resource_handle] = projected
+            entries[source_version_ref] = projected
 
     def resolve_resource_snapshot(
         self,
         *,
         run_id: str,
         resource_handle: str,
+        source_version_ref: str | None = None,
     ) -> dict[str, object]:
         with self._lock:
-            snapshot = self._snapshots_by_run.get(run_id, {}).get(resource_handle)
+            versions = self._snapshots_by_run.get(run_id, {}).get(resource_handle, {})
+            if source_version_ref is None:
+                snapshot = next(iter(versions.values())) if len(versions) == 1 else None
+            else:
+                snapshot = versions.get(source_version_ref)
             if snapshot is None:
                 raise EvidenceResolutionError("resource snapshot is unavailable for this run")
             return dict(snapshot)

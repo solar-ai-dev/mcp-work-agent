@@ -54,6 +54,9 @@ from google_work_agent.application.agents.work_analysis import (
 from google_work_agent.application.agents.work_analysis.assemble_work_analysis import (
     required_override_confirmation_kind,
 )
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
+)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     StateArtifactRefV1,
     WorkAnalysisResultV2,
@@ -251,7 +254,9 @@ class WorkAnalysisSubgraph:
             "finalize",
             route_after_assemble_work_analysis,
             {
+                "assess_information_gaps": "assess_information_gaps",
                 "assess_operational_risks": "assess_operational_risks",
+                "finalize": "finalize",
                 "end": END,
             },
         )
@@ -479,6 +484,7 @@ class WorkAnalysisSubgraph:
                 ),
             },
         )
+        patch["information_gap_confirmation_resolution"] = None
 
     def _assess_action_necessity_node(
         self, state: WorkAnalysisLocalState
@@ -551,6 +557,10 @@ class WorkAnalysisSubgraph:
                 state.get("policy_confirmation_receipts", []),
             ),
             based_on=based_on,
+            duplicate_conflict_assessment=cast(
+                DuplicateConflictAssessmentV1,
+                state.get("duplicate_conflict_assessment"),
+            ),
         )
         if override_kind is not None:
             return self._resolve_confirmation(
@@ -702,9 +712,7 @@ class WorkAnalysisSubgraph:
         *,
         disposition: str,
         signal: (
-            RetrievalRequiredV1
-            | RequestReconsiderationRequiredV1
-            | RouteReconsiderationRequiredV1
+            RetrievalRequiredV1 | RequestReconsiderationRequiredV1 | RouteReconsiderationRequiredV1
         ),
     ) -> WorkAnalysisLocalState:
         reason_codes = signal["reason_codes"]
@@ -770,7 +778,8 @@ class WorkAnalysisSubgraph:
     ) -> WorkAnalysisLocalState:
         del question, reason_code, options, policy_confirmation
         working = cast(WorkAnalysisLocalState, dict(state))
-        if not isinstance(working.get("user_interrupt"), Mapping):
+        raw_interrupt = working.get("user_interrupt")
+        if not isinstance(raw_interrupt, Mapping):
             raise ValueError("Work Analysis confirmation must be checkpointed by its producer node")
         response, early = self._confirm_inline(working)
         if early is not None:
@@ -785,21 +794,25 @@ class WorkAnalysisSubgraph:
         context["confirmation_response"] = dict(response)
         patch: dict[str, Any] = {}
         if origin_target == "analysis.assess_information_gaps":
-            acknowledged = [
-                {**item, "requires_confirmation": False}
-                for item in cast(list[dict[str, object]], working.get("ambiguity_candidates", []))
-            ]
             patch.update(
                 {
-                    "ambiguity_candidates": cast(Any, acknowledged),
-                    "relation_validation_ambiguities": cast(Any, acknowledged),
-                    "__analysis_information_gap_assessment__": {
-                        "disposition": "COMPLETE",
-                        "ambiguities": acknowledged,
-                        "retrieval_needs": [],
-                        "evidence_refs": list(working.get("evidence_refs", [])),
+                    "information_gap_confirmation_resolution": {
+                        "schema_version": 1,
+                        "reason_code": str(raw_interrupt.get("reason_code", "")),
+                        "question": str(raw_interrupt.get("question", "")),
+                        "affected_field_paths": [
+                            item
+                            for item in cast(
+                                list[object], raw_interrupt.get("affected_field_paths", [])
+                            )
+                            if isinstance(item, str)
+                        ],
+                        "response": dict(response),
+                        "prior_ambiguities": [
+                            dict(item) for item in working.get("ambiguity_candidates", [])
+                        ],
                     },
-                    "__analysis_noncomplete_disposition__": "RESUME_RISKS",
+                    "__analysis_noncomplete_disposition__": "RESUME_INFORMATION_GAPS",
                 }
             )
         else:

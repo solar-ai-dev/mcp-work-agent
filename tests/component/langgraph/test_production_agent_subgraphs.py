@@ -1251,7 +1251,7 @@ def test_current_evidence__through_compiled_work_analysis__reenters_request_owne
 
     signal = result["request_reconsideration"]
     assert result["__target__"] == "REQUEST_UNDERSTANDING"
-    assert result["work_analysis_result"] is None
+    assert result.get("work_analysis_result") is None
     assert signal["based_on_request_intent"] == {
         "artifact_id": "intent-1",
         "revision": 1,
@@ -1296,6 +1296,8 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
             "status": "needsAction",
             "due": None,
             "source_version_ref": None,
+            "notes": None,
+            "notes_truncated": False,
         },
         {
             "candidate_ref": "task:existing-1",
@@ -1306,6 +1308,8 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
             "status": "needsAction",
             "due": None,
             "source_version_ref": None,
+            "notes": None,
+            "notes_truncated": False,
         },
     ]
     state["retrieval_result"] = cast(Any, retrieval)
@@ -1345,6 +1349,7 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     assert llm.calls == [
         "work_analysis.extract_work_facts",
         "work_analysis.detect_duplicate_conflict_candidates",
+        "work_analysis.assess_action_necessity",
         "work_analysis.assess_information_gaps",
         "work_analysis.assess_operational_risks",
     ]
@@ -1466,6 +1471,82 @@ def test_request_confirmation__interrupts_and_resumes__same_owner() -> None:
     assert resumed["request_intent"]["goal"] == "schedule team sync"
     assert graph.get_state(config).next == ()
     assert llm.calls.count("request_understanding.identify_goal") == 2
+
+
+def test_reconsideration_confirmation__preserves_prior_intent__and_revises_artifact() -> None:
+    llm = _ComponentInferencePort(request_confirmation=True)
+
+    def confirm_inline(
+        state: Mapping[str, object],
+    ) -> tuple[ConfirmationResponseProjectionV1, None]:
+        user_interrupt = cast(Mapping[str, object], state["user_interrupt"])
+        resume = interrupt(
+            {
+                "semantic_owner_id": "REQUEST_UNDERSTANDING",
+                "origin_target": user_interrupt["origin_target"],
+            }
+        )
+        return cast(ConfirmationResponseProjectionV1, resume["confirmation_response"]), None
+
+    request_graph = RequestUnderstandingSubgraph(
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=confirm_inline,
+    ).build()
+    wrapper = StateGraph(GraphState)
+    wrapper.add_node("request_understanding", request_graph)
+    wrapper.add_edge(START, "request_understanding")
+    wrapper.add_edge("request_understanding", END)
+    graph = wrapper.compile(checkpointer=InMemorySaver())
+    config: RunnableConfig = {"configurable": {"thread_id": "reconsider-confirm-thread"}}
+    state = _state()
+    state["request_intent"] = cast(Any, _intent())
+    state["request_reconsideration"] = cast(
+        Any,
+        {
+            "kind": "REQUEST_RECONSIDERATION_REQUIRED",
+            "reason_codes": ["OBSERVED_SOURCE_CONTRADICTS_INTENT"],
+            "based_on_request_intent": {
+                "artifact_id": "intent-1",
+                "revision": 1,
+                "based_on": [],
+            },
+            "observations": [
+                {
+                    "evidence_ref": "ev-1",
+                    "resource_ref": "gmail_message:message-1",
+                    "excerpt": "current observation",
+                }
+            ],
+        },
+    )
+
+    with provider_dispatch_execution_scope():
+        graph.invoke(state, config)
+        resumed = graph.invoke(
+            Command(
+                resume={
+                    "confirmation_response": {
+                        "schema_version": 1,
+                        "response_kind": "FREE_TEXT",
+                        "selected_option": None,
+                        "free_text": "team sync tomorrow",
+                    }
+                }
+            ),
+            config,
+        )
+
+    assert resumed["request_intent"]["meta"] == {
+        "artifact_id": "intent-1",
+        "revision": 2,
+        "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+    }
 
 
 @pytest.mark.parametrize(

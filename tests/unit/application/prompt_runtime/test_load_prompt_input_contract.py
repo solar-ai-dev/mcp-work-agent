@@ -109,6 +109,7 @@ def test_work_analysis_contracts__accept_current__observation_projections() -> N
             "evidence": [],
             "source_statuses": [],
             "task_review_candidates": [],
+            "duplicate_conflict_assessment": {},
         },
     )
     contract.validate_projection(

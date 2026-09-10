@@ -780,11 +780,12 @@ class PlanningSubgraph:
         if "work_analysis" not in working and state.get("work_analysis_result") is not None:
             working["work_analysis"] = cast(Any, state["work_analysis_result"])
         plan = state.get("tool_route_plan")
-        if "output_plan" not in working and isinstance(plan, Mapping):
-            projected_output_plan = plan.get("output_plan")
-            if isinstance(projected_output_plan, Mapping):
-                working["output_plan"] = dict(projected_output_plan)
-        output_plan = working.get("output_plan")
+        frozen_output_plan = plan.get("output_plan") if isinstance(plan, Mapping) else None
+        output_plan = (
+            frozen_output_plan
+            if isinstance(frozen_output_plan, Mapping)
+            else working.get("output_plan")
+        )
         analysis = working.get("work_analysis")
         if isinstance(output_plan, Mapping):
             working["output_plan"] = select_required_output_routes(
@@ -826,22 +827,35 @@ class PlanningSubgraph:
         for raw in evidence:
             item = dict(raw)
             handle = item.get("resource_handle")
+            evidence_ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
             locator = item.get("locator")
             if isinstance(locator, Mapping) and "draft_snapshot" in locator:
                 safe_locator = dict(locator)
                 legacy_snapshot = safe_locator.pop("draft_snapshot")
                 item["locator"] = safe_locator
-                if isinstance(handle, str) and isinstance(legacy_snapshot, Mapping):
-                    snapshots[handle] = dict(legacy_snapshot)
+                if (
+                    isinstance(evidence_ref, str)
+                    and evidence_ref
+                    and isinstance(legacy_snapshot, Mapping)
+                ):
+                    snapshots[evidence_ref] = dict(legacy_snapshot)
             if (
                 isinstance(handle, str)
                 and handle.startswith("gmail_draft:")
-                and handle not in snapshots
+                and isinstance(evidence_ref, str)
+                and evidence_ref
+                and evidence_ref not in snapshots
                 and self._evidence_store is not None
             ):
-                snapshots[handle] = self._evidence_store.resolve_resource_snapshot(
+                source_version_ref = (
+                    locator.get("source_version_ref") if isinstance(locator, Mapping) else None
+                )
+                if source_version_ref is not None and not isinstance(source_version_ref, str):
+                    raise ValueError("Draft evidence source version is invalid")
+                snapshots[evidence_ref] = self._evidence_store.resolve_resource_snapshot(
                     run_id=state["run_id"],
                     resource_handle=handle,
+                    source_version_ref=source_version_ref,
                 )
             projected.append(item)
         return projected, snapshots

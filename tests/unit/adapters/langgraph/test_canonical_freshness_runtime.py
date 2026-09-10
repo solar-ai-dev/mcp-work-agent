@@ -9,6 +9,8 @@ from google_work_agent.adapters.langgraph.main.state import (
     WorkflowPhase,
 )
 from google_work_agent.adapters.langgraph.main.supervisor_artifact_revisions import (
+    artifact_freshness_violation,
+    input_plan_reuse_is_current,
     invalidate_stale_downstream,
 )
 from google_work_agent.adapters.langgraph.main.supervisor_decision import (
@@ -46,6 +48,82 @@ def test_intent_revision__with_existing_downstream__invalidates_all_artifacts() 
     ]
     current_values = cast(dict[str, object], current)
     assert all(current_values[field] is None for field in invalidated)
+
+
+def test_output_only_intent_revision__preserves_input_observation__and_invalidates_dependents() -> (
+    None
+):
+    previous = _state_with_reusable_input_observation()
+    current = deepcopy(previous)
+    intent = cast(dict[str, object], current["request_intent"])
+    intent["meta"] = _meta("intent-1", 2)
+    intent["goal"] = "Create the task only when the observed work remains outstanding."
+    intent["completion_conditions"] = ["Preview only when action remains necessary."]
+
+    invalidated = invalidate_stale_downstream(previous=previous, current=current)
+
+    assert invalidated == [
+        "work_analysis_result",
+        "planning_result",
+        "plan_review",
+        "approved_plan_id",
+    ]
+    assert current["tool_route_plan"] == previous["tool_route_plan"]
+    assert current["acquisition_result"] == previous["acquisition_result"]
+    assert current["retrieval_result"] == previous["retrieval_result"]
+    assert input_plan_reuse_is_current(current)
+
+
+def test_input_semantics_revision__invalidates_input_observation__and_clears_reuse() -> None:
+    previous = _state_with_reusable_input_observation()
+    current = deepcopy(previous)
+    intent = cast(dict[str, object], current["request_intent"])
+    intent["meta"] = _meta("intent-1", 2)
+    responsibilities = cast(dict[str, object], intent["resource_responsibilities"])
+    responsibilities["source_reads"] = [
+        {"resource_type": "CALENDAR_EVENT", "required_information": ["conflicts"]}
+    ]
+
+    invalidated = invalidate_stale_downstream(previous=previous, current=current)
+
+    assert invalidated == [
+        "tool_route_plan",
+        "acquisition_result",
+        "retrieval_result",
+        "work_analysis_result",
+        "planning_result",
+        "plan_review",
+        "approved_plan_id",
+    ]
+    assert current.get("input_plan_reuse") is None
+
+
+def test_rebuilt_output_plan__with_reused_input_plan__keeps_retrieval_fresh() -> None:
+    previous = _state_with_reusable_input_observation()
+    current = deepcopy(previous)
+    intent = cast(dict[str, object], current["request_intent"])
+    intent["meta"] = _meta("intent-1", 2)
+    intent["goal"] = "Create the task only when the observed work remains outstanding."
+    intent["completion_conditions"] = ["Preview only when action remains necessary."]
+    invalidate_stale_downstream(previous=previous, current=current)
+
+    routed = deepcopy(current)
+    plan = cast(dict[str, object], routed["tool_route_plan"])
+    plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": {
+            "artifact_id": "output-1",
+            "revision": 2,
+            "based_on": [{"artifact_id": "intent-1", "revision": 2}],
+        },
+        "output_mode": "ANSWER",
+    }
+    invalidated = invalidate_stale_downstream(previous=current, current=routed)
+
+    assert invalidated == []
+    assert routed["retrieval_result"] is not None
+    assert input_plan_reuse_is_current(routed)
+    assert artifact_freshness_violation(WorkflowPhase.WORK_ANALYSIS, routed) is None
 
 
 def test_retrieval_revision__with_existing_downstream__invalidates_dependent_artifacts() -> None:
@@ -193,6 +271,63 @@ def _state() -> GraphState:
             "trace_context": {},
         },
     )
+
+
+def _state_with_reusable_input_observation() -> GraphState:
+    state = _state()
+    state["request_intent"] = cast(
+        object,
+        {
+            "schema_version": 2,
+            "meta": _meta("intent-1", 1),
+            "goal": "Create a task when needed.",
+            "completion_conditions": ["Produce a safe result."],
+            "constraints": [],
+            "resource_responsibilities": {
+                "source_reads": [{"resource_type": "TASK", "required_information": ["duplicates"]}],
+                "outputs": [{"resource_type": "TASK", "effect": "CREATE"}],
+            },
+        },
+    )
+    state["tool_route_plan"] = cast(
+        object,
+        {
+            "schema_version": 2,
+            "input_plan": {
+                "schema_version": 1,
+                "meta": {
+                    "artifact_id": "input-1",
+                    "revision": 1,
+                    "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+                },
+                "input_routes": [{"route_id": "task-read"}],
+            },
+            "output_plan": {
+                "schema_version": 1,
+                "meta": {
+                    "artifact_id": "output-1",
+                    "revision": 1,
+                    "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+                },
+                "output_mode": "ACTION",
+                "output_routes": [],
+            },
+        },
+    )
+    state["retrieval_result"] = cast(
+        object,
+        {
+            "meta": {
+                "artifact_id": "retrieval-1",
+                "revision": 1,
+                "based_on": [
+                    {"artifact_id": "intent-1", "revision": 1},
+                    {"artifact_id": "input-1", "revision": 1},
+                ],
+            }
+        },
+    )
+    return state
 
 
 def _meta(artifact_id: str, revision: int) -> dict[str, object]:

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     RouteActionNecessityV1,
     WorkAmbiguityV1,
     WorkRelationV1,
     WorkRiskV1,
+)
+from google_work_agent.ports.system.contracts.confirmation import (
+    ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
@@ -48,6 +51,15 @@ class InformationGapAssessmentV1(TypedDict):
     question: NotRequired[str]
     options: NotRequired[list[str]]
     reason_codes: NotRequired[list[str]]
+
+
+class InformationGapConfirmationResolutionV1(TypedDict):
+    schema_version: Required[Literal[1]]
+    reason_code: str
+    question: str
+    affected_field_paths: list[str]
+    response: ConfirmationResponseProjectionV1
+    prior_ambiguities: list[WorkAmbiguityV1]
 
 
 class OperationalRiskAssessmentV1(TypedDict):

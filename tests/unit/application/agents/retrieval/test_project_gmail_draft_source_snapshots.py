@@ -36,8 +36,11 @@ def test_snapshot_projection__preserves_empty_and_null__without_filling_omission
         },
     )
 
-    snapshot = project_gmail_draft_source_snapshots(result)["gmail_draft:draft-1"]
+    observation = project_gmail_draft_source_snapshots(result)[0]
+    snapshot = observation["snapshot"]
 
+    assert observation["resource_handle"] == "gmail_draft:draft-1"
+    assert observation["source_version_ref"].startswith("sha256:")
     assert snapshot["to"] == []
     assert snapshot["thread_id"] is None
     assert snapshot["references"] == ""

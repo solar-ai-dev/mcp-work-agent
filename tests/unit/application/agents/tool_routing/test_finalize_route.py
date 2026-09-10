@@ -92,3 +92,69 @@ def test_finalize_route__selection_outside_bound_set__blocks() -> None:
     assert result["disposition"] == "BLOCKED"
     assert result["tool_route_plan"] is None
     assert any("outside the bound eligible set" in reason for reason in result["reason_codes"])
+
+
+def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None:
+    catalog = _catalog()
+    ids = iter(f"id-{index}" for index in range(30))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            ("TASK", "TASK_LIST"),
+            (("TASK", EffectType.CREATE),),
+            "ACTION",
+            "REQUIRED",
+            (
+                ("TASK", "POLICY_TASK_DUPLICATE_CHECK"),
+                ("TASK_LIST", "POLICY_TASK_DUPLICATE_CHECK"),
+            ),
+        ),
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+    )
+    first_intent: RequestIntentV2 = {
+        "schema_version": 2,
+        "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
+        "goal": "create task when needed",
+        "completion_conditions": ["safe preview"],
+        "constraints": [],
+        "requested_effect_hints": ["CREATE"],
+        "requested_resource_hints": ["TASK"],
+        "analysis_requirement": "REQUIRED",
+        "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+    }
+    first = finalize_route(
+        request_intent=first_intent,
+        binding=binding,
+        selected_tools={("TASK", "CREATE"): "tasks_create_task"},
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+    )
+    first_plan = first["tool_route_plan"]
+    assert first_plan is not None
+    revised_intent: RequestIntentV2 = {
+        **first_intent,
+        "meta": {
+            "artifact_id": "intent-1",
+            "revision": 2,
+            "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+        },
+        "completion_conditions": ["no action when already satisfied"],
+    }
+
+    revised = finalize_route(
+        request_intent=revised_intent,
+        binding=binding,
+        selected_tools={("TASK", "CREATE"): "tasks_create_task"},
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+        previous_plan=first_plan,
+        reuse_input_plan=True,
+    )
+
+    revised_plan = revised["tool_route_plan"]
+    assert revised_plan is not None
+    assert revised_plan["input_plan"] == first_plan["input_plan"]
+    assert revised_plan["output_plan"]["meta"]["revision"] == 2
+    assert revised_plan["output_plan"]["meta"]["based_on"] == [
+        {"artifact_id": "intent-1", "revision": 2}
+    ]

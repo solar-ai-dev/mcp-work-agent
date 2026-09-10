@@ -94,7 +94,7 @@ def _entry(source: str = "Do the bounded work.\n") -> PromptMirrorEntry:
     )
 
 
-def test_prompt_identifier_is_stable_and_collision_resistant() -> None:
+def test_prompt_identifier__for_slot_and_model__is_stable_and_collision_resistant() -> None:
     first = prompt_identifier("google-work-agent", "request_understanding.identify_goal")
     second = prompt_identifier("google-work-agent", "request-understanding.identify-goal")
 
@@ -102,7 +102,7 @@ def test_prompt_identifier_is_stable_and_collision_resistant() -> None:
     assert first != second
 
 
-def test_build_prompt_entry_keeps_source_exact_and_binds_manifest_metadata() -> None:
+def test_build_prompt_entry__with_manifest_slot__keeps_source_and_metadata() -> None:
     entry = _entry("Keep literal {json} unchanged.\n")
 
     message = entry.prompt.invoke({}).to_messages()[0]
@@ -113,7 +113,7 @@ def test_build_prompt_entry_keeps_source_exact_and_binds_manifest_metadata() -> 
     assert entry.prompt.metadata["prompt_version"] == "1.0.52"
 
 
-def test_mirror_prompt_creates_once_and_then_is_unchanged() -> None:
+def test_mirror_prompt__after_initial_create__is_unchanged() -> None:
     client = _PromptClient()
     entry = _entry()
 
@@ -128,7 +128,7 @@ def test_mirror_prompt_creates_once_and_then_is_unchanged() -> None:
     assert dumps(client.prompts[entry.identifier]) == dumps(entry.prompt)
 
 
-def test_mirror_prompt_ignores_langsmith_hub_metadata() -> None:
+def test_mirror_prompt__with_hub_metadata__ignores_non_source_fields() -> None:
     client = _PromptClient()
     entry = _entry()
     mirror_prompt(client, entry, apply=True)
@@ -142,7 +142,7 @@ def test_mirror_prompt_ignores_langsmith_hub_metadata() -> None:
     assert client.pushes == 1
 
 
-def test_mirror_prompt_creates_new_commit_when_source_changes() -> None:
+def test_mirror_prompt__when_source_changes__creates_new_commit() -> None:
     client = _PromptClient()
     first = _entry("First source.\n")
     changed = _entry("Changed source.\n")

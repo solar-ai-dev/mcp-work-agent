@@ -19,6 +19,9 @@ from google_work_agent.application.agents.retrieval.contracts.segment_identity i
 from google_work_agent.application.agents.retrieval.format_calendar_freebusy_evidence import (
     format_calendar_freebusy_evidence,
 )
+from google_work_agent.application.agents.retrieval.project_gmail_draft_source_snapshots import (
+    gmail_draft_source_version_ref,
+)
 from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
     strip_resource_recovery_marker,
 )
@@ -141,6 +144,13 @@ def normalize_segments(
                             "position": source_position,
                             "chunk_index": index,
                             "chunk_count": len(chunks),
+                            **(
+                                {
+                                    "source_version_ref": gmail_draft_source_version_ref(raw)
+                                }
+                                if resource_type == "gmail_draft"
+                                else {}
+                            ),
                             **cast(dict[str, object], raw.get("_message_locator", {})),
                         },
                         text=normalized_chunk,

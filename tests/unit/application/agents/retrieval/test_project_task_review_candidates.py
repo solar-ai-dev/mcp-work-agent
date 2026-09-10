@@ -24,7 +24,7 @@ def _result(resources: list[dict[str, object]]) -> AcquisitionResultV1:
     )
 
 
-def _task(*, title: str) -> dict[str, object]:
+def _task(*, title: str, notes: str | None = None) -> dict[str, object]:
     return {
         "resource_handle": "task:task-1",
         "resource_type": "task",
@@ -35,6 +35,7 @@ def _task(*, title: str) -> dict[str, object]:
             "title": title,
             "status": "needsAction",
             "due": "2026-08-10T00:00:00.000Z",
+            "notes": notes,
         },
     }
 
@@ -51,6 +52,8 @@ def test_task_candidates__preserve_bounded_observation__and_dedupe_identity() ->
             "title": "Ion",
             "status": "needsAction",
             "due": "2026-08-10T00:00:00.000Z",
+            "notes": None,
+            "notes_truncated": False,
             "source_version_ref": "v1",
         }
     ]
@@ -58,6 +61,13 @@ def test_task_candidates__preserve_bounded_observation__and_dedupe_identity() ->
 
 def test_task_candidates__reject_conflicting_observations__for_same_identity() -> None:
     with pytest.raises(ValueError, match="conflicting observations"):
-        project_task_review_candidates(
-            _result([_task(title="Ion"), _task(title="Different")])
-        )
+        project_task_review_candidates(_result([_task(title="Ion"), _task(title="Different")]))
+
+
+def test_task_candidates__with_long_notes__carry_bounded_semantic_context() -> None:
+    notes = "different work detail " * 100
+
+    candidate = project_task_review_candidates(_result([_task(title="Ion", notes=notes)]))[0]
+
+    assert candidate["notes"] == notes.strip()[:1200]
+    assert candidate["notes_truncated"] is True

@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypedDict, cast
 
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
+)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     RouteActionNecessityV1,
     StateArtifactRefV1,
@@ -25,6 +28,7 @@ class AssembleWorkAnalysisInput(TypedDict):
     evidence_refs: list[str]
     route_action_necessities: list[RouteActionNecessityV1]
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1
 
 
 def project_assemble_work_analysis_input(
@@ -70,6 +74,9 @@ def project_assemble_work_analysis_input(
         ),
         "policy_confirmation_receipts": cast(
             list[PolicyConfirmationReceiptV1], state.get("policy_confirmation_receipts", [])
+        ),
+        "duplicate_conflict_assessment": cast(
+            DuplicateConflictAssessmentV1, state["duplicate_conflict_assessment"]
         ),
     }
 

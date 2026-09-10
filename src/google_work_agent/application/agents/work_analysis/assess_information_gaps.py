@@ -11,6 +11,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     InformationGapAssessmentV1,
+    InformationGapConfirmationResolutionV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     RouteActionNecessityV1,
@@ -104,7 +105,7 @@ def assess_information_gaps(
     prompt_ref: PromptReference,
     allowed_evidence_refs: set[str],
     requested_mode: RequestedModeV1,
-    confirmation_response: dict[str, object] | None = None,
+    confirmation_resolution: InformationGapConfirmationResolutionV1 | None = None,
     source_statuses: Sequence[Mapping[str, object]] = (),
     route_action_necessities: Sequence[RouteActionNecessityV1] = (),
 ) -> InformationGapAssessmentV1:
@@ -117,8 +118,8 @@ def assess_information_gaps(
         "source_statuses": [dict(item) for item in source_statuses],
         "route_action_necessities": [dict(item) for item in route_action_necessities],
     }
-    if confirmation_response is not None:
-        prompt_input["confirmation_response"] = dict(confirmation_response)
+    if confirmation_resolution is not None:
+        prompt_input["confirmation_resolution"] = dict(confirmation_resolution)
     output_schema = _bound_output_schema(allowed_evidence_refs)
 
     def validate(value: object) -> object:
@@ -168,10 +169,28 @@ def combine_information_gap_assessment(
     *,
     assessment: InformationGapAssessmentV1,
     relation_ambiguities: Sequence[WorkAmbiguityV1],
+    confirmation_resolution: InformationGapConfirmationResolutionV1 | None = None,
 ) -> InformationGapAssessmentV1:
     """Combine owner decisions without erasing a newly discovered user choice."""
 
-    ambiguities = [*relation_ambiguities, *assessment["ambiguities"]]
+    resolved_code = (
+        confirmation_resolution["reason_code"]
+        if confirmation_resolution is not None
+        else None
+    )
+    prior = (
+        confirmation_resolution["prior_ambiguities"]
+        if confirmation_resolution is not None
+        else []
+    )
+    newly_assessed = [dict(item) for item in assessment["ambiguities"]]
+    new_codes = {item["code"] for item in newly_assessed}
+    retained = [
+        dict(item)
+        for item in [*relation_ambiguities, *prior]
+        if item["code"] != resolved_code and item["code"] not in new_codes
+    ]
+    ambiguities = [*retained, *newly_assessed]
     if assessment["disposition"] == "COMPLETE" and any(
         item["requires_confirmation"] for item in ambiguities
     ):

@@ -28,7 +28,7 @@ def assess_information_gaps_node(
     requested_mode: RequestedModeV1,
 ) -> WorkAnalysisStateV2:
     assessment = assess_information_gaps(
-        **project_assess_information_gaps_input(state),
+        **(projected := project_assess_information_gaps_input(state)),
         llm_runtime=llm_runtime,
         prompt_ref=prompt_ref,
         requested_mode=requested_mode,
@@ -38,6 +38,7 @@ def assess_information_gaps_node(
         relation_ambiguities=cast(
             list[WorkAmbiguityV1], state.get("relation_validation_ambiguities", [])
         ),
+        confirmation_resolution=projected["confirmation_resolution"],
     )
     assessment = require_resolution_for_undetermined_action(
         assessment=assessment,

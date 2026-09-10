@@ -343,9 +343,7 @@ def _respond(
                 "requested_work_status": "SATISFIED",
                 "requested_work_reason": "The current Task already fulfils the request",
                 "matched_fact_ids": [str(fact["fact_id"])],
-                "matched_candidate_refs": [
-                    str(item["candidate_ref"]) for item in task_candidates
-                ],
+                "matched_candidate_refs": [str(item["candidate_ref"]) for item in task_candidates],
                 "evidence_refs": refs,
             }
         return {
@@ -360,14 +358,32 @@ def _respond(
         }
     if prompt_id == "work_analysis.assess_action_necessity":
         routes = cast(list[Mapping[str, object]], base["output_routes"])
+        duplicate_assessment = cast(
+            Mapping[str, object], base.get("duplicate_conflict_assessment", {})
+        )
+        duplicate_satisfied = duplicate_assessment.get("requested_work_status") == "SATISFIED"
+        evidence_refs = (
+            list(cast(list[str], duplicate_assessment.get("evidence_refs", [])))
+            if duplicate_satisfied
+            else []
+        )
+        candidate_refs = (
+            list(cast(list[str], duplicate_assessment.get("matched_candidate_refs", [])))
+            if duplicate_satisfied
+            else []
+        )
         return {
             "route_assessments": [
                 {
                     "route_id": str(route["route_id"]),
-                    "status": "REQUIRED",
-                    "reason": "THE_REQUESTED_EXTERNAL_EFFECT_IS_NOT_YET_SATISFIED",
-                    "evidence_refs": [],
-                    "candidate_refs": [],
+                    "status": "NOT_REQUIRED" if duplicate_satisfied else "REQUIRED",
+                    "reason": (
+                        "THE_REQUESTED_EXTERNAL_EFFECT_IS_ALREADY_SATISFIED"
+                        if duplicate_satisfied
+                        else "THE_REQUESTED_EXTERNAL_EFFECT_IS_NOT_YET_SATISFIED"
+                    ),
+                    "evidence_refs": evidence_refs,
+                    "candidate_refs": candidate_refs,
                 }
                 for route in routes
             ]

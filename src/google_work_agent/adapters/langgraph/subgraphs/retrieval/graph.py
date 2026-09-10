@@ -707,13 +707,12 @@ class RetrievalSubgraph:
         acquisition_result = _require_state_value(
             working_state["acquisition_result"], "acquisition_result"
         )
-        for handle, snapshot in project_gmail_draft_source_snapshots(
-            acquisition_result
-        ).items():
+        for observation in project_gmail_draft_source_snapshots(acquisition_result):
             self._evidence_store.put_resource_snapshot(
                 run_id=state["run_id"],
-                resource_handle=handle,
-                snapshot=snapshot,
+                resource_handle=observation["resource_handle"],
+                source_version_ref=observation["source_version_ref"],
+                snapshot=observation["snapshot"],
             )
         patch = normalize_segments_node(
             cast(

@@ -9,7 +9,12 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     AcquisitionResultV1,
     TaskReviewCandidateV1,
 )
+from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
+    strip_resource_recovery_marker,
+)
 from google_work_agent.ports.connector.contracts.resource_snapshot import ResourceType
+
+_MAX_REVIEW_NOTES_CHARS = 1200
 
 
 def project_task_review_candidates(
@@ -35,6 +40,7 @@ def project_task_review_candidates(
             payload = resource.get("payload")
             values = payload if isinstance(payload, Mapping) else {}
             parent_id = resource.get("parent_id")
+            notes, notes_truncated = _bounded_notes(values.get("notes"))
             candidate = TaskReviewCandidateV1(
                 candidate_ref=handle,
                 route_id=route_id,
@@ -43,6 +49,8 @@ def project_task_review_candidates(
                 title=_optional_text(values.get("title")),
                 status=_optional_text(values.get("status")),
                 due=_optional_text(values.get("due")),
+                notes=notes,
+                notes_truncated=notes_truncated,
                 source_version_ref=_optional_text(resource.get("version")),
             )
             prior = candidates.get(handle)
@@ -54,6 +62,18 @@ def project_task_review_candidates(
 
 def _optional_text(value: object) -> str | None:
     return cast(str, value) if isinstance(value, str) else None
+
+
+def _bounded_notes(value: object) -> tuple[str | None, bool]:
+    if not isinstance(value, str):
+        return None, False
+    visible = strip_resource_recovery_marker(value)
+    if visible is None:
+        return None, False
+    normalized = visible.strip()
+    if not normalized:
+        return None, False
+    return normalized[:_MAX_REVIEW_NOTES_CHARS], len(normalized) > _MAX_REVIEW_NOTES_CHARS
 
 
 __all__ = ["project_task_review_candidates"]

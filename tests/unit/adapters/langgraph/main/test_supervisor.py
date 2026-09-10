@@ -89,7 +89,7 @@ def test_request_complete__routes_to__tool_route() -> None:
     assert decision["state_update"]["finalize_intent"] is None
 
 
-def test_current_evidence__reenters_request_owner__and_invalidates_dependents() -> None:
+def test_current_evidence__reenters_request_owner__before_meaning_is_revised() -> None:
     intent = _request_intent()
     state = _state(
         workflow_phase=WorkflowPhase.WORK_ANALYSIS,
@@ -123,10 +123,10 @@ def test_current_evidence__reenters_request_owner__and_invalidates_dependents() 
     assert decision["target"] == SupervisorTarget.REQUEST_UNDERSTANDING.value
     assert decision["next_phase"] == WorkflowPhase.REQUEST_ANALYSIS.value
     assert decision["state_update"]["request_reconsideration"] == signal
-    assert decision["state_update"]["tool_route_plan"] is None
-    assert decision["state_update"]["retrieval_result"] is None
-    assert decision["state_update"]["work_analysis_result"] is None
-    assert decision["state_update"]["planning_result"] is None
+    assert "tool_route_plan" not in decision["state_update"]
+    assert "retrieval_result" not in decision["state_update"]
+    assert "work_analysis_result" not in decision["state_update"]
+    assert "planning_result" not in decision["state_update"]
 
 
 def test_stale_request_reconsideration__from_work_analysis__routes_recovery() -> None:

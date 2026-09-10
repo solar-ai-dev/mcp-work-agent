@@ -332,7 +332,6 @@ class RequestUnderstandingSubgraph:
             prompt_context.pop("confirmation_interrupt", None)
             return {
                 "final_intent": None,
-                "request_intent": None,
                 "user_interrupt": None,
                 "prompt_context": prompt_context,
                 "trace_context": trace_context,

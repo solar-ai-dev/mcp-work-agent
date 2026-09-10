@@ -194,6 +194,8 @@ class TaskReviewCandidateV1(TypedDict):
     title: str | None
     status: str | None
     due: str | None
+    notes: NotRequired[str | None]
+    notes_truncated: NotRequired[bool]
     source_version_ref: str | None
 
 

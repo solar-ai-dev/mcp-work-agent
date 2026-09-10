@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 from google_work_agent.adapters.langgraph.subgraphs.planning.graph import (
     PlanningRuntimeDependencies,
@@ -147,6 +147,60 @@ def test_compiled_planning__action_executes_exact__four_node_path() -> None:
         "planning.draft_action_objective_per_output_route",
         "planning.compose_arguments_per_output_route",
     ]
+
+
+def test_planning_runtime_projection__repeated_call__uses_frozen_output_route_coverage() -> None:
+    routes = [
+        {
+            "route_id": "required-route",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "effect": "CREATE",
+            "selected_tool_id": "tasks_create_task",
+            "reason_codes": [],
+        },
+        {
+            "route_id": "satisfied-route",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "effect": "CREATE",
+            "selected_tool_id": "tasks_create_task",
+            "reason_codes": [],
+        },
+    ]
+    state = {
+        "tool_route_plan": {"output_plan": {"output_mode": "ACTION", "output_routes": routes}},
+        "work_analysis": {
+            "route_action_necessities": [
+                {
+                    "route_id": "required-route",
+                    "status": "REQUIRED",
+                    "reason": "REQUEST_REMAINS_OUTSTANDING",
+                    "evidence_refs": [],
+                    "candidate_refs": [],
+                },
+                {
+                    "route_id": "satisfied-route",
+                    "status": "NOT_REQUIRED",
+                    "reason": "REQUEST_ALREADY_SATISFIED",
+                    "evidence_refs": ["ev-1"],
+                    "candidate_refs": ["task:existing"],
+                },
+            ]
+        },
+        "evidence": [],
+    }
+    subgraph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=lambda _prompt_id, _input: {})
+    )
+
+    first = subgraph._project_runtime_inputs(cast(Any, state))  # noqa: SLF001
+    second = subgraph._project_runtime_inputs(first)  # noqa: SLF001
+
+    assert [route["route_id"] for route in first["output_plan"]["output_routes"]] == [
+        "required-route"
+    ]
+    assert second["output_plan"] == first["output_plan"]
 
 
 def test_compiled_review_revise__emits_bounded_planning__revision_signal_without_recheck() -> None:

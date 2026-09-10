@@ -22,6 +22,7 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     DuplicateConflictAssessmentV1,
     InformationGapAssessmentV1,
+    InformationGapConfirmationResolutionV1,
     OperationalRiskAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
@@ -59,6 +60,9 @@ class WorkAnalysisLocalState(GraphState):
     evidence_refs: NotRequired[list[str]]
     availability_results: NotRequired[list[dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
+    information_gap_confirmation_resolution: NotRequired[
+        InformationGapConfirmationResolutionV1 | None
+    ]
     fact_candidates: NotRequired[list[WorkFactV1]]
     entity_relation_candidates: NotRequired[list[WorkRelationV1]]
     temporal_dependency_candidates: NotRequired[list[WorkRelationV1]]
@@ -100,6 +104,7 @@ class WorkAnalysisStateV2(TypedDict, total=False):
 
 __all__ = [
     "WorkAnalysisInputState",
+    "InformationGapConfirmationResolutionV1",
     "WorkAnalysisLocalState",
     "WorkAnalysisStateV2",
 ]

@@ -24,7 +24,19 @@ def _duplicate(status: str) -> DuplicateConflictAssessmentV1:
 
 
 def test_task_create__duplicate_owner_satisfied__becomes_route_no_action() -> None:
-    runtime = WorkAnalysisRuntimeFake({})
+    runtime = WorkAnalysisRuntimeFake(
+        {
+            "route_assessments": [
+                {
+                    "route_id": "task-create",
+                    "status": "NOT_REQUIRED",
+                    "reason": "existing Task satisfies the request",
+                    "evidence_refs": [],
+                    "candidate_refs": ["task:1"],
+                }
+            ]
+        }
+    )
 
     result = assess_action_necessity(
         request_intent={},
@@ -48,7 +60,44 @@ def test_task_create__duplicate_owner_satisfied__becomes_route_no_action() -> No
 
     assert result["route_assessments"][0]["status"] == "NOT_REQUIRED"
     assert result["route_assessments"][0]["candidate_refs"] == ["task:1"]
-    assert runtime.calls == []
+    assert len(runtime.calls) == 1
+    assert runtime.calls[0]["prompt_input"]["duplicate_conflict_assessment"] == (
+        _duplicate("SATISFIED")
+    )
+
+
+def test_task_nonduplicate__still_uses_request_conditions__before_required() -> None:
+    runtime = WorkAnalysisRuntimeFake(
+        {
+            "route_assessments": [
+                {
+                    "route_id": "task-create",
+                    "status": "NOT_REQUIRED",
+                    "reason": "the user's stated condition is false",
+                    "evidence_refs": ["ev-condition"],
+                    "candidate_refs": [],
+                }
+            ]
+        }
+    )
+
+    result = assess_action_necessity(
+        request_intent={"completion_conditions": ["create only if the condition holds"]},
+        output_routes=[
+            {"route_id": "task-create", "resource_type": "TASK", "effect": "CREATE"}
+        ],
+        work_facts=[],
+        evidence=[],
+        source_statuses=[],
+        task_review_candidates=[],
+        duplicate_conflict_assessment=_duplicate("NOT_SATISFIED"),
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref("work_analysis.assess_action_necessity", "assess_action_necessity"),
+        allowed_evidence_refs={"ev-condition"},
+        requested_mode="AUTO",
+    )
+
+    assert result["route_assessments"][0]["status"] == "NOT_REQUIRED"
 
 
 def test_non_task_routes__are_assessed_independently__without_task_substitution() -> None:

@@ -210,6 +210,10 @@ def compose_arguments_per_output_route(
         refs = candidate.get("evidence_refs", [])
         if not isinstance(arguments, dict):
             raise ValueError("argument candidate requires business arguments")
+        if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
+            raise ValueError("argument candidate evidence_refs must be strings")
+        if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
+            raise PlanningArgumentBindingError("argument candidate references unavailable evidence")
         arguments = cast(
             dict[str, object],
             _restore_exact_argument_literals(
@@ -236,6 +240,7 @@ def compose_arguments_per_output_route(
             arguments=arguments,
             evidence=evidence,
             source_snapshots=source_snapshots or {},
+            selected_evidence_refs=refs,
         )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])
@@ -256,10 +261,6 @@ def compose_arguments_per_output_route(
                     raise PlanningArgumentBindingError(
                         "modification requires a valid planned date"
                     ) from error
-        if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
-            raise ValueError("argument candidate evidence_refs must be strings")
-        if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
-            raise PlanningArgumentBindingError("argument candidate references unavailable evidence")
         refs = list(
             dict.fromkeys(
                 [

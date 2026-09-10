@@ -134,7 +134,7 @@
       "prompt_slot_id": "work_analysis.assess_action_necessity",
       "runtime_node_id": "analysis.assess_action_necessity",
       "input_schema_version": 1,
-      "required_root_fields": ["request_intent", "output_routes", "work_facts", "evidence", "source_statuses", "task_review_candidates"],
+      "required_root_fields": ["request_intent", "output_routes", "work_facts", "evidence", "source_statuses", "task_review_candidates", "duplicate_conflict_assessment"],
       "optional_root_fields": [],
       "output_schema_version": 1
     },
@@ -143,7 +143,7 @@
       "runtime_node_id": "analysis.assess_information_gaps",
       "input_schema_version": 1,
       "required_root_fields": ["request_intent", "work_facts", "evidence", "source_statuses", "route_action_necessities"],
-      "optional_root_fields": ["confirmation_response"],
+      "optional_root_fields": ["confirmation_resolution"],
       "output_schema_version": 2
     },
     {

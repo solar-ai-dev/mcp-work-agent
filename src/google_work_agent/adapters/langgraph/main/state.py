@@ -39,6 +39,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
     PlanReviewResultV2,
 )
+from google_work_agent.application.agents.state_artifact import StateArtifactRefV1
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ScopeExpansionRequiredV1,
     ToolRoutePlanV2,
@@ -89,6 +90,7 @@ class GraphStateUpdateV1(TypedDict, total=False):
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: WorkflowSignalV1 | ScopeExpansionRequiredV1 | None
     request_reconsideration: RequestReconsiderationRequiredV1 | None
+    input_plan_reuse: InputPlanReuseV1 | None
     acquisition_result: AcquisitionResultV1 | None
     retrieval_result: RetrievalResultV1 | None
     work_analysis_result: WorkAnalysisResultV2 | None
@@ -144,6 +146,15 @@ class RunInputV1(TypedDict):
     default_github_repository: NotRequired[dict[str, object] | None]
 
 
+class InputPlanReuseV1(TypedDict):
+    """Proof that a frozen input plan still represents a revised Intent's IN semantics."""
+
+    schema_version: Required[Literal[1]]
+    input_plan_ref: StateArtifactRefV1
+    prior_request_intent_ref: StateArtifactRefV1
+    current_request_intent_ref: StateArtifactRefV1
+
+
 class ExecutionSummaryV1(TypedDict):
     """Domain-backed execution fact projected solely for Main routing."""
 
@@ -182,6 +193,7 @@ class GraphState(TypedDict, total=False):
     tool_route_plan: Required[ToolRoutePlanV2 | None]
     workflow_signal: Required[WorkflowSignalV1 | ScopeExpansionRequiredV1 | None]
     request_reconsideration: NotRequired[RequestReconsiderationRequiredV1 | None]
+    input_plan_reuse: NotRequired[InputPlanReuseV1 | None]
     acquisition_result: Required[AcquisitionResultV1 | None]
     retrieval_result: Required[RetrievalResultV1 | None]
     work_analysis_result: Required[WorkAnalysisResultV2 | None]
@@ -284,6 +296,7 @@ def initial_graph_state(
         "admitted_connector_ids": [],
         "workflow_signal": None,
         "request_reconsideration": None,
+        "input_plan_reuse": None,
         "acquisition_result": None,
         "retrieval_result": None,
         "work_analysis_result": None,

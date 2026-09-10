@@ -60,18 +60,46 @@ def test_exact_source_snapshot__is_run_scoped__and_discarded_with_evidence() -> 
     store.put_resource_snapshot(
         run_id="run-1",
         resource_handle="gmail_draft:draft-1",
+        source_version_ref="v1",
         snapshot=snapshot,
     )
 
     assert store.resolve_resource_snapshot(
-        run_id="run-1", resource_handle="gmail_draft:draft-1"
+        run_id="run-1", resource_handle="gmail_draft:draft-1", source_version_ref="v1"
     ) == snapshot
     with pytest.raises(EvidenceResolutionError):
         store.resolve_resource_snapshot(
-            run_id="run-2", resource_handle="gmail_draft:draft-1"
+            run_id="run-2", resource_handle="gmail_draft:draft-1", source_version_ref="v1"
         )
 
     store.discard_run(run_id="run-1")
+    with pytest.raises(EvidenceResolutionError):
+        store.resolve_resource_snapshot(
+            run_id="run-1", resource_handle="gmail_draft:draft-1", source_version_ref="v1"
+        )
+
+
+def test_source_snapshot__keeps_multiple_versions__for_one_resource() -> None:
+    store = RunScopedEvidenceStore()
+    store.put_resource_snapshot(
+        run_id="run-1",
+        resource_handle="gmail_draft:draft-1",
+        source_version_ref="v1",
+        snapshot={"body": "first"},
+    )
+    store.put_resource_snapshot(
+        run_id="run-1",
+        resource_handle="gmail_draft:draft-1",
+        source_version_ref="v2",
+        snapshot={"body": "second"},
+    )
+
+    assert store.resolve_resource_snapshot(
+        run_id="run-1", resource_handle="gmail_draft:draft-1", source_version_ref="v1"
+    ) == {"body": "first"}
+    assert store.resolve_resource_snapshot(
+        run_id="run-1", resource_handle="gmail_draft:draft-1", source_version_ref="v2"
+    ) == {"body": "second"}
     with pytest.raises(EvidenceResolutionError):
         store.resolve_resource_snapshot(
             run_id="run-1", resource_handle="gmail_draft:draft-1"

@@ -152,6 +152,49 @@ def test_write_gap__user_owned_choice__preserves_confirmation() -> None:
     )
 
 
+def test_confirmation_resolution__removes_only_answered_ambiguity__and_keeps_other_choice() -> None:
+    result = combine_information_gap_assessment(
+        assessment={
+            "disposition": "COMPLETE",
+            "ambiguities": [],
+            "retrieval_needs": [],
+            "evidence_refs": ["ev-1"],
+        },
+        relation_ambiguities=[],
+        confirmation_resolution={
+            "schema_version": 1,
+            "reason_code": "MISSING_TASK_LIST",
+            "question": "Which task list should be used?",
+            "affected_field_paths": ["task_list_id"],
+            "response": {
+                "schema_version": 1,
+                "response_kind": "OPTION",
+                "selected_option": "work",
+                "free_text": None,
+            },
+            "prior_ambiguities": [
+                {
+                    "code": "MISSING_TASK_LIST",
+                    "description": "A task list is required.",
+                    "requires_confirmation": True,
+                    "evidence_refs": [],
+                },
+                {
+                    "code": "MISSING_DUE_DATE",
+                    "description": "A due date is required.",
+                    "requires_confirmation": True,
+                    "evidence_refs": ["ev-1"],
+                },
+            ],
+        },
+    )
+
+    assert result["disposition"] == "NEEDS_CONFIRMATION"
+    assert [item["code"] for item in result["ambiguities"]] == ["MISSING_DUE_DATE"]
+    assert result["question"] == "A due date is required."
+    assert result["reason_codes"] == ["MISSING_DUE_DATE"]
+
+
 def test_undetermined_duplicate_review__returns_to_retrieval__without_user_confirmation() -> None:
     assessment: InformationGapAssessmentV1 = {
         "disposition": "COMPLETE",

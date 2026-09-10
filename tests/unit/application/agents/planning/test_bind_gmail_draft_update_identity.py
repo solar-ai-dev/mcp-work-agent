@@ -109,6 +109,60 @@ def test_gmail_draft_update__with_spaced_literal__restores_exact_value() -> None
     assert result["arguments"]["payload"]["body"] == f"기존 본문 {exact_sentence}"
 
 
+def test_gmail_draft_update__same_resource_versions__binds_selected_evidence_snapshot() -> None:
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {
+            **ROUTE,
+            "schema_version": 1,
+            "argument_schema": planning_tool_argument_schema("gmail_update_draft"),
+            "immutable_arguments": {},
+        },
+    )
+    evidence = [
+        {
+            "evidence_id": "draft-v1",
+            "resource_handle": "gmail_draft:draft-actual",
+            "locator": {"kind": "resource_payload", "source_version_ref": "v1"},
+        },
+        {
+            "evidence_id": "draft-v2",
+            "resource_handle": "gmail_draft:draft-actual",
+            "locator": {"kind": "resource_payload", "source_version_ref": "v2"},
+        },
+    ]
+
+    result = compose_arguments_per_output_route(
+        [ROUTE],
+        objectives=[
+            {
+                "schema_version": 1,
+                "route_id": "r1",
+                "objective": "Update the observed Draft",
+                "target_semantics": "GMAIL_DRAFT",
+                "scope_constraints": [],
+                "evidence_refs": ["draft-v2"],
+            }
+        ],
+        bound_tool_schemas=[bound],
+        request_intent={},
+        evidence=evidence,
+        source_snapshots={
+            "draft-v1": {**PAYLOAD, "body": "이전 본문"},
+            "draft-v2": {**PAYLOAD, "body": "현재 본문"},
+        },
+        invoke=lambda *_: {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": {"payload": {"body": "현재 본문\n추가 문장"}},
+            "evidence_refs": ["draft-v2"],
+        },
+    )[0]
+
+    assert result["arguments"]["payload"]["body"] == "현재 본문\n추가 문장"
+    assert result["evidence_refs"] == ["draft-v2"]
+
+
 def _compose(
     *,
     model_draft_id: str | None,
@@ -155,9 +209,7 @@ def _compose(
                 if evidence is None
                 else evidence
             ),
-            source_snapshots={
-                "gmail_draft:draft-actual": {**PAYLOAD, "body": "기존 본문"}
-            },
+            source_snapshots={"draft-evidence": {**PAYLOAD, "body": "기존 본문"}},
             invoke=lambda *_: {
                 "schema_version": 1,
                 "route_id": "r1",

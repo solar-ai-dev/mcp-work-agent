@@ -16,12 +16,14 @@ def bind_gmail_draft_update_identity(
     arguments: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
     source_snapshots: Mapping[str, Mapping[str, object]],
+    selected_evidence_refs: Sequence[str],
 ) -> tuple[dict[str, object], list[str]]:
     if not _is_gmail_draft_update_route(route):
         return dict(arguments), []
     if action_objective.get("target_semantics") != "GMAIL_DRAFT":
         raise PlanningArgumentBindingError("Gmail Draft UPDATE target semantics are invalid")
 
+    selected = set(selected_evidence_refs)
     identities: dict[str, tuple[dict[str, object], list[str]]] = {}
     for item in evidence:
         handle = item.get("resource_handle")
@@ -31,10 +33,11 @@ def bind_gmail_draft_update_identity(
             or not handle.startswith("gmail_draft:")
             or not isinstance(evidence_ref, str)
             or not evidence_ref
+            or (selected and evidence_ref not in selected)
         ):
             continue
         draft_id = handle.removeprefix("gmail_draft:")
-        snapshot = source_snapshots.get(handle)
+        snapshot = source_snapshots.get(evidence_ref)
         if not draft_id or snapshot is None:
             continue
         projected = _validated_snapshot(snapshot)

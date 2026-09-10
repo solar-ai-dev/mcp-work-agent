@@ -162,12 +162,6 @@ def route_request_reconsideration(
             WorkflowPhase.REQUEST_ANALYSIS,
             workflow_signal=typed_signal,
             request_reconsideration=typed_signal,
-            tool_route_plan=None,
-            acquisition_result=None,
-            retrieval_result=None,
-            work_analysis_result=None,
-            planning_result=None,
-            plan_review=None,
         ),
         reason_code=typed_signal["reason_codes"][0],
     )

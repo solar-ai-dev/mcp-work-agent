@@ -1,5 +1,6 @@
 from google_work_agent.application.agents.work_analysis.assemble_work_analysis import (
     assemble_work_analysis,
+    required_override_confirmation_kind,
     work_analysis_confirmation_context_hash,
 )
 from tests.support.work_analysis import fact
@@ -137,3 +138,123 @@ def test_current_approved_conflict__override_receipt_is__bound_into_result() -> 
         {"artifact_id": "receipt-1", "revision": 1}
     ]
     assert {"artifact_id": "receipt-1", "revision": 1} in result["meta"]["based_on"]
+
+
+def test_duplicate_required__without_receipt__requires_duplicate_override_confirmation() -> None:
+    based_on = [{"artifact_id": "intent-1", "revision": 1}]
+
+    kind = required_override_confirmation_kind(
+        validated_relations=[],
+        action_execution_required=True,
+        policy_confirmation_receipts=[],
+        based_on=based_on,  # type: ignore[arg-type]
+        duplicate_conflict_assessment=_satisfied_duplicate_assessment(),  # type: ignore[arg-type]
+    )
+
+    assert kind == "DUPLICATE_OVERRIDE"
+
+
+def test_duplicate_override__when_approved__keeps_route_and_summary_required() -> None:
+    based_on = [{"artifact_id": "intent-1", "revision": 1}]
+    receipt = _override_receipt(
+        kind="DUPLICATE_OVERRIDE",
+        decision="APPROVED",
+        based_on=based_on,
+    )
+
+    result = assemble_work_analysis(
+        artifact_id="analysis-1",
+        revision=1,
+        based_on=based_on,  # type: ignore[arg-type]
+        work_facts=[fact("f1"), fact("f2")],
+        validated_relations=[],
+        ambiguities=[],
+        risks=[],
+        evidence_refs=["ev-1"],
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "REQUIRED",
+                "reason": "USER_CONFIRMED_DUPLICATE_OVERRIDE",
+                "evidence_refs": ["ev-1"],
+                "candidate_refs": ["task:1"],
+            }
+        ],
+        policy_confirmation_receipts=[receipt],  # type: ignore[list-item]
+        duplicate_conflict_assessment=_satisfied_duplicate_assessment(),  # type: ignore[arg-type]
+    )
+
+    assert result["action_necessity"] == "REQUIRED"
+    assert result["action_necessity_reason"] == "DUPLICATE_OVERRIDE_APPROVED"
+    assert result["route_action_necessities"][0]["status"] == "REQUIRED"
+
+
+def test_duplicate_override__when_declined__makes_route_and_summary_not_required() -> None:
+    based_on = [{"artifact_id": "intent-1", "revision": 1}]
+    receipt = _override_receipt(
+        kind="DUPLICATE_OVERRIDE",
+        decision="DECLINED",
+        based_on=based_on,
+    )
+
+    result = assemble_work_analysis(
+        artifact_id="analysis-1",
+        revision=1,
+        based_on=based_on,  # type: ignore[arg-type]
+        work_facts=[fact("f1"), fact("f2")],
+        validated_relations=[],
+        ambiguities=[],
+        risks=[],
+        evidence_refs=["ev-1"],
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "REQUIRED",
+                "reason": "USER_CONFIRMED_DUPLICATE_OVERRIDE",
+                "evidence_refs": ["ev-1"],
+                "candidate_refs": ["task:1"],
+            }
+        ],
+        policy_confirmation_receipts=[receipt],  # type: ignore[list-item]
+        duplicate_conflict_assessment=_satisfied_duplicate_assessment(),  # type: ignore[arg-type]
+    )
+
+    assert result["action_necessity"] == "NOT_REQUIRED"
+    assert result["action_necessity_reason"] == "DUPLICATE_OVERRIDE_DECLINED"
+    assert result["route_action_necessities"][0]["status"] == "NOT_REQUIRED"
+    assert result["route_action_necessities"][0]["reason"] == "DUPLICATE_OVERRIDE_DECLINED"
+
+
+def _override_receipt(
+    *,
+    kind: str,
+    decision: str,
+    based_on: list[dict[str, object]],
+) -> dict[str, object]:
+    interrupt_id = f"interrupt-{kind.lower()}"
+    return {
+        "schema_version": 1,
+        "meta": {"artifact_id": f"receipt-{kind.lower()}", "revision": 1, "based_on": based_on},
+        "interrupt_id": interrupt_id,
+        "confirmation_kind": kind,
+        "decision": decision,
+        "semantic_owner_id": "WORK_ANALYSIS",
+        "decision_context_hash": work_analysis_confirmation_context_hash(
+            confirmation_kind=kind,
+            interrupt_id=interrupt_id,
+            based_on=based_on,  # type: ignore[arg-type]
+        ),
+        "affected_route_ids": ["task-create"],
+        "affected_resource_refs": ["task:1"],
+    }
+
+
+def _satisfied_duplicate_assessment() -> dict[str, object]:
+    return {
+        "relation_candidates": [],
+        "requested_work_status": "SATISFIED",
+        "requested_work_reason": "The observed task already satisfies the request.",
+        "matched_fact_ids": ["f1"],
+        "matched_candidate_refs": ["task:1"],
+        "evidence_refs": ["ev-1"],
+    }
