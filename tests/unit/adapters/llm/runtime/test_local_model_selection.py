@@ -53,7 +53,8 @@ def test_model_catalog_matrix__uses_only_ready_model__or_preserves_valid_choice(
             assert selected is not None and selected.model_id == preferred
 
 
-def test_local_model_selection__with_both_ready_and_no_valid_preference__requires_user_choice() -> None:
+def test_local_model_selection__with_both_ready_and_no_valid_preference__requires_user_choice(
+) -> None:
     resolver = LocalModelSelectionResolver(
         _selection(),
         _Catalog(
