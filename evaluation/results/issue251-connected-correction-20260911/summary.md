@@ -10,3 +10,7 @@
 | Q5 Task CREATE | qwen3.5:4b | `request_understanding.identify_goal` | FAIL — structured inference 오류로 intent 미생성 | [node-q5-identify-4b.md](node-q5-identify-4b.md) |
 | Q5 비중복 판단 | qwen3.5:9b | `work_analysis.detect_duplicate_conflict_candidates` | PASS — 최초 의미 모순을 제한 1회 재검증 후 비중복으로 수렴 | [node-q5-duplicate-9b.md](node-q5-duplicate-9b.md) |
 | Cobalt 후속 조회 | qwen3.5:9b | `retrieval.plan_query` | PASS — 0건 소진 뒤 비어 있지 않은 후속 조회 계획 생성·검증 | [node-cobalt-followup-9b.md](node-cobalt-followup-9b.md) |
+
+## Production Graph 통제 회귀
+
+production compiled Graph와 통제 LLM/MCP를 사용한 대표 경로 30건이 통과했다. 상세 범위는 [graph-controlled-regression.md](graph-controlled-regression.md)에 기록했다.
