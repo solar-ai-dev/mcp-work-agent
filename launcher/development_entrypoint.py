@@ -94,11 +94,11 @@ def read_development_sampling_environment(
     try:
         temperature = None if not temperature_value else float(temperature_value)
     except ValueError as error:
-        raise ValueError("GWA_DEVELOPMENT_LLM_TEMPERATURE must be numeric") from error
+        raise ValueError("development sampling temperature must be numeric") from error
     try:
         seed = None if not seed_value else int(seed_value)
     except ValueError as error:
-        raise ValueError("GWA_DEVELOPMENT_LLM_SEED must be an integer") from error
+        raise ValueError("development sampling seed must be an integer") from error
     return temperature, seed
 
 
