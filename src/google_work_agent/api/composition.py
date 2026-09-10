@@ -1137,6 +1137,7 @@ class ProductionRuntimeConfig:
         runtime_root: Path,
         working_directory: Path,
         mcp_manifest_version: str,
+        oauth_client_id: str = "development-client-id",
         github_oauth_client_id: str | None = None,
         github_oauth_scope: str = "",
         mcp_module_name: str | None = None,
@@ -1155,7 +1156,7 @@ class ProductionRuntimeConfig:
             build_channel="DEVELOPMENT",
             deployment_profile="LOCAL_CAPABLE",
             oauth_environment=OAuthEnvironment.DEVELOPMENT,
-            oauth_client_id="development-client-id",
+            oauth_client_id=oauth_client_id.strip(),
             github_oauth_client_id=(github_oauth_client_id or "").strip() or None,
             github_oauth_scope=github_oauth_scope.strip(),
             api_contract_version=API_CONTRACT_VERSION,
@@ -1692,9 +1693,8 @@ def _build_connectors(
     connector_environment = {
         ATTACHMENT_STAGING_DIR_ENV: str(attachment_staging_dir),
         "GOOGLE_OAUTH_ENV": environment,
+        "GOOGLE_OAUTH_CLIENT_ID": oauth_client_id,
     }
-    if configuration_source == "SIGNED_RELEASE_MANIFEST":
-        connector_environment["GOOGLE_OAUTH_CLIENT_ID"] = oauth_client_id
     google_descriptor = build_google_workspace_connector_descriptor(
         MCPArtifactConfig(
             executable_path=str(executable_path),

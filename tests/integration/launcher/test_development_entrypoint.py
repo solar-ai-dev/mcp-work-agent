@@ -94,6 +94,25 @@ def test_development_config__ambient_github_values__requires_explicit_handoff(
     assert handed_off.github_oauth_scope == "ambient-scope"
 
 
+def test_development_config__ambient_google_client_id__requires_explicit_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "ambient-google-client")
+    direct = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path,
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+    )
+    assert direct.oauth_client_id == "development-client-id"
+
+    from scripts.run_development import development_runtime_config
+
+    handed_off = development_runtime_config(runtime_root=tmp_path)
+    assert handed_off.oauth_client_id == "ambient-google-client"
+
+
 def test_development_config__langsmith_secret__requires_explicit_complete_handoff(
     tmp_path: Path,
 ) -> None:

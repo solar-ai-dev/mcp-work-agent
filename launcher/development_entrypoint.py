@@ -29,6 +29,7 @@ from launcher.bootstrap_secret import create_bootstrap_secret
 from launcher.open_product_ui import build_product_ui_url, open_product_ui
 from launcher.readiness import ServiceReadiness, wait_for_service_ready
 
+DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID = "development-client-id"
 DEVELOPMENT_GITHUB_APP_CLIENT_ID = "Iv23liYV2mScbAiVwc5Y"
 DEVELOPMENT_LANGSMITH_PROJECT = "google-work-agent-development"
 DEVELOPMENT_LANGSMITH_TRACE_ENVIRONMENT = {
@@ -132,6 +133,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
             mcp_manifest_version=MCP_MANIFEST_VERSION,
+            oauth_client_id=os.environ.get(
+                "GOOGLE_OAUTH_CLIENT_ID", DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+            ),
             github_oauth_client_id=os.environ.get(
                 "GITHUB_APP_CLIENT_ID", DEVELOPMENT_GITHUB_APP_CLIENT_ID
             ),
