@@ -1,0 +1,7 @@
+# 검색 실행 계약 교정 후 제한 READ-only Live
+
+고정 제품 커밋: `9e2912a9fd300125ff9302c42bebe9332b7a26ce`
+
+| 사례·모델 | 실행 커밋 | 도달/최초 실패 노드 | 실제 결과·최종 사용자 답변 요지 | Run/Trace |
+| --- | --- | --- | --- | --- |
+| Q1 · `qwen3.5:9b` | `9e2912a9fd300125ff9302c42bebe9332b7a26ce` | Request Understanding·Tool Route 통과. `plan_query`에서 `QUERY_PROTECTED_CONSTRAINT_CHANGED`로 최초 실패 | **실패.** 검색 계획 검증에서 차단되어 Gmail READ 0회, Action/외부 WRITE 0회. 최종 답변은 내부 검증 실패로 결과를 준비하지 못했다는 안내였다. 검색 결과 0건으로 판정하지 않는다. | Run `2b6c1925-0523-42f1-b36b-b855b24c3792` · [LangSmith trace](https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a08d55-d2d2-7a52-a13b-32303764ccf1/run/01a08d55-d2d2-7a52-a13b-32303764ccf1) |
