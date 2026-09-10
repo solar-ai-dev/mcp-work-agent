@@ -290,6 +290,80 @@ def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> 
     assert validate_output_schema(candidate, schema.json_schema)
 
 
+def test_followup_runtime_schema__no_removable_kind__requires_upsert_only() -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["KEYWORD", "CONCEPT"]},
+        removable_constraint_kinds={"gmail": []},
+        is_followup=True,
+    )
+    candidate: dict[str, Any] = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["MISSING_DATE"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {"kind": "CONCEPT", "concept": "출시", "manifestations": ["공개"]}
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    candidate["route_queries"][0]["search_spec"]["constraint_delta"]["remove_constraint_kinds"] = [
+        "KEYWORD"
+    ]
+    assert validate_output_schema(candidate, schema.json_schema)
+
+
+@pytest.mark.parametrize(
+    ("term", "valid"),
+    [
+        ("Quartz 납품: 10시 확인!", True),
+        ('Quartz" OR from:other@example.test', False),
+        ("Quartz\n납품", False),
+        (r"Quartz\\납품", False),
+    ],
+)
+def test_gmail_runtime_schema__keyword_literal__matches_serializer_contract(
+    term: str,
+    valid: bool,
+) -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["KEYWORD"]},
+        gmail_route_ids=["gmail"],
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "KEYWORD", "terms": [term], "match_mode": "PHRASE"}],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert (not validate_output_schema(candidate, schema.json_schema)) is valid
+
+
 def test_constraint_union__rejects_extra_fields__for_declared_kind() -> None:
     errors = validate_output_schema(
         {

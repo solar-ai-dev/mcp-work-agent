@@ -260,9 +260,139 @@ def test_build_query__changed_search__protects_anchor_values(kind: str, remove: 
         },
     }
     with pytest.raises(RetrievalV2ValidationError, match="protected") as raised:
-        build_query(plan, prior_plans={"r": prior}, **kwargs)
+        build_query(
+            plan,
+            prior_plans={"r": prior},
+            protected_constraints_by_route={
+                "r": [cast(SemanticRetrievalConstraintV1, anchors[kind])]
+            },
+            **kwargs,
+        )
     assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
     assert raised.value.affected_field_paths
+
+
+def test_build_query__followup_changes_hypothesis_but_preserves_explicit_constraint() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+    explicit = cast(
+        SemanticRetrievalConstraintV1,
+        {"kind": "KEYWORD", "terms": ["Nimbus"], "match_mode": "PHRASE"},
+    )
+    initial = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        explicit,
+                        {"kind": "CONCEPT", "concept": "출시", "manifestations": ["공개"]},
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    prior = build_query(
+        initial,
+        frozen_routes=[route],
+        route_policies=policies,
+        protected_constraints_by_route={"r": [explicit]},
+    )[0]
+    changed = deepcopy(initial)
+    changed["route_queries"][0]["search_spec"] = {
+        "mode": "CHANGED",
+        "constraint_delta": {
+            "upsert_constraints": [
+                {"kind": "CONCEPT", "concept": "출시", "manifestations": ["배포"]}
+            ],
+            "remove_constraint_kinds": [],
+        },
+    }
+
+    result = build_query(
+        changed,
+        frozen_routes=[route],
+        route_policies=policies,
+        prior_plans={"r": prior},
+        protected_constraints_by_route={"r": [explicit]},
+    )[0]
+
+    assert explicit in result["effective_constraints"]
+    assert {
+        "kind": "CONCEPT",
+        "concept": "출시",
+        "manifestations": ["배포"],
+    } in result["effective_constraints"]
+
+
+def test_build_query__same_manifestation__is_allowed_when_effective_query_changes() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r": RouteConstraintPolicy(frozenset({"CONCEPT", "KEYWORD"}))}
+    initial = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "CONCEPT", "concept": "출시", "manifestations": ["공개"]}
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    prior = build_query(initial, frozen_routes=[route], route_policies=policies)[0]
+    changed = deepcopy(initial)
+    changed["route_queries"][0]["search_spec"] = {
+        "mode": "CHANGED",
+        "constraint_delta": {
+            "upsert_constraints": [
+                {"kind": "KEYWORD", "terms": ["Nimbus"], "match_mode": "PHRASE"}
+            ],
+            "remove_constraint_kinds": [],
+        },
+    }
+
+    result = build_query(
+        changed,
+        frozen_routes=[route],
+        route_policies=policies,
+        prior_plans={"r": prior},
+    )[0]
+
+    assert {"kind": "CONCEPT", "concept": "출시", "manifestations": ["공개"]} in result[
+        "effective_constraints"
+    ]
+    assert result["query_identity_hash"] != prior["query_identity_hash"]
 
 
 @pytest.mark.parametrize(
@@ -340,7 +470,7 @@ def test_build_query__person_promotion__requires_candidate_evidence(
         )
     ]
     if not allowed:
-        with pytest.raises(RetrievalV2ValidationError, match="protected"):
+        with pytest.raises(RetrievalV2ValidationError, match="validated evidence"):
             build_query(
                 plan,
                 frozen_routes=[route],

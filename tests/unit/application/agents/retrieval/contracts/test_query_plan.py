@@ -88,3 +88,96 @@ def test_get_only_message_route__with_search__rejects_before_adapter() -> None:
             frozen_routes=[route],
             supported_constraint_kinds={"message-detail": ["KEYWORD"]},
         )
+
+
+def test_detail_candidate__from_other_route__is_rejected() -> None:
+    routes = [
+        cast(
+            InputToolRouteV1,
+            {
+                "route_id": "gmail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_get_thread"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+        ),
+        cast(
+            InputToolRouteV1,
+            {
+                "route_id": "github",
+                "resource_type": "GITHUB_ISSUE",
+                "connector_id": "github",
+                "allowed_read_tool_ids": ["github_get_issue"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+        ),
+    ]
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "DETAIL_FETCH",
+                "reason_codes": ["MISSING_BODY"],
+                "search_spec": None,
+                "detail_candidate_ref": "github_issue:acme/repo#7",
+            }
+        ],
+    }
+
+    with pytest.raises(RetrievalV2ValidationError) as raised:
+        validate_retrieval_query_plan_v2(
+            candidate,
+            frozen_routes=routes,
+            supported_constraint_kinds={"gmail": [], "github": []},
+            detail_candidate_refs=["github_issue:acme/repo#7"],
+        )
+
+    assert raised.value.reason_code == "RETRIEVAL_ROUTE_SCOPE_VIOLATION"
+
+
+def test_gmail_keyword__unsupported_literal__is_typed_before_adapter() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "gmail",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "KEYWORD",
+                            "terms": ['Quartz" OR from:other@example.test'],
+                            "match_mode": "PHRASE",
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    with pytest.raises(RetrievalV2ValidationError) as raised:
+        validate_retrieval_query_plan_v2(
+            candidate,
+            frozen_routes=[route],
+            supported_constraint_kinds={"gmail": ["KEYWORD"]},
+        )
+
+    assert raised.value.reason_code == "QUERY_LITERAL_UNSUPPORTED"

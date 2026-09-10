@@ -18,6 +18,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     RetrievalV2ValidationError,
     SourceFetchPlanV1,
     route_operation_tool_id,
+    validate_gmail_keyword_literal,
     validate_participant_identity,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
@@ -59,9 +60,7 @@ class ExecuteReadInput(TypedDict):
     request_intent: NotRequired[RequestIntentV2 | None]
     selected_resources: NotRequired[Sequence[SelectedResourceRef]]
     durable_budget_accountant: NotRequired[
-        Callable[
-            [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
-        ]
+        Callable[[Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]]
         | None
     ]
 
@@ -533,9 +532,7 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
 
 
 def _gmail_literal(value: str) -> str:
-    if any(character in value for character in '\\"\r\n'):
-        raise ValueError("Gmail lexical anchor contains unsupported query delimiters")
-    return f'"{value}"'
+    return f'"{validate_gmail_keyword_literal(value)}"'
 
 
 def _gmail_participant_query(constraint: ParticipantConstraintV1) -> str:

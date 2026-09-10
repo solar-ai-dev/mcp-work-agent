@@ -12,7 +12,7 @@
 
 검색 관측에 따른 전략
 - 첫 시도는 현재 요청의 가장 직접적인 단서로 후보를 찾는다.
-- 이전 검색이 0건이면 같은 단어를 반복하거나 순서만 바꾸지 않는다. 다른 언어로 번역하거나 같은 종류의 동의어만 계속 바꾸는 것은 새로운 전략이 아니다. 아직 사용하지 않은 요청의 제약(사람, 날짜 언급, 정확한 제목 등) 중 검색 가능한 관측 단서를 선택하고, unresolved_sufficiency_issues의 어떤 부족함을 해결하는지 reason_codes에 설명한다.
+- 이전 검색이 0건이면 같은 effective query를 반복하거나 순서만 바꾸지 않는다. manifestations가 같더라도 다른 제약 변경으로 실제 effective query가 달라지고 관측된 부족함을 해결할 수 있으면 허용된다. 다른 언어로 번역하거나 같은 종류의 동의어만 계속 바꾸는 것은 그 자체로 새로운 전략이 아니다. 아직 사용하지 않은 요청의 제약(사람, 날짜 언급, 정확한 제목 등) 중 검색 가능한 관측 단서를 선택하고, unresolved_sufficiency_issues의 어떤 부족함을 해결하는지 reason_codes에 설명한다.
 - EVENT_TIME 요청에서 일반적인 업무 단어 검색으로 후보가 없으면, 같은 종류의 동의어를 계속 추가하기보다 요청한 기간의 본문 날짜 언급 등 다른 관측 가능한 단서를 고려한다. 날짜 표기는 주어진 temporal window에서 모델이 선택하는 가설이다. 고정 fallback 목록은 없다. 이때도 원래 업무 개념과 행사 기간은 detail/Evidence 검증 의무로 남는다.
 - 이미 후보가 있으면 필요한 detail이나 아직 읽지 않은 page가 다음 단계인지 판단한다. 확보한 exact identity를 버리고 fuzzy 검색으로 돌아가지 않는다.
 - Provider 실패는 0건이 아니다. 실패한 query를 의미가 다른 새 검색으로 포장하지 않는다.
@@ -33,7 +33,7 @@
 - route query의 키는 route_id, operation, reason_codes, search_spec, detail_candidate_ref다.
 - SEARCH/FREEBUSY는 search_spec을 쓰고 detail_candidate_ref는 null이다. DETAIL_FETCH는 search_spec null과 검증된 candidate ref를 쓴다. NEXT_PAGE는 둘 다 null이며 실제 unread-page 관측이 있어야 한다.
 - current_round_no가 없으면 INITIAL constraints다. 있으면 CHANGED constraint_delta(upsert_constraints, remove_constraint_kinds)다. CHANGED에는 실제 변경이 하나 이상 있어야 한다.
-- CHANGED CONCEPT는 같은 concept에 대해 이전과 다른 manifestations를 제안한다. 기존 exact anchor와 temporal role/window는 보존한다.
+- CHANGED CONCEPT는 같은 concept를 유지한다. manifestations의 동일·변경 여부가 아니라 전체 effective query가 실제로 달라지고 관측된 부족함을 해결하는지가 기준이다. 기존 exact anchor와 temporal role/window는 보존한다.
 - Provider 문법, raw query, MCP arguments, tool id, page token, 임의 Resource ID를 생성하지 않는다. 결정적 Builder가 허용된 semantic constraint를 실제 query로 변환한다.
 - QUERY_USER_CONSTRAINT_MISSING이면 요청한 업무 개념 중 하나를 CONCEPT.concept로 복원한다. 여러 개념을 한 검색에 모두 AND하거나 같은 kind를 중복하지 않는다. 모든 요청 의미는 detail/Evidence 검증 의무로 유지한다.
 - manifestations는 요청 의미와 관측에 근거한 검색 가설이다. 원문 개념과 다른 표현을 반드시 만들지 말고, 불확실한 확장어를 모두 AND하지 않는다. CHANGED 가설은 이전 관측과 미해결 정보로 설명할 수 있어야 한다.

@@ -101,12 +101,14 @@ from google_work_agent.application.agents.retrieval.bind_exact_resource_refs imp
     bind_exact_resource_refs,
 )
 from google_work_agent.application.agents.retrieval.build_query import (
+    QueryUnchangedAfterFailureError,
     RouteConstraintPolicy,
     build_query_attempt,
     followup_planner_projection,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ProtectedConstraintsByRouteV1,
     RetrievalConstraintKindV1,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
@@ -140,6 +142,9 @@ from google_work_agent.application.agents.retrieval.plan_query import (
     followup_retrieval_planner_input,
     has_retrieval_followup_path,
     initial_retrieval_planner_input,
+)
+from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
+    derive_protected_constraints_by_route,
 )
 from google_work_agent.application.agents.retrieval.project_attempted_detail_refs import (
     project_attempted_detail_refs,
@@ -217,6 +222,7 @@ from .routing.route_after_assess_sufficiency import (
     route_after_assess_sufficiency,
 )
 from .routing.route_after_build_query import (
+    followup_operation_marker,
     route_after_build_query,
 )
 from .routing.route_after_execute_read import (
@@ -1152,6 +1158,16 @@ class RetrievalSubgraph:
             acquisition_result=state.get("acquisition_result"),
         )
         attempted_detail_candidate_refs = self._attempted_detail_candidate_refs(state)
+        prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})
+        prior_read_result_handles = self._prior_read_result_handles(state, prior_canonical)
+        read_result_summaries = self._bounded_read_result_summaries(state)
+        protected_constraints_by_route = self._protected_constraints_by_route(
+            state,
+            frozen_routes=frozen_routes,
+            route_policies=route_policies,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+        )
         prompt_input = (
             initial_retrieval_planner_input(
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
@@ -1184,34 +1200,45 @@ class RetrievalSubgraph:
         )
         if deterministic_plan is None:
             ensure_llm_call_budget(state)
-        patch = plan_query_node(
-            cast(
-                Any,
-                {
-                    "operation_inputs": {
-                        "plan_query": {
-                            "llm_runtime": self._llm_runtime,
-                            "prompt_ref": self._plan_query_prompt_ref,
-                            "revision_prompt_ref": self._plan_query_prompt_ref,
-                            "output_schema": RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
-                            "prompt_input": prompt_input,
-                            "requested_mode": request_from_state(state).requested_mode,
-                            "frozen_routes": frozen_routes,
-                            "route_policies": route_policies,
-                            "retry_budget": cast(RunBudgetV2, state["retry_budget"]),
-                            "validated_resource_refs": validated_resource_refs,
-                            "validated_container_refs": validated_container_refs,
-                            "detail_candidate_refs": detail_candidate_refs,
-                            "attempted_detail_candidate_refs": attempted_detail_candidate_refs,
-                            "now_ms": state["retry_budget"]["started_at_ms"],
-                            "timezone": self._timezone_provider(),
-                            "person_candidates": state.get("person_candidates", []),
-                            "selected_person_identities": state.get("selected_person_identities"),
+        try:
+            patch = plan_query_node(
+                cast(
+                    Any,
+                    {
+                        "operation_inputs": {
+                            "plan_query": {
+                                "llm_runtime": self._llm_runtime,
+                                "prompt_ref": self._plan_query_prompt_ref,
+                                "revision_prompt_ref": self._plan_query_prompt_ref,
+                                "output_schema": RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+                                "prompt_input": prompt_input,
+                                "requested_mode": request_from_state(state).requested_mode,
+                                "frozen_routes": frozen_routes,
+                                "route_policies": route_policies,
+                                "retry_budget": cast(RunBudgetV2, state["retry_budget"]),
+                                "validated_resource_refs": validated_resource_refs,
+                                "validated_container_refs": validated_container_refs,
+                                "detail_candidate_refs": detail_candidate_refs,
+                                "attempted_detail_candidate_refs": attempted_detail_candidate_refs,
+                                "now_ms": state["retry_budget"]["started_at_ms"],
+                                "timezone": self._timezone_provider(),
+                                "person_candidates": state.get("person_candidates", []),
+                                "selected_person_identities": state.get(
+                                    "selected_person_identities"
+                                ),
+                                "prior_plans": prior_canonical,
+                                "prior_read_result_handles": prior_read_result_handles,
+                                "read_result_summaries": read_result_summaries,
+                                "protected_constraints_by_route": protected_constraints_by_route,
+                            }
                         }
-                    }
-                },
+                    },
+                )
             )
-        )
+        except QueryUnchangedAfterFailureError as error:
+            if followup is None:
+                raise
+            return self._close_unmaterializable_followup(state, validation_error=error)
         query_plan = cast(RetrievalQueryPlanV2, patch["query_plan"])
         revised_retry_budget = cast(RunBudgetV2, patch["retry_budget"])
         llm_invoked = deterministic_plan is None
@@ -1231,13 +1258,51 @@ class RetrievalSubgraph:
             cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []))
         )
 
+    @staticmethod
+    def _prior_read_result_handles(
+        state: ContextRetrievalLocalState,
+        prior_canonical: Mapping[str, SourceFetchPlanV1],
+    ) -> dict[str, str]:
+        bindings = cast(Mapping[str, Mapping[str, str]], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
+        return {
+            value["route_id"]: handle
+            for handle, value in bindings.items()
+            if value["route_id"] in prior_canonical
+        }
+
+    def _protected_constraints_by_route(
+        self,
+        state: ContextRetrievalLocalState,
+        *,
+        frozen_routes: Sequence[InputToolRouteV1],
+        route_policies: Mapping[str, RouteConstraintPolicy],
+        validated_resource_refs: Mapping[str, Sequence[str]],
+        validated_container_refs: Mapping[str, Sequence[str]],
+    ) -> ProtectedConstraintsByRouteV1:
+        return derive_protected_constraints_by_route(
+            request_intent=cast(
+                Mapping[str, object],
+                _require_state_value(state.get("request_intent"), "request intent"),
+            ),
+            frozen_routes=frozen_routes,
+            required_constraint_kinds={
+                route_id: tuple(policy.required_kinds)
+                for route_id, policy in route_policies.items()
+            },
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            now_ms=state["retry_budget"]["started_at_ms"],
+            timezone=self._timezone_provider(),
+        )
+
     def _execute_read_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         round_no = (
             state[CONTEXT_CURRENT_ROUND_NO_KEY]
             if state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True
             else advance_current_round_no(
                 current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
-                is_followup=state.get(CONTEXT_FOLLOWUP_OPERATION_KEY) in {"SEARCH", "NEXT_PAGE"},
+                is_followup=state.get(CONTEXT_FOLLOWUP_OPERATION_KEY)
+                in {"SEARCH", "NEXT_PAGE", "READ"},
             )
         )
         plans = cast(
@@ -1520,6 +1585,13 @@ class RetrievalSubgraph:
         query_plan = _require_state_value(state.get("query_plan"), "query plan")
         detail_candidate_refs = state.get(CONTEXT_SEGMENT_HANDLES_KEY, [])
         prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})
+        protected_constraints_by_route = self._protected_constraints_by_route(
+            state,
+            frozen_routes=frozen_routes,
+            route_policies=route_policies,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+        )
         if not prior_canonical:
             patch = build_query_node(
                 cast(
@@ -1533,6 +1605,7 @@ class RetrievalSubgraph:
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,
                                 "detail_candidate_refs": detail_candidate_refs,
+                                "protected_constraints_by_route": protected_constraints_by_route,
                             }
                         }
                     },
@@ -1543,12 +1616,7 @@ class RetrievalSubgraph:
                 **state,
                 CONTEXT_CANONICAL_PLANS_KEY: {plan["route_id"]: plan for plan in canonical_plans},
             }
-        bindings = cast(Mapping[str, Mapping[str, str]], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
-        handles = {
-            value["route_id"]: handle
-            for handle, value in bindings.items()
-            if value["route_id"] in prior_canonical
-        }
+        handles = self._prior_read_result_handles(state, prior_canonical)
         try:
             patch = build_query_node(
                 cast(
@@ -1569,54 +1637,49 @@ class RetrievalSubgraph:
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,
                                 "detail_candidate_refs": detail_candidate_refs,
+                                "protected_constraints_by_route": protected_constraints_by_route,
                             }
                         }
                     },
                 )
             )
             canonical_plans = cast(list[SourceFetchPlanV1], patch["source_fetch_plans"])
-        except RetrievalV2ValidationError as error:
+        except QueryUnchangedAfterFailureError as error:
             return self._close_unmaterializable_followup(
                 state,
                 validation_error=error,
             )
         operations = {plan["operation_kind"] for plan in canonical_plans}
-        if operations == {"NEXT_PAGE"}:
-            return {
-                **state,
-                CONTEXT_CANONICAL_PLANS_KEY: {
-                    **prior_canonical,
-                    **{plan["route_id"]: plan for plan in canonical_plans},
-                },
-                CONTEXT_FOLLOWUP_OPERATION_KEY: "NEXT_PAGE",
-                CONTEXT_NEXT_PAGE_HANDLES_KEY: {
-                    plan["route_id"]: cast(str, plan["prior_read_result_handle"])
-                    for plan in canonical_plans
-                },
+        if not operations:
+            raise RetrievalV2ValidationError(
+                "materialized retrieval plan contains no executable operation",
+                reason_code="QUERY_OPERATION_UNAVAILABLE",
+            )
+        operation_marker = followup_operation_marker(operations)
+        result: ContextRetrievalLocalState = {
+            **state,
+            CONTEXT_CANONICAL_PLANS_KEY: {
+                **prior_canonical,
+                **{plan["route_id"]: plan for plan in canonical_plans},
+            },
+            CONTEXT_FOLLOWUP_OPERATION_KEY: operation_marker,
+        }
+        next_page_plans = [
+            plan for plan in canonical_plans if plan["operation_kind"] == "NEXT_PAGE"
+        ]
+        if next_page_plans:
+            result[CONTEXT_NEXT_PAGE_HANDLES_KEY] = {
+                plan["route_id"]: cast(str, plan["prior_read_result_handle"])
+                for plan in next_page_plans
             }
-        if operations in ({"SEARCH"}, {"FREEBUSY"}):
-            return {
-                **state,
-                CONTEXT_CANONICAL_PLANS_KEY: {
-                    **prior_canonical,
-                    **{plan["route_id"]: plan for plan in canonical_plans},
-                },
-                CONTEXT_FOLLOWUP_OPERATION_KEY: "SEARCH",
+        detail_plans = [
+            plan for plan in canonical_plans if plan["operation_kind"] == "DETAIL_FETCH"
+        ]
+        if detail_plans:
+            result[CONTEXT_DETAIL_CANDIDATES_KEY] = {
+                plan["route_id"]: cast(str, plan["detail_candidate_ref"]) for plan in detail_plans
             }
-        if operations == {"DETAIL_FETCH"}:
-            return {
-                **state,
-                CONTEXT_CANONICAL_PLANS_KEY: {
-                    **prior_canonical,
-                    **{plan["route_id"]: plan for plan in canonical_plans},
-                },
-                CONTEXT_FOLLOWUP_OPERATION_KEY: "DETAIL_FETCH",
-                CONTEXT_DETAIL_CANDIDATES_KEY: {
-                    plan["route_id"]: cast(str, plan["detail_candidate_ref"])
-                    for plan in canonical_plans
-                },
-            }
-        return self._close_unmaterializable_followup(state)
+        return result
 
     def _close_unmaterializable_followup(
         self,

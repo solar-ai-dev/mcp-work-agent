@@ -34,10 +34,12 @@ RetrievalValidationReasonCodeV1 = Literal[
     "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
     "QUERY_USER_CONSTRAINT_MISSING",
     "QUERY_PROTECTED_CONSTRAINT_CHANGED",
+    "QUERY_LITERAL_UNSUPPORTED",
 ]
 TemporalAxisV1 = Literal["MESSAGE_TIME", "TASK_SCHEDULED_DATE", "EVENT_TIME", "AVAILABILITY_WINDOW"]
 ParticipantRoleV1 = Literal["ANY", "SENDER", "RECIPIENT", "ATTENDEE"]
 PARTICIPANT_EMAIL_PATTERN = r'^[^\s<>:@"{}()\\]+@[^\s<>:@"{}()\\]+\.[^\s<>:@"{}()\\]+$'
+GMAIL_KEYWORD_LITERAL_PATTERN = r'^[^\r\n"\\]+$'
 
 
 def validate_participant_identity(value: object) -> str:
@@ -118,6 +120,20 @@ SemanticRetrievalConstraintV1 = (
     | ContainerRefConstraintV1
     | StatusScopeConstraintV1
 )
+ProtectedConstraintsByRouteV1 = Mapping[str, Sequence[SemanticRetrievalConstraintV1]]
+
+
+def validate_gmail_keyword_literal(value: object) -> str:
+    """Validate one literal that can be lowered without changing Gmail query meaning."""
+    if not isinstance(value, str) or re.fullmatch(GMAIL_KEYWORD_LITERAL_PATTERN, value) is None:
+        raise RetrievalV2ValidationError(
+            "Gmail keyword literal contains unsupported query delimiters",
+            reason_code="QUERY_LITERAL_UNSUPPORTED",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraints[?(@.kind=='KEYWORD')].terms[]",
+            ),
+        )
+    return value
 
 
 class ConstraintDeltaV2(TypedDict):
@@ -350,6 +366,12 @@ def validate_route_query_intent_v2(
             supported_kinds=supported_constraint_kinds.get(route_id),
             validated_resource_refs=(validated_resource_refs or {}).get(route_id),
             validated_container_refs=(validated_container_refs or {}).get(route_id),
+            keyword_literal_pattern=(
+                GMAIL_KEYWORD_LITERAL_PATTERN
+                if route["resource_type"]
+                in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                else None
+            ),
         )
         constraints = (
             validated_spec["constraints"]
@@ -369,8 +391,13 @@ def validate_route_query_intent_v2(
                 affected_field_paths=("$.route_queries[].search_spec",),
             )
         route_resource_refs = (validated_resource_refs or {}).get(route_id, ())
+        route_candidate_refs = {
+            ref
+            for ref in detail_candidate_refs
+            if ref.startswith(f"{route['resource_type'].lower()}:")
+        }
         if not isinstance(detail_candidate_ref, str) or detail_candidate_ref not in {
-            *detail_candidate_refs,
+            *route_candidate_refs,
             *route_resource_refs,
         }:
             raise RetrievalV2ValidationError(
@@ -406,6 +433,7 @@ def validate_search_spec_v1(
     supported_kinds: Collection[RetrievalConstraintKindV1] | None,
     validated_resource_refs: Collection[str] | None,
     validated_container_refs: Collection[str] | None,
+    keyword_literal_pattern: str | None = None,
 ) -> SearchConstraintSpecV1:
     """Validate INITIAL values or CHANGED typed delta for one frozen route."""
     if supported_kinds is None:
@@ -419,6 +447,7 @@ def validate_search_spec_v1(
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            keyword_literal_pattern=keyword_literal_pattern,
         )
         return {"mode": "INITIAL", "constraints": constraints}
     if mode == "CHANGED":
@@ -431,6 +460,7 @@ def validate_search_spec_v1(
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
             allow_empty=True,
+            keyword_literal_pattern=keyword_literal_pattern,
         )
         removals = delta["remove_constraint_kinds"]
         if not isinstance(removals, list) or not all(item in _KINDS for item in removals):
@@ -462,6 +492,7 @@ def _validate_constraints(
     validated_resource_refs: Collection[str] | None,
     validated_container_refs: Collection[str] | None,
     allow_empty: bool = False,
+    keyword_literal_pattern: str | None = None,
 ) -> list[SemanticRetrievalConstraintV1]:
     if not isinstance(value, list) or (not value and not allow_empty):
         raise RetrievalV2ValidationError("constraints must be non-empty")
@@ -471,6 +502,7 @@ def _validate_constraints(
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            keyword_literal_pattern=keyword_literal_pattern,
         )
         for item in value
     ]
@@ -485,6 +517,7 @@ def _validate_constraint(
     supported_kinds: Collection[RetrievalConstraintKindV1],
     validated_resource_refs: Collection[str] | None,
     validated_container_refs: Collection[str] | None,
+    keyword_literal_pattern: str | None,
 ) -> SemanticRetrievalConstraintV1:
     constraint = _mapping(value, "constraint")
     if _FORBIDDEN_AUTHORITY_FIELDS.intersection(constraint):
@@ -527,6 +560,17 @@ def _validate_constraint(
             "PHRASE",
         }:
             raise RetrievalV2ValidationError("keyword constraint is invalid")
+        if keyword_literal_pattern is not None and any(
+            re.fullmatch(keyword_literal_pattern, term) is None
+            for term in cast(list[str], constraint["terms"])
+        ):
+            raise RetrievalV2ValidationError(
+                "Gmail keyword literal contains unsupported query delimiters",
+                reason_code="QUERY_LITERAL_UNSUPPORTED",
+                affected_field_paths=(
+                    "$.route_queries[].search_spec.constraints[?(@.kind=='KEYWORD')].terms[]",
+                ),
+            )
         return {
             "kind": "KEYWORD",
             "terms": cast(list[str], constraint["terms"]),

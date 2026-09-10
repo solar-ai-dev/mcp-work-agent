@@ -8,7 +8,10 @@ from tests.support.fakes.llm import FakeStructuredInferencePort
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
-from google_work_agent.application.agents.retrieval.build_query import RouteConstraintPolicy
+from google_work_agent.application.agents.retrieval.build_query import (
+    RouteConstraintPolicy,
+    build_query,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
     QueryAttemptV1,
 )
@@ -411,18 +414,56 @@ def test_retrieval_followup__no_required_google_issue__keeps_query_planning_llm(
             "reason_codes": ["USER_REQUEST"],
         }
     ]
+    route = cast(InputToolRouteV1, frozen_routes[0])
+    policy = {"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+    prior = build_query(
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "route-1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "PHRASE"}
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+        frozen_routes=[route],
+        route_policies=policy,
+    )[0]
+    read_summaries = [
+        {
+            "route_id": "route-1",
+            "query_identity_hash": prior["query_identity_hash"],
+            "read_result_handle": "page-1",
+            "has_next_page": True,
+            "exhausted": False,
+        }
+    ]
 
     _, _, llm_invoked = plan_query(
         llm_runtime=runtime,
         prompt_ref=prompt_ref,
         revision_prompt_ref=prompt_ref,
         output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
-        prompt_input={"current_round_no": 0, "unresolved_sufficiency_issues": []},
+        prompt_input={
+            "current_round_no": 0,
+            "unresolved_sufficiency_issues": [],
+            "read_result_summaries": read_summaries,
+        },
         requested_mode="LOCAL_GPU",
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
-        route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
+        route_policies=policy,
         retry_budget=build_default_run_budget(),
         detail_candidate_refs=["gmail_thread:candidate"],
+        prior_plans={"route-1": prior},
+        read_result_summaries=read_summaries,
     )
 
     assert llm_invoked is True
@@ -483,6 +524,24 @@ def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() 
         "terms": ["Quartz"],
         "match_mode": "PHRASE",
     }
+    route = cast(InputToolRouteV1, frozen_routes[0])
+    policies = {"route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+    prior = build_query(
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "route-1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {"mode": "INITIAL", "constraints": [prior_keyword]},
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+        frozen_routes=[route],
+        route_policies=policies,
+    )[0]
 
     result, _, llm_invoked = plan_query(
         llm_runtime=runtime,
@@ -508,8 +567,10 @@ def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() 
         },
         requested_mode="LOCAL_GPU",
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
-        route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))},
+        route_policies=policies,
         retry_budget=build_default_run_budget(),
+        prior_plans={"route-1": prior},
+        protected_constraints_by_route={"route-1": [prior_keyword]},
     )
 
     assert llm_invoked is True
@@ -517,6 +578,122 @@ def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() 
     projected_input = cast(dict[str, object], runtime.calls[0]["prompt_input"])
     projected_routes = cast(list[dict[str, object]], projected_input["input_routes"])
     assert projected_routes[0]["supported_constraint_kinds"] == ["CONCEPT", "KEYWORD"]
+
+
+def test_plan_query__materialization_failure__uses_one_semantic_revision() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    protected_keyword = {
+        "kind": "KEYWORD",
+        "terms": ["Nimbus"],
+        "match_mode": "PHRASE",
+    }
+    policies = {"route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+    prior = build_query(
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "route-1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {"mode": "INITIAL", "constraints": [protected_keyword]},
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+        frozen_routes=[route],
+        route_policies=policies,
+    )[0]
+    invalid = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["MISSING_DATE"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {"kind": "KEYWORD", "terms": ["다른 값"], "match_mode": "PHRASE"}
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    revised = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["MISSING_DATE"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {"kind": "CONCEPT", "concept": "출시", "manifestations": ["공개"]}
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[invalid, revised])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+
+    result, budget, invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": []},
+            "input_routes": [route],
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [],
+            "read_result_summaries": [],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        prior_plans={"route-1": prior},
+        protected_constraints_by_route={"route-1": [protected_keyword]},
+    )
+
+    assert invoked is True
+    assert result == revised
+    assert len(runtime.calls) == 2
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
 
 
 @pytest.mark.parametrize("terms", [["회의 관련 메일"], ["프로젝트", "일정"]])

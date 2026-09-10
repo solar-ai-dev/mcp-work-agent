@@ -11,6 +11,7 @@ from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ProtectedConstraintsByRouteV1,
     RetrievalConstraintKindV1,
     RetrievalV2ValidationError,
     RouteQueryIntentV2,
@@ -20,9 +21,6 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     PersonCandidateV1,
-)
-from google_work_agent.application.agents.retrieval.match_person_mention import (
-    person_discovery_term,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
@@ -53,10 +51,12 @@ def build_query(
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
     read_result_summaries: Sequence[Mapping[str, object]] | None = None,
+    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None = None,
 ) -> list[SourceFetchPlanV1]:
     """Validate/merge semantic constraints and materialize deterministic read plans."""
     prior_plans = prior_plans or {}
     prior_read_result_handles = prior_read_result_handles or {}
+    protected_constraints_by_route = protected_constraints_by_route or {}
     route_by_id = {route["route_id"]: route for route in frozen_routes}
     _validate_policies(route_by_id, route_policies)
     bound_plan = bind_required_container_constraints(
@@ -93,6 +93,7 @@ def build_query(
             ),
             selected_person_identities=selected_person_identities or {},
             read_result_summaries=read_result_summaries,
+            protected_constraints=protected_constraints_by_route.get(route_id, ()),
         )
         for route_id in (query["route_id"] for query in validated["route_queries"])
     ]
@@ -153,15 +154,28 @@ def _build_one(
     person_candidates: Sequence[PersonCandidateV1],
     selected_person_identities: Mapping[str, str],
     read_result_summaries: Sequence[Mapping[str, object]] | None,
+    protected_constraints: Sequence[SemanticRetrievalConstraintV1],
 ) -> SourceFetchPlanV1:
     operation = query["operation"]
+    if operation in {"SEARCH", "FREEBUSY"}:
+        _validate_changed_removals(
+            query,
+            policy=policy,
+            prior_plan=prior_plan,
+            protected_constraints=protected_constraints,
+        )
     effective = (
         _effective_constraints(query, policy=policy, prior_plan=prior_plan)
         if operation in {"SEARCH", "FREEBUSY"}
         else ([] if prior_plan is None else prior_plan["effective_constraints"])
     )
+    if operation in {"SEARCH", "FREEBUSY"}:
+        _validate_protected_constraint_continuity(
+            protected_constraints,
+            effective,
+        )
     if prior_plan is not None and operation in {"SEARCH", "FREEBUSY"}:
-        _validate_anchor_continuity(
+        _validate_person_promotion(
             prior_plan["effective_constraints"],
             effective,
             person_candidates=person_candidates,
@@ -236,67 +250,106 @@ def _effective_constraints(
     return effective
 
 
-def _validate_anchor_continuity(
+def _validate_changed_removals(
+    query: RouteQueryIntentV2,
+    *,
+    policy: RouteConstraintPolicy,
+    prior_plan: SourceFetchPlanV1 | None,
+    protected_constraints: Sequence[SemanticRetrievalConstraintV1],
+) -> None:
+    spec = query["search_spec"]
+    if spec is None or spec["mode"] != "CHANGED":
+        return
+    if prior_plan is None:
+        raise RetrievalV2ValidationError("CHANGED SEARCH requires a prior query")
+    removals = set(spec["constraint_delta"]["remove_constraint_kinds"])
+    protected_kinds = {item["kind"] for item in protected_constraints}
+    if removals.intersection(protected_kinds):
+        raise RetrievalV2ValidationError(
+            "CHANGED SEARCH removes a protected constraint",
+            reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraint_delta.remove_constraint_kinds",
+            ),
+        )
+    prior_kinds = {item["kind"] for item in prior_plan["effective_constraints"]}
+    removable = prior_kinds - policy.required_kinds - protected_kinds
+    if not removals.issubset(removable):
+        raise RetrievalV2ValidationError(
+            "CHANGED SEARCH removes a constraint that is not removable",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraint_delta.remove_constraint_kinds",
+            ),
+        )
+
+
+def _validate_protected_constraint_continuity(
+    protected: Sequence[SemanticRetrievalConstraintV1],
+    effective: Sequence[SemanticRetrievalConstraintV1],
+) -> None:
+    current = {item["kind"]: item for item in effective}
+    for expected in protected:
+        actual = current.get(expected["kind"])
+        if actual is not None and _canonical_constraints([actual]) == _canonical_constraints(
+            [expected]
+        ):
+            continue
+        raise RetrievalV2ValidationError(
+            f"SEARCH changes protected {expected['kind']} constraint",
+            reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraint_delta",
+                f"$.source_fetch_plans[].effective_constraints[?(@.kind=='{expected['kind']}')]",
+            ),
+        )
+
+
+def _validate_person_promotion(
     prior: Sequence[SemanticRetrievalConstraintV1],
     effective: Sequence[SemanticRetrievalConstraintV1],
     *,
     person_candidates: Sequence[PersonCandidateV1],
     selected_person_identities: Mapping[str, str],
 ) -> None:
-    current = {item["kind"]: item for item in effective}
-    participant = current.get("PARTICIPANT")
-    resolved_terms: set[str] = set()
-    if participant is not None and participant["kind"] == "PARTICIPANT":
-        hard_identities = {item["identity"] for item in participant["participants"]}
-        for mention in {item["mention"] for item in person_candidates}:
-            identities = {
-                item["identity"]
-                for item in person_candidates
-                if item["mention"] == mention and item["source_segment_ids"]
-            }
-            selected = selected_person_identities.get(mention)
-            if selected not in identities:
-                selected = next(iter(identities)) if len(identities) == 1 else None
-            if selected in hard_identities:
-                resolved_terms.update({mention, person_discovery_term(mention)})
-    for previous in prior:
-        following = current.get(previous["kind"])
-        if following == previous:
-            continue
-        if previous["kind"] == "CONCEPT":
-            if (
-                following
-                and following["kind"] == "CONCEPT"
-                and (previous["concept"] == following["concept"])
-            ):
-                continue
-        elif previous["kind"] == "PARTICIPANT" and following and following["kind"] == "PARTICIPANT":
-            # Exact identities cannot be dropped or an AND weakened to OR.
-            if (
-                all(item in following["participants"] for item in previous["participants"])
-                and (
-                    following["match_mode"] == previous["match_mode"]
-                    or len(previous["participants"]) == 1
-                )
-                and (
-                    following["match_mode"] == "ALL"
-                    or following["participants"] == previous["participants"]
-                )
-            ):
-                continue
-        elif previous["kind"] == "KEYWORD" and resolved_terms:
-            remaining = [term for term in previous["terms"] if term not in resolved_terms]
-            if (not remaining and following is None) or following == {
-                **previous,
-                "terms": remaining,
-            }:
-                continue
+    previous_participant = next(
+        (item for item in prior if item["kind"] == "PARTICIPANT"),
+        None,
+    )
+    current_participant = next(
+        (item for item in effective if item["kind"] == "PARTICIPANT"),
+        None,
+    )
+    if current_participant is None or current_participant["kind"] != "PARTICIPANT":
+        return
+    previous_identities = (
+        set()
+        if previous_participant is None or previous_participant["kind"] != "PARTICIPANT"
+        else {item["identity"] for item in previous_participant["participants"]}
+    )
+    added_identities = {
+        item["identity"] for item in current_participant["participants"]
+    } - previous_identities
+    if not added_identities:
+        return
+    resolved_identities: set[str] = set()
+    for mention in {item["mention"] for item in person_candidates}:
+        identities = {
+            item["identity"]
+            for item in person_candidates
+            if item["mention"] == mention and item["source_segment_ids"]
+        }
+        selected = selected_person_identities.get(mention)
+        if selected in identities:
+            resolved_identities.add(selected)
+        elif len(identities) == 1:
+            resolved_identities.update(identities)
+    if not added_identities.issubset(resolved_identities):
         raise RetrievalV2ValidationError(
-            f"CHANGED SEARCH changes protected {previous['kind']} anchor",
+            "CHANGED SEARCH promotes a participant without validated evidence",
             reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
             affected_field_paths=(
                 "$.route_queries[].search_spec.constraint_delta",
-                f"$.source_fetch_plans[].effective_constraints[?(@.kind=='{previous['kind']}')]",
+                "$.source_fetch_plans[].effective_constraints[?(@.kind=='PARTICIPANT')]",
             ),
         )
 

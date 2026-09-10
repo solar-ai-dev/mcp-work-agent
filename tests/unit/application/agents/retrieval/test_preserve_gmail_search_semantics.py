@@ -29,6 +29,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
+    derive_protected_constraints_by_route,
     gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
     validate_gmail_search_role_separation,
@@ -731,3 +732,43 @@ def test_concept_ranking__matching_concept__remains_candidate_not_event_fact() -
     assert ranked[0]["reason_codes"] == ["CONCEPT_MANIFESTATION_MATCH"]
     assert ranked[1]["reason_codes"] == ["CONCEPT_MANIFESTATION_MATCH"]
     assert ranked[2]["reason_codes"] == []
+
+
+def test_protected_constraints__uses_only_source_bound_literals_and_required_route_binding() -> (
+    None
+):
+    request_text = "Nimbus 출시 날짜를 메일에서 확인해줘"
+    protected = derive_protected_constraints_by_route(
+        request_intent={
+            "constraints": [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "search_terms",
+                    "value": ["Nimbus"],
+                    "provenance": {
+                        "source": "USER_REQUEST",
+                        "start_offset": request_text.index("Nimbus"),
+                        "end_offset": request_text.index("Nimbus") + len("Nimbus"),
+                    },
+                },
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "search_terms",
+                    "value": ["모델 가설"],
+                },
+            ]
+        },
+        frozen_routes=[ROUTE],
+        required_constraint_kinds={"gmail": ["CONTAINER_REF"]},
+        validated_resource_refs=None,
+        validated_container_refs={"gmail": ["inbox"]},
+        now_ms=None,
+        timezone=None,
+    )
+
+    assert protected == {
+        "gmail": [
+            {"kind": "KEYWORD", "terms": ["Nimbus"], "match_mode": "PHRASE"},
+            {"kind": "CONTAINER_REF", "container_refs": ["inbox"]},
+        ]
+    }

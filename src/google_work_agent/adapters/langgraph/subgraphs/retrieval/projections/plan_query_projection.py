@@ -2,6 +2,10 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import NotRequired, TypedDict, cast
 
 from google_work_agent.application.agents.retrieval.build_query import RouteConstraintPolicy
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ProtectedConstraintsByRouteV1,
+    SourceFetchPlanV1,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     PersonCandidateV1,
 )
@@ -37,6 +41,10 @@ class PlanQueryInput(TypedDict):
     timezone: NotRequired[str | None]
     person_candidates: NotRequired[Sequence[PersonCandidateV1]]
     selected_person_identities: NotRequired[Mapping[str, str] | None]
+    prior_plans: NotRequired[Mapping[str, SourceFetchPlanV1] | None]
+    prior_read_result_handles: NotRequired[Mapping[str, str] | None]
+    read_result_summaries: NotRequired[Sequence[Mapping[str, object]] | None]
+    protected_constraints_by_route: NotRequired[ProtectedConstraintsByRouteV1 | None]
 
 
 def project_plan_query_input(state: Mapping[str, object]) -> PlanQueryInput:

@@ -7,7 +7,10 @@ from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ProtectedConstraintsByRouteV1,
+    RetrievalConstraintKindV1,
     RetrievalV2ValidationError,
+    SemanticRetrievalConstraintV1,
     TemporalRangeConstraintV1,
     validate_participant_identity,
 )
@@ -24,12 +27,53 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     InputToolRouteV1,
 )
 
-_GMAIL_SEARCH_RESOURCE_TYPES = frozenset(
-    {"GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
-)
+_GMAIL_SEARCH_RESOURCE_TYPES = frozenset({"GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"})
+
+
+def derive_protected_constraints_by_route(
+    *,
+    request_intent: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    required_constraint_kinds: Mapping[str, Sequence[RetrievalConstraintKindV1]],
+    validated_resource_refs: Mapping[str, Sequence[str]] | None,
+    validated_container_refs: Mapping[str, Sequence[str]] | None,
+    now_ms: int | None,
+    timezone: str | None,
+) -> ProtectedConstraintsByRouteV1:
+    """Project only verified literals and deterministic route bindings as protected data."""
+    constraints = request_intent.get("constraints")
+    result: dict[str, list[SemanticRetrievalConstraintV1]] = {}
+    for route in frozen_routes:
+        route_id = route["route_id"]
+        protected: list[dict[str, object]] = []
+        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES:
+            protected.extend(
+                _explicit_gmail_constraints(
+                    constraints,
+                    now_ms=now_ms,
+                    timezone=timezone,
+                    source_resource_type=route["resource_type"],
+                    require_validated_provenance=True,
+                )
+            )
+        required = set(required_constraint_kinds.get(route_id, ()))
+        container_refs = list(dict.fromkeys((validated_container_refs or {}).get(route_id, ())))
+        if "CONTAINER_REF" in required and container_refs:
+            protected.append({"kind": "CONTAINER_REF", "container_refs": container_refs})
+        resource_refs = list(dict.fromkeys((validated_resource_refs or {}).get(route_id, ())))
+        if "RESOURCE_REF" in required and resource_refs:
+            protected.append({"kind": "RESOURCE_REF", "resource_refs": resource_refs})
+        if protected:
+            result[route_id] = cast(list[SemanticRetrievalConstraintV1], protected)
+    return result
+
+
 def resolve_gmail_query_periods(
-    *, prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
-    now_ms: int | None, timezone: str | None,
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    now_ms: int | None,
+    timezone: str | None,
 ) -> dict[str, TemporalRangeConstraintV1]:
     """Bind the existing period resolver to Gmail routes, never Calendar policy reads."""
     intent = prompt_input.get("request_intent")
@@ -52,11 +96,14 @@ def requested_participant_identities(prompt_input: Mapping[str, object]) -> list
     if not isinstance(intent, Mapping):
         return []
     constraints = _explicit_gmail_constraints(intent.get("constraints"), now_ms=None, timezone=None)
-    return sorted({
-        str(person["identity"])
-        for constraint in constraints if constraint["kind"] == "PARTICIPANT"
-        for person in cast(list[dict[str, str]], constraint["participants"])
-    })
+    return sorted(
+        {
+            str(person["identity"])
+            for constraint in constraints
+            if constraint["kind"] == "PARTICIPANT"
+            for person in cast(list[dict[str, str]], constraint["participants"])
+        }
+    )
 
 
 def gmail_planner_constraint_kinds(
@@ -71,12 +118,15 @@ def gmail_planner_constraint_kinds(
         return None
     explicit = _explicit_gmail_constraints(constraints, now_ms=None, timezone=None)
     kinds = {str(item["kind"]) for item in explicit} | {
-        "CONTAINER_REF", "RESOURCE_REF", "PARTICIPANT",
+        "CONTAINER_REF",
+        "RESOURCE_REF",
+        "PARTICIPANT",
     }
     if _requested_concepts(constraints):
         kinds.add("CONCEPT")
-    if any(isinstance(item, Mapping) and item.get("kind") in {"DATE", "TIME"}
-           for item in constraints):
+    if any(
+        isinstance(item, Mapping) and item.get("kind") in {"DATE", "TIME"} for item in constraints
+    ):
         kinds.add("TEMPORAL_RANGE")
     if kinds == {"CONTAINER_REF", "RESOURCE_REF", "PARTICIPANT"}:
         # Missing RU search fields are not evidence that the original request has
@@ -87,14 +137,18 @@ def gmail_planner_constraint_kinds(
 
 
 def requested_gmail_concepts(
-    prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
 ) -> dict[str, set[str]]:
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping) or has_explicit_gmail_subject(intent.get("constraints")):
         return {}
     concepts = _requested_concepts(intent.get("constraints"))
-    return {route["route_id"]: concepts for route in frozen_routes
-            if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES and concepts}
+    return {
+        route["route_id"]: concepts
+        for route in frozen_routes
+        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES and concepts
+    }
 
 
 def preserve_gmail_search_semantics(
@@ -112,9 +166,7 @@ def preserve_gmail_search_semantics(
     RequestIntent are data, not a new semantic choice.
     """
     gmail_routes = [
-        route
-        for route in frozen_routes
-        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+        route for route in frozen_routes if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
     ]
     if len(gmail_routes) != 1:
         return value
@@ -150,8 +202,12 @@ def preserve_gmail_search_semantics(
     intent_constraints = request_intent.get("constraints")
     has_topic = isinstance(intent_constraints, list) and any(
         isinstance(item, Mapping)
-        and item.get("field") in {
-            "business_concepts", "search_terms", "subject", "search_criteria_subject",
+        and item.get("field")
+        in {
+            "business_concepts",
+            "search_terms",
+            "subject",
+            "search_criteria_subject",
         }
         and item.get("value")
         for item in intent_constraints
@@ -182,8 +238,10 @@ def preserve_gmail_search_semantics(
         ] + explicit_constraints
         if concepts and not has_explicit_gmail_subject(intent_constraints):
             search_spec["constraints"] = [
-                item for item in search_spec["constraints"]
-                if not isinstance(item, Mapping) or item.get("kind") != "CONCEPT"
+                item
+                for item in search_spec["constraints"]
+                if not isinstance(item, Mapping)
+                or item.get("kind") != "CONCEPT"
                 or item.get("concept") in concepts
             ]
     return candidate
@@ -271,7 +329,9 @@ def validate_gmail_search_role_separation(
 
 
 def validate_requested_concepts(
-    value: object, prompt_input: Mapping[str, object], frozen_routes: Sequence[InputToolRouteV1],
+    value: object,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
 ) -> None:
     """Keep each user-owned concept represented without prescribing its hypotheses."""
     intent = prompt_input.get("request_intent")
@@ -280,8 +340,11 @@ def validate_requested_concepts(
     if has_explicit_gmail_subject(intent.get("constraints")):
         return
     concepts = _requested_concepts(intent.get("constraints"))
-    gmail_ids = {route["route_id"] for route in frozen_routes
-                 if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES}
+    gmail_ids = {
+        route["route_id"]
+        for route in frozen_routes
+        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+    }
     for query in value.get("route_queries", []):
         if query.get("route_id") not in gmail_ids:
             continue
@@ -290,8 +353,11 @@ def validate_requested_concepts(
             continue
         constraints = spec.get("constraints", [])
         if concepts:
-            hypotheses = [item for item in constraints
-                          if item.get("kind") == "CONCEPT" and item.get("concept") in concepts]
+            hypotheses = [
+                item
+                for item in constraints
+                if item.get("kind") == "CONCEPT" and item.get("concept") in concepts
+            ]
             if not hypotheses:
                 raise RetrievalV2ValidationError(
                     "discovery hypothesis must retain a requested business concept",
@@ -304,8 +370,11 @@ def _requested_concepts(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
     return {
-        entry for item in value if isinstance(item, Mapping)
-        and item.get("kind") == "USER_REQUIREMENT" and item.get("field") == "business_concepts"
+        entry
+        for item in value
+        if isinstance(item, Mapping)
+        and item.get("kind") == "USER_REQUIREMENT"
+        and item.get("field") == "business_concepts"
         for entry in (item["value"] if isinstance(item.get("value"), list) else [item.get("value")])
         if isinstance(entry, str) and entry
     }
@@ -317,6 +386,7 @@ def _explicit_gmail_constraints(
     now_ms: int | None,
     timezone: str | None,
     source_resource_type: str | None = None,
+    require_validated_provenance: bool = False,
 ) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
@@ -339,6 +409,8 @@ def _explicit_gmail_constraints(
     }
     for item in value:
         if not isinstance(item, Mapping):
+            continue
+        if require_validated_provenance and not _has_validated_source_provenance(item):
             continue
         kind = str(item.get("kind", "")).upper()
         field = str(item.get("field", "")).strip().lower()
@@ -408,6 +480,21 @@ def _explicit_gmail_constraints(
         if temporal is not None:
             result.append(dict(temporal))
     return result
+
+
+def _has_validated_source_provenance(value: Mapping[str, object]) -> bool:
+    provenance = value.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return False
+    source = provenance.get("source")
+    start = provenance.get("start_offset")
+    end = provenance.get("end_offset")
+    return (
+        source in {"USER_REQUEST", "CONFIRMATION_RESPONSE"}
+        and type(start) is int
+        and type(end) is int
+        and 0 <= cast(int, start) < cast(int, end)
+    )
 
 
 def _canonical_gmail_status(value: str) -> str | None:

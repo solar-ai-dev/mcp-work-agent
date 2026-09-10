@@ -15,6 +15,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     bind_required_container_constraints,
+    build_query,
     followup_planner_projection,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
@@ -22,10 +23,12 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     PLANNER_CONCEPT_MANIFESTATION_LIMIT,
+    ProtectedConstraintsByRouteV1,
     RetrievalConstraintKindV1,
     RetrievalOperationV2,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
+    SourceFetchPlanV1,
     route_operation_tool_id,
     status_scope_values,
     validate_retrieval_query_plan_v2,
@@ -437,6 +440,10 @@ def plan_query(
     timezone: str | None = None,
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
+    prior_plans: Mapping[str, SourceFetchPlanV1] | None = None,
+    prior_read_result_handles: Mapping[str, str] | None = None,
+    read_result_summaries: Sequence[Mapping[str, object]] | None = None,
+    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None = None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2, bool]:
     """Plan provider-neutral retrieval intent against already-frozen input routes."""
     for route_id, policy in route_policies.items():
@@ -482,6 +489,14 @@ def plan_query(
         detail_candidate_refs=detail_candidate_refs,
         next_page_route_ids=next_page_route_ids,
     )
+    route_operations = {
+        route_id: tuple(
+            operation
+            for operation in operations
+            if operation not in {"SEARCH", "FREEBUSY"} or supported_kinds.get(route_id)
+        )
+        for route_id, operations in route_operations.items()
+    }
     if not any(route_operations.values()):
         raise RetrievalV2ValidationError(
             "no executable retrieval operation is available for the frozen routes",
@@ -504,22 +519,22 @@ def plan_query(
         supported_constraint_kinds=planner_kinds,
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
-        detail_candidate_refs=detail_candidate_refs,
+        detail_candidate_refs_by_route=_detail_candidate_refs_by_route(
+            frozen_routes,
+            detail_candidate_refs,
+        ),
         is_followup=is_followup,
         requested_concepts=concepts_by_route,
         next_page_route_ids=next_page_route_ids,
-        prior_concept_manifestations={
-            route["route_id"]: {
-                term
-                for attempt in cast(
-                    list[QueryAttemptV1], prompt_input.get("prior_query_attempts", [])
-                )
-                if attempt["route_id"] == route["route_id"]
-                for constraint in attempt["normalized_intent_constraints"]
-                if constraint["kind"] == "CONCEPT"
-                for term in constraint["manifestations"]
-            }
+        removable_constraint_kinds=_removable_constraint_kinds_by_route(
+            prior_plans=prior_plans,
+            route_policies=route_policies,
+            protected_constraints_by_route=protected_constraints_by_route,
+        ),
+        gmail_route_ids={
+            route["route_id"]
             for route in frozen_routes
+            if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
         },
         allowed_participant_identities=requested_participant_identities(prompt_input),
         resolved_temporal_constraints=resolve_gmail_query_periods(
@@ -542,15 +557,30 @@ def plan_query(
         selected_person_identities=selected_person_identities,
     )
     if deterministic_plan is not None:
+        validated_deterministic = validate_retrieval_query_plan_v2(
+            deterministic_plan,
+            frozen_routes=frozen_routes,
+            supported_constraint_kinds=supported_kinds,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            detail_candidate_refs=detail_candidate_refs,
+        )
+        build_query(
+            validated_deterministic,
+            frozen_routes=frozen_routes,
+            route_policies=route_policies,
+            prior_plans=prior_plans,
+            prior_read_result_handles=prior_read_result_handles,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            detail_candidate_refs=detail_candidate_refs,
+            person_candidates=person_candidates,
+            selected_person_identities=selected_person_identities,
+            read_result_summaries=read_result_summaries,
+            protected_constraints_by_route=protected_constraints_by_route,
+        )
         return (
-            validate_retrieval_query_plan_v2(
-                deterministic_plan,
-                frozen_routes=frozen_routes,
-                supported_constraint_kinds=supported_kinds,
-                validated_resource_refs=validated_resource_refs,
-                validated_container_refs=validated_container_refs,
-                detail_candidate_refs=detail_candidate_refs,
-            ),
+            validated_deterministic,
             retry_budget,
             False,
         )
@@ -586,11 +616,23 @@ def plan_query(
             detail_candidate_refs=detail_candidate_refs,
         )
         validate_requested_concepts(validated, prompt_input, frozen_routes)
+        validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        build_query(
+            validated_round,
+            frozen_routes=frozen_routes,
+            route_policies=route_policies,
+            prior_plans=prior_plans,
+            prior_read_result_handles=prior_read_result_handles,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            detail_candidate_refs=detail_candidate_refs,
+            person_candidates=person_candidates,
+            selected_person_identities=selected_person_identities,
+            read_result_summaries=read_result_summaries,
+            protected_constraints_by_route=protected_constraints_by_route,
+        )
         return (
-            _validate_query_plan_round(
-                validated,
-                is_followup=is_followup,
-            ),
+            validated_round,
             retry_budget,
             True,
         )
@@ -615,6 +657,12 @@ def plan_query(
             is_followup=is_followup,
             now_ms=now_ms,
             timezone=timezone,
+            prior_plans=prior_plans,
+            prior_read_result_handles=prior_read_result_handles,
+            read_result_summaries=read_result_summaries,
+            protected_constraints_by_route=protected_constraints_by_route,
+            person_candidates=person_candidates,
+            selected_person_identities=selected_person_identities,
         )
     return revised_plan, revised_budget, True
 
@@ -731,6 +779,37 @@ def _route_operations(
     return operations
 
 
+def _detail_candidate_refs_by_route(
+    frozen_routes: Sequence[InputToolRouteV1],
+    detail_candidate_refs: Collection[str],
+) -> dict[str, tuple[str, ...]]:
+    return {
+        route["route_id"]: tuple(
+            ref
+            for ref in detail_candidate_refs
+            if ref.startswith(f"{route['resource_type'].lower()}:")
+        )
+        for route in frozen_routes
+    }
+
+
+def _removable_constraint_kinds_by_route(
+    *,
+    prior_plans: Mapping[str, SourceFetchPlanV1] | None,
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None,
+) -> dict[str, frozenset[RetrievalConstraintKindV1]]:
+    return {
+        route_id: frozenset(
+            {item["kind"] for item in plan["effective_constraints"]}
+            - route_policies[route_id].required_kinds
+            - {item["kind"] for item in (protected_constraints_by_route or {}).get(route_id, ())}
+        )
+        for route_id, plan in (prior_plans or {}).items()
+        if route_id in route_policies
+    }
+
+
 def _applicable_constraint_kinds(
     route_policies: Mapping[str, RouteConstraintPolicy],
     *,
@@ -771,6 +850,12 @@ def _revise_plan_once(
     is_followup: bool,
     now_ms: int | None,
     timezone: str | None,
+    prior_plans: Mapping[str, SourceFetchPlanV1] | None,
+    prior_read_result_handles: Mapping[str, str] | None,
+    read_result_summaries: Sequence[Mapping[str, object]] | None,
+    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None,
+    person_candidates: Sequence[PersonCandidateV1],
+    selected_person_identities: Mapping[str, str] | None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2]:
     signature = build_semantic_failure_signature_v1(
         node_id="retrieval.plan_query",
@@ -827,8 +912,23 @@ def _revise_plan_once(
         detail_candidate_refs=detail_candidate_refs,
     )
     validate_requested_concepts(validated, prompt_input, frozen_routes)
+    validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+    build_query(
+        validated_round,
+        frozen_routes=frozen_routes,
+        route_policies=route_policies,
+        prior_plans=prior_plans,
+        prior_read_result_handles=prior_read_result_handles,
+        validated_resource_refs=validated_resource_refs,
+        validated_container_refs=validated_container_refs,
+        detail_candidate_refs=detail_candidate_refs,
+        person_candidates=person_candidates,
+        selected_person_identities=selected_person_identities,
+        read_result_summaries=read_result_summaries,
+        protected_constraints_by_route=protected_constraints_by_route,
+    )
     return (
-        _validate_query_plan_round(validated, is_followup=is_followup),
+        validated_round,
         decision["run_budget"],
     )
 
