@@ -30,16 +30,24 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
 )
+from google_work_agent.application.agents.retrieval.derive_protected_constraints_by_route import (
+    derive_protected_constraints_by_route,
+)
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
-    derive_protected_constraints_by_route,
-    gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
-    validate_gmail_search_role_separation,
-    validate_requested_concepts,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import rag_retrieve_rerank
+from google_work_agent.application.agents.retrieval.resolve_gmail_planner_constraint_kinds import (
+    resolve_gmail_planner_constraint_kinds,
+)
+from google_work_agent.application.agents.retrieval.validate_gmail_search_role_separation import (
+    validate_gmail_search_role_separation,
+)
+from google_work_agent.application.agents.retrieval.validate_requested_gmail_concepts import (
+    validate_requested_gmail_concepts,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
@@ -71,7 +79,7 @@ DRAFT_POLICIES = {"gmail": RouteConstraintPolicy(frozenset({"KEYWORD", "STATUS_S
 
 
 def test_gmail_constraint_kinds__requested_status_scope__remains_available() -> None:
-    kinds = gmail_planner_constraint_kinds(
+    kinds = resolve_gmail_planner_constraint_kinds(
         {
             "request_intent": {
                 "constraints": [
@@ -84,7 +92,7 @@ def test_gmail_constraint_kinds__requested_status_scope__remains_available() -> 
 
 
 def test_gmail_status__unrelated_or_changed_status__cannot_restrict_search() -> None:
-    kinds = gmail_planner_constraint_kinds(
+    kinds = resolve_gmail_planner_constraint_kinds(
         {
             "request_intent": {
                 "constraints": [{"kind": "SCOPE", "field": "status", "value": "OPEN"}],
@@ -317,7 +325,7 @@ def test_query_planner__unstructured_request_constraint__retains_bounded_discove
             },
         ]
     }
-    kinds = gmail_planner_constraint_kinds({"request_intent": intent})
+    kinds = resolve_gmail_planner_constraint_kinds({"request_intent": intent})
     assert kinds is not None and "KEYWORD" in kinds
     assert not {"TEMPORAL_RANGE", "STATUS_SCOPE", "CONCEPT"} & kinds
     reference = PromptReference(
@@ -359,7 +367,7 @@ def test_query_planner__unstructured_request_constraint__retains_bounded_discove
 
 
 def test_gmail_constraints__scope_search_terms__preserves_original_anchor() -> None:
-    kinds = gmail_planner_constraint_kinds(
+    kinds = resolve_gmail_planner_constraint_kinds(
         {
             "request_intent": {
                 "constraints": [
@@ -432,7 +440,7 @@ def test_gmail_constraints__empty_values__do_not_authorize_temporal_or_status_fi
         request_text="메일에서 ORB-17을 찾아줘",
         entry_mode="AGENT_SEARCH",
     )
-    kinds = gmail_planner_constraint_kinds({"request_intent": intent})
+    kinds = resolve_gmail_planner_constraint_kinds({"request_intent": intent})
     assert kinds is not None and "KEYWORD" in kinds
     assert not {"TEMPORAL_RANGE", "STATUS_SCOPE"} & kinds
 
@@ -635,10 +643,10 @@ def test_compound_concepts__planner_hypothesis__keeps_user_owned_concept(
     }
     candidate = _plan([{"kind": "CONCEPT", "concept": concept, "manifestations": terms}])
     if valid:
-        validate_requested_concepts(candidate, {"request_intent": intent}, [ROUTE])
+        validate_requested_gmail_concepts(candidate, {"request_intent": intent}, [ROUTE])
     else:
         with pytest.raises(RetrievalV2ValidationError):
-            validate_requested_concepts(candidate, {"request_intent": intent}, [ROUTE])
+            validate_requested_gmail_concepts(candidate, {"request_intent": intent}, [ROUTE])
     assert intent["constraints"][0]["value"] == ["납품", "정산"]
     assert intent["constraints"][1]["value"] == ["ORB-17"]
 
@@ -807,7 +815,7 @@ def test_concept_ranking__matching_concept__remains_candidate_not_event_fact() -
     assert ranked[2]["reason_codes"] == []
 
 
-def test_protected_constraints__uses_finalized_source_literals_and_required_route_binding() -> None:
+def test_protected_constraints__finalized_source_and_route_binding__preserves_both() -> None:
     request_text = "Nimbus와 Quartz 출시 날짜를 메일에서 확인해줘"
     candidate: RequestGoalCandidateV1 = {
         "goal": "Nimbus 출시 날짜 확인",

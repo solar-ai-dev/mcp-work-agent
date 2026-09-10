@@ -420,7 +420,7 @@ def test_build_query__changed_search__protects_anchor_values(kind: str, remove: 
     assert raised.value.affected_field_paths
 
 
-def test_build_query__followup_changes_hypothesis_but_preserves_explicit_constraint() -> None:
+def test_build_query__followup_hypothesis_change__preserves_explicit_constraint() -> None:
     route = cast(
         InputToolRouteV1,
         {

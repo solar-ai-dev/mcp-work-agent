@@ -24,7 +24,9 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
 )
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     preserve_gmail_search_semantics,
-    requested_participant_identities,
+)
+from google_work_agent.application.agents.retrieval.resolve_request_participants import (
+    resolve_request_participants,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
@@ -132,7 +134,7 @@ def test_person_discovery__unresolved_mention__does_not_invent_email(
     _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)
     assert arguments["query"] == discovery_query
     assert not any(item["kind"] == "PARTICIPANT" for item in fetch["effective_constraints"])
-    assert requested_participant_identities(prompt_input) == []
+    assert resolve_request_participants(prompt_input) == []
 
 
 def test_model_participant__current_request_email__rejects_invented_email() -> None:
@@ -146,7 +148,7 @@ def test_model_participant__current_request_email__rejects_invented_email() -> N
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["g"],
         route_operations={"g": ["SEARCH"]},
-        allowed_participant_identities=requested_participant_identities(prompt_input),
+        allowed_participant_identities=resolve_request_participants(prompt_input),
     )
     assert validate_output_schema(_plan("kim@example.com"), schema.json_schema) == []
     assert validate_output_schema(_plan("invented@example.com"), schema.json_schema)

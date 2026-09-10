@@ -179,7 +179,7 @@ def test_gmail_keyword_lowering__different_match_modes__produces_distinct_querie
     assert arguments["query"] == expected
 
 
-def test_gmail_phrase_lowering__preserves_term_order_and_repetition() -> None:
+def test_gmail_phrase_lowering__ordered_repeated_terms__preserves_order_and_repetition() -> None:
     route = cast(
         InputToolRouteV1,
         {

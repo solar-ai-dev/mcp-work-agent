@@ -47,16 +47,28 @@ from google_work_agent.application.agents.retrieval.plan_candidate_detail import
 )
 from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
-    gmail_planner_constraint_kinds,
     preserve_gmail_search_semantics,
-    requested_gmail_concepts,
-    requested_participant_identities,
+)
+from google_work_agent.application.agents.retrieval.resolve_gmail_planner_constraint_kinds import (
+    resolve_gmail_planner_constraint_kinds,
+)
+from google_work_agent.application.agents.retrieval.resolve_gmail_query_periods import (
     resolve_gmail_query_periods,
-    validate_gmail_search_role_separation,
-    validate_requested_concepts,
+)
+from google_work_agent.application.agents.retrieval.resolve_request_participants import (
+    resolve_request_participants,
+)
+from google_work_agent.application.agents.retrieval.resolve_requested_gmail_concepts import (
+    resolve_requested_gmail_concepts,
 )
 from google_work_agent.application.agents.retrieval.select_followup_routes import (
     select_followup_routes,
+)
+from google_work_agent.application.agents.retrieval.validate_gmail_search_role_separation import (
+    validate_gmail_search_role_separation,
+)
+from google_work_agent.application.agents.retrieval.validate_requested_gmail_concepts import (
+    validate_requested_gmail_concepts,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -458,7 +470,7 @@ def plan_query(
         validated_container_refs=validated_container_refs,
     )
     is_followup = "current_round_no" in prompt_input
-    meaningful_kinds = gmail_planner_constraint_kinds(prompt_input)
+    meaningful_kinds = resolve_gmail_planner_constraint_kinds(prompt_input)
     if meaningful_kinds is not None:
         supported_kinds = {
             route["route_id"]: (
@@ -477,7 +489,7 @@ def plan_query(
             )
             for route in frozen_routes
         }
-    concepts_by_route = requested_gmail_concepts(prompt_input, frozen_routes)
+    concepts_by_route = resolve_requested_gmail_concepts(prompt_input, frozen_routes)
     planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = {
         route_id: ({"CONCEPT"} if concepts_by_route.get(route_id) else kinds)
         for route_id, kinds in supported_kinds.items()
@@ -536,7 +548,7 @@ def plan_query(
             for route in frozen_routes
             if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
         },
-        allowed_participant_identities=requested_participant_identities(prompt_input),
+        allowed_participant_identities=resolve_request_participants(prompt_input),
         resolved_temporal_constraints=resolve_gmail_query_periods(
             prompt_input=prompt_input,
             frozen_routes=frozen_routes,
@@ -614,7 +626,7 @@ def plan_query(
             validated_container_refs=validated_container_refs,
             detail_candidate_refs=detail_candidate_refs,
         )
-        validate_requested_concepts(validated, prompt_input, frozen_routes)
+        validate_requested_gmail_concepts(validated, prompt_input, frozen_routes)
         validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
         build_query(
             validated_round,
@@ -909,7 +921,7 @@ def _revise_plan_once(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
     )
-    validate_requested_concepts(validated, prompt_input, frozen_routes)
+    validate_requested_gmail_concepts(validated, prompt_input, frozen_routes)
     validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
     build_query(
         validated_round,

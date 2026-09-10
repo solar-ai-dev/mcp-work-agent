@@ -124,6 +124,9 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     SufficiencyIssueV2,
     SufficiencyResultV2,
 )
+from google_work_agent.application.agents.retrieval.derive_protected_constraints_by_route import (
+    derive_protected_constraints_by_route,
+)
 from google_work_agent.application.agents.retrieval.execute_read import RetrievalReadBindingError
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
     advance_current_round_no,
@@ -142,9 +145,6 @@ from google_work_agent.application.agents.retrieval.plan_query import (
     followup_retrieval_planner_input,
     has_retrieval_followup_path,
     initial_retrieval_planner_input,
-)
-from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
-    derive_protected_constraints_by_route,
 )
 from google_work_agent.application.agents.retrieval.project_attempted_detail_refs import (
     project_attempted_detail_refs,
