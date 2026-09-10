@@ -1079,6 +1079,8 @@ class ProductionRuntimeConfig:
     langsmith_api_key: str | None = field(default=None, repr=False)
     langsmith_project_name: str | None = None
     langsmith_trace_binding: tuple[tuple[str, str], ...] = ()
+    development_sampling_temperature: float | None = None
+    development_sampling_seed: int | None = None
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = ()
     code_signature_verified_paths: frozenset[str] = frozenset()
 
@@ -1101,8 +1103,10 @@ class ProductionRuntimeConfig:
                 self.langsmith_api_key is not None
                 or self.langsmith_project_name is not None
                 or self.langsmith_trace_binding
+                or self.development_sampling_temperature is not None
+                or self.development_sampling_seed is not None
             ):
-                raise ValueError("signed runtime cannot enable external development observability")
+                raise ValueError("signed runtime cannot enable development-only controls")
             if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
                 raise ValueError("signed GitHub OAuth client ID must be non-empty")
             paths = [entry.file_path for entry in self.verified_release_files]
@@ -1114,6 +1118,12 @@ class ProductionRuntimeConfig:
             raise ValueError("LangSmith API key and project name must be configured together")
         if self.langsmith_trace_binding and self.langsmith_api_key is None:
             raise ValueError("LangSmith trace binding requires an enabled LangSmith client")
+        if self.development_sampling_temperature is not None and not (
+            0.0 <= self.development_sampling_temperature <= 2.0
+        ):
+            raise ValueError("development sampling temperature must be between 0.0 and 2.0")
+        if self.development_sampling_seed is not None and self.development_sampling_seed < 0:
+            raise ValueError("development sampling seed must be non-negative")
 
     def verified_frontend_site(self) -> _VerifiedFrontendSite | None:
         """Project only release-indexed frontend assets before deferred core startup."""
@@ -1146,6 +1156,8 @@ class ProductionRuntimeConfig:
         langsmith_api_key: str | None = None,
         langsmith_project_name: str | None = None,
         langsmith_trace_binding: Mapping[str, str] | None = None,
+        sampling_temperature: float | None = None,
+        sampling_seed: int | None = None,
     ) -> ProductionRuntimeConfig:
         """Create the only explicit non-installed configuration mode."""
 
@@ -1172,6 +1184,8 @@ class ProductionRuntimeConfig:
             langsmith_api_key=(langsmith_api_key or "").strip() or None,
             langsmith_project_name=(langsmith_project_name or "").strip() or None,
             langsmith_trace_binding=tuple(sorted((langsmith_trace_binding or {}).items())),
+            development_sampling_temperature=sampling_temperature,
+            development_sampling_seed=sampling_seed,
         )
 
     @classmethod
@@ -2278,6 +2292,8 @@ def build_production_runtime(
     langsmith_api_key: str | None = None,
     langsmith_project_name: str | None = None,
     langsmith_trace_binding: tuple[tuple[str, str], ...] = (),
+    development_sampling_temperature: float | None = None,
+    development_sampling_seed: int | None = None,
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = (),
     code_signature_verified_paths: frozenset[str] = frozenset(),
     request_process_exit: Callable[[], None] | None = None,
@@ -2290,6 +2306,8 @@ def build_production_runtime(
         langsmith_api_key is not None
         or langsmith_project_name is not None
         or langsmith_trace_binding
+        or development_sampling_temperature is not None
+        or development_sampling_seed is not None
     ):
         raise CoreInitializationError("EXTERNAL_DEVELOPMENT_OBSERVABILITY_FORBIDDEN")
     langsmith_callback: LangSmithWorkflowTraceCallback | None = None
@@ -2519,6 +2537,8 @@ def build_production_runtime(
             release_version=release_version,
             runtime_selection=runtime_selection,
             prompt_execution_scope=prompt_execution_scope,
+            sampling_temperature=development_sampling_temperature,
+            sampling_seed=development_sampling_seed,
         )
     except RuntimeError as error:
         connector_registry.close_all()
@@ -3520,6 +3540,8 @@ def _build_llm_runtime(
     release_version: str,
     runtime_selection: LlmRuntimeSelectionV1,
     prompt_execution_scope: PromptExecutionScope,
+    sampling_temperature: float | None = None,
+    sampling_seed: int | None = None,
     keyring_store: SecretStorePort | None = None,
 ) -> tuple[
     StructuredInferenceRuntimeRouter,
@@ -3565,12 +3587,16 @@ def _build_llm_runtime(
         ollama_probe=ollama_probe,
         selected_model_provider=local_model_selection.get_selected_model,
     )
+    runtime_policy = RuntimePolicy(
+        sampling_temperature=sampling_temperature,
+        sampling_seed=sampling_seed,
+    )
     status_service = LlmRuntimeStatusRouter(
         runtime_selection=runtime_selection,
         credential_service=credential_service,
         api_connection_service=GeminiConnectionService(transport=gemini_transport),
         hardware_probe=hardware_probe,
-        runtime_policy=RuntimePolicy(),
+        runtime_policy=runtime_policy,
         api_provider_name="gemini",
         local_model_selection=local_model_selection,
     )
@@ -3606,7 +3632,7 @@ def _build_llm_runtime(
                 execution_scope=prompt_execution_scope,
             ),
         ),
-        runtime_policy=RuntimePolicy(),
+        runtime_policy=runtime_policy,
         schema_repairer=PromptRepairSchemaRepairer(
             manifest_path=prompt_manifest_path,
             execution_scope=prompt_execution_scope,

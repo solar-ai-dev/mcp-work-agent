@@ -98,13 +98,10 @@ class RuntimePolicy:
     local_timeout_seconds: int = 180
     structured_output_repair_budget: int = 1
     max_fallback_count: int = 1
-    # docs/15 section 9.5 (Runtime Prompt Activation Gate): fixed sampling
-    # conditions for the Node Prompt Gate only -- never set by production
-    # callers (see api/composition.py, which constructs RuntimePolicy()
-    # with no args). None means "use the provider's own default", which is
-    # what every production dispatch path does today. Fixing these values
-    # narrows sampling variance on a best-effort basis; it does not
-    # guarantee bit-identical, fully deterministic output.
+    # None means "use the provider's own default". Explicit values are
+    # accepted only through the development runtime configuration so finite
+    # local-model measurements can be reproduced without changing user
+    # Settings or the signed product configuration.
     sampling_temperature: float | None = None
     sampling_seed: int | None = None
 

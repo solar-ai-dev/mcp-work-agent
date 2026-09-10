@@ -185,6 +185,47 @@ def test_development_config__prompt_manifest__requires_explicit_handoff(
     assert handed_off.development_prompt_manifest_path == manifest_path.resolve()
 
 
+def test_development_config__sampling_policy__requires_explicit_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.run_development import development_runtime_config
+
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    monkeypatch.setenv("GWA_DEVELOPMENT_LLM_TEMPERATURE", "0.2")
+    monkeypatch.setenv("GWA_DEVELOPMENT_LLM_SEED", "1729")
+    direct = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path / "direct",
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+    )
+    handed_off = development_runtime_config(runtime_root=tmp_path / "runner")
+
+    assert direct.development_sampling_temperature is None
+    assert direct.development_sampling_seed is None
+    assert handed_off.development_sampling_temperature == 0.2
+    assert handed_off.development_sampling_seed == 1729
+
+
+def test_development_config__sampling_policy__rejects_invalid_values(tmp_path: Path) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    with pytest.raises(ValueError, match="temperature"):
+        ProductionRuntimeConfig.development(
+            runtime_root=tmp_path,
+            working_directory=ROOT,
+            mcp_manifest_version="test",
+            sampling_temperature=2.1,
+        )
+    with pytest.raises(ValueError, match="seed"):
+        ProductionRuntimeConfig.development(
+            runtime_root=tmp_path,
+            working_directory=ROOT,
+            mcp_manifest_version="test",
+            sampling_seed=-1,
+        )
+
+
 def test_development_entrypoint__imports_and_rejects__non_loopback_bind() -> None:
     module = importlib.import_module("launcher.development_entrypoint")
 

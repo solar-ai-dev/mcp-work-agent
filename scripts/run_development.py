@@ -26,6 +26,26 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 
 
+def _optional_sampling_temperature() -> float | None:
+    value = os.environ.get("GWA_DEVELOPMENT_LLM_TEMPERATURE", "").strip()
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError as error:
+        raise ValueError("GWA_DEVELOPMENT_LLM_TEMPERATURE must be numeric") from error
+
+
+def _optional_sampling_seed() -> int | None:
+    value = os.environ.get("GWA_DEVELOPMENT_LLM_SEED", "").strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError as error:
+        raise ValueError("GWA_DEVELOPMENT_LLM_SEED must be an integer") from error
+
+
 def development_runtime_config(
     *,
     runtime_root: Path | None = None,
@@ -55,6 +75,8 @@ def development_runtime_config(
         langsmith_api_key=langsmith_api_key,
         langsmith_project_name=langsmith_project_name,
         langsmith_trace_binding=langsmith_trace_binding,
+        sampling_temperature=_optional_sampling_temperature(),
+        sampling_seed=_optional_sampling_seed(),
     )
 
 
