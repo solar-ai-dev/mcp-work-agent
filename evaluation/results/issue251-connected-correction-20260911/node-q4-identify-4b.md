@@ -6,4 +6,4 @@
 - 결과: PASS
 - 핵심 현상: `READ`와 `UPDATE`, `GMAIL_DRAFT` source, `UPDATE:GMAIL_DRAFT` output을 모두 유지했다. Connector READ와 Provider WRITE는 0이었다.
 - Run ID: `8a257482-4ece-43b4-9759-709327fdfd58`
-- LangSmith: [trace 01a08c9f-6ee7-7ed1-b633-1e3c14794eb7](https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/r/01a08c9f-6ee7-7ed1-b633-1e3c14794eb7)
+- LangSmith: 로컬 trace ID `01a08c9f-6ee7-7ed1-b633-1e3c14794eb7`가 발급됐으나 tracing 환경 플래그 누락으로 원격 전송되지 않았다. 결과를 채우기 위한 재실행은 하지 않았다.
