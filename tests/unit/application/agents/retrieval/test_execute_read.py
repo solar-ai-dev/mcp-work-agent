@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from hashlib import sha256
@@ -31,7 +31,10 @@ from google_work_agent.application.use_cases.resource.get_repository_access impo
     GetRepositoryAccessHandler,
     GetRepositoryAccessQuery,
 )
-from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
+from google_work_agent.application.use_cases.run.guard_run_budget import (
+    build_default_run_budget,
+    validate_run_budget_v2,
+)
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
@@ -114,6 +117,48 @@ class _Reader:
         del binding
         self.calls.append(dict(tool_arguments))
         return ConnectorReadResultV1(1, "gmail_search_threads", "req", {}, None, 0)
+
+
+def test_execute_read__with_durable_accountant__commits_budget_before_connector_dispatch() -> None:
+    durable_budget = build_default_run_budget()
+    graph_budget = build_default_run_budget()
+
+    def account(
+        update: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        nonlocal durable_budget
+        durable_budget = validate_run_budget_v2(dict(update(durable_budget)))
+        return durable_budget
+
+    class Reader:
+        def execute_read(
+            self,
+            binding: ValidatedConnectorToolBindingV1,
+            tool_arguments: dict[str, JsonValue],
+        ) -> ConnectorReadResultV1:
+            del binding, tool_arguments
+            assert durable_budget["connector_calls_used"] == 1
+            assert durable_budget["source_page_calls_used"] == 1
+            return ConnectorReadResultV1(
+                1, "gmail_search_threads", "req", {"items": []}, None, 0
+            )
+
+    result = execute_read(
+        plan={**_plan(), "operation_kind": "SEARCH"},
+        run_id="run",
+        binding=_binding(),
+        tool_arguments={"query": "bounded"},
+        connector_reader=Reader(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        read_result_handle="read",
+        run_budget=graph_budget,
+        now_ms=0,
+        prior_query_attempts=[],
+        durable_budget_accountant=account,
+    )
+
+    assert result.status == "COMPLETE"
+    assert graph_budget == durable_budget
 
 
 def test_github_default__lost_access__prevents_issue_read() -> None:

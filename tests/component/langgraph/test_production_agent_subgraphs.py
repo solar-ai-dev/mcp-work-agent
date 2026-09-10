@@ -65,7 +65,10 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     provider_dispatch_execution_scope,
 )
-from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
+from google_work_agent.application.use_cases.run.guard_run_budget import (
+    build_default_run_budget,
+    validate_run_budget_v2,
+)
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -1001,6 +1004,17 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     state["tool_route_plan"] = cast(Any, routes)
     connector = DetailConnector()
     inference = TemporalInference()
+    durable_budget = validate_run_budget_v2(dict(state["retry_budget"]))
+
+    def update_run_budget(
+        run_id: str,
+        update: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        nonlocal durable_budget
+        assert run_id == state["run_id"]
+        durable_budget = validate_run_budget_v2(dict(update(durable_budget)))
+        return durable_budget
+
     graph = RetrievalSubgraph(
         now_ms=lambda: run_start + 10_000,
         should_stop_for_cancel=lambda _run_id: False,
@@ -1017,6 +1031,7 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
         tool_catalog=load_development_tool_registry(),
         read_result_cache=InMemoryRunRetrievalCache(),
         confirm_inline=cast(Any, _confirm_early),
+        update_run_budget=update_run_budget,
     ).build()
     with provider_dispatch_execution_scope():
         result = graph.invoke(state, config={"recursion_limit": 100})
@@ -1039,6 +1054,10 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     assert result["retry_budget"]["detail_fetches_used"] == 3
     assert result["retry_budget"]["source_page_calls_used"] == 1
     assert result["retry_budget"]["additional_retrieval_rounds_used"] == 0
+    assert durable_budget["connector_calls_used"] == 4
+    assert durable_budget["source_page_calls_used"] == 1
+    assert durable_budget["detail_fetches_used"] == 3
+    assert result["retry_budget"] == durable_budget
     assert {attempt["round_no"] for attempt in result["__context_query_attempts__"]} == {0}
     assert result["retrieval_result"]["temporal_constraints"] == [
         {

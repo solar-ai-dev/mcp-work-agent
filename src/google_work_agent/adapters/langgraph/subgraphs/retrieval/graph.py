@@ -411,6 +411,11 @@ class RetrievalSubgraph:
         default_calendar_id_provider: Callable[[], str | None] | None = None,
         repository_access: GetRepositoryAccessHandler | None = None,
         load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
+        update_run_budget: Callable[
+            [str, Callable[[Mapping[str, object]], Mapping[str, object]]],
+            Mapping[str, object],
+        ]
+        | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -434,6 +439,7 @@ class RetrievalSubgraph:
         self._connector_reader = connector_reader
         self._repository_access = repository_access
         self._load_retrieval_head = load_retrieval_head
+        self._update_run_budget = update_run_budget
         self._tool_catalog = tool_catalog
         self._read_result_cache = read_result_cache
         self._confirm_inline = confirm_inline
@@ -1327,6 +1333,13 @@ class RetrievalSubgraph:
                                 "repository_access": self._repository_access,
                                 "request_intent": state["request_intent"],
                                 "selected_resources": request_from_state(state).selected_resources,
+                                "durable_budget_accountant": (
+                                    None
+                                    if self._update_run_budget is None
+                                    else lambda update: self._update_run_budget(
+                                        state["run_id"], update
+                                    )
+                                ),
                             }
                         }
                     },

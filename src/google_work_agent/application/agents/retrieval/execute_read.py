@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -80,6 +80,10 @@ def execute_read(
     repository_access: GetRepositoryAccessHandler | None = None,
     request_intent: RequestIntentV2 | None = None,
     selected_resources: Sequence[SelectedResourceRef] = (),
+    durable_budget_accountant: Callable[
+        [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+    ]
+    | None = None,
 ) -> RetrievalReadExecutionV1:
     """Execute one registry-validated READ and keep its opaque continuation cache-local."""
     _validate_binding(plan, binding)
@@ -155,6 +159,7 @@ def execute_read(
                         run_id=run_id,
                         is_detail=False,
                         now_ms=now_ms,
+                        durable_accountant=durable_budget_accountant,
                     ),
                 )
             except ConnectorOperationFailure as error:
@@ -181,6 +186,7 @@ def execute_read(
             run_id=run_id,
             is_detail=plan["operation_kind"] == "DETAIL_FETCH",
             now_ms=now_ms,
+            durable_accountant=durable_budget_accountant,
         )
     except RetrievalReadBudgetExceeded:
         return RetrievalReadExecutionV1(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,6 +74,10 @@ def build_pre_analysis_subgraphs(
     repository_access: GetRepositoryAccessHandler | None = None,
     connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
+    update_run_budget: Callable[
+        [str, Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+    ]
+    | None = None,
 ) -> PreAnalysisSubgraphs:
     """Create nodes only; workflow policy remains in their Application owners."""
 
@@ -120,6 +124,7 @@ def build_pre_analysis_subgraphs(
             timezone_provider=timezone_provider,
             default_tasklist_id_provider=default_tasklist_id_provider,
             default_calendar_id_provider=default_calendar_id_provider,
+            update_run_budget=update_run_budget,
         ).build(),
     )
 

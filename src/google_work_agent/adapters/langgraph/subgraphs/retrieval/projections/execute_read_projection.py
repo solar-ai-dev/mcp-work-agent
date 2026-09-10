@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
@@ -58,6 +58,12 @@ class ExecuteReadInput(TypedDict):
     repository_access: NotRequired[GetRepositoryAccessHandler | None]
     request_intent: NotRequired[RequestIntentV2 | None]
     selected_resources: NotRequired[Sequence[SelectedResourceRef]]
+    durable_budget_accountant: NotRequired[
+        Callable[
+            [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+        ]
+        | None
+    ]
 
 
 def project_execute_read_input(state: Mapping[str, object]) -> ExecuteReadInput:
