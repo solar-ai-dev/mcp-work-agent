@@ -29,6 +29,22 @@ from google_work_agent.ports.system.settings_port import GitHubRepositoryDefault
 _CONSTRAINT_KINDS = {"PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"}
 _EFFECTS = {"READ", "CREATE", "UPDATE", "SEND", "DELETE"}
 _PROVENANCE_SOURCES = {"USER_REQUEST", "CONFIRMATION_RESPONSE"}
+_SOURCE_LITERAL_FIELDS = frozenset(
+    {
+        "search_terms",
+        "subject",
+        "search_criteria_subject",
+        "sender",
+        "sender_email",
+        "from",
+        "search_criteria_sender",
+        "recipient",
+        "recipient_email",
+        "to",
+        "search_criteria_recipient",
+        "person",
+    }
+)
 
 
 @overload
@@ -217,7 +233,7 @@ def materialize_validated_constraint_provenance(
     user_request: str,
     confirmation_response_text: str | None,
 ) -> list[ConstraintV1]:
-    """Bind identity and normalized source-status constraints to current-Run text."""
+    """Bind source-owned literal, identity, and status constraints to current-Run text."""
     sources: list[tuple[ConstraintProvenanceSource, str]] = [("USER_REQUEST", user_request)]
     if confirmation_response_text is not None:
         sources.insert(0, ("CONFIRMATION_RESPONSE", confirmation_response_text))
@@ -251,29 +267,46 @@ def materialize_validated_constraint_provenance(
         is_repository = is_repository_constraint(copied)
         is_gmail_draft = is_gmail_draft_constraint(copied)
         if not is_repository and not is_gmail_draft:
-            materialized.append(copied)
+            if copied["field"] not in _SOURCE_LITERAL_FIELDS:
+                materialized.append(copied)
+                continue
+            values = copied["value"]
+            literal_values = [values] if isinstance(values, str) else values
+            for literal_value in literal_values:
+                literal = cast(ConstraintV1, {**copied, "value": literal_value})
+                for source, source_text in sources:
+                    start = source_text.find(literal_value)
+                    if start < 0:
+                        continue
+                    literal["provenance"] = {
+                        "source": source,
+                        "start_offset": start,
+                        "end_offset": start + len(literal_value),
+                    }
+                    break
+                materialized.append(literal)
             continue
-        value = copied["value"]
-        if not isinstance(value, str):
+        identity_value = copied["value"]
+        if not isinstance(identity_value, str):
             raise RequestUnderstandingValidationError(
                 f"$.constraints[{index}].value must be a scalar identity"
             )
-        if is_repository and not is_fully_qualified_repository(value):
+        if is_repository and not is_fully_qualified_repository(identity_value):
             raise RequestUnderstandingValidationError(
                 f"$.constraints[{index}].value must be a fully-qualified repository"
             )
-        if is_gmail_draft and not is_valid_gmail_draft_id(value):
+        if is_gmail_draft and not is_valid_gmail_draft_id(identity_value):
             raise RequestUnderstandingValidationError(
                 f"$.constraints[{index}].value must be a valid Gmail Draft identifier"
             )
         for source, source_text in sources:
-            start = source_text.find(value)
+            start = source_text.find(identity_value)
             if start < 0:
                 continue
             copied["provenance"] = {
                 "source": source,
                 "start_offset": start,
-                "end_offset": start + len(value),
+                "end_offset": start + len(identity_value),
             }
             materialized.append(copied)
             break

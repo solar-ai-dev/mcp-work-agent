@@ -192,6 +192,49 @@ def test_gmail_goal__keyed_slots__preserves_distinct_semantic_roles() -> None:
     assert "subject" not in fields
 
 
+def test_gmail_goal__finalized_literal__binds_normalized_ru_output_to_request() -> None:
+    request = _request("Nimbus 출시 날짜를 메일에서 확인해줘")
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "Nimbus 출시 날짜 확인",
+                "completion_conditions": ["출시 날짜를 답한다"],
+                "constraints": _goal_constraints(
+                    search_terms=["Nimbus"],
+                    business_concepts=["출시"],
+                ),
+                "resource_responsibilities": _resource_responsibilities(
+                    source_type="GMAIL_THREAD", required_information=["출시 날짜"]
+                ),
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-source-literal",
+        user_request=request.request_text,
+    )
+
+    nimbus = next(item for item in intent["constraints"] if item["value"] == "Nimbus")
+    assert nimbus["provenance"] == {
+        "source": "USER_REQUEST",
+        "start_offset": request.request_text.index("Nimbus"),
+        "end_offset": request.request_text.index("Nimbus") + len("Nimbus"),
+    }
+    business_concept = next(
+        item for item in intent["constraints"] if item["field"] == "business_concepts"
+    )
+    assert "provenance" not in business_concept
+
+
 def test_source_status__explicit_sent_scope__retains_resource_and_source_provenance() -> None:
     request = _request("보낸 편지함에서 Quartz 찾아줘")
     runtime = FakeStructuredInferencePort(

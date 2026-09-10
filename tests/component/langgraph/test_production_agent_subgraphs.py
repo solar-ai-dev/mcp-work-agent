@@ -1184,7 +1184,108 @@ def test_retrieval__unchanged_main_back_edge__closes_partial_without_a_second_re
     assert second["retrieval_result"]["retrieval_rounds"] == 1
     assert second["__target__"] == "SOLUTION_PLANNING"
     assert connector.call_count == 1
-    assert llm.calls.count("retrieval.plan_query") == 2
+    assert llm.calls.count("retrieval.plan_query") == 3
+
+
+def test_retrieval__plan_query_finalize__skips_stale_builder_plan() -> None:
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    llm = _ComponentInferencePort(retrieval_followup_changes_query=False)
+    connector = _ComponentConnectorReadPort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        first = graph.invoke(state)
+        updates = list(
+            graph.stream(
+                {
+                    **first,
+                    "workflow_signal": {
+                        "kind": "RETRIEVAL_REQUIRED",
+                        "reason_codes": ["EVIDENCE_GAP"],
+                        "needs": [
+                            {
+                                "required_information": "new status evidence",
+                                "reason_codes": ["EVIDENCE_GAP"],
+                            }
+                        ],
+                    },
+                },
+                stream_mode="updates",
+            )
+        )
+
+    visited = [next(iter(update)) for update in updates]
+    assert visited == ["plan_query", "finalize"]
+    assert connector.call_count == 1
+
+
+def test_retrieval__new_plan_after_stale_finalize__continues_to_builder_and_read() -> None:
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    llm = _ComponentInferencePort(retrieval_followup_changes_query=True)
+    connector = _ComponentConnectorReadPort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        first = graph.invoke(state)
+        updates = list(
+            graph.stream(
+                {
+                    **first,
+                    "__context_followup_operation__": "FINALIZE",
+                    "workflow_signal": {
+                        "kind": "RETRIEVAL_REQUIRED",
+                        "reason_codes": ["EVIDENCE_GAP"],
+                        "needs": [
+                            {
+                                "required_information": "new status evidence",
+                                "reason_codes": ["EVIDENCE_GAP"],
+                            }
+                        ],
+                    },
+                },
+                stream_mode="updates",
+            )
+        )
+
+    visited = [next(iter(update)) for update in updates]
+    assert visited[:3] == ["plan_query", "build_query", "execute_read"]
+    assert connector.call_count == 2
 
 
 def test_retrieval__unchanged_local_followup__closes_partial_without_looping() -> None:

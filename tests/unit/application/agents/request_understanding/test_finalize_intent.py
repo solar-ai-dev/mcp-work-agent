@@ -113,6 +113,107 @@ def test_finalize_intent__materializes_confirmation_response__repository_provena
     }
 
 
+def test_finalize_intent__source_literals__split_and_bind_each_scalar_value() -> None:
+    request_text = "Nimbus와 Quartz 관련 메일을 확인해줘"
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "관련 메일 조회",
+        "completion_conditions": ["관련 메일을 확인한다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["Nimbus", "Quartz", "모델 가설"],
+                "provenance": {
+                    "source": "USER_REQUEST",
+                    "start_offset": 999,
+                    "end_offset": 1000,
+                },
+            },
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "business_concepts",
+                "value": ["출시 일정"],
+            },
+        ],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "analysis_requirement": "NONE",
+    }
+
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-literals",
+        user_request=request_text,
+    )
+
+    assert intent["constraints"][:3] == [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": "Nimbus",
+            "provenance": {
+                "source": "USER_REQUEST",
+                "start_offset": request_text.index("Nimbus"),
+                "end_offset": request_text.index("Nimbus") + len("Nimbus"),
+            },
+        },
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": "Quartz",
+            "provenance": {
+                "source": "USER_REQUEST",
+                "start_offset": request_text.index("Quartz"),
+                "end_offset": request_text.index("Quartz") + len("Quartz"),
+            },
+        },
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": "모델 가설",
+        },
+    ]
+    assert intent["constraints"][3] == {
+        "kind": "USER_REQUIREMENT",
+        "field": "business_concepts",
+        "value": ["출시 일정"],
+    }
+
+
+def test_finalize_intent__confirmation_literal__binds_only_to_current_response() -> None:
+    subject = "Quartz 납품 회신 검토"
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "확인된 제목의 메일 조회",
+        "completion_conditions": ["메일을 확인한다"],
+        "constraints": [{"kind": "RESOURCE", "field": "subject", "value": [subject]}],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "analysis_requirement": "NONE",
+    }
+
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-confirmed-subject",
+        user_request="방금 선택한 제목의 메일을 확인해줘",
+        confirmation_response_text=subject,
+    )
+
+    assert intent["constraints"] == [
+        {
+            "kind": "RESOURCE",
+            "field": "subject",
+            "value": subject,
+            "provenance": {
+                "source": "CONFIRMATION_RESPONSE",
+                "start_offset": 0,
+                "end_offset": len(subject),
+            },
+        }
+    ]
+
+
 def test_finalize_intent__materializes_exact_user_request__gmail_draft_provenance() -> None:
     draft_id = "r976635311795334843"
     request_text = f"Gmail 초안 ID {draft_id}를 수정해줘"

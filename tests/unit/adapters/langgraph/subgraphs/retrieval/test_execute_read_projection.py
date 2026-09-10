@@ -7,6 +7,10 @@ import pytest
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.projections import (
     execute_read_projection,
 )
+from google_work_agent.application.agents.retrieval.build_query import (
+    RouteConstraintPolicy,
+    build_query,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     SourceFetchPlanV1,
 )
@@ -173,6 +177,51 @@ def test_gmail_keyword_lowering__different_match_modes__produces_distinct_querie
 
     assert tool_id == "gmail_search_threads"
     assert arguments["query"] == expected
+
+
+def test_gmail_phrase_lowering__preserves_term_order_and_repetition() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = build_query(
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "route-gmail",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {
+                                "kind": "KEYWORD",
+                                "terms": ["납품", "회신", "검토", "회신"],
+                                "match_mode": "PHRASE",
+                            }
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+        frozen_routes=[route],
+        route_policies={
+            "route-gmail": RouteConstraintPolicy(frozenset({"KEYWORD"}))
+        },
+    )[0]
+
+    _, arguments = execute_read_projection.project_connector_call(plan, route=route, page_size=20)
+
+    assert arguments["query"] == '"납품 회신 검토 회신"'
 
 
 def test_gmail_draft_search__for_frozen_draft_route__uses_draft_operation() -> None:

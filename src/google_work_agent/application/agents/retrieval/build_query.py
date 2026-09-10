@@ -371,8 +371,17 @@ def _canonical_constraints(constraints: Sequence[SemanticRetrievalConstraintV1])
         item = dict(constraint)
         for key, value in item.items():
             if isinstance(value, list):
-                item[key] = sorted(
-                    value, key=lambda member: json.dumps(member, sort_keys=True, ensure_ascii=True)
+                item[key] = (
+                    list(value)
+                    if item.get("kind") == "KEYWORD"
+                    and item.get("match_mode") == "PHRASE"
+                    and key == "terms"
+                    else sorted(
+                        value,
+                        key=lambda member: json.dumps(
+                            member, sort_keys=True, ensure_ascii=True
+                        ),
+                    )
                 )
         normalized.append(item)
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)

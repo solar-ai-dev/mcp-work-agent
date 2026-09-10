@@ -14,7 +14,11 @@ from google_work_agent.application.agents.request_understanding import (
     preserve_explicit_search_anchors,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestGoalCandidateV1,
     RequestIntentV2,
+)
+from google_work_agent.application.agents.request_understanding.finalize_intent import (
+    finalize_intent,
 )
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
@@ -734,30 +738,35 @@ def test_concept_ranking__matching_concept__remains_candidate_not_event_fact() -
     assert ranked[2]["reason_codes"] == []
 
 
-def test_protected_constraints__uses_only_source_bound_literals_and_required_route_binding() -> (
-    None
-):
-    request_text = "Nimbus 출시 날짜를 메일에서 확인해줘"
+def test_protected_constraints__uses_finalized_source_literals_and_required_route_binding() -> None:
+    request_text = "Nimbus와 Quartz 출시 날짜를 메일에서 확인해줘"
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "Nimbus 출시 날짜 확인",
+        "completion_conditions": ["출시 날짜를 답한다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["Nimbus", "Quartz", "모델 가설"],
+            },
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "business_concepts",
+                "value": ["출시"],
+            },
+        ],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "analysis_requirement": "NONE",
+    }
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-protected-literal",
+        user_request=request_text,
+    )
     protected = derive_protected_constraints_by_route(
-        request_intent={
-            "constraints": [
-                {
-                    "kind": "USER_REQUIREMENT",
-                    "field": "search_terms",
-                    "value": ["Nimbus"],
-                    "provenance": {
-                        "source": "USER_REQUEST",
-                        "start_offset": request_text.index("Nimbus"),
-                        "end_offset": request_text.index("Nimbus") + len("Nimbus"),
-                    },
-                },
-                {
-                    "kind": "USER_REQUIREMENT",
-                    "field": "search_terms",
-                    "value": ["모델 가설"],
-                },
-            ]
-        },
+        request_intent=intent,
         frozen_routes=[ROUTE],
         required_constraint_kinds={"gmail": ["CONTAINER_REF"]},
         validated_resource_refs=None,
@@ -768,7 +777,85 @@ def test_protected_constraints__uses_only_source_bound_literals_and_required_rou
 
     assert protected == {
         "gmail": [
-            {"kind": "KEYWORD", "terms": ["Nimbus"], "match_mode": "PHRASE"},
+            {"kind": "KEYWORD", "terms": ["Nimbus", "Quartz"], "match_mode": "ALL"},
             {"kind": "CONTAINER_REF", "container_refs": ["inbox"]},
         ]
     }
+    policies = {
+        "gmail": RouteConstraintPolicy(
+            frozenset({"KEYWORD", "CONCEPT", "CONTAINER_REF"}),
+            frozenset({"CONTAINER_REF"}),
+        )
+    }
+
+    initial = build_query(
+        _plan(
+            [
+                {"kind": "KEYWORD", "terms": ["Nimbus", "Quartz"], "match_mode": "ALL"},
+                {"kind": "CONCEPT", "concept": "출시", "manifestations": ["공개"]},
+            ]
+        ),
+        frozen_routes=[ROUTE],
+        route_policies=policies,
+        validated_container_refs={"gmail": ["inbox"]},
+        protected_constraints_by_route=protected,
+    )[0]
+    changed_hypothesis = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["INSUFFICIENT_RESULTS"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {
+                                "kind": "CONCEPT",
+                                "concept": "출시",
+                                "manifestations": ["배포"],
+                            }
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    revised = build_query(
+        changed_hypothesis,
+        frozen_routes=[ROUTE],
+        route_policies=policies,
+        prior_plans={"gmail": initial},
+        validated_container_refs={"gmail": ["inbox"]},
+        protected_constraints_by_route=protected,
+    )[0]
+    assert {
+        "kind": "KEYWORD",
+        "terms": ["Nimbus", "Quartz"],
+        "match_mode": "ALL",
+    } in revised["effective_constraints"]
+    assert {
+        "kind": "CONCEPT",
+        "concept": "출시",
+        "manifestations": ["배포"],
+    } in revised["effective_constraints"]
+
+    changed_literal = cast(Any, changed_hypothesis)
+    changed_literal["route_queries"][0]["search_spec"]["constraint_delta"] = {
+        "upsert_constraints": [
+            {"kind": "KEYWORD", "terms": ["다른 값"], "match_mode": "PHRASE"}
+        ],
+        "remove_constraint_kinds": [],
+    }
+    with pytest.raises(RetrievalV2ValidationError, match="protected"):
+        build_query(
+            changed_literal,
+            frozen_routes=[ROUTE],
+            route_policies=policies,
+            prior_plans={"gmail": initial},
+            validated_container_refs={"gmail": ["inbox"]},
+            protected_constraints_by_route=protected,
+        )

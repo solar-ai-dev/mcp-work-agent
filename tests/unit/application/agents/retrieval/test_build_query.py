@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -172,6 +172,154 @@ def test_build_query__preserves_exact__frozen_resource_type() -> None:
         build_query(
             reordered, frozen_routes=[route], route_policies=policies, prior_plans={"r1": original}
         )
+
+
+def test_build_query__phrase_order_and_repetition__define_execution_and_identity() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r1",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r1": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+
+    def phrase(terms: list[str]) -> dict[str, object]:
+        return {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "r1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {"kind": "KEYWORD", "terms": terms, "match_mode": "PHRASE"}
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        }
+
+    original = build_query(
+        phrase(["납품", "회신", "검토", "회신"]),
+        frozen_routes=[route],
+        route_policies=policies,
+    )[0]
+    reordered = build_query(
+        phrase(["검토", "회신", "납품", "회신"]),
+        frozen_routes=[route],
+        route_policies=policies,
+    )[0]
+    repeated = build_query(
+        phrase(["납품", "회신", "검토", "회신"]),
+        frozen_routes=[route],
+        route_policies=policies,
+    )[0]
+
+    assert cast(Any, original["effective_constraints"][0])["terms"] == [
+        "납품",
+        "회신",
+        "검토",
+        "회신",
+    ]
+    assert original["query_identity_hash"] != reordered["query_identity_hash"]
+    assert original["query_identity_hash"] == repeated["query_identity_hash"]
+
+
+@pytest.mark.parametrize("match_mode", ["ANY", "ALL"])
+def test_build_query__unordered_keyword_modes__retain_stable_identity(match_mode: str) -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r1",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r1": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+
+    def plan(terms: list[str]) -> dict[str, object]:
+        return {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "r1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {"kind": "KEYWORD", "terms": terms, "match_mode": match_mode}
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        }
+
+    first = build_query(plan(["alpha", "beta"]), frozen_routes=[route], route_policies=policies)[0]
+    second = build_query(plan(["beta", "alpha"]), frozen_routes=[route], route_policies=policies)[0]
+
+    assert first["effective_constraints"] == second["effective_constraints"]
+    assert first["query_identity_hash"] == second["query_identity_hash"]
+
+
+def test_build_query__concept_alternatives__retain_stable_identity_when_reordered() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r1",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r1": RouteConstraintPolicy(frozenset({"CONCEPT"}))}
+
+    def plan(manifestations: list[str]) -> dict[str, object]:
+        return {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "r1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {
+                                "kind": "CONCEPT",
+                                "concept": "출시",
+                                "manifestations": manifestations,
+                            }
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        }
+
+    first = build_query(
+        plan(["공개", "배포"]), frozen_routes=[route], route_policies=policies
+    )[0]
+    second = build_query(
+        plan(["배포", "공개"]), frozen_routes=[route], route_policies=policies
+    )[0]
+
+    assert first["effective_constraints"] == second["effective_constraints"]
+    assert first["query_identity_hash"] == second["query_identity_hash"]
 
 
 @pytest.mark.parametrize(

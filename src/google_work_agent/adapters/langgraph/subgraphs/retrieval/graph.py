@@ -479,7 +479,7 @@ class RetrievalSubgraph:
         graph.add_node("finalize", self._cancellable_node(self._finalize_node))
         graph.add_edge(START, "plan_query")
         boundaries = (
-            ("plan_query", route_after_plan_query, ("build_query",)),
+            ("plan_query", route_after_plan_query, ("build_query", "finalize")),
             ("build_query", route_after_build_query, ("execute_read", "finalize")),
             ("execute_read", route_after_execute_read, ("normalize_segments",)),
             ("normalize_segments", route_after_normalize_segments, ("rag_retrieve",)),
@@ -1242,7 +1242,7 @@ class RetrievalSubgraph:
         query_plan = cast(RetrievalQueryPlanV2, patch["query_plan"])
         revised_retry_budget = cast(RunBudgetV2, patch["retry_budget"])
         llm_invoked = deterministic_plan is None
-        return {
+        result: ContextRetrievalLocalState = {
             **state,
             "query_plan": query_plan,
             "retry_budget": (
@@ -1251,6 +1251,8 @@ class RetrievalSubgraph:
                 else revised_retry_budget
             ),
         }
+        result.pop(CONTEXT_FOLLOWUP_OPERATION_KEY, None)
+        return result
 
     @staticmethod
     def _attempted_detail_candidate_refs(state: ContextRetrievalLocalState) -> list[str]:
