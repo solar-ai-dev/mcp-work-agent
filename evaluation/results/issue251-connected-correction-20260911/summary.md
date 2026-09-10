@@ -8,3 +8,4 @@
 |---|---|---|---|---|
 | Q4 Draft UPDATE | qwen3.5:4b | `request_understanding.identify_goal` | PASS — READ+UPDATE와 Gmail Draft source/output 보존 | [node-q4-identify-4b.md](node-q4-identify-4b.md) |
 | Q5 Task CREATE | qwen3.5:4b | `request_understanding.identify_goal` | FAIL — structured inference 오류로 intent 미생성 | [node-q5-identify-4b.md](node-q5-identify-4b.md) |
+| Q5 비중복 판단 | qwen3.5:9b | `work_analysis.detect_duplicate_conflict_candidates` | PASS — 최초 의미 모순을 제한 1회 재검증 후 비중복으로 수렴 | [node-q5-duplicate-9b.md](node-q5-duplicate-9b.md) |
