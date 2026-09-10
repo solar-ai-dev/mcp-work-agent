@@ -29,6 +29,9 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     SelectedResourceRef,
     WorkflowStartRequest,
 )
+from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationRequiredV1,
+)
 
 _TYPE_HINT_NAMESPACE = (RunBudgetV2, WorkflowStartRequest)
 
@@ -40,6 +43,8 @@ class RequestUnderstandingInputState(AgentSubgraphInputEnvelope, total=False):
     admitted_connector_ids: list[str]
     user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
+    request_intent: RequestIntentV2 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
 
 
 class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
@@ -55,12 +60,14 @@ class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
     finalize_intent: FinalizeIntentV1 | None
 
     request_intent: RequestIntentV2 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
 
 
 class RequestUnderstandingParentOutputState(AgentSubgraphInputEnvelope, total=False):
     """Only fields that Request Understanding may project back to Main."""
 
     request_intent: RequestIntentV2 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
     admitted_connector_ids: list[str]
     finalize_intent: FinalizeIntentV1 | None
     user_interrupt: UserInterruptV1 | None

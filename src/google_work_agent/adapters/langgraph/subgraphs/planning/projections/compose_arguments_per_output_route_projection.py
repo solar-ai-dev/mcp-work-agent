@@ -25,6 +25,7 @@ class ComposeArgumentsInputV1(TypedDict):
     work_analysis: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[dict[str, object]]
     run_reference_time: NotRequired[RunReferenceTimeV1]
+    source_snapshots: NotRequired[dict[str, dict[str, object]]]
 
 
 def project_compose_arguments_per_output_route_input(
@@ -61,6 +62,7 @@ def project_compose_arguments_per_output_route_input(
         result["run_reference_time"] = reference_time
     work_analysis = state.get("work_analysis")
     confirmation = state.get("confirmation_response")
+    snapshots = state.get("source_snapshots")
     if work_analysis is not None:
         if not isinstance(work_analysis, Mapping):
             raise ValueError("work_analysis must be an object")
@@ -69,6 +71,16 @@ def project_compose_arguments_per_output_route_input(
         if not isinstance(confirmation, Mapping):
             raise ValueError("confirmation_response must be an object")
         result["confirmation_response"] = dict(confirmation)
+    if snapshots is not None:
+        if not isinstance(snapshots, Mapping) or not all(
+            isinstance(handle, str) and isinstance(snapshot, Mapping)
+            for handle, snapshot in snapshots.items()
+        ):
+            raise ValueError("source_snapshots must be an object map")
+        result["source_snapshots"] = {
+            str(handle): dict(cast(Mapping[str, object], snapshot))
+            for handle, snapshot in snapshots.items()
+        }
     return result
 
 

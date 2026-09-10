@@ -261,7 +261,8 @@ def _validate_work_analysis_receipt_references(
         "action_necessity",
         "action_necessity_reason",
     }
-    if set(root) != expected or root["schema_version"] != 2:
+    supported = {frozenset(expected), frozenset({*expected, "route_action_necessities"})}
+    if frozenset(root) not in supported or root["schema_version"] != 2:
         raise CanonicalDomainValidationError("work analysis artifact is invalid")
     _validate_meta(root["meta"], path="work analysis.meta")
     if root["action_necessity"] not in {"REQUIRED", "NOT_REQUIRED"}:

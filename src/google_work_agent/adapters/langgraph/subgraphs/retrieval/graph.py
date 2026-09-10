@@ -147,6 +147,12 @@ from google_work_agent.application.agents.retrieval.project_attempted_detail_ref
 from google_work_agent.application.agents.retrieval.project_detail_candidate_refs import (
     project_detail_candidate_refs,
 )
+from google_work_agent.application.agents.retrieval.project_gmail_draft_source_snapshots import (
+    project_gmail_draft_source_snapshots,
+)
+from google_work_agent.application.agents.retrieval.project_task_review_candidates import (
+    project_task_review_candidates,
+)
 from google_work_agent.application.agents.retrieval.resolve_availability import (
     AvailableIntervalV1,
     BusyIntervalV1,
@@ -701,6 +707,14 @@ class RetrievalSubgraph:
         acquisition_result = _require_state_value(
             working_state["acquisition_result"], "acquisition_result"
         )
+        for handle, snapshot in project_gmail_draft_source_snapshots(
+            acquisition_result
+        ).items():
+            self._evidence_store.put_resource_snapshot(
+                run_id=state["run_id"],
+                resource_handle=handle,
+                snapshot=snapshot,
+            )
         patch = normalize_segments_node(
             cast(
                 Any,
@@ -1402,6 +1416,7 @@ class RetrievalSubgraph:
                 "read_result_handles": all_handles,
                 "segment_handles": list(acquisition["resource_handles"]),
                 "query_attempts": attempts,
+                "task_review_candidates": project_task_review_candidates(acquisition),
             },
         )
 
@@ -1878,6 +1893,7 @@ class RetrievalSubgraph:
                 current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
                 prior_result=prior_result,
                 prior_artifact_ref=prior_artifact_ref,
+                task_review_candidates=list(state.get("task_review_candidates", [])),
             )
             retrieval_result = cast(Any, patch["final_result"])
         self._evidence_store.put(run_id=state["run_id"], evidence_drafts=state["evidence_drafts"])

@@ -21,6 +21,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_decision import (
     SupervisorTarget,
     base_supervisor_state_update,
     make_supervisor_decision,
+    recovery_supervisor_decision,
 )
 from google_work_agent.adapters.langgraph.main.supervisor_terminal_projection import (
     JsonObject,
@@ -47,6 +48,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
 )
 from google_work_agent.application.use_cases.run.terminal_contract import FinalizeIntent
 from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationRequiredV1,
     RouteReconsiderationRequiredV1,
 )
 
@@ -123,6 +125,54 @@ def route_reconsideration(
     )
 
 
+def route_request_reconsideration(
+    *,
+    phase: WorkflowPhase,
+    state: GraphState,
+    result: object | None,
+) -> SupervisorDecisionV1 | None:
+    """Re-enter the existing semantic owner when current evidence disproves the intent."""
+
+    if phase is not WorkflowPhase.WORK_ANALYSIS or not isinstance(result, Mapping):
+        return None
+    if result.get("disposition") != "REQUEST_RECONSIDERATION_REQUIRED":
+        return None
+    signal = result.get("workflow_signal")
+    if not isinstance(signal, Mapping) or signal.get("kind") != (
+        "REQUEST_RECONSIDERATION_REQUIRED"
+    ):
+        return recovery_supervisor_decision("REQUEST_RECONSIDERATION_SIGNAL_INVALID")
+    current_intent = state.get("request_intent")
+    current_meta = current_intent.get("meta") if isinstance(current_intent, Mapping) else None
+    based_on = signal.get("based_on_request_intent")
+    observations = signal.get("observations")
+    if (
+        not isinstance(current_meta, Mapping)
+        or not isinstance(based_on, Mapping)
+        or dict(based_on) != dict(current_meta)
+        or not isinstance(observations, list)
+        or not observations
+    ):
+        return recovery_supervisor_decision("REQUEST_RECONSIDERATION_SIGNAL_STALE")
+    typed_signal = cast(RequestReconsiderationRequiredV1, dict(signal))
+    return make_supervisor_decision(
+        target=SupervisorTarget.REQUEST_UNDERSTANDING,
+        next_phase=WorkflowPhase.REQUEST_ANALYSIS,
+        state_update=base_supervisor_state_update(
+            WorkflowPhase.REQUEST_ANALYSIS,
+            workflow_signal=typed_signal,
+            request_reconsideration=typed_signal,
+            tool_route_plan=None,
+            acquisition_result=None,
+            retrieval_result=None,
+            work_analysis_result=None,
+            planning_result=None,
+            plan_review=None,
+        ),
+        reason_code=typed_signal["reason_codes"][0],
+    )
+
+
 def route_request_understanding(
     *,
     state: GraphState,
@@ -137,6 +187,8 @@ def route_request_understanding(
             state_update=base_supervisor_state_update(
                 WorkflowPhase.TOOL_ROUTING,
                 request_intent=request_intent,
+                workflow_signal=None,
+                request_reconsideration=None,
             ),
         )
     if result is RequestUnderstandingResult.NEEDS_CONFIRMATION:
@@ -277,6 +329,7 @@ def _retrieval_route_budget(state: GraphState) -> RunBudgetV2:
 __all__ = [
     "route_initialize",
     "route_reconsideration",
+    "route_request_reconsideration",
     "route_request_understanding",
     "route_tool_routing",
 ]

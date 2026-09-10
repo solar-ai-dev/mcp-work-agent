@@ -106,6 +106,9 @@ from google_work_agent.application.agents.planning.outline_answer import (
 from google_work_agent.application.agents.planning.resolve_default_container import (
     RequiredContainerUnresolvedError,
 )
+from google_work_agent.application.agents.planning.select_required_output_routes import (
+    select_required_output_routes,
+)
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_understanding_output,
 )
@@ -153,7 +156,18 @@ def planning_answer_path_selected(state: Mapping[str, object]) -> bool:
     if disposition == "ANSWER":
         return True
     analysis = state.get("work_analysis", state.get("work_analysis_result"))
-    return isinstance(analysis, Mapping) and analysis.get("action_necessity") == "NOT_REQUIRED"
+    if not isinstance(analysis, Mapping):
+        return False
+    if "route_action_necessities" not in analysis:
+        return analysis.get("action_necessity") == "NOT_REQUIRED"
+    output_plan = raw_plan.get("output_plan")
+    if not isinstance(output_plan, Mapping):
+        raise ValueError("tool route output_plan is required")
+    selected = select_required_output_routes(output_plan, work_analysis=analysis)
+    routes = selected.get("output_routes")
+    if not isinstance(routes, list):
+        raise ValueError("selected output routes must be a list")
+    return not routes
 
 
 class PlanningSubgraph:
@@ -767,11 +781,24 @@ class PlanningSubgraph:
             working["work_analysis"] = cast(Any, state["work_analysis_result"])
         plan = state.get("tool_route_plan")
         if "output_plan" not in working and isinstance(plan, Mapping):
-            output_plan = plan.get("output_plan")
-            if isinstance(output_plan, Mapping):
-                working["output_plan"] = dict(output_plan)
+            projected_output_plan = plan.get("output_plan")
+            if isinstance(projected_output_plan, Mapping):
+                working["output_plan"] = dict(projected_output_plan)
+        output_plan = working.get("output_plan")
+        analysis = working.get("work_analysis")
+        if isinstance(output_plan, Mapping):
+            working["output_plan"] = select_required_output_routes(
+                output_plan,
+                work_analysis=analysis if isinstance(analysis, Mapping) else None,
+            )
         if "evidence" not in working:
             working["evidence"] = self._evidence(state)
+        evidence, source_snapshots = self._project_evidence_and_source_snapshots(
+            state,
+            cast(list[Mapping[str, object]], working.get("evidence", [])),
+        )
+        working["evidence"] = evidence
+        working["source_snapshots"] = source_snapshots
         working["evidence_refs"] = [
             ref
             for item in cast(list[Mapping[str, object]], working.get("evidence", []))
@@ -786,6 +813,38 @@ class PlanningSubgraph:
                 cast(Mapping[str, object], context["confirmation_response"])
             )
         return working
+
+    def _project_evidence_and_source_snapshots(
+        self,
+        state: PlanningLocalState,
+        evidence: list[Mapping[str, object]],
+    ) -> tuple[list[dict[str, object]], dict[str, dict[str, object]]]:
+        """Keep editable source state out of the LLM-facing Evidence projection."""
+
+        projected: list[dict[str, object]] = []
+        snapshots: dict[str, dict[str, object]] = {}
+        for raw in evidence:
+            item = dict(raw)
+            handle = item.get("resource_handle")
+            locator = item.get("locator")
+            if isinstance(locator, Mapping) and "draft_snapshot" in locator:
+                safe_locator = dict(locator)
+                legacy_snapshot = safe_locator.pop("draft_snapshot")
+                item["locator"] = safe_locator
+                if isinstance(handle, str) and isinstance(legacy_snapshot, Mapping):
+                    snapshots[handle] = dict(legacy_snapshot)
+            if (
+                isinstance(handle, str)
+                and handle.startswith("gmail_draft:")
+                and handle not in snapshots
+                and self._evidence_store is not None
+            ):
+                snapshots[handle] = self._evidence_store.resolve_resource_snapshot(
+                    run_id=state["run_id"],
+                    resource_handle=handle,
+                )
+            projected.append(item)
+        return projected, snapshots
 
     def _evidence(self, state: PlanningLocalState) -> list[dict[str, object]]:
         if isinstance(state.get("__replan_from_plan_id__"), str):

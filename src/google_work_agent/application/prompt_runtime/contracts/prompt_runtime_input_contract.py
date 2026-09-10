@@ -24,6 +24,7 @@ REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "work_analysis.detect_duplicate_conflict_candidates": (
         "analysis.detect_duplicate_conflict_candidates"
     ),
+    "work_analysis.assess_action_necessity": "analysis.assess_action_necessity",
     "work_analysis.assess_information_gaps": "analysis.assess_information_gaps",
     "work_analysis.assess_operational_risks": "analysis.assess_operational_risks",
     "planning.outline_answer": "planning.outline_answer",
@@ -60,7 +61,8 @@ class PromptRuntimeInputContractEntryV1:
         output_version = {
             "retrieval.select_evidence": 3,
             "request_understanding.identify_goal": 9,
-            "work_analysis.detect_duplicate_conflict_candidates": 2,
+            "work_analysis.detect_duplicate_conflict_candidates": 3,
+            "work_analysis.assess_information_gaps": 2,
             "work_analysis.assess_operational_risks": 2,
         }.get(self.prompt_slot_id, 1)
         input_versions = {3, 4} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}

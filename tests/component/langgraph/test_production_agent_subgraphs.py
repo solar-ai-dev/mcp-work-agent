@@ -100,12 +100,14 @@ class _ComponentInferencePort:
         retrieval_needs_more: bool = False,
         retrieval_followup_changes_query: bool = True,
         github_retrieval: bool = False,
+        request_reconsideration: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
         self.work_fact_count = work_fact_count
         self.retrieval_needs_more = retrieval_needs_more
         self.retrieval_followup_changes_query = retrieval_followup_changes_query
+        self.request_reconsideration = request_reconsideration
         self.calls: list[str] = []
 
     def infer(
@@ -301,9 +303,32 @@ class _ComponentInferencePort:
                     "Observed tasks do not satisfy the request" if required else None
                 ),
                 "matched_fact_ids": [],
+                "matched_candidate_refs": [],
                 "evidence_refs": [],
             }
+        if prompt_id == "work_analysis.assess_action_necessity":
+            routes = cast(list[Mapping[str, object]], projection["output_routes"])
+            return {
+                "route_assessments": [
+                    {
+                        "route_id": str(route["route_id"]),
+                        "status": "REQUIRED",
+                        "reason": "THE_REQUESTED_EXTERNAL_EFFECT_IS_NOT_YET_SATISFIED",
+                        "evidence_refs": [],
+                        "candidate_refs": [],
+                    }
+                    for route in routes
+                ]
+            }
         if prompt_id == "work_analysis.assess_information_gaps":
+            if self.request_reconsideration:
+                return {
+                    "disposition": "REQUEST_RECONSIDERATION_REQUIRED",
+                    "ambiguities": [],
+                    "retrieval_needs": [],
+                    "evidence_refs": ["current-evidence"],
+                    "reason_codes": ["CURRENT_EVIDENCE_CHANGES_REQUEST_MEANING"],
+                }
             return {
                 "disposition": "COMPLETE",
                 "ambiguities": [],
@@ -1185,6 +1210,62 @@ def test_work_analysis__compiled_normal_path__produces_analysis() -> None:
     assert ("finalize", "assess_operational_risks") in _edge_set(graph)
 
 
+def test_current_evidence__through_compiled_work_analysis__reenters_request_owner() -> None:
+    state = _state(initial_target="work_analysis")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan())
+    retrieval = _retrieval_result()
+    retrieval["coverage"] = "SUFFICIENT"
+    retrieval["evidence_refs"] = ["current-evidence"]
+    state["retrieval_result"] = cast(Any, retrieval)
+    evidence_store = RunScopedEvidenceStore()
+    evidence_store.put(
+        run_id=state["run_id"],
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "current-evidence",
+                "resource_handle": "gmail_message:current-message",
+                "segment_id": "current-segment",
+                "kind": "excerpt",
+                "excerpt": "The observed source changes the initial request interpretation.",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+    )
+    graph = WorkAnalysisSubgraph(
+        llm_runtime=_ComponentInferencePort(request_reconsideration=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=evidence_store,
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    signal = result["request_reconsideration"]
+    assert result["__target__"] == "REQUEST_UNDERSTANDING"
+    assert result["work_analysis_result"] is None
+    assert signal["based_on_request_intent"] == {
+        "artifact_id": "intent-1",
+        "revision": 1,
+        "based_on": [],
+    }
+    assert signal["observations"] == [
+        {
+            "evidence_ref": "current-evidence",
+            "resource_ref": "gmail_message:current-message",
+            "excerpt": "The observed source changes the initial request interpretation.",
+        }
+    ]
+
+
 def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     state = _state(initial_target="work_analysis")
     intent = _intent()
@@ -1204,6 +1285,28 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
             "observed_resource_count": 2,
             "failure_kind": None,
         }
+    ]
+    retrieval["task_review_candidates"] = [
+        {
+            "candidate_ref": "task:existing-0",
+            "route_id": "input-task-route",
+            "resource_id": "existing-0",
+            "task_list_id": "task-list-1",
+            "title": "task-0",
+            "status": "needsAction",
+            "due": None,
+            "source_version_ref": None,
+        },
+        {
+            "candidate_ref": "task:existing-1",
+            "route_id": "input-task-route",
+            "resource_id": "existing-1",
+            "task_list_id": "task-list-1",
+            "title": "task-1",
+            "status": "needsAction",
+            "due": None,
+            "source_version_ref": None,
+        },
     ]
     state["retrieval_result"] = cast(Any, retrieval)
     evidence_store = RunScopedEvidenceStore()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal, NotRequired, TypedDict
 
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     WorkAmbiguityV1,
     WorkRelationV1,
     WorkRiskV1,
@@ -28,6 +29,7 @@ class DuplicateConflictAssessmentV1(TypedDict):
     requested_work_status: Literal["NOT_APPLICABLE", "SATISFIED", "NOT_SATISFIED", "UNDETERMINED"]
     requested_work_reason: str | None
     matched_fact_ids: list[str]
+    matched_candidate_refs: list[str]
     evidence_refs: list[str]
 
 
@@ -36,6 +38,7 @@ class InformationGapAssessmentV1(TypedDict):
         "COMPLETE",
         "NEEDS_MORE_DATA",
         "NEEDS_CONFIRMATION",
+        "REQUEST_RECONSIDERATION_REQUIRED",
         "ROUTE_RECONSIDERATION_REQUIRED",
         "BLOCKED",
     ]
@@ -50,3 +53,7 @@ class InformationGapAssessmentV1(TypedDict):
 class OperationalRiskAssessmentV1(TypedDict):
     risks: list[WorkRiskV1]
     evidence_refs: list[str]
+
+
+class ActionNecessityAssessmentV1(TypedDict):
+    route_assessments: list[RouteActionNecessityV1]

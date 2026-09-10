@@ -1,7 +1,7 @@
 # 05. Context · Retrieval 설계서
 
 > **Authority:** Context·Retrieval의 Query·Evidence·coverage 의미. Tool Route·Workflow·Domain의 전문 계약은 해당 owner를 따른다.  
-> **상태:** Draft v2.19 · **기준일:** 2026-09-07 · **대상:** P0 MVP
+> **상태:** Draft v2.20 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적
 
@@ -514,6 +514,8 @@ class EvidenceSelectionResultV2:
 | 아직 본문을 읽지 않은 preview | `CONTEXT`로 유지하고 bounded detail fetch로 관련성을 확인한다. 제목에 핵심 단어가 없다는 이유로 본문 관련성을 부정하지 않는다. |
 | 기존 checkpoint의 marker 없는 Evidence | 기존 relevance 판단을 유지한다. |
 
+기존 Gmail Draft의 UPDATE를 준비할 때 원본 필드 snapshot은 Evidence locator나 LLM 입력에 넣지 않는다. Retrieval은 같은 Run의 기존 Evidence 저장 경계에 exact source snapshot을 Resource identity로 보관하고, Planning의 결정적 binder만 이를 해석한다. Provider 응답에서 생략된 필드와 명시적 `null`·빈 문자열·빈 목록은 서로 다른 값으로 보존한다.
+
 `excluded_segment_ids`는 Retrieval의 selection 결과다. Browser가 직접 수정하지 않으며 사용자 제외·추가 검색은 기존 `run.adjust_context → ContextAdjustmentV1`을 통해 같은 Run의 Retrieval에만 전달한다. Browser·Agent의 Main State/Evidence row 직접 변경은 금지한다. 사용자 제외의 수명은 §4.2를 따른다.
 
 ### 5.8 `retrieval.assess_sufficiency`
@@ -640,7 +642,7 @@ Retrieval Core는 `connector_id + resource_type + allowed_read_tool_ids`에 따�
 
 | 항목 | 구분 |
 | --- | --- |
-| `TASK + CREATE` 필수 조회 | 기존 미완료 Task의 중복 후보와 Evidence를 Work Analysis에 제공한다. Retrieval이 최종 중복 여부나 `action_necessity`를 확정하지 않는다. |
+| `TASK + CREATE` 필수 조회 | 기존 미완료 Task의 bounded 후보와 Evidence를 Work Analysis에 제공한다. 중복 검토 후보는 최종 답변용 selected Evidence와 독립된 현재 조회 projection이며, 정상 0건·무관 후보·후보 정보 유실을 구분한다. Retrieval이 최종 중복 여부나 실행 필요성을 확정하지 않는다. |
 | Google `due` | `scheduled_date`로 정규화한다. |
 | `business_deadline` | Gmail·사용자 요청·Evidence에서 확인한 경우에만 별도 근거로 사용한다. `due`와 자동 동일시하지 않는다. |
 | 완료 상태 | 예정일 경과를 Provider 완료 상태로 해석하지 않는다. |

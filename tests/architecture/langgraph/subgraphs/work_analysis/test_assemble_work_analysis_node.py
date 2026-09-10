@@ -56,6 +56,7 @@ def test_work_analysis__graph_and__state_are_exact() -> None:
         "resolve_temporal_dependencies",
         "detect_duplicate_conflict_candidates",
         "validate_relations",
+        "assess_action_necessity",
         "assess_information_gaps",
         "assess_operational_risks",
         "finalize",
@@ -75,5 +76,6 @@ def test_work_analysis__graph_and__state_are_exact() -> None:
         "ambiguity_candidates",
         "retrieval_needs",
         "operational_risk_candidates",
+        "route_action_necessities",
         "final_analysis",
     }

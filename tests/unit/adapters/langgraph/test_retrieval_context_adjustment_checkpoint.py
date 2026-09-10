@@ -65,4 +65,4 @@ def test_context_adjustment__charges_revision_and__additional_retrieval_budget()
 
     assert budget["planning_revisions_used"] == 1
     assert budget["additional_retrieval_rounds_used"] == 1
-    assert budget["llm_call_limit"] == budget["absolute_llm_call_limit"] == 24
+    assert budget["llm_call_limit"] == budget["absolute_llm_call_limit"] == 36

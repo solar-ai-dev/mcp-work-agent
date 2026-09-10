@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from google_work_agent.application.agents.preserve_exact_user_literals import (
@@ -61,6 +62,7 @@ def identify_goal(
     prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+    request_reconsideration: Mapping[str, object] | None = None,
 ) -> RequestGoalCandidateV1:
     """Identify only the current Run's goal semantics."""
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
@@ -69,6 +71,7 @@ def identify_goal(
     prompt_input = _prompt_input(
         request=request,
         confirmation_response=confirmation_response,
+        request_reconsideration=request_reconsideration,
     )
     result = llm_runtime.infer(
         request.requested_mode,
@@ -91,6 +94,7 @@ def identify_goal_with_budget(
     prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+    request_reconsideration: Mapping[str, object] | None = None,
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Identify the goal with one bounded semantic contract revision."""
 
@@ -100,6 +104,7 @@ def identify_goal_with_budget(
     prompt_input = _prompt_input(
         request=request,
         confirmation_response=confirmation_response,
+        request_reconsideration=request_reconsideration,
     )
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(
@@ -153,6 +158,7 @@ def _prompt_input(
     *,
     request: WorkflowStartRequest,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
+    request_reconsideration: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     prompt_input: dict[str, object] = {
         "user_request": request.request_text,
@@ -172,6 +178,8 @@ def _prompt_input(
         prompt_input["run_reference_time"] = reference_time
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if request_reconsideration is not None:
+        prompt_input["request_reconsideration"] = dict(request_reconsideration)
     return prompt_input
 
 

@@ -62,7 +62,7 @@ def test_all_baseline__prompts_are_honest__pre_experiment_drafts() -> None:
         json.loads(default_prompt_manifest_path().read_text(encoding="utf-8")),
     )
     slots = cast(list[dict[str, object]], manifest["slots"])
-    assert len(slots) == 22
+    assert len(slots) == len(REQUIRED_PROMPT_SLOT_IDS)
     for slot in slots:
         assert slot["activation_status"] == "DRAFT"
         assert all(
@@ -96,8 +96,11 @@ def test_product_release_bundle__returns_exact_referenced__artifact_closure(
 
     assert "prompt_manifest.json" in relative
     assert "prompt_runtime_input_contract_v1.json" in relative
-    assert len({path for path in relative if path.startswith("sources/")}) == 22
-    assert len({path for path in relative if path.startswith("activation-evidence/")}) == 132
+    prompt_count = len(REQUIRED_PROMPT_SLOT_IDS)
+    assert len({path for path in relative if path.startswith("sources/")}) == prompt_count
+    assert len(
+        {path for path in relative if path.startswith("activation-evidence/")}
+    ) == prompt_count * 6
     assert "activation-evidence/unreferenced.json" not in relative
 
 
@@ -275,11 +278,11 @@ def test_prompt_registry__rejects_duplicate__json_field(tmp_path: Path) -> None:
         PromptRegistry(manifest_path, contract_path)
 
 
-def test_all_22_prompt__sources_are_lf_pinned__and_manifest_hash_exact() -> None:
+def test_all_prompt__sources_are_lf_pinned__and_manifest_hash_exact() -> None:
     manifest_path = default_prompt_manifest_path()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     source_root = manifest_path.parent
-    assert len(manifest["slots"]) == 22
+    assert len(manifest["slots"]) == len(REQUIRED_PROMPT_SLOT_IDS)
     for slot in manifest["slots"]:
         source = source_root / slot["source"]
         payload = source.read_bytes()

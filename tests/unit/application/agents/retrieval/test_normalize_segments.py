@@ -60,7 +60,7 @@ def test_gmail_preview__without_body__preserves_metadata_only_fact() -> None:
     assert normalize_segments(result)[0].locator["is_metadata_only"] is True
 
 
-def test_gmail_draft__with_mutable_payload__keeps_full_planning_evidence() -> None:
+def test_gmail_draft__with_mutable_payload__keeps_snapshot_out_of_evidence_locator() -> None:
     result = _result("unused")
     resources = cast(list[dict[str, object]], result["source_summaries"][0]["resources"])
     payload = {
@@ -89,7 +89,8 @@ def test_gmail_draft__with_mutable_payload__keeps_full_planning_evidence() -> No
     assert 'to: ["recipient@example.com"]' in text
     assert 'subject: "Quartz 납품 회신 검토"' in text
     assert "body:\n기존 본문" in text
-    assert segment.locator["draft_snapshot"] == payload
+    assert "draft_snapshot" not in segment.locator
+    assert segment.text
 
 
 def test_github_issue__preserves_observed_metadata__separately_from_description() -> None:

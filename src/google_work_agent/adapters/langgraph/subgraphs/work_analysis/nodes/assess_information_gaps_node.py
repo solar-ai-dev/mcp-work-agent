@@ -6,7 +6,7 @@ from google_work_agent.adapters.langgraph.subgraphs.work_analysis.state import W
 from google_work_agent.application.agents.work_analysis.assess_information_gaps import (
     assess_information_gaps,
     combine_information_gap_assessment,
-    require_resolution_for_undetermined_duplicate_review,
+    require_resolution_for_undetermined_action,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkAmbiguityV1,
@@ -38,14 +38,10 @@ def assess_information_gaps_node(
         relation_ambiguities=cast(
             list[WorkAmbiguityV1], state.get("relation_validation_ambiguities", [])
         ),
-        request_intent=cast(WorkAnalysisStateV2, state)["request_intent"],
-        has_confirmation_response=state.get("confirmation_response") is not None,
     )
-    assessment = require_resolution_for_undetermined_duplicate_review(
+    assessment = require_resolution_for_undetermined_action(
         assessment=assessment,
-        duplicate_conflict_assessment=cast(WorkAnalysisStateV2, state)[
-            "duplicate_conflict_assessment"
-        ],
+        route_action_necessities=cast(WorkAnalysisStateV2, state)["route_action_necessities"],
     )
     return cast(
         WorkAnalysisStateV2,

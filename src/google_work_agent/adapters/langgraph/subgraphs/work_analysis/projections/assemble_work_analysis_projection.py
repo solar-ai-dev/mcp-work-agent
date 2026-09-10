@@ -3,10 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypedDict, cast
 
-from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
-    DuplicateConflictAssessmentV1,
-)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     StateArtifactRefV1,
     WorkAmbiguityV1,
     WorkFactV1,
@@ -25,8 +23,7 @@ class AssembleWorkAnalysisInput(TypedDict):
     ambiguities: list[WorkAmbiguityV1]
     risks: list[WorkRiskV1]
     evidence_refs: list[str]
-    action_route_required: bool
-    duplicate_conflict_assessment: DuplicateConflictAssessmentV1
+    route_action_necessities: list[RouteActionNecessityV1]
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
 
 
@@ -41,6 +38,7 @@ def project_assemble_work_analysis_input(
         "operational_risk_candidates",
         "evidence_refs",
         "duplicate_conflict_assessment",
+        "route_action_necessities",
     )
     if any(key not in state for key in required):
         raise ValueError("missing typed input projection for analysis.finalize")
@@ -67,13 +65,8 @@ def project_assemble_work_analysis_input(
         "ambiguities": cast(list[WorkAmbiguityV1], state["ambiguity_candidates"]),
         "risks": cast(list[WorkRiskV1], state["operational_risk_candidates"]),
         "evidence_refs": list(cast(list[str], state["evidence_refs"])),
-        "action_route_required": (
-            isinstance(route_plan, Mapping)
-            and isinstance(route_plan.get("output_plan"), Mapping)
-            and route_plan["output_plan"].get("output_mode") == "ACTION"
-        ),
-        "duplicate_conflict_assessment": cast(
-            DuplicateConflictAssessmentV1, state["duplicate_conflict_assessment"]
+        "route_action_necessities": cast(
+            list[RouteActionNecessityV1], state["route_action_necessities"]
         ),
         "policy_confirmation_receipts": cast(
             list[PolicyConfirmationReceiptV1], state.get("policy_confirmation_receipts", [])

@@ -29,6 +29,7 @@ def identify_goal_node(
         retry_budget=state["retry_budget"],
         prompt_ref=prompt_ref,
         confirmation_response=projection.get("confirmation_response"),
+        request_reconsideration=projection.get("request_reconsideration"),
     )
     return {
         "goal_candidate": candidate,

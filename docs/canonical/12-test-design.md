@@ -1,7 +1,7 @@
 # 12. 테스트 설계서
 
 > **Authority:** current owner contract와 State Transition Test Matrix의 product regression verification. Expected assertion은 검증 oracle이며 새 behavioral authority가 아니다.  
-> **상태:** Draft v3.55 · **기준일:** 2026-09-07 · **OS:** Windows 11 x64 · **Browser:** Chrome·Edge
+> **상태:** Draft v3.56 · **기준일:** 2026-09-07 · **OS:** Windows 11 x64 · **Browser:** Chrome·Edge
 
 ## 1. 목적과 계층
 
@@ -310,7 +310,7 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 - Main State control/projection schema를 contract-test한다.
   - `ExecutionSummaryV1`, `VerificationSummaryV1`, `RunBudgetV2`, `PromptContextV1`, `TraceContextV1`이 06의 declared fields를 정확히 가져야 하며 opaque `object`/임의 dict로 대체하면 실패한다.
-  - `RunBudgetV2.absolute_llm_call_limit=24`, active profile limits `14/20/18`, Planning Revision 2, Additional Retrieval 2를 검증하고 Profile 변경 시 counter reset을 금지한다.
+  - 새 `RunBudgetV2.absolute_llm_call_limit=36`, 기존 persisted Run의 24 유지, active profile limits `14/20/18`, Planning Revision 2, Additional Retrieval 2를 검증하고 resume·merge·Profile 변경 시 counter 또는 저장 상한 reset을 금지한다.
   - `PromptContextV1`에 Conversation History/previous-run artifact/raw user request가 들어가면 실패한다.
 
 - current Node Registry closure를 검증한다.
@@ -468,15 +468,17 @@ Local SLLM의 다음 LLM 책임은 서로 다른 PromptRef와 최소 Typed Proje
 
 #### 중복·충돌 검증
 
-- Work Analysis의 `DUPLICATES`·`CONFLICTS_WITH` 확정과 `action_necessity=NOT_REQUIRED`는 LLM 출력만으로 허용하지 않는다.
+- Work Analysis의 `DUPLICATES`·`CONFLICTS_WITH` 확정과 Route별 `NOT_REQUIRED`는 검증되지 않은 LLM 출력만으로 허용하지 않는다.
   - `relation_candidates`는 결정적 relation validator를 거쳐 `validated_relations`로 승격되어야 하며, 검증 전 후보가 `WorkAnalysisResultV2.relations`에 직접 포함되면 실패다.
   - 정규화된 Source 데이터·Calendar availability·현재 Task 상태로 검증되지 않은 유사 후보 또는 불확실 관계는 `relation_validation_ambiguities`/위험·확인 경로로 남긴다.
 
-- 정확 Task 중복의 기본 경로는 `action_necessity=NOT_REQUIRED → 새 Action 0`이다. 사용자가 중복 사실을 인지한 상태에서 추가 생성을 요구하면 `DUPLICATE_OVERRIDE_REQUIRED` 2차 Confirmation 전에는 Planning/Approval로 진행할 수 없다.
+- 정확 Task 중복의 기본 경로는 해당 Route `NOT_REQUIRED → 새 Action 0`이다. 정상 0건은 `REQUIRED`, 무관 후보는 중복 아님, 조회 후보 정보가 빠졌으면 `UNDETERMINED`임을 각각 검증한다. 사용자가 중복 사실을 인지한 상태에서 추가 생성을 요구하면 `DUPLICATE_OVERRIDE_REQUIRED` 2차 Confirmation 전에는 Planning/Approval로 진행할 수 없다.
 
 - 검증된 Calendar 충돌은 `CONFLICT_OVERRIDE_REQUIRED` 2차 Confirmation 전에는 충돌 Event Action Plan을 만들 수 없다. Confirmation 응답은 Work Analysis owner checkpoint로 resume하며 Request Understanding부터 재시작하지 않는다.
 
-- Action Output Route가 존재해도 Retrieval/Analysis에서 목표가 이미 충족된 정확 중복·동일 상태를 확인하면 `action_necessity=NOT_REQUIRED`로 Planning이 새 Action 없이 Evidence 기반 Answer로 종료 가능. 이때 Tool Route를 재선택하거나 기존 Resource를 중복 생성하지 않음
+- Action Output Route가 존재해도 Retrieval/Analysis에서 목표가 이미 충족된 정확 중복·동일 상태를 확인하면 해당 Route를 `NOT_REQUIRED`로 두고 Planning이 새 Action 없이 Evidence 기반 Answer로 종료 가능하다. 혼합 Route에서는 `REQUIRED` Route만 Plan에 남으며 Tool Route를 재선택하거나 기존 Resource를 중복 생성하지 않는다.
+
+- 현재 Evidence가 Request Intent를 반증·보완하면 같은 Run에서 기존 Request Understanding owner가 revision을 만들고 dependent Tool Route·Retrieval·Analysis·Planning을 fresh하게 다시 생성한다. local fact repair와 Tool Route reconsideration은 이 경로로 잘못 보내지 않으며, stale signal은 Recovery로 fail closed한다.
 
 - `NO_TOOL_NEEDED`라도 `analysis_requirement=REQUIRED`이면 Work Analysis를 건너뛰지 않으며, `NONE`일 때만 Planning(Answer)로 직행
 
@@ -649,7 +651,7 @@ RequestConfirmation
 
 ### 8.13 Budget
 
-- Route/Runtime별 LLM Budget Profile과 Product LLM Call hard cap 24 검증. `NORMAL=14 / RETRIEVAL_HEAVY=20 / REVISION_HEAVY=18 / ABSOLUTE=24` ceiling을 정확히 계수하고, budget을 맞추기 위해 서로 다른 semantic responsibility를 임의 fuse하지 않는지 검증
+- Route/Runtime별 LLM Budget Profile과 Product LLM Call hard cap을 검증한다. 새 Run은 `NORMAL=14 / RETRIEVAL_HEAVY=20 / REVISION_HEAVY=18 / ABSOLUTE=36`, 기존 저장 Run은 `ABSOLUTE=24`를 유지하며, budget을 맞추기 위해 서로 다른 semantic responsibility를 임의 fuse하지 않는지 검증한다.
 
 - Revision 2, Repair 1, Additional Retrieval 2
 

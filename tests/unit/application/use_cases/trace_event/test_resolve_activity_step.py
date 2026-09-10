@@ -21,3 +21,11 @@ def test_activity_step__build_query_validation__is_observable() -> None:
 
     assert result is not None
     assert result.label == "검색 조건 검증"
+
+
+def test_activity_step__action_necessity__is_user_facing() -> None:
+    result = resolve_activity_step("work_analysis", "assess_action_necessity")
+
+    assert result is not None
+    assert result.label == "실행 필요성"
+    assert "action" not in result.completed.lower()

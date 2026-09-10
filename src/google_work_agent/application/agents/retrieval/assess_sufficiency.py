@@ -77,8 +77,8 @@ READ_ANSWER_CALL_RESERVE = 4
 
 
 def _answer_call_reserve(intent: RequestIntentV2) -> int:
-    # Six existing Work Analysis semantic operations precede Planning when required.
-    return READ_ANSWER_CALL_RESERVE + (6 if intent.get("analysis_requirement") == "REQUIRED" else 0)
+    # Seven Work Analysis semantic operations precede Planning when required.
+    return READ_ANSWER_CALL_RESERVE + (7 if intent.get("analysis_requirement") == "REQUIRED" else 0)
 
 
 def deterministic_sufficiency(
@@ -442,9 +442,9 @@ def assess_sufficiency(
         sufficiency_output_schema(tool_route_plan),
     )
     validated = validate_sufficiency_result_v2(result.structured_output)
-    validated = _remove_unverified_model_user_issues(
+    validated = _normalize_model_resolution_ownership(
         validated,
-        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
     )
     validated = _fail_closed_on_empty_required_acquisition(
         validated,
@@ -553,31 +553,30 @@ def _guard_event_year(
     return result
 
 
-def _remove_unverified_model_user_issues(
+def _normalize_model_resolution_ownership(
     result: SufficiencyResultV2,
     *,
-    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
 ) -> SufficiencyResultV2:
-    """Reject model-authored USER ownership not established by a typed owner.
+    """Keep genuine candidate choices while returning missing facts to their source owner."""
 
-    Evidence-derived person ambiguity is projected deterministically before
-    this LLM path.  Provider-resolvable facts remain Connector-owned; the
-    model cannot turn them into a user question merely by writing USER.
-    """
-
-    if (
-        set(request_intent["requested_effect_hints"]) != {"READ"}
-        or request_intent["ambiguity"]["requires_confirmation"]
-    ):
-        return result
-    is_google_discovery = bool(request_intent["requested_resource_hints"]) and all(
-        hint.startswith(("GMAIL", "TASK", "CALENDAR"))
-        for hint in request_intent["requested_resource_hints"]
-    )
-    if not is_google_discovery:
-        return result
-    issues = [issue for issue in result["issues"] if issue["resolution_source"] != "USER"]
-    return {"schema_version": 2, "status": result["status"], "issues": issues}
+    routes = () if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    normalized: list[SufficiencyIssueV2] = []
+    for original in result["issues"]:
+        issue = original.copy()
+        if issue["resolution_source"] == "USER" and issue["issue_type"] == "MISSING":
+            route_id = issue.get("route_id")
+            route = next((item for item in routes if item["route_id"] == route_id), None)
+            if route is None and len(routes) == 1:
+                route = routes[0]
+                issue["route_id"] = route["route_id"]
+            issue["resolution_source"] = (
+                "GOOGLE"
+                if route is not None and route["connector_id"] == "google_workspace"
+                else "CONNECTOR"
+            )
+        normalized.append(issue)
+    return {"schema_version": 2, "status": result["status"], "issues": normalized}
 
 
 def _fail_closed_on_empty_required_acquisition(

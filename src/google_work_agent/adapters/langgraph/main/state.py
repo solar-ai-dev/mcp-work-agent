@@ -62,6 +62,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowStartRequest,
 )
 from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationRequiredV1,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
     SubgraphReturnV2,
@@ -75,6 +76,7 @@ _TYPE_HINT_NAMESPACE = (
     SufficiencyResultV2,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
+    RequestReconsiderationRequiredV1,
 )
 
 
@@ -86,6 +88,7 @@ class GraphStateUpdateV1(TypedDict, total=False):
     request_intent: RequestIntentV2 | None
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: WorkflowSignalV1 | ScopeExpansionRequiredV1 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
     acquisition_result: AcquisitionResultV1 | None
     retrieval_result: RetrievalResultV1 | None
     work_analysis_result: WorkAnalysisResultV2 | None
@@ -178,6 +181,7 @@ class GraphState(TypedDict, total=False):
     request_intent: Required[RequestIntentV2 | None]
     tool_route_plan: Required[ToolRoutePlanV2 | None]
     workflow_signal: Required[WorkflowSignalV1 | ScopeExpansionRequiredV1 | None]
+    request_reconsideration: NotRequired[RequestReconsiderationRequiredV1 | None]
     acquisition_result: Required[AcquisitionResultV1 | None]
     retrieval_result: Required[RetrievalResultV1 | None]
     work_analysis_result: Required[WorkAnalysisResultV2 | None]
@@ -279,6 +283,7 @@ def initial_graph_state(
         "tool_route_plan": None,
         "admitted_connector_ids": [],
         "workflow_signal": None,
+        "request_reconsideration": None,
         "acquisition_result": None,
         "retrieval_result": None,
         "work_analysis_result": None,

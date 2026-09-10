@@ -12,6 +12,6 @@ def test_validate_relations__exact_node__projection_and_router() -> None:
     )
     assert (owner / "projections/validate_relations_projection.py").exists()
     assert (
-        'return "assess_information_gaps"'
+        'return "assess_action_necessity"'
         in (owner / "routing/route_after_validate_relations.py").read_text()
     )

@@ -28,6 +28,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     RetrievalSourceStatusV1,
     SufficiencyIssueV2,
     SufficiencyResultV2,
+    TaskReviewCandidateV1,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
 from google_work_agent.application.agents.retrieval.resolve_availability import AvailableIntervalV1
@@ -103,6 +104,7 @@ class ContextRetrievalLocalState(GraphState):
     __context_round_preadvanced__: NotRequired[bool]
     __context_retrieval_retry_confirmation__: NotRequired[bool]
     __context_evidence_reassessment_issues__: NotRequired[list[SufficiencyIssueV2] | None]
+    task_review_candidates: NotRequired[list[TaskReviewCandidateV1]]
 
 
 class RetrievalState(TypedDict, total=False):
@@ -124,6 +126,7 @@ class RetrievalState(TypedDict, total=False):
     evidence_reassessment_issues: list[SufficiencyIssueV2]
     sufficiency: SufficiencyResultV2 | None
     final_result: RetrievalResultV1 | None
+    task_review_candidates: list[TaskReviewCandidateV1]
 
 
 __all__ = [

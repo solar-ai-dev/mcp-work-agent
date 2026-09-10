@@ -15,14 +15,15 @@ def test_requested_task_satisfied__becomes_not_required__from_duplicate_owner() 
         ambiguities=[],
         risks=[],
         evidence_refs=["ev-1"],
-        action_route_required=True,
-        duplicate_conflict_assessment={
-            "relation_candidates": [],
-            "requested_work_status": "SATISFIED",
-            "requested_work_reason": "existing task fulfils request",
-            "matched_fact_ids": ["f1"],
-            "evidence_refs": ["ev-1"],
-        },
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "NOT_REQUIRED",
+                "reason": "EXACT_DUPLICATE_ALREADY_SATISFIES_REQUEST",
+                "evidence_refs": ["ev-1"],
+                "candidate_refs": ["task:1"],
+            }
+        ],
         policy_confirmation_receipts=[],
     )
 
@@ -41,19 +42,20 @@ def test_incomplete_duplicate_review__keeps_action__undetermined() -> None:
         ambiguities=[],
         risks=[],
         evidence_refs=["ev-1"],
-        action_route_required=True,
-        duplicate_conflict_assessment={
-            "relation_candidates": [],
-            "requested_work_status": "UNDETERMINED",
-            "requested_work_reason": "Task observation was partial",
-            "matched_fact_ids": [],
-            "evidence_refs": [],
-        },
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "UNDETERMINED",
+                "reason": "TASK_DUPLICATE_REVIEW_UNDETERMINED",
+                "evidence_refs": [],
+                "candidate_refs": [],
+            }
+        ],
         policy_confirmation_receipts=[],
     )
 
     assert result["action_necessity"] == "UNDETERMINED"
-    assert result["action_necessity_reason"] == "DUPLICATE_REVIEW_UNDETERMINED"
+    assert result["action_necessity_reason"] == "TASK_DUPLICATE_REVIEW_UNDETERMINED"
 
 
 def test_complete_nonduplicate_review__keeps_frozen_action__required() -> None:
@@ -66,19 +68,22 @@ def test_complete_nonduplicate_review__keeps_frozen_action__required() -> None:
         ambiguities=[],
         risks=[],
         evidence_refs=[],
-        action_route_required=True,
-        duplicate_conflict_assessment={
-            "relation_candidates": [],
-            "requested_work_status": "NOT_SATISFIED",
-            "requested_work_reason": "observed Task scope contained no match",
-            "matched_fact_ids": [],
-            "evidence_refs": [],
-        },
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "REQUIRED",
+                "reason": "CURRENT_TASK_OBSERVATION_DOES_NOT_SATISFY_REQUEST",
+                "evidence_refs": [],
+                "candidate_refs": [],
+            }
+        ],
         policy_confirmation_receipts=[],
     )
 
     assert result["action_necessity"] == "REQUIRED"
-    assert result["action_necessity_reason"] == "FROZEN_ACTION_ROUTE_REQUIRES_EXECUTION"
+    assert result["action_necessity_reason"] == (
+        "CURRENT_TASK_OBSERVATION_DOES_NOT_SATISFY_REQUEST"
+    )
 
 
 def test_current_approved_conflict__override_receipt_is__bound_into_result() -> None:
@@ -115,14 +120,15 @@ def test_current_approved_conflict__override_receipt_is__bound_into_result() -> 
         ambiguities=[],
         risks=[],
         evidence_refs=["ev-1"],
-        action_route_required=True,
-        duplicate_conflict_assessment={
-            "relation_candidates": [],
-            "requested_work_status": "NOT_APPLICABLE",
-            "requested_work_reason": None,
-            "matched_fact_ids": [],
-            "evidence_refs": [],
-        },
+        route_action_necessities=[
+            {
+                "route_id": "calendar-create",
+                "status": "REQUIRED",
+                "reason": "CURRENT_OBSERVATION_REQUIRES_ACTION",
+                "evidence_refs": ["ev-1"],
+                "candidate_refs": [],
+            }
+        ],
         policy_confirmation_receipts=[receipt],  # type: ignore[list-item]
     )
 

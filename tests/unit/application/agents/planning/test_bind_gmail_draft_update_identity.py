@@ -149,12 +149,15 @@ def _compose(
                     {
                         "evidence_id": "draft-evidence",
                         "resource_handle": "gmail_draft:draft-actual",
-                        "locator": {"draft_snapshot": {**PAYLOAD, "body": "기존 본문"}},
+                        "locator": {"kind": "resource_payload"},
                     }
                 ]
                 if evidence is None
                 else evidence
             ),
+            source_snapshots={
+                "gmail_draft:draft-actual": {**PAYLOAD, "body": "기존 본문"}
+            },
             invoke=lambda *_: {
                 "schema_version": 1,
                 "route_id": "r1",

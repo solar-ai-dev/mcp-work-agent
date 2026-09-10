@@ -57,7 +57,7 @@ def test_canonical_prompt_manifest__source_and_caller__contract_sets_are_equal()
     runtime_callers = {cast(str, slot["runtime_node_id"]) for slot in slots}
     sources = {path.stem for path in (PROMPT_RUNTIME / "sources").glob("*.md")}
 
-    assert len(slots) == 22
+    assert len(slots) == len(REQUIRED_PROMPT_SLOT_IDS)
     assert manifest_ids == prompt_ids == sources == REQUIRED_PROMPT_SLOT_IDS
     assert runtime_callers == set(REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT.values())
 

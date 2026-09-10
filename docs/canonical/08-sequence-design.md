@@ -1,7 +1,7 @@
 # 08. 시퀀스 설계서
 
 > **Authority:** cross-layer participant interaction order와 crash/replay cut. State/Workflow/API/Infrastructure semantics는 해당 owner를 따른다.
-> **상태:** Draft v3.31 · **기준일:** 2026-09-07 · **대상:** P0 MVP
+> **상태:** Draft v3.32 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적과 범위
 
@@ -161,7 +161,7 @@ sequenceDiagram
 
 Local State는 invocation 범위에서만 유지한다. 같은 owner 안의 호출은 이 State로 이어지며 Agent→Agent handoff가 아니다. 중간 Candidate는 Main State의 새 authority가 되지 않는다. Parent에는 공식 Versioned Typed Result·disposition과 필요한 Typed Workflow Signal만 반환한다.
 
-Local SLLM의 atomic Node 목록과 분해 방식은 여기서 반복하지 않는다. 강한 Runtime의 node fusion은 `06/15`가 요구하는 parity gate를 통과한 Profile에서만 허용하며, Product LLM 호출은 Run당 hard cap 24를 넘지 않는다.
+Local SLLM의 atomic Node 목록과 분해 방식은 여기서 반복하지 않는다. 강한 Runtime의 node fusion은 `06/15`가 요구하는 parity gate를 통과한 Profile에서만 허용하며, Product LLM 호출은 새 Run의 hard cap 36을 넘지 않는다. 기존 persisted Run은 저장된 24 상한을 유지한다.
 
 #### 3.2.1 LLM 호출 전 PromptRef 선택
 
@@ -432,11 +432,11 @@ facts를 추출하고 필요한 entity·temporal/dependency·duplicate/conflict 
 
 | 분석 결과 | 다음 처리 |
 | --- | --- |
-| exact duplicate default stop | `WorkAnalysisResultV2(action_necessity=NOT_REQUIRED)` 반환. |
+| exact duplicate default stop | 해당 Output Route에 `route_action_necessities[].status=NOT_REQUIRED`를 반환한다. |
 | duplicate/conflict override 확인 필요 | `NEEDS_CONFIRMATION`과 `DUPLICATE_OVERRIDE_REQUIRED \| CONFLICT_OVERRIDE_REQUIRED`를 반환한다. 사용자 2차 확인 → Controller의 Receipt/Audit 저장 → 같은 owner checkpoint 재개. |
-| override APPROVED | 현재 relation/evidence Context에 confirmed override를 결합하고 `action_necessity=REQUIRED + override receipt ref` 반환. |
-| override DECLINED | `action_necessity=NOT_REQUIRED` 반환. |
-| blocking relation 없음 | typed local state를 검증하고 `action_necessity`를 포함한 `WorkAnalysisResultV2` 반환. |
+| override APPROVED | 현재 relation/evidence Context에 confirmed override를 결합하고 해당 Route를 `REQUIRED`로 두며 override receipt ref를 반환한다. |
+| override DECLINED | 해당 Route를 `NOT_REQUIRED`로 둔다. |
+| blocking relation 없음 | typed local state를 검증하고 Route별 실행 필요성을 포함한 `WorkAnalysisResultV2`를 반환한다. |
 
 ### 6.4 계획과 검토
 
@@ -447,8 +447,8 @@ Application `begin_planning` → Domain `BeginPlanning(expected_version)` → Ru
 | 계획 분기 | 반환까지의 순서 |
 | --- | --- |
 | `output_mode=ANSWER` | 근거 기반 답변 작성 → `AnswerDraftV2` 반환. |
-| `output_mode=ACTION` + `analysis.action_necessity=NOT_REQUIRED` | Evidence 기반 no-action 답변 작성 → 새 Action 0개의 `AnswerDraftV2` 반환. |
-| `output_mode=ACTION` | 고정 Output Route별 `selected_tool` Schema와 optional Analysis·Evidence를 사용해 Tool Arguments candidate 작성 → 결정적 `build_dependencies + assemble_plan + validate_plan` → `ActionPlanDraftV2` 반환. |
+| `output_mode=ACTION` + 모든 Route가 `NOT_REQUIRED` | Evidence 기반 no-action 답변 작성 → 새 Action 0개의 `AnswerDraftV2` 반환. |
+| `output_mode=ACTION` + 하나 이상의 Route가 `REQUIRED` | 필요한 고정 Output Route의 `selected_tool` Schema와 optional Analysis·Evidence를 사용해 Tool Arguments candidate 작성 → 결정적 `build_dependencies + assemble_plan + validate_plan` → `ActionPlanDraftV2` 반환. |
 | Action Plan 검토 | Supervisor → Review: Intent + Plan + Evidence/Policy Projection → 해당 dimension 검사 → 결정적 `aggregate_review_findings + validate_review` 및 결과 mapping/validation → `PlanReviewResultV2` 반환. |
 
 ### 6.5 Route와 중간 결과 보존

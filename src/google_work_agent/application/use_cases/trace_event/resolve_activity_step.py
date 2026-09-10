@@ -46,6 +46,9 @@ _STEPS: dict[tuple[str, str], ActivityStepPresentation] = {
         "중복·충돌 후보", "중복되거나 충돌할 수 있는 항목을"
     ),
     ("work_analysis", "validate_relations"): _step("관계 검증", "근거와 업무 관계를"),
+    ("work_analysis", "assess_action_necessity"): _step(
+        "실행 필요성", "현재 업무 결과에 추가 실행이 필요한지"
+    ),
     ("work_analysis", "assess_information_gaps"): _step("부족한 정보", "업무 처리에 부족한 정보를"),
     ("work_analysis", "assess_operational_risks"): _step(
         "주의 사항", "실행 전에 확인할 주의 사항을"

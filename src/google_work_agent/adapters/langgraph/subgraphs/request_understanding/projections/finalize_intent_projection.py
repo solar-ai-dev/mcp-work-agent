@@ -9,6 +9,7 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     AmbiguityV1,
     RequestGoalCandidateV1,
+    RequestIntentV2,
 )
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
@@ -22,6 +23,7 @@ class FinalizeIntentInput(TypedDict):
     goal_candidate: RequestGoalCandidateV1
     ambiguity_candidate: AmbiguityV1
     confirmation_response: NotRequired[ConfirmationResponseProjectionV1]
+    prior_intent: NotRequired[RequestIntentV2]
 
 
 def project_finalize_intent_input(state: RequestUnderstandingStateV2) -> FinalizeIntentInput:
@@ -41,4 +43,9 @@ def project_finalize_intent_input(state: RequestUnderstandingStateV2) -> Finaliz
         projected["confirmation_response"] = validate_confirmation_response_projection_v1(
             confirmation
         )
+    if state.get("request_reconsideration") is not None:
+        prior_intent = state.get("request_intent")
+        if prior_intent is None:
+            raise ValueError("request reconsideration requires the prior intent")
+        projected["prior_intent"] = prior_intent
     return projected

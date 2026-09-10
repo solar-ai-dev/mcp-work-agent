@@ -54,6 +54,11 @@ def project_detect_duplicate_conflict_candidates_input(
             "source_statuses": project_retrieval_source_statuses(state),
             "selected_segment_count": len(selected_segment_ids),
             "excluded_segment_count": len(excluded_segment_ids),
+            "task_review_candidates": (
+                []
+                if retrieval is None
+                else [dict(item) for item in retrieval.get("task_review_candidates", [])]
+            ),
         },
         "allowed_evidence_refs": set(state["evidence_refs"]),
         "request_intent": cast(RequestIntentV2, state["request_intent"]),

@@ -143,6 +143,7 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
         "person_candidates",
         "selected_person_identities",
         "unresolved_event_dates",
+        "task_review_candidates",
     }
 
 

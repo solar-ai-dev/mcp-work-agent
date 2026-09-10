@@ -330,6 +330,10 @@ def _respond(
         return {"relation_candidates": []}
     if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
         required = base.get("task_duplicate_review_required") is True
+        source_state = cast(Mapping[str, object], base["source_state"])
+        task_candidates = cast(
+            list[Mapping[str, object]], source_state.get("task_review_candidates", [])
+        )
         if scenario == "TASK_DUPLICATE_NO_ACTION":
             facts = cast(list[Mapping[str, object]], base["work_facts"])
             fact = facts[0]
@@ -339,6 +343,9 @@ def _respond(
                 "requested_work_status": "SATISFIED",
                 "requested_work_reason": "The current Task already fulfils the request",
                 "matched_fact_ids": [str(fact["fact_id"])],
+                "matched_candidate_refs": [
+                    str(item["candidate_ref"]) for item in task_candidates
+                ],
                 "evidence_refs": refs,
             }
         return {
@@ -348,7 +355,22 @@ def _respond(
                 "Observed tasks do not satisfy the request" if required else None
             ),
             "matched_fact_ids": [],
+            "matched_candidate_refs": [],
             "evidence_refs": [],
+        }
+    if prompt_id == "work_analysis.assess_action_necessity":
+        routes = cast(list[Mapping[str, object]], base["output_routes"])
+        return {
+            "route_assessments": [
+                {
+                    "route_id": str(route["route_id"]),
+                    "status": "REQUIRED",
+                    "reason": "THE_REQUESTED_EXTERNAL_EFFECT_IS_NOT_YET_SATISFIED",
+                    "evidence_refs": [],
+                    "candidate_refs": [],
+                }
+                for route in routes
+            ]
         }
     if prompt_id == "work_analysis.assess_information_gaps":
         return {

@@ -31,6 +31,7 @@ DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "requested_work_status",
             "requested_work_reason",
             "matched_fact_ids",
+            "matched_candidate_refs",
             "evidence_refs",
         ],
         "additionalProperties": False,
@@ -73,6 +74,11 @@ DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "uniqueItems": True,
                 "items": {"type": "string", "minLength": 1},
             },
+            "matched_candidate_refs": {
+                "type": "array",
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
             "evidence_refs": {
                 "type": "array",
                 "uniqueItems": True,
@@ -107,6 +113,7 @@ def detect_duplicate_conflict_candidates(
             "requested_work_status": "NOT_APPLICABLE",
             "requested_work_reason": None,
             "matched_fact_ids": [],
+            "matched_candidate_refs": [],
             "evidence_refs": [],
         }
     prompt_input: dict[str, object] = {
@@ -120,7 +127,8 @@ def detect_duplicate_conflict_candidates(
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
     fact_ids = {fact["fact_id"] for fact in work_facts}
-    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs)
+    candidate_refs = _task_candidate_refs(source_state)
+    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs, candidate_refs)
 
     def validate(value: object) -> object:
         errors = validate_output_schema(value, output_schema.json_schema)
@@ -144,19 +152,24 @@ def detect_duplicate_conflict_candidates(
                 raise ValueError("guarded relation evidence is outside current RetrievalResultV1")
             seen.add(relation_id)
         matched_fact_ids = cast(list[str], root["matched_fact_ids"])
+        matched_candidate_refs = cast(list[str], root["matched_candidate_refs"])
         refs = cast(list[str], root["evidence_refs"])
         if not set(matched_fact_ids).issubset(fact_ids):
             raise ValueError("requested-work assessment references an unknown fact")
         if not set(refs).issubset(allowed_evidence_refs):
             raise ValueError("requested-work assessment evidence is outside RetrievalResultV1")
+        if not set(matched_candidate_refs).issubset(candidate_refs):
+            raise ValueError("requested-work assessment references an unknown Task candidate")
         status = root["requested_work_status"]
         reason = root["requested_work_reason"]
         if reason is not None and (not isinstance(reason, str) or not reason.strip()):
             raise ValueError("requested-work assessment reason must be non-empty or null")
-        if status == "SATISFIED" and (not matched_fact_ids or not refs):
-            raise ValueError("satisfied requested work requires current facts and evidence")
-        if status in {"NOT_APPLICABLE", "NOT_SATISFIED"} and matched_fact_ids:
-            raise ValueError("non-matching requested work cannot bind matched facts")
+        if status == "SATISFIED" and not (matched_fact_ids or matched_candidate_refs):
+            raise ValueError("satisfied requested work requires a current matched observation")
+        if status in {"NOT_APPLICABLE", "NOT_SATISFIED"} and (
+            matched_fact_ids or matched_candidate_refs
+        ):
+            raise ValueError("non-matching requested work cannot bind matched observations")
         if task_duplicate_review_required and status == "NOT_APPLICABLE":
             raise ValueError("required Task duplicate review cannot be not applicable")
         if not task_duplicate_review_required and status != "NOT_APPLICABLE":
@@ -167,6 +180,7 @@ def detect_duplicate_conflict_candidates(
                 source_state=source_state,
                 work_facts=work_facts,
                 matched_fact_ids=matched_fact_ids,
+                task_candidate_refs=candidate_refs,
             )
         return value
 
@@ -185,6 +199,9 @@ def detect_duplicate_conflict_candidates(
                 dict(item) for item in cast(list[dict[str, object]], root["relation_candidates"])
             ],
             "matched_fact_ids": list(cast(list[str], root["matched_fact_ids"])),
+            "matched_candidate_refs": list(
+                cast(list[str], root["matched_candidate_refs"])
+            ),
             "evidence_refs": list(cast(list[str], root["evidence_refs"])),
         },
     )
@@ -205,6 +222,7 @@ def _validate_determinate_task_assessment(
     source_state: Mapping[str, object],
     work_facts: Sequence[WorkFactV1],
     matched_fact_ids: Sequence[str],
+    task_candidate_refs: set[str],
 ) -> None:
     raw_statuses = source_state.get("source_statuses", [])
     if not isinstance(raw_statuses, list) or not all(
@@ -233,16 +251,16 @@ def _validate_determinate_task_assessment(
         return
 
     observed_counts = [item.get("observed_resource_count") for item in task_statuses]
-    if all(count == 0 for count in observed_counts):
-        return
-    if not any(fact["kind"] == "TASK" for fact in work_facts):
+    if any(not isinstance(count, int) for count in observed_counts):
+        raise ValueError("Task duplicate review requires observed resource counts")
+    if sum(cast(list[int], observed_counts)) != len(task_candidate_refs):
         raise ValueError(
-            "non-empty Task observation must be represented before a nonduplicate decision"
+            "Task observation candidates do not cover the complete Provider observation"
         )
 
 
 def _bound_output_schema(
-    fact_ids: set[str], allowed_evidence_refs: set[str]
+    fact_ids: set[str], allowed_evidence_refs: set[str], candidate_refs: set[str]
 ) -> OutputSchemaDefinition:
     """Bind guarded candidates to the current fact and Retrieval identities."""
 
@@ -269,10 +287,31 @@ def _bound_output_schema(
         "uniqueItems": True,
         "items": {"type": "string", "enum": sorted(allowed_evidence_refs)},
     }
+    properties["matched_candidate_refs"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "items": {"type": "string", "enum": sorted(candidate_refs)},
+    }
     return OutputSchemaDefinition(
         schema_version=DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA.schema_version,
         json_schema=json_schema,
     )
+
+
+def _task_candidate_refs(source_state: Mapping[str, object]) -> set[str]:
+    raw_candidates = source_state.get("task_review_candidates", [])
+    if not isinstance(raw_candidates, list) or not all(
+        isinstance(item, Mapping) for item in raw_candidates
+    ):
+        raise ValueError("Task review candidates are invalid")
+    refs = {
+        str(item["candidate_ref"])
+        for item in cast(list[Mapping[str, object]], raw_candidates)
+        if isinstance(item.get("candidate_ref"), str) and item["candidate_ref"]
+    }
+    if len(refs) != len(raw_candidates):
+        raise ValueError("Task review candidate identities must be unique and non-empty")
+    return refs
 
 
 __all__ = [

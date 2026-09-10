@@ -137,6 +137,7 @@ def compose_arguments_per_output_route(
     request_intent: Mapping[str, object] | None = None,
     work_analysis: Mapping[str, object] | None = None,
     evidence: Sequence[Mapping[str, object]] = (),
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
     run_reference_time: Mapping[str, object] | None = None,
@@ -234,6 +235,7 @@ def compose_arguments_per_output_route(
             action_objective=objective,
             arguments=arguments,
             evidence=evidence,
+            source_snapshots=source_snapshots or {},
         )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])

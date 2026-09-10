@@ -1,4 +1,4 @@
-"""Canonical eight-node Work Analysis production runtime."""
+"""Canonical Work Analysis production runtime."""
 
 from __future__ import annotations
 
@@ -46,6 +46,9 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     EvidenceDraftV1,
 )
 from google_work_agent.application.agents.work_analysis import (
+    assess_action_necessity as action_necessity,
+)
+from google_work_agent.application.agents.work_analysis import (
     detect_duplicate_conflict_candidates as duplicate_candidates,
 )
 from google_work_agent.application.agents.work_analysis.assemble_work_analysis import (
@@ -71,11 +74,14 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.observability import ObservabilityContext
 from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationObservationV1,
+    RequestReconsiderationRequiredV1,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
 )
 
 from .nodes.assemble_work_analysis_node import assemble_work_analysis_node
+from .nodes.assess_action_necessity_node import assess_action_necessity_node
 from .nodes.assess_information_gaps_node import assess_information_gaps_node
 from .nodes.assess_operational_risks_node import assess_operational_risks_node
 from .nodes.detect_duplicate_conflict_candidates_node import (
@@ -89,6 +95,7 @@ from .projections.task_duplicate_review_requirement_projection import (
     project_task_duplicate_review_requirement,
 )
 from .routing.route_after_assemble_work_analysis import route_after_assemble_work_analysis
+from .routing.route_after_assess_action_necessity import route_after_assess_action_necessity
 from .routing.route_after_assess_information_gaps import route_after_assess_information_gaps
 from .routing.route_after_assess_operational_risks import route_after_assess_operational_risks
 from .routing.route_after_detect_duplicate_conflict_candidates import (
@@ -110,7 +117,7 @@ ConfirmInline = Callable[
 
 
 class WorkAnalysisSubgraph:
-    """Run six atomic Prompt operations and two deterministic runtime nodes."""
+    """Run seven atomic Prompt operations and two deterministic runtime nodes."""
 
     def __init__(
         self,
@@ -153,6 +160,11 @@ class WorkAnalysisSubgraph:
                 manifest,
                 execution_scope=prompt_execution_scope,
             ),
+            "assess_action_necessity": load_prompt_reference(
+                "work_analysis.assess_action_necessity",
+                manifest,
+                execution_scope=prompt_execution_scope,
+            ),
             "assess_operational_risks": load_prompt_reference(
                 "work_analysis.assess_operational_risks",
                 manifest,
@@ -179,6 +191,7 @@ class WorkAnalysisSubgraph:
             "detect_duplicate_conflict_candidates", self._detect_duplicate_conflict_candidates_node
         )
         graph.add_node("validate_relations", self._validate_relations_node)
+        graph.add_node("assess_action_necessity", self._assess_action_necessity_node)
         graph.add_node("assess_information_gaps", self._assess_information_gaps_node)
         graph.add_node("assess_operational_risks", self._assess_operational_risks_node)
         graph.add_node("finalize", self._finalize_node)
@@ -214,6 +227,11 @@ class WorkAnalysisSubgraph:
         graph.add_conditional_edges(
             "validate_relations",
             route_after_validate_relations,
+            {"assess_action_necessity": "assess_action_necessity"},
+        )
+        graph.add_conditional_edges(
+            "assess_action_necessity",
+            route_after_assess_action_necessity,
             {"assess_information_gaps": "assess_information_gaps"},
         )
         graph.add_conditional_edges(
@@ -321,8 +339,10 @@ class WorkAnalysisSubgraph:
             "requested_work_status": "NOT_APPLICABLE",
             "requested_work_reason": None,
             "matched_fact_ids": [],
+            "matched_candidate_refs": [],
             "evidence_refs": [],
         }
+        returned["route_action_necessities"] = []
         return returned
 
     def _resolve_entity_relations_node(
@@ -460,6 +480,36 @@ class WorkAnalysisSubgraph:
             },
         )
 
+    def _assess_action_necessity_node(
+        self, state: WorkAnalysisLocalState
+    ) -> WorkAnalysisLocalState:
+        plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
+        output_plan = plan["output_plan"]
+        routes = [] if output_plan["output_mode"] == "ANSWER" else output_plan["output_routes"]
+        llm_required = action_necessity.action_necessity_llm_required(routes)
+        if llm_required:
+            ensure_llm_call_budget(state)
+        patch = assess_action_necessity_node(
+            cast(dict[str, object], state),
+            llm_runtime=self._llm_runtime,
+            prompt_ref=self._prompt_refs["assess_action_necessity"],
+            requested_mode=request_from_state(state).requested_mode,
+        )
+        return cast(
+            WorkAnalysisLocalState,
+            {
+                **patch,
+                "retry_budget": (
+                    consume_llm_call_budget(state) if llm_required else state["retry_budget"]
+                ),
+                "trace_context": self._trace(
+                    state,
+                    "assess_action_necessity",
+                    self._prompt_refs["assess_action_necessity"] if llm_required else None,
+                ),
+            },
+        )
+
     def _assess_operational_risks_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
@@ -495,7 +545,7 @@ class WorkAnalysisSubgraph:
         based_on = self._based_on(state)
         override_kind = required_override_confirmation_kind(
             validated_relations=cast(list[Any], state.get("validated_relations", [])),
-            action_route_required=_action_route_required(state),
+            action_execution_required=_action_execution_required(state),
             policy_confirmation_receipts=cast(
                 list[PolicyConfirmationReceiptV1],
                 state.get("policy_confirmation_receipts", []),
@@ -602,6 +652,20 @@ class WorkAnalysisSubgraph:
                 disposition=cast(Any, disposition),
                 signal=signal,
             )
+        if disposition == "REQUEST_RECONSIDERATION_REQUIRED":
+            return self._finish_with_signal(
+                state,
+                disposition="REQUEST_RECONSIDERATION_REQUIRED",
+                signal=self._request_reconsideration_signal(
+                    state,
+                    evidence_refs=[
+                        item
+                        for item in cast(list[object], assessment.get("evidence_refs", []))
+                        if isinstance(item, str) and item
+                    ],
+                    reason_codes=reason_codes,
+                ),
+            )
         if disposition == "ROUTE_RECONSIDERATION_REQUIRED":
             return self._finish_with_signal(
                 state,
@@ -637,7 +701,11 @@ class WorkAnalysisSubgraph:
         state: WorkAnalysisLocalState,
         *,
         disposition: str,
-        signal: RetrievalRequiredV1 | RouteReconsiderationRequiredV1,
+        signal: (
+            RetrievalRequiredV1
+            | RequestReconsiderationRequiredV1
+            | RouteReconsiderationRequiredV1
+        ),
     ) -> WorkAnalysisLocalState:
         reason_codes = signal["reason_codes"]
         decision = route_supervisor(
@@ -659,6 +727,36 @@ class WorkAnalysisSubgraph:
             WorkAnalysisLocalState,
             {**merged, "__work_analysis_retry_confirmation__": False},
         )
+
+    @staticmethod
+    def _request_reconsideration_signal(
+        state: WorkAnalysisLocalState,
+        *,
+        evidence_refs: list[str],
+        reason_codes: list[str],
+    ) -> RequestReconsiderationRequiredV1:
+        intent = _require_state_value(state.get("request_intent"), "request_intent")
+        selected = set(evidence_refs)
+        observations = [
+            cast(
+                RequestReconsiderationObservationV1,
+                {
+                    "evidence_ref": item["evidence_id"],
+                    "resource_ref": item["resource_handle"],
+                    "excerpt": item["excerpt"],
+                },
+            )
+            for item in state.get("evidence", [])
+            if item["evidence_id"] in selected
+        ]
+        if not observations:
+            raise ValueError("request reconsideration requires current evidence observations")
+        return {
+            "kind": "REQUEST_RECONSIDERATION_REQUIRED",
+            "reason_codes": reason_codes,
+            "based_on_request_intent": dict(intent["meta"]),
+            "observations": observations,
+        }
 
     def _resolve_confirmation(
         self,
@@ -871,10 +969,12 @@ class WorkAnalysisSubgraph:
         return isinstance(state.get(ANALYSIS_AGENT_LOCAL_KEY), Mapping)
 
 
-def _action_route_required(state: WorkAnalysisLocalState) -> bool:
-    plan = state.get("tool_route_plan")
-    output = plan.get("output_plan") if isinstance(plan, Mapping) else None
-    return isinstance(output, Mapping) and output.get("output_mode") == "ACTION"
+def _action_execution_required(state: WorkAnalysisLocalState) -> bool:
+    return any(
+        item.get("status") == "REQUIRED"
+        for item in state.get("route_action_necessities", [])
+        if isinstance(item, Mapping)
+    )
 
 
 __all__ = ["WorkAnalysisSubgraph"]

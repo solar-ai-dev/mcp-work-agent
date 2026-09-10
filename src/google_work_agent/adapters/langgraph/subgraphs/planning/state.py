@@ -69,6 +69,7 @@ class PlanningLocalState(GraphState):
     work_analysis: NotRequired[dict[str, object]]
     evidence: NotRequired[list[dict[str, object]]]
     evidence_refs: NotRequired[list[str]]
+    source_snapshots: NotRequired[dict[str, dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
     answer_outline: NotRequired[AnswerOutlineV1]
     planning_disposition: NotRequired[str]

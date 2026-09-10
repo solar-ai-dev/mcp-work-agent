@@ -1,7 +1,7 @@
 # 15. Agent Capability · Failure · Prompt 공통 계약
 
 > **Authority:** Agent capability·normalized failure·Prompt runtime contract. 승인/Claim/Write/Verification/Domain lifecycle의 최종 판정은 해당 owner를 따른다.  
-> **상태:** Approved v1.34 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
+> **상태:** Approved v1.35 · **기준일:** 2026-09-07 · **대상:** P0 Product Agent/Prompt Runtime
 
 ## 0. 문서 목적
 
@@ -190,7 +190,7 @@ llm_budget_policy: ROUTE_PROFILE
 normal_max_llm_calls: 14
 retrieval_heavy_max_llm_calls: 20
 revision_heavy_max_llm_calls: 18
-absolute_max_llm_calls: 24
+absolute_max_llm_calls: 36
 node_holdout: SEPARATE
 failure_reason_min_items:
   dev: 3
@@ -223,6 +223,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | `work_analysis.resolve_temporal_dependencies` | LLM | conditional. 날짜·기간·선후·dependency 후보만 소유한다. |
 | `work_analysis.detect_duplicate_conflict_candidates` | LLM | conditional. duplicate/conflict candidate만 제안한다. |
 | `work_analysis.validate_relations` | deterministic | 실제 `DUPLICATES \| CONFLICTS_WITH` 확정은 relation validator가 소유한다. |
+| `work_analysis.assess_action_necessity` | LLM/deterministic | frozen Output Route별 적용 여부를 한 번 판단한다. Task CREATE는 앞선 중복 검토 결과에서 결정적으로 파생한다. |
 | `work_analysis.assess_information_gaps` | LLM | 부족 정보 평가 |
 | `work_analysis.assess_operational_risks` | LLM | conditional |
 | `work_analysis.assemble_work_analysis` | deterministic | 분석 결과 조립 |
@@ -368,7 +369,7 @@ HUMAN_REVIEW
 | Request Understanding | `COMPLETE \| NEEDS_CONFIRMATION \| INVALID` |
 | Tool Route | `ROUTE_READY \| NO_TOOL_NEEDED \| NEEDS_CONFIRMATION \| BLOCKED` |
 | Retrieval | `SUFFICIENT \| NO_FETCH_NEEDED \| NEEDS_MORE_DATA \| NEEDS_CONFIRMATION \| ROUTE_RECONSIDERATION_REQUIRED \| PARTIAL \| BLOCKED` |
-| Work Analysis | `COMPLETE \| NEEDS_MORE_DATA \| NEEDS_CONFIRMATION \| ROUTE_RECONSIDERATION_REQUIRED \| BLOCKED` |
+| Work Analysis | `COMPLETE \| NEEDS_MORE_DATA \| NEEDS_CONFIRMATION \| REQUEST_RECONSIDERATION_REQUIRED \| ROUTE_RECONSIDERATION_REQUIRED \| BLOCKED` |
 | Planning | `ANSWER_ONLY \| PLAN_READY \| NEEDS_CONFIRMATION \| ROUTE_RECONSIDERATION_REQUIRED \| BLOCKED` |
 | Review | `PASS \| REVISE \| RETRIEVE_MORE \| ROUTE_RECONSIDERATION \| CONFIRM \| BLOCK` |
 | Domain | `ALLOW_READ \| REQUIRE_APPROVAL \| BLOCK` |
@@ -617,7 +618,7 @@ Additional Retrieval: 최초 Retrieval 이후 최대 2회
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=24
+ABSOLUTE_MAX_LLM_CALLS=36
 ```
 
 | Profile·상한 | 적용 조건 |
@@ -627,6 +628,8 @@ ABSOLUTE_MAX_LLM_CALLS=24
 | `REVISION_HEAVY` | Review가 `REVISE`를 반환하고 Domain과 deterministic Policy가 Revision을 허용한 경우에만 선택 |
 | Profile 승격 | Supervisor의 결정적 규칙으로 수행 |
 | `ABSOLUTE_MAX_LLM_CALLS` | 상한을 넘으면 Prompt를 더 호출하지 않음 |
+
+새 Run은 absolute 상한 36을 snapshot한다. 기존 checkpoint에 24가 저장된 Run은 resume·profile 승격에서도 24를 유지하며 현재 기본값으로 다시 쓰지 않는다.
 
 ### 8.3 Budget 소진 처리
 
@@ -717,6 +720,7 @@ Current required Product-LLM Prompt Slot set은 아래 22개다. 각 slot에서 
 | `analysis.resolve_entity_relations` | `work_analysis.resolve_entity_relations` |
 | `analysis.resolve_temporal_dependencies` | `work_analysis.resolve_temporal_dependencies` |
 | `analysis.detect_duplicate_conflict_candidates` | `work_analysis.detect_duplicate_conflict_candidates` |
+| `analysis.assess_action_necessity` | `work_analysis.assess_action_necessity` |
 | `analysis.assess_information_gaps` | `work_analysis.assess_information_gaps` |
 | `analysis.assess_operational_risks` | `work_analysis.assess_operational_risks` |
 | `planning.outline_answer` | `planning.outline_answer` |

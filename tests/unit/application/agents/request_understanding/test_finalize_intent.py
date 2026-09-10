@@ -29,6 +29,37 @@ def test_finalize_intent__valid_candidates__attaches_application_lineage() -> No
     assert intent["meta"] == {"artifact_id": "intent-1", "revision": 1, "based_on": []}
 
 
+def test_finalize_intent__same_run_reconsideration__increments_existing_artifact() -> None:
+    goal_candidate: RequestGoalCandidateV1 = {
+        "goal": "reconsidered goal",
+        "completion_conditions": ["done"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_MESSAGE"],
+        "analysis_requirement": "REQUIRED",
+    }
+    prior = finalize_intent(
+        {**goal_candidate, "goal": "initial goal"},
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-1",
+        user_request="goal",
+    )
+
+    revised = finalize_intent(
+        goal_candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="ignored-new-id",
+        user_request="goal",
+        prior_intent=prior,
+    )
+
+    assert revised["meta"] == {
+        "artifact_id": "intent-1",
+        "revision": 2,
+        "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+    }
+
+
 def test_finalize_intent__materializes_exact_user_request__repository_provenance() -> None:
     repository = "solar-ai-dev/google-work-agent"
     request_text = f"{repository} 저장소의 열린 이슈를 찾아줘"

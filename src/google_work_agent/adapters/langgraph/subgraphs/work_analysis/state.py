@@ -25,6 +25,7 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
     OperationalRiskAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     WorkAmbiguityV1,
     WorkAnalysisResultV2,
     WorkFactV1,
@@ -68,6 +69,7 @@ class WorkAnalysisLocalState(GraphState):
     ambiguity_candidates: NotRequired[list[WorkAmbiguityV1]]
     retrieval_needs: NotRequired[list[RetrievalNeedV1]]
     operational_risk_candidates: NotRequired[list[WorkRiskV1]]
+    route_action_necessities: NotRequired[list[RouteActionNecessityV1]]
     final_analysis: NotRequired[WorkAnalysisResultV2 | None]
     __analysis_information_gap_assessment__: NotRequired[InformationGapAssessmentV1]
     __analysis_operational_risk_assessment__: NotRequired[OperationalRiskAssessmentV1]
@@ -77,7 +79,7 @@ class WorkAnalysisLocalState(GraphState):
 
 
 class WorkAnalysisStateV2(TypedDict, total=False):
-    """The exact fourteen owner-local fields for the Work Analysis capability."""
+    """The exact owner-local semantic fields for the Work Analysis capability."""
 
     user_request: str
     request_intent: RequestIntentV2
@@ -92,6 +94,7 @@ class WorkAnalysisStateV2(TypedDict, total=False):
     ambiguity_candidates: list[WorkAmbiguityV1]
     retrieval_needs: list[RetrievalNeedV1]
     operational_risk_candidates: list[WorkRiskV1]
+    route_action_necessities: list[RouteActionNecessityV1]
     final_analysis: WorkAnalysisResultV2 | None
 
 

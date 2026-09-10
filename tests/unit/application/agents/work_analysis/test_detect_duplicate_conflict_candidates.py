@@ -25,6 +25,7 @@ def test_duplicate_is__never_promoted__by_candidate_operation() -> None:
         "requested_work_status": "SATISFIED",
         "requested_work_reason": "existing task fulfils the request",
         "matched_fact_ids": ["f1"],
+        "matched_candidate_refs": [],
         "evidence_refs": ["ev-1"],
     }
     runtime = WorkAnalysisRuntimeFake(output)
@@ -86,6 +87,7 @@ def test_duplicate_candidates__without_policy_or_two_facts__materialize_empty_wi
         "requested_work_status": "NOT_APPLICABLE",
         "requested_work_reason": None,
         "matched_fact_ids": [],
+        "matched_candidate_refs": [],
         "evidence_refs": [],
     }
     assert runtime.calls == []
@@ -97,6 +99,7 @@ def test_complete_empty_task_observation__supports_nonduplicate__without_item_ev
         "requested_work_status": "NOT_SATISFIED",
         "requested_work_reason": "required Task scope was observed empty",
         "matched_fact_ids": [],
+        "matched_candidate_refs": [],
         "evidence_refs": [],
     }
     runtime = WorkAnalysisRuntimeFake(output)
@@ -160,6 +163,7 @@ def test_nonduplicate_review__requires_complete__represented_task_observation(
             "requested_work_status": "NOT_SATISFIED",
             "requested_work_reason": "no duplicate",
             "matched_fact_ids": [],
+            "matched_candidate_refs": [],
             "evidence_refs": [],
         }
     )

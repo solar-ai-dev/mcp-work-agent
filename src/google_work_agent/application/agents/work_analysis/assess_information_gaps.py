@@ -10,10 +10,10 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
-    DuplicateConflictAssessmentV1,
     InformationGapAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     WorkAmbiguityV1,
     WorkFactV1,
 )
@@ -29,6 +29,7 @@ _DISPOSITIONS = (
     "COMPLETE",
     "NEEDS_MORE_DATA",
     "NEEDS_CONFIRMATION",
+    "REQUEST_RECONSIDERATION_REQUIRED",
     "ROUTE_RECONSIDERATION_REQUIRED",
     "BLOCKED",
 )
@@ -105,6 +106,7 @@ def assess_information_gaps(
     requested_mode: RequestedModeV1,
     confirmation_response: dict[str, object] | None = None,
     source_statuses: Sequence[Mapping[str, object]] = (),
+    route_action_necessities: Sequence[RouteActionNecessityV1] = (),
 ) -> InformationGapAssessmentV1:
     """Identify only missing information and its legal workflow disposition."""
 
@@ -113,6 +115,7 @@ def assess_information_gaps(
         "work_facts": [dict(fact) for fact in work_facts],
         "evidence": list(evidence),
         "source_statuses": [dict(item) for item in source_statuses],
+        "route_action_necessities": [dict(item) for item in route_action_necessities],
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
@@ -143,6 +146,12 @@ def assess_information_gaps(
             not root.get("question") or not isinstance(reason_codes, list) or not reason_codes
         ):
             raise ValueError("NEEDS_CONFIRMATION requires question and reason_codes")
+        if disposition == "REQUEST_RECONSIDERATION_REQUIRED" and (
+            not refs or not isinstance(reason_codes, list) or not reason_codes
+        ):
+            raise ValueError(
+                "REQUEST_RECONSIDERATION_REQUIRED requires evidence and reason_codes"
+            )
         return value
 
     result = llm_runtime.infer(
@@ -159,32 +168,10 @@ def combine_information_gap_assessment(
     *,
     assessment: InformationGapAssessmentV1,
     relation_ambiguities: Sequence[WorkAmbiguityV1],
-    request_intent: RequestIntentV2,
-    has_confirmation_response: bool,
 ) -> InformationGapAssessmentV1:
-    """Combine gap candidates while keeping READ uncertainty non-interrupting."""
+    """Combine owner decisions without erasing a newly discovered user choice."""
 
-    requested_effects = set(request_intent["requested_effect_hints"])
-    is_read_only = bool(requested_effects) and requested_effects == {"READ"}
-    ambiguities = [
-        cast(
-            WorkAmbiguityV1,
-            {
-                **item,
-                "requires_confirmation": False
-                if has_confirmation_response or is_read_only
-                else item["requires_confirmation"],
-            },
-        )
-        for item in [*relation_ambiguities, *assessment["ambiguities"]]
-    ]
-    if is_read_only and assessment["disposition"] == "NEEDS_CONFIRMATION":
-        return {
-            "disposition": "COMPLETE",
-            "ambiguities": ambiguities,
-            "retrieval_needs": [],
-            "evidence_refs": list(assessment["evidence_refs"]),
-        }
+    ambiguities = [*relation_ambiguities, *assessment["ambiguities"]]
     if assessment["disposition"] == "COMPLETE" and any(
         item["requires_confirmation"] for item in ambiguities
     ):
@@ -203,15 +190,15 @@ def combine_information_gap_assessment(
     return cast(InformationGapAssessmentV1, {**assessment, "ambiguities": ambiguities})
 
 
-def require_resolution_for_undetermined_duplicate_review(
+def require_resolution_for_undetermined_action(
     *,
     assessment: InformationGapAssessmentV1,
-    duplicate_conflict_assessment: DuplicateConflictAssessmentV1,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
 ) -> InformationGapAssessmentV1:
-    """Route an owning duplicate decision back to Retrieval before Planning consumes it."""
+    """Route an unresolved owning action decision before Planning consumes it."""
 
     if (
-        duplicate_conflict_assessment["requested_work_status"] != "UNDETERMINED"
+        not any(item["status"] == "UNDETERMINED" for item in route_action_necessities)
         or assessment["disposition"] != "COMPLETE"
     ):
         return assessment
@@ -223,12 +210,12 @@ def require_resolution_for_undetermined_duplicate_review(
             "retrieval_needs": [
                 {
                     "required_information": (
-                        "current Tasks needed to complete the duplicate review"
+                        "current observations needed to determine requested action applicability"
                     ),
-                    "reason_codes": ["TASK_DUPLICATE_REVIEW_UNDETERMINED"],
+                    "reason_codes": ["ACTION_NECESSITY_UNDETERMINED"],
                 }
             ],
-            "reason_codes": ["TASK_DUPLICATE_REVIEW_UNDETERMINED"],
+            "reason_codes": ["ACTION_NECESSITY_UNDETERMINED"],
         },
     )
 
@@ -271,15 +258,20 @@ def _disposition_schema(base_schema: Mapping[str, object], disposition: str) -> 
     retrieval_needs["minItems" if disposition == "NEEDS_MORE_DATA" else "maxItems"] = (
         1 if disposition == "NEEDS_MORE_DATA" else 0
     )
-    if disposition == "NEEDS_CONFIRMATION":
+    if disposition in {"NEEDS_CONFIRMATION", "REQUEST_RECONSIDERATION_REQUIRED"}:
         required = cast(list[str], branch["required"])
-        required.extend(["question", "reason_codes"])
-        properties["question"] = {"type": "string", "minLength": 1}
+        required.append("reason_codes")
+        if disposition == "NEEDS_CONFIRMATION":
+            required.append("question")
+            properties["question"] = {"type": "string", "minLength": 1}
         properties["reason_codes"] = {
             "type": "array",
             "minItems": 1,
             "items": {"type": "string", "minLength": 1},
         }
+    if disposition == "REQUEST_RECONSIDERATION_REQUIRED":
+        evidence_refs = cast(dict[str, object], properties["evidence_refs"])
+        evidence_refs["minItems"] = 1
     return branch
 
 
@@ -287,5 +279,5 @@ __all__ = [
     "ASSESS_INFORMATION_GAPS_OUTPUT_SCHEMA",
     "assess_information_gaps",
     "combine_information_gap_assessment",
-    "require_resolution_for_undetermined_duplicate_review",
+    "require_resolution_for_undetermined_action",
 ]

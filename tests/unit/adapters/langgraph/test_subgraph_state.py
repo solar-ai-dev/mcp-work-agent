@@ -74,7 +74,8 @@ def test_role_input_projection__does_not_expose__foreign_business_artifacts() ->
     planning_fields = set(get_type_hints(PlanningInputState, include_extras=True))
     review_fields = set(get_type_hints(ReviewInputState, include_extras=True))
 
-    assert "request_intent" not in request_fields
+    assert "request_intent" in request_fields
+    assert "request_reconsideration" in request_fields
     assert "retrieval_result" not in request_fields
     assert "analysis_result" not in request_fields
     assert "plan_draft" not in request_fields

@@ -54,6 +54,30 @@ def test_discard_removes__run__evidence() -> None:
         store.resolve(run_id="run-1", evidence_refs=["evidence-1"])
 
 
+def test_exact_source_snapshot__is_run_scoped__and_discarded_with_evidence() -> None:
+    store = RunScopedEvidenceStore()
+    snapshot = {"body": "", "thread_id": None, "attachments": []}
+    store.put_resource_snapshot(
+        run_id="run-1",
+        resource_handle="gmail_draft:draft-1",
+        snapshot=snapshot,
+    )
+
+    assert store.resolve_resource_snapshot(
+        run_id="run-1", resource_handle="gmail_draft:draft-1"
+    ) == snapshot
+    with pytest.raises(EvidenceResolutionError):
+        store.resolve_resource_snapshot(
+            run_id="run-2", resource_handle="gmail_draft:draft-1"
+        )
+
+    store.discard_run(run_id="run-1")
+    with pytest.raises(EvidenceResolutionError):
+        store.resolve_resource_snapshot(
+            run_id="run-1", resource_handle="gmail_draft:draft-1"
+        )
+
+
 def test_projection_resolves__only_result__refs() -> None:
     store = RunScopedEvidenceStore()
     draft = _draft("evidence-1")

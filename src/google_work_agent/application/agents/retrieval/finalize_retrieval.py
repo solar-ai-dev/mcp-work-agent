@@ -22,6 +22,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     RetrievalResultV1,
     RetrievalSourceStatusV1,
     SufficiencyResultV2,
+    TaskReviewCandidateV1,
 )
 from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
     project_unresolved_event_dates,
@@ -54,6 +55,7 @@ def finalize_retrieval(
     query_attempts: Sequence[QueryAttemptV1] = (),
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
+    task_review_candidates: Sequence[TaskReviewCandidateV1] = (),
 ) -> RetrievalResultV1:
     """Materialize the only parent-facing Retrieval business artifact."""
     selected_ids = list(selection_result["selected_segment_ids"])
@@ -118,6 +120,9 @@ def finalize_retrieval(
         "unresolved_event_dates": unresolved_dates,
         "person_candidates": list(person_candidates),
         "selected_person_identities": dict(selected_person_identities or {}),
+        "task_review_candidates": [
+            cast(TaskReviewCandidateV1, dict(item)) for item in task_review_candidates
+        ],
     }
 
 

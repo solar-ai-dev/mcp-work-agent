@@ -15,6 +15,7 @@ def bind_gmail_draft_update_identity(
     action_objective: Mapping[str, object],
     arguments: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]],
 ) -> tuple[dict[str, object], list[str]]:
     if not _is_gmail_draft_update_route(route):
         return dict(arguments), []
@@ -32,10 +33,9 @@ def bind_gmail_draft_update_identity(
             or not evidence_ref
         ):
             continue
-        locator = item.get("locator")
-        snapshot = locator.get("draft_snapshot") if isinstance(locator, Mapping) else None
         draft_id = handle.removeprefix("gmail_draft:")
-        if not draft_id or not isinstance(snapshot, Mapping):
+        snapshot = source_snapshots.get(handle)
+        if not draft_id or snapshot is None:
             continue
         projected = _validated_snapshot(snapshot)
         if draft_id in identities and identities[draft_id][0] != projected:
@@ -80,8 +80,8 @@ def _validated_snapshot(value: Mapping[str, object]) -> dict[str, object]:
     }
     if set(value) != expected:
         raise PlanningArgumentBindingError("Gmail Draft evidence snapshot is incomplete")
-    if not isinstance(value["to"], list) or not value["to"]:
-        raise PlanningArgumentBindingError("Gmail Draft evidence requires recipients")
+    if not isinstance(value["to"], list):
+        raise PlanningArgumentBindingError("Gmail Draft recipients are invalid")
     if any(not isinstance(value[name], list) for name in ("cc", "bcc", "attachments")):
         raise PlanningArgumentBindingError("Gmail Draft list fields are invalid")
     if any(not isinstance(value[name], str) for name in ("subject", "body")):

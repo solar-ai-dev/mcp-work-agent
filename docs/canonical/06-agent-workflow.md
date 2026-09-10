@@ -2,7 +2,7 @@
 
 > **목적:** 요청 처리의 책임, 상태 전달, 분기와 안전한 중단·재개를 정의한다.  
 > **Authority:** Agent·Workflow orchestration, State projection, Node/Edge/Interrupt와 registered continuation semantics.  
-> **상태:** Draft v7.30 · **기준일:** 2026-09-07 · **대상:** P0 MVP
+> **상태:** Draft v7.31 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 0. 먼저 이해할 것
 
@@ -254,6 +254,7 @@ Confirmation은 §10.2, Tool Route의 필수 READ 보강은 §5.3, Retrieval 내
 | `Retrieval.BLOCKED` | `BlockRun` 적용 후 종료 |
 | `WorkAnalysis.COMPLETE` | Planning |
 | `WorkAnalysis.NEEDS_MORE_DATA` + 현재 IN Route로 해결 가능 | `RetrievalRequiredV1`을 전달해 Retrieval 재진입 |
+| `WorkAnalysis.REQUEST_RECONSIDERATION_REQUIRED` | 현재 Evidence가 현재 Request Intent를 반증·보완한 경우 기존 Request Understanding owner로 재진입. Intent revision을 만들고 Tool Route 이후 dependent artifact를 fresh하게 다시 생성 |
 | Work Analysis의 부족 정보를 현재 Route로 해결 불가 | owner-local finalizer가 `ROUTE_RECONSIDERATION_REQUIRED + RouteReconsiderationRequiredV1`로 정규화해 Tool Route로 전달 |
 | `WorkAnalysis.NEEDS_CONFIRMATION` | Work Analysis owner에서 interrupt. 중복·충돌 Override는 각각 `DUPLICATE_OVERRIDE_REQUIRED / CONFLICT_OVERRIDE_REQUIRED`를 사용 |
 | `WorkAnalysis.ROUTE_RECONSIDERATION_REQUIRED` | Tool Route |
@@ -376,7 +377,7 @@ class RunBudgetV2:
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[24, 36]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -519,6 +520,17 @@ class RouteReconsiderationRequiredV1:
     kind: Literal["ROUTE_RECONSIDERATION_REQUIRED"]
     reason_codes: list[str]
 
+class RequestReconsiderationObservationV1:
+    evidence_ref: str
+    resource_ref: str
+    excerpt: str
+
+class RequestReconsiderationRequiredV1:
+    kind: Literal["REQUEST_RECONSIDERATION_REQUIRED"]
+    reason_codes: list[str]
+    based_on_request_intent: StateArtifactMetaV1
+    observations: list[RequestReconsiderationObservationV1]
+
 class RetrievalNeedV1:
     required_information: str
     reason_codes: list[str]  # minItems=1
@@ -538,7 +550,7 @@ class BlockedSignalV1:
     kind: Literal["BLOCKED"]
     reason_codes: list[str]
 
-WorkflowSignalV1 = ConfirmationRequiredV1 | RouteReconsiderationRequiredV1 | RetrievalRequiredV1 | BlockedSignalV1
+WorkflowSignalV1 = ConfirmationRequiredV1 | RouteReconsiderationRequiredV1 | RequestReconsiderationRequiredV1 | RetrievalRequiredV1 | BlockedSignalV1
 ```
 
 #### 추가 Retrieval과 Context Adjustment
@@ -920,6 +932,13 @@ class WorkRiskV1:
     description: str
     evidence_refs: list[str]
 
+class RouteActionNecessityV1:
+    route_id: str
+    status: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
+    reason: str
+    evidence_refs: list[str]
+    candidate_refs: list[str]
+
 class WorkAnalysisResultV2:
     schema_version: Literal[2]
     meta: StateArtifactMetaV1
@@ -929,6 +948,7 @@ class WorkAnalysisResultV2:
     risks: list[WorkRiskV1]
     action_necessity: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
     action_necessity_reason: str | None
+    route_action_necessities: list[RouteActionNecessityV1]
     policy_confirmation_receipt_refs: list[StateArtifactRefV1]
     evidence_refs: list[str]
 ```
@@ -937,8 +957,11 @@ class WorkAnalysisResultV2:
 
 | 결과 | 의미·조건 |
 | --- | --- |
-| `action_necessity=NOT_REQUIRED` | 정확한 중복 등으로 현재 상태가 요청 효과를 충족해 새 Action이 필요 없다는 업무 사실이다. Tool Route는 요청 capability의 기록으로 유지한다. |
-| Override 후 `action_necessity=REQUIRED` | DUPLICATE_OVERRIDE 또는 CONFLICT_OVERRIDE에 필요한 current APPROVED Receipt를 policy_confirmation_receipt_refs와 based_on에 포함한다. |
+| Route별 `NOT_REQUIRED` | 정확한 중복 등 현재 관측이 해당 Route의 요청 효과를 이미 충족해 새 Action이 필요 없다는 업무 사실이다. Output Route는 capability 기록으로 유지한다. |
+| Route별 `REQUIRED` | 해당 Route의 실행 후보를 Planning이 작성한다. 다른 Route의 `NOT_REQUIRED`가 이 Route를 제거하지 않는다. |
+| Override 후 `REQUIRED` | DUPLICATE_OVERRIDE 또는 CONFLICT_OVERRIDE에 필요한 current APPROVED Receipt를 policy_confirmation_receipt_refs와 based_on에 포함한다. |
+
+aggregate `action_necessity`는 route-scoped 결과에서 결정적으로 파생하는 persisted compatibility 필드이며 별도 의미 판정 authority가 아니다. 현재 Planning은 `route_action_necessities`만 소비해 필요한 Route를 선별한다.
 
 ### 3.5 Planning Result
 
@@ -1052,6 +1075,7 @@ PlanReviewResultV2 = (
 
 - `RetrievalRequiredV1`은 `RetrievalNeedV1[]`로 부족한 정보·Evidence 종류와 추가 조회 목적을 기록한다.
 - `RouteReconsiderationRequiredV1`은 `reason_codes`로 현재 Route 재검토 사유를 기록하고 Tool Route를 직접 덮어쓰지 않는다. 영향 Route 상세는 해당 Subgraph의 typed issue/result가 함께 보존한다.
+- `RequestReconsiderationRequiredV1`은 현재 Request Intent revision과 이를 반증·보완한 현재 Evidence 관측을 함께 묶는다. local fact repair나 Route 문제에는 사용하지 않는다.
 - Review의 계획 수정 요청은 별도 WorkflowSignal 타입을 만들지 않고 `ReviewReviseV2.issues`를 Planning revision Input Projection으로 전달한다.
 - Signal은 해당 Back-edge/Interrupt가 소비되면 clear하며 장기 업무 사실로 취급하지 않는다.
 
@@ -1061,6 +1085,7 @@ PlanReviewResultV2 = (
 | --- | --- | --- | --- |
 | `ConfirmationRequiredV1` | 6개 owner Subgraph의 공식 `NEEDS_CONFIRMATION` finalization | Supervisor → Application `RequestConfirmation` → LangGraph interrupt | 등록된 interrupt/checkpoint가 성립하고 해당 confirmation control path가 signal을 인수한 뒤. Resume 이후 business fact로 유지하지 않는다. |
 | `RouteReconsiderationRequiredV1` | Retrieval / Work Analysis / Planning의 `ROUTE_RECONSIDERATION_REQUIRED`, Review의 `ROUTE_RECONSIDERATION` | Supervisor → Tool Route Back-edge | Tool Route owner가 reconsideration input projection으로 인수할 때 |
+| `RequestReconsiderationRequiredV1` | Work Analysis가 현재 Evidence로 현재 Request Intent의 의미 재검토 필요를 확정한 경우 | Supervisor → 기존 Request Understanding Back-edge | Request Understanding이 같은 artifact identity의 새 revision을 확정하고 dependent artifact를 invalidate한 뒤 |
 | `RetrievalRequiredV1` | Work Analysis `NEEDS_MORE_DATA` 또는 Review `RETRIEVE_MORE`가 **현재 InputRoutePlan으로 해결 가능할 때만** | Supervisor → Retrieval Back-edge | Retrieval owner가 additional-retrieval input projection으로 인수할 때. Retrieval 자체 local `NEEDS_MORE_DATA` self-loop에는 생성하지 않는다. |
 | `BlockedSignalV1` | role-local blocked/block finalization이 reason code를 control signal로 전달해야 하는 경우 | Supervisor terminal handler → 필요한 Domain `BlockRun`/terminal reconciliation | terminal/reconcile control path가 reason을 인수한 뒤. Domain terminal 사실의 대체 authority로 남기지 않는다. |
 
@@ -1118,7 +1143,7 @@ SubgraphDispositionV2 = Literal[
     "SUFFICIENT", "NO_FETCH_NEEDED", "NEEDS_MORE_DATA", "PARTIAL",
     "ANSWER_ONLY", "PLAN_READY",
     "PASS", "REVISE", "RETRIEVE_MORE", "ROUTE_RECONSIDERATION", "CONFIRM",
-    "NEEDS_CONFIRMATION", "ROUTE_RECONSIDERATION_REQUIRED", "BLOCKED", "BLOCK"
+    "NEEDS_CONFIRMATION", "REQUEST_RECONSIDERATION_REQUIRED", "ROUTE_RECONSIDERATION_REQUIRED", "BLOCKED", "BLOCK"
 ]
 ```
 
@@ -1325,8 +1350,9 @@ FreeBusy interval의 교집합·차집합·가용 시간 계산도 결정적 Ret
 | `resolve_temporal_dependencies` | 날짜·기간·선후·dependency 후보. temporal_dependency_candidates만 갱신. Calendar 산술·DAG 검증은 소유하지 않음 |
 | `detect_duplicate_conflict_candidates` | duplicate_conflict_candidates 제안. DUPLICATES·CONFLICTS_WITH 최종 판정 아님 |
 | `validate_relations` | 세 후보 collection을 정규화된 Source·Calendar availability·Task 현재 상태로 검증해 validated_relations·relation_validation_ambiguities 기록 |
+| `assess_action_necessity` | frozen Output Route별 현재 적용 여부를 한 번 판단. Task CREATE는 앞선 중복 검토 결과에서 결정적으로 파생 |
 | `assess_information_gaps` | 현재 목표의 부족 정보와 해결 가능한 Retrieval Need. ambiguity_candidates·retrieval_needs만 갱신 |
-| `assess_operational_risks` | 실행 필요성·과잉 실행·일정/업무 위험을 operational_risk_candidates에 기록. Policy·Approval·중복·충돌 최종 판정은 하지 않음 |
+| `assess_operational_risks` | 과잉 실행·일정/업무 위험을 operational_risk_candidates에 기록. 실행 필요성·Policy·Approval·중복·충돌을 다시 판단하지 않음 |
 | `assemble_work_analysis / validate_work_analysis` | 검증된 결과를 WorkAnalysisResultV2로 조립·검증 |
 
 서로 다른 의미 판단을 한 LLM 호출에 facts·relations·dependencies·duplicates·gaps·risks로 모두 요구하지 않는다. Tool이나 Action Arguments를 만들지 않는다.
@@ -1376,7 +1402,7 @@ class WorkAnalysisStateV2:
 | 서로 다른 fact operand가 2개 미만 | relation schema상 후보가 없으므로 빈 candidate를 결정적으로 만든다. validate_relations와 이후 Policy 판단은 생략하지 않는다. |
 | analysis_requirement=REQUIRED | 전체 semantic relation 책임을 유지한다. |
 | 검증 전 relation 후보 | WorkAnalysisResultV2.relations에 직접 넣지 않는다. |
-| 정확 중복 확정 | 기본 action_necessity=NOT_REQUIRED로 기존 Resource를 보여주고 새 Action을 만들지 않는다. |
+| 정확 중복 확정 | 해당 Route를 `NOT_REQUIRED`로 두고 기존 Resource를 보여주며 새 Action을 만들지 않는다. |
 | 중복을 인지하고도 추가 생성 요청 | 즉시 Planning하지 않는다. WorkAnalysis.NEEDS_CONFIRMATION + DUPLICATE_OVERRIDE_REQUIRED로 2차 확인한 뒤 새 생성 후보를 허용한다. |
 | 검증된 Calendar 충돌 | CONFLICT_OVERRIDE_REQUIRED Confirmation 없이 충돌 Action Plan으로 진행하지 않는다. |
 | 유사 후보·검증 불가 관계 | ambiguity/risk 또는 추가 확인으로 남긴다. 가능한 관계는 Source ID·Evidence ref 무결성을 검증한 뒤 조립한다. |
@@ -1388,8 +1414,8 @@ Planning 진입 시 Tool Route는 이미 확정되어 있다.
 | 현재 입력 | 적용 책임 |
 | --- | --- |
 | ANSWER Route | outline_answer · compose_answer |
-| ACTION Route + action_necessity=NOT_REQUIRED | 근거와 no-action reason을 답변으로 작성 |
-| 그 외 ACTION Route | Route별 action objective와 Tool Arguments 작성, 결정적 dependency 구성·Plan 조립·검증 |
+| 모든 ACTION Route가 `NOT_REQUIRED` | 근거와 no-action reason을 답변으로 작성 |
+| 하나 이상의 ACTION Route가 `REQUIRED` | 필요한 Route만 action objective와 Tool Arguments 작성, 결정적 dependency 구성·Plan 조립·검증 |
 
 분기 진입은 `planning.choose_answer_or_action_from_route`의 결정적 Application operation이며 별도 checkpoint/resume Runtime Node가 아니다.
 
@@ -1593,7 +1619,7 @@ REVIEW_RECHECK_PER_PLANNING_REVISION=1
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=24
+ABSOLUTE_MAX_LLM_CALLS=36
 ```
 
 - 책임 분리를 위해 Subgraph 내부 Node 수가 증가해도 모든 Node가 LLM Call일 필요는 없다.
@@ -1605,6 +1631,7 @@ ABSOLUTE_MAX_LLM_CALLS=24
 | 항목 | 규칙 |
 | --- | --- |
 | 기준 | Run 시작 시 `10 Settings`의 validated budget snapshot을 고정한다. |
+| compatibility | 새 Run의 absolute 상한은 36이다. 이미 저장된 상한 24의 Run은 resume·profile 승격·merge에서도 24를 유지하며 재작성하지 않는다. |
 | counter | 음수가 아니며 단조 증가한다. Profile 승격으로 사용량을 초기화하지 않는다. |
 | 집행 범위 | LLM·Repair·Revision·Retrieval 외에도 per-Run Connector call, Context token, Retry, 최대 실행 시간을 검사한다. elapsed time은 ClockPort로 확인한다. |
 | Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=8`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |
@@ -1721,8 +1748,9 @@ Runtime Node ID는 이 문서가 소유하고, repository owner·naming·placeme
 | `analysis.resolve_temporal_dependencies` | work_analysis | LLM/conditional | temporal/dependency candidates only |
 | `analysis.detect_duplicate_conflict_candidates` | work_analysis | LLM/conditional | duplicate/conflict candidates only |
 | `analysis.validate_relations` | work_analysis | deterministic | duplicate/conflict/current-state relation validation |
+| `analysis.assess_action_necessity` | work_analysis | LLM/conditional | frozen output route별 현재 적용 여부. Task CREATE는 중복 검토에서 결정적으로 파생 |
 | `analysis.assess_information_gaps` | work_analysis | LLM | missing information / retrieval needs only |
-| `analysis.assess_operational_risks` | work_analysis | LLM/conditional | operational risk / action-necessity candidate only |
+| `analysis.assess_operational_risks` | work_analysis | LLM/conditional | operational risk only |
 | `analysis.finalize` | work_analysis | deterministic | `assemble_work_analysis` → `validate_work_analysis` → `WorkAnalysisResultV2`; 두 deterministic operation은 이 runtime node 안에서 연속 실행 |
 | `planning.outline_answer` | planning | LLM | answer evidence/conclusion outline only |
 | `planning.compose_answer` | planning | LLM | answer prose from approved outline/evidence |

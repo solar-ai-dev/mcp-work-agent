@@ -13,6 +13,7 @@ ROUTE_AFTER_WORK_ANALYSIS_SUCCESSORS = frozenset(
         "stage_two",
         "single_workflow",
         "response_synthesis",
+        "request_understanding",
         "recovery",
         "end",
     }

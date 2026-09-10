@@ -22,6 +22,19 @@ class RouteReconsiderationRequiredV1(TypedDict):
     reason_codes: list[str]
 
 
+class RequestReconsiderationObservationV1(TypedDict):
+    evidence_ref: str
+    resource_ref: str
+    excerpt: str
+
+
+class RequestReconsiderationRequiredV1(TypedDict):
+    kind: Required[Literal["REQUEST_RECONSIDERATION_REQUIRED"]]
+    reason_codes: list[str]
+    based_on_request_intent: dict[str, object]
+    observations: list[RequestReconsiderationObservationV1]
+
+
 class RetrievalNeedV1(TypedDict):
     required_information: str
     reason_codes: list[str]
@@ -55,6 +68,7 @@ class BlockedSignalV1(TypedDict):
 
 WorkflowSignalV1 = (
     ConfirmationRequiredV1
+    | RequestReconsiderationRequiredV1
     | RouteReconsiderationRequiredV1
     | RetrievalRequiredV1
     | PlanningRevisionRequiredV1

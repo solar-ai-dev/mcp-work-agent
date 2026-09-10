@@ -36,7 +36,8 @@ MAX_ADDITIONAL_ACQUISITIONS = 2
 NORMAL_MAX_LLM_CALLS = 14
 REVISION_HEAVY_MAX_LLM_CALLS = 18
 RETRIEVAL_HEAVY_MAX_LLM_CALLS = 20
-ABSOLUTE_MAX_LLM_CALLS = 24
+ABSOLUTE_MAX_LLM_CALLS = 36
+_SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS = frozenset({24, ABSOLUTE_MAX_LLM_CALLS})
 
 _PROFILE_LIMITS = {
     BudgetProfile.NORMAL: NORMAL_MAX_LLM_CALLS,
@@ -73,7 +74,7 @@ class RunBudgetV2(TypedDict):
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[24, 36]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -272,8 +273,8 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         _require_int(value[field], field, minimum=1)
     for field in non_negative:
         _require_int(value[field], field, minimum=0)
-    if value["absolute_llm_call_limit"] != ABSOLUTE_MAX_LLM_CALLS:
-        raise ValueError("run budget absolute_llm_call_limit must be 24")
+    if value["absolute_llm_call_limit"] not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
+        raise ValueError("run budget absolute_llm_call_limit must be 24 or 36")
     if int(value["max_source_page_calls"]) > 8:
         raise ValueError("run budget max_source_page_calls exceeds retrieval hard bound")
     if int(value["max_detail_fetches"]) > 12:
@@ -472,7 +473,12 @@ def _effective_profile_limit(profile: BudgetProfile, budget: object) -> int:
             or profile is BudgetProfile.RETRIEVAL_HEAVY
         )
     ):
-        return ABSOLUTE_MAX_LLM_CALLS
+        if not isinstance(budget, dict):
+            raise ValueError("run budget is required for the combined profile limit")
+        absolute_limit = budget.get("absolute_llm_call_limit")
+        if absolute_limit not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
+            raise ValueError("run budget absolute LLM limit is invalid")
+        return cast(int, absolute_limit)
     return _PROFILE_LIMITS[profile]
 
 

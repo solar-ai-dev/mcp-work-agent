@@ -23,6 +23,7 @@ def finalize_intent(
     user_request: str,
     confirmation_response_text: str | None = None,
     repository_default: GitHubRepositoryDefaultV1 | None = None,
+    prior_intent: RequestIntentV2 | None = None,
 ) -> RequestIntentV2:
     if not artifact_id:
         raise ValueError("artifact_id must be non-empty")
@@ -34,13 +35,27 @@ def finalize_intent(
     provenance_sources: dict[ConstraintProvenanceSource, str] = {"USER_REQUEST": user_request}
     if confirmation_response_text is not None:
         provenance_sources["CONFIRMATION_RESPONSE"] = confirmation_response_text
+    meta = (
+        {"artifact_id": artifact_id, "revision": 1, "based_on": []}
+        if prior_intent is None
+        else {
+            "artifact_id": prior_intent["meta"]["artifact_id"],
+            "revision": prior_intent["meta"]["revision"] + 1,
+            "based_on": [
+                {
+                    "artifact_id": prior_intent["meta"]["artifact_id"],
+                    "revision": prior_intent["meta"]["revision"],
+                }
+            ],
+        }
+    )
     return validate_intent(
         {
             "schema_version": 2,
             **goal_candidate,
             "constraints": constraints,
             "ambiguity": ambiguity_candidate,
-            "meta": {"artifact_id": artifact_id, "revision": 1, "based_on": []},
+            "meta": meta,
             **(
                 {"repository_default": asdict(repository_default)}
                 if repository_default is not None

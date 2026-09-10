@@ -7,6 +7,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     WorkFactV1,
 )
 
@@ -20,12 +21,19 @@ class AssessInformationGapsInput(TypedDict):
     allowed_evidence_refs: set[str]
     confirmation_response: dict[str, object] | None
     source_statuses: list[dict[str, object]]
+    route_action_necessities: list[RouteActionNecessityV1]
 
 
 def project_assess_information_gaps_input(
     state: Mapping[str, object],
 ) -> AssessInformationGapsInput:
-    required = ("request_intent", "fact_candidates", "evidence", "evidence_refs")
+    required = (
+        "request_intent",
+        "fact_candidates",
+        "evidence",
+        "evidence_refs",
+        "route_action_necessities",
+    )
     if any(key not in state for key in required):
         raise ValueError("missing typed input projection for analysis.assess_information_gaps")
     response = state.get("confirmation_response")
@@ -36,6 +44,9 @@ def project_assess_information_gaps_input(
         "allowed_evidence_refs": set(cast(list[str], state["evidence_refs"])),
         "confirmation_response": dict(response) if isinstance(response, Mapping) else None,
         "source_statuses": project_retrieval_source_statuses(state),
+        "route_action_necessities": cast(
+            list[RouteActionNecessityV1], state["route_action_necessities"]
+        ),
     }
 
 

@@ -5,7 +5,7 @@ import pytest
 from google_work_agent.application.agents.work_analysis.assess_information_gaps import (
     assess_information_gaps,
     combine_information_gap_assessment,
-    require_resolution_for_undetermined_duplicate_review,
+    require_resolution_for_undetermined_action,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     InformationGapAssessmentV1,
@@ -106,9 +106,7 @@ def test_assess_information__gaps_exposes_disposition_invariants__to_repair() ->
     assert "question" in branches["NEEDS_CONFIRMATION"]["required"]
 
 
-def test_read_only_gap__missing_evidence__does_not_interrupt_for_confirmation() -> None:
-    request_intent = intent()
-    request_intent["requested_effect_hints"] = ["READ"]
+def test_read_only_gap__genuine_new_choice__preserves_confirmation() -> None:
     result = combine_information_gap_assessment(
         assessment={
             "disposition": "NEEDS_CONFIRMATION",
@@ -127,28 +125,14 @@ def test_read_only_gap__missing_evidence__does_not_interrupt_for_confirmation() 
             "reason_codes": ["MISSING_APPROVED_BUDGET"],
         },
         relation_ambiguities=[],
-        request_intent=request_intent,
-        has_confirmation_response=False,
     )
 
-    assert result == {
-        "disposition": "COMPLETE",
-        "ambiguities": [
-            {
-                "code": "MISSING_APPROVED_BUDGET",
-                "description": "The evidence does not include an approved budget.",
-                "requires_confirmation": False,
-                "evidence_refs": ["ev-1"],
-            }
-        ],
-        "retrieval_needs": [],
-        "evidence_refs": ["ev-1"],
-    }
+    assert result["disposition"] == "NEEDS_CONFIRMATION"
+    assert result["ambiguities"][0]["requires_confirmation"] is True
+    assert result["question"] == "Please provide the approved budget."
 
 
 def test_write_gap__user_owned_choice__preserves_confirmation() -> None:
-    request_intent = intent()
-    request_intent["requested_effect_hints"] = ["CREATE"]
     assessment: InformationGapAssessmentV1 = {
         "disposition": "NEEDS_CONFIRMATION",
         "ambiguities": [],
@@ -163,8 +147,6 @@ def test_write_gap__user_owned_choice__preserves_confirmation() -> None:
         combine_information_gap_assessment(
             assessment=assessment,
             relation_ambiguities=[],
-            request_intent=request_intent,
-            has_confirmation_response=False,
         )
         == assessment
     )
@@ -178,22 +160,26 @@ def test_undetermined_duplicate_review__returns_to_retrieval__without_user_confi
         "evidence_refs": [],
     }
 
-    result = require_resolution_for_undetermined_duplicate_review(
+    result = require_resolution_for_undetermined_action(
         assessment=assessment,
-        duplicate_conflict_assessment={
-            "relation_candidates": [],
-            "requested_work_status": "UNDETERMINED",
-            "requested_work_reason": "observed tasks were not represented",
-            "matched_fact_ids": [],
-            "evidence_refs": [],
-        },
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "UNDETERMINED",
+                "reason": "observed tasks were not represented",
+                "evidence_refs": [],
+                "candidate_refs": [],
+            }
+        ],
     )
 
     assert result["disposition"] == "NEEDS_MORE_DATA"
     assert result["retrieval_needs"] == [
         {
-            "required_information": "current Tasks needed to complete the duplicate review",
-            "reason_codes": ["TASK_DUPLICATE_REVIEW_UNDETERMINED"],
+            "required_information": (
+                "current observations needed to determine requested action applicability"
+            ),
+            "reason_codes": ["ACTION_NECESSITY_UNDETERMINED"],
         }
     ]
     assert "question" not in result

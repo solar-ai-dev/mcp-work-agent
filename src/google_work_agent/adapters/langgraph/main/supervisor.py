@@ -21,6 +21,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_execution_rules import
 from google_work_agent.adapters.langgraph.main.supervisor_intake_rules import (
     route_initialize,
     route_reconsideration,
+    route_request_reconsideration,
     route_request_understanding,
     route_tool_routing,
 )
@@ -74,6 +75,13 @@ def route_supervisor(
             state_update=base_supervisor_state_update(WorkflowPhase.RECOVERY),
             reason_code=freshness_reason,
         )
+    request_reconsideration = route_request_reconsideration(
+        phase=current_phase,
+        state=state,
+        result=result,
+    )
+    if request_reconsideration is not None:
+        return request_reconsideration
     reconsideration = route_reconsideration(current_phase, result)
     if reconsideration is not None:
         return reconsideration

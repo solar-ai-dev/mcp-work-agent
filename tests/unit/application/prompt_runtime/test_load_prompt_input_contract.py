@@ -101,12 +101,24 @@ def test_work_analysis_contracts__accept_current__observation_projections() -> N
         },
     )
     contract.validate_projection(
+        "work_analysis.assess_action_necessity",
+        {
+            "request_intent": {},
+            "output_routes": [],
+            "work_facts": [],
+            "evidence": [],
+            "source_statuses": [],
+            "task_review_candidates": [],
+        },
+    )
+    contract.validate_projection(
         "work_analysis.assess_information_gaps",
         {
             "request_intent": {},
             "work_facts": [],
             "evidence": [],
             "source_statuses": [],
+            "route_action_necessities": [],
         },
     )
     contract.validate_projection(

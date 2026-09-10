@@ -960,6 +960,50 @@ def test_assess_sufficiency__read_only_connector_gap__cannot_become_user_confirm
     assert {issue["resolution_source"] for issue in result["issues"]} == {"GOOGLE"}
 
 
+def test_assess_sufficiency__new_candidate_conflict__remains_a_user_choice() -> None:
+    conflict = {
+        "schema_version": 2,
+        "status": "NEEDS_CONFIRMATION",
+        "issues": [
+            {
+                "slot": "matching_resource",
+                "issue_type": "CONFLICT",
+                "required": True,
+                "resolution_source": "USER",
+                "safety_critical": False,
+                "reason_codes": ["MULTIPLE_MATCHING_RESOURCES"],
+            }
+        ],
+    }
+    runtime = FakeLLMRuntime(deque([_llm_result(conflict)]))
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:one",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "candidate one",
+                "locator": {},
+                "reason_codes": ["CONTEXT"],
+            }
+        ],
+        retry_budget=_run_budget(used=0),
+        attempted_detail_candidate_refs=["gmail_thread:one"],
+    )
+
+    assert result["status"] == "NEEDS_CONFIRMATION"
+    assert result["issues"][0]["resolution_source"] == "USER"
+
+
 def test_observed_person_candidates__introduce_user_choice__after_clear_request() -> None:
     intent = _intent()
     intent["ambiguity"] = {

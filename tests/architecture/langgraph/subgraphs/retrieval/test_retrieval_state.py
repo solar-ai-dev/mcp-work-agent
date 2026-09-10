@@ -23,6 +23,7 @@ def test_retrieval_state__v2_declares__exact_semantic_fields() -> None:
         "evidence_reassessment_issues",
         "sufficiency",
         "final_result",
+        "task_review_candidates",
     }
     annotations = __import__(
         "google_work_agent.adapters.langgraph.subgraphs.retrieval.state",

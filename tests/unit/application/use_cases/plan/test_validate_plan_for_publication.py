@@ -298,6 +298,23 @@ def test_work_analysis_receipt__ref_must_resolve__to_approved_receipt() -> None:
     assert result["reason_codes"] == ["WORK_ANALYSIS_INVALID"]
 
 
+def test_current_work_analysis__route_necessity__is_accepted_by_publication() -> None:
+    analysis = _analysis()
+    analysis["route_action_necessities"] = [
+        {
+            "route_id": "r1",
+            "status": "REQUIRED",
+            "reason": "REQUESTED_EXTERNAL_EFFECT_IS_NOT_SATISFIED",
+            "evidence_refs": [],
+            "candidate_refs": [],
+        }
+    ]
+
+    result = _call(_task_create_plan(), analysis=analysis)
+
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
 def test_not_required_analysis__with_action_fails_closed__on_override_provenance_dependency() -> (
     None
 ):

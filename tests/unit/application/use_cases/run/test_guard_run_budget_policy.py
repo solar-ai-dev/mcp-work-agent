@@ -20,6 +20,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     build_semantic_failure_signature_v1,
     check_llm_call_budget,
     consume_llm_provider_calls,
+    merge_run_budget_progress,
     promote_budget_profile,
     validate_run_budget_v2,
 )
@@ -215,6 +216,28 @@ def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolut
     )
 
 
+def test_legacy_run__keeps_24_call_absolute_limit__through_merge_and_promotion() -> None:
+    legacy = {
+        **build_default_run_budget(),
+        "absolute_llm_call_limit": 24,
+    }
+    legacy = validate_run_budget_v2(legacy)
+    revised = approve_planning_revision(legacy)["run_budget"]
+    combined = approve_additional_acquisition(revised)["run_budget"]
+
+    assert combined["absolute_llm_call_limit"] == 24
+    assert combined["llm_call_limit"] == 24
+
+    observed = {**combined, "llm_calls_used": 23}
+    merged = merge_run_budget_progress(combined, observed)
+    assert merged["absolute_llm_call_limit"] == 24
+    assert merged["llm_call_limit"] == 24
+    assert check_llm_call_budget(merged)["decision"] == BudgetDecision.ALLOW.value
+    assert check_llm_call_budget({**merged, "llm_calls_used": 24})["decision"] == (
+        BudgetDecision.DENY.value
+    )
+
+
 def test_only_one_of_revision__or_retrieval_triggered_keeps__its_own_single_profile_cap() -> None:
     """Combined effective cap requires BOTH conditions actually triggered --
     only one triggered still uses that profile's own ceiling, not 16."""
@@ -360,4 +383,4 @@ def test_budget_profile__constants_match__frozen_contract() -> None:
     assert NORMAL_MAX_LLM_CALLS == 14
     assert REVISION_HEAVY_MAX_LLM_CALLS == 18
     assert RETRIEVAL_HEAVY_MAX_LLM_CALLS == 20
-    assert ABSOLUTE_MAX_LLM_CALLS == 24
+    assert ABSOLUTE_MAX_LLM_CALLS == 36

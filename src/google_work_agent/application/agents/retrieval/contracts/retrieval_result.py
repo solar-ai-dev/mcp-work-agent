@@ -186,6 +186,17 @@ class RetrievalSourceStatusV1(TypedDict):
     )
 
 
+class TaskReviewCandidateV1(TypedDict):
+    candidate_ref: str
+    route_id: str
+    resource_id: str
+    task_list_id: str | None
+    title: str | None
+    status: str | None
+    due: str | None
+    source_version_ref: str | None
+
+
 class RetrievalResultV1(TypedDict):
     """Canonical Retrieval parent handoff (06-agent-workflow.md SS3.3)."""
 
@@ -206,3 +217,4 @@ class RetrievalResultV1(TypedDict):
     person_candidates: NotRequired[list[PersonCandidateV1]]
     selected_person_identities: NotRequired[dict[str, str]]
     unresolved_event_dates: NotRequired[list[UnresolvedEventDateV1]]
+    task_review_candidates: NotRequired[list[TaskReviewCandidateV1]]

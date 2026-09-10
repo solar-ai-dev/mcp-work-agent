@@ -141,7 +141,6 @@ def normalize_segments(
                             "position": source_position,
                             "chunk_index": index,
                             "chunk_count": len(chunks),
-                            **_gmail_draft_snapshot_locator(raw, resource_type=resource_type),
                             **cast(dict[str, object], raw.get("_message_locator", {})),
                         },
                         text=normalized_chunk,
@@ -421,35 +420,6 @@ def _gmail_draft_text(resource: Mapping[str, object], payload: Mapping[str, obje
     if isinstance(body, str):
         fields.append(f"body:\n{body}")
     return "\n".join(fields)
-
-
-def _gmail_draft_snapshot_locator(
-    resource: Mapping[str, object], *, resource_type: str
-) -> dict[str, object]:
-    """Project the complete editable Draft state needed by the existing UPDATE binder."""
-
-    if resource_type != "gmail_draft":
-        return {}
-    payload = resource.get("payload")
-    if not isinstance(payload, Mapping):
-        raise ValueError("Gmail Draft evidence requires a provider payload")
-    snapshot: dict[str, object] = {}
-    for name in ("to", "cc", "bcc", "attachments"):
-        value = payload.get(name, [])
-        if not isinstance(value, list):
-            raise ValueError(f"Gmail Draft {name} must be a list")
-        snapshot[name] = list(value)
-    for name in ("subject", "body"):
-        value = payload.get(name)
-        if not isinstance(value, str):
-            raise ValueError(f"Gmail Draft {name} must be a string")
-        snapshot[name] = value
-    for name in ("thread_id", "in_reply_to", "references"):
-        value = payload.get(name)
-        if value is not None and not isinstance(value, str):
-            raise ValueError(f"Gmail Draft {name} must be a string or null")
-        snapshot[name] = value
-    return {"draft_snapshot": snapshot}
 
 
 def _strip_email_quote_and_signature(text: str) -> str:

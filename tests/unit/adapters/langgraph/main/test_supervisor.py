@@ -89,6 +89,77 @@ def test_request_complete__routes_to__tool_route() -> None:
     assert decision["state_update"]["finalize_intent"] is None
 
 
+def test_current_evidence__reenters_request_owner__and_invalidates_dependents() -> None:
+    intent = _request_intent()
+    state = _state(
+        workflow_phase=WorkflowPhase.WORK_ANALYSIS,
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
+    )
+    signal = {
+        "kind": "REQUEST_RECONSIDERATION_REQUIRED",
+        "reason_codes": ["OBSERVED_SOURCE_CONTRADICTS_INTENT"],
+        "based_on_request_intent": dict(intent["meta"]),
+        "observations": [
+            {
+                "evidence_ref": "ev-1",
+                "resource_ref": "gmail_message:message-1",
+                "excerpt": "current observation",
+            }
+        ],
+    }
+
+    decision = route_supervisor(
+        phase=WorkflowPhase.WORK_ANALYSIS,
+        state=state,
+        result={
+            "disposition": "REQUEST_RECONSIDERATION_REQUIRED",
+            "typed_result": None,
+            "workflow_signal": signal,
+            "reason_codes": signal["reason_codes"],
+        },
+    )
+
+    assert decision["target"] == SupervisorTarget.REQUEST_UNDERSTANDING.value
+    assert decision["next_phase"] == WorkflowPhase.REQUEST_ANALYSIS.value
+    assert decision["state_update"]["request_reconsideration"] == signal
+    assert decision["state_update"]["tool_route_plan"] is None
+    assert decision["state_update"]["retrieval_result"] is None
+    assert decision["state_update"]["work_analysis_result"] is None
+    assert decision["state_update"]["planning_result"] is None
+
+
+def test_stale_request_reconsideration__from_work_analysis__routes_recovery() -> None:
+    intent = _request_intent()
+    decision = route_supervisor(
+        phase=WorkflowPhase.WORK_ANALYSIS,
+        state=_state(
+            workflow_phase=WorkflowPhase.WORK_ANALYSIS,
+            request_intent=intent,
+        ),
+        result={
+            "disposition": "REQUEST_RECONSIDERATION_REQUIRED",
+            "typed_result": None,
+            "workflow_signal": {
+                "kind": "REQUEST_RECONSIDERATION_REQUIRED",
+                "reason_codes": ["STALE"],
+                "based_on_request_intent": {"artifact_id": "other", "revision": 1},
+                "observations": [
+                    {
+                        "evidence_ref": "ev-1",
+                        "resource_ref": "gmail_message:message-1",
+                        "excerpt": "stale",
+                    }
+                ],
+            },
+            "reason_codes": ["STALE"],
+        },
+    )
+
+    assert decision["target"] == SupervisorTarget.RECOVERY.value
+    assert decision["reason_code"] == "REQUEST_RECONSIDERATION_SIGNAL_STALE"
+
+
 def test_tool_route_ready__with_frozen_input_route__enters_retrieval() -> None:
     plan = _tool_route_plan()
     plan["input_plan"]["input_routes"] = [_input_route()]

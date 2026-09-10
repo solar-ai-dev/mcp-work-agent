@@ -11,6 +11,7 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
     WorkAnalysisResultV2,
 )
 from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationRequiredV1,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
 )
@@ -29,11 +30,17 @@ class WorkAnalysisRouteResultV1(TypedDict):
     disposition: Literal[
         "COMPLETE",
         "NEEDS_MORE_DATA",
+        "REQUEST_RECONSIDERATION_REQUIRED",
         "ROUTE_RECONSIDERATION_REQUIRED",
         "BLOCKED",
     ]
     typed_result: WorkAnalysisResultV2 | None
-    workflow_signal: RetrievalRequiredV1 | RouteReconsiderationRequiredV1 | None
+    workflow_signal: (
+        RetrievalRequiredV1
+        | RequestReconsiderationRequiredV1
+        | RouteReconsiderationRequiredV1
+        | None
+    )
     reason_codes: list[str]
 
 
