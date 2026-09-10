@@ -116,6 +116,7 @@ def required_override_confirmation_kind(
     *,
     validated_relations: Sequence[WorkRelationV1],
     action_execution_required: bool,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1],
     based_on: Sequence[StateArtifactRefV1],
     duplicate_conflict_assessment: DuplicateConflictAssessmentV1 | None = None,
@@ -132,7 +133,7 @@ def required_override_confirmation_kind(
         "DUPLICATES" in kinds
         or _duplicate_observation_requires_override(
             duplicate_conflict_assessment,
-            action_execution_required=action_execution_required,
+            route_action_necessities=route_action_necessities,
         )
     ) and not _has_decision(receipts, "DUPLICATE_OVERRIDE"):
         return "DUPLICATE_OVERRIDE"
@@ -150,7 +151,7 @@ def _apply_policy_receipts_to_routes(
     kinds = {relation["kind"] for relation in relations}
     if _duplicate_observation_requires_override(
         duplicate_conflict_assessment,
-        action_execution_required=any(route["status"] == "REQUIRED" for route in routes),
+        route_action_necessities=routes,
     ):
         kinds.add("DUPLICATES")
     used: list[PolicyConfirmationReceiptV1] = []
@@ -184,9 +185,7 @@ def _resolve_action_necessity(
     kinds = {relation["kind"] for relation in relations}
     if _duplicate_observation_requires_override(
         duplicate_conflict_assessment,
-        action_execution_required=any(
-            item["status"] == "REQUIRED" for item in route_action_necessities
-        ),
+        route_action_necessities=route_action_necessities,
     ):
         kinds.add("DUPLICATES")
     used: list[PolicyConfirmationReceiptV1] = []
@@ -229,13 +228,17 @@ def _resolve_action_necessity(
 def _duplicate_observation_requires_override(
     assessment: DuplicateConflictAssessmentV1 | None,
     *,
-    action_execution_required: bool,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
 ) -> bool:
+    if assessment is None or assessment["requested_work_status"] != "SATISFIED":
+        return False
+    matched = set(assessment["matched_candidate_refs"])
     return bool(
-        action_execution_required
-        and assessment is not None
-        and assessment["requested_work_status"] == "SATISFIED"
-        and assessment["matched_candidate_refs"]
+        matched
+        and any(
+            route["status"] == "REQUIRED" and matched.intersection(route["candidate_refs"])
+            for route in route_action_necessities
+        )
     )
 
 

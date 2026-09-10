@@ -146,12 +146,70 @@ def test_duplicate_required__without_receipt__requires_duplicate_override_confir
     kind = required_override_confirmation_kind(
         validated_relations=[],
         action_execution_required=True,
+        route_action_necessities=[
+            {
+                "route_id": "task-create",
+                "status": "REQUIRED",
+                "reason": "USER_REQUESTED_DUPLICATE_OVERRIDE",
+                "evidence_refs": ["ev-1"],
+                "candidate_refs": ["task:1"],
+            }
+        ],
         policy_confirmation_receipts=[],
         based_on=based_on,  # type: ignore[arg-type]
         duplicate_conflict_assessment=_satisfied_duplicate_assessment(),  # type: ignore[arg-type]
     )
 
     assert kind == "DUPLICATE_OVERRIDE"
+
+
+def test_satisfied_task_route__does_not_block_unrelated_required_route() -> None:
+    based_on = [{"artifact_id": "intent-1", "revision": 1}]
+    route_necessities = [
+        {
+            "route_id": "task-create",
+            "status": "NOT_REQUIRED",
+            "reason": "THE_REQUESTED_TASK_ALREADY_EXISTS",
+            "evidence_refs": ["ev-1"],
+            "candidate_refs": ["task:1"],
+        },
+        {
+            "route_id": "calendar-create",
+            "status": "REQUIRED",
+            "reason": "THE_REQUESTED_EVENT_DOES_NOT_EXIST",
+            "evidence_refs": [],
+            "candidate_refs": [],
+        },
+    ]
+
+    kind = required_override_confirmation_kind(
+        validated_relations=[],
+        action_execution_required=True,
+        route_action_necessities=route_necessities,  # type: ignore[arg-type]
+        policy_confirmation_receipts=[],
+        based_on=based_on,  # type: ignore[arg-type]
+        duplicate_conflict_assessment=_satisfied_duplicate_assessment(),  # type: ignore[arg-type]
+    )
+    result = assemble_work_analysis(
+        artifact_id="analysis-1",
+        revision=1,
+        based_on=based_on,  # type: ignore[arg-type]
+        work_facts=[fact("f1")],
+        validated_relations=[],
+        ambiguities=[],
+        risks=[],
+        evidence_refs=["ev-1"],
+        route_action_necessities=route_necessities,  # type: ignore[arg-type]
+        policy_confirmation_receipts=[],
+        duplicate_conflict_assessment=_satisfied_duplicate_assessment(),  # type: ignore[arg-type]
+    )
+
+    assert kind is None
+    assert result["action_necessity"] == "REQUIRED"
+    assert [item["status"] for item in result["route_action_necessities"]] == [
+        "NOT_REQUIRED",
+        "REQUIRED",
+    ]
 
 
 def test_duplicate_override__when_approved__keeps_route_and_summary_required() -> None:

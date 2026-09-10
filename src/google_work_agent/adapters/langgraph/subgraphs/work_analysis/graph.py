@@ -58,6 +58,7 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
     DuplicateConflictAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     StateArtifactRefV1,
     WorkAnalysisResultV2,
 )
@@ -552,6 +553,10 @@ class WorkAnalysisSubgraph:
         override_kind = required_override_confirmation_kind(
             validated_relations=cast(list[Any], state.get("validated_relations", [])),
             action_execution_required=_action_execution_required(state),
+            route_action_necessities=cast(
+                list[RouteActionNecessityV1],
+                state.get("route_action_necessities", []),
+            ),
             policy_confirmation_receipts=cast(
                 list[PolicyConfirmationReceiptV1],
                 state.get("policy_confirmation_receipts", []),
