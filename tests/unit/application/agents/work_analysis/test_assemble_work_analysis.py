@@ -163,7 +163,7 @@ def test_duplicate_required__without_receipt__requires_duplicate_override_confir
     assert kind == "DUPLICATE_OVERRIDE"
 
 
-def test_satisfied_task_route__does_not_block_unrelated_required_route() -> None:
+def test_satisfied_task_route__with_unrelated_required_route__does_not_require_override() -> None:
     based_on = [{"artifact_id": "intent-1", "revision": 1}]
     route_necessities = [
         {

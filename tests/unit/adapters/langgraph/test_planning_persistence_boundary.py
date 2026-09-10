@@ -71,7 +71,7 @@ def test_current_plan__joins_frozen_route__and_builds_expected() -> None:
     }
 
 
-def test_current_plan__accepts_ordered_subset_of_frozen_routes() -> None:
+def test_current_plan__with_ordered_frozen_route_subset__accepts_projection() -> None:
     state = _state()
     routes = state["tool_route_plan"]["output_plan"]["output_routes"]
     routes.insert(
@@ -89,7 +89,7 @@ def test_current_plan__accepts_ordered_subset_of_frozen_routes() -> None:
     }
 
 
-def test_current_plan__rejects_reordered_subset_of_frozen_routes() -> None:
+def test_current_plan__with_reordered_frozen_route_subset__rejects_projection() -> None:
     state = _state()
     state["tool_route_plan"]["output_plan"]["output_routes"].append(
         {
@@ -108,7 +108,7 @@ def test_current_plan__rejects_reordered_subset_of_frozen_routes() -> None:
         connector_ids_from_frozen_routes(state=state, plan=plan)
 
 
-def test_current_plan__rejects_duplicate_frozen_route_identity() -> None:
+def test_current_plan__with_duplicate_frozen_route_identity__fails_closed() -> None:
     state = _state()
     state["tool_route_plan"]["output_plan"]["output_routes"].append(
         dict(state["tool_route_plan"]["output_plan"]["output_routes"][0])
