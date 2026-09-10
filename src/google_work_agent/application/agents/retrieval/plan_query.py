@@ -604,8 +604,7 @@ def plan_query(
             ),
             prompt_input=prompt_input,
             frozen_routes=frozen_routes,
-            now_ms=now_ms,
-            timezone=timezone,
+            protected_constraints_by_route=protected_constraints_by_route or {},
         )
         validated = validate_retrieval_query_plan_v2(
             candidate,
@@ -900,8 +899,7 @@ def _revise_plan_once(
         ),
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
-        now_ms=now_ms,
-        timezone=timezone,
+        protected_constraints_by_route=protected_constraints_by_route or {},
     )
     validated = validate_retrieval_query_plan_v2(
         candidate,

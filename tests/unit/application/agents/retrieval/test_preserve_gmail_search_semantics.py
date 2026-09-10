@@ -96,8 +96,9 @@ def test_gmail_status__unrelated_or_changed_status__cannot_restrict_search() -> 
     planned = preserve_gmail_search_semantics(
         _plan([{"kind": "STATUS_SCOPE", "values": ["SENT"]}]),
         frozen_routes=[ROUTE],
-        now_ms=None,
-        timezone=None,
+        protected_constraints_by_route={
+            "gmail": [{"kind": "STATUS_SCOPE", "values": ["DRAFT"]}]
+        },
         prompt_input={
             "request_intent": {
                 "constraints": [
@@ -131,8 +132,16 @@ def test_gmail_draft_source__with_structured_status__preserves_lexical_anchor() 
         _plan([]),
         prompt_input={"request_intent": intent},
         frozen_routes=[DRAFT_ROUTE],
-        now_ms=None,
-        timezone=None,
+        protected_constraints_by_route={
+            "gmail": [
+                {
+                    "kind": "KEYWORD",
+                    "terms": ["Quartz 납품 회신 검토"],
+                    "match_mode": "PHRASE",
+                },
+                {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
+            ]
+        },
     )
 
     fetch = build_query(
@@ -171,8 +180,9 @@ def test_gmail_status__bound_to_other_source_resource__does_not_cross_routes() -
         _plan([]),
         prompt_input={"request_intent": intent},
         frozen_routes=[ROUTE],
-        now_ms=None,
-        timezone=None,
+        protected_constraints_by_route={
+            "gmail": [{"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "PHRASE"}]
+        },
     )
     constraints = planned["route_queries"][0]["search_spec"]["constraints"]
 
@@ -195,8 +205,12 @@ def test_gmail_draft_source__with_status_word_subject__preserves_lexical_value()
         _plan([]),
         prompt_input={"request_intent": intent},
         frozen_routes=[DRAFT_ROUTE],
-        now_ms=None,
-        timezone=None,
+        protected_constraints_by_route={
+            "gmail": [
+                {"kind": "KEYWORD", "terms": ["임시보관함"], "match_mode": "PHRASE"},
+                {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
+            ]
+        },
     )
 
     fetch = build_query(
@@ -358,8 +372,9 @@ def test_gmail_constraints__scope_search_terms__preserves_original_anchor() -> N
     preserved = preserve_gmail_search_semantics(
         _plan([]),
         frozen_routes=[ROUTE],
-        now_ms=None,
-        timezone=None,
+        protected_constraints_by_route={
+            "gmail": [{"kind": "KEYWORD", "terms": ["ORB-17"], "match_mode": "PHRASE"}]
+        },
         prompt_input={
             "request_intent": {
                 "constraints": [
@@ -451,8 +466,15 @@ def test_mail_request__period_only__reaches_provider_without_schedule_filter() -
         _plan([_concept(), {"kind": "KEYWORD", "terms": ["회의"], "match_mode": "PHRASE"}]),
         prompt_input={"request_intent": intent},
         frozen_routes=[ROUTE],
-        now_ms=int(datetime(2026, 9, 6, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000),
-        timezone="Asia/Seoul",
+        protected_constraints_by_route=derive_protected_constraints_by_route(
+            request_intent=intent,
+            frozen_routes=[ROUTE],
+            required_constraint_kinds={"gmail": ()},
+            validated_resource_refs=None,
+            validated_container_refs=None,
+            now_ms=int(datetime(2026, 9, 6, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1000),
+            timezone="Asia/Seoul",
+        ),
     )
     fetch = build_query(
         planned,
@@ -488,20 +510,26 @@ def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
     request = (
         "제목이 'KAN-93 일정'인 메일 찾아줘" if exact_subject else "KAN-93 일정 얘기한 메일 찾아줘"
     )
-    candidate = preserve_explicit_search_anchors.preserve_explicit_search_anchors(
-        {
-            "goal": request,
-            "completion_conditions": ["관련 메일 확인"],
-            "constraints": [
-                {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["KAN-93"]},
-                {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},
-            ],
-            "requested_resource_hints": ["GMAIL_THREAD"],
-            "requested_effect_hints": ["READ"],
-            "analysis_requirement": "NONE",
-        },
-        request_text=request,
-        entry_mode="AGENT_SEARCH",
+    goal_candidate: RequestGoalCandidateV1 = {
+        "goal": request,
+        "completion_conditions": ["관련 메일 확인"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "subject" if exact_subject else "search_terms",
+                "value": ["KAN-93 일정" if exact_subject else "KAN-93"],
+            },
+            {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},
+        ],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "requested_effect_hints": ["READ"],
+        "analysis_requirement": "NONE",
+    }
+    candidate = finalize_intent(
+        goal_candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-schedule-concept",
+        user_request=request,
     )
     reference = PromptReference(
         prompt_bundle_version="test",
@@ -527,6 +555,15 @@ def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
             )
         ]
     )
+    protected = derive_protected_constraints_by_route(
+        request_intent=candidate,
+        frozen_routes=[ROUTE],
+        required_constraint_kinds={"gmail": ()},
+        validated_resource_refs=None,
+        validated_container_refs=None,
+        now_ms=None,
+        timezone=None,
+    )
     planned, _, invoked = plan_query(
         llm_runtime=runtime,
         prompt_ref=reference,
@@ -537,10 +574,16 @@ def test_schedule_concept__project_anchor_or_exact_subject__preserves_scope(
         frozen_routes=[ROUTE],
         route_policies=POLICIES,
         retry_budget=build_default_run_budget(),
+        protected_constraints_by_route=protected,
     )
     assert invoked
     assert validate_output_schema(planned, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema) == []
-    fetch = build_query(planned, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
+    fetch = build_query(
+        planned,
+        frozen_routes=[ROUTE],
+        route_policies=POLICIES,
+        protected_constraints_by_route=protected,
+    )[0]
     tool, arguments = execute_read_projection.project_connector_call(
         fetch,
         route=ROUTE,
@@ -618,12 +661,32 @@ def test_concept_revision__specific_failure_and_raw_candidate__rebinds_exact_anc
         input_schema_version="2",
         output_schema_version="2",
     )
-    intent = {
+    revision_candidate: RequestGoalCandidateV1 = {
+        "goal": "ORB-17 일정 메일 조회",
+        "completion_conditions": ["관련 메일을 찾는다"],
         "constraints": [
             {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]},
             {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["ORB-17"]},
-        ]
+        ],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "requested_effect_hints": ["READ"],
+        "analysis_requirement": "NONE",
     }
+    intent = finalize_intent(
+        revision_candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-concept-revision",
+        user_request="ORB-17 일정 메일을 찾아줘",
+    )
+    protected = derive_protected_constraints_by_route(
+        request_intent=intent,
+        frozen_routes=[ROUTE],
+        required_constraint_kinds={"gmail": ()},
+        validated_resource_refs=None,
+        validated_container_refs=None,
+        now_ms=None,
+        timezone=None,
+    )
     planned, budget, _ = plan_query(
         llm_runtime=runtime,
         prompt_ref=reference,
@@ -634,6 +697,7 @@ def test_concept_revision__specific_failure_and_raw_candidate__rebinds_exact_anc
         frozen_routes=[ROUTE],
         route_policies=POLICIES,
         retry_budget=build_default_run_budget(),
+        protected_constraints_by_route=protected,
     )
     repair_input = runtime.calls[1]["prompt_input"]
     failure_record = cast(dict[str, object], repair_input["failure_record"])
@@ -642,7 +706,12 @@ def test_concept_revision__specific_failure_and_raw_candidate__rebinds_exact_anc
     initial_payload = cast(dict[str, Any], initial)
     assert initial_payload["route_queries"][0]["search_spec"]["constraints"] == initial_constraints
     assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
-    fetch = build_query(planned, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
+    fetch = build_query(
+        planned,
+        frozen_routes=[ROUTE],
+        route_policies=POLICIES,
+        protected_constraints_by_route=protected,
+    )[0]
     _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)
     assert arguments["query"] == '{"박람회" "시간변경" "체육대회"} "ORB-17"'
 
@@ -859,3 +928,140 @@ def test_protected_constraints__uses_finalized_source_literals_and_required_rout
             validated_container_refs={"gmail": ["inbox"]},
             protected_constraints_by_route=protected,
         )
+
+
+@pytest.mark.parametrize("requires_revision", [False, True])
+def test_live_gmail_routes__finalized_literal_and_concept_plan__reach_projection(
+    requires_revision: bool,
+) -> None:
+    """Reproduce the Live get-only Message + searchable Thread route shape."""
+
+    request_text = "Nimbus 출시 날짜만 메일에서 확인해줘."
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "Nimbus 출시 날짜 확인",
+        "completion_conditions": ["출시 날짜를 답한다"],
+        "constraints": [
+            {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["Nimbus"]},
+            {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["출시"]},
+        ],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_MESSAGE", "GMAIL_THREAD"],
+        "analysis_requirement": "NONE",
+    }
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-live-route-regression",
+        user_request=request_text,
+    )
+    message_route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "message-get",
+            "resource_type": "GMAIL_MESSAGE",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_get_message"],
+            "required": True,
+            "reason_codes": ["REQUESTED_INPUT"],
+        },
+    )
+    thread_route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "thread-search",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_get_thread", "gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["RETRIEVAL_GMAIL_DISCOVERY"],
+        },
+    )
+    routes = [message_route, thread_route]
+    policies = {
+        "message-get": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"})),
+        "thread-search": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"})),
+    }
+    protected = derive_protected_constraints_by_route(
+        request_intent=intent,
+        frozen_routes=routes,
+        required_constraint_kinds={route["route_id"]: () for route in routes},
+        validated_resource_refs=None,
+        validated_container_refs=None,
+        now_ms=None,
+        timezone=None,
+    )
+    assert set(protected) == {"thread-search"}
+    concept_only = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "thread-search",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "CONCEPT", "concept": "출시", "manifestations": ["출시"]}
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    invalid_initial = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "thread-search",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": []},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    outputs = [invalid_initial, concept_only] if requires_revision else [concept_only, concept_only]
+    runtime = FakeStructuredInferencePort(outputs=outputs)
+    reference = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="test",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="2",
+        output_schema_version="2",
+    )
+
+    planned, _, invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=reference,
+        revision_prompt_ref=reference,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": intent, "input_routes": routes},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        protected_constraints_by_route=protected,
+    )
+    fetch = build_query(
+        planned,
+        frozen_routes=routes,
+        route_policies=policies,
+        protected_constraints_by_route=protected,
+    )[0]
+    tool, arguments = execute_read_projection.project_connector_call(
+        fetch,
+        route=thread_route,
+        page_size=20,
+    )
+
+    assert invoked is True
+    assert len(runtime.calls) == (2 if requires_revision else 1)
+    assert tool == "gmail_search_threads"
+    assert '"Nimbus"' in str(arguments["query"])
+    assert '"출시"' in str(arguments["query"])

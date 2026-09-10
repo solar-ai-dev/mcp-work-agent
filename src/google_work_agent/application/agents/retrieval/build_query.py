@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -290,9 +291,7 @@ def _validate_protected_constraint_continuity(
     current = {item["kind"]: item for item in effective}
     for expected in protected:
         actual = current.get(expected["kind"])
-        if actual is not None and _canonical_constraints([actual]) == _canonical_constraints(
-            [expected]
-        ):
+        if actual is not None and _preserves_protected_constraint(expected, actual):
             continue
         raise RetrievalV2ValidationError(
             f"SEARCH changes protected {expected['kind']} constraint",
@@ -302,6 +301,74 @@ def _validate_protected_constraint_continuity(
                 f"$.source_fetch_plans[].effective_constraints[?(@.kind=='{expected['kind']}')]",
             ),
         )
+
+
+def _preserves_protected_constraint(
+    expected: SemanticRetrievalConstraintV1,
+    actual: SemanticRetrievalConstraintV1,
+) -> bool:
+    if _canonical_constraints([actual]) == _canonical_constraints([expected]):
+        return True
+    expected_value = cast(Mapping[str, object], expected)
+    actual_value = cast(Mapping[str, object], actual)
+    kind = expected_value.get("kind")
+    if actual_value.get("kind") != kind:
+        return False
+    if kind == "KEYWORD":
+        expected_terms = expected_value.get("terms")
+        actual_terms = actual_value.get("terms")
+        expected_mode = expected_value.get("match_mode")
+        actual_mode = actual_value.get("match_mode")
+        if not isinstance(expected_terms, list) or not isinstance(actual_terms, list):
+            return False
+        if not all(isinstance(term, str) for term in [*expected_terms, *actual_terms]):
+            return False
+        if expected_mode == "PHRASE":
+            return (
+                actual_mode == "PHRASE" and actual_terms == expected_terms
+            ) or (
+                len(expected_terms) == 1
+                and actual_mode == "ALL"
+                and _string_multiset_contains(actual_terms, expected_terms)
+            )
+        return (
+            actual_mode == expected_mode
+            and expected_mode in {"ALL", "ANY"}
+            and _string_multiset_contains(actual_terms, expected_terms)
+        )
+    if kind == "PARTICIPANT":
+        expected_participants = expected_value.get("participants")
+        actual_participants = actual_value.get("participants")
+        if not isinstance(expected_participants, list) or not isinstance(actual_participants, list):
+            return False
+        expected_pairs = {
+            (item.get("role"), item.get("identity"))
+            for item in expected_participants
+            if isinstance(item, Mapping)
+        }
+        actual_pairs = {
+            (item.get("role"), item.get("identity"))
+            for item in actual_participants
+            if isinstance(item, Mapping)
+        }
+        return (
+            actual_value.get("match_mode") == expected_value.get("match_mode")
+            and expected_pairs.issubset(actual_pairs)
+        )
+    if kind == "STATUS_SCOPE":
+        expected_values = expected_value.get("values")
+        actual_values = actual_value.get("values")
+        return (
+            isinstance(expected_values, list)
+            and isinstance(actual_values, list)
+            and set(expected_values).issubset(actual_values)
+        )
+    # Resource/container identity and temporal bounds are exact safety facts.
+    return False
+
+
+def _string_multiset_contains(actual: list[object], expected: list[object]) -> bool:
+    return not (Counter(cast(list[str], expected)) - Counter(cast(list[str], actual)))
 
 
 def _validate_person_promotion(

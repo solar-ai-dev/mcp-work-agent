@@ -12,6 +12,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     RetrievalV2ValidationError,
     SemanticRetrievalConstraintV1,
     TemporalRangeConstraintV1,
+    route_operation_tool_id,
     validate_participant_identity,
 )
 from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
@@ -46,7 +47,7 @@ def derive_protected_constraints_by_route(
     for route in frozen_routes:
         route_id = route["route_id"]
         protected: list[dict[str, object]] = []
-        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES:
+        if _is_searchable_gmail_route(route):
             protected.extend(
                 _explicit_gmail_constraints(
                     constraints,
@@ -86,7 +87,7 @@ def resolve_gmail_query_periods(
     return {
         route["route_id"]: bound
         for route in frozen_routes
-        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+        if _is_searchable_gmail_route(route)
     }
 
 
@@ -147,7 +148,7 @@ def requested_gmail_concepts(
     return {
         route["route_id"]: concepts
         for route in frozen_routes
-        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES and concepts
+        if _is_searchable_gmail_route(route) and concepts
     }
 
 
@@ -156,8 +157,7 @@ def preserve_gmail_search_semantics(
     *,
     prompt_input: Mapping[str, object],
     frozen_routes: Sequence[InputToolRouteV1],
-    now_ms: int | None,
-    timezone: str | None,
+    protected_constraints_by_route: ProtectedConstraintsByRouteV1,
 ) -> object:
     """Keep validated explicit Gmail values exact across semantic planning.
 
@@ -165,40 +165,32 @@ def preserve_gmail_search_semantics(
     initial Gmail search, sender/recipient/subject strings already owned by
     RequestIntent are data, not a new semantic choice.
     """
-    gmail_routes = [
-        route for route in frozen_routes if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
-    ]
-    if len(gmail_routes) != 1:
-        return value
+    gmail_routes = {
+        route["route_id"]: route
+        for route in frozen_routes
+        if _is_searchable_gmail_route(route)
+    }
     request_intent = prompt_input.get("request_intent")
     if not isinstance(request_intent, Mapping):
         return value
-    explicit_constraints = _explicit_gmail_constraints(
-        request_intent.get("constraints"),
-        now_ms=now_ms,
-        timezone=timezone,
-        source_resource_type=gmail_routes[0]["resource_type"],
-    )
     concepts = _requested_concepts(request_intent.get("constraints"))
-    if (not explicit_constraints and not concepts) or not isinstance(value, Mapping):
+    has_protected = any(
+        protected_constraints_by_route.get(route_id) for route_id in gmail_routes
+    )
+    if (not has_protected and not concepts) or not isinstance(value, Mapping):
         return value
     route_queries = value.get("route_queries")
     if not isinstance(route_queries, list):
         return value
 
-    route_id = gmail_routes[0]["route_id"]
     candidate = deepcopy(dict(value))
     candidate_queries = candidate.get("route_queries")
     if not isinstance(candidate_queries, list):
         return value
-    replacement_kinds = {str(item["kind"]) for item in explicit_constraints}
-    # Any person mentioned by the user is projected below as either an exact
-    # email or a discovery term. Do not retain a competing model participant.
-    if any(
+    has_explicit_person = any(
         isinstance(item, Mapping) and item.get("kind") in {"PERSON", "EMAIL"}
         for item in request_intent.get("constraints", [])
-    ):
-        replacement_kinds.add("PARTICIPANT")
+    )
     intent_constraints = request_intent.get("constraints")
     has_topic = isinstance(intent_constraints, list) and any(
         isinstance(item, Mapping)
@@ -212,18 +204,12 @@ def preserve_gmail_search_semantics(
         and item.get("value")
         for item in intent_constraints
     )
-    if replacement_kinds == {"TEMPORAL_RANGE"} and not has_topic:
-        # A period-only intent has no topical filter for the planner to specialize.
-        replacement_kinds.update({"KEYWORD", "CONCEPT"})
-    if concepts:
-        # A model's literal concept keyword must not AND away its alternatives.
-        replacement_kinds.add("KEYWORD")
-    if has_explicit_gmail_subject(request_intent.get("constraints")):
-        replacement_kinds.add("CONCEPT")
+    has_explicit_subject = has_explicit_gmail_subject(request_intent.get("constraints"))
     for route_query in candidate_queries:
         if not isinstance(route_query, dict):
             continue
-        if route_query.get("route_id") != route_id or route_query.get("operation") != "SEARCH":
+        route_id = route_query.get("route_id")
+        if route_id not in gmail_routes or route_query.get("operation") != "SEARCH":
             continue
         search_spec = route_query.get("search_spec")
         if not isinstance(search_spec, dict) or search_spec.get("mode") != "INITIAL":
@@ -231,12 +217,26 @@ def preserve_gmail_search_semantics(
         constraints = search_spec.get("constraints")
         if not isinstance(constraints, list):
             continue
-        search_spec["constraints"] = [
+        protected = list(protected_constraints_by_route.get(cast(str, route_id), ()))
+        protected_kinds = {str(item["kind"]) for item in protected}
+        period_only = protected_kinds == {"TEMPORAL_RANGE"} and not has_topic
+        filtered_constraints = [
             item
             for item in constraints
-            if not isinstance(item, Mapping) or str(item.get("kind")) not in replacement_kinds
-        ] + explicit_constraints
-        if concepts and not has_explicit_gmail_subject(intent_constraints):
+            if not isinstance(item, Mapping)
+            or (
+                not (has_explicit_person and item.get("kind") == "PARTICIPANT")
+                and not (period_only and item.get("kind") in {"KEYWORD", "CONCEPT"})
+                and not (concepts and item.get("kind") == "KEYWORD")
+                and not (has_explicit_subject and item.get("kind") == "KEYWORD")
+                and not (has_explicit_subject and item.get("kind") == "CONCEPT")
+            )
+        ]
+        search_spec["constraints"] = _merge_initial_protected_constraints(
+            filtered_constraints,
+            protected,
+        )
+        if concepts and not has_explicit_subject:
             search_spec["constraints"] = [
                 item
                 for item in search_spec["constraints"]
@@ -245,6 +245,75 @@ def preserve_gmail_search_semantics(
                 or item.get("concept") in concepts
             ]
     return candidate
+
+
+def _merge_initial_protected_constraints(
+    candidate_constraints: Sequence[object],
+    protected_constraints: Sequence[SemanticRetrievalConstraintV1],
+) -> list[object]:
+    """Bind code-owned constraints without discarding a compatible model hypothesis."""
+
+    merged = list(candidate_constraints)
+    for protected in protected_constraints:
+        kind = protected["kind"]
+        matching_indexes = [
+            index
+            for index, item in enumerate(merged)
+            if isinstance(item, Mapping) and item.get("kind") == kind
+        ]
+        if not matching_indexes:
+            merged.append(deepcopy(protected))
+            continue
+        if len(matching_indexes) != 1:
+            # Keep malformed duplicate kinds visible to the canonical validator.
+            continue
+        index = matching_indexes[0]
+        existing = merged[index]
+        if kind == "KEYWORD" and isinstance(existing, Mapping):
+            merged[index] = _merge_initial_keyword_constraint(existing, protected)
+        else:
+            merged[index] = deepcopy(protected)
+    return merged
+
+
+def _merge_initial_keyword_constraint(
+    candidate: Mapping[str, object],
+    protected: SemanticRetrievalConstraintV1,
+) -> object:
+    protected_value = cast(Mapping[str, object], protected)
+    protected_terms = protected_value.get("terms")
+    candidate_terms = candidate.get("terms")
+    protected_mode = protected_value.get("match_mode")
+    candidate_mode = candidate.get("match_mode")
+    if (
+        not isinstance(protected_terms, list)
+        or not all(isinstance(term, str) for term in protected_terms)
+        or not isinstance(candidate_terms, list)
+        or not all(isinstance(term, str) for term in candidate_terms)
+        or candidate_mode not in {"ANY", "ALL", "PHRASE"}
+    ):
+        return dict(candidate)
+    if candidate_mode == "ANY" and len(candidate_terms) > 1 and protected_mode != "ANY":
+        # Let the protected-continuity validator reject a genuine OR weakening.
+        return dict(candidate)
+    if protected_mode == "ALL" and candidate_mode == "ALL":
+        return {
+            "kind": "KEYWORD",
+            "terms": list(dict.fromkeys([*protected_terms, *candidate_terms])),
+            "match_mode": "ALL",
+        }
+    if protected_mode == "PHRASE" and len(protected_terms) == 1:
+        if candidate_mode == "PHRASE" and candidate_terms == protected_terms:
+            return deepcopy(protected)
+        if candidate_mode in {"ALL", "PHRASE"} or len(candidate_terms) == 1:
+            return {
+                "kind": "KEYWORD",
+                "terms": list(dict.fromkeys([*protected_terms, *candidate_terms])),
+                "match_mode": "ALL",
+            }
+    # A multi-token PHRASE cannot safely share one match_mode with a separate
+    # same-kind hypothesis. Preserve the verified phrase and discard that hypothesis.
+    return deepcopy(protected)
 
 
 def validate_gmail_search_role_separation(
@@ -260,7 +329,7 @@ def validate_gmail_search_role_separation(
     gmail_routes = {
         route["route_id"]: route
         for route in frozen_routes
-        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+        if _is_searchable_gmail_route(route)
     }
     route_queries = value.get("route_queries")
     if not isinstance(route_queries, list):
@@ -343,7 +412,7 @@ def validate_requested_concepts(
     gmail_ids = {
         route["route_id"]
         for route in frozen_routes
-        if route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+        if _is_searchable_gmail_route(route)
     }
     for query in value.get("route_queries", []):
         if query.get("route_id") not in gmail_ids:
@@ -494,6 +563,13 @@ def _has_validated_source_provenance(value: Mapping[str, object]) -> bool:
         and type(start) is int
         and type(end) is int
         and 0 <= cast(int, start) < cast(int, end)
+    )
+
+
+def _is_searchable_gmail_route(route: InputToolRouteV1) -> bool:
+    return (
+        route["resource_type"] in _GMAIL_SEARCH_RESOURCE_TYPES
+        and route_operation_tool_id(route, "SEARCH") is not None
     )
 
 

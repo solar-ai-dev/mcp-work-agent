@@ -488,6 +488,207 @@ def test_build_query__followup_changes_hypothesis_but_preserves_explicit_constra
     } in result["effective_constraints"]
 
 
+def test_build_query__same_kind_hypothesis__preserves_all_literals_and_can_change() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+    protected = cast(
+        SemanticRetrievalConstraintV1,
+        {"kind": "KEYWORD", "terms": ["Cobalt", "남극"], "match_mode": "ALL"},
+    )
+    initial = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "KEYWORD",
+                            "terms": ["Cobalt", "남극", "출장"],
+                            "match_mode": "ALL",
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    prior = build_query(
+        initial,
+        frozen_routes=[route],
+        route_policies=policies,
+        protected_constraints_by_route={"r": [protected]},
+    )[0]
+    changed = deepcopy(initial)
+    changed["route_queries"][0]["search_spec"] = {
+        "mode": "CHANGED",
+        "constraint_delta": {
+            "upsert_constraints": [
+                {
+                    "kind": "KEYWORD",
+                    "terms": ["Cobalt", "남극", "확정"],
+                    "match_mode": "ALL",
+                }
+            ],
+            "remove_constraint_kinds": [],
+        },
+    }
+
+    revised = build_query(
+        changed,
+        frozen_routes=[route],
+        route_policies=policies,
+        prior_plans={"r": prior},
+        protected_constraints_by_route={"r": [protected]},
+    )[0]
+
+    assert revised["effective_constraints"] == [
+        {"kind": "KEYWORD", "terms": ["Cobalt", "남극", "확정"], "match_mode": "ALL"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "changed_keyword",
+    [
+        {"kind": "KEYWORD", "terms": ["Cobalt", "다른 값"], "match_mode": "ALL"},
+        {"kind": "KEYWORD", "terms": ["Cobalt", "남극"], "match_mode": "ANY"},
+    ],
+)
+def test_build_query__same_kind_change_or_or_weakening__remains_rejected(
+    changed_keyword: dict[str, object],
+) -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+    protected = cast(
+        SemanticRetrievalConstraintV1,
+        {"kind": "KEYWORD", "terms": ["Cobalt", "남극"], "match_mode": "ALL"},
+    )
+    initial = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": [protected]},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    prior = build_query(
+        initial,
+        frozen_routes=[route],
+        route_policies=policies,
+        protected_constraints_by_route={"r": [protected]},
+    )[0]
+    changed = deepcopy(initial)
+    changed["route_queries"][0]["search_spec"] = {
+        "mode": "CHANGED",
+        "constraint_delta": {
+            "upsert_constraints": [changed_keyword],
+            "remove_constraint_kinds": [],
+        },
+    }
+
+    with pytest.raises(RetrievalV2ValidationError) as raised:
+        build_query(
+            changed,
+            frozen_routes=[route],
+            route_policies=policies,
+            prior_plans={"r": prior},
+            protected_constraints_by_route={"r": [protected]},
+        )
+    assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
+
+
+def test_build_query__protected_phrase__preserves_order_and_repetition() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+    protected = cast(
+        SemanticRetrievalConstraintV1,
+        {
+            "kind": "KEYWORD",
+            "terms": ["Quartz", "Quartz", "납품"],
+            "match_mode": "PHRASE",
+        },
+    )
+    initial = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": [protected]},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    prior = build_query(
+        initial,
+        frozen_routes=[route],
+        route_policies=policies,
+        protected_constraints_by_route={"r": [protected]},
+    )[0]
+    changed = deepcopy(initial)
+    changed["route_queries"][0]["search_spec"] = {
+        "mode": "CHANGED",
+        "constraint_delta": {
+            "upsert_constraints": [
+                {
+                    "kind": "KEYWORD",
+                    "terms": ["Quartz", "납품", "Quartz"],
+                    "match_mode": "PHRASE",
+                }
+            ],
+            "remove_constraint_kinds": [],
+        },
+    }
+
+    with pytest.raises(RetrievalV2ValidationError) as raised:
+        build_query(
+            changed,
+            frozen_routes=[route],
+            route_policies=policies,
+            prior_plans={"r": prior},
+            protected_constraints_by_route={"r": [protected]},
+        )
+    assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
+
+
 def test_build_query__same_manifestation__is_allowed_when_effective_query_changes() -> None:
     route = cast(
         InputToolRouteV1,

@@ -19,6 +19,9 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
     bind_retrieval_query_plan_output_schema,
 )
+from google_work_agent.application.agents.retrieval.match_person_mention import (
+    person_discovery_term,
+)
 from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
     preserve_gmail_search_semantics,
     requested_participant_identities,
@@ -115,8 +118,15 @@ def test_person_discovery__unresolved_mention__does_not_invent_email(
         _plan("invented@example.com"),
         prompt_input=prompt_input,
         frozen_routes=[ROUTE],
-        now_ms=None,
-        timezone=None,
+        protected_constraints_by_route={
+            "g": [
+                {
+                    "kind": "KEYWORD",
+                    "terms": [person_discovery_term(mention), "박람회"],
+                    "match_mode": "ALL",
+                }
+            ]
+        },
     )
     fetch = build_query(repaired, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)

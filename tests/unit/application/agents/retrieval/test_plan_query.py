@@ -1590,6 +1590,16 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
         route_policies={"route-1": RouteConstraintPolicy(frozenset({"PARTICIPANT", "KEYWORD"}))},
         retry_budget=build_default_run_budget(),
+        protected_constraints_by_route={
+            "route-1": [
+                {
+                    "kind": "PARTICIPANT",
+                    "participants": [{"role": "SENDER", "identity": "sender@example.com"}],
+                    "match_mode": "ALL",
+                },
+                {"kind": "KEYWORD", "terms": ["회신부탁"], "match_mode": "PHRASE"},
+            ]
+        },
     )
 
     assert llm_invoked is True
@@ -1678,6 +1688,15 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
         route_policies={"route-1": RouteConstraintPolicy(frozenset({"PARTICIPANT", "KEYWORD"}))},
         retry_budget=build_default_run_budget(),
+        protected_constraints_by_route={
+            "route-1": [
+                {
+                    "kind": "KEYWORD",
+                    "terms": ["대리", "프로젝트", "일정"],
+                    "match_mode": "ALL",
+                }
+            ]
+        },
     )
 
     assert llm_invoked is True
@@ -1757,6 +1776,18 @@ def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None
         retry_budget=build_default_run_budget(),
         now_ms=1_788_560_100_000,
         timezone="Asia/Seoul",
+        protected_constraints_by_route={
+            "route-1": [
+                {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ALL"},
+                {
+                    "kind": "TEMPORAL_RANGE",
+                    "axis": "MESSAGE_TIME",
+                    "start_local": "2026-08-24T00:00:00",
+                    "end_local": "2026-08-31T00:00:00",
+                    "timezone": "Asia/Seoul",
+                },
+            ]
+        },
     )
 
     search_spec = result["route_queries"][0]["search_spec"]
