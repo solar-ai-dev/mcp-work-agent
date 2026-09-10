@@ -390,17 +390,23 @@ def _gmail_thread_list_metadata(
 def _gmail_draft_snapshot(payload: dict[str, object]) -> dict[str, object]:
     draft_id = _required_response_text(payload, "id")
     message = cast(dict[str, object], payload.get("message") or {})
-    return _snapshot(
+    content = {
+        **_gmail_message_content(message),
+        "message_id": _optional_text(message.get("id")),
+    }
+    snapshot = _snapshot(
         "gmail_draft",
         draft_id,
         _optional_text(message.get("threadId")),
         (),
         message.get("historyId"),
-        {
-            **_gmail_message_content(message),
-            "message_id": _optional_text(message.get("id")),
-        },
+        content,
     )
+    # Draft UPDATE must distinguish an observed nullable value from an
+    # unobserved field.  The generic snapshot projector omits nulls, so keep
+    # the exact Draft source payload at this provider-owned boundary.
+    snapshot["payload"] = content
+    return snapshot
 
 
 def _gmail_message_content(message: dict[str, object]) -> dict[str, object]:

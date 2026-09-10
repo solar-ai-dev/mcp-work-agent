@@ -211,7 +211,7 @@ def test_development_config__sampling_policy__requires_explicit_handoff(
     assert handed_off.development_sampling_seed == 1729
 
 
-def test_development_sampling_environment__parses_only_explicit_values() -> None:
+def test_development_sampling_environment__parses_explicit_values__without_defaults() -> None:
     assert read_development_sampling_environment({}) == (None, None)
     assert read_development_sampling_environment(
         {

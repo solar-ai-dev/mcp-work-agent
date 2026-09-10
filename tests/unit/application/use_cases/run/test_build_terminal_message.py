@@ -180,7 +180,7 @@ def test_context_block__does_not_claim_zero_resources__without_that_fact() -> No
     assert "검색 조건을 바꾸거나" in result.content
 
 
-def test_schema_validation_block__explains_internal_failure_without_exposing_code() -> None:
+def test_schema_validation_block__explains_internal_failure__without_exposing_code() -> None:
     result = BuildTerminalMessageHandler()(
         BuildTerminalMessageQueryV1(
             1,

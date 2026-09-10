@@ -55,6 +55,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     approve_semantic_revision,
     build_semantic_failure_signature_v1,
 )
+from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.ports.llm.structured_inference_contracts import (
     PromptReference,
 )
@@ -657,17 +658,23 @@ def materialize_evidence_drafts(
         if key in seen:
             continue
         seen.add(key)
+        materialized = {
+            "schema_version": 1,
+            "resource_handle": segment.resource_handle,
+            "segment_id": segment.segment_id,
+            "kind": "excerpt",
+            "excerpt": excerpt,
+            "locator": dict(segment.locator),
+            "reason_codes": [role_draft["role"]],
+        }
         result.append(
-            {
-                "schema_version": 1,
-                "evidence_id": f"evidence-{segment.segment_id}",
-                "resource_handle": segment.resource_handle,
-                "segment_id": segment.segment_id,
-                "kind": "excerpt",
-                "excerpt": excerpt,
-                "locator": dict(segment.locator),
-                "reason_codes": [role_draft["role"]],
-            }
+            cast(
+                EvidenceDraftV1,
+                {
+                    **materialized,
+                    "evidence_id": ("evidence-" + calculate_canonical_json_hash(materialized)),
+                },
+            )
         )
     return result
 

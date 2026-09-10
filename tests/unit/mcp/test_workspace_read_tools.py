@@ -198,7 +198,12 @@ def test_gmail_draft_search__with_listing_result__hydrates_provider_identity_and
     item = cast(dict[str, object], cast(list[object], payload["items"])[0])
     assert item["resource_type"] == "gmail_draft"
     assert item["resource_id"] == "draft-1"
-    assert cast(dict[str, object], item["payload"])["to"] == ["recipient@example.com"]
+    source = cast(dict[str, object], item["payload"])
+    assert source["to"] == ["recipient@example.com"]
+    assert source["body"] is None
+    assert source["in_reply_to"] is None
+    assert source["references"] is None
+    assert source["attachments"] == []
     assert payload["next_page_token"] == "next-1"
     assert calls[0] == (
         "https://gmail.googleapis.com/gmail/v1/users/me/drafts",

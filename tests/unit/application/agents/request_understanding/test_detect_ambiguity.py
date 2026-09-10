@@ -230,7 +230,7 @@ def test_detect_ambiguity_schema__connector_owned_gap__passes_output_contract() 
     assert errors == []
 
 
-def test_detect_ambiguity_schema__accepts_user_owned_fields_without_derived_metadata() -> None:
+def test_detect_ambiguity_schema__accepts_user_owned_fields__without_derived_metadata() -> None:
     errors = validate_output_schema(
         {
             "missing_information_owner": "USER",

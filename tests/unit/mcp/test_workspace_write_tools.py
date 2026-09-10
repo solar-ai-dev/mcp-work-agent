@@ -327,7 +327,24 @@ def test_gmail_get__draft_reads__without_a_claim(monkeypatch: pytest.MonkeyPatch
     result = verified_server._tool_call(
         _state(), tool_name="gmail_get_draft", arguments={"draft_id": "draft-1"}
     )
-    assert cast(dict[str, object], result["item"])["resource_id"] == "draft-1"
+    item = cast(dict[str, object], result["item"])
+    assert item["resource_id"] == "draft-1"
+    source = cast(dict[str, object], item["payload"])
+    assert set(
+        (
+            "to",
+            "cc",
+            "bcc",
+            "subject",
+            "body",
+            "thread_id",
+            "in_reply_to",
+            "references",
+            "attachments",
+        )
+    ).issubset(source)
+    assert source["body"] is None
+    assert source["in_reply_to"] is None
 
 
 # --------------------------------------------------------------------------

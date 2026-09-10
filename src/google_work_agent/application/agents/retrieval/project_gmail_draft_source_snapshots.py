@@ -46,7 +46,10 @@ def project_gmail_draft_source_snapshots(
             payload = raw.get("payload")
             if not isinstance(handle, str) or not handle or not isinstance(payload, Mapping):
                 raise ValueError("Gmail Draft acquisition snapshot is incomplete")
-            snapshot = {name: payload[name] for name in _DRAFT_FIELDS if name in payload}
+            missing_fields = set(_DRAFT_FIELDS) - set(payload)
+            if missing_fields:
+                raise ValueError("Gmail Draft acquisition snapshot is incomplete")
+            snapshot = {name: payload[name] for name in _DRAFT_FIELDS}
             source_version_ref = gmail_draft_source_version_ref(raw, snapshot=snapshot)
             key = (handle, source_version_ref)
             candidate: GmailDraftSourceSnapshotV1 = {
@@ -73,7 +76,10 @@ def gmail_draft_source_version_ref(
     source = snapshot if snapshot is not None else payload
     if not isinstance(source, Mapping):
         raise ValueError("Gmail Draft source version requires a snapshot")
-    exact = {name: source[name] for name in _DRAFT_FIELDS if name in source}
+    missing_fields = set(_DRAFT_FIELDS) - set(source)
+    if missing_fields:
+        raise ValueError("Gmail Draft source version requires a complete snapshot")
+    exact = {name: source[name] for name in _DRAFT_FIELDS}
     return f"sha256:{calculate_canonical_json_hash(exact)}"
 
 

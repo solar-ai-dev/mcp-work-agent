@@ -244,6 +244,67 @@ def test_materialization__inconsistent_legacy_selection__rejects_without_guessin
         )
 
 
+def test_materialization__replays_same_assessment__with_stable_identity() -> None:
+    segment = SourceSegment(
+        "segment-1",
+        "gmail_thread:thread-1",
+        "GMAIL",
+        "gmail_thread",
+        "thread-1",
+        None,
+        None,
+        {"kind": "resource_payload", "position": 0},
+        "Nimbus 출시일은 9월 12일입니다.",
+    )
+    selection = {
+        "schema_version": 2,
+        "selected_segment_ids": ["segment-1"],
+        "excluded_segment_ids": [],
+        "evidence_drafts": [
+            {"segment_id": "segment-1", "role": "SUPPORTS", "relevance_reason": "출시일"}
+        ],
+    }
+
+    first = materialize_evidence_drafts(selection, segments=[segment])
+    second = materialize_evidence_drafts(selection, segments=[segment])
+
+    assert first == second
+    assert first[0]["evidence_id"].startswith("evidence-")
+
+
+def test_materialization__materializes_changed_assessment__with_distinct_identity() -> None:
+    segment = SourceSegment(
+        "segment-1",
+        "gmail_thread:thread-1",
+        "GMAIL",
+        "gmail_thread",
+        "thread-1",
+        None,
+        None,
+        {"kind": "resource_payload", "position": 0},
+        "Nimbus 출시일은 9월 12일입니다.",
+    )
+    base = {
+        "schema_version": 2,
+        "selected_segment_ids": ["segment-1"],
+        "excluded_segment_ids": [],
+        "evidence_drafts": [
+            {"segment_id": "segment-1", "role": "SUPPORTS", "relevance_reason": "출시일"}
+        ],
+    }
+    revised = {
+        **base,
+        "evidence_drafts": [
+            {"segment_id": "segment-1", "role": "CONTEXT", "relevance_reason": "과거 인용"}
+        ],
+    }
+
+    first = materialize_evidence_drafts(base, segments=[segment])
+    second = materialize_evidence_drafts(revised, segments=[segment])
+
+    assert first[0]["evidence_id"] != second[0]["evidence_id"]
+
+
 def test_source_assessment__object_order_changes__preserves_ranked_detail_priority() -> None:
     segments = [
         SourceSegment(

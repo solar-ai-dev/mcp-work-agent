@@ -52,7 +52,7 @@ class _Graph:
         self.invocations.append(config)
 
 
-def test_output_schema_failure__uses_existing_terminal_pipeline() -> None:
+def test_output_schema_failure__uses_existing_terminal_pipeline__without_bypass() -> None:
     runtime = cast(Any, object.__new__(LangGraphWorkflowRuntime))
     runtime._invocation = _FailingInvocation(
         LLMInvocationError(

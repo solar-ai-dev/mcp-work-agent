@@ -1,5 +1,7 @@
 from typing import cast
 
+import pytest
+
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
 )
@@ -8,7 +10,7 @@ from google_work_agent.application.agents.retrieval.project_gmail_draft_source_s
 )
 
 
-def test_snapshot_projection__preserves_empty_and_null__without_filling_omissions() -> None:
+def test_snapshot_projection__preserves_empty_and_null__without_filling_values() -> None:
     result = cast(
         AcquisitionResultV1,
         {
@@ -28,6 +30,7 @@ def test_snapshot_projection__preserves_empty_and_null__without_filling_omission
                                 "thread_id": None,
                                 "in_reply_to": None,
                                 "references": "",
+                                "attachments": [],
                             },
                         }
                     ],
@@ -44,4 +47,36 @@ def test_snapshot_projection__preserves_empty_and_null__without_filling_omission
     assert snapshot["to"] == []
     assert snapshot["thread_id"] is None
     assert snapshot["references"] == ""
-    assert "attachments" not in snapshot
+    assert snapshot["attachments"] == []
+
+
+def test_snapshot_projection__rejects_unobserved_source_field__without_guessing() -> None:
+    result = cast(
+        AcquisitionResultV1,
+        {
+            "source_summaries": [
+                {
+                    "route_id": "draft-read",
+                    "resources": [
+                        {
+                            "resource_handle": "gmail_draft:draft-1",
+                            "resource_type": "gmail_draft",
+                            "payload": {
+                                "to": [],
+                                "cc": [],
+                                "bcc": [],
+                                "subject": "subject",
+                                "body": "body",
+                                "thread_id": None,
+                                "in_reply_to": None,
+                                "references": None,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(ValueError, match="snapshot is incomplete"):
+        project_gmail_draft_source_snapshots(result)

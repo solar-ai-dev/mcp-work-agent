@@ -417,9 +417,7 @@ class WorkAnalysisSubgraph:
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": (
-                    consume_llm_call_budget(state) if llm_required else state["retry_budget"]
-                ),
+                "retry_budget": patch["retry_budget"],
                 "trace_context": self._trace(
                     state,
                     "detect_duplicate_conflict_candidates",
@@ -427,6 +425,10 @@ class WorkAnalysisSubgraph:
                         self._prompt_refs["detect_duplicate_conflict_candidates"]
                         if llm_required
                         else None
+                    ),
+                    llm_call_increment=(
+                        patch["retry_budget"]["llm_calls_used"]
+                        - state["retry_budget"]["llm_calls_used"]
                     ),
                 ),
             },

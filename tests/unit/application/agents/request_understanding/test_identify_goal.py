@@ -491,7 +491,7 @@ def test_request_goal_schema__for_ollama_output__contains_no_patterns() -> None:
         ("DELETE", "CALENDAR_EVENT"),
     ],
 )
-def test_request_goal_schema__accepts_supported_output_pairs(
+def test_request_goal_schema__accepts_supported_output_pairs__before_application(
     effect: str, resource_type: str
 ) -> None:
     candidate = {
@@ -511,7 +511,7 @@ def test_request_goal_schema__accepts_supported_output_pairs(
     )
 
 
-def test_request_goal_schema__rejects_unsupported_output_pair_before_application() -> None:
+def test_request_goal_schema__rejects_unsupported_output_pair__before_application() -> None:
     candidate = {
         "goal": "할 일을 만든다",
         "completion_conditions": ["할 일이 생성된다"],
