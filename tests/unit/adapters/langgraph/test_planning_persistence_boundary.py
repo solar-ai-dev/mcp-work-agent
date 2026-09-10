@@ -71,6 +71,53 @@ def test_current_plan__joins_frozen_route__and_builds_expected() -> None:
     }
 
 
+def test_current_plan__accepts_ordered_subset_of_frozen_routes() -> None:
+    state = _state()
+    routes = state["tool_route_plan"]["output_plan"]["output_routes"]
+    routes.insert(
+        0,
+        {
+            "route_id": "route-skipped",
+            "connector_id": "google_workspace",
+            "effect": "CREATE",
+            "selected_tool_id": "calendar_create_event",
+        },
+    )
+
+    assert connector_ids_from_frozen_routes(state=state, plan=_plan()) == {
+        "action-1": "google_workspace"
+    }
+
+
+def test_current_plan__rejects_reordered_subset_of_frozen_routes() -> None:
+    state = _state()
+    state["tool_route_plan"]["output_plan"]["output_routes"].append(
+        {
+            "route_id": "route-2",
+            "connector_id": "google_workspace",
+            "effect": "CREATE",
+            "selected_tool_id": "tasks_create_task",
+        }
+    )
+    first = _action()
+    second = {**_action(), "action_id": "action-2", "route_id": "route-2"}
+    plan = _plan()
+    plan["actions"] = [second, first]
+
+    with pytest.raises(ValueError, match="preserve frozen output route order"):
+        connector_ids_from_frozen_routes(state=state, plan=plan)
+
+
+def test_current_plan__rejects_duplicate_frozen_route_identity() -> None:
+    state = _state()
+    state["tool_route_plan"]["output_plan"]["output_routes"].append(
+        dict(state["tool_route_plan"]["output_plan"]["output_routes"][0])
+    )
+
+    with pytest.raises(ValueError, match="duplicate frozen output route id"):
+        connector_ids_from_frozen_routes(state=state, plan=_plan())
+
+
 @pytest.mark.parametrize("field", ["route_id", "tool_id", "effect"])
 def test_current_plan__fails_closed_on__frozen_route_drift(field: str) -> None:
     plan = _plan()

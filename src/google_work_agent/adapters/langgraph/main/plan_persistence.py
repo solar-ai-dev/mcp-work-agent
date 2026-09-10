@@ -85,26 +85,49 @@ def connector_ids_from_frozen_routes(
     if not isinstance(raw_routes, list):
         raise ValueError("ACTION output_plan.output_routes must be a list")
 
-    actions = plan["actions"]
-    if len(actions) != len(raw_routes):
-        raise ValueError("write actions must align exactly with frozen output routes")
-
-    connector_ids: dict[str, str] = {}
-    for index, (action, raw_route) in enumerate(zip(actions, raw_routes, strict=True)):
+    routes_by_id: dict[str, tuple[int, Mapping[str, object]]] = {}
+    for index, raw_route in enumerate(raw_routes):
         if not isinstance(raw_route, Mapping):
             raise ValueError(f"output_routes[{index}] must be an object")
-        if action["route_id"] != raw_route.get("route_id"):
-            raise ValueError(f"write action route does not match frozen route at index {index}")
+        route_id = raw_route.get("route_id")
+        if not isinstance(route_id, str) or not route_id:
+            raise ValueError(f"output_routes[{index}].route_id is required")
+        if route_id in routes_by_id:
+            raise ValueError(f"duplicate frozen output route id: {route_id}")
+        routes_by_id[route_id] = (index, raw_route)
+
+    actions = plan["actions"]
+    connector_ids: dict[str, str] = {}
+    selected_route_ids: set[str] = set()
+    previous_route_index = -1
+    for action_index, action in enumerate(actions):
+        route_id = action["route_id"]
+        frozen_route = routes_by_id.get(route_id)
+        if frozen_route is None:
+            raise ValueError(
+                f"write action route does not match frozen route identity at index {action_index}"
+            )
+        if route_id in selected_route_ids:
+            raise ValueError(f"duplicate write action route id: {route_id}")
+        selected_route_ids.add(route_id)
+        route_index, raw_route = frozen_route
+        if route_index <= previous_route_index:
+            raise ValueError("write actions must preserve frozen output route order")
+        previous_route_index = route_index
         if action["tool_id"] != raw_route.get("selected_tool_id"):
-            raise ValueError(f"write action tool does not match frozen route at index {index}")
+            raise ValueError(
+                f"write action tool does not match frozen route at index {action_index}"
+            )
         if action["effect"] != raw_route.get("effect"):
-            raise ValueError(f"write action effect does not match frozen route at index {index}")
+            raise ValueError(
+                f"write action effect does not match frozen route at index {action_index}"
+            )
         connector_id = raw_route.get("connector_id")
         if not isinstance(connector_id, str) or not connector_id:
-            raise ValueError(f"output_routes[{index}].connector_id is required")
+            raise ValueError(f"output_routes[{route_index}].connector_id is required")
         action_id = action["action_id"]
         if not action_id:
-            raise ValueError(f"write action id is empty at index {index}")
+            raise ValueError(f"write action id is empty at index {action_index}")
         if action_id in connector_ids:
             raise ValueError(f"duplicate write action id: {action_id}")
         connector_ids[action_id] = connector_id

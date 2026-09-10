@@ -101,6 +101,7 @@ class _ComponentInferencePort:
         retrieval_followup_changes_query: bool = True,
         github_retrieval: bool = False,
         request_reconsideration: bool = False,
+        duplicate_found: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -108,6 +109,7 @@ class _ComponentInferencePort:
         self.retrieval_needs_more = retrieval_needs_more
         self.retrieval_followup_changes_query = retrieval_followup_changes_query
         self.request_reconsideration = request_reconsideration
+        self.duplicate_found = duplicate_found
         self.calls: list[str] = []
 
     def infer(
@@ -296,6 +298,20 @@ class _ComponentInferencePort:
             return {"relation_candidates": []}
         if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
             required = projection.get("task_duplicate_review_required") is True
+            if required and self.duplicate_found:
+                facts = cast(list[Mapping[str, object]], projection.get("work_facts", []))
+                source_state = cast(Mapping[str, object], projection.get("source_state", {}))
+                candidates = cast(
+                    list[Mapping[str, object]], source_state.get("task_review_candidates", [])
+                )
+                return {
+                    "relation_candidates": [],
+                    "requested_work_status": "SATISFIED",
+                    "requested_work_reason": "The observed Task already satisfies the request",
+                    "matched_fact_ids": [str(facts[0]["fact_id"])],
+                    "matched_candidate_refs": [str(candidates[0]["candidate_ref"])],
+                    "evidence_refs": list(cast(list[str], facts[0]["evidence_refs"])),
+                }
             return {
                 "relation_candidates": [],
                 "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
@@ -308,14 +324,21 @@ class _ComponentInferencePort:
             }
         if prompt_id == "work_analysis.assess_action_necessity":
             routes = cast(list[Mapping[str, object]], projection["output_routes"])
+            duplicate = cast(
+                Mapping[str, object], projection.get("duplicate_conflict_assessment", {})
+            )
             return {
                 "route_assessments": [
                     {
                         "route_id": str(route["route_id"]),
                         "status": "REQUIRED",
                         "reason": "THE_REQUESTED_EXTERNAL_EFFECT_IS_NOT_YET_SATISFIED",
-                        "evidence_refs": [],
-                        "candidate_refs": [],
+                        "evidence_refs": list(
+                            cast(list[str], duplicate.get("evidence_refs", []))
+                        ),
+                        "candidate_refs": list(
+                            cast(list[str], duplicate.get("matched_candidate_refs", []))
+                        ),
                     }
                     for route in routes
                 ]
@@ -1353,6 +1376,92 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
         "work_analysis.assess_information_gaps",
         "work_analysis.assess_operational_risks",
     ]
+
+
+def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> None:
+    state = _state(initial_target="work_analysis")
+    intent = _intent()
+    intent["requested_effect_hints"] = ["CREATE"]
+    intent["requested_resource_hints"] = ["TASK"]
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, _task_create_route_plan())
+    retrieval = _retrieval_result()
+    retrieval["coverage"] = "SUFFICIENT"
+    retrieval["evidence_refs"] = ["task-evidence"]
+    retrieval["source_statuses"] = [
+        {
+            "route_id": "input-task-route",
+            "resource_type": "TASK",
+            "status": "COMPLETE",
+            "evidence_refs": ["task-evidence"],
+            "observed_resource_count": 1,
+            "failure_kind": None,
+        }
+    ]
+    retrieval["task_review_candidates"] = [
+        {
+            "candidate_ref": "task:existing-1",
+            "route_id": "input-task-route",
+            "resource_id": "existing-1",
+            "task_list_id": "task-list-1",
+            "title": "task-0",
+            "status": "needsAction",
+            "due": None,
+            "source_version_ref": None,
+            "notes": None,
+            "notes_truncated": False,
+        }
+    ]
+    state["retrieval_result"] = cast(Any, retrieval)
+    evidence_store = RunScopedEvidenceStore()
+    evidence_store.put(
+        run_id=state["run_id"],
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "task-evidence",
+                "resource_handle": "task:existing-1",
+                "segment_id": "task-segment",
+                "kind": "excerpt",
+                "excerpt": "task-0 is an existing task",
+                "locator": {},
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            }
+        ],
+    )
+
+    def confirm_inline(
+        working: Mapping[str, object],
+    ) -> tuple[ConfirmationResponseProjectionV1, None]:
+        user_interrupt = cast(Mapping[str, object], working["user_interrupt"])
+        resume = interrupt(dict(user_interrupt))
+        return cast(ConfirmationResponseProjectionV1, resume["confirmation_response"]), None
+
+    work_analysis = WorkAnalysisSubgraph(
+        llm_runtime=_ComponentInferencePort(work_fact_count=1, duplicate_found=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=evidence_store,
+        confirm_inline=confirm_inline,
+    ).build()
+    wrapper = StateGraph(GraphState)
+    wrapper.add_node("work_analysis", work_analysis)
+    wrapper.add_edge(START, "work_analysis")
+    wrapper.add_edge("work_analysis", END)
+    graph = wrapper.compile(checkpointer=InMemorySaver())
+    config: RunnableConfig = {"configurable": {"thread_id": "duplicate-override-thread"}}
+
+    with provider_dispatch_execution_scope():
+        interrupted = graph.invoke(state, config)
+
+    payload = interrupted["__interrupt__"][0].value
+    assert payload["origin_target"] == "analysis.assess_operational_risks"
+    assert payload["policy_confirmation"]["confirmation_kind"] == "DUPLICATE_OVERRIDE"
+    assert graph.get_state(config).next == ("work_analysis",)
 
 
 def test_planning__compiled_normal_path__produces_answer() -> None:

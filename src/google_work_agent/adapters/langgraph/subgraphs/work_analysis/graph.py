@@ -568,22 +568,42 @@ class WorkAnalysisSubgraph:
             ),
         )
         if override_kind is not None:
+            question = (
+                "조회한 자료에서 중복된 업무 또는 일정 충돌이 확인됐습니다. "
+                "이를 감안하여 작업 제안을 계속 준비할까요? 실제 실행은 별도로 승인받습니다."
+            )
+            reason_code = f"{override_kind}_REQUIRED"
+            options = [
+                {"option_id": "APPROVED", "label": "계속 준비해 주세요"},
+                {"option_id": "DECLINED", "label": "진행하지 않을게요"},
+            ]
+            policy_confirmation: dict[str, object] = {
+                "confirmation_kind": override_kind,
+                "based_on": based_on,
+            }
+            if not isinstance(state.get("user_interrupt"), Mapping):
+                return cast(
+                    WorkAnalysisLocalState,
+                    {
+                        **self._confirmation_patch(
+                            state,
+                            origin_target="analysis.assess_operational_risks",
+                            question=question,
+                            reason_code=reason_code,
+                            options=options,
+                            policy_confirmation=policy_confirmation,
+                        ),
+                        "__analysis_noncomplete_disposition__": "RESUME_FINALIZE",
+                        "__work_analysis_retry_confirmation__": True,
+                    },
+                )
             return self._resolve_confirmation(
                 state,
                 origin_target="analysis.assess_operational_risks",
-                question=(
-                    "조회한 자료에서 중복된 업무 또는 일정 충돌이 확인됐습니다. "
-                    "이를 감안하여 작업 제안을 계속 준비할까요? 실제 실행은 별도로 승인받습니다."
-                ),
-                reason_code=f"{override_kind}_REQUIRED",
-                options=[
-                    {"option_id": "APPROVED", "label": "계속 준비해 주세요"},
-                    {"option_id": "DECLINED", "label": "진행하지 않을게요"},
-                ],
-                policy_confirmation={
-                    "confirmation_kind": override_kind,
-                    "based_on": based_on,
-                },
+                question=question,
+                reason_code=reason_code,
+                options=options,
+                policy_confirmation=policy_confirmation,
             )
 
         patch = assemble_work_analysis_node(
