@@ -326,7 +326,6 @@ def test_build_query__concept_alternatives__retain_stable_identity_when_reordere
     "kind",
     [
         "TEMPORAL_RANGE",
-        "PARTICIPANT",
         "KEYWORD",
         "CONCEPT",
         "CONTAINER_REF",
@@ -335,7 +334,9 @@ def test_build_query__concept_alternatives__retain_stable_identity_when_reordere
     ],
 )
 @pytest.mark.parametrize("remove", [False, True])
-def test_build_query__changed_search__protects_anchor_values(kind: str, remove: bool) -> None:
+def test_build_query__changed_search__accepts_planner_semantic_revision(
+    kind: str, remove: bool
+) -> None:
     anchors = {
         "TEMPORAL_RANGE": {
             "kind": "TEMPORAL_RANGE",
@@ -407,17 +408,12 @@ def test_build_query__changed_search__protects_anchor_values(kind: str, remove: 
             "remove_constraint_kinds": [kind] if remove else [],
         },
     }
-    with pytest.raises(RetrievalV2ValidationError, match="protected") as raised:
-        build_query(
-            plan,
-            prior_plans={"r": prior},
-            protected_constraints_by_route={
-                "r": [cast(SemanticRetrievalConstraintV1, anchors[kind])]
-            },
-            **kwargs,
-        )
-    assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
-    assert raised.value.affected_field_paths
+    result = build_query(plan, prior_plans={"r": prior}, **kwargs)[0]
+
+    if remove:
+        assert result["effective_constraints"] == []
+    else:
+        assert cast(SemanticRetrievalConstraintV1, changed) in result["effective_constraints"]
 
 
 def test_build_query__followup_hypothesis_change__preserves_explicit_constraint() -> None:
@@ -459,7 +455,6 @@ def test_build_query__followup_hypothesis_change__preserves_explicit_constraint(
         initial,
         frozen_routes=[route],
         route_policies=policies,
-        protected_constraints_by_route={"r": [explicit]},
     )[0]
     changed = deepcopy(initial)
     changed["route_queries"][0]["search_spec"] = {
@@ -477,7 +472,6 @@ def test_build_query__followup_hypothesis_change__preserves_explicit_constraint(
         frozen_routes=[route],
         route_policies=policies,
         prior_plans={"r": prior},
-        protected_constraints_by_route={"r": [explicit]},
     )[0]
 
     assert explicit in result["effective_constraints"]
@@ -501,10 +495,6 @@ def test_build_query__same_kind_hypothesis__preserves_all_literals_and_can_chang
         },
     )
     policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
-    protected = cast(
-        SemanticRetrievalConstraintV1,
-        {"kind": "KEYWORD", "terms": ["Cobalt", "남극"], "match_mode": "ALL"},
-    )
     initial = {
         "schema_version": 2,
         "route_queries": [
@@ -530,7 +520,6 @@ def test_build_query__same_kind_hypothesis__preserves_all_literals_and_can_chang
         initial,
         frozen_routes=[route],
         route_policies=policies,
-        protected_constraints_by_route={"r": [protected]},
     )[0]
     changed = deepcopy(initial)
     changed["route_queries"][0]["search_spec"] = {
@@ -552,7 +541,6 @@ def test_build_query__same_kind_hypothesis__preserves_all_literals_and_can_chang
         frozen_routes=[route],
         route_policies=policies,
         prior_plans={"r": prior},
-        protected_constraints_by_route={"r": [protected]},
     )[0]
 
     assert revised["effective_constraints"] == [
@@ -567,7 +555,7 @@ def test_build_query__same_kind_hypothesis__preserves_all_literals_and_can_chang
         {"kind": "KEYWORD", "terms": ["Cobalt", "남극"], "match_mode": "ANY"},
     ],
 )
-def test_build_query__same_kind_change_or_or_weakening__remains_rejected(
+def test_build_query__same_kind_change_or_match_mode_revision__is_planner_owned(
     changed_keyword: dict[str, object],
 ) -> None:
     route = cast(
@@ -582,7 +570,7 @@ def test_build_query__same_kind_change_or_or_weakening__remains_rejected(
         },
     )
     policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
-    protected = cast(
+    initial_keyword = cast(
         SemanticRetrievalConstraintV1,
         {"kind": "KEYWORD", "terms": ["Cobalt", "남극"], "match_mode": "ALL"},
     )
@@ -593,7 +581,7 @@ def test_build_query__same_kind_change_or_or_weakening__remains_rejected(
                 "route_id": "r",
                 "operation": "SEARCH",
                 "reason_codes": ["USER_REQUEST"],
-                "search_spec": {"mode": "INITIAL", "constraints": [protected]},
+                "search_spec": {"mode": "INITIAL", "constraints": [initial_keyword]},
                 "detail_candidate_ref": None,
             }
         ],
@@ -602,7 +590,6 @@ def test_build_query__same_kind_change_or_or_weakening__remains_rejected(
         initial,
         frozen_routes=[route],
         route_policies=policies,
-        protected_constraints_by_route={"r": [protected]},
     )[0]
     changed = deepcopy(initial)
     changed["route_queries"][0]["search_spec"] = {
@@ -613,18 +600,17 @@ def test_build_query__same_kind_change_or_or_weakening__remains_rejected(
         },
     }
 
-    with pytest.raises(RetrievalV2ValidationError) as raised:
-        build_query(
-            changed,
-            frozen_routes=[route],
-            route_policies=policies,
-            prior_plans={"r": prior},
-            protected_constraints_by_route={"r": [protected]},
-        )
-    assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
+    result = build_query(
+        changed,
+        frozen_routes=[route],
+        route_policies=policies,
+        prior_plans={"r": prior},
+    )[0]
+
+    assert result["effective_constraints"] == [changed_keyword]
 
 
-def test_build_query__protected_phrase__preserves_order_and_repetition() -> None:
+def test_build_query__changed_phrase__uses_planner_order_and_repetition() -> None:
     route = cast(
         InputToolRouteV1,
         {
@@ -637,7 +623,7 @@ def test_build_query__protected_phrase__preserves_order_and_repetition() -> None
         },
     )
     policies = {"r": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
-    protected = cast(
+    initial_phrase = cast(
         SemanticRetrievalConstraintV1,
         {
             "kind": "KEYWORD",
@@ -652,7 +638,7 @@ def test_build_query__protected_phrase__preserves_order_and_repetition() -> None
                 "route_id": "r",
                 "operation": "SEARCH",
                 "reason_codes": ["USER_REQUEST"],
-                "search_spec": {"mode": "INITIAL", "constraints": [protected]},
+                "search_spec": {"mode": "INITIAL", "constraints": [initial_phrase]},
                 "detail_candidate_ref": None,
             }
         ],
@@ -661,7 +647,6 @@ def test_build_query__protected_phrase__preserves_order_and_repetition() -> None
         initial,
         frozen_routes=[route],
         route_policies=policies,
-        protected_constraints_by_route={"r": [protected]},
     )[0]
     changed = deepcopy(initial)
     changed["route_queries"][0]["search_spec"] = {
@@ -678,15 +663,20 @@ def test_build_query__protected_phrase__preserves_order_and_repetition() -> None
         },
     }
 
-    with pytest.raises(RetrievalV2ValidationError) as raised:
-        build_query(
-            changed,
-            frozen_routes=[route],
-            route_policies=policies,
-            prior_plans={"r": prior},
-            protected_constraints_by_route={"r": [protected]},
-        )
-    assert raised.value.reason_code == "QUERY_PROTECTED_CONSTRAINT_CHANGED"
+    result = build_query(
+        changed,
+        frozen_routes=[route],
+        route_policies=policies,
+        prior_plans={"r": prior},
+    )[0]
+
+    assert result["effective_constraints"] == [
+        {
+            "kind": "KEYWORD",
+            "terms": ["Quartz", "납품", "Quartz"],
+            "match_mode": "PHRASE",
+        }
+    ]
 
 
 def test_build_query__same_manifestation__is_allowed_when_effective_query_changes() -> None:

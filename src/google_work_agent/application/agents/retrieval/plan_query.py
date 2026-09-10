@@ -23,7 +23,6 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     PLANNER_CONCEPT_MANIFESTATION_LIMIT,
-    ProtectedConstraintsByRouteV1,
     RetrievalConstraintKindV1,
     RetrievalOperationV2,
     RetrievalQueryPlanV2,
@@ -39,16 +38,10 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     PersonCandidateV1,
 )
-from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
-    has_explicit_gmail_subject,
-)
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
     plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
-from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
-    preserve_gmail_search_semantics,
-)
 from google_work_agent.application.agents.retrieval.resolve_gmail_planner_constraint_kinds import (
     resolve_gmail_planner_constraint_kinds,
 )
@@ -63,12 +56,6 @@ from google_work_agent.application.agents.retrieval.resolve_requested_gmail_conc
 )
 from google_work_agent.application.agents.retrieval.select_followup_routes import (
     select_followup_routes,
-)
-from google_work_agent.application.agents.retrieval.validate_gmail_search_role_separation import (
-    validate_gmail_search_role_separation,
-)
-from google_work_agent.application.agents.retrieval.validate_requested_gmail_concepts import (
-    validate_requested_gmail_concepts,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -455,7 +442,6 @@ def plan_query(
     prior_plans: Mapping[str, SourceFetchPlanV1] | None = None,
     prior_read_result_handles: Mapping[str, str] | None = None,
     read_result_summaries: Sequence[Mapping[str, object]] | None = None,
-    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None = None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2, bool]:
     """Plan provider-neutral retrieval intent against already-frozen input routes."""
     for route_id, policy in route_policies.items():
@@ -490,10 +476,7 @@ def plan_query(
             for route in frozen_routes
         }
     concepts_by_route = resolve_requested_gmail_concepts(prompt_input, frozen_routes)
-    planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = {
-        route_id: ({"CONCEPT"} if concepts_by_route.get(route_id) else kinds)
-        for route_id, kinds in supported_kinds.items()
-    }
+    planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = dict(supported_kinds)
     next_page_route_ids = _next_page_route_ids(prompt_input)
     route_operations = _route_operations(
         frozen_routes,
@@ -541,7 +524,6 @@ def plan_query(
         removable_constraint_kinds=_removable_constraint_kinds_by_route(
             prior_plans=prior_plans,
             route_policies=route_policies,
-            protected_constraints_by_route=protected_constraints_by_route,
         ),
         gmail_route_ids={
             route["route_id"]
@@ -589,7 +571,6 @@ def plan_query(
             person_candidates=person_candidates,
             selected_person_identities=selected_person_identities,
             read_result_summaries=read_result_summaries,
-            protected_constraints_by_route=protected_constraints_by_route,
         )
         return (
             validated_deterministic,
@@ -603,20 +584,10 @@ def plan_query(
         bounded_output_schema,
     )
     try:
-        validate_gmail_search_role_separation(
+        candidate = bind_required_container_constraints(
             result.structured_output,
-            prompt_input,
-            frozen_routes,
-        )
-        candidate = preserve_gmail_search_semantics(
-            bind_required_container_constraints(
-                result.structured_output,
-                route_policies=route_policies,
-                validated_container_refs=validated_container_refs,
-            ),
-            prompt_input=prompt_input,
-            frozen_routes=frozen_routes,
-            protected_constraints_by_route=protected_constraints_by_route or {},
+            route_policies=route_policies,
+            validated_container_refs=validated_container_refs,
         )
         validated = validate_retrieval_query_plan_v2(
             candidate,
@@ -626,7 +597,6 @@ def plan_query(
             validated_container_refs=validated_container_refs,
             detail_candidate_refs=detail_candidate_refs,
         )
-        validate_requested_gmail_concepts(validated, prompt_input, frozen_routes)
         validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
         build_query(
             validated_round,
@@ -640,7 +610,6 @@ def plan_query(
             person_candidates=person_candidates,
             selected_person_identities=selected_person_identities,
             read_result_summaries=read_result_summaries,
-            protected_constraints_by_route=protected_constraints_by_route,
         )
         return (
             validated_round,
@@ -671,7 +640,6 @@ def plan_query(
             prior_plans=prior_plans,
             prior_read_result_handles=prior_read_result_handles,
             read_result_summaries=read_result_summaries,
-            protected_constraints_by_route=protected_constraints_by_route,
             person_candidates=person_candidates,
             selected_person_identities=selected_person_identities,
         )
@@ -808,13 +776,11 @@ def _removable_constraint_kinds_by_route(
     *,
     prior_plans: Mapping[str, SourceFetchPlanV1] | None,
     route_policies: Mapping[str, RouteConstraintPolicy],
-    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None,
 ) -> dict[str, frozenset[RetrievalConstraintKindV1]]:
     return {
         route_id: frozenset(
             {item["kind"] for item in plan["effective_constraints"]}
             - route_policies[route_id].required_kinds
-            - {item["kind"] for item in (protected_constraints_by_route or {}).get(route_id, ())}
         )
         for route_id, plan in (prior_plans or {}).items()
         if route_id in route_policies
@@ -864,7 +830,6 @@ def _revise_plan_once(
     prior_plans: Mapping[str, SourceFetchPlanV1] | None,
     prior_read_result_handles: Mapping[str, str] | None,
     read_result_summaries: Sequence[Mapping[str, object]] | None,
-    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None,
     person_candidates: Sequence[PersonCandidateV1],
     selected_person_identities: Mapping[str, str] | None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2]:
@@ -898,20 +863,10 @@ def _revise_plan_once(
         },
         output_schema,
     )
-    validate_gmail_search_role_separation(
+    candidate = bind_required_container_constraints(
         revision.structured_output,
-        prompt_input,
-        frozen_routes,
-    )
-    candidate = preserve_gmail_search_semantics(
-        bind_required_container_constraints(
-            revision.structured_output,
-            route_policies=route_policies,
-            validated_container_refs=validated_container_refs,
-        ),
-        prompt_input=prompt_input,
-        frozen_routes=frozen_routes,
-        protected_constraints_by_route=protected_constraints_by_route or {},
+        route_policies=route_policies,
+        validated_container_refs=validated_container_refs,
     )
     validated = validate_retrieval_query_plan_v2(
         candidate,
@@ -921,7 +876,6 @@ def _revise_plan_once(
         validated_container_refs=validated_container_refs,
         detail_candidate_refs=detail_candidate_refs,
     )
-    validate_requested_gmail_concepts(validated, prompt_input, frozen_routes)
     validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
     build_query(
         validated_round,
@@ -935,7 +889,6 @@ def _revise_plan_once(
         person_candidates=person_candidates,
         selected_person_identities=selected_person_identities,
         read_result_summaries=read_result_summaries,
-        protected_constraints_by_route=protected_constraints_by_route,
     )
     return (
         validated_round,
@@ -1005,25 +958,21 @@ def has_retrieval_followup_path(
         validated_container_refs=None,
         detail_candidate_refs=detail_candidate_refs,
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
-    ) is not None or (
-        not has_explicit_gmail_subject(request_intent["constraints"])
-        and any(
-            attempt["operation_kind"] == "SEARCH"
-            and attempt["route_id"] in eligible_route_ids
-            and attempt.get("stop_reason") == "COMPLETE"
-            and not any(
-                other["route_id"] == attempt["route_id"]
-                and other.get("stop_reason") not in {"COMPLETE", None}
-                for other in query_attempts
-            )
-            and sum(
-                other["operation_kind"] == "SEARCH" and other["route_id"] == attempt["route_id"]
-                for other in query_attempts
-            )
-            < 3
-            and any(item["kind"] == "CONCEPT" for item in attempt["normalized_intent_constraints"])
-            for attempt in query_attempts
+    ) is not None or any(
+        attempt["operation_kind"] == "SEARCH"
+        and attempt["route_id"] in eligible_route_ids
+        and attempt.get("stop_reason") == "COMPLETE"
+        and not any(
+            other["route_id"] == attempt["route_id"]
+            and other.get("stop_reason") not in {"COMPLETE", None}
+            for other in query_attempts
         )
+        and sum(
+            other["operation_kind"] == "SEARCH" and other["route_id"] == attempt["route_id"]
+            for other in query_attempts
+        )
+        < 3
+        for attempt in query_attempts
     )
 
 

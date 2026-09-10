@@ -409,7 +409,6 @@ def assess_sufficiency(
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     attempted_detail_candidate_refs: Collection[str] = (),
     query_attempts: Sequence[QueryAttemptV1] = (),
-    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
     deterministic = deterministic_sufficiency(
@@ -442,10 +441,6 @@ def assess_sufficiency(
         sufficiency_output_schema(tool_route_plan),
     )
     validated = validate_sufficiency_result_v2(result.structured_output)
-    validated = _normalize_model_resolution_ownership(
-        validated,
-        tool_route_plan=tool_route_plan,
-    )
     validated = _fail_closed_on_empty_required_acquisition(
         validated,
         tool_route_plan=tool_route_plan,
@@ -460,31 +455,6 @@ def assess_sufficiency(
         detail_candidate_refs=acquisition_result["resource_handles"],
         attempted_detail_candidate_refs=attempted_detail_candidate_refs,
     )
-    if tool_route_plan is not None and set(request_intent["requested_effect_hints"]) == {"READ"}:
-        unread_routes = {
-            summary.get("route_id")
-            for summary in read_result_summaries
-            if summary.get("has_next_page") is True and summary.get("exhausted") is not True
-        }
-        for route in tool_route_plan["input_plan"]["input_routes"]:
-            if (
-                route["route_id"] not in unread_routes
-                or "RESOURCE_SELECTED" in route["reason_codes"]
-            ):
-                continue
-            validated["issues"].append(
-                {
-                    "slot": "source_page_coverage",
-                    "route_id": route["route_id"],
-                    "issue_type": "MISSING",
-                    "required": True,
-                    "safety_critical": False,
-                    "resolution_source": "GOOGLE"
-                    if route["connector_id"] == "google_workspace"
-                    else "CONNECTOR",
-                    "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
-                }
-            )
     validated = require_read_evidence_support(
         validated,
         request_intent=request_intent,
@@ -551,33 +521,6 @@ def _guard_event_year(
             ],
         }
     return result
-
-
-def _normalize_model_resolution_ownership(
-    result: SufficiencyResultV2,
-    *,
-    tool_route_plan: ToolRoutePlanV2 | None,
-) -> SufficiencyResultV2:
-    """Keep genuine candidate choices while returning missing facts to their source owner."""
-
-    routes = () if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
-    normalized: list[SufficiencyIssueV2] = []
-    for original in result["issues"]:
-        issue = original.copy()
-        if issue["resolution_source"] == "USER" and issue["issue_type"] == "MISSING":
-            route_id = issue.get("route_id")
-            route = next((item for item in routes if item["route_id"] == route_id), None)
-            if route is None and len(routes) == 1:
-                route = routes[0]
-                issue["route_id"] = route["route_id"]
-            issue["resolution_source"] = (
-                "GOOGLE"
-                if route is not None and route["connector_id"] == "google_workspace"
-                else "CONNECTOR"
-            )
-        normalized.append(issue)
-    return {"schema_version": 2, "status": result["status"], "issues": normalized}
-
 
 def _fail_closed_on_empty_required_acquisition(
     result: SufficiencyResultV2,

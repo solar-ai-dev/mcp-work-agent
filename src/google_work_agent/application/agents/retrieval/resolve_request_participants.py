@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
-    ParticipantMatchV1,
+    RetrievalV2ValidationError,
+    validate_participant_identity,
 )
-from google_work_agent.application.agents.retrieval.derive_gmail_search_constraints import (
-    derive_gmail_search_constraints,
+
+_PARTICIPANT_FIELDS = frozenset(
+    {
+        "sender",
+        "sender_email",
+        "from",
+        "recipient",
+        "recipient_email",
+        "to",
+        "search_criteria_sender",
+        "search_criteria_recipient",
+        "person",
+    }
 )
 
 
@@ -20,16 +31,20 @@ def resolve_request_participants(
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping):
         return []
-    constraints = derive_gmail_search_constraints(
-        intent.get("constraints"),
-        now_ms=None,
-        timezone=None,
-    )
-    return sorted(
-        {
-            str(person["identity"])
-            for constraint in constraints
-            if constraint["kind"] == "PARTICIPANT"
-            for person in cast(list[ParticipantMatchV1], constraint["participants"])
-        }
-    )
+    constraints = intent.get("constraints")
+    if not isinstance(constraints, list):
+        return []
+    identities: set[str] = set()
+    for constraint in constraints:
+        if not isinstance(constraint, Mapping):
+            continue
+        if str(constraint.get("field", "")).strip().lower() not in _PARTICIPANT_FIELDS:
+            continue
+        value = constraint.get("value")
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            try:
+                identities.add(validate_participant_identity(item))
+            except RetrievalV2ValidationError:
+                continue
+    return sorted(identities)

@@ -167,7 +167,7 @@ def test_record_activity__query_rejection__preserves_specific_safe_cause() -> No
             {
                 "__context_agent_local__": {
                     "failure_record": {
-                        "reason_code": "QUERY_PROTECTED_CONSTRAINT_CHANGED",
+                        "reason_code": "QUERY_USER_CONSTRAINT_MISSING",
                         "diagnostic": "CHANGED SEARCH changes protected STATUS_SCOPE anchor",
                     }
                 }
@@ -178,7 +178,7 @@ def test_record_activity__query_rejection__preserves_specific_safe_cause() -> No
 
     update = emit.call_args.args[0].attributes["detail_updates"][0]
     assert update["label"] == "검색 변경 거절 원인"
-    assert "QUERY_PROTECTED_CONSTRAINT_CHANGED" in update["value"]
+    assert "QUERY_USER_CONSTRAINT_MISSING" in update["value"]
     assert "STATUS_SCOPE" in update["value"]
 
 

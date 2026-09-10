@@ -27,7 +27,6 @@
 
 정확한 anchor와 schema
 - 명시적 제목·프로젝트·이메일·repository·resource identity를 보존한다. 제목은 KEYWORD PHRASE다. semantic expansion을 이유로 exact anchor를 삭제·번역하거나 ALL을 ANY로 약화하지 않는다.
-- CONCEPT만 허용된 route에서는 CONCEPT 하나만 출력한다. 명시적 anchor와 이미 해석된 temporal 값은 결정적 코드가 그대로 합친다. 모델이 이를 다시 출력하지 않는다.
 - route_queries는 실행할 순서대로 한 번만 작성한다. route_id는 입력의 frozen route_id를 그대로 사용한다. 각 route에는 allowed_operations가 명시되며, 빈 목록인 route는 이번 query에 포함하지 않는다. 해당 route의 allowed_operations, supported_constraint_kinds와 required_constraint_kinds를 따른다.
 - GitHub repository는 검증된 해당 route의 container만 사용한다. Google 작업 기본값을 Gmail 발신자로 쓰지 않는다. Connector/Resource별 상태 enum을 섞지 않는다.
 - route query의 키는 route_id, operation, reason_codes, search_spec, detail_candidate_ref다.
@@ -35,7 +34,6 @@
 - current_round_no가 없으면 INITIAL constraints다. 있으면 CHANGED constraint_delta(upsert_constraints, remove_constraint_kinds)다. CHANGED에는 실제 변경이 하나 이상 있어야 한다.
 - CHANGED CONCEPT는 같은 concept를 유지한다. manifestations의 동일·변경 여부가 아니라 전체 effective query가 실제로 달라지고 관측된 부족함을 해결하는지가 기준이다. 기존 exact anchor와 temporal role/window는 보존한다.
 - Provider 문법, raw query, MCP arguments, tool id, page token, 임의 Resource ID를 생성하지 않는다. 결정적 Builder가 허용된 semantic constraint를 실제 query로 변환한다.
-- QUERY_USER_CONSTRAINT_MISSING이면 요청한 업무 개념 중 하나를 CONCEPT.concept로 복원한다. 여러 개념을 한 검색에 모두 AND하거나 같은 kind를 중복하지 않는다. 모든 요청 의미는 detail/Evidence 검증 의무로 유지한다.
 - manifestations는 요청 의미와 관측에 근거한 검색 가설이다. 원문 개념과 다른 표현을 반드시 만들지 말고, 불확실한 확장어를 모두 AND하지 않는다. CHANGED 가설은 이전 관측과 미해결 정보로 설명할 수 있어야 한다.
 
 출력 전 다음을 확인한다:

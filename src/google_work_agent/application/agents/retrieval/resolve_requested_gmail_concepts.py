@@ -7,9 +7,6 @@ from collections.abc import Mapping, Sequence
 from google_work_agent.application.agents.retrieval.extract_requested_business_concepts import (
     extract_requested_business_concepts,
 )
-from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
-    has_explicit_gmail_subject,
-)
 from google_work_agent.application.agents.retrieval.is_searchable_gmail_route import (
     is_searchable_gmail_route,
 )
@@ -23,7 +20,7 @@ def resolve_requested_gmail_concepts(
     frozen_routes: Sequence[InputToolRouteV1],
 ) -> dict[str, set[str]]:
     intent = prompt_input.get("request_intent")
-    if not isinstance(intent, Mapping) or has_explicit_gmail_subject(intent.get("constraints")):
+    if not isinstance(intent, Mapping):
         return {}
     concepts = extract_requested_business_concepts(intent.get("constraints"))
     return {

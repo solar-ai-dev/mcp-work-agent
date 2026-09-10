@@ -30,3 +30,30 @@ def test_resolve_requested_gmail_concepts__searchable_route__binds_concept() -> 
     }
 
     assert resolve_requested_gmail_concepts(prompt_input, [route]) == {"gmail": {"출시"}}
+
+
+def test_resolve_requested_gmail_concepts__exact_subject__does_not_hide_concept_option() -> None:
+    route: InputToolRouteV1 = {
+        "route_id": "gmail",
+        "resource_type": "GMAIL_THREAD",
+        "connector_id": "google_workspace",
+        "allowed_read_tool_ids": ["gmail_search_threads"],
+        "required": True,
+        "reason_codes": ["USER_REQUEST"],
+    }
+    prompt_input = {
+        "request_intent": {
+            "constraints": [
+                {"kind": "RESOURCE", "field": "subject", "value": ["Nimbus 출시"]},
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "business_concepts",
+                    "value": ["출시 일정"],
+                },
+            ]
+        }
+    }
+
+    assert resolve_requested_gmail_concepts(prompt_input, [route]) == {
+        "gmail": {"출시 일정"}
+    }

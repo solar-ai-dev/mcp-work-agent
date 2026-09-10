@@ -457,7 +457,6 @@ def test_followup_query__real_nodes_and_projection__dispatches_changed_second_re
         initial_plan,
         frozen_routes=[GOOGLE],
         route_policies=policy,
-        protected_constraints_by_route={"gmail": [protected]},
     )[0]
     registry = load_signed_tool_registry()
     binding = registry.bind_required("google_workspace", "gmail_search_threads", "READ")
@@ -559,7 +558,6 @@ def test_followup_query__real_nodes_and_projection__dispatches_changed_second_re
                     "route_policies": policy,
                     "retry_budget": budget,
                     "prior_plans": {"gmail": prior},
-                    "protected_constraints_by_route": {"gmail": [protected]},
                     "read_result_summaries": [],
                 }
             }
@@ -573,7 +571,6 @@ def test_followup_query__real_nodes_and_projection__dispatches_changed_second_re
                     "frozen_routes": [GOOGLE],
                     "route_policies": policy,
                     "prior_plans": {"gmail": prior},
-                    "protected_constraints_by_route": {"gmail": [protected]},
                 }
             }
         }

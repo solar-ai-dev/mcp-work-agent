@@ -176,6 +176,7 @@ def test_existing_gmail_thread_reply__detailed_identity__is_sufficient_without_l
             }
         ],
         retry_budget=_run_budget(used=0),
+        attempted_detail_candidate_refs=["gmail_thread:thread-kim"],
         query_attempts=[
             cast(
                 QueryAttemptV1,
@@ -218,19 +219,16 @@ def test_existing_gmail_thread_reply__detailed_identity__is_sufficient_without_l
 
 
 @pytest.mark.parametrize(
-    "has_next,exhausted,used,expected",
+    ("has_next", "exhausted"),
     [
-        (True, False, 0, "NEEDS_MORE_DATA"),
-        (True, False, 2, "PARTIAL"),
-        (True, True, 0, "SUFFICIENT"),
-        (False, False, 0, "SUFFICIENT"),
+        (True, False),
+        (True, True),
+        (False, False),
     ],
 )
-def test_sufficiency_node__unread_page__requires_bounded_coverage(
+def test_sufficiency_node__page_inventory__does_not_force_more_data(
     has_next: bool,
     exhausted: bool,
-    used: int,
-    expected: str,
 ) -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
     intent = _intent()
@@ -247,13 +245,20 @@ def test_sufficiency_node__unread_page__requires_bounded_coverage(
                     "selected_segment_ids": [],
                     "excluded_segment_ids": [],
                 },
+                "read_result_summaries": [
+                    {
+                        "route_id": "route-gmail",
+                        "has_next_page": has_next,
+                        "exhausted": exhausted,
+                    }
+                ],
             },
             llm_runtime=runtime,
             prompt_ref=SUFFICIENCY_PROMPT_REF,
             requested_mode="LOCAL_GPU",
             tool_route_plan=_tool_route_plan(),
             acquisition_result=_acquisition_result(),
-            retry_budget=_run_budget(used=used),
+            retry_budget=_run_budget(used=0),
             evidence_drafts=[
                 {
                     "schema_version": 1,
@@ -266,18 +271,9 @@ def test_sufficiency_node__unread_page__requires_bounded_coverage(
                     "reason_codes": ["SUPPORTS"],
                 }
             ],
-            read_result_summaries=[
-                {
-                    "route_id": "route-gmail",
-                    "has_next_page": has_next,
-                    "exhausted": exhausted,
-                }
-            ],
         )["sufficiency"],
     )
-    assert result["status"] == expected
-    if has_next and not exhausted:
-        assert result["issues"][0]["reason_codes"] == ["UNREAD_PAGE_AVAILABLE"]
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
 
 
 def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard() -> None:
@@ -938,12 +934,8 @@ def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() 
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
 
 
-def test_assess_sufficiency__read_only_connector_gap__cannot_become_user_confirmation() -> None:
+def test_assess_sufficiency__user_owned_missing_choice__is_not_reassigned() -> None:
     runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("NEEDS_CONFIRMATION"))]))
-    acquisition = _acquisition_result()
-    acquisition["resource_handles"] = []
-    acquisition["source_summaries"][0]["resource_count"] = 0
-    acquisition["source_summaries"][0]["resource_handles"] = []
 
     result = assess_sufficiency(
         llm_runtime=runtime,
@@ -951,13 +943,24 @@ def test_assess_sufficiency__read_only_connector_gap__cannot_become_user_confirm
         requested_mode="LOCAL_GPU",
         request_intent=_intent(),
         tool_route_plan=_tool_route_plan(),
-        acquisition_result=acquisition,
-        evidence_drafts=[],
+        acquisition_result=_acquisition_result(),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "선택 가능한 자료",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
         retry_budget=_run_budget(used=0),
     )
 
-    assert result["status"] == "NEEDS_MORE_DATA"
-    assert {issue["resolution_source"] for issue in result["issues"]} == {"GOOGLE"}
+    assert result["status"] == "NEEDS_CONFIRMATION"
+    assert any(issue["resolution_source"] == "USER" for issue in result["issues"])
 
 
 def test_assess_sufficiency__new_candidate_conflict__remains_a_user_choice() -> None:

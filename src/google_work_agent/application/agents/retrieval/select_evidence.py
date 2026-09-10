@@ -28,8 +28,6 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
     project_person_candidates,
 )
 from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
-    EventDateCandidateV1,
-    has_only_reporting_period_dates,
     match_temporal_evidence,
     project_event_date_candidates,
 )
@@ -102,7 +100,7 @@ def select_evidence(
         len(retained["selected_segment_ids"]) if retained is not None else 0
     )
     if retained is not None and (remaining <= 0 or not reassessment):
-        return _guard_temporal_roles(retained, segments, query_attempts), retry_budget
+        return retained, retry_budget
     if retained is None:
         retained = None
         reassessment = rag_candidates
@@ -122,7 +120,7 @@ def select_evidence(
         evidence_reassessment_issues=evidence_reassessment_issues,
     )
     if retained is None:
-        return _guard_temporal_roles(selected, segments, query_attempts), revised_budget
+        return selected, revised_budget
     merged: EvidenceSelectionResultV2 = {
         "schema_version": 2,
         "evidence_drafts": retained["evidence_drafts"] + selected["evidence_drafts"],
@@ -131,81 +129,7 @@ def select_evidence(
             retained["excluded_segment_ids"] + selected["excluded_segment_ids"]
         ),
     }
-    return _guard_temporal_roles(merged, segments, query_attempts), revised_budget
-
-
-def _guard_temporal_roles(
-    selection: EvidenceSelectionResultV2,
-    segments: Sequence[SourceSegment],
-    attempts: Sequence[QueryAttemptV1],
-) -> EvidenceSelectionResultV2:
-    if not any(
-        item["axis"] == "EVENT_TIME" for item in project_query_temporal_constraints(attempts)
-    ):
-        return selection
-    reporting_ids = {
-        item.segment_id
-        for item in segments
-        if has_only_reporting_period_dates(item.text)
-        and any(
-            constraint["axis"] == "EVENT_TIME"
-            for constraint in project_query_temporal_constraints(
-                [
-                    attempt
-                    for attempt in attempts
-                    if attempt["resource_type"].lower() == item.resource_type.lower()
-                ]
-            )
-        )
-    }
-    outside_ids: set[str] = set()
-    dates_by_resource: dict[str, list[EventDateCandidateV1]] = {}
-    for segment in segments:
-        dates = [
-            date
-            for constraint in project_query_temporal_constraints(
-                [
-                    attempt
-                    for attempt in attempts
-                    if attempt["resource_type"].lower() == segment.resource_type.lower()
-                ]
-            )
-            if constraint["axis"] == "EVENT_TIME"
-            for date in project_event_date_candidates(segment.text, constraint)
-        ]
-        dates_by_resource.setdefault(segment.resource_handle, []).extend(dates)
-        if dates and all(
-            item["year_explicit"] and not item["date_intersects_window"] for item in dates
-        ):
-            outside_ids.add(segment.segment_id)
-    outside_resources = {
-        resource_handle
-        for resource_handle, dates in dates_by_resource.items()
-        if dates
-        and all(item["year_explicit"] and not item["date_intersects_window"] for item in dates)
-    }
-    outside_ids.update(
-        segment.segment_id for segment in segments if segment.resource_handle in outside_resources
-    )
-    return {
-        **selection,
-        "evidence_drafts": [
-            {**item, "role": "CONTEXT", "relevance_reason": "보고·집계 기간이며 확정 행사일이 아님"}
-            if item["segment_id"] in reporting_ids
-            else item
-            for item in selection["evidence_drafts"]
-            if item["segment_id"] not in outside_ids
-        ],
-        "selected_segment_ids": [
-            value for value in selection["selected_segment_ids"] if value not in outside_ids
-        ],
-        "excluded_segment_ids": _stable_unique(
-            [
-                *selection["excluded_segment_ids"],
-                *(value for value in selection["selected_segment_ids"] if value in outside_ids),
-            ]
-        ),
-    }
+    return merged, revised_budget
 
 
 def _select_ranked_evidence(

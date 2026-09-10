@@ -108,7 +108,6 @@ from google_work_agent.application.agents.retrieval.build_query import (
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
-    ProtectedConstraintsByRouteV1,
     RetrievalConstraintKindV1,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
@@ -123,9 +122,6 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     RetrievalResultV1,
     SufficiencyIssueV2,
     SufficiencyResultV2,
-)
-from google_work_agent.application.agents.retrieval.derive_protected_constraints_by_route import (
-    derive_protected_constraints_by_route,
 )
 from google_work_agent.application.agents.retrieval.execute_read import RetrievalReadBindingError
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
@@ -937,7 +933,6 @@ class RetrievalSubgraph:
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
             confirmation_response=confirmation_response,
             attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
-            read_result_summaries=self._bounded_read_result_summaries(state),
         )
         sufficiency_result = cast(SufficiencyResultV2, patch["sufficiency"])
         llm_provider_result: dict[str, object] = {"structured_output_attempts": 1}
@@ -1161,13 +1156,6 @@ class RetrievalSubgraph:
         prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})
         prior_read_result_handles = self._prior_read_result_handles(state, prior_canonical)
         read_result_summaries = self._bounded_read_result_summaries(state)
-        protected_constraints_by_route = self._protected_constraints_by_route(
-            state,
-            frozen_routes=frozen_routes,
-            route_policies=route_policies,
-            validated_resource_refs=validated_resource_refs,
-            validated_container_refs=validated_container_refs,
-        )
         prompt_input = (
             initial_retrieval_planner_input(
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
@@ -1229,7 +1217,6 @@ class RetrievalSubgraph:
                                 "prior_plans": prior_canonical,
                                 "prior_read_result_handles": prior_read_result_handles,
                                 "read_result_summaries": read_result_summaries,
-                                "protected_constraints_by_route": protected_constraints_by_route,
                             }
                         }
                     },
@@ -1271,31 +1258,6 @@ class RetrievalSubgraph:
             for handle, value in bindings.items()
             if value["route_id"] in prior_canonical
         }
-
-    def _protected_constraints_by_route(
-        self,
-        state: ContextRetrievalLocalState,
-        *,
-        frozen_routes: Sequence[InputToolRouteV1],
-        route_policies: Mapping[str, RouteConstraintPolicy],
-        validated_resource_refs: Mapping[str, Sequence[str]],
-        validated_container_refs: Mapping[str, Sequence[str]],
-    ) -> ProtectedConstraintsByRouteV1:
-        return derive_protected_constraints_by_route(
-            request_intent=cast(
-                Mapping[str, object],
-                _require_state_value(state.get("request_intent"), "request intent"),
-            ),
-            frozen_routes=frozen_routes,
-            required_constraint_kinds={
-                route_id: tuple(policy.required_kinds)
-                for route_id, policy in route_policies.items()
-            },
-            validated_resource_refs=validated_resource_refs,
-            validated_container_refs=validated_container_refs,
-            now_ms=state["retry_budget"]["started_at_ms"],
-            timezone=self._timezone_provider(),
-        )
 
     def _execute_read_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         round_no = (
@@ -1587,13 +1549,6 @@ class RetrievalSubgraph:
         query_plan = _require_state_value(state.get("query_plan"), "query plan")
         detail_candidate_refs = state.get(CONTEXT_SEGMENT_HANDLES_KEY, [])
         prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})
-        protected_constraints_by_route = self._protected_constraints_by_route(
-            state,
-            frozen_routes=frozen_routes,
-            route_policies=route_policies,
-            validated_resource_refs=validated_resource_refs,
-            validated_container_refs=validated_container_refs,
-        )
         if not prior_canonical:
             patch = build_query_node(
                 cast(
@@ -1607,7 +1562,6 @@ class RetrievalSubgraph:
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,
                                 "detail_candidate_refs": detail_candidate_refs,
-                                "protected_constraints_by_route": protected_constraints_by_route,
                             }
                         }
                     },
@@ -1639,7 +1593,6 @@ class RetrievalSubgraph:
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,
                                 "detail_candidate_refs": detail_candidate_refs,
-                                "protected_constraints_by_route": protected_constraints_by_route,
                             }
                         }
                     },

@@ -19,12 +19,6 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
     bind_retrieval_query_plan_output_schema,
 )
-from google_work_agent.application.agents.retrieval.match_person_mention import (
-    person_discovery_term,
-)
-from google_work_agent.application.agents.retrieval.preserve_gmail_search_semantics import (
-    preserve_gmail_search_semantics,
-)
 from google_work_agent.application.agents.retrieval.resolve_request_participants import (
     resolve_request_participants,
 )
@@ -95,17 +89,18 @@ def test_participant_validation__unresolved_or_unsafe__rejects_schema_builder_an
 
 
 @pytest.mark.parametrize(
-    ("mention", "discovery_query"),
+    ("mention", "terms", "discovery_query"),
     [
-        ("김대리", '"대리" "박람회"'),
-        ("이과장", '"과장" "박람회"'),
-        ("박 팀장", '"박람회" "팀장"'),
-        ("정수진 부장", '"박람회" "정수진"'),
-        ("Alex Morgan", '"Alex Morgan" "박람회"'),
+        ("김대리", ["대리", "박람회"], '"대리" "박람회"'),
+        ("이과장", ["과장", "박람회"], '"과장" "박람회"'),
+        ("박 팀장", ["박람회", "팀장"], '"박람회" "팀장"'),
+        ("정수진 부장", ["박람회", "정수진"], '"박람회" "정수진"'),
+        ("Alex Morgan", ["Alex Morgan", "박람회"], '"Alex Morgan" "박람회"'),
     ],
 )
-def test_person_discovery__unresolved_mention__does_not_invent_email(
+def test_person_discovery__planner_keyword__does_not_invent_email(
     mention: str,
+    terms: list[str],
     discovery_query: str,
 ) -> None:
     prompt_input = {
@@ -116,21 +111,24 @@ def test_person_discovery__unresolved_mention__does_not_invent_email(
             ]
         }
     }
-    repaired = preserve_gmail_search_semantics(
-        _plan("invented@example.com"),
-        prompt_input=prompt_input,
-        frozen_routes=[ROUTE],
-        protected_constraints_by_route={
-            "g": [
-                {
-                    "kind": "KEYWORD",
-                    "terms": [person_discovery_term(mention), "박람회"],
-                    "match_mode": "ALL",
-                }
-            ]
-        },
-    )
-    fetch = build_query(repaired, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
+    planner_output = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "g",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "detail_candidate_ref": None,
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "KEYWORD", "terms": terms, "match_mode": "ALL"}
+                    ],
+                },
+            }
+        ],
+    }
+    fetch = build_query(planner_output, frozen_routes=[ROUTE], route_policies=POLICIES)[0]
     _, arguments = execute_read_projection.project_connector_call(fetch, route=ROUTE, page_size=20)
     assert arguments["query"] == discovery_query
     assert not any(item["kind"] == "PARTICIPANT" for item in fetch["effective_constraints"])

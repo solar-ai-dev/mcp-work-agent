@@ -47,7 +47,7 @@ _EXPLICIT_GMAIL_DRAFT_ID_PATTERN = re.compile(
     r"(?P<draft_id>[A-Za-z0-9_-]{3,256})"
 )
 _SOURCE_OWNED_FIELDS = frozenset(
-    {"search_terms", "business_concepts", "person", "sender", "recipient", "subject"}
+    {"search_terms", "person", "sender", "recipient", "subject"}
 )
 _GMAIL_SOURCE_RESOURCE_HINTS = frozenset(
     {"GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
@@ -386,8 +386,8 @@ def _matching_source_span(value: str, request_text: str) -> str | None:
     if not compact:
         return None
     pattern = re.compile(r"\s*".join(re.escape(character) for character in compact), re.I)
-    matches = list(pattern.finditer(request_text))
-    return matches[0].group(0) if len(matches) == 1 else None
+    match = pattern.search(request_text)
+    return match.group(0) if match is not None else None
 
 
 __all__ = ["preserve_explicit_search_anchors"]

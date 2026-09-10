@@ -41,7 +41,6 @@ def format_blocked_terminal_message(
         "QUERY_OPERATION_UNAVAILABLE",
         "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
         "QUERY_USER_CONSTRAINT_MISSING",
-        "QUERY_PROTECTED_CONSTRAINT_CHANGED",
     }:
         return (
             "요청을 처리하는 중 내부 검증에 실패해 결과나 변경안을 준비하지 못했습니다. "

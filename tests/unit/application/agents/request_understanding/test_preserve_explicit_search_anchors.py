@@ -96,14 +96,14 @@ def test_inferred_anchor__with_source_spacing__restores_exact_text() -> None:
     assert fields["person"] == ["김대리"]
 
 
-def test_invented_value__without_source_support__is_not_promoted() -> None:
+def test_business_concept__paraphrase__is_not_removed_by_substring_guard() -> None:
     candidate = _candidate()
     candidate["constraints"].extend(
         [
             {
                 "kind": "USER_REQUIREMENT",
                 "field": "business_concepts",
-                "value": ["이정"],
+                "value": ["현장 교육"],
             },
             {
                 "kind": "USER_REQUIREMENT",
@@ -119,10 +119,25 @@ def test_invented_value__without_source_support__is_not_promoted() -> None:
         entry_mode="AGENT_SEARCH",
     )
 
-    assert not any(
-        item["field"] in {"business_concepts", "search_terms"}
-        for item in result["constraints"]
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["business_concepts"] == ["현장 교육"]
+    assert "search_terms" not in fields
+
+
+def test_repeated_explicit_anchor__remains_source_bound() -> None:
+    candidate = _candidate()
+    candidate["constraints"].append(
+        {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["Nimbus"]}
     )
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text="Nimbus 출시와 Nimbus 일정 변경을 메일에서 확인해줘.",
+        entry_mode="AGENT_SEARCH",
+    )
+
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["search_terms"] == ["Nimbus"]
 
 
 def test_explicit_relative_period__without_year__preserves_source_text() -> None:

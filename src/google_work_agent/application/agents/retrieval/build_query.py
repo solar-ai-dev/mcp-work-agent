@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -12,7 +11,6 @@ from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
-    ProtectedConstraintsByRouteV1,
     RetrievalConstraintKindV1,
     RetrievalV2ValidationError,
     RouteQueryIntentV2,
@@ -52,12 +50,10 @@ def build_query(
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
     read_result_summaries: Sequence[Mapping[str, object]] | None = None,
-    protected_constraints_by_route: ProtectedConstraintsByRouteV1 | None = None,
 ) -> list[SourceFetchPlanV1]:
     """Validate/merge semantic constraints and materialize deterministic read plans."""
     prior_plans = prior_plans or {}
     prior_read_result_handles = prior_read_result_handles or {}
-    protected_constraints_by_route = protected_constraints_by_route or {}
     route_by_id = {route["route_id"]: route for route in frozen_routes}
     _validate_policies(route_by_id, route_policies)
     bound_plan = bind_required_container_constraints(
@@ -94,7 +90,6 @@ def build_query(
             ),
             selected_person_identities=selected_person_identities or {},
             read_result_summaries=read_result_summaries,
-            protected_constraints=protected_constraints_by_route.get(route_id, ()),
         )
         for route_id in (query["route_id"] for query in validated["route_queries"])
     ]
@@ -155,7 +150,6 @@ def _build_one(
     person_candidates: Sequence[PersonCandidateV1],
     selected_person_identities: Mapping[str, str],
     read_result_summaries: Sequence[Mapping[str, object]] | None,
-    protected_constraints: Sequence[SemanticRetrievalConstraintV1],
 ) -> SourceFetchPlanV1:
     operation = query["operation"]
     if operation in {"SEARCH", "FREEBUSY"}:
@@ -163,18 +157,12 @@ def _build_one(
             query,
             policy=policy,
             prior_plan=prior_plan,
-            protected_constraints=protected_constraints,
         )
     effective = (
         _effective_constraints(query, policy=policy, prior_plan=prior_plan)
         if operation in {"SEARCH", "FREEBUSY"}
         else ([] if prior_plan is None else prior_plan["effective_constraints"])
     )
-    if operation in {"SEARCH", "FREEBUSY"}:
-        _validate_protected_constraint_continuity(
-            protected_constraints,
-            effective,
-        )
     if prior_plan is not None and operation in {"SEARCH", "FREEBUSY"}:
         _validate_person_promotion(
             prior_plan["effective_constraints"],
@@ -256,7 +244,6 @@ def _validate_changed_removals(
     *,
     policy: RouteConstraintPolicy,
     prior_plan: SourceFetchPlanV1 | None,
-    protected_constraints: Sequence[SemanticRetrievalConstraintV1],
 ) -> None:
     spec = query["search_spec"]
     if spec is None or spec["mode"] != "CHANGED":
@@ -264,17 +251,8 @@ def _validate_changed_removals(
     if prior_plan is None:
         raise RetrievalV2ValidationError("CHANGED SEARCH requires a prior query")
     removals = set(spec["constraint_delta"]["remove_constraint_kinds"])
-    protected_kinds = {item["kind"] for item in protected_constraints}
-    if removals.intersection(protected_kinds):
-        raise RetrievalV2ValidationError(
-            "CHANGED SEARCH removes a protected constraint",
-            reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
-            affected_field_paths=(
-                "$.route_queries[].search_spec.constraint_delta.remove_constraint_kinds",
-            ),
-        )
     prior_kinds = {item["kind"] for item in prior_plan["effective_constraints"]}
-    removable = prior_kinds - policy.required_kinds - protected_kinds
+    removable = prior_kinds - policy.required_kinds
     if not removals.issubset(removable):
         raise RetrievalV2ValidationError(
             "CHANGED SEARCH removes a constraint that is not removable",
@@ -282,94 +260,6 @@ def _validate_changed_removals(
                 "$.route_queries[].search_spec.constraint_delta.remove_constraint_kinds",
             ),
         )
-
-
-def _validate_protected_constraint_continuity(
-    protected: Sequence[SemanticRetrievalConstraintV1],
-    effective: Sequence[SemanticRetrievalConstraintV1],
-) -> None:
-    current = {item["kind"]: item for item in effective}
-    for expected in protected:
-        actual = current.get(expected["kind"])
-        if actual is not None and _preserves_protected_constraint(expected, actual):
-            continue
-        raise RetrievalV2ValidationError(
-            f"SEARCH changes protected {expected['kind']} constraint",
-            reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
-            affected_field_paths=(
-                "$.route_queries[].search_spec.constraint_delta",
-                f"$.source_fetch_plans[].effective_constraints[?(@.kind=='{expected['kind']}')]",
-            ),
-        )
-
-
-def _preserves_protected_constraint(
-    expected: SemanticRetrievalConstraintV1,
-    actual: SemanticRetrievalConstraintV1,
-) -> bool:
-    if _canonical_constraints([actual]) == _canonical_constraints([expected]):
-        return True
-    expected_value = cast(Mapping[str, object], expected)
-    actual_value = cast(Mapping[str, object], actual)
-    kind = expected_value.get("kind")
-    if actual_value.get("kind") != kind:
-        return False
-    if kind == "KEYWORD":
-        expected_terms = expected_value.get("terms")
-        actual_terms = actual_value.get("terms")
-        expected_mode = expected_value.get("match_mode")
-        actual_mode = actual_value.get("match_mode")
-        if not isinstance(expected_terms, list) or not isinstance(actual_terms, list):
-            return False
-        if not all(isinstance(term, str) for term in [*expected_terms, *actual_terms]):
-            return False
-        if expected_mode == "PHRASE":
-            return (
-                actual_mode == "PHRASE" and actual_terms == expected_terms
-            ) or (
-                len(expected_terms) == 1
-                and actual_mode == "ALL"
-                and _string_multiset_contains(actual_terms, expected_terms)
-            )
-        return (
-            actual_mode == expected_mode
-            and expected_mode in {"ALL", "ANY"}
-            and _string_multiset_contains(actual_terms, expected_terms)
-        )
-    if kind == "PARTICIPANT":
-        expected_participants = expected_value.get("participants")
-        actual_participants = actual_value.get("participants")
-        if not isinstance(expected_participants, list) or not isinstance(actual_participants, list):
-            return False
-        expected_pairs = {
-            (item.get("role"), item.get("identity"))
-            for item in expected_participants
-            if isinstance(item, Mapping)
-        }
-        actual_pairs = {
-            (item.get("role"), item.get("identity"))
-            for item in actual_participants
-            if isinstance(item, Mapping)
-        }
-        return (
-            actual_value.get("match_mode") == expected_value.get("match_mode")
-            and expected_pairs.issubset(actual_pairs)
-        )
-    if kind == "STATUS_SCOPE":
-        expected_values = expected_value.get("values")
-        actual_values = actual_value.get("values")
-        return (
-            isinstance(expected_values, list)
-            and isinstance(actual_values, list)
-            and set(expected_values).issubset(actual_values)
-        )
-    # Resource/container identity and temporal bounds are exact safety facts.
-    return False
-
-
-def _string_multiset_contains(actual: list[object], expected: list[object]) -> bool:
-    return not (Counter(cast(list[str], expected)) - Counter(cast(list[str], actual)))
-
 
 def _validate_person_promotion(
     prior: Sequence[SemanticRetrievalConstraintV1],
@@ -413,7 +303,7 @@ def _validate_person_promotion(
     if not added_identities.issubset(resolved_identities):
         raise RetrievalV2ValidationError(
             "CHANGED SEARCH promotes a participant without validated evidence",
-            reason_code="QUERY_PROTECTED_CONSTRAINT_CHANGED",
+            reason_code="QUERY_USER_CONSTRAINT_MISSING",
             affected_field_paths=(
                 "$.route_queries[].search_spec.constraint_delta",
                 "$.source_fetch_plans[].effective_constraints[?(@.kind=='PARTICIPANT')]",

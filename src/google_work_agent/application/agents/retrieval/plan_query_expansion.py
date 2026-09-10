@@ -15,9 +15,6 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     PersonCandidateV1,
 )
-from google_work_agent.application.agents.retrieval.has_explicit_gmail_subject import (
-    has_explicit_gmail_subject,
-)
 from google_work_agent.application.agents.retrieval.match_person_mention import (
     person_discovery_term,
 )
@@ -45,9 +42,7 @@ def plan_query_expansion(
     route_queries: list[dict[str, object]] = []
     for route in select_followup_routes(prompt_input, frozen_routes):
         route_id = route["route_id"]
-        if "gmail_search_threads" in route[
-            "allowed_read_tool_ids"
-        ] and not _has_exact_subject_constraint(prompt_input):
+        if "gmail_search_threads" in route["allowed_read_tool_ids"]:
             prior_searches = [
                 item
                 for item in attempts
@@ -79,20 +74,14 @@ def plan_query_expansion(
                     ),
                     None,
                 )
-                if (
-                    prior_participant is not None
-                    and prior_participant["match_mode"] == "ANY"
-                    and len(prior_participant["participants"]) > 1
-                ):
-                    # This schema cannot express (A OR B) AND the newly resolved identity.
+                if prior_participant is not None:
+                    # The existing relation belongs to semantic planning; deterministic
+                    # continuation cannot infer how another identity combines with it.
                     continue
                 upserts: list[SemanticRetrievalConstraintV1] = [
                     {
                         "kind": "PARTICIPANT",
-                        "participants": [
-                            *(prior_participant["participants"] if prior_participant else []),
-                            {"role": "ANY", "identity": chosen},
-                        ],
+                        "participants": [{"role": "ANY", "identity": chosen}],
                         "match_mode": "ALL",
                     }
                 ]
@@ -174,12 +163,4 @@ def _read_summaries(prompt_input: Mapping[str, object]) -> dict[str, Mapping[str
         and item.get("has_next_page") is True
         and item.get("exhausted") is not True
     }
-
-
-def _has_exact_subject_constraint(prompt_input: Mapping[str, object]) -> bool:
-    intent = prompt_input.get("request_intent")
-    constraints = intent.get("constraints") if isinstance(intent, Mapping) else None
-    return has_explicit_gmail_subject(constraints)
-
-
 __all__ = ["plan_query_expansion"]

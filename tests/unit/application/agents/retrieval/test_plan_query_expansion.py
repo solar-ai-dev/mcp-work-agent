@@ -45,3 +45,49 @@ def test_plan_query_expansion__page_summary__continues_only_unexhausted_route(
 
 def test_plan_query_expansion__no_round_context__does_not_invent_continuation() -> None:
     assert plan_query_expansion(prompt_input={}, frozen_routes=[]) is None
+
+
+def test_plan_query_expansion__second_participant__does_not_infer_all_relation() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+        },
+    )
+    result = plan_query_expansion(
+        prompt_input={
+            "current_round_no": 1,
+            "unresolved_sufficiency_issues": [
+                {"required": True, "resolution_source": "GOOGLE", "route_id": "gmail"}
+            ],
+            "prior_query_attempts": [
+                {
+                    "route_id": "gmail",
+                    "operation_kind": "SEARCH",
+                    "normalized_intent_constraints": [
+                        {
+                            "kind": "PARTICIPANT",
+                            "participants": [
+                                {"role": "SENDER", "identity": "first@example.com"}
+                            ],
+                            "match_mode": "ALL",
+                        }
+                    ],
+                }
+            ],
+        },
+        frozen_routes=[route],
+        person_candidates=[
+            {
+                "mention": "두 번째 담당자",
+                "identity": "second@example.com",
+                "display_names": ["두 번째 담당자"],
+                "source_segment_ids": ["segment-1"],
+            }
+        ],
+    )
+
+    assert result is None

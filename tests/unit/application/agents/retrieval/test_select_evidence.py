@@ -873,7 +873,7 @@ def test_select_evidence__with_lineage_keywords__does_not_force_selection() -> N
     assert len(runtime.calls) == 1
 
 
-def test_event_time__resource_with_only_explicit_outside_dates__excludes_title_context() -> None:
+def test_event_time__past_date_and_current_uncertainty__keeps_model_roles() -> None:
     output = {
         "schema_version": 2,
         "evidence_drafts": [
@@ -905,7 +905,7 @@ def test_event_time__resource_with_only_explicit_outside_dates__excludes_title_c
             None,
             None,
             {},
-            "점검 일정은 2026년 9월 15일입니다.",
+            "과거 후보는 2026년 9월 15일이었고 현재 최종 일정은 아직 미정입니다.",
         ),
     ]
     intent = _intent()
@@ -954,8 +954,12 @@ def test_event_time__resource_with_only_explicit_outside_dates__excludes_title_c
         query_attempts=attempts,
     )
 
-    assert result["selected_segment_ids"] == []
-    assert set(result["excluded_segment_ids"]) == {"title", "body"}
+    assert result["selected_segment_ids"] == ["title", "body"]
+    assert result["excluded_segment_ids"] == []
+    assert [item["role"] for item in result["evidence_drafts"]] == [
+        "CONTEXT",
+        "CONTRADICTS",
+    ]
 
 
 def test_select_evidence__with_detail_assessment__selects_semantic_result() -> None:

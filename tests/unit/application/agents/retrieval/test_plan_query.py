@@ -149,14 +149,15 @@ def test_retrieval_followup_path__exhausted_identity_search__rejects() -> None:
 
 
 @pytest.mark.parametrize(
-    ("constraints", "search_attempt_count"),
+    ("constraints", "search_attempt_count", "expected"),
     [
-        ([{"kind": "RESOURCE", "field": "subject", "value": "정확한 제목"}], 1),
-        ([], 2),
+        ([{"kind": "RESOURCE", "field": "subject", "value": "정확한 제목"}], 1, True),
+        ([], 2, True),
+        ([], 3, False),
     ],
 )
-def test_retrieval_followup_path__exact_subject_or_repeated_expansion__does_not_broaden(
-    constraints: list[dict[str, str]], search_attempt_count: int
+def test_retrieval_followup_path__format_does_not_override_progress_budget(
+    constraints: list[dict[str, str]], search_attempt_count: int, expected: bool
 ) -> None:
     attempts = [
         cast(
@@ -165,6 +166,7 @@ def test_retrieval_followup_path__exact_subject_or_repeated_expansion__does_not_
                 "route_id": "route-1",
                 "round_no": index,
                 "operation_kind": "SEARCH",
+                "stop_reason": "COMPLETE",
                 "normalized_intent_constraints": [
                     {
                         "kind": "KEYWORD",
@@ -177,7 +179,7 @@ def test_retrieval_followup_path__exact_subject_or_repeated_expansion__does_not_
         for index in range(search_attempt_count)
     ]
 
-    assert not has_retrieval_followup_path(
+    assert has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": constraints}),
         tool_route_plan=_tool_route_plan(
             allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
@@ -186,7 +188,7 @@ def test_retrieval_followup_path__exact_subject_or_repeated_expansion__does_not_
         unresolved_sufficiency_issues=[{"required": True, "resolution_source": "GOOGLE"}],
         read_result_summaries=[{"route_id": "route-1", "result_count": 0, "exhausted": True}],
         query_attempts=attempts,
-    )
+    ) is expected
 
 
 def test_plan_query_is__the_only_product_prompt__owner_in_retrieval_core() -> None:
@@ -570,7 +572,6 @@ def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() 
         route_policies=policies,
         retry_budget=build_default_run_budget(),
         prior_plans={"route-1": prior},
-        protected_constraints_by_route={"route-1": [prior_keyword]},
     )
 
     assert llm_invoked is True
@@ -580,7 +581,7 @@ def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() 
     assert projected_routes[0]["supported_constraint_kinds"] == ["CONCEPT", "KEYWORD"]
 
 
-def test_plan_query__materialization_failure__uses_one_semantic_revision() -> None:
+def test_plan_query__unverified_participant__uses_one_semantic_revision() -> None:
     route = cast(
         InputToolRouteV1,
         {
@@ -592,12 +593,14 @@ def test_plan_query__materialization_failure__uses_one_semantic_revision() -> No
             "reason_codes": ["USER_REQUEST"],
         },
     )
-    protected_keyword = {
+    prior_keyword = {
         "kind": "KEYWORD",
         "terms": ["Nimbus"],
         "match_mode": "PHRASE",
     }
-    policies = {"route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))}
+    policies = {
+        "route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT", "PARTICIPANT"}))
+    }
     prior = build_query(
         {
             "schema_version": 2,
@@ -606,7 +609,7 @@ def test_plan_query__materialization_failure__uses_one_semantic_revision() -> No
                     "route_id": "route-1",
                     "operation": "SEARCH",
                     "reason_codes": ["USER_REQUEST"],
-                    "search_spec": {"mode": "INITIAL", "constraints": [protected_keyword]},
+                    "search_spec": {"mode": "INITIAL", "constraints": [prior_keyword]},
                     "detail_candidate_ref": None,
                 }
             ],
@@ -625,7 +628,13 @@ def test_plan_query__materialization_failure__uses_one_semantic_revision() -> No
                     "mode": "CHANGED",
                     "constraint_delta": {
                         "upsert_constraints": [
-                            {"kind": "KEYWORD", "terms": ["다른 값"], "match_mode": "PHRASE"}
+                            {
+                                "kind": "PARTICIPANT",
+                                "participants": [
+                                    {"role": "ANY", "identity": "invented@example.com"}
+                                ],
+                                "match_mode": "ALL",
+                            }
                         ],
                         "remove_constraint_kinds": [],
                     },
@@ -687,7 +696,6 @@ def test_plan_query__materialization_failure__uses_one_semantic_revision() -> No
         route_policies=policies,
         retry_budget=build_default_run_budget(),
         prior_plans={"route-1": prior},
-        protected_constraints_by_route={"route-1": [protected_keyword]},
     )
 
     assert invoked is True
@@ -1519,7 +1527,7 @@ def test_calendar_route__without_validated_container__does_not_offer_container_r
     assert projected_routes[0]["supported_constraint_kinds"] == ["TEMPORAL_RANGE"]
 
 
-def test_general_gmail_search__preserves_explicit__sender_subject_values() -> None:
+def test_general_gmail_search__passes_planner_sender_subject_values() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
@@ -1532,10 +1540,12 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
                     "constraints": [
                         {
                             "kind": "PARTICIPANT",
-                            "participants": [{"role": "SENDER", "identity": "wrong@example.com"}],
+                            "participants": [
+                                {"role": "SENDER", "identity": "sender@example.com"}
+                            ],
                             "match_mode": "ALL",
                         },
-                        {"kind": "KEYWORD", "terms": ["corrupted"], "match_mode": "PHRASE"},
+                        {"kind": "KEYWORD", "terms": ["회신부탁"], "match_mode": "PHRASE"},
                     ],
                 },
                 "detail_candidate_ref": None,
@@ -1590,16 +1600,6 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
         route_policies={"route-1": RouteConstraintPolicy(frozenset({"PARTICIPANT", "KEYWORD"}))},
         retry_budget=build_default_run_budget(),
-        protected_constraints_by_route={
-            "route-1": [
-                {
-                    "kind": "PARTICIPANT",
-                    "participants": [{"role": "SENDER", "identity": "sender@example.com"}],
-                    "match_mode": "ALL",
-                },
-                {"kind": "KEYWORD", "terms": ["회신부탁"], "match_mode": "PHRASE"},
-            ]
-        },
     )
 
     assert llm_invoked is True
@@ -1616,7 +1616,7 @@ def test_general_gmail_search__preserves_explicit__sender_subject_values() -> No
     ]
 
 
-def test_general_gmail_search__preserved_person_and_terms__uses_constraints() -> None:
+def test_general_gmail_search__passes_planner_relation_without_count_rewrite() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
@@ -1627,7 +1627,11 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
                 "search_spec": {
                     "mode": "INITIAL",
                     "constraints": [
-                        {"kind": "KEYWORD", "terms": ["wrong"], "match_mode": "PHRASE"}
+                        {
+                            "kind": "KEYWORD",
+                            "terms": ["대리", "프로젝트", "일정"],
+                            "match_mode": "ANY",
+                        }
                     ],
                 },
                 "detail_candidate_ref": None,
@@ -1688,15 +1692,6 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
         route_policies={"route-1": RouteConstraintPolicy(frozenset({"PARTICIPANT", "KEYWORD"}))},
         retry_budget=build_default_run_budget(),
-        protected_constraints_by_route={
-            "route-1": [
-                {
-                    "kind": "KEYWORD",
-                    "terms": ["대리", "프로젝트", "일정"],
-                    "match_mode": "ALL",
-                }
-            ]
-        },
     )
 
     assert llm_invoked is True
@@ -1704,11 +1699,11 @@ def test_general_gmail_search__preserved_person_and_terms__uses_constraints() ->
     assert search_spec is not None
     assert search_spec["mode"] == "INITIAL"
     assert search_spec["constraints"] == [
-        {"kind": "KEYWORD", "terms": ["대리", "프로젝트", "일정"], "match_mode": "ALL"},
+        {"kind": "KEYWORD", "terms": ["대리", "프로젝트", "일정"], "match_mode": "ANY"},
     ]
 
 
-def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None:
+def test_general_gmail_search__last_week__uses_schema_bound_temporal_value() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
@@ -1719,7 +1714,18 @@ def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None
                 "search_spec": {
                     "mode": "INITIAL",
                     "constraints": [
-                        {"kind": "KEYWORD", "terms": ["wrong"], "match_mode": "PHRASE"}
+                        {
+                            "kind": "KEYWORD",
+                            "terms": ["프로젝트", "일정"],
+                            "match_mode": "ANY",
+                        },
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "MESSAGE_TIME",
+                            "start_local": "2026-08-24T00:00:00",
+                            "end_local": "2026-08-31T00:00:00",
+                            "timezone": "Asia/Seoul",
+                        },
                     ],
                 },
                 "detail_candidate_ref": None,
@@ -1776,25 +1782,13 @@ def test_general_gmail_search__last_week__resolves_from_injected_clock() -> None
         retry_budget=build_default_run_budget(),
         now_ms=1_788_560_100_000,
         timezone="Asia/Seoul",
-        protected_constraints_by_route={
-            "route-1": [
-                {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ALL"},
-                {
-                    "kind": "TEMPORAL_RANGE",
-                    "axis": "MESSAGE_TIME",
-                    "start_local": "2026-08-24T00:00:00",
-                    "end_local": "2026-08-31T00:00:00",
-                    "timezone": "Asia/Seoul",
-                },
-            ]
-        },
     )
 
     search_spec = result["route_queries"][0]["search_spec"]
     assert search_spec is not None
     assert search_spec["mode"] == "INITIAL"
     assert search_spec["constraints"] == [
-        {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ALL"},
+        {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ANY"},
         {
             "kind": "TEMPORAL_RANGE",
             "axis": "MESSAGE_TIME",

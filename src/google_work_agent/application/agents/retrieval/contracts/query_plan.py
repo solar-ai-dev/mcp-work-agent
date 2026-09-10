@@ -33,7 +33,6 @@ RetrievalValidationReasonCodeV1 = Literal[
     "QUERY_OPERATION_UNAVAILABLE",
     "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
     "QUERY_USER_CONSTRAINT_MISSING",
-    "QUERY_PROTECTED_CONSTRAINT_CHANGED",
     "QUERY_LITERAL_UNSUPPORTED",
 ]
 TemporalAxisV1 = Literal["MESSAGE_TIME", "TASK_SCHEDULED_DATE", "EVENT_TIME", "AVAILABILITY_WINDOW"]
@@ -120,7 +119,6 @@ SemanticRetrievalConstraintV1 = (
     | ContainerRefConstraintV1
     | StatusScopeConstraintV1
 )
-ProtectedConstraintsByRouteV1 = Mapping[str, Sequence[SemanticRetrievalConstraintV1]]
 
 
 def validate_gmail_keyword_literal(value: object) -> str:
