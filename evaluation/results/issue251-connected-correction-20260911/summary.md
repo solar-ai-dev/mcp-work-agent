@@ -20,3 +20,4 @@ production compiled Graph와 통제 LLM/MCP를 사용한 대표 경로 30건이 
 | 질문 | 모델 | 최초 실패 노드 | 결과 | 기록 |
 |---|---|---|---|---|
 | Q1 Nimbus 날짜 | qwen3.5:9b | `retrieval.select_evidence` / `retrieval.assess_sufficiency` | FAIL — 첫 검색 후보 2건을 Evidence로 연결하지 못했고 제한 재조회는 0건 | [live-q1-9b.md](live-q1-9b.md) |
+| Q4 Quartz Draft | qwen3.5:9b | `review.recheck` | FAIL — 실제 Draft 후보 1건을 읽었지만 정확한 UPDATE Preview 대신 이미 명시한 문구를 다시 묻는 Confirmation으로 종료 | [live-q4-9b.md](live-q4-9b.md) |
