@@ -24,3 +24,4 @@ production compiled Graph와 통제 LLM/MCP를 사용한 대표 경로 30건이 
 | Cobalt 확정 안내 | qwen3.5:9b | 두 번째 `retrieval.build_query` 이후 `retrieval.execute_read` 미진입 | FAIL — 첫 검색 0건 뒤 후속 query는 생성했지만 실제 READ 없이 근거 부족으로 종료 | [live-cobalt-9b.md](live-cobalt-9b.md) |
 | Maple 최종 날짜 | qwen3.5:9b | 세 번째 `retrieval.plan_query` | FAIL — Gmail READ 2회 뒤 추가 query 구조화 출력이 schema 검증에 실패해 `BLOCKED` 종료 | [live-maple-9b.md](live-maple-9b.md) |
 | Q5 Ion Task | qwen3.5:9b / qwen3.5:4b | 실행 전 Task List allowlist | SKIPPED — Ion 자료가 현재 허용 범위 밖이어서 권한·자료를 변경하지 않고 두 Run 모두 미실행 | [live-q5-skipped.md](live-q5-skipped.md) |
+| Q1 Nimbus 날짜 | qwen3.5:4b | `retrieval.execute_read` → `retrieval.select_evidence` | FAIL — 서로 다른 세 query가 모두 0건이어서 Evidence와 날짜 답변을 만들지 못함 | [live-q1-4b.md](live-q1-4b.md) |
