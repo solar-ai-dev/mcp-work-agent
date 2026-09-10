@@ -40,10 +40,8 @@ from google_work_agent.ports.system.contracts.confirmation import (
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
 
-class AmbiguityCandidateV1(TypedDict):
-    requires_confirmation: bool
+class AmbiguityCandidateV2(TypedDict):
     missing_information_owner: Literal["NONE", "USER", "CONNECTOR"]
-    reason_codes: list[str]
     missing_fields: list[str]
 
 
@@ -60,69 +58,12 @@ class RequestAmbiguityValidationError(ValueError):
         self.affected_field_paths = tuple(affected_field_paths)
 
 DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-ambiguity-v1",
+    schema_version="request-ambiguity-v2",
     json_schema={
         "type": "object",
-        "required": [
-            "requires_confirmation",
-            "missing_information_owner",
-            "reason_codes",
-            "missing_fields",
-        ],
+        "required": ["missing_information_owner", "missing_fields"],
         "additionalProperties": False,
-        "oneOf": [
-            {
-                "properties": {
-                    "requires_confirmation": {"const": False},
-                    "missing_information_owner": {"const": "NONE"},
-                    "reason_codes": {"maxItems": 0},
-                    "missing_fields": {"maxItems": 0},
-                },
-                "required": [
-                    "requires_confirmation",
-                    "missing_information_owner",
-                    "reason_codes",
-                    "missing_fields",
-                ],
-            },
-            {
-                "properties": {
-                    "requires_confirmation": {"const": True},
-                    "missing_information_owner": {"const": "USER"},
-                    "reason_codes": {"minItems": 1},
-                    "missing_fields": {"minItems": 1},
-                },
-                "required": [
-                    "requires_confirmation",
-                    "missing_information_owner",
-                    "reason_codes",
-                    "missing_fields",
-                ],
-            },
-            {
-                "properties": {
-                    "requires_confirmation": {"const": False},
-                    "missing_information_owner": {"const": "CONNECTOR"},
-                    "reason_codes": {"minItems": 1},
-                    "missing_fields": {"minItems": 1},
-                },
-                "required": [
-                    "requires_confirmation",
-                    "missing_information_owner",
-                    "reason_codes",
-                    "missing_fields",
-                ],
-            },
-        ],
         "properties": {
-            "requires_confirmation": {
-                "type": "boolean",
-                "description": (
-                    "False unless an explicit user-owned choice is genuinely missing. "
-                    "When false, owner is NONE with empty details or CONNECTOR with "
-                    "non-empty retrievable details."
-                ),
-            },
             "missing_information_owner": {
                 "enum": ["NONE", "USER", "CONNECTOR"],
                 "description": (
@@ -130,16 +71,9 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "CONNECTOR for facts retrievable from selected or routed resources."
                 ),
             },
-            "reason_codes": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "Empty for NONE; non-empty for USER or CONNECTOR-owned missing information."
-                ),
-            },
             "missing_fields": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "minLength": 1},
                 "description": (
                     "Empty for NONE; non-empty for USER or CONNECTOR-owned missing information."
                 ),
@@ -271,42 +205,32 @@ def _validate_ambiguity_candidate(
     value: object,
     *,
     goal_candidate: RequestGoalCandidateV1,
-) -> AmbiguityCandidateV1:
+) -> AmbiguityCandidateV2:
     if not isinstance(value, dict) or set(value) != {
-        "requires_confirmation",
         "missing_information_owner",
-        "reason_codes",
         "missing_fields",
     }:
         raise ValueError("request ambiguity fields are invalid")
-    requires_confirmation = value.get("requires_confirmation")
     missing_information_owner = value.get("missing_information_owner")
-    reason_codes = value.get("reason_codes")
     missing_fields = value.get("missing_fields")
-    if not isinstance(requires_confirmation, bool):
-        raise ValueError("requires_confirmation must be boolean")
     if missing_information_owner not in {"NONE", "USER", "CONNECTOR"}:
         raise ValueError("missing_information_owner is invalid")
-    if not isinstance(reason_codes, list) or any(
-        not isinstance(item, str) for item in reason_codes
-    ):
-        raise ValueError("reason_codes must contain strings")
     if not isinstance(missing_fields, list) or any(
-        not isinstance(item, str) for item in missing_fields
+        not isinstance(item, str) or not item.strip() for item in missing_fields
     ):
-        raise ValueError("missing_fields must contain strings")
-    if requires_confirmation and (not reason_codes or not missing_fields):
-        raise ValueError("reason_codes and missing_fields are required for missing information")
-    if missing_information_owner == "NONE" and (
-        requires_confirmation or reason_codes or missing_fields
-    ):
-        raise ValueError("NONE ambiguity metadata must be empty")
-    if missing_information_owner == "USER" and not requires_confirmation:
-        raise ValueError("USER-owned missing information requires confirmation")
-    if missing_information_owner == "CONNECTOR" and requires_confirmation:
-        raise ValueError("CONNECTOR-owned missing information cannot require confirmation")
-    if missing_information_owner != "NONE" and (not reason_codes or not missing_fields):
-        raise ValueError("owned missing information requires details")
+        raise ValueError("missing_fields must contain non-empty strings")
+    if missing_information_owner == "NONE" and missing_fields:
+        raise RequestAmbiguityValidationError(
+            "NONE ambiguity fields must be empty",
+            reason_code="REQUEST_AMBIGUITY_OWNER_FIELDS_MISMATCH",
+            affected_field_paths=("$.missing_information_owner", "$.missing_fields"),
+        )
+    if missing_information_owner != "NONE" and not missing_fields:
+        raise RequestAmbiguityValidationError(
+            "owned missing information requires fields",
+            reason_code="REQUEST_AMBIGUITY_OWNER_FIELDS_MISMATCH",
+            affected_field_paths=("$.missing_information_owner", "$.missing_fields"),
+        )
     if missing_information_owner == "USER" and _overlaps_connector_owned_information(
         missing_fields,
         goal_candidate=goal_candidate,
@@ -321,23 +245,27 @@ def _validate_ambiguity_candidate(
             ),
         )
     return cast(
-        AmbiguityCandidateV1,
+        AmbiguityCandidateV2,
         {
-            "requires_confirmation": requires_confirmation,
             "missing_information_owner": missing_information_owner,
-            "reason_codes": reason_codes,
             "missing_fields": missing_fields,
         },
     )
 
 
-def _finalize_ambiguity_candidate(candidate: AmbiguityCandidateV1) -> AmbiguityV1:
+def _finalize_ambiguity_candidate(candidate: AmbiguityCandidateV2) -> AmbiguityV1:
     if candidate["missing_information_owner"] == "CONNECTOR":
         return {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    if candidate["missing_information_owner"] == "USER":
+        return {
+            "requires_confirmation": True,
+            "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+            "missing_fields": candidate["missing_fields"],
+        }
     return {
-        "requires_confirmation": candidate["requires_confirmation"],
-        "reason_codes": candidate["reason_codes"],
-        "missing_fields": candidate["missing_fields"],
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
     }
 
 

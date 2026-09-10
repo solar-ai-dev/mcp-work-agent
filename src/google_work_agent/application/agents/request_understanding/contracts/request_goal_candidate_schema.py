@@ -8,6 +8,7 @@ from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     SOURCE_STATUS_VALUES_BY_RESOURCE,
+    WRITE_EFFECT_RESOURCE_TYPES,
     ActionEffectValue,
     ConstraintProvenanceSource,
     ConstraintV1,
@@ -262,6 +263,22 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["resource_type", "effect"],
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {"effect": {"const": effect}},
+                            "required": ["effect"],
+                        },
+                        "then": {
+                            "properties": {
+                                "resource_type": {
+                                    "enum": sorted(resource_types),
+                                }
+                            }
+                        },
+                    }
+                    for effect, resource_types in WRITE_EFFECT_RESOURCE_TYPES.items()
+                ],
                 "properties": {
                     "resource_type": {"enum": _RESOURCE_TYPES},
                     "effect": {"enum": ["CREATE", "UPDATE", "SEND", "DELETE"]},
@@ -282,7 +299,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v9",
+    schema_version="request-goal-candidate-v10",
     json_schema={
         "type": "object",
         "required": [
@@ -534,7 +551,14 @@ def _normalize_status_constraints(
             raise ValueError("source status provenance source is unavailable")
         start_offset = source_value.find(source_text)
         if start_offset < 0:
-            raise ValueError("source status text has no current-Run source binding")
+            raise RequestGoalSemanticValidationError(
+                "source status text has no current-Run source binding",
+                reason_code="REQUEST_STATUS_PROVENANCE_MISMATCH",
+                affected_field_paths=(
+                    "$.constraints.status[].source",
+                    "$.constraints.status[].source_text",
+                ),
+            )
         identity = (status, resource_type, source, source_text)
         if identity in identities:
             raise ValueError("source status binding is duplicated")

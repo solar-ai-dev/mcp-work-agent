@@ -151,6 +151,15 @@ from google_work_agent.application.agents.planning.contracts.action_plan_draft i
 from google_work_agent.application.agents.planning.contracts.domain_validation import (
     DomainValidationResult,
 )
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema,
+)
+from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
+    RequestAmbiguityValidationError,
+)
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    RetrievalV2ValidationError,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
     RetrievalResultV1,
@@ -724,6 +733,16 @@ class _WorkflowRuntimeComposition:
                 workflow_key=request.workflow_key,
                 initial_start=True,
             )
+        except (
+            request_goal_candidate_schema.RequestGoalSemanticValidationError,
+            RequestAmbiguityValidationError,
+            RetrievalV2ValidationError,
+        ) as error:
+            return self._settle_semantic_validation_failure(
+                error=error,
+                run_id=request.run_id,
+                workflow_key=request.workflow_key,
+            )
 
     def prepare_start(self, request: WorkflowStartRequest) -> None:
         self._invocation.prepare_start(request)
@@ -774,6 +793,16 @@ class _WorkflowRuntimeComposition:
                 run_id=request.run_id,
                 workflow_key=request.workflow_key,
             )
+        except (
+            request_goal_candidate_schema.RequestGoalSemanticValidationError,
+            RequestAmbiguityValidationError,
+            RetrievalV2ValidationError,
+        ) as error:
+            return self._settle_semantic_validation_failure(
+                error=error,
+                run_id=request.run_id,
+                workflow_key=request.workflow_key,
+            )
 
     def _settle_llm_invocation_failure(
         self,
@@ -814,12 +843,47 @@ class _WorkflowRuntimeComposition:
             ):
                 raise error
             reason_code = error.code.value
+        elif error.code is LLMErrorCode.OUTPUT_SCHEMA_INVALID:
+            reason_code = error.code.value
         else:
             raise error
+        return self._settle_pre_execution_failure(
+            reason_code=reason_code,
+            run_id=run_id,
+            workflow_key=workflow_key,
+        )
+
+    def _settle_semantic_validation_failure(
+        self,
+        *,
+        error: request_goal_candidate_schema.RequestGoalSemanticValidationError
+        | RequestAmbiguityValidationError
+        | RetrievalV2ValidationError,
+        run_id: str,
+        workflow_key: str,
+    ) -> WorkflowInvocationResult:
+        return self._settle_pre_execution_failure(
+            reason_code=error.reason_code,
+            run_id=run_id,
+            workflow_key=workflow_key,
+        )
+
+    def _settle_pre_execution_failure(
+        self,
+        *,
+        reason_code: str,
+        run_id: str,
+        workflow_key: str,
+    ) -> WorkflowInvocationResult:
+        config = self._config_for_thread(workflow_key)
+        snapshot = self._graph.get_state(config)
         pending_owner = next(
             (node for node in snapshot.next if isinstance(node, str) and node != "__start__"),
             None,
         )
+        facts = self._read_terminal_facts(run_id)
+        if facts["action_statuses"]:
+            raise RuntimeError("pre-execution validation failure cannot close an action Run")
         if pending_owner is None:
             raise RuntimeError("LLM terminal failure has no resumable graph owner")
         self._graph.update_state(

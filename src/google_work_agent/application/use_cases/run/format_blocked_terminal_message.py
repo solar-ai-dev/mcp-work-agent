@@ -31,6 +31,22 @@ def format_blocked_terminal_message(
             "외부 변경은 실행하지 않았습니다. 검색 조건을 바꾸거나 확인할 자료를 "
             "지정해 다시 요청해 주세요."
         )
+    if reasons & {
+        "OUTPUT_SCHEMA_INVALID",
+        "REQUEST_STATUS_PROVENANCE_MISMATCH",
+        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT",
+        "REQUEST_AMBIGUITY_OWNER_FIELDS_MISMATCH",
+        "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
+        "QUERY_OPERATION_FIELD_MISMATCH",
+        "QUERY_OPERATION_UNAVAILABLE",
+        "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+        "QUERY_USER_CONSTRAINT_MISSING",
+        "QUERY_PROTECTED_CONSTRAINT_CHANGED",
+    }:
+        return (
+            "요청을 처리하는 중 내부 검증에 실패해 결과나 변경안을 준비하지 못했습니다. "
+            "외부 변경은 실행하지 않았습니다. 잠시 후 다시 요청해 주세요."
+        )
     if source_kind == "INVALID_REQUEST":
         return (
             "요청을 처리하는 데 필요한 조건을 확인하지 못해 안전하게 중단했습니다. "

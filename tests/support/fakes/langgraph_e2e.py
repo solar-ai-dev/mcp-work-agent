@@ -228,9 +228,7 @@ def _respond(
             "GMAIL_CONFIRMATION",
         } and not isinstance(base.get("confirmation_response"), Mapping)
         return {
-            "requires_confirmation": needs_confirmation,
             "missing_information_owner": "USER" if needs_confirmation else "NONE",
-            "reason_codes": ["MISSING_USER_CHOICE"] if needs_confirmation else [],
             "missing_fields": ["attendee" if scenario == "CALENDAR_CONFIRMATION" else "target"]
             if needs_confirmation
             else [],

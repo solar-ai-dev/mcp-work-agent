@@ -180,9 +180,7 @@ class _ComponentInferencePort:
         if prompt_id == "request_understanding.detect_ambiguity":
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
-                "requires_confirmation": needs_confirmation,
                 "missing_information_owner": "USER" if needs_confirmation else "NONE",
-                "reason_codes": ["MISSING_TARGET"] if needs_confirmation else [],
                 "missing_fields": ["target"] if needs_confirmation else [],
             }
         if prompt_id == "tool_routing.determine_io_resources":

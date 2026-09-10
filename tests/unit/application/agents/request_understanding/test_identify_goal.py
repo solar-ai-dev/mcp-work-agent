@@ -24,6 +24,7 @@ from google_work_agent.application.agents.request_understanding.identify_goal im
     identify_goal_with_budget,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
@@ -228,7 +229,7 @@ def test_source_status__explicit_sent_scope__retains_resource_and_source_provena
     assert status["provenance"]["source_text"] == "보낸 편지함"
 
 
-def test_source_status__without_current_run_source_binding__rejects_before_intent() -> None:
+def test_source_status__without_current_run_source_binding__uses_bounded_revision() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -245,16 +246,34 @@ def test_source_status__without_current_run_source_binding__rejects_before_inten
                     output_effect="SEND",
                 ),
                 "analysis_requirement": "NONE",
-            }
+            },
+            {
+                "goal": "기존 메일 대화에 답장",
+                "completion_conditions": ["같은 대화에 답장을 보낸다"],
+                "constraints": _goal_constraints(search_terms=["Quartz"]),
+                "resource_responsibilities": _resource_responsibilities(
+                    source_type="GMAIL_THREAD",
+                    required_information=["납품 일정", "답장 대상 대화 identity"],
+                    output_type="GMAIL_MESSAGE",
+                    output_effect="SEND",
+                ),
+                "analysis_requirement": "NONE",
+            },
         ]
     )
 
-    with pytest.raises(ValueError, match="source binding"):
-        identify_goal(
-            llm_runtime=runtime,
-            request=_request("Quartz 납품 일정 확인했다고 답장 보내줘."),
-            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-        )
+    candidate, budget = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=_request("Quartz 납품 일정 확인했다고 답장 보내줘."),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert not any(item["field"] == "status" for item in candidate["constraints"])
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_STATUS_PROVENANCE_MISMATCH"
+    )
+    assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
 def test_thread_reply__without_explicit_source_status__does_not_create_status() -> None:
@@ -461,6 +480,52 @@ def test_request_goal_schema__for_ollama_output__contains_no_patterns() -> None:
         return []
 
     assert collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema) == []
+
+
+@pytest.mark.parametrize(
+    "effect,resource_type",
+    [
+        ("CREATE", "TASK"),
+        ("UPDATE", "GMAIL_DRAFT"),
+        ("SEND", "GMAIL_MESSAGE"),
+        ("DELETE", "CALENDAR_EVENT"),
+    ],
+)
+def test_request_goal_schema__accepts_supported_output_pairs(
+    effect: str, resource_type: str
+) -> None:
+    candidate = {
+        "goal": "외부 업무를 수행한다",
+        "completion_conditions": ["요청한 변경을 수행한다"],
+        "constraints": _goal_constraints(),
+        "resource_responsibilities": _resource_responsibilities(
+            output_type=resource_type,
+            output_effect=effect,
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    assert (
+        validate_output_schema(candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema)
+        == []
+    )
+
+
+def test_request_goal_schema__rejects_unsupported_output_pair_before_application() -> None:
+    candidate = {
+        "goal": "할 일을 만든다",
+        "completion_conditions": ["할 일이 생성된다"],
+        "constraints": _goal_constraints(),
+        "resource_responsibilities": _resource_responsibilities(
+            output_type="GMAIL_MESSAGE",
+            output_effect="CREATE",
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    errors = validate_output_schema(candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema)
+
+    assert "$.resource_responsibilities.outputs[0].resource_type must be one of" in errors[0]
 
 
 def test_request_goal_validator__with_empty_responsibility_text__rejects_candidate() -> None:
@@ -785,12 +850,14 @@ def test_semantic_revision__invented_source_need__may_be_removed() -> None:
                 "goal": "새 메일 전송",
                 "completion_conditions": ["새 메시지를 보낸다"],
                 "constraints": _goal_constraints(
-                    recipient=["person@example.test"], subject=["안내"]
+                    recipient=["person@example.test"],
+                    subject=["안내"],
+                    status=[_source_status("SENT", "GMAIL_THREAD", "보낸 편지함")],
                 ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["발명된 기존 대화 identity"],
-                    output_type="GMAIL_THREAD",
+                    output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
                 "analysis_requirement": "NONE",
@@ -833,11 +900,14 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
             {
                 "goal": "기존 메일을 확인해 답장",
                 "completion_conditions": ["확인한 납품 주소를 반영해 답장한다"],
-                "constraints": _goal_constraints(search_terms=["Project Anchor"]),
+                "constraints": _goal_constraints(
+                    search_terms=["Project Anchor"],
+                    status=[_source_status("SENT", "GMAIL_THREAD", "보낸 편지함")],
+                ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["기존 메일의 납품 주소"],
-                    output_type="GMAIL_THREAD",
+                    output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
                 "analysis_requirement": "NONE",
@@ -897,12 +967,12 @@ def test_semantic_revision__validated_selected_resource__remains_bound() -> None
             {
                 "goal": "선택한 메일 요약",
                 "completion_conditions": ["요약을 답한다"],
-                "constraints": _goal_constraints(),
+                "constraints": _goal_constraints(
+                    status=[_source_status("SENT", "GMAIL_THREAD", "보낸 편지함")]
+                ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["선택한 메일 내용"],
-                    output_type="GMAIL_THREAD",
-                    output_effect="SEND",
                 ),
                 "analysis_requirement": "NONE",
             },

@@ -178,6 +178,25 @@ def test_context_block__does_not_claim_zero_resources__without_that_fact() -> No
     assert "충분한 근거를 확보하지 못해" in result.content
     assert "자료를 찾지 못해" not in result.content
     assert "검색 조건을 바꾸거나" in result.content
+
+
+def test_schema_validation_block__explains_internal_failure_without_exposing_code() -> None:
+    result = BuildTerminalMessageHandler()(
+        BuildTerminalMessageQueryV1(
+            1,
+            "run-1",
+            1,
+            "POLICY_BLOCK",
+            "BLOCKED",
+            None,
+            ["OUTPUT_SCHEMA_INVALID"],
+            "할 일을 만들어 줘",
+        )
+    )
+
+    assert "내부 검증에 실패" in result.content
+    assert "외부 변경은 실행하지 않았습니다" in result.content
+    assert "OUTPUT_SCHEMA_INVALID" not in result.content
     assert "외부 변경은 실행하지 않았습니다" in result.content
     assert "CONTEXT_BLOCKED" not in result.content
 

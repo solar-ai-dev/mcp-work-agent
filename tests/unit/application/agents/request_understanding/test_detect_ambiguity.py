@@ -37,9 +37,7 @@ def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "requires_confirmation": True,
                 "missing_information_owner": "USER",
-                "reason_codes": ["MISSING_RECIPIENT"],
                 "missing_fields": ["recipient"],
             }
         ]
@@ -102,9 +100,7 @@ def test_connector_owned_information__before_retrieval__proceeds_without_confirm
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "requires_confirmation": False,
                 "missing_information_owner": "CONNECTOR",
-                "reason_codes": ["SOURCE_FACT_REQUIRED"],
                 "missing_fields": ["납품 일정"],
             }
         ]
@@ -153,15 +149,11 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "requires_confirmation": True,
                 "missing_information_owner": "USER",
-                "reason_codes": ["MISSING_SCHEDULE"],
                 "missing_fields": ["Quartz 납품 일정"],
             },
             {
-                "requires_confirmation": False,
                 "missing_information_owner": "CONNECTOR",
-                "reason_codes": ["SOURCE_FACT_REQUIRED"],
                 "missing_fields": ["납품 일정"],
             },
         ]
@@ -201,13 +193,13 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_detect_ambiguity__rejects_metadata__without_confirmation() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[{
-        "requires_confirmation": False,
-        "missing_information_owner": "NONE",
-        "reason_codes": ["MISSING_PROJECT_NAME"],
-        "missing_fields": ["project_name"],
-    }])
+def test_detect_ambiguity__rejects_fields__without_owner() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {"missing_information_owner": "NONE", "missing_fields": ["project_name"]},
+            {"missing_information_owner": "NONE", "missing_fields": ["project_name"]},
+        ]
+    )
     candidate: RequestGoalCandidateV1 = {
         "goal": "새 할 일 생성",
         "completion_conditions": ["할 일을 생성한다"],
@@ -217,7 +209,7 @@ def test_detect_ambiguity__rejects_metadata__without_confirmation() -> None:
         "analysis_requirement": "NONE",
     }
 
-    with pytest.raises(ValueError, match="NONE ambiguity metadata must be empty"):
+    with pytest.raises(ValueError, match="NONE ambiguity fields must be empty"):
         detect_ambiguity(
             llm_runtime=runtime,
             request=_request("Google Tasks에 새 할 일을 만들어줘"),
@@ -229,9 +221,7 @@ def test_detect_ambiguity__rejects_metadata__without_confirmation() -> None:
 def test_detect_ambiguity_schema__connector_owned_gap__passes_output_contract() -> None:
     errors = validate_output_schema(
         {
-            "requires_confirmation": False,
             "missing_information_owner": "CONNECTOR",
-            "reason_codes": ["MISSING_SOURCE_FACT"],
             "missing_fields": ["source_fact"],
         },
         DETECT_AMBIGUITY_OUTPUT_SCHEMA.json_schema,
@@ -240,18 +230,16 @@ def test_detect_ambiguity_schema__connector_owned_gap__passes_output_contract() 
     assert errors == []
 
 
-def test_detect_ambiguity_schema__rejects_empty_confirmation_details__before_application() -> None:
+def test_detect_ambiguity_schema__accepts_user_owned_fields_without_derived_metadata() -> None:
     errors = validate_output_schema(
         {
-            "requires_confirmation": True,
             "missing_information_owner": "USER",
-            "reason_codes": [],
             "missing_fields": ["analysis_scope"],
         },
         DETECT_AMBIGUITY_OUTPUT_SCHEMA.json_schema,
     )
 
-    assert "$.reason_codes must contain at least 1 items" in errors
+    assert errors == []
 
 
 def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -> None:
@@ -341,9 +329,7 @@ def test_selected_gmail_analysis__does_not_invent_user_owned__ambiguity() -> Non
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "requires_confirmation": True,
                 "missing_information_owner": "USER",
-                "reason_codes": ["MISSING_ANALYSIS_FOCUS"],
                 "missing_fields": ["analysis_focus"],
             }
         ]
@@ -397,9 +383,7 @@ def test_general_tasks_analysis__retrieves_requested_result_fields__before_confi
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "requires_confirmation": True,
                 "missing_information_owner": "USER",
-                "reason_codes": ["BUDGET_FIELD_MISSING"],
                 "missing_fields": ["승인 예산"],
             }
         ]
@@ -453,9 +437,7 @@ def test_selected_gmail_send__with_missing_recipient__preserves_confirmation() -
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "requires_confirmation": True,
                 "missing_information_owner": "USER",
-                "reason_codes": ["MISSING_RECIPIENT"],
                 "missing_fields": ["recipient"],
             }
         ]
@@ -525,7 +507,7 @@ def test_detect_ambiguity__forces_existing_confirmation_for__unbound_repository(
     repository: str,
 ) -> None:
     runtime = FakeStructuredInferencePort(
-        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+        outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
     )
     request = _request("저 저장소의 열린 이슈를 찾아줘")
     candidate = _github_candidate(repository)
@@ -547,7 +529,7 @@ def test_detect_ambiguity__forces_existing_confirmation_for__unbound_repository(
 def test_detect_ambiguity__accepts_confirmation_source__without_owner_guessing() -> None:
     repository = "solar-ai-dev/google-work-agent"
     runtime = FakeStructuredInferencePort(
-        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+        outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
     )
 
     result = detect_ambiguity(
@@ -568,7 +550,7 @@ def test_detect_ambiguity__accepts_confirmation_source__without_owner_guessing()
 
 def test_detect_ambiguity__selected_and_explicit_conflict__has_no_precedence() -> None:
     runtime = FakeStructuredInferencePort(
-        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+        outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
     )
     request = _request(
         "owner-b/repo의 열린 이슈를 찾아줘",
@@ -597,7 +579,7 @@ def test_detect_ambiguity__selected_and_explicit_conflict__has_no_precedence() -
 def test_detect_ambiguity__matching_selected_and_explicit_repository__is_unambiguous() -> None:
     repository = "owner-a/repo"
     runtime = FakeStructuredInferencePort(
-        outputs=[{"requires_confirmation": False, "reason_codes": [], "missing_fields": []}]
+        outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
     )
 
     result = detect_ambiguity(

@@ -35,6 +35,7 @@
 
 - `source_reads`: 각 항목은 `resource_type`과 그 Resource에서 조회할 기존 사실 또는 exact identity인 `required_information`만 가진다. 전체 Resource/list 자체를 조회하고 별도 확인 속성이 없으면 `required_information`은 `[]`다.
 - `outputs`: 각 항목은 `resource_type`과 사용자가 요청한 `CREATE | UPDATE | SEND | DELETE`인 `effect`만 가진다.
+- 각 output의 resource와 effect는 schema가 허용한 실제 write 조합으로만 작성한다. 같은 조합을 다른 resource나 effect로 바꾸어 맞추지 않는다.
 - source가 없으면 `source_reads`를 `[]`, 외부 Write가 없으면 `outputs`를 `[]`로 둔다.
 - 같은 기존 Draft, Task, Event, Issue를 읽고 수정하는 요청은 같은 `resource_type`을 source와 output 양쪽에 둘 수 있다. 이는 서로 다른 의미가 아니라 한 Resource의 입력 역할과 결과 역할이다.
 - source 전체에서 확인할 사실과 평면 effect/resource hint는 이 객체에서 코드가 결정적으로 파생한다. 별도 필드로 다시 생성하지 않는다.

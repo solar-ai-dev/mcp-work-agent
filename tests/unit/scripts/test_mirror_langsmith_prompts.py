@@ -88,7 +88,7 @@ def _entry(source: str = "Do the bounded work.\n") -> PromptMirrorEntry:
             "activation_status": "DRAFT",
             "runtime_node_id": "request.identify_goal",
             "input_schema_version": 2,
-            "output_schema_version": 9,
+            "output_schema_version": 10,
         },
         source_text=source,
     )

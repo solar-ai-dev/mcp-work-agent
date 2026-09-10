@@ -18,18 +18,18 @@
 # 출력 규칙
 
 확인 불필요:
-`{"requires_confirmation": false, "missing_information_owner": "NONE", "reason_codes": [], "missing_fields": []}`
+`{"missing_information_owner": "NONE", "missing_fields": []}`
 
 Connector 조회가 먼저 필요한 경우:
-- `requires_confirmation=false`
 - `missing_information_owner="CONNECTOR"`
-- `reason_codes`와 `missing_fields`에는 Connector 소유 need를 식별할 최소 정보만 둔다.
+- `missing_fields`에는 Connector 소유 need를 식별할 최소 정보만 둔다.
 - Runtime은 이 candidate를 확정 Ambiguity에 저장하지 않고 Retrieval로 진행한다.
 
 확인 필요:
-- `requires_confirmation=true`
 - `missing_information_owner="USER"`
-- `reason_codes`와 `missing_fields`는 실제 사용자 선택만 포함
+- `missing_fields`는 실제 사용자 선택만 포함
+
+`requires_confirmation`과 `reason_codes`는 Runtime이 owner와 missing fields에서 결정적으로 파생한다. 출력에 중복 생성하지 않는다.
 
 # 출력 전 검증
 
