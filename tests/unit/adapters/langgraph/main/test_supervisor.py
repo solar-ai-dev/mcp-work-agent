@@ -58,6 +58,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     approve_semantic_revision,
     build_default_run_budget,
     build_semantic_failure_signature_v1,
+    promote_run_budget_profile,
 )
 from google_work_agent.application.use_cases.run.run_terminal import derive_finalize_intent
 from google_work_agent.application.use_cases.run.terminal_contract import (
@@ -91,10 +92,14 @@ def test_request_complete__routes_to__tool_route() -> None:
 
 def test_current_evidence__reenters_request_owner__before_meaning_is_revised() -> None:
     intent = _request_intent()
+    retrieval_budget = promote_run_budget_profile(
+        build_default_run_budget(), BudgetProfile.RETRIEVAL_HEAVY
+    )
     state = _state(
         workflow_phase=WorkflowPhase.WORK_ANALYSIS,
         request_intent=intent,
         tool_route_plan=_tool_route_plan(),
+        retry_budget=retrieval_budget,
     )
     signal = {
         "kind": "REQUEST_RECONSIDERATION_REQUIRED",
@@ -123,6 +128,10 @@ def test_current_evidence__reenters_request_owner__before_meaning_is_revised() -
     assert decision["target"] == SupervisorTarget.REQUEST_UNDERSTANDING.value
     assert decision["next_phase"] == WorkflowPhase.REQUEST_ANALYSIS.value
     assert decision["state_update"]["request_reconsideration"] == signal
+    revised_budget = cast(RunBudgetV2, decision["state_update"]["retry_budget"])
+    assert revised_budget["planning_revisions_used"] == 1
+    assert revised_budget["additional_retrieval_rounds_used"] == 0
+    assert revised_budget["llm_call_limit"] == revised_budget["absolute_llm_call_limit"] == 36
     assert "tool_route_plan" not in decision["state_update"]
     assert "retrieval_result" not in decision["state_update"]
     assert "work_analysis_result" not in decision["state_update"]

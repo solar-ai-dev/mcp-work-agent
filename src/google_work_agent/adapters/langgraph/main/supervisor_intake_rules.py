@@ -25,6 +25,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_decision import (
 )
 from google_work_agent.adapters.langgraph.main.supervisor_terminal_projection import (
     JsonObject,
+    budget_reason_code,
     confirmation_state_update,
     finalize_supervisor_result,
     request_intent_from_state,
@@ -42,8 +43,10 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ToolRouteResultV1,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
+    BudgetDecision,
     BudgetProfile,
     RunBudgetV2,
+    approve_planning_revision,
     promote_run_budget_profile,
 )
 from google_work_agent.application.use_cases.run.terminal_contract import FinalizeIntent
@@ -155,15 +158,28 @@ def route_request_reconsideration(
     ):
         return recovery_supervisor_decision("REQUEST_RECONSIDERATION_SIGNAL_STALE")
     typed_signal = cast(RequestReconsiderationRequiredV1, dict(signal))
+    revision_budget = approve_planning_revision(state["retry_budget"])
+    if revision_budget["decision"] == BudgetDecision.DENY.value:
+        return finalize_supervisor_result(
+            state=state,
+            intent=FinalizeIntent.BLOCKED.value,
+            reason_code=budget_reason_code(
+                revision_budget,
+                default="REQUEST_RECONSIDERATION_BUDGET_DENIED",
+            ),
+            budget_decision=revision_budget,
+        )
     return make_supervisor_decision(
         target=SupervisorTarget.REQUEST_UNDERSTANDING,
         next_phase=WorkflowPhase.REQUEST_ANALYSIS,
         state_update=base_supervisor_state_update(
             WorkflowPhase.REQUEST_ANALYSIS,
+            retry_budget=revision_budget["run_budget"],
             workflow_signal=typed_signal,
             request_reconsideration=typed_signal,
         ),
         reason_code=typed_signal["reason_codes"][0],
+        budget_decision=revision_budget,
     )
 
 
