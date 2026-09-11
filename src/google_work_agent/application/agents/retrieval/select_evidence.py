@@ -378,7 +378,7 @@ def _exact_selected_resource_selection(
     candidates: list[RagCandidateV1],
     exclusion_obligations: Collection[str],
 ) -> EvidenceSelectionResultV2 | None:
-    """Preserve one verified exact resource whenever the request includes its read."""
+    """Preserve bounded segments from one verified exact resource without LLM selection."""
 
     resource_refs = {candidate["resource_ref"] for candidate in candidates}
     if (
@@ -389,7 +389,7 @@ def _exact_selected_resource_selection(
         or any("EXACT_RESOURCE" not in candidate["reason_codes"] for candidate in candidates)
     ):
         return None
-    selected_segment_ids = [candidates[0]["segment_id"]]
+    selected_segment_ids = [candidate["segment_id"] for candidate in candidates]
     return {
         "schema_version": 2,
         "evidence_drafts": [

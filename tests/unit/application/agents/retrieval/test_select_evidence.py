@@ -564,7 +564,7 @@ def test_search_candidates__all_irrelevant__excludes_without_repair_or_fabricati
     assert len(runtime.calls) == 1
 
 
-def test_exact_selected_resource__with_multiple_segments__selects_top_rank_without_llm() -> None:
+def test_exact_selected_resource__with_multiple_segments__preserves_all_without_llm() -> None:
     runtime = FakeLLMRuntime()
     intent = _intent()
     intent["analysis_requirement"] = "NONE"
@@ -609,7 +609,7 @@ def test_exact_selected_resource__with_multiple_segments__selects_top_rank_witho
     )
 
     assert runtime.calls == []
-    assert result["selected_segment_ids"] == ["segment-1"]
+    assert result["selected_segment_ids"] == ["segment-1", "segment-2", "segment-3"]
 
 
 def test_select_evidence__repairs_container_only_selection__for_task_read() -> None:
