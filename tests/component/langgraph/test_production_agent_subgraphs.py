@@ -162,23 +162,25 @@ class _ComponentInferencePort:
                     "status": [],
                     "additional_constraints": [],
                 },
-                "resource_responsibilities": (
-                    {
-                        "source_reads": [],
-                        "outputs": [{"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}],
-                    }
-                    if needs_action
-                    else {
-                        "source_reads": (
-                            [{"resource_type": "GITHUB_ISSUE", "required_information": []}]
-                            if self.github_retrieval
-                            else []
-                        ),
-                        "outputs": [],
-                    }
-                ),
                 "analysis_requirement": "NONE",
             }
+        if prompt_id == "request_understanding.identify_resource_responsibilities":
+            needs_action = self.request_confirmation or has_confirmation
+            return (
+                {
+                    "source_reads": [],
+                    "outputs": [{"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}],
+                }
+                if needs_action
+                else {
+                    "source_reads": (
+                        [{"resource_type": "GITHUB_ISSUE", "required_information": []}]
+                        if self.github_retrieval
+                        else []
+                    ),
+                    "outputs": [],
+                }
+            )
         if prompt_id == "request_understanding.detect_ambiguity":
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
@@ -718,7 +720,10 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         result = graph.invoke(_state())
 
     assert result["request_intent"]["goal"] == "summarize status"
-    assert llm.calls == ["request_understanding.identify_goal"]
+    assert llm.calls == [
+        "request_understanding.identify_goal",
+        "request_understanding.identify_resource_responsibilities",
+    ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 

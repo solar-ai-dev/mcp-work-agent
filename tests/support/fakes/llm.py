@@ -53,6 +53,11 @@ class FakeStructuredInferencePort:
     outputs: list[object]
     calls: list[StructuredInferenceCall] = field(default_factory=list)
     validate_schema: bool = False
+    _pending_resource_responsibilities: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def infer(
         self,
@@ -69,7 +74,28 @@ class FakeStructuredInferencePort:
                 "output_schema": output_schema_ref,
             }
         )
-        output = self.outputs.pop(0)
+        if (
+            output_schema_ref.schema_version == "request-resource-responsibilities-v1"
+            and self._pending_resource_responsibilities is not None
+        ):
+            output = self._pending_resource_responsibilities
+            self._pending_resource_responsibilities = None
+        else:
+            output = self.outputs.pop(0)
+            if isinstance(output, Mapping) and "resource_responsibilities" in output:
+                responsibilities = output["resource_responsibilities"]
+                if output_schema_ref.schema_version == "request-goal-candidate-v11":
+                    self._pending_resource_responsibilities = responsibilities
+                    output = {
+                        key: value
+                        for key, value in output.items()
+                        if key != "resource_responsibilities"
+                    }
+                elif (
+                    output_schema_ref.schema_version
+                    == "request-resource-responsibilities-v1"
+                ):
+                    output = responsibilities
         if isinstance(output, Exception):
             raise output
         if self.validate_schema:

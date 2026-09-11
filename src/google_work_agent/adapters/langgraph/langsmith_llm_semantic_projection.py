@@ -18,6 +18,7 @@ _SAFE_FIELD_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}")
 _SUPPORTED_PROMPTS = frozenset(
     {
         "request_understanding.identify_goal",
+        "request_understanding.identify_resource_responsibilities",
         "request_understanding.detect_ambiguity",
         "retrieval.plan_query",
         "tool_routing.determine_io_resources",
@@ -120,7 +121,10 @@ def project_llm_semantic_input(prompt_id: str, value: object) -> dict[str, objec
     mapping = _prompt_mapping(value)
     if prompt_id not in _SUPPORTED_PROMPTS or mapping is None:
         return _unavailable()
-    if prompt_id == "request_understanding.identify_goal":
+    if prompt_id in {
+        "request_understanding.identify_goal",
+        "request_understanding.identify_resource_responsibilities",
+    }:
         result = _project_identify_input(mapping)
     elif prompt_id == "request_understanding.detect_ambiguity":
         result = _project_ambiguity_input(mapping)
@@ -145,6 +149,8 @@ def project_llm_semantic_output(prompt_id: str, value: object) -> dict[str, obje
         return _unavailable()
     if prompt_id == "request_understanding.identify_goal":
         result = _project_goal_candidate(mapping)
+    elif prompt_id == "request_understanding.identify_resource_responsibilities":
+        result = _project_resource_responsibilities_candidate(mapping)
     elif prompt_id == "request_understanding.detect_ambiguity":
         result = _project_ambiguity_output(mapping)
     elif prompt_id == "retrieval.plan_query":
@@ -204,6 +210,16 @@ def _project_goal_candidate(value: Mapping[object, object]) -> dict[str, object]
         result["outputs"] = {"count": 0, "items": []}
     result["constraints"] = _project_goal_constraints(value.get("constraints"))
     return result
+
+
+def _project_resource_responsibilities_candidate(
+    value: Mapping[object, object],
+) -> dict[str, object]:
+    return {
+        "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
+        "source_reads": _project_source_reads(value.get("source_reads")),
+        "outputs": _project_outputs(value.get("outputs")),
+    }
 
 
 def _project_ambiguity_input(value: Mapping[object, object]) -> dict[str, object]:

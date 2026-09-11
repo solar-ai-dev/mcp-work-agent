@@ -309,14 +309,13 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v10",
+    schema_version="request-goal-candidate-v11",
     json_schema={
         "type": "object",
         "required": [
             "goal",
             "completion_conditions",
             "constraints",
-            "resource_responsibilities",
             "analysis_requirement",
         ],
         "additionalProperties": False,
@@ -350,7 +349,6 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "그 밖의 명시적 실행 값은 additional_constraints에 둔다."
                 ),
             },
-            "resource_responsibilities": _RESOURCE_RESPONSIBILITY_SCHEMA,
             "analysis_requirement": {
                 "enum": ["NONE", "REQUIRED"],
                 "description": (
@@ -367,10 +365,16 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
     },
 )
 
+IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA = OutputSchemaDefinition(
+    schema_version="request-resource-responsibilities-v1",
+    json_schema=deepcopy(_RESOURCE_RESPONSIBILITY_SCHEMA),
+)
+
 
 def validate_request_goal_candidate(
     value: object,
     *,
+    resource_responsibilities: object,
     schema: OutputSchemaDefinition = IDENTIFY_GOAL_OUTPUT_SCHEMA,
     provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
 ) -> RequestGoalCandidateV1:
@@ -379,9 +383,9 @@ def validate_request_goal_candidate(
         raise ValueError(f"request goal candidate is invalid: {'; '.join(errors)}")
     root = cast(dict[str, object], value)
     slots = cast(dict[str, object], root["constraints"])
-    _validate_semantic_constraint_text(slots, root=root)
-    normalized_responsibilities = _normalize_source_read_responsibilities(
-        cast(Mapping[str, object], root["resource_responsibilities"])
+    _validate_semantic_constraint_text(slots)
+    normalized_responsibilities = validate_resource_responsibility_candidate(
+        resource_responsibilities
     )
     normalized_root = {
         **root,
@@ -453,6 +457,22 @@ def validate_request_goal_candidate(
     return cast(RequestGoalCandidateV1, value)
 
 
+def validate_resource_responsibility_candidate(
+    value: object,
+) -> ResourceResponsibilitiesV1:
+    errors = validate_output_schema(
+        value,
+        IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA.json_schema,
+    )
+    if errors:
+        raise ValueError(f"resource responsibility candidate is invalid: {'; '.join(errors)}")
+    responsibilities = _normalize_source_read_responsibilities(
+        cast(Mapping[str, object], value)
+    )
+    _validate_resource_responsibility_text(responsibilities)
+    return responsibilities
+
+
 def _normalize_source_read_responsibilities(
     responsibilities: Mapping[str, object],
 ) -> ResourceResponsibilitiesV1:
@@ -515,8 +535,6 @@ def derive_requested_resource_fields(
 
 def _validate_semantic_constraint_text(
     slots: Mapping[str, object],
-    *,
-    root: Mapping[str, object],
 ) -> None:
     for field in _MODEL_CONSTRAINT_SLOT_KINDS:
         if field == "status":
@@ -552,9 +570,9 @@ def _validate_semantic_constraint_text(
                 f"$.constraints.additional_constraints[{index}].provenance.source_text",
             )
 
-    responsibilities = root.get("resource_responsibilities")
-    if not isinstance(responsibilities, Mapping):
-        return
+def _validate_resource_responsibility_text(
+    responsibilities: ResourceResponsibilitiesV1,
+) -> None:
     source_reads = cast(Sequence[Mapping[str, object]], responsibilities["source_reads"])
     for source_index, source in enumerate(source_reads):
         information = cast(Sequence[str], source["required_information"])
@@ -637,10 +655,17 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
     schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
     properties = cast(dict[str, object], schema["properties"])
     properties["constraints"] = _CONSTRAINT_LIST_SCHEMA
+    properties["resource_responsibilities"] = _RESOURCE_RESPONSIBILITY_SCHEMA
     properties["requested_effect_hints"] = _DERIVED_EFFECT_HINTS_SCHEMA
     properties["requested_resource_hints"] = _DERIVED_RESOURCE_HINTS_SCHEMA
     required = cast(list[str], schema["required"])
-    required.extend(["requested_effect_hints", "requested_resource_hints"])
+    required.extend(
+        [
+            "resource_responsibilities",
+            "requested_effect_hints",
+            "requested_resource_hints",
+        ]
+    )
     errors = validate_output_schema(value, schema)
     if errors:
         raise ValueError(f"normalized request goal candidate is invalid: {'; '.join(errors)}")
@@ -649,8 +674,10 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
 
 __all__ = [
     "IDENTIFY_GOAL_OUTPUT_SCHEMA",
+    "IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA",
     "RequestGoalSemanticValidationError",
     "REQUEST_GOAL_SLOT_KINDS",
     "validate_normalized_request_goal_candidate",
     "validate_request_goal_candidate",
+    "validate_resource_responsibility_candidate",
 ]

@@ -104,6 +104,11 @@ class RequestUnderstandingSubgraph:
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
+        self._identify_resource_responsibilities_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_resource_responsibilities",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
         self._identify_temporal_scope_prompt_ref = load_prompt_reference(
             "request_understanding.identify_temporal_scope",
             manifest_path,
@@ -178,6 +183,12 @@ class RequestUnderstandingSubgraph:
             working_state,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_goal_prompt_ref,
+            responsibility_prompt_ref=self._identify_resource_responsibilities_prompt_ref,
+        )
+        calls_used = max(
+            0,
+            patch["retry_budget"]["llm_calls_used"]
+            - state["retry_budget"]["llm_calls_used"],
         )
         return {
             **current_run_fields,
@@ -188,7 +199,8 @@ class RequestUnderstandingSubgraph:
                 node_name="identify_goal",
                 llm_call_id=f"{request.run_id}:request.identify_goal",
                 prompt_ref=self._identify_goal_prompt_ref,
-                llm_call_increment=1,
+                additional_prompt_refs=(self._identify_resource_responsibilities_prompt_ref,),
+                llm_call_increment=calls_used,
                 invocation_id=invocation_id,
                 agent_invocation_increment=1 if is_first_node else 0,
             ),
@@ -384,6 +396,7 @@ class RequestUnderstandingSubgraph:
         node_name: str,
         llm_call_id: str | None = None,
         prompt_ref: Any = None,
+        additional_prompt_refs: tuple[Any, ...] = (),
         llm_call_increment: int = 0,
         invocation_id: str | None = None,
         agent_invocation_increment: int = 0,
@@ -401,6 +414,7 @@ class RequestUnderstandingSubgraph:
             node_name=node_name,
             llm_call_id=llm_call_id,
             prompt_ref=prompt_ref,
+            additional_prompt_refs=additional_prompt_refs,
             agent_invocation_increment=agent_invocation_increment,
             llm_call_increment=llm_call_increment,
         )

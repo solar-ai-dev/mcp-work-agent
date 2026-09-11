@@ -25,24 +25,12 @@
 
 같은 값을 의미 없이 여러 역할에 반복하지 않는다. 다만 관련 이름을 보존한다는 이유로 원문의 AND/OR 관계나 요청 범위를 바꾸지 않는다. 근거 없이 이메일·Resource ID·기간·상태를 보충하지 않는다.
 
-# source와 output의 구분
-
-외부 Resource 역할은 `resource_responsibilities` 한 곳에 작성한다.
-
-`source_reads`에는 필요한 기존 자료와 그 자료에서 확인할 사실·identity를 `resource_type`과 `required_information`으로 쓴다. 목록 자체를 읽는 것이 목적이면 추가 속성을 발명하지 않는다. `outputs`에는 요청한 외부 변경의 `resource_type`과 `CREATE | UPDATE | SEND | DELETE`를 쓴다. 같은 기존 Resource를 읽고 수정하면 양쪽에 같은 Resource 종류가 올 수 있다. Runtime이 파생하는 평면 hint를 출력에 중복 생성하지 않는다.
-
-기존 A와 B를 보고 새 C를 작성·저장하라는 요청에서는 A와 B만 `source_reads`, C만 `outputs`다. C를 CREATE한다는 이유로 C의 제목·수신자·본문·identity를 기존 source 정보처럼 `source_reads`에 넣지 않는다. C가 이미 존재해 조회 후 UPDATE하는 요청일 때만 같은 Resource 종류가 양쪽에 올 수 있다.
-
-외부 자료 조회나 변경 없이 답할 수 있는 설명·예시·작성 조언은 `source_reads`와 `outputs`를 모두 비운다. 답변에서 내용을 작성하는 것과 외부에 저장·수정·전송하는 것은 다르다. 실제 자료를 찾아 달라거나 선택한 자료를 설명·수정하라는 요청이면 필요한 source를 유지하고, 일반 답변 경로를 만들기 위해 조회·변경 요구를 지우지 않는다. 조회만 필요하면 `outputs`는 비어 있다. 독립적인 외부 작성·전송은 output만 필요할 수 있으며, 관련 없는 READ를 붙이지 않는다. 기존 Draft·Thread·Task·Event·Issue의 사실이나 identity가 필요하면 source를 보존한다. 실행 후 Verification은 별도 업무 source가 아니다.
-
-CREATE는 새 외부 Resource, UPDATE는 기존 Resource 변경, SEND는 전송, DELETE는 제거다. SEND 본문을 작성하는 내부 과정은 별도 Draft CREATE가 아니다. 기존 Thread의 자료를 참고한 새 메일과 그 Thread에 대한 Reply를 구분한다. Issue close/reopen의 effect는 UPDATE다. Resource/effect는 supplied schema의 조합을 따르고, 지원하지 않는 요구를 다른 작업으로 바꾸어 맞추지 않는다.
-
-Calendar 값은 현재 schema의 local date/time/timezone 의미를 보존한다. 참석자 주소를 Gmail 요청으로 중복 해석하지 않는다. GitHub repository는 명시되거나 검증된 현재 입력만 사용한다.
-
 # 분석과 재해석
 
 `analysis_requirement`은 실제로 필요한 파생 판단을 표현한다. 직접 조회·정리로 충분한 경우와 관계·비교·원인·후속 작업·중복·충돌 판단이 필요한 경우를 구분한다.
 
 `base_projection`, `candidate_output`, `failure_record`를 받으면 같은 호출의 수정이다. 실패한 부분과 그에 의존하는 관계를 다시 판단하고, 최초 후보의 잘못된 source 가설은 고칠 수 있다. 사용자 원문·명시 선택·금지는 보존하며, validator 오류를 피하려고 실제 요청한 조회나 변경을 지우지 않는다.
+
+외부 Resource의 source/output 역할은 별도 책임이 판정한다. 여기서는 supplied schema에 없는 Resource 역할이나 평면 hint를 만들지 않는다.
 
 지정된 JSON schema에 맞는 객체 하나만 반환한다. Tool 선택·Query·arguments·정책 승인·실행 결과를 작성하지 않는다.

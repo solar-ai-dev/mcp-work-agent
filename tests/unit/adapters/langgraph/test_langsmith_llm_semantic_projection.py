@@ -115,17 +115,6 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
         {
             "goal": "private natural language goal",
             "analysis_requirement": "NONE",
-            "requested_effect_hints": ["READ", "UPDATE"],
-            "requested_resource_hints": ["GMAIL_DRAFT"],
-            "resource_responsibilities": {
-                "source_reads": [
-                    {
-                        "resource_type": "GMAIL_DRAFT",
-                        "required_information": ["private body", "private recipient"],
-                    }
-                ],
-                "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
-            },
             "constraints": [
                 {
                     "kind": "SOURCE_FILTER",
@@ -142,14 +131,8 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
         },
     )
 
-    assert projection["source_reads"] == {
-        "count": 1,
-        "items": [{"resource_type": "GMAIL_DRAFT", "required_information_count": 2}],
-    }
-    assert projection["outputs"] == {
-        "count": 1,
-        "items": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
-    }
+    assert projection["source_reads"] == {"count": 0, "items": []}
+    assert projection["outputs"] == {"count": 0, "items": []}
     assert projection["constraints"] == {
         "count": 2,
         "items": [
@@ -159,12 +142,46 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
     }
     for secret in (
         "private natural language goal",
-        "private body",
-        "private recipient",
         "private source text",
         "private query literal",
     ):
         assert secret not in repr(projection)
+
+
+def test_resource_responsibility_output__keeps_roles__without_business_literals() -> None:
+    projection = project_llm_semantic_output(
+        "request_understanding.identify_resource_responsibilities",
+        {
+            "source_reads": [
+                {
+                    "resource_type": "TASK",
+                    "required_information": ["private task state"],
+                },
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["private event time"],
+                },
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        },
+    )
+
+    assert projection == {
+        "projection_version": 1,
+        "source_reads": {
+            "count": 2,
+            "items": [
+                {"resource_type": "TASK", "required_information_count": 1},
+                {"resource_type": "CALENDAR_EVENT", "required_information_count": 1},
+            ],
+        },
+        "outputs": {
+            "count": 1,
+            "items": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        },
+    }
+    assert "private task state" not in repr(projection)
+    assert "private event time" not in repr(projection)
 
 
 def test_plan_query__keeps_candidate_shape__without_query_literals_or_refs() -> None:

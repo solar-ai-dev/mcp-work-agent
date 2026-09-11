@@ -21,6 +21,7 @@ _ORIGIN_PROMPT_IDS: dict[str, frozenset[str]] = {
     "request.detect_ambiguity": frozenset(
         {
             "request_understanding.identify_goal",
+            "request_understanding.identify_resource_responsibilities",
             "request_understanding.detect_ambiguity",
         }
     ),

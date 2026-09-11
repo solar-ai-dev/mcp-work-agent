@@ -47,6 +47,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
+    IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
     RequestGoalSemanticValidationError,
     derive_requested_resource_fields,
     validate_normalized_request_goal_candidate,
@@ -60,13 +61,19 @@ def identify_goal(
     llm_runtime: StructuredInferencePort,
     request: WorkflowStartRequest,
     prompt_ref: PromptReference | None = None,
+    responsibility_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
 ) -> RequestGoalCandidateV1:
     """Identify only the current Run's goal semantics."""
+    resolved_manifest_path = manifest_path or default_prompt_manifest_path()
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
-        "request_understanding.identify_goal", manifest_path or default_prompt_manifest_path()
+        "request_understanding.identify_goal", resolved_manifest_path
+    )
+    resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_resource_responsibilities",
+        resolved_manifest_path,
     )
     prompt_input = _prompt_input(
         request=request,
@@ -79,8 +86,15 @@ def identify_goal(
         prompt_input,
         IDENTIFY_GOAL_OUTPUT_SCHEMA,
     )
+    responsibility_result = llm_runtime.infer(
+        request.requested_mode,
+        resolved_responsibility_prompt_ref,
+        prompt_input,
+        IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
+    )
     return _validated_candidate(
         result.structured_output,
+        resource_responsibilities=responsibility_result.structured_output,
         request=request,
         confirmation_response=confirmation_response,
     )
@@ -92,14 +106,20 @@ def identify_goal_with_budget(
     request: WorkflowStartRequest,
     retry_budget: RunBudgetV2,
     prompt_ref: PromptReference | None = None,
+    responsibility_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Identify the goal with one bounded semantic contract revision."""
 
+    resolved_manifest_path = manifest_path or default_prompt_manifest_path()
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
-        "request_understanding.identify_goal", manifest_path or default_prompt_manifest_path()
+        "request_understanding.identify_goal", resolved_manifest_path
+    )
+    resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_resource_responsibilities",
+        resolved_manifest_path,
     )
     prompt_input = _prompt_input(
         request=request,
@@ -113,9 +133,18 @@ def identify_goal_with_budget(
             prompt_input,
             IDENTIFY_GOAL_OUTPUT_SCHEMA,
         )
+        responsibility_result = llm_runtime.infer(
+            request.requested_mode,
+            resolved_responsibility_prompt_ref,
+            prompt_input,
+            IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
+        )
+        goal_output = result.structured_output
+        responsibility_output = responsibility_result.structured_output
         try:
             candidate = _validated_candidate(
-                result.structured_output,
+                goal_output,
+                resource_responsibilities=responsibility_output,
                 request=request,
                 confirmation_response=confirmation_response,
             )
@@ -127,26 +156,40 @@ def identify_goal_with_budget(
             decision = approve_semantic_revision(retry_budget, signature=signature)
             if decision["decision"] == BudgetDecision.DENY.value:
                 raise
-            revised = llm_runtime.infer(
+            failure_record = build_failure_record_v1(
+                failure_reason_code=error.reason_code,
+                failure_origin="LLM_OUTPUT",
+                detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE",
+                experiment_disposition="RUN_REVISION",
+                affected_field_paths=list(error.affected_field_paths),
+                failure_context_ids=[str(error)],
+            )
+            revised_goal = llm_runtime.infer(
                 request.requested_mode,
                 resolved_prompt_ref,
                 {
                     "base_projection": prompt_input,
-                    "candidate_output": result.structured_output,
-                    "failure_record": build_failure_record_v1(
-                        failure_reason_code=error.reason_code,
-                        failure_origin="LLM_OUTPUT",
-                        detected_by="RUNTIME_DOMAIN_VALIDATOR",
-                        runtime_disposition="RETRYABLE",
-                        experiment_disposition="RUN_REVISION",
-                        affected_field_paths=list(error.affected_field_paths),
-                        failure_context_ids=[str(error)],
-                    ),
+                    "candidate_output": goal_output,
+                    "failure_record": failure_record,
                 },
                 IDENTIFY_GOAL_OUTPUT_SCHEMA,
             )
+            revised_responsibilities = llm_runtime.infer(
+                request.requested_mode,
+                resolved_responsibility_prompt_ref,
+                {
+                    "base_projection": prompt_input,
+                    "candidate_output": responsibility_output,
+                    "failure_record": failure_record,
+                },
+                IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
+            )
+            goal_output = revised_goal.structured_output
+            responsibility_output = revised_responsibilities.structured_output
             candidate = _validated_candidate(
-                revised.structured_output,
+                goal_output,
+                resource_responsibilities=responsibility_output,
                 request=request,
                 confirmation_response=confirmation_response,
             )
@@ -186,6 +229,7 @@ def _prompt_input(
 def _validated_candidate(
     value: object,
     *,
+    resource_responsibilities: object,
     request: WorkflowStartRequest,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
 ) -> RequestGoalCandidateV1:
@@ -198,6 +242,7 @@ def _validated_candidate(
     candidate = _apply_quoted_literal_authority(
         validate_request_goal_candidate(
             value,
+            resource_responsibilities=resource_responsibilities,
             provenance_sources=provenance_sources,
         ),
         request_text=request.request_text,

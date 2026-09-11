@@ -9,6 +9,7 @@ ensure_llm_call_budget-before / consume_llm_call_budget-after pattern).
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 import pytest
@@ -51,6 +52,11 @@ PROMPT_REF = PromptReference(
     purpose="test",
     input_schema_version="v1",
     output_schema_version="v1",
+)
+RESPONSIBILITY_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_resource_responsibilities",
+    purpose="identify_resource_responsibilities",
 )
 
 
@@ -114,11 +120,20 @@ class _RepairingAgent:
         input_projection: Mapping[str, object],
         output_schema_ref: OutputSchemaDefinition,
     ) -> StructuredInferenceResultV1:
-        del requested_mode, prompt_ref, input_projection, output_schema_ref
+        del requested_mode, input_projection, output_schema_ref
         result = self.invoke_structured()
+        output = result.structured_output
+        if prompt_ref.prompt_id == "request_understanding.identify_resource_responsibilities":
+            output = cast(dict[str, object], output["resource_responsibilities"])
+        else:
+            output = {
+                key: value
+                for key, value in output.items()
+                if key != "resource_responsibilities"
+            }
         return StructuredInferenceResultV1(
             schema_version=1,
-            structured_output=result.structured_output,
+            structured_output=output,
             provider="test-provider",
             model="test-model",
             actual_runtime="LOCAL_GPU",
@@ -139,6 +154,7 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph = object.__new__(RequestUnderstandingSubgraph)
     subgraph._llm_runtime = agent if agent is not None else cast(Any, _NeverCalledAgent())
     subgraph._identify_goal_prompt_ref = PROMPT_REF
+    subgraph._identify_resource_responsibilities_prompt_ref = RESPONSIBILITY_PROMPT_REF
     subgraph._graph_profile = GraphProfile.SIX_ROLE_BASELINE
     return subgraph
 
@@ -199,5 +215,5 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
 
     result = subgraph._identify_goal_node(cast(Any, state))
 
-    assert agent.calls == 1
-    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 5
+    assert agent.calls == 2
+    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 7
