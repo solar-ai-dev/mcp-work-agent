@@ -109,10 +109,14 @@ def _freeze_plan(
     id_factory: Callable[[], str],
 ) -> ToolRoutePlanV2:
     previous_input_plan = None if previous_plan is None else previous_plan["input_plan"]
+    previous_input_is_for_request = (
+        previous_input_plan is not None
+        and request_ref in previous_input_plan["meta"]["based_on"]
+    )
     reuse_previous_input = (
-        reuse_input_plan
-        and previous_input_plan is not None
+        previous_input_plan is not None
         and previous_input_plan["input_routes"] == input_routes
+        and (reuse_input_plan or previous_input_is_for_request)
     )
     input_revision = (
         1 if previous_input_plan is None else previous_input_plan["meta"]["revision"] + 1

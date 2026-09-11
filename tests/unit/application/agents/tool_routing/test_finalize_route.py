@@ -158,3 +158,52 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
     assert revised_plan["output_plan"]["meta"]["based_on"] == [
         {"artifact_id": "intent-1", "revision": 2}
     ]
+
+
+def test_finalize_route__same_request_and_routes__preserves_input_plan_identity() -> None:
+    catalog = _catalog()
+    ids = iter(f"id-{index}" for index in range(30))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            ("GMAIL_THREAD",),
+            (),
+            "ANSWER",
+            "REQUIRED",
+        ),
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+    )
+    intent: RequestIntentV2 = {
+        "schema_version": 2,
+        "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
+        "goal": "list matching mail",
+        "completion_conditions": ["all matching titles returned"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "analysis_requirement": "REQUIRED",
+        "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+    }
+    first = finalize_route(
+        request_intent=intent,
+        binding=binding,
+        selected_tools={},
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+    )
+    first_plan = first["tool_route_plan"]
+    assert first_plan is not None
+
+    repeated = finalize_route(
+        request_intent=intent,
+        binding=binding,
+        selected_tools={},
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+        previous_plan=first_plan,
+    )
+
+    repeated_plan = repeated["tool_route_plan"]
+    assert repeated_plan is not None
+    assert repeated_plan["input_plan"] is first_plan["input_plan"]
+    assert repeated_plan["output_plan"]["meta"]["revision"] == 2

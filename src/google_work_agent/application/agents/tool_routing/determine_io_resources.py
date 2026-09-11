@@ -417,6 +417,20 @@ def _semantic_candidate(
     output_effects = tuple(
         EffectType(cast(str, item)) for item in cast(list[object], raw["output_effects"])
     )
+    if raw["disposition"] == "NO_TOOL_NEEDED" and input_resources:
+        raise ToolRouteValidationError(
+            "NO_TOOL_NEEDED cannot retain input resource routes",
+            reason_code="TOOL_ROUTE_FORBIDDEN_INPUT_INCLUDED",
+            affected_field_paths=("$.input_resource_types",),
+        )
+    if raw["disposition"] == "NO_TOOL_NEEDED" and (
+        raw_output_resources or output_effects
+    ):
+        raise ToolRouteValidationError(
+            "NO_TOOL_NEEDED cannot retain output resource routes",
+            reason_code="TOOL_ROUTE_OUTPUT_MODE_WRONG",
+            affected_field_paths=("$.output_resource_types", "$.output_effects"),
+        )
     requested_write_effects = {
         EffectType(item)
         for item in request_intent["requested_effect_hints"]

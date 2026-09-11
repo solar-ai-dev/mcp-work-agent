@@ -90,6 +90,58 @@ def test_get_only_message_route__with_search__rejects_before_adapter() -> None:
         )
 
 
+def test_duplicate_constraint_kind__reports_the_rejected_field_path() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "gmail-search",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+
+    with pytest.raises(
+        RetrievalV2ValidationError, match="effective constraints cannot duplicate a kind"
+    ) as caught:
+        validate_retrieval_query_plan_v2(
+            {
+                "schema_version": 2,
+                "route_queries": [
+                    {
+                        "route_id": "gmail-search",
+                        "operation": "SEARCH",
+                        "reason_codes": ["USER_REQUEST"],
+                        "search_spec": {
+                            "mode": "INITIAL",
+                            "constraints": [
+                                {
+                                    "kind": "CONCEPT",
+                                    "concept": "Maple",
+                                    "manifestations": ["Maple"],
+                                },
+                                {
+                                    "kind": "CONCEPT",
+                                    "concept": "maintenance",
+                                    "manifestations": ["maintenance"],
+                                },
+                            ],
+                        },
+                        "detail_candidate_ref": None,
+                    }
+                ],
+            },
+            frozen_routes=[route],
+            supported_constraint_kinds={"gmail-search": ["CONCEPT"]},
+        )
+
+    assert caught.value.affected_field_paths == (
+        "$.route_queries[].search_spec.constraints",
+    )
+
+
 def test_detail_candidate__from_other_route__is_rejected() -> None:
     routes = [
         cast(

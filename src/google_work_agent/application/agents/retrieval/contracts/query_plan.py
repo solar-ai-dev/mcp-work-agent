@@ -505,7 +505,10 @@ def _validate_constraints(
         for item in value
     ]
     if len({constraint["kind"] for constraint in constraints}) != len(constraints):
-        raise RetrievalV2ValidationError("effective constraints cannot duplicate a kind")
+        raise RetrievalV2ValidationError(
+            "effective constraints cannot duplicate a kind",
+            affected_field_paths=("$.route_queries[].search_spec.constraints",),
+        )
     return constraints
 
 

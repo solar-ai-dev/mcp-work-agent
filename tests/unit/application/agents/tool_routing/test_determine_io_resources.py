@@ -579,6 +579,86 @@ def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> 
     ]
 
 
+def test_no_tool_disposition__cannot_retain_input_resource_routes() -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-answer", "revision": 1, "based_on": []},
+            "goal": "answer without external resources",
+            "completion_conditions": ["answered"],
+            "constraints": [],
+            "requested_effect_hints": [],
+            "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
+            "analysis_requirement": "REQUIRED",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-answer",
+        conversation_id="conversation-answer",
+        workflow_key="thread-answer",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="answer without external resources",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request-answer", "command-answer", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "schema_version": 1,
+                "input_resource_types": ["EMAIL"],
+                "output_resource_types": [],
+                "output_effects": [],
+                "disposition": "NO_TOOL_NEEDED",
+            },
+            {
+                "schema_version": 1,
+                "input_resource_types": [],
+                "output_resource_types": [],
+                "output_effects": [],
+                "disposition": "NO_TOOL_NEEDED",
+            },
+        ]
+    )
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+        prompt_ref=PromptReference(
+            prompt_bundle_version="test",
+            prompt_id="tool_routing.determine_io_resources",
+            prompt_version="1",
+            content_hash="hash",
+            agent_role="tool_routing",
+            subgraph_name="tool_routing",
+            node_name="determine_io_resources",
+            node_state="INITIAL",
+            purpose="determine_io_resources",
+            input_schema_version="v1",
+            output_schema_version="v1",
+        ),
+    )
+
+    assert len(runtime.calls) == 2
+    assert candidate.input_resource_types == ()
+    assert candidate.output_pairs == ()
+    assert candidate.output_mode == "ANSWER"
+    revision_input = cast(Mapping[str, object], runtime.calls[1]["prompt_input"])
+    failure_record = cast(Mapping[str, object], revision_input["failure_record"])
+    assert failure_record["affected_field_paths"] == ["$.input_resource_types"]
+
+
 def test_semantic_route_schema__with_requested_writes__permits_only_those_effects() -> None:
     intent = cast(
         RequestIntentV2,
