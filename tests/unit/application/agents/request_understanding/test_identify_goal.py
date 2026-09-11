@@ -619,7 +619,7 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         "request_understanding.identify_resource_responsibilities",
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
-        "request-goal-candidate-v11",
+        "request-goal-candidate-v12",
         "request-resource-responsibilities-v1",
     ]
     assert runtime.calls[1]["prompt_input"]["goal_candidate"] == {
@@ -787,6 +787,60 @@ def test_request_goal_schema__for_ollama_output__contains_no_patterns() -> None:
         return []
 
     assert collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema) == []
+
+
+def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope() -> None:
+    candidate = {
+        "goal": "관련 제목 목록을 요청 범위 끝까지 반환한다",
+        "completion_conditions": ["요청 범위의 제목을 빠짐없이 반환한다"],
+        "constraints": _goal_constraints(
+            {
+                "kind": "SCOPE",
+                "field": "coverage_requirement",
+                "value": "EXHAUSTIVE",
+            },
+            search_terms=["Project Anchor"],
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    normalized = goal_schema.validate_request_goal_candidate(
+        candidate,
+        resource_responsibilities=_resource_responsibilities(
+            source_type="GMAIL_THREAD",
+            required_information=["관련 제목 목록"],
+        ),
+    )
+
+    assert {
+        "kind": "SCOPE",
+        "field": "coverage_requirement",
+        "value": "EXHAUSTIVE",
+    } in normalized["constraints"]
+
+
+def test_request_goal_schema__rejects_non_typed_collection_scope() -> None:
+    candidate = {
+        "goal": "관련 제목 목록을 반환한다",
+        "completion_conditions": ["관련 제목을 반환한다"],
+        "constraints": _goal_constraints(
+            {
+                "kind": "SCOPE",
+                "field": "coverage_requirement",
+                "value": "ALL_RESULTS",
+            }
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        goal_schema.validate_request_goal_candidate(
+            candidate,
+            resource_responsibilities=_resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["관련 제목 목록"],
+            ),
+        )
 
 
 @pytest.mark.parametrize(

@@ -61,7 +61,7 @@ class PromptRuntimeInputContractEntryV1:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
         output_version = {
             "retrieval.select_evidence": 3,
-            "request_understanding.identify_goal": 11,
+            "request_understanding.identify_goal": 12,
             "request_understanding.detect_ambiguity": 2,
             "work_analysis.detect_duplicate_conflict_candidates": 3,
             "work_analysis.assess_information_gaps": 2,

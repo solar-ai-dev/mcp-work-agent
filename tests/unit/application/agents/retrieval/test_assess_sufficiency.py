@@ -276,6 +276,115 @@ def test_sufficiency_node__page_inventory__does_not_force_more_data(
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
 
 
+@pytest.mark.parametrize(
+    ("has_next_page", "expected_status"),
+    [(True, "NEEDS_MORE_DATA"), (False, "SUFFICIENT")],
+)
+def test_exhaustive_collection__uses_page_observation_to_guard_llm_sufficiency(
+    has_next_page: bool,
+    expected_status: str,
+) -> None:
+    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    intent = _intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = [
+        {
+            "kind": "SCOPE",
+            "field": "coverage_requirement",
+            "value": "EXHAUSTIVE",
+        }
+    ]
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        retry_budget=_run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "현재 확인한 목록 항목",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        read_result_summaries=[
+            {
+                "route_id": "route-gmail",
+                "has_next_page": has_next_page,
+                "exhausted": not has_next_page,
+            }
+        ],
+    )
+
+    assert result["status"] == expected_status
+    if has_next_page:
+        assert result["issues"] == [
+            {
+                "slot": "collection_coverage",
+                "route_id": "route-gmail",
+                "issue_type": "MISSING",
+                "required": True,
+                "resolution_source": "GOOGLE",
+                "safety_critical": False,
+                "reason_codes": ["COLLECTION_PAGE_REMAINS"],
+            }
+        ]
+    else:
+        assert result["issues"] == []
+
+
+def test_exhaustive_collection__exhausted_followup_budget__closes_as_partial() -> None:
+    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    intent = _intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = [
+        {
+            "kind": "SCOPE",
+            "field": "coverage_requirement",
+            "value": "EXHAUSTIVE",
+        }
+    ]
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=_acquisition_result(),
+        retry_budget=_run_budget(used=2),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "현재 확인한 목록 항목",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        read_result_summaries=[
+            {
+                "route_id": "route-gmail",
+                "has_next_page": True,
+                "exhausted": False,
+            }
+        ],
+    )
+
+    assert result["status"] == "PARTIAL"
+
+
 def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard() -> None:
     intent = _intent()
     intent["analysis_requirement"] = "NONE"

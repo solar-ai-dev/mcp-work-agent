@@ -478,6 +478,38 @@ class _CollectionConnectorReadPort:
         )
 
 
+class _PagedCollectionConnectorReadPort:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        del tool_arguments
+        page = self.call_count
+        self.call_count += 1
+        return ConnectorReadResultV1(
+            schema_version=1,
+            tool_id=binding.tool_id,
+            request_id=f"component-paged-read-{page}",
+            output={
+                "items": [
+                    {
+                        "resource_type": "gmail_thread",
+                        "resource_id": f"thread-{page}",
+                        "parent_id": None,
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": {
+                            "subject": f"Status title {page}",
+                            "body": "The current status is ready.",
+                        },
+                    }
+                ]
+            },
+            next_page_token="next-page" if page == 0 else None,
+            total_count=2,
+        )
+
+
 @pytest.mark.parametrize("multiple", [False, True])
 def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple: bool) -> None:
     class Reader:
@@ -937,6 +969,48 @@ def test_retrieval__compiled_collection_metadata__is_not_limited_by_rag_evidence
         "Same title",
         "Same title",
     ]
+
+
+def test_retrieval__compiled_exhaustive_collection__reads_unread_page_before_finalize() -> None:
+    state = _state(initial_target="context_retriever")
+    intent = _intent()
+    intent["constraints"] = [
+        {
+            "kind": "SCOPE",
+            "field": "coverage_requirement",
+            "value": "EXHAUSTIVE",
+        }
+    ]
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    connector = _PagedCollectionConnectorReadPort()
+    llm = _ComponentInferencePort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.call_count == 2
+    assert llm.calls.count("retrieval.assess_sufficiency") == 2
+    assert result["retrieval_result"]["collection_results"][0][
+        "continuation_status"
+    ] == "EXHAUSTED"
 
 
 @pytest.mark.parametrize(

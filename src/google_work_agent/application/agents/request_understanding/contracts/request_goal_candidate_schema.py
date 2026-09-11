@@ -169,6 +169,18 @@ _CONSTRAINT_LIST_SCHEMA = {
                     },
                 },
             },
+            {
+                "if": {
+                    "properties": {"field": {"const": "coverage_requirement"}},
+                    "required": ["field"],
+                },
+                "then": {
+                    "properties": {
+                        "kind": {"const": "SCOPE"},
+                        "value": {"const": "EXHAUSTIVE"},
+                    }
+                },
+            },
         ],
         "properties": {
             "kind": {
@@ -215,7 +227,8 @@ _additional_properties.pop("source_resource_type")
 _additional_properties.pop("provenance")
 _additional_field = cast(dict[str, object], _additional_properties["field"])
 _additional_field["description"] = (
-    "명명된 검색 슬롯 밖의 명시적 실행 필드. 예약 슬롯 이름은 허용하지 않는다."
+    "명명된 검색 슬롯 밖의 명시적 실행 필드 또는 typed 완료 범위. "
+    "coverage_requirement에는 EXHAUSTIVE만 허용하며 예약 슬롯 이름은 허용하지 않는다."
 )
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = (
     _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
@@ -309,7 +322,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v11",
+    schema_version="request-goal-candidate-v12",
     json_schema={
         "type": "object",
         "required": [
@@ -346,7 +359,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "기간 원문은 DATE.period이며 시간축 판정은 별도 operation이 수행한다. "
                     "한 문장에 사람·프로젝트·업무·답변 지시를 합쳐 검색어로 만들지 않는다. "
                     "요청에 없는 이름 있는 슬롯은 빈 배열로 둔다. Calendar/GitHub 등 "
-                    "그 밖의 명시적 실행 값은 additional_constraints에 둔다."
+                    "그 밖의 명시적 실행 값과 typed 완료 범위는 additional_constraints에 둔다."
                 ),
             },
             "analysis_requirement": {
