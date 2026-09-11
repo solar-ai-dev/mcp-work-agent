@@ -243,6 +243,11 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
         "source_reads": {
             "type": "array",
             "uniqueItems": True,
+            "description": (
+                "기존 외부 자료에서 읽어야 할 사실이나 identity만 둔다. 새로 CREATE할 "
+                "output은 그 output의 기존 상태를 실제로 읽어야 하는 별도 요구가 없는 한 "
+                "source_reads에 반복하지 않는다."
+            ),
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -260,6 +265,10 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
         "outputs": {
             "type": "array",
             "uniqueItems": True,
+            "description": (
+                "사용자가 새로 만들거나 변경·전송·삭제하라고 요청한 외부 결과만 둔다. "
+                "그 결과를 작성하는 데 참고할 기존 자료는 source_reads에 둔다."
+            ),
             "items": {
                 "type": "object",
                 "additionalProperties": False,

@@ -31,6 +31,8 @@
 
 `source_reads`에는 필요한 기존 자료와 그 자료에서 확인할 사실·identity를 `resource_type`과 `required_information`으로 쓴다. 목록 자체를 읽는 것이 목적이면 추가 속성을 발명하지 않는다. `outputs`에는 요청한 외부 변경의 `resource_type`과 `CREATE | UPDATE | SEND | DELETE`를 쓴다. 같은 기존 Resource를 읽고 수정하면 양쪽에 같은 Resource 종류가 올 수 있다. Runtime이 파생하는 평면 hint를 출력에 중복 생성하지 않는다.
 
+기존 A와 B를 보고 새 C를 작성·저장하라는 요청에서는 A와 B만 `source_reads`, C만 `outputs`다. C를 CREATE한다는 이유로 C의 제목·수신자·본문·identity를 기존 source 정보처럼 `source_reads`에 넣지 않는다. C가 이미 존재해 조회 후 UPDATE하는 요청일 때만 같은 Resource 종류가 양쪽에 올 수 있다.
+
 외부 자료 조회나 변경 없이 답할 수 있는 설명·예시·작성 조언은 `source_reads`와 `outputs`를 모두 비운다. 답변에서 내용을 작성하는 것과 외부에 저장·수정·전송하는 것은 다르다. 실제 자료를 찾아 달라거나 선택한 자료를 설명·수정하라는 요청이면 필요한 source를 유지하고, 일반 답변 경로를 만들기 위해 조회·변경 요구를 지우지 않는다. 조회만 필요하면 `outputs`는 비어 있다. 독립적인 외부 작성·전송은 output만 필요할 수 있으며, 관련 없는 READ를 붙이지 않는다. 기존 Draft·Thread·Task·Event·Issue의 사실이나 identity가 필요하면 source를 보존한다. 실행 후 Verification은 별도 업무 source가 아니다.
 
 CREATE는 새 외부 Resource, UPDATE는 기존 Resource 변경, SEND는 전송, DELETE는 제거다. SEND 본문을 작성하는 내부 과정은 별도 Draft CREATE가 아니다. 기존 Thread의 자료를 참고한 새 메일과 그 Thread에 대한 Reply를 구분한다. Issue close/reopen의 effect는 UPDATE다. Resource/effect는 supplied schema의 조합을 따르고, 지원하지 않는 요구를 다른 작업으로 바꾸어 맞추지 않는다.
