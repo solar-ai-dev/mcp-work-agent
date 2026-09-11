@@ -781,7 +781,6 @@ def test_identify_goal__with_spaced_literal__restores_exact_semantic_fields() ->
                 "completion_conditions": [f"'{spaced_sentence}'가 한 번만 추가된다"],
                 "constraints": _goal_constraints(
                     search_terms=["Quartz 납품 회신 검토"],
-                    status=[_source_status("DRAFT", "GMAIL_DRAFT", "임시보관함")],
                 ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_DRAFT",
@@ -810,10 +809,16 @@ def test_identify_goal__with_spaced_literal__restores_exact_semantic_fields() ->
     )
     assert exact_sentence in required_information[0]
     assert spaced_sentence not in str(result)
-    status = next(item for item in result["constraints"] if item["field"] == "status")
-    assert status["value"] == "DRAFT"
-    assert status["source_resource_type"] == "GMAIL_DRAFT"
-    assert status["provenance"]["source_text"] == "임시보관함"
+    assert not any(item["field"] == "status" for item in result["constraints"])
+    assert result["resource_responsibilities"] == {
+        "source_reads": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "required_information": [f"초안 끝에 '{exact_sentence}'를 추가"],
+            }
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+    }
 
 
 def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> None:

@@ -20,7 +20,7 @@
 - `business_concepts`: 찾으려는 업무 의미. 자연스러운 의역은 가능하지만 새 업무 요구를 추가하지 않는다.
 - `person`: identity가 미확정인 이름·직급. `sender`와 `recipient`는 명시된 역할이다. 일반 집합 명사를 특정 사람으로 만들지 않는다.
 - `subject`: 사용자가 제목으로 지정한 값. `period`: 사용자가 표현한 기간이며 시간축 판단은 별도 책임이다.
-- `status`: 기존 source의 상태·검색 범위만 표현한다. schema의 `value`, `source_resource_type`, `source`, `source_text`를 사용하고 `source_text`에는 해당 상태를 실제로 말한 입력 구간을 복사한다. 원하는 변경 후 상태를 source의 현재 상태로 옮기지 않는다. 상태 근거가 없으면 비운다.
+- `status`: 기존 source의 상태 중 Resource type 자체로는 결정되지 않는 추가 검색 범위만 표현한다. Resource type이 이미 같은 범위를 보장하면 반복하지 않고 비운다. 예를 들어 `GMAIL_DRAFT`는 Draft collection을 이미 지정하므로 `DRAFT`를 다시 쓰지 않는다. 추가 상태를 쓸 때는 schema의 `value`, `source_resource_type`, `source`, `source_text`를 사용하고 `source_text`에는 해당 상태를 실제로 말한 입력 구간을 복사한다. 원하는 변경 후 상태를 source의 현재 상태로 옮기지 않는다.
 - `additional_constraints`: 위 슬롯에 속하지 않는 명시적 실행 값만 기존 `kind/field/value` 계약으로 보존한다.
 
 같은 값을 의미 없이 여러 역할에 반복하지 않는다. 다만 관련 이름을 보존한다는 이유로 원문의 AND/OR 관계나 요청 범위를 바꾸지 않는다. 근거 없이 이메일·Resource ID·기간·상태를 보충하지 않는다.
