@@ -35,6 +35,11 @@ RetrievalValidationReasonCodeV1 = Literal[
     "QUERY_USER_CONSTRAINT_MISSING",
     "QUERY_LITERAL_UNSUPPORTED",
 ]
+RetrievalValidationStageV1 = Literal[
+    "QUERY_PLAN_VALIDATOR",
+    "ROUND_VALIDATOR",
+    "BUILD_QUERY",
+]
 TemporalAxisV1 = Literal["MESSAGE_TIME", "TASK_SCHEDULED_DATE", "EVENT_TIME", "AVAILABILITY_WINDOW"]
 ParticipantRoleV1 = Literal["ANY", "SENDER", "RECIPIENT", "ATTENDEE"]
 PARTICIPANT_EMAIL_PATTERN = r'^[^\s<>:@"{}()\\]+@[^\s<>:@"{}()\\]+\.[^\s<>:@"{}()\\]+$'
@@ -186,10 +191,12 @@ class RetrievalV2ValidationError(ValueError):
         *,
         reason_code: RetrievalValidationReasonCodeV1 = "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
         affected_field_paths: tuple[str, ...] = (),
+        validation_stage: RetrievalValidationStageV1 | None = None,
     ) -> None:
         super().__init__(message)
         self.reason_code = reason_code
         self.affected_field_paths = affected_field_paths
+        self.validation_stage = validation_stage
 
 
 _KINDS = frozenset(

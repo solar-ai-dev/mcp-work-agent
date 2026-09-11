@@ -83,6 +83,12 @@ class _SemanticValidationError(ValueError):
     affected_field_paths = ("$.resource_responsibilities.outputs", "unsafe@email")
 
 
+class _StagedSemanticValidationError(ValueError):
+    reason_code = "SEMANTIC_FIELD_INVALID"
+    affected_field_paths = ("$.route_queries[].operation",)
+    validation_stage = "QUERY_PLAN_VALIDATOR"
+
+
 def _metadata(**extra: object) -> dict[str, object]:
     return {
         "product_run_id": "run-123",
@@ -461,6 +467,20 @@ def test_callback__semantic_failure__exports_reason_and_safe_field_hash_only() -
     assert metadata["affected_field_path_hashes"] == ["f7d52e4f92f5570b"]
     assert "private model output" not in repr(update)
     assert "unsafe@email" not in repr(update)
+
+
+def test_callback__preserves_specific_validation_stage() -> None:
+    client = _Client()
+    callback = LangSmithWorkflowTraceCallback(client=client, project_name="quality")
+    run_id = uuid4()
+    callback.on_chain_start(None, {}, run_id=run_id, metadata=_metadata(), name="graph")
+
+    callback.on_chain_error(_StagedSemanticValidationError("private output"), run_id=run_id)
+
+    metadata = client.updated[0][1]["extra"]["metadata"]
+    assert metadata["validation_stage"] == "QUERY_PLAN_VALIDATOR"
+    assert metadata["validation_rule"] == "SEMANTIC_FIELD_INVALID"
+    assert metadata["affected_field_paths"] == ["$.route_queries[].operation"]
 
 
 def test_callback__records_interrupt_without_failure__and_never_breaks_workflow() -> None:

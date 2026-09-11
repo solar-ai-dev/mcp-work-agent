@@ -27,6 +27,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     RetrievalOperationV2,
     RetrievalQueryPlanV2,
     RetrievalV2ValidationError,
+    RetrievalValidationStageV1,
     SourceFetchPlanV1,
     route_operation_tool_id,
     status_scope_values,
@@ -523,12 +524,6 @@ def plan_query(
     read_result_summaries: Sequence[Mapping[str, object]] | None = None,
 ) -> tuple[RetrievalQueryPlanV2, RunBudgetV2, bool]:
     """Plan provider-neutral retrieval intent against already-frozen input routes."""
-    for route_id, policy in route_policies.items():
-        if (
-            "CONTAINER_REF" in policy.required_kinds
-            and len(set((validated_container_refs or {}).get(route_id, ()))) != 1
-        ):
-            raise RetrievalV2ValidationError(f"route {route_id} requires one validated container")
     supported_kinds = _applicable_constraint_kinds(
         route_policies,
         validated_resource_refs=validated_resource_refs,
@@ -576,6 +571,7 @@ def plan_query(
             "no executable retrieval operation is available for the frozen routes",
             reason_code="QUERY_OPERATION_UNAVAILABLE",
             affected_field_paths=("$.input_routes[].allowed_read_tool_ids",),
+            validation_stage="QUERY_PLAN_VALIDATOR",
         )
     planner_input = _project_route_constraint_policies(
         prompt_input,
@@ -617,51 +613,75 @@ def plan_query(
             timezone=timezone,
         ),
     )
-    deterministic_plan = deterministic_query_plan(
-        prompt_input=prompt_input,
-        frozen_routes=frozen_routes,
-        route_policies=route_policies,
-        validated_resource_refs=validated_resource_refs,
-        validated_container_refs=validated_container_refs,
-        timezone=timezone,
-        detail_candidate_refs=detail_candidate_refs,
-        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
-        person_candidates=person_candidates,
-        selected_person_identities=selected_person_identities,
-    )
-    if deterministic_plan is not None:
-        validated_deterministic = validate_retrieval_query_plan_v2(
-            deterministic_plan,
-            frozen_routes=frozen_routes,
-            supported_constraint_kinds=supported_kinds,
-            validated_resource_refs=validated_resource_refs,
-            validated_container_refs=validated_container_refs,
-            detail_candidate_refs=detail_candidate_refs,
-        )
-        build_query(
-            validated_deterministic,
+    try:
+        deterministic_plan = deterministic_query_plan(
+            prompt_input=prompt_input,
             frozen_routes=frozen_routes,
             route_policies=route_policies,
-            prior_plans=prior_plans,
-            prior_read_result_handles=prior_read_result_handles,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            timezone=timezone,
             detail_candidate_refs=detail_candidate_refs,
+            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
             person_candidates=person_candidates,
             selected_person_identities=selected_person_identities,
-            read_result_summaries=read_result_summaries,
         )
+    except RetrievalV2ValidationError as error:
+        if error.validation_stage is None:
+            error.validation_stage = "QUERY_PLAN_VALIDATOR"
+        raise
+    if deterministic_plan is not None:
+        validation_stage: RetrievalValidationStageV1 = "QUERY_PLAN_VALIDATOR"
+        try:
+            validated_deterministic = validate_retrieval_query_plan_v2(
+                deterministic_plan,
+                frozen_routes=frozen_routes,
+                supported_constraint_kinds=supported_kinds,
+                validated_resource_refs=validated_resource_refs,
+                validated_container_refs=validated_container_refs,
+                detail_candidate_refs=detail_candidate_refs,
+            )
+            validation_stage = "BUILD_QUERY"
+            build_query(
+                validated_deterministic,
+                frozen_routes=frozen_routes,
+                route_policies=route_policies,
+                prior_plans=prior_plans,
+                prior_read_result_handles=prior_read_result_handles,
+                validated_resource_refs=validated_resource_refs,
+                validated_container_refs=validated_container_refs,
+                detail_candidate_refs=detail_candidate_refs,
+                person_candidates=person_candidates,
+                selected_person_identities=selected_person_identities,
+                read_result_summaries=read_result_summaries,
+            )
+        except RetrievalV2ValidationError as error:
+            if error.validation_stage is None:
+                error.validation_stage = validation_stage
+            raise
         return (
             validated_deterministic,
             retry_budget,
             False,
         )
+    for route_id, policy in route_policies.items():
+        if (
+            "CONTAINER_REF" in policy.required_kinds
+            and len(set((validated_container_refs or {}).get(route_id, ()))) != 1
+        ):
+            raise RetrievalV2ValidationError(
+                f"route {route_id} requires one validated container",
+                reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+                affected_field_paths=("$.validated_container_refs",),
+                validation_stage="QUERY_PLAN_VALIDATOR",
+            )
     result = llm_runtime.infer(
         requested_mode,
         prompt_ref,
         planner_input,
         bounded_output_schema,
     )
+    validation_stage = "QUERY_PLAN_VALIDATOR"
     try:
         candidate = bind_required_container_constraints(
             result.structured_output,
@@ -676,7 +696,9 @@ def plan_query(
             validated_container_refs=validated_container_refs,
             detail_candidate_refs=detail_candidate_refs,
         )
+        validation_stage = "ROUND_VALIDATOR"
         validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        validation_stage = "BUILD_QUERY"
         build_query(
             validated_round,
             frozen_routes=frozen_routes,
@@ -696,6 +718,8 @@ def plan_query(
             True,
         )
     except RetrievalV2ValidationError as error:
+        if error.validation_stage is None:
+            error.validation_stage = validation_stage
         revised_plan, revised_budget = _revise_plan_once(
             llm_runtime=llm_runtime,
             revision_prompt_ref=revision_prompt_ref,
@@ -942,33 +966,41 @@ def _revise_plan_once(
         },
         output_schema,
     )
-    candidate = bind_required_container_constraints(
-        revision.structured_output,
-        route_policies=route_policies,
-        validated_container_refs=validated_container_refs,
-    )
-    validated = validate_retrieval_query_plan_v2(
-        candidate,
-        frozen_routes=frozen_routes,
-        supported_constraint_kinds=supported_kinds,
-        validated_resource_refs=validated_resource_refs,
-        validated_container_refs=validated_container_refs,
-        detail_candidate_refs=detail_candidate_refs,
-    )
-    validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
-    build_query(
-        validated_round,
-        frozen_routes=frozen_routes,
-        route_policies=route_policies,
-        prior_plans=prior_plans,
-        prior_read_result_handles=prior_read_result_handles,
-        validated_resource_refs=validated_resource_refs,
-        validated_container_refs=validated_container_refs,
-        detail_candidate_refs=detail_candidate_refs,
-        person_candidates=person_candidates,
-        selected_person_identities=selected_person_identities,
-        read_result_summaries=read_result_summaries,
-    )
+    validation_stage: RetrievalValidationStageV1 = "QUERY_PLAN_VALIDATOR"
+    try:
+        candidate = bind_required_container_constraints(
+            revision.structured_output,
+            route_policies=route_policies,
+            validated_container_refs=validated_container_refs,
+        )
+        validated = validate_retrieval_query_plan_v2(
+            candidate,
+            frozen_routes=frozen_routes,
+            supported_constraint_kinds=supported_kinds,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            detail_candidate_refs=detail_candidate_refs,
+        )
+        validation_stage = "ROUND_VALIDATOR"
+        validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        validation_stage = "BUILD_QUERY"
+        build_query(
+            validated_round,
+            frozen_routes=frozen_routes,
+            route_policies=route_policies,
+            prior_plans=prior_plans,
+            prior_read_result_handles=prior_read_result_handles,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            detail_candidate_refs=detail_candidate_refs,
+            person_candidates=person_candidates,
+            selected_person_identities=selected_person_identities,
+            read_result_summaries=read_result_summaries,
+        )
+    except RetrievalV2ValidationError as error:
+        if error.validation_stage is None:
+            error.validation_stage = validation_stage
+        raise
     return (
         validated_round,
         decision["run_budget"],

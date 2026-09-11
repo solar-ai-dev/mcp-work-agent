@@ -328,6 +328,118 @@ def test_selected_exact_resource__materializes_detail_fetch__without_llm() -> No
     ]
 
 
+def test_selected_calendar_event__materializes_detail_fetch__without_search_container() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = [
+        {
+            "route_id": "event-detail",
+            "resource_type": "CALENDAR_EVENT",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["calendar_get_event", "calendar_list_events"],
+            "required": True,
+            "reason_codes": ["RESOURCE_SELECTED"],
+        }
+    ]
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": {}, "input_routes": frozen_routes},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
+        route_policies={
+            "event-detail": RouteConstraintPolicy(
+                frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
+                frozenset({"CONTAINER_REF"}),
+            )
+        },
+        retry_budget=build_default_run_budget(),
+        validated_resource_refs={"event-detail": ["calendar_event:event-42"]},
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert result["route_queries"] == [
+        {
+            "route_id": "event-detail",
+            "operation": "DETAIL_FETCH",
+            "reason_codes": ["RESOURCE_SELECTED"],
+            "search_spec": None,
+            "detail_candidate_ref": "calendar_event:event-42",
+        }
+    ]
+
+
+def test_calendar_search__still_requires_validated_container() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "event-search",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            }
+        ],
+    )
+
+    with pytest.raises(
+        RetrievalV2ValidationError, match="requires one validated container"
+    ) as caught:
+        plan_query(
+            llm_runtime=runtime,
+            prompt_ref=prompt_ref,
+            revision_prompt_ref=prompt_ref,
+            output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+            prompt_input={"request_intent": {}, "input_routes": frozen_routes},
+            requested_mode="LOCAL_GPU",
+            frozen_routes=frozen_routes,
+            route_policies={
+                "event-search": RouteConstraintPolicy(
+                    frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
+                    frozenset({"CONTAINER_REF"}),
+                )
+            },
+            retry_budget=build_default_run_budget(),
+        )
+
+    assert runtime.calls == []
+    assert caught.value.reason_code == "RETRIEVAL_ROUTE_SCOPE_VIOLATION"
+    assert caught.value.validation_stage == "QUERY_PLAN_VALIDATOR"
+    assert caught.value.affected_field_paths == ("$.validated_container_refs",)
+
+
 def test_explicit_resource_id__materializes_detail_fetch__without_llm() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(
@@ -1160,6 +1272,71 @@ def test_initial_query__invalid_next_page__repairs_before_materialization() -> N
     failure_record = cast(dict[str, object], repair_input["failure_record"])
     assert failure_record["failure_reason_code"] == "QUERY_OPERATION_FIELD_MISMATCH"
     assert failure_record["affected_field_paths"] == ["$.route_queries[].operation"]
+
+
+def test_revised_query_validation_error__retains_exact_stage_and_field_path() -> None:
+    invalid = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "KEYWORD", "terms": ["first"], "match_mode": "ANY"},
+                        {"kind": "KEYWORD", "terms": ["second"], "match_mode": "ANY"},
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[invalid, invalid])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    frozen_routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "route-1",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            }
+        ],
+    )
+
+    with pytest.raises(RetrievalV2ValidationError) as caught:
+        plan_query(
+            llm_runtime=runtime,
+            prompt_ref=prompt_ref,
+            revision_prompt_ref=prompt_ref,
+            output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+            prompt_input={"request_intent": {}, "input_routes": frozen_routes},
+            requested_mode="LOCAL_GPU",
+            frozen_routes=frozen_routes,
+            route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
+            retry_budget=build_default_run_budget(),
+        )
+
+    assert len(runtime.calls) == 2
+    assert caught.value.validation_stage == "QUERY_PLAN_VALIDATOR"
+    assert caught.value.affected_field_paths == ("$.route_queries[].search_spec.constraints",)
 
 
 def test_calendar_route__projects_existing__route_constraint_policy() -> None:

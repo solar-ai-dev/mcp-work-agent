@@ -32,6 +32,15 @@ from google_work_agent.ports.system.external_call_trace_port import (
 _LOGGER = logging.getLogger(__name__)
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 _SAFE_FIELD_PATH = re.compile(r"[$A-Za-z0-9_.\[\]-]{1,160}")
+_SAFE_VALIDATION_STAGES = frozenset(
+    {
+        "OUTPUT_SCHEMA",
+        "QUERY_PLAN_VALIDATOR",
+        "ROUND_VALIDATOR",
+        "BUILD_QUERY",
+        "POST_INFERENCE_VALIDATION",
+    }
+)
 _TRACE_BINDING_KEYS = frozenset(
     {
         "code_sha",
@@ -319,10 +328,14 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler, ExternalCallTracePort)
             if safe_error_code is not None:
                 metadata["safe_error_code"] = safe_error_code
             affected_field_paths = _safe_affected_field_paths(error)
-            if affected_field_paths:
-                metadata["validation_stage"] = "POST_INFERENCE_VALIDATION"
+            validation_stage = _safe_validation_stage(error)
+            if validation_stage is None and affected_field_paths:
+                validation_stage = "POST_INFERENCE_VALIDATION"
+            if validation_stage is not None:
+                metadata["validation_stage"] = validation_stage
                 if safe_error_code is not None:
                     metadata["validation_rule"] = safe_error_code
+            if affected_field_paths:
                 metadata["affected_field_paths"] = list(affected_field_paths)
                 metadata["affected_field_path_hashes"] = [
                     sha256(path.encode("utf-8")).hexdigest()[:16] for path in affected_field_paths
@@ -468,6 +481,11 @@ def _safe_affected_field_paths(error: BaseException) -> tuple[str, ...]:
     return tuple(
         path for path in value[:16] if isinstance(path, str) and _SAFE_FIELD_PATH.fullmatch(path)
     )
+
+
+def _safe_validation_stage(error: BaseException) -> str | None:
+    value = getattr(error, "validation_stage", None)
+    return value if isinstance(value, str) and value in _SAFE_VALIDATION_STAGES else None
 
 
 def _dotted_order(
