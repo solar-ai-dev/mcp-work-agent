@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -28,6 +29,7 @@ class ExternalCallTraceStartV1:
     connector_id: str | None = None
     tool_id: str | None = None
     effect: str | None = None
+    safe_semantic_input: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,7 @@ class ExternalCallTraceFinishV1:
     has_next_page: bool | None = None
     error_type: str | None = None
     safe_error_code: str | None = None
+    safe_semantic_output: Mapping[str, object] | None = None
 
 
 class ExternalCallTracePort(Protocol):

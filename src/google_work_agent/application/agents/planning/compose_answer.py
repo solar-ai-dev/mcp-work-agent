@@ -32,6 +32,15 @@ from google_work_agent.ports.llm.structured_inference_contracts import OutputSch
 PROMPT_ID = "planning.compose_answer"
 MAX_USER_VISIBLE_ANSWER_CHARS = 2_400
 
+
+class _ComposeAnswerValidationError(ValueError):
+    """Preserve existing failure control flow while exposing a safe validation boundary."""
+
+    def __init__(self, message: str, *, reason_code: str, field_path: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.affected_field_paths = (field_path,)
+
 ANSWER_DRAFT_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
     schema_version="planning-answer-draft-v2",
     json_schema={
@@ -142,17 +151,36 @@ def compose_answer(
     )
     if task_projection is not None:
         if not set(task_projection.draft["evidence_refs"]).issubset(approved_refs):
-            raise ValueError("task read answer references evidence outside its approved outline")
+            raise _ComposeAnswerValidationError(
+                "task read answer references evidence outside its approved outline",
+                reason_code="COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID",
+                field_path="$.evidence_refs",
+            )
         return _with_partial_scope(task_projection.draft, retrieval_result)
     candidate = invoke(PROMPT_ID, prompt_input)
     schema_version = candidate.get("schema_version")
     answer = candidate.get("answer")
     refs = candidate.get("evidence_refs")
     if schema_version != 2:
-        raise ValueError("compose_answer output requires schema_version 2")
+        raise _ComposeAnswerValidationError(
+            "compose_answer output requires schema_version 2",
+            reason_code="COMPOSE_ANSWER_SCHEMA_VERSION_INVALID",
+            field_path="$.schema_version",
+        )
     if not isinstance(answer, str) or not answer.strip():
-        raise ValueError("compose_answer output requires answer")
-    normalized_answer = normalize_generated_answer_prose(answer)
+        raise _ComposeAnswerValidationError(
+            "compose_answer output requires answer",
+            reason_code="COMPOSE_ANSWER_TEXT_MISSING",
+            field_path="$.answer",
+        )
+    try:
+        normalized_answer = normalize_generated_answer_prose(answer)
+    except ValueError as error:
+        raise _ComposeAnswerValidationError(
+            str(error),
+            reason_code="COMPOSE_ANSWER_PROSE_INVALID",
+            field_path="$.answer",
+        ) from error
     _validate_unresolved_date_claims(normalized_answer, retrieval_result)
     if any(
         item["axis"] == "MESSAGE_TIME"
@@ -164,14 +192,30 @@ def compose_answer(
         # The provider projection contains received_at, not a proved sent-at timestamp.
         normalized_answer = normalized_answer.replace("보낸 날짜:", "수신 시각:")
     if len(normalized_answer) > MAX_USER_VISIBLE_ANSWER_CHARS:
-        raise ValueError("compose_answer output exceeds the user-visible answer limit")
+        raise _ComposeAnswerValidationError(
+            "compose_answer output exceeds the user-visible answer limit",
+            reason_code="COMPOSE_ANSWER_TEXT_LIMIT_EXCEEDED",
+            field_path="$.answer",
+        )
     if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
-        raise ValueError("compose_answer output requires evidence_refs")
+        raise _ComposeAnswerValidationError(
+            "compose_answer output requires evidence_refs",
+            reason_code="COMPOSE_ANSWER_EVIDENCE_REFS_INVALID",
+            field_path="$.evidence_refs",
+        )
     allowed = set(answer_outline["evidence_refs"])
     if not set(refs).issubset(allowed):
-        raise ValueError("compose_answer referenced evidence outside its projection")
+        raise _ComposeAnswerValidationError(
+            "compose_answer referenced evidence outside its projection",
+            reason_code="COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID",
+            field_path="$.evidence_refs",
+        )
     if len(refs) != len(set(refs)):
-        raise ValueError("compose_answer output contains duplicate evidence_refs")
+        raise _ComposeAnswerValidationError(
+            "compose_answer output contains duplicate evidence_refs",
+            reason_code="COMPOSE_ANSWER_EVIDENCE_REFS_DUPLICATED",
+            field_path="$.evidence_refs",
+        )
     visible_answer = sanitize_user_visible_answer(
         normalized_answer,
         internal_refs=[*allowed, *refs],
@@ -218,7 +262,11 @@ def _with_partial_scope(
         notices.insert(0, "확인한 범위의 부분 결과입니다. 요청한 전체 범위를 확인한 것은 아닙니다.")
     answer = "\n\n".join([*notices, draft["answer"]])
     if len(answer) > MAX_USER_VISIBLE_ANSWER_CHARS:
-        raise ValueError("compose_answer output exceeds the user-visible answer limit")
+        raise _ComposeAnswerValidationError(
+            "compose_answer output exceeds the user-visible answer limit",
+            reason_code="COMPOSE_ANSWER_TEXT_LIMIT_EXCEEDED",
+            field_path="$.answer",
+        )
     return {**draft, "answer": answer}
 
 
@@ -246,7 +294,11 @@ def _validate_unresolved_date_claims(
             rf"|\s*\**\s*\([월화수목금토일]\))"
         )
         if re.search(explicit_year, answer) or re.search(weekday, answer):
-            raise ValueError("compose_answer promoted an unresolved event date into a dated fact")
+            raise _ComposeAnswerValidationError(
+                "compose_answer promoted an unresolved event date into a dated fact",
+                reason_code="COMPOSE_ANSWER_UNRESOLVED_DATE_PROMOTED",
+                field_path="$.answer",
+            )
 
 
 def _evidence_ref(item: Mapping[str, object]) -> str | None:

@@ -206,7 +206,7 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
             "reason_codes": {"count": 0, "values": []},
             "requires_confirmation": False,
         },
-        "constraints": {"count": 1, "items": [{"kind": "KEYWORD"}]},
+        "constraints": {"count": 1, "items": [{"field": "subject", "kind": "KEYWORD"}]},
         "requested_effect_hints": {"count": 1, "values": ["READ"]},
         "requested_resource_hints": {"count": 1, "values": ["GMAIL_THREAD"]},
         "schema_version": 2,
@@ -307,6 +307,11 @@ def test_callback__nests_safe_llm_and_connector_dispatches__under_workflow_root(
             prompt_version="1.0.50",
             prompt_content_hash="d" * 64,
             output_schema_id="request-intent-v2",
+            safe_semantic_input={
+                "projection_version": 1,
+                "selected_resource_count": 0,
+                "user_request": "private-request",
+            },
         )
     )
     connector_handle = callback.begin_external_call(
@@ -331,6 +336,12 @@ def test_callback__nests_safe_llm_and_connector_dispatches__under_workflow_root(
             input_tokens=20,
             output_tokens=5,
             total_tokens=25,
+            safe_semantic_output={
+                "projection_version": 1,
+                "missing_information_owner": "USER",
+                "missing_fields": {"count": 1, "values": ["target_resource"]},
+                "body": "private-body",
+            },
         ),
     )
     callback.finish_external_call(
@@ -367,10 +378,21 @@ def test_callback__nests_safe_llm_and_connector_dispatches__under_workflow_root(
             "prompt_version": "1.0.50",
             "prompt_content_hash": "d" * 64,
             "output_schema_id": "request-intent-v2",
+            "semantic_input": {
+                "projection_version": 1,
+                "selected_resource_count": 0,
+            },
         }
     }
     updates = {str(run_id): update for run_id, update in client.updated}
     assert updates[llm_handle.trace_run_id]["outputs"]["call"]["total_tokens"] == 25
+    assert updates[llm_handle.trace_run_id]["outputs"]["call"]["semantic_output"] == {
+        "projection_version": 1,
+        "missing_information_owner": "USER",
+        "missing_fields": {"count": 1, "values": ["target_resource"]},
+    }
+    assert "private-request" not in repr((client.created, client.updated))
+    assert "private-body" not in repr((client.created, client.updated))
     connector_update = updates[connector_handle.trace_run_id]
     assert connector_update["error"] == "SAFE_ERROR_TYPE:ConnectorOperationFailure"
     assert connector_update["outputs"]["call"]["safe_error_code"] == "TIMEOUT"
@@ -412,11 +434,14 @@ def test_callback__exports_typed_failure_code__without_error_message() -> None:
         "error_type": "LLMInvocationError",
         "safe_error_code": "OUTPUT_SCHEMA_INVALID",
         "provider_dispatch_occurred": True,
+        "validation_stage": "POST_INFERENCE_VALIDATION",
+        "validation_rule": "OUTPUT_SCHEMA_INVALID",
+        "affected_field_paths": ["$.valid[0].field"],
         "affected_field_path_hashes": ["ad9bfb268fcc46b5"],
     }
     assert "private provider output" not in repr(update)
     assert "secret@example.com" not in repr(update)
-    assert "$.valid[0].field" not in repr(update)
+    assert "$.valid[0].field" in repr(update)
 
 
 def test_callback__semantic_failure__exports_reason_and_safe_field_hash_only() -> None:
@@ -430,6 +455,9 @@ def test_callback__semantic_failure__exports_reason_and_safe_field_hash_only() -
     update = client.updated[0][1]
     metadata = update["extra"]["metadata"]
     assert metadata["safe_error_code"] == "SEMANTIC_FIELD_INVALID"
+    assert metadata["validation_stage"] == "POST_INFERENCE_VALIDATION"
+    assert metadata["validation_rule"] == "SEMANTIC_FIELD_INVALID"
+    assert metadata["affected_field_paths"] == ["$.resource_responsibilities.outputs"]
     assert metadata["affected_field_path_hashes"] == ["f7d52e4f92f5570b"]
     assert "private model output" not in repr(update)
     assert "unsafe@email" not in repr(update)
@@ -632,3 +660,77 @@ def test_io_projection__null_presence__distinguishes_omitted_from_explicit_null(
     assert omitted["state_fields"] == []
     assert cleared["state_fields"] == ["request_intent"]
     assert cleared["fields"] == {"request_intent": {"value_state": "NULL"}}
+
+
+def test_io_projection__keeps_route_and_retrieval_decisions__without_identities() -> None:
+    projection = project_langsmith_workflow_payload(
+        {
+            "ambiguity_candidate": {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource", "민감한 일정 제목"],
+                "requires_confirmation": True,
+            },
+            "io_resource_candidate": {
+                "input_resource_types": ["GMAIL_THREAD"],
+                "output_resource_types": [],
+                "output_effects": [],
+                "disposition": "ROUTE_READY",
+            },
+            "tool_route_plan": {
+                "schema_version": 2,
+                "input_plan": {
+                    "input_routes": [
+                        {
+                            "route_id": "private-route",
+                            "resource_type": "GMAIL_THREAD",
+                            "connector_id": "google_workspace",
+                            "allowed_read_tool_ids": ["gmail_search"],
+                            "reason_codes": ["REQUESTED_INPUT"],
+                        }
+                    ]
+                },
+                "output_plan": {"output_mode": "ANSWER"},
+            },
+            "rag_candidates": [{"segment_id": "private-segment"}],
+            "evidence_selection": {
+                "schema_version": 2,
+                "evidence_drafts": [{"segment_id": "private-segment"}],
+                "selected_segment_ids": ["private-segment"],
+                "excluded_segment_ids": [],
+            },
+            "sufficiency": {
+                "schema_version": 2,
+                "status": "NEEDS_MORE_DATA",
+                "issues": [
+                    {
+                        "issue_type": "MISSING",
+                        "required": True,
+                        "resolution_source": "GOOGLE",
+                        "safety_critical": False,
+                        "reason_codes": ["LATEST_MESSAGE_REQUIRED"],
+                    }
+                ],
+            },
+        }
+    )
+
+    fields = projection["fields"]
+    assert fields["ambiguity_candidate"] == {
+        "missing_fields": {"count": 2, "values": ["target_resource"]},
+        "missing_information_owner": "USER",
+        "requires_confirmation": True,
+    }
+    assert fields["io_resource_candidate"] == {
+        "disposition": "ROUTE_READY",
+        "input_resource_types": {"count": 1, "values": ["GMAIL_THREAD"]},
+        "output_effects": {"count": 0, "values": []},
+        "output_resource_types": {"count": 0, "values": []},
+    }
+    assert fields["rag_candidates"] == {"count": 1}
+    assert fields["evidence_selection"]["selected_segment_ids"] == {"count": 1}
+    assert fields["sufficiency"]["status"] == "NEEDS_MORE_DATA"
+    assert fields["sufficiency"]["issues"]["count"] == 1
+    exported = repr(projection)
+    assert "민감한 일정 제목" not in exported
+    assert "private-route" not in exported
+    assert "private-segment" not in exported

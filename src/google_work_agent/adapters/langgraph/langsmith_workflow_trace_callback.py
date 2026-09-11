@@ -15,6 +15,9 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphInterrupt
 from langsmith import Client
 
+from google_work_agent.adapters.langgraph.langsmith_llm_semantic_projection import (
+    sanitize_llm_semantic_projection,
+)
 from google_work_agent.adapters.langgraph.langsmith_workflow_io_projection import (
     project_langsmith_workflow_payload,
 )
@@ -317,6 +320,10 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler, ExternalCallTracePort)
                 metadata["safe_error_code"] = safe_error_code
             affected_field_paths = _safe_affected_field_paths(error)
             if affected_field_paths:
+                metadata["validation_stage"] = "POST_INFERENCE_VALIDATION"
+                if safe_error_code is not None:
+                    metadata["validation_rule"] = safe_error_code
+                metadata["affected_field_paths"] = list(affected_field_paths)
                 metadata["affected_field_path_hashes"] = [
                     sha256(path.encode("utf-8")).hexdigest()[:16] for path in affected_field_paths
                 ]
@@ -529,6 +536,9 @@ def _external_call_input(command: ExternalCallTraceStartV1) -> dict[str, object]
         value = _safe_optional_value(getattr(command, name))
         if value is not None:
             result[name] = value
+    semantic_input = sanitize_llm_semantic_projection(command.safe_semantic_input)
+    if semantic_input is not None:
+        result["semantic_input"] = semantic_input
     return result
 
 
@@ -548,6 +558,9 @@ def _external_call_output(result: ExternalCallTraceFinishV1) -> dict[str, object
         output["error_type"] = error_type
     if (error_code := _safe_optional_value(result.safe_error_code)) is not None:
         output["safe_error_code"] = error_code
+    semantic_output = sanitize_llm_semantic_projection(result.safe_semantic_output)
+    if semantic_output is not None:
+        output["semantic_output"] = semantic_output
     return output
 
 

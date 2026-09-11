@@ -45,6 +45,18 @@ SCHEMA = OutputSchemaDefinition(
         "additionalProperties": False,
     },
 )
+AMBIGUITY_SCHEMA = OutputSchemaDefinition(
+    "ambiguity-v2",
+    {
+        "type": "object",
+        "required": ["missing_information_owner", "missing_fields"],
+        "properties": {
+            "missing_information_owner": {"enum": ["NONE", "USER", "CONNECTOR"]},
+            "missing_fields": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": False,
+    },
+)
 
 
 @dataclass
@@ -118,11 +130,12 @@ class _Hardware:
 class _Repairer:
     calls: int = 0
     failed_outputs: list[object] = field(default_factory=list)
+    repaired: object = field(default_factory=lambda: {"answer": "repaired"})
 
     def repair(self, **kwargs: object) -> object:
         self.calls += 1
         self.failed_outputs.append(kwargs["failed_output"])
-        return {"answer": "repaired"}
+        return self.repaired
 
 
 @dataclass
@@ -443,6 +456,139 @@ def test_actual_provider_and_repair_dispatches__with_trace_port__emit_separate_s
     assert [entry[1].status for entry in trace.finishes] == ["COMPLETED", "COMPLETED"]
     assert trace.finishes[0][1].total_tokens == 2
     assert "private-input" not in repr((trace.starts, trace.finishes))
+
+
+def test_supported_prompt_trace__projects_provider_candidate__without_raw_input() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    provider = _Provider(
+        runtime=ActualRuntime.LOCAL_GPU,
+        content={"missing_information_owner": "USER", "missing_fields": ["target_resource"]},
+    )
+    trace = _ExternalCallTrace()
+    prompt = replace(PROMPT, prompt_id="request_understanding.detect_ambiguity")
+
+    result = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=provider,
+        external_call_trace=trace,
+    ).infer(
+        "LOCAL_GPU",
+        prompt,
+        {
+            "user_request": "그 일정 언제야?",
+            "selected_resource_refs": [],
+            "goal_candidate": {
+                "requested_effect_hints": ["READ"],
+                "requested_resource_hints": ["CALENDAR_EVENT"],
+                "resource_responsibilities": {
+                    "source_reads": [
+                        {
+                            "resource_type": "CALENDAR_EVENT",
+                            "required_information": ["private information"],
+                        }
+                    ]
+                },
+            },
+            "resolution_responsibilities": {
+                "connector_owned_information": [
+                    {
+                        "information": "private information",
+                        "resource_type": "CALENDAR_EVENT",
+                    }
+                ],
+                "resolved_resource_refs": [],
+            },
+        },
+        AMBIGUITY_SCHEMA,
+    )
+
+    assert result.structured_output == {
+        "missing_information_owner": "USER",
+        "missing_fields": ["target_resource"],
+    }
+    assert trace.starts[0].safe_semantic_input is not None
+    assert trace.starts[0].safe_semantic_input["selected_resource_count"] == 0
+    assert trace.finishes[0][1].safe_semantic_output == {
+        "projection_version": 1,
+        "missing_information_owner": "USER",
+        "missing_fields": {"count": 1, "values": ["target_resource"]},
+    }
+    assert "그 일정 언제야" not in repr((trace.starts, trace.finishes))
+    assert "private information" not in repr((trace.starts, trace.finishes))
+
+
+def test_supported_prompt_trace__projection_failure__does_not_change_provider_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import google_work_agent.adapters.llm.runtime.structured_inference_router as router_module
+
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    expected = {"missing_information_owner": "NONE", "missing_fields": []}
+    trace = _ExternalCallTrace()
+    monkeypatch.setattr(
+        router_module,
+        "project_llm_semantic_output",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("projection failed")),
+    )
+
+    result = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=_Provider(runtime=ActualRuntime.LOCAL_GPU, content=expected),
+        external_call_trace=trace,
+    ).infer(
+        "LOCAL_GPU",
+        replace(PROMPT, prompt_id="request_understanding.detect_ambiguity"),
+        {"selected_resource_refs": []},
+        AMBIGUITY_SCHEMA,
+    )
+
+    assert result.structured_output == expected
+    assert trace.finishes[0][1].safe_semantic_output is None
+
+
+def test_schema_repair_trace__keeps_initial_and_repaired_candidates__separate() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    trace = _ExternalCallTrace()
+    repairer = _Repairer(
+        repaired={"missing_information_owner": "CONNECTOR", "missing_fields": ["event_time"]}
+    )
+
+    result = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=_Provider(
+            runtime=ActualRuntime.LOCAL_GPU,
+            content={"missing_information_owner": "NONE", "missing_fields": "invalid"},
+        ),
+        repairer=repairer,
+        external_call_trace=trace,
+    ).infer(
+        "LOCAL_GPU",
+        replace(PROMPT, prompt_id="request_understanding.detect_ambiguity"),
+        {"selected_resource_refs": []},
+        AMBIGUITY_SCHEMA,
+    )
+
+    assert result.structured_output == {
+        "missing_information_owner": "CONNECTOR",
+        "missing_fields": ["event_time"],
+    }
+    assert [item.call_kind for item in trace.starts] == [
+        "LLM_INFERENCE",
+        "LLM_SCHEMA_REPAIR",
+    ]
+    assert trace.finishes[0][1].safe_semantic_output == {
+        "projection_version": 1,
+        "missing_information_owner": "NONE",
+        "missing_fields": {"count": 0},
+    }
+    assert trace.finishes[1][1].safe_semantic_output == {
+        "projection_version": 1,
+        "missing_information_owner": "CONNECTOR",
+        "missing_fields": {"count": 1, "values": ["event_time"]},
+    }
 
 
 def test_failed_actual_provider_dispatch__with_trace_port__exports_safe_error_only() -> None:
