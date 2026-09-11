@@ -14,9 +14,6 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     PlanningAnswerConfirmationV1,
     PlanningSemanticInvoker,
 )
-from google_work_agent.application.agents.planning.project_empty_read_answer import (
-    project_empty_read_answer,
-)
 from google_work_agent.application.agents.planning.project_task_read_answer import (
     project_task_read_answer,
 )
@@ -88,6 +85,24 @@ def answer_outline_output_schema(
     )
 
 
+def answer_confirmation_allowed(
+    request_intent: Mapping[str, object],
+    work_analysis: Mapping[str, object] | None,
+) -> bool:
+    """Return whether a current typed ambiguity still requires a user choice."""
+
+    ambiguity = request_intent.get("ambiguity")
+    if isinstance(ambiguity, Mapping) and ambiguity.get("requires_confirmation") is True:
+        return True
+    if work_analysis is None:
+        return False
+    ambiguities = work_analysis.get("ambiguities")
+    return isinstance(ambiguities, list) and any(
+        isinstance(item, Mapping) and item.get("requires_confirmation") is True
+        for item in ambiguities
+    )
+
+
 def outline_answer(
     *,
     user_request: str,
@@ -117,6 +132,10 @@ def outline_answer(
         prompt_input["work_analysis"] = dict(work_analysis)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if retrieval_result is not None:
+        for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
+            if key in retrieval_result:
+                prompt_input[key] = deepcopy(retrieval_result[key])
     task_projection = project_task_read_answer(
         user_request=user_request,
         request_intent=request_intent,
@@ -124,18 +143,9 @@ def outline_answer(
     )
     if task_projection is not None:
         return task_projection.outline
-    empty_projection = project_empty_read_answer(
-        user_request=user_request,
-        request_intent=request_intent,
-        retrieval_result=retrieval_result,
-        evidence=evidence,
-    )
-    if empty_projection is not None:
-        return empty_projection.outline
     candidate = invoke(PROMPT_ID, prompt_input)
     if candidate.get("disposition") == "NEEDS_CONFIRMATION":
-        ambiguity = request_intent.get("ambiguity")
-        if not isinstance(ambiguity, Mapping) or ambiguity.get("requires_confirmation") is not True:
+        if not answer_confirmation_allowed(request_intent, work_analysis):
             raise ValueError("outline_answer confirmation is not permitted for actionable intent")
         question = candidate.get("question")
         options = candidate.get("options")
@@ -180,6 +190,7 @@ def outline_answer(
 
 __all__ = [
     "ANSWER_OUTLINE_OUTPUT_SCHEMA",
+    "answer_confirmation_allowed",
     "answer_outline_output_schema",
     "outline_answer",
 ]

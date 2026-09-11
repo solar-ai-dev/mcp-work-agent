@@ -75,6 +75,7 @@ from google_work_agent.adapters.langgraph.subgraphs.retrieval.nodes.select_evide
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.state import (
     ContextRetrievalInputState,
     ContextRetrievalLocalState,
+    ReadResultBindingV1,
     RetrievalState,
 )
 from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
@@ -211,6 +212,9 @@ from .projections.execute_read_projection import (
     sanitize_acquisition_result,
 )
 from .projections.retrieval_continuation_projection import (
+    bind_read_result_plan,
+    read_result_binding_matches_plan,
+    resolve_read_result_plan,
     restore_prior_evidence_selection,
     restore_retrieval_continuation,
 )
@@ -538,6 +542,9 @@ class RetrievalSubgraph:
         )
         retry_budget = _authorize_context_adjustment_budget(state)
         prior_result = state.get("retrieval_result")
+        serialized_read_bindings: dict[str, dict[str, object]] = {
+            handle: dict(binding) for handle, binding in continuation["read_bindings"].items()
+        }
         next_state: ContextRetrievalLocalState = {
             **state,
             "retry_budget": retry_budget,
@@ -562,7 +569,7 @@ class RetrievalSubgraph:
             CONTEXT_AGENT_LOCAL_KEY: local_state,
             CONTEXT_CURRENT_ROUND_NO_KEY: current_round_no,
             CONTEXT_READ_RESULT_HANDLES_KEY: list(continuation["read_result_handles"]),
-            CONTEXT_READ_BINDINGS_KEY: dict(continuation["read_bindings"]),
+            CONTEXT_READ_BINDINGS_KEY: serialized_read_bindings,
             CONTEXT_SEGMENT_HANDLES_KEY: list(continuation["segment_handles"]),
             CONTEXT_QUERY_ATTEMPTS_KEY: list(continuation["query_attempts"]),
             CONTEXT_CANONICAL_PLANS_KEY: dict(continuation["canonical_plans"]),
@@ -933,6 +940,7 @@ class RetrievalSubgraph:
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
             confirmation_response=confirmation_response,
             attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
+            read_result_summaries=self._bounded_read_result_summaries(state),
         )
         sufficiency_result = cast(SufficiencyResultV2, patch["sufficiency"])
         llm_provider_result: dict[str, object] = {"structured_output_attempts": 1}
@@ -1252,12 +1260,24 @@ class RetrievalSubgraph:
         state: ContextRetrievalLocalState,
         prior_canonical: Mapping[str, SourceFetchPlanV1],
     ) -> dict[str, str]:
-        bindings = cast(Mapping[str, Mapping[str, str]], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
-        return {
-            value["route_id"]: handle
-            for handle, value in bindings.items()
-            if value["route_id"] in prior_canonical
-        }
+        bindings = cast(Mapping[str, ReadResultBindingV1], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
+        result: dict[str, str] = {}
+        handles = cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, list(bindings)))
+        for handle in reversed(handles):
+            binding = bindings.get(handle)
+            if not isinstance(binding, Mapping):
+                raise RetrievalReadBindingError("read-result binding is malformed")
+            route_id = binding.get("route_id")
+            query_hash = binding.get("query_identity_hash")
+            plan = prior_canonical.get(route_id) if isinstance(route_id, str) else None
+            if (
+                plan is not None
+                and isinstance(query_hash, str)
+                and read_result_binding_matches_plan(binding, plan)
+                and route_id not in result
+            ):
+                result[route_id] = handle
+        return result
 
     def _execute_read_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         round_no = (
@@ -1381,10 +1401,7 @@ class RetrievalSubgraph:
                 page_calls += 1
             effective_handle = execution.read_result_handle
             if execution.status == "COMPLETE":
-                bindings[effective_handle] = {
-                    "route_id": plan["route_id"],
-                    "query_identity_hash": plan["query_identity_hash"],
-                }
+                bindings[effective_handle] = bind_read_result_plan(plan)
                 new_handles.append(effective_handle)
             token = None
             resolution = self._read_result_cache.resolve_read_result(
@@ -1503,17 +1520,16 @@ class RetrievalSubgraph:
             Mapping[str, SourceFetchPlanV1],
             state.get(CONTEXT_CANONICAL_PLANS_KEY, {}),
         )
-        by_route = {**prior, **{plan["route_id"]: plan for plan in plans}}
+        available_plans = [*plans, *prior.values()]
         result = []
         for handle in handles:
             raw = bindings.get(handle)
-            if not isinstance(raw, Mapping) or not isinstance(raw.get("route_id"), str):
+            if not isinstance(raw, Mapping):
                 raise RetrievalReadBindingError("read-result binding is malformed")
-            route_id = cast(str, raw["route_id"])
-            plan = by_route.get(route_id)
-            if plan is None:
-                raise RetrievalReadBindingError("cached read has no canonical source plan")
-            result.append(plan)
+            try:
+                result.append(resolve_read_result_plan(raw, available_plans=available_plans))
+            except ValueError as error:
+                raise RetrievalReadBindingError(str(error)) from error
         return result
 
     @staticmethod

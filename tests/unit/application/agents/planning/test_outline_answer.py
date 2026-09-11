@@ -53,6 +53,32 @@ def test_outline_rejects__confirmation__for_actionable_intent() -> None:
         )
 
 
+def test_outline_allows__confirmation__from_current_work_analysis_ambiguity() -> None:
+    result = outline_answer(
+        user_request="Summarize after resolving the conflicting owner.",
+        request_intent={"ambiguity": {"requires_confirmation": False}},
+        work_analysis={
+            "ambiguities": [
+                {
+                    "code": "owner_conflict",
+                    "description": "Two current owners conflict.",
+                    "requires_confirmation": True,
+                    "evidence_refs": ["e1"],
+                }
+            ]
+        },
+        evidence=[{"evidence_id": "e1", "excerpt": "conflicting owners"}],
+        invoke=lambda _prompt_id, _prompt_input: {
+            "disposition": "NEEDS_CONFIRMATION",
+            "question": "Which owner should be used?",
+            "options": ["A", "B"],
+            "reason_codes": ["OWNER_CONFLICT"],
+        },
+    )
+
+    assert result["disposition"] == "NEEDS_CONFIRMATION"
+
+
 def test_outline_uses__distinct_prompt__and_minimum_projection() -> None:
     captured: dict[str, object] = {}
 
@@ -155,14 +181,12 @@ def test_outline_task_read__concrete_task__selects_without_llm() -> None:
     }
 
 
-def test_outline_gmail_read__empty_evidence__returns_no_result_without_llm() -> None:
-    invoked = False
+def test_outline_gmail_read__empty_evidence__passes_observed_state_to_answer_agent() -> None:
+    captured: dict[str, object] = {}
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
-        del prompt_id, prompt_input
-        nonlocal invoked
-        invoked = True
-        return {}
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {"sections": ["확인된 검색 결과 없음"], "evidence_refs": []}
 
     result = outline_answer(
         user_request="지난주 프로젝트 일정 메일을 찾아줘.",
@@ -195,8 +219,19 @@ def test_outline_gmail_read__empty_evidence__returns_no_result_without_llm() -> 
         invoke=invoke,
     )
 
-    assert invoked is False
-    assert result == {"sections": ["검색 결과 없음"], "evidence_refs": []}
+    assert captured["prompt_id"] == "planning.outline_answer"
+    prompt_input = cast(dict[str, object], captured["prompt_input"])
+    assert prompt_input["coverage"] == "PARTIAL"
+    assert prompt_input["source_statuses"] == [{"status": "COMPLETE", "failure_kind": None}]
+    assert prompt_input["missing_information"] == [
+        {
+            "code": "required_source_evidence",
+            "description": "검색 결과가 없습니다.",
+            "required_for": "RETRIEVAL",
+            "reason_codes": ["REQUIRED_SOURCE_RETURNED_NO_RESOURCES"],
+        }
+    ]
+    assert result == {"sections": ["확인된 검색 결과 없음"], "evidence_refs": []}
 
 
 def test_outline_analysis_read__current_work_facts__preserves_for_composition() -> None:

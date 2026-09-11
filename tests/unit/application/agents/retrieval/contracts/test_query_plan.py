@@ -90,6 +90,38 @@ def test_get_only_message_route__with_search__rejects_before_adapter() -> None:
         )
 
 
+def test_non_gmail_search__empty_constraints__remains_rejected() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "task-route",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["tasks_list_tasks"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+
+    with pytest.raises(RetrievalV2ValidationError, match="constraints must be non-empty"):
+        validate_retrieval_query_plan_v2(
+            {
+                "schema_version": 2,
+                "route_queries": [
+                    {
+                        "route_id": "task-route",
+                        "operation": "SEARCH",
+                        "reason_codes": ["USER_REQUEST"],
+                        "search_spec": {"mode": "INITIAL", "constraints": []},
+                        "detail_candidate_ref": None,
+                    }
+                ],
+            },
+            frozen_routes=[route],
+            supported_constraint_kinds={"task-route": ["STATUS_SCOPE"]},
+        )
+
+
 def test_duplicate_constraint_kind__reports_the_rejected_field_path() -> None:
     route = cast(
         InputToolRouteV1,
@@ -137,9 +169,7 @@ def test_duplicate_constraint_kind__reports_the_rejected_field_path() -> None:
             supported_constraint_kinds={"gmail-search": ["CONCEPT"]},
         )
 
-    assert caught.value.affected_field_paths == (
-        "$.route_queries[].search_spec.constraints",
-    )
+    assert caught.value.affected_field_paths == ("$.route_queries[].search_spec.constraints",)
 
 
 def test_detail_candidate__from_other_route__is_rejected() -> None:

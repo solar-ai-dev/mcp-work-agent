@@ -59,6 +59,37 @@ def test_temporal_range__partial_or_empty_bounds__preserves_contract(
     assert validate_output_schema(candidate, schema.json_schema)
 
 
+def test_gmail_search_schema__empty_constraints__allows_only_gmail_route() -> None:
+    gmail_schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["CONCEPT"]},
+        gmail_route_ids=["gmail"],
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": []},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert validate_output_schema(candidate, gmail_schema.json_schema) == []
+
+    non_gmail_schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["calendar"],
+        route_operations={"calendar": ["SEARCH"]},
+        supported_constraint_kinds={"calendar": ["CONCEPT"]},
+    )
+    candidate["route_queries"][0]["route_id"] = "calendar"
+    assert validate_output_schema(candidate, non_gmail_schema.json_schema)
+
+
 def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     temporal: TemporalRangeConstraintV1 = {
         "kind": "TEMPORAL_RANGE",

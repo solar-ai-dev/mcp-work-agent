@@ -397,6 +397,10 @@ def _bind_route_operation(
         operation_properties["search_spec"] = deepcopy(
             _CHANGED_SEARCH_SPEC if is_followup else _INITIAL_SEARCH_SPEC
         )
+        if operation == "SEARCH" and gmail_keyword_literals and not is_followup:
+            search_spec = cast(dict[str, object], operation_properties["search_spec"])
+            search_fields = cast(dict[str, object], search_spec["properties"])
+            cast(dict[str, object], search_fields["constraints"])["minItems"] = 0
         if is_followup:
             search_spec = cast(dict[str, object], operation_properties["search_spec"])
             search_fields = cast(dict[str, object], search_spec["properties"])

@@ -15,9 +15,6 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.planning.normalize_generated_answer_prose import (
     normalize_generated_answer_prose,
 )
-from google_work_agent.application.agents.planning.project_empty_read_answer import (
-    project_empty_read_answer,
-)
 from google_work_agent.application.agents.planning.project_task_read_answer import (
     project_task_read_answer,
 )
@@ -142,14 +139,6 @@ def compose_answer(
         if not set(task_projection.draft["evidence_refs"]).issubset(approved_refs):
             raise ValueError("task read answer references evidence outside its approved outline")
         return _with_partial_scope(task_projection.draft, retrieval_result)
-    empty_projection = project_empty_read_answer(
-        user_request=user_request,
-        request_intent=request_intent,
-        retrieval_result=retrieval_result,
-        evidence=evidence,
-    )
-    if empty_projection is not None:
-        return empty_projection.draft
     candidate = invoke(PROMPT_ID, prompt_input)
     schema_version = candidate.get("schema_version")
     answer = candidate.get("answer")

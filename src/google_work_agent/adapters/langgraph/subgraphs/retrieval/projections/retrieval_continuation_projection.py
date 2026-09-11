@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Literal, TypedDict, cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import (
@@ -17,12 +18,66 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     RetrievalResultV1,
 )
 
+from ..state import ReadResultBindingV1
+
+
+def bind_read_result_plan(plan: SourceFetchPlanV1) -> ReadResultBindingV1:
+    """Bind a cached result to the exact immutable plan executed for that read."""
+
+    return {
+        "route_id": plan["route_id"],
+        "query_identity_hash": plan["query_identity_hash"],
+        "source_fetch_plan": deepcopy(plan),
+    }
+
+
+def read_result_binding_matches_plan(
+    binding: Mapping[str, object], plan: SourceFetchPlanV1
+) -> bool:
+    return (
+        binding.get("route_id") == plan["route_id"]
+        and binding.get("query_identity_hash") == plan["query_identity_hash"]
+    )
+
+
+def resolve_read_result_plan(
+    binding: Mapping[str, object],
+    *,
+    available_plans: list[SourceFetchPlanV1],
+) -> SourceFetchPlanV1:
+    """Resolve current bindings exactly and old bindings only by route plus query identity."""
+
+    route_id = binding.get("route_id")
+    query_hash = binding.get("query_identity_hash")
+    if not isinstance(route_id, str) or not isinstance(query_hash, str):
+        raise ValueError("read-result binding is malformed")
+    source_fetch_plan = binding.get("source_fetch_plan")
+    if source_fetch_plan is not None:
+        if (
+            not isinstance(source_fetch_plan, Mapping)
+            or source_fetch_plan.get("route_id") != route_id
+            or source_fetch_plan.get("query_identity_hash") != query_hash
+        ):
+            raise ValueError("cached read source plan binding is malformed")
+        return cast(SourceFetchPlanV1, deepcopy(dict(source_fetch_plan)))
+    plan = next(
+        (
+            candidate
+            for candidate in available_plans
+            if candidate["route_id"] == route_id and candidate["query_identity_hash"] == query_hash
+        ),
+        None,
+    )
+    if plan is None:
+        raise ValueError("cached read has no canonical source plan for its executed query")
+    return plan
+
 
 class RetrievalContinuationProjectionV1(TypedDict):
     canonical_plans: dict[str, SourceFetchPlanV1]
     query_attempts: list[QueryAttemptV1]
     read_result_handles: list[str]
-    read_bindings: dict[str, dict[str, str]]
+    read_bindings: dict[str, ReadResultBindingV1]
     segment_handles: list[str]
 
 
@@ -86,7 +141,7 @@ def restore_retrieval_continuation(
             raise ValueError("retrieval continuation canonical plan is malformed")
         typed_plans[route_id] = cast(SourceFetchPlanV1, dict(plan))
 
-    typed_bindings: dict[str, dict[str, str]] = {}
+    typed_bindings: dict[str, ReadResultBindingV1] = {}
     for handle in handles:
         binding = bindings.get(handle)
         if not isinstance(binding, Mapping):
@@ -100,10 +155,23 @@ def restore_retrieval_continuation(
             or not query_hash
         ):
             raise ValueError("retrieval continuation binding is malformed")
-        typed_bindings[handle] = {
-            "route_id": route_id,
-            "query_identity_hash": query_hash,
-        }
+        typed_binding = cast(
+            ReadResultBindingV1,
+            {
+                "route_id": route_id,
+                "query_identity_hash": query_hash,
+            },
+        )
+        source_fetch_plan = binding.get("source_fetch_plan")
+        if source_fetch_plan is not None:
+            if (
+                not isinstance(source_fetch_plan, Mapping)
+                or source_fetch_plan.get("route_id") != route_id
+                or source_fetch_plan.get("query_identity_hash") != query_hash
+            ):
+                raise ValueError("retrieval continuation source plan binding is malformed")
+            typed_binding["source_fetch_plan"] = cast(SourceFetchPlanV1, dict(source_fetch_plan))
+        typed_bindings[handle] = typed_binding
 
     return RetrievalContinuationProjectionV1(
         canonical_plans=typed_plans,
@@ -151,6 +219,9 @@ def restore_prior_evidence_selection(
 
 __all__ = [
     "RetrievalContinuationProjectionV1",
+    "bind_read_result_plan",
+    "read_result_binding_matches_plan",
+    "resolve_read_result_plan",
     "restore_prior_evidence_selection",
     "restore_retrieval_continuation",
 ]

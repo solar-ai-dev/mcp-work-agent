@@ -445,6 +445,7 @@ def validate_search_spec_v1(
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            allow_empty=keyword_literal_pattern is not None,
             keyword_literal_pattern=keyword_literal_pattern,
         )
         return {"mode": "INITIAL", "constraints": constraints}

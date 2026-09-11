@@ -409,6 +409,7 @@ def assess_sufficiency(
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     attempted_detail_candidate_refs: Collection[str] = (),
     query_attempts: Sequence[QueryAttemptV1] = (),
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
     deterministic = deterministic_sufficiency(
@@ -431,6 +432,7 @@ def assess_sufficiency(
         ),
         "budget_state": budget_state_prompt_projection(retry_budget),
         "temporal_constraints": project_query_temporal_constraints(query_attempts),
+        "read_result_summaries": [dict(item) for item in read_result_summaries],
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
@@ -521,6 +523,7 @@ def _guard_event_year(
             ],
         }
     return result
+
 
 def _fail_closed_on_empty_required_acquisition(
     result: SufficiencyResultV2,

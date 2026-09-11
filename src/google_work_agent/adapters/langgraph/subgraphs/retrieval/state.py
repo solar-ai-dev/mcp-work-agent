@@ -48,6 +48,14 @@ from google_work_agent.ports.system.contracts.workflow_signal import (
 )
 
 
+class ReadResultBindingV1(TypedDict):
+    """Checkpoint-safe identity of the exact plan that produced one cached READ."""
+
+    route_id: str
+    query_identity_hash: str
+    source_fetch_plan: NotRequired[SourceFetchPlanV1]
+
+
 class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Retrieval."""
 
@@ -65,7 +73,7 @@ class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
     __context_canonical_plans__: dict[str, SourceFetchPlanV1]
     __context_query_attempts__: list[QueryAttemptV1]
     __context_read_result_handles__: list[str]
-    __context_read_bindings__: dict[str, dict[str, str]]
+    __context_read_bindings__: dict[str, ReadResultBindingV1]
     __context_segment_handles__: list[str]
 
 
@@ -132,5 +140,6 @@ class RetrievalState(TypedDict, total=False):
 __all__ = [
     "ContextRetrievalInputState",
     "ContextRetrievalLocalState",
+    "ReadResultBindingV1",
     "RetrievalState",
 ]

@@ -17,7 +17,6 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     RouteQueryIntentV2,
     SemanticRetrievalConstraintV1,
     SourceFetchPlanV1,
-    StatusScopeConstraintV1,
     TemporalRangeConstraintV1,
     validate_retrieval_query_plan_v2,
 )
@@ -263,12 +262,9 @@ def _validate_route_materializability(
     }:
         return
 
-    has_query_term = False
     for constraint in constraints:
         kind = constraint["kind"]
-        if kind in {"CONCEPT", "KEYWORD", "RESOURCE_REF", "CONTAINER_REF"}:
-            has_query_term = True
-        elif kind == "PARTICIPANT":
+        if kind == "PARTICIPANT":
             participant = cast(ParticipantConstraintV1, constraint)
             if any(item["role"] == "ATTENDEE" for item in participant["participants"]):
                 raise RetrievalV2ValidationError(
@@ -277,7 +273,6 @@ def _validate_route_materializability(
                         "$.route_queries[].search_spec.constraints[?(@.kind=='PARTICIPANT')]",
                     ),
                 )
-            has_query_term = True
         elif kind == "TEMPORAL_RANGE":
             temporal = cast(TemporalRangeConstraintV1, constraint)
             if temporal["axis"] != "MESSAGE_TIME":
@@ -287,17 +282,6 @@ def _validate_route_materializability(
                         "$.route_queries[].search_spec.constraints[?(@.kind=='TEMPORAL_RANGE')].axis",
                     ),
                 )
-            has_query_term = True
-        elif kind == "STATUS_SCOPE":
-            status = cast(StatusScopeConstraintV1, constraint)
-            if any(value in {"DRAFT", "SENT"} for value in status["values"]):
-                has_query_term = True
-
-    if not has_query_term:
-        raise RetrievalV2ValidationError(
-            "Gmail SEARCH requires at least one translatable constraint",
-            affected_field_paths=("$.route_queries[].search_spec.constraints",),
-        )
 
 
 def _validate_changed_removals(
@@ -321,6 +305,7 @@ def _validate_changed_removals(
                 "$.route_queries[].search_spec.constraint_delta.remove_constraint_kinds",
             ),
         )
+
 
 def _validate_person_promotion(
     prior: Sequence[SemanticRetrievalConstraintV1],
@@ -396,9 +381,7 @@ def _canonical_constraints(constraints: Sequence[SemanticRetrievalConstraintV1])
                     and key == "terms"
                     else sorted(
                         value,
-                        key=lambda member: json.dumps(
-                            member, sort_keys=True, ensure_ascii=True
-                        ),
+                        key=lambda member: json.dumps(member, sort_keys=True, ensure_ascii=True),
                     )
                 )
         normalized.append(item)

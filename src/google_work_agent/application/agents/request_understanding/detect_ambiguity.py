@@ -57,6 +57,7 @@ class RequestAmbiguityValidationError(ValueError):
         self.reason_code = reason_code
         self.affected_field_paths = tuple(affected_field_paths)
 
+
 DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
     schema_version="request-ambiguity-v2",
     json_schema={
@@ -110,10 +111,7 @@ def detect_ambiguity(
             },
             retry_budget,
         )
-    if _is_selected_read_target(
-        request=request,
-        goal_candidate=goal_candidate,
-    ) or _is_general_answer_only(
+    if _is_general_answer_only(
         request=request,
         goal_candidate=goal_candidate,
     ):
@@ -341,37 +339,15 @@ def _constraint_values(value: str | list[str]) -> list[str]:
 
 
 def _same_information_need(left: str, right: str) -> bool:
-    """Correlate a candidate with an already-owned need without classifying its words."""
+    """Match only the same normalized need; wording similarity is not ownership proof."""
 
     normalized_left = _normalize_information_need(left)
     normalized_right = _normalize_information_need(right)
-    return bool(
-        normalized_left
-        and normalized_right
-        and (
-            normalized_left == normalized_right
-            or normalized_left in normalized_right
-            or normalized_right in normalized_left
-        )
-    )
+    return bool(normalized_left and normalized_left == normalized_right)
 
 
 def _normalize_information_need(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-
-
-def _is_selected_read_target(
-    *,
-    request: WorkflowStartRequest,
-    goal_candidate: RequestGoalCandidateV1,
-) -> bool:
-    """Skip a second target decision only when the user already selected the READ source."""
-
-    return (
-        bool(request.selected_resources)
-        and set(goal_candidate["requested_effect_hints"]) == {"READ"}
-        and bool(goal_candidate["requested_resource_hints"])
-    )
 
 
 def _is_general_answer_only(

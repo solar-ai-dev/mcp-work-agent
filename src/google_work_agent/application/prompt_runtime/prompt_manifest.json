@@ -334,7 +334,7 @@
       "node_name": "outline_answer",
       "node_state": "INITIAL",
       "purpose": "outline_answer",
-      "input_schema_version": 1,
+      "input_schema_version": 2,
       "output_schema_version": 1,
       "source": "sources/planning.outline_answer.md",
       "activation_evidence": null

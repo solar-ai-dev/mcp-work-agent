@@ -442,14 +442,16 @@ def test_compose_answer__with_internal_thread_id__removes_resource_identity() ->
     assert result["answer"] == "선택한 Gmail 스레드 내용을 요약했습니다."
 
 
-def test_compose_gmail_read__empty_result__explains_without_llm() -> None:
-    invoked = False
+def test_compose_gmail_read__empty_result__uses_observed_state_without_fixed_retry_text() -> None:
+    captured: dict[str, object] = {}
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
-        del prompt_id, prompt_input
-        nonlocal invoked
-        invoked = True
-        return {}
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {
+            "schema_version": 2,
+            "answer": "확인한 범위에서는 관련 메일이 조회되지 않았습니다.",
+            "evidence_refs": [],
+        }
 
     result = compose_answer(
         user_request="지난주 프로젝트 일정 메일을 찾아줘.",
@@ -483,11 +485,12 @@ def test_compose_gmail_read__empty_result__explains_without_llm() -> None:
         invoke=invoke,
     )
 
-    assert invoked is False
-    assert result["answer"] == (
-        "'지난주 · 프로젝트 · 일정' 조건으로 Gmail을 검색했지만 관련 자료를 찾지 "
-        "못했습니다. 검색어나 기간을 넓혀 다시 요청해 주세요."
-    )
+    assert captured["prompt_id"] == "planning.compose_answer"
+    prompt_input = cast(dict[str, object], captured["prompt_input"])
+    assert prompt_input["coverage"] == "PARTIAL"
+    assert prompt_input["source_statuses"] == [{"status": "COMPLETE", "failure_kind": None}]
+    assert "검색어나 기간을 넓혀" not in result["answer"]
+    assert "관련 메일이 조회되지 않았습니다" in result["answer"]
 
 
 def test_compose_rejects__evidence_not__approved_by_outline() -> None:

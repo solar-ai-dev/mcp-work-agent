@@ -53,6 +53,67 @@ def test_restore_retrieval_continuation__prior_query__preserves_bounds() -> None
     assert result["read_result_handles"] == ["read-1"]
 
 
+def test_cached_read_binding__changed_route_plan__resolves_exact_executed_plan() -> None:
+    executed = cast(
+        SourceFetchPlanV1,
+        {
+            "schema_version": 1,
+            "route_id": "route-1",
+            "connector_id": "google_workspace",
+            "resource_type": "EMAIL",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": ["first"], "match_mode": "PHRASE"}
+            ],
+            "query_identity_hash": "a" * 64,
+            "prior_read_result_handle": None,
+            "detail_candidate_ref": None,
+        },
+    )
+    latest = cast(
+        SourceFetchPlanV1,
+        {
+            **executed,
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": ["latest"], "match_mode": "PHRASE"}
+            ],
+            "query_identity_hash": "b" * 64,
+        },
+    )
+
+    binding = retrieval_continuation_projection.bind_read_result_plan(executed)
+    resolved = retrieval_continuation_projection.resolve_read_result_plan(
+        binding,
+        available_plans=[latest],
+    )
+
+    assert resolved == executed
+    assert resolved is not executed
+
+
+def test_old_cached_read_binding__changed_route_plan__requires_exact_query_identity() -> None:
+    latest = cast(
+        SourceFetchPlanV1,
+        {
+            "schema_version": 1,
+            "route_id": "route-1",
+            "connector_id": "google_workspace",
+            "resource_type": "EMAIL",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [],
+            "query_identity_hash": "b" * 64,
+            "prior_read_result_handle": None,
+            "detail_candidate_ref": None,
+        },
+    )
+
+    with pytest.raises(ValueError, match="executed query"):
+        retrieval_continuation_projection.resolve_read_result_plan(
+            {"route_id": "route-1", "query_identity_hash": "a" * 64},
+            available_plans=[latest],
+        )
+
+
 def test_restore_retrieval_continuation__old_checkpoint__uses_fresh_read() -> None:
     assert retrieval_continuation_projection.restore_retrieval_continuation(
         {}, has_prior_result=True

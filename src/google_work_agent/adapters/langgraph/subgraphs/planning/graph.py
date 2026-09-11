@@ -101,6 +101,7 @@ from google_work_agent.application.agents.planning.draft_action_objective_per_ou
 )
 from google_work_agent.application.agents.planning.outline_answer import (
     ANSWER_OUTLINE_OUTPUT_SCHEMA,
+    answer_confirmation_allowed,
     answer_outline_output_schema,
 )
 from google_work_agent.application.agents.planning.resolve_default_container import (
@@ -731,10 +732,12 @@ class PlanningSubgraph:
                 request_intent = prompt_input.get("request_intent")
                 if not isinstance(request_intent, Mapping):
                     raise ValueError("outline_answer requires request_intent")
-                ambiguity = request_intent.get("ambiguity")
-                confirmation_allowed = (
-                    isinstance(ambiguity, Mapping)
-                    and ambiguity.get("requires_confirmation") is True
+                work_analysis = prompt_input.get("work_analysis")
+                if work_analysis is not None and not isinstance(work_analysis, Mapping):
+                    raise ValueError("outline_answer work_analysis must be an object")
+                confirmation_allowed = answer_confirmation_allowed(
+                    request_intent,
+                    cast(Mapping[str, object] | None, work_analysis),
                 )
                 projected_refs = [
                     ref

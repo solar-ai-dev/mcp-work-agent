@@ -526,11 +526,6 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
         elif constraint["kind"] == "STATUS_SCOPE":
             mapping = {"DRAFT": "in:drafts", "SENT": "in:sent"}
             terms.extend(mapping[item] for item in constraint["values"] if item in mapping)
-    if not terms:
-        raise RetrievalV2ValidationError(
-            "Gmail SEARCH requires at least one translatable constraint",
-            affected_field_paths=("$.source_fetch_plans[].effective_constraints",),
-        )
     return " ".join(terms)
 
 

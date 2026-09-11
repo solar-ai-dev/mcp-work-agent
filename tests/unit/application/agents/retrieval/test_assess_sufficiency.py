@@ -410,6 +410,15 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
             }
         ],
         retry_budget=_run_budget(used=0),
+        read_result_summaries=[
+            {
+                "route_id": "route-gmail",
+                "query_identity_hash": "a" * 64,
+                "has_next_page": True,
+                "exhausted": False,
+                "result_count": 1,
+            }
+        ],
     )
 
     assert result["status"] == "SUFFICIENT"
@@ -421,7 +430,17 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
         "source_statuses",
         "budget_state",
         "temporal_constraints",
+        "read_result_summaries",
     }
+    assert prompt_input["read_result_summaries"] == [
+        {
+            "route_id": "route-gmail",
+            "query_identity_hash": "a" * 64,
+            "has_next_page": True,
+            "exhausted": False,
+            "result_count": 1,
+        }
+    ]
 
 
 def test_retrieval_followup__reentry__charges_one_additional_round() -> None:

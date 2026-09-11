@@ -311,12 +311,8 @@ def test_build_query__concept_alternatives__retain_stable_identity_when_reordere
             ],
         }
 
-    first = build_query(
-        plan(["공개", "배포"]), frozen_routes=[route], route_policies=policies
-    )[0]
-    second = build_query(
-        plan(["배포", "공개"]), frozen_routes=[route], route_policies=policies
-    )[0]
+    first = build_query(plan(["공개", "배포"]), frozen_routes=[route], route_policies=policies)[0]
+    second = build_query(plan(["배포", "공개"]), frozen_routes=[route], route_policies=policies)[0]
 
     assert first["effective_constraints"] == second["effective_constraints"]
     assert first["query_identity_hash"] == second["query_identity_hash"]
@@ -409,8 +405,8 @@ def test_build_query__changed_search__accepts_planner_semantic_revision(
         },
     }
     if remove:
-        with pytest.raises(RetrievalV2ValidationError, match="translatable constraint"):
-            build_query(plan, prior_plans={"r": prior}, **kwargs)
+        result = build_query(plan, prior_plans={"r": prior}, **kwargs)[0]
+        assert result["effective_constraints"] == []
         return
     result = build_query(plan, prior_plans={"r": prior}, **kwargs)[0]
     assert cast(SemanticRetrievalConstraintV1, changed) in result["effective_constraints"]
@@ -431,7 +427,6 @@ def test_build_query__changed_search__accepts_planner_semantic_revision(
             "participants": [{"role": "ATTENDEE", "identity": "one@example.test"}],
             "match_mode": "ALL",
         },
-        {"kind": "STATUS_SCOPE", "values": ["ANY"]},
     ],
 )
 def test_build_query__gmail_search__rejects_constraints_the_projection_cannot_lower(
@@ -471,6 +466,43 @@ def test_build_query__gmail_search__rejects_constraints_the_projection_cannot_lo
                 )
             },
         )
+
+
+def test_build_query__gmail_search__allows_no_translatable_filter() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "STATUS_SCOPE", "values": ["ANY"]}],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    result = build_query(
+        plan,
+        frozen_routes=[route],
+        route_policies={"r": RouteConstraintPolicy(frozenset({"STATUS_SCOPE"}))},
+    )
+
+    assert result[0]["effective_constraints"] == [{"kind": "STATUS_SCOPE", "values": ["ANY"]}]
 
 
 def test_build_query__followup_hypothesis_change__preserves_explicit_constraint() -> None:

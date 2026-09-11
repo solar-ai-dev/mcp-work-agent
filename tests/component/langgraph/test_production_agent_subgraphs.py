@@ -114,6 +114,7 @@ class _ComponentInferencePort:
         self.request_reconsideration = request_reconsideration
         self.duplicate_found = duplicate_found
         self.calls: list[str] = []
+        self.inputs: dict[str, list[dict[str, object]]] = {}
 
     def infer(
         self,
@@ -127,6 +128,7 @@ class _ComponentInferencePort:
         self.calls.append(prompt_id)
         base = input_projection.get("base_projection", input_projection)
         projection = cast(Mapping[str, object], base)
+        self.inputs.setdefault(prompt_id, []).append(dict(projection))
         output = self._response(prompt_id, projection)
         if self.github_retrieval:
             assert not validate_output_schema(output, output_schema_ref.json_schema)
@@ -334,9 +336,7 @@ class _ComponentInferencePort:
                         "route_id": str(route["route_id"]),
                         "status": "REQUIRED",
                         "reason": "THE_REQUESTED_EXTERNAL_EFFECT_IS_NOT_YET_SATISFIED",
-                        "evidence_refs": list(
-                            cast(list[str], duplicate.get("evidence_refs", []))
-                        ),
+                        "evidence_refs": list(cast(list[str], duplicate.get("evidence_refs", []))),
                         "candidate_refs": list(
                             cast(list[str], duplicate.get("matched_candidate_refs", []))
                         ),
@@ -707,7 +707,7 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     state = _state(initial_target="context_retriever")
     state["request_intent"] = cast(Any, _intent())
     state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
-    llm = _ComponentInferencePort()
+    llm = _ComponentInferencePort(retrieval_followup_changes_query=False)
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
@@ -736,6 +736,20 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     ]
     assert result["retrieval_result"]["evidence_refs"]
     assert connector.call_count == 1
+    binding = next(iter(result["__context_read_bindings__"].values()))
+    assert binding["source_fetch_plan"]["query_identity_hash"] == binding["query_identity_hash"]
+    sufficiency_input = llm.inputs["retrieval.assess_sufficiency"][0]
+    assert sufficiency_input["read_result_summaries"] == [
+        {
+            "read_result_handle": next(iter(result["__context_read_bindings__"])),
+            "route_id": "route-1",
+            "query_identity_hash": binding["query_identity_hash"],
+            "has_next_page": False,
+            "exhausted": True,
+            "result_count": 1,
+            "page_state_hash": None,
+        }
+    ]
     assert set(graph.get_graph().nodes) == {
         "__start__",
         "__end__",

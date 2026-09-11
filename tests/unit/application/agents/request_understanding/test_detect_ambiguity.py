@@ -150,7 +150,7 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
         outputs=[
             {
                 "missing_information_owner": "USER",
-                "missing_fields": ["Quartz 납품 일정"],
+                "missing_fields": ["납품 일정"],
             },
             {
                 "missing_information_owner": "CONNECTOR",
@@ -242,8 +242,15 @@ def test_detect_ambiguity_schema__accepts_user_owned_fields__without_derived_met
     assert errors == []
 
 
-def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[])
+def test_selected_gmail_read__retrievable_content_gap__still_assesses_ambiguity() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["메일 본문"],
+            }
+        ]
+    )
     request = WorkflowStartRequest(
         run_id="run-selected",
         conversation_id="conversation-1",
@@ -252,9 +259,9 @@ def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 읽고 요약해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef(
-            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
-        ),),
+        selected_resources=(
+            SelectedResourceRef("ref-thread-42", "google_workspace", "gmail_thread", "thread-42"),
+        ),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -287,7 +294,7 @@ def test_selected_gmail_read__with_retrievable_content_gap__does_not_confirm() -
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert runtime.calls == []
+    assert len(runtime.calls) == 1
 
 
 def test_general_advice__model_invented_choice__does_not_ask_user() -> None:
@@ -325,7 +332,7 @@ def test_general_advice__model_invented_choice__does_not_ask_user() -> None:
     assert runtime.calls == []
 
 
-def test_selected_gmail_analysis__does_not_invent_user_owned__ambiguity() -> None:
+def test_selected_gmail_analysis__user_owned_choice__may_require_confirmation() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -342,9 +349,9 @@ def test_selected_gmail_analysis__does_not_invent_user_owned__ambiguity() -> Non
         requested_mode="LOCAL_GPU",
         request_text="선택한 메일을 분석해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef(
-            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
-        ),),
+        selected_resources=(
+            SelectedResourceRef("ref-thread-42", "google_workspace", "gmail_thread", "thread-42"),
+        ),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -375,8 +382,51 @@ def test_selected_gmail_analysis__does_not_invent_user_owned__ambiguity() -> Non
         ),
     )
 
-    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert runtime.calls == []
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["analysis_focus"],
+    }
+    assert len(runtime.calls) == 1
+
+
+def test_connector_owner_overlap__similar_wording__does_not_reclassify_user_choice() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["Quartz 납품 일정 중 어느 변경안을 적용할지"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "기존 대화의 납품 일정을 확인하고 변경안을 선택한다",
+        "completion_conditions": ["선택된 변경안을 적용한다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["납품 일정"],
+            }
+        ],
+        "requested_effect_hints": ["READ", "UPDATE"],
+        "requested_resource_hints": ["GMAIL_DRAFT"],
+        "analysis_requirement": "REQUIRED",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("기존 초안을 읽고 변경할 일정을 정해줘"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["Quartz 납품 일정 중 어느 변경안을 적용할지"],
+    }
+    assert len(runtime.calls) == 1
 
 
 def test_general_tasks_analysis__retrieves_requested_result_fields__before_confirmation() -> None:
@@ -395,8 +445,7 @@ def test_general_tasks_analysis__retrieves_requested_result_fields__before_confi
         entry_mode="AGENT_SEARCH",
         requested_mode="LOCAL_GPU",
         request_text=(
-            "Google Tasks에 있는 현재 할 일을 읽고 담당자와 승인 예산 정보가 있는지 "
-            "분석해줘."
+            "Google Tasks에 있는 현재 할 일을 읽고 담당자와 승인 예산 정보가 있는지 분석해줘."
         ),
         selected_resource_ids=(),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
@@ -483,9 +532,9 @@ def test_selected_gmail_send__with_missing_recipient__preserves_confirmation() -
         requested_mode="LOCAL_GPU",
         request_text="이 메일에 답장해줘",
         selected_resource_ids=("thread-42",),
-        selected_resources=(SelectedResourceRef(
-            "ref-thread-42", "google_workspace", "gmail_thread", "thread-42"
-        ),),
+        selected_resources=(
+            SelectedResourceRef("ref-thread-42", "google_workspace", "gmail_thread", "thread-42"),
+        ),
         run_budget=cast(dict[str, Any], build_default_run_budget()),
         correlation=WorkflowCorrelationContext("request-1", "command-1", "v1"),
     )
@@ -652,8 +701,10 @@ def test_github_read__without_repository_constraint__requires_confirmation_befor
     candidate = _github_candidate("unused")
     candidate["constraints"] = []
     result = detect_ambiguity(
-        llm_runtime=runtime, request=_request("GitHub 열린 이슈를 보여줘"),
-        goal_candidate=candidate, prompt_ref=_prompt_ref(),
+        llm_runtime=runtime,
+        request=_request("GitHub 열린 이슈를 보여줘"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
     )
     assert result["requires_confirmation"] is True
     assert result["missing_fields"] == ["repository"]

@@ -11,10 +11,7 @@ from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     build_query,
 )
-from google_work_agent.application.agents.retrieval.contracts.query_plan import (
-    RetrievalV2ValidationError,
-    SourceFetchPlanV1,
-)
+from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
@@ -29,49 +26,97 @@ def test_freebusy_projection__checkpoint_sanitization__preserves_calendar_owners
         evidence_calendar_conflict_risk,
     )
 
-    plan = cast(SourceFetchPlanV1, {
-        "route_id": "freebusy-route", "connector_id": "google_workspace",
-        "resource_type": "CALENDAR_FREEBUSY", "query_identity_hash": "a" * 64,
-        "effective_constraints": [{
-            "kind": "TEMPORAL_RANGE", "axis": "AVAILABILITY_WINDOW",
-            "start_local": "2026-09-10T10:00:00", "end_local": "2026-09-10T11:00:00",
-            "timezone": "Asia/Seoul",
-        }],
-    })
-    result = ConnectorReadResultV1(1, "calendar_query_freebusy", "request", {
-        "calendars": [{"calendar_id": "calendar-1", "intervals": [{
-            "start": "2026-09-10T01:00:00Z", "end": "2026-09-10T02:00:00Z", "transparency": "busy",
-        }]}],
-    }, None, 0)
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "freebusy-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_FREEBUSY",
+            "query_identity_hash": "a" * 64,
+            "effective_constraints": [
+                {
+                    "kind": "TEMPORAL_RANGE",
+                    "axis": "AVAILABILITY_WINDOW",
+                    "start_local": "2026-09-10T10:00:00",
+                    "end_local": "2026-09-10T11:00:00",
+                    "timezone": "Asia/Seoul",
+                }
+            ],
+        },
+    )
+    result = ConnectorReadResultV1(
+        1,
+        "calendar_query_freebusy",
+        "request",
+        {
+            "calendars": [
+                {
+                    "calendar_id": "calendar-1",
+                    "intervals": [
+                        {
+                            "start": "2026-09-10T01:00:00Z",
+                            "end": "2026-09-10T02:00:00Z",
+                            "transparency": "busy",
+                        }
+                    ],
+                }
+            ],
+        },
+        None,
+        0,
+    )
     acquisition = execute_read_projection.sanitize_acquisition_result(
         execute_read_projection.project_acquisition_result([(plan, result)], remaining_budget={}),
     )
     risk = evidence_calendar_conflict_risk(
-        arguments={"calendar_id": "calendar-1", "payload": {
-            "start": "2026-09-10T10:00:00+09:00", "end": "2026-09-10T11:00:00+09:00",
-        }}, acquisition_result=acquisition, checked_at_ms=123,
+        arguments={
+            "calendar_id": "calendar-1",
+            "payload": {
+                "start": "2026-09-10T10:00:00+09:00",
+                "end": "2026-09-10T11:00:00+09:00",
+            },
+        },
+        acquisition_result=acquisition,
+        checked_at_ms=123,
         work_hours=CalendarWorkHours(timezone="Asia/Seoul"),
     )
     assert cast(dict[str, object], risk["calendar_conflict"])["decision"] == "HARD_CONFLICT"
 
 
 def test_failed_read__survives_cache_hydration__without_becoming_empty_success() -> None:
-    failed_plan = cast(SourceFetchPlanV1, {
-        "route_id": "failed-route", "connector_id": "github", "resource_type": "GITHUB_ISSUE",
-    })
-    successful_plan = cast(SourceFetchPlanV1, {
-        "route_id": "ok-route", "connector_id": "github", "resource_type": "GITHUB_ISSUE",
-    })
+    failed_plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "failed-route",
+            "connector_id": "github",
+            "resource_type": "GITHUB_ISSUE",
+        },
+    )
+    successful_plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "ok-route",
+            "connector_id": "github",
+            "resource_type": "GITHUB_ISSUE",
+        },
+    )
     successful_read = ConnectorReadResultV1(
-        1, "github_list_issues", "request", {"items": []}, None, 0,
+        1,
+        "github_list_issues",
+        "request",
+        {"items": []},
+        None,
+        0,
     )
     result = execute_read_projection.project_acquisition_result(
-        [(successful_plan, successful_read)], remaining_budget={"pages": 2},
+        [(successful_plan, successful_read)],
+        remaining_budget={"pages": 2},
         failed_reads=[(failed_plan, "NOT_FOUND")],
     )
     assert result["status"] == "PARTIAL"
     hydrated = execute_read_projection.project_acquisition_result(
-        [(successful_plan, successful_read)], remaining_budget={"pages": 2},
+        [(successful_plan, successful_read)],
+        remaining_budget={"pages": 2},
         prior_result=execute_read_projection.sanitize_acquisition_result(result),
     )
     assert hydrated["status"] == "PARTIAL"
@@ -168,8 +213,12 @@ def test_gmail_keyword_lowering__different_match_modes__produces_distinct_querie
     )
     route = cast(
         InputToolRouteV1,
-        {"route_id": "route-gmail", "connector_id": "google_workspace",
-         "resource_type": "GMAIL_THREAD", "allowed_read_tool_ids": ["gmail_search_threads"]},
+        {
+            "route_id": "route-gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+        },
     )
 
     tool_id, arguments = execute_read_projection.project_connector_call(
@@ -178,6 +227,35 @@ def test_gmail_keyword_lowering__different_match_modes__produces_distinct_querie
 
     assert tool_id == "gmail_search_threads"
     assert arguments["query"] == expected
+
+
+def test_gmail_search_projection__empty_constraints__preserves_agent_selected_read() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "route-gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [],
+        },
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+        },
+    )
+
+    tool_id, arguments = execute_read_projection.project_connector_call(
+        plan, route=route, page_size=20
+    )
+
+    assert tool_id == "gmail_search_threads"
+    assert arguments["query"] == ""
 
 
 def test_gmail_phrase_lowering__ordered_repeated_terms__preserves_order_and_repetition() -> None:
@@ -215,9 +293,7 @@ def test_gmail_phrase_lowering__ordered_repeated_terms__preserves_order_and_repe
             ],
         },
         frozen_routes=[route],
-        route_policies={
-            "route-gmail": RouteConstraintPolicy(frozenset({"KEYWORD"}))
-        },
+        route_policies={"route-gmail": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
     )[0]
 
     _, arguments = execute_read_projection.project_connector_call(plan, route=route, page_size=20)
@@ -260,7 +336,7 @@ def test_gmail_draft_search__for_frozen_draft_route__uses_draft_operation() -> N
     assert arguments == {"query": '"Quartz 납품 회신 검토"', "page_size": 20}
 
 
-def test_gmail_search__unmaterializable_checkpoint_plan__raises_typed_validation_error() -> None:
+def test_gmail_search__status_any_only__lowers_to_unfiltered_query() -> None:
     plan = cast(
         SourceFetchPlanV1,
         {
@@ -283,12 +359,12 @@ def test_gmail_search__unmaterializable_checkpoint_plan__raises_typed_validation
         },
     )
 
-    with pytest.raises(RetrievalV2ValidationError) as raised:
-        execute_read_projection.project_connector_call(plan, route=route, page_size=20)
-
-    assert raised.value.affected_field_paths == (
-        "$.source_fetch_plans[].effective_constraints",
+    tool_id, arguments = execute_read_projection.project_connector_call(
+        plan, route=route, page_size=20
     )
+
+    assert tool_id == "gmail_search_threads"
+    assert arguments["query"] == ""
 
 
 @pytest.mark.parametrize("axis", ["MESSAGE_TIME", "EVENT_TIME"])
@@ -314,10 +390,15 @@ def test_gmail_temporal_lowering__event_and_receipt_dates__keeps_axes_distinct(a
     )
     _, arguments = execute_read_projection.project_connector_call(
         plan,
-        route=cast(InputToolRouteV1, {
-            "route_id": "route-gmail", "connector_id": "google_workspace",
-            "resource_type": "GMAIL_THREAD", "allowed_read_tool_ids": ["gmail_search_threads"],
-        }),
+        route=cast(
+            InputToolRouteV1,
+            {
+                "route_id": "route-gmail",
+                "connector_id": "google_workspace",
+                "resource_type": "GMAIL_THREAD",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+            },
+        ),
         page_size=20,
     )
     expected = '"체육대회"'
@@ -331,16 +412,29 @@ def test_gmail_temporal_lowering__event_and_receipt_dates__keeps_axes_distinct(a
 
 @pytest.mark.parametrize("term", ['alpha" OR from:attacker@example.test', "alpha\nbeta", "a\\b"])
 def test_gmail_keyword_lowering__query_grammar_escape__rejects_before_provider(term: str) -> None:
-    plan = cast(SourceFetchPlanV1, {
-        "route_id": "r", "connector_id": "google_workspace", "resource_type": "GMAIL_THREAD",
-        "operation_kind": "SEARCH", "effective_constraints": [
-            {"kind": "KEYWORD", "terms": [term], "match_mode": "ALL"},
-        ],
-    })
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": [term], "match_mode": "ALL"},
+            ],
+        },
+    )
     with pytest.raises(ValueError):
         execute_read_projection.project_connector_call(
-            plan, route=cast(InputToolRouteV1, {
-                "route_id": "r", "connector_id": "google_workspace",
-                "resource_type": "GMAIL_THREAD", "allowed_read_tool_ids": ["gmail_search_threads"],
-            }), page_size=20,
+            plan,
+            route=cast(
+                InputToolRouteV1,
+                {
+                    "route_id": "r",
+                    "connector_id": "google_workspace",
+                    "resource_type": "GMAIL_THREAD",
+                    "allowed_read_tool_ids": ["gmail_search_threads"],
+                },
+            ),
+            page_size=20,
         )

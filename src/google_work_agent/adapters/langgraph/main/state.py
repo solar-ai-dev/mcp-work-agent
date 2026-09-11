@@ -222,7 +222,7 @@ class GraphState(TypedDict, total=False):
     __context_canonical_plans__: NotRequired[dict[str, SourceFetchPlanV1]]
     __context_query_attempts__: NotRequired[list[QueryAttemptV1]]
     __context_read_result_handles__: NotRequired[list[str]]
-    __context_read_bindings__: NotRequired[dict[str, dict[str, str]]]
+    __context_read_bindings__: NotRequired[dict[str, dict[str, object]]]
     __context_segment_handles__: NotRequired[list[str]]
     __modify_review_plan_id__: NotRequired[str | None]
     __modify_review_version__: NotRequired[int | None]

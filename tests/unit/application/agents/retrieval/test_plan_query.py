@@ -67,7 +67,7 @@ def _tool_route_plan(*, allowed_read_tool_ids: list[str]) -> ToolRoutePlanV2:
     )
 
 
-def test_plan_query__gmail_unmaterializable_candidate__uses_semantic_revision() -> None:
+def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revision() -> None:
     route = cast(
         InputToolRouteV1,
         {
@@ -79,7 +79,7 @@ def test_plan_query__gmail_unmaterializable_candidate__uses_semantic_revision() 
             "reason_codes": ["USER_REQUEST"],
         },
     )
-    invalid = {
+    unfiltered = {
         "schema_version": 2,
         "route_queries": [
             {
@@ -88,30 +88,13 @@ def test_plan_query__gmail_unmaterializable_candidate__uses_semantic_revision() 
                 "reason_codes": ["USER_REQUEST"],
                 "search_spec": {
                     "mode": "INITIAL",
-                    "constraints": [{"kind": "STATUS_SCOPE", "values": ["ANY"]}],
+                    "constraints": [],
                 },
                 "detail_candidate_ref": None,
             }
         ],
     }
-    revised = {
-        "schema_version": 2,
-        "route_queries": [
-            {
-                "route_id": "route-1",
-                "operation": "SEARCH",
-                "reason_codes": ["USER_REQUEST"],
-                "search_spec": {
-                    "mode": "INITIAL",
-                    "constraints": [
-                        {"kind": "CONCEPT", "concept": "출시", "manifestations": ["출시"]}
-                    ],
-                },
-                "detail_candidate_ref": None,
-            }
-        ],
-    }
-    runtime = FakeStructuredInferencePort(outputs=[invalid, revised])
+    runtime = FakeStructuredInferencePort(outputs=[unfiltered])
     prompt_ref = PromptReference(
         prompt_bundle_version="test",
         prompt_id="retrieval.plan_query",
@@ -137,21 +120,14 @@ def test_plan_query__gmail_unmaterializable_candidate__uses_semantic_revision() 
         },
         requested_mode="LOCAL_GPU",
         frozen_routes=[route],
-        route_policies={
-            "route-1": RouteConstraintPolicy(frozenset({"CONCEPT", "STATUS_SCOPE"}))
-        },
+        route_policies={"route-1": RouteConstraintPolicy(frozenset({"CONCEPT", "STATUS_SCOPE"}))},
         retry_budget=build_default_run_budget(),
     )
 
-    assert result == revised
+    assert result == unfiltered
     assert llm_invoked is True
-    assert len(runtime.calls) == 2
-    assert budget["semantic_revisions_used_by_failure"]
-    repair_input = cast(dict[str, object], runtime.calls[1]["prompt_input"])
-    failure_record = cast(dict[str, object], repair_input["failure_record"])
-    assert failure_record["affected_field_paths"] == [
-        "$.route_queries[].search_spec.constraints"
-    ]
+    assert len(runtime.calls) == 1
+    assert budget["semantic_revisions_used_by_failure"] == {}
 
 
 def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
@@ -266,16 +242,19 @@ def test_retrieval_followup_path__format_does_not_override_progress_budget(
         for index in range(search_attempt_count)
     ]
 
-    assert has_retrieval_followup_path(
-        request_intent=cast(RequestIntentV2, {"constraints": constraints}),
-        tool_route_plan=_tool_route_plan(
-            allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
-        ),
-        route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
-        unresolved_sufficiency_issues=[{"required": True, "resolution_source": "GOOGLE"}],
-        read_result_summaries=[{"route_id": "route-1", "result_count": 0, "exhausted": True}],
-        query_attempts=attempts,
-    ) is expected
+    assert (
+        has_retrieval_followup_path(
+            request_intent=cast(RequestIntentV2, {"constraints": constraints}),
+            tool_route_plan=_tool_route_plan(
+                allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
+            ),
+            route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
+            unresolved_sufficiency_issues=[{"required": True, "resolution_source": "GOOGLE"}],
+            read_result_summaries=[{"route_id": "route-1", "result_count": 0, "exhausted": True}],
+            query_attempts=attempts,
+        )
+        is expected
+    )
 
 
 def test_plan_query_is__the_only_product_prompt__owner_in_retrieval_core() -> None:
@@ -775,9 +754,7 @@ def test_plan_query__unverified_participant__uses_one_semantic_revision() -> Non
         "terms": ["Nimbus"],
         "match_mode": "PHRASE",
     }
-    policies = {
-        "route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT", "PARTICIPANT"}))
-    }
+    policies = {"route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT", "PARTICIPANT"}))}
     prior = build_query(
         {
             "schema_version": 2,
@@ -1717,9 +1694,7 @@ def test_general_gmail_search__passes_planner_sender_subject_values() -> None:
                     "constraints": [
                         {
                             "kind": "PARTICIPANT",
-                            "participants": [
-                                {"role": "SENDER", "identity": "sender@example.com"}
-                            ],
+                            "participants": [{"role": "SENDER", "identity": "sender@example.com"}],
                             "match_mode": "ALL",
                         },
                         {"kind": "KEYWORD", "terms": ["회신부탁"], "match_mode": "PHRASE"},
