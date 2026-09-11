@@ -482,3 +482,84 @@ def test_evidence_sufficiency_and_answer_projection__keeps_counts__and_decisions
     assert "private-segment" not in exported
     assert "private user-visible answer" not in exported
     assert "private-evidence" not in exported
+
+
+def test_sufficiency_input__projects_bounded_pagination_facts_without_payloads() -> None:
+    projection = project_llm_semantic_input(
+        "retrieval.assess_sufficiency",
+        {
+            "request_intent": {
+                "completion_conditions": ["private condition 1", "private condition 2"],
+                "requested_effect_hints": ["READ"],
+                "requested_resource_hints": ["GMAIL_THREAD"],
+                "resource_responsibilities": {
+                    "source_reads": [
+                        {
+                            "resource_type": "GMAIL_THREAD",
+                            "required_information": ["private information"],
+                        }
+                    ],
+                    "outputs": [],
+                },
+            },
+            "selected_evidence": [{"resource_ref": "private-resource"}],
+            "source_statuses": [
+                {
+                    "resource_type": "GMAIL_THREAD",
+                    "status": "SUCCESS",
+                    "failure_kind": "NONE",
+                }
+            ],
+            "budget_state": {
+                "additional_rounds_used": 1,
+                "additional_rounds_remaining": 2,
+            },
+            "temporal_constraints": [],
+            "read_result_summaries": [
+                {
+                    "has_next_page": True,
+                    "exhausted": False,
+                    "result_count": 20,
+                    "page_state_hash": "private-page-token-hash",
+                    "read_result_handle": "private-read-result",
+                },
+                {
+                    "has_next_page": False,
+                    "exhausted": True,
+                    "result_count": 3,
+                    "query_literal": "private query literal",
+                },
+            ],
+        },
+    )
+
+    assert projection["completion_condition_count"] == 2
+    assert projection["read_result_summary_count"] == 2
+    assert projection["has_next_page_count"] == 1
+    assert projection["exhausted_count"] == 1
+    assert projection["result_count_total"] == 23
+    assert projection["selected_evidence_count"] == 1
+    assert projection["source_statuses"] == {
+        "count": 1,
+        "items": [
+            {
+                "resource_type": "GMAIL_THREAD",
+                "status": "SUCCESS",
+                "failure_kind": "NONE",
+            }
+        ],
+    }
+    assert projection["budget_state"] == {
+        "additional_rounds_used": 1,
+        "additional_rounds_remaining": 2,
+    }
+    exported = repr(projection)
+    for private_value in (
+        "private condition",
+        "private information",
+        "private-resource",
+        "private-page-token-hash",
+        "private-read-result",
+        "private query literal",
+    ):
+        assert private_value not in exported

@@ -36,6 +36,7 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "has_confirmation_response",
         "has_request_reconsideration",
         "analysis_requirement",
+        "completion_condition_count",
         "requested_effect_hints",
         "requested_resource_hints",
         "source_reads",
@@ -65,6 +66,9 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "has_current_round",
         "prior_query_attempt_count",
         "read_result_summary_count",
+        "has_next_page_count",
+        "exhausted_count",
+        "result_count_total",
         "detail_candidate_count",
         "route_queries",
         "operation",
@@ -413,6 +417,7 @@ def _project_evidence_output(value: Mapping[object, object]) -> dict[str, object
 
 def _project_sufficiency_input(value: Mapping[object, object]) -> dict[str, object]:
     statuses = _sequence(value.get("source_statuses"))
+    read_result_summaries = _sequence(value.get("read_result_summaries"))
     status_items: list[dict[str, object]] = []
     for raw_item in statuses[:_MAX_COLLECTION_ITEMS]:
         item = _mapping(raw_item)
@@ -425,15 +430,55 @@ def _project_sufficiency_input(value: Mapping[object, object]) -> dict[str, obje
     return {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
         "request_intent": _project_intent_summary(_mapping(value.get("request_intent"))),
+        "completion_condition_count": _completion_condition_count(
+            value.get("request_intent")
+        ),
         "selected_evidence_count": _count(value.get("selected_evidence")),
         "source_statuses": {"count": len(statuses), "items": status_items},
         "budget_state": _safe_number_mapping(value.get("budget_state")),
         "temporal_constraint_shapes": _project_query_constraints(
             value.get("temporal_constraints")
         ),
-        "read_result_summary_count": _count(value.get("read_result_summaries")),
+        "read_result_summary_count": len(read_result_summaries),
+        "has_next_page_count": _true_field_count(
+            read_result_summaries,
+            field="has_next_page",
+        ),
+        "exhausted_count": _true_field_count(
+            read_result_summaries,
+            field="exhausted",
+        ),
+        "result_count_total": _nonnegative_integer_field_total(
+            read_result_summaries,
+            field="result_count",
+        ),
         "has_confirmation_response": _present(value.get("confirmation_response")),
     }
+
+
+def _completion_condition_count(value: object) -> int:
+    intent = _mapping(value)
+    return 0 if intent is None else _count(intent.get("completion_conditions"))
+
+
+def _true_field_count(values: Sequence[object], *, field: str) -> int:
+    return sum(
+        1
+        for raw_item in values
+        if (item := _mapping(raw_item)) is not None and item.get(field) is True
+    )
+
+
+def _nonnegative_integer_field_total(values: Sequence[object], *, field: str) -> int:
+    total = 0
+    for raw_item in values:
+        item = _mapping(raw_item)
+        if item is None:
+            continue
+        count = item.get(field)
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            total += count
+    return total
 
 
 def _project_sufficiency_output(value: Mapping[object, object]) -> dict[str, object]:
