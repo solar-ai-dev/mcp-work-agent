@@ -16,7 +16,9 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 import pytest
 from launcher.development_entrypoint import (
+    DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID,
     main,
+    read_development_google_oauth_client_id,
     read_development_langsmith_environment,
     read_development_sampling_environment,
 )
@@ -115,6 +117,38 @@ def test_development_config__ambient_google_client_id__requires_explicit_handoff
 
     handed_off = development_runtime_config(runtime_root=tmp_path)
     assert handed_off.oauth_client_id == "ambient-google-client"
+
+
+def test_development_google_oauth_client_id__uses_env_file_without_process_value(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "GOOGLE_OAUTH_CLIENT_ID=file-google-client\n",
+        encoding="utf-8",
+    )
+
+    client_id = read_development_google_oauth_client_id({}, env_file=env_file)
+
+    assert client_id == "file-google-client"
+    assert client_id != DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+
+
+def test_development_google_oauth_client_id__explicit_process_value_wins(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "GOOGLE_OAUTH_CLIENT_ID=file-google-client\n",
+        encoding="utf-8",
+    )
+
+    client_id = read_development_google_oauth_client_id(
+        {"GOOGLE_OAUTH_CLIENT_ID": " explicit-google-client "},
+        env_file=env_file,
+    )
+
+    assert client_id == "explicit-google-client"
 
 
 def test_development_config__langsmith_secret__requires_explicit_complete_handoff(

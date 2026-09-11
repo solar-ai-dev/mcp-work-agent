@@ -102,6 +102,32 @@ def read_development_sampling_environment(
     return temperature, seed
 
 
+def read_development_google_oauth_client_id(
+    environment: Mapping[str, str] | None = None,
+    *,
+    env_file: Path | None = None,
+) -> str:
+    values = os.environ if environment is None else environment
+    explicit = values.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    if explicit:
+        return explicit
+
+    path = PROJECT_ROOT / ".env.local" if env_file is None else env_file
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+    configured = ""
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "GOOGLE_OAUTH_CLIENT_ID":
+            configured = value.strip().strip("\"'")
+    return configured or DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+
+
 def _boolean_environment(environment: Mapping[str, str], name: str) -> bool:
     value = environment.get(name, "").strip().lower()
     if value in {"", "0", "false", "no", "off"}:
@@ -153,9 +179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
             mcp_manifest_version=MCP_MANIFEST_VERSION,
-            oauth_client_id=os.environ.get(
-                "GOOGLE_OAUTH_CLIENT_ID", DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
-            ),
+            oauth_client_id=read_development_google_oauth_client_id(),
             github_oauth_client_id=os.environ.get(
                 "GITHUB_APP_CLIENT_ID", DEVELOPMENT_GITHUB_APP_CLIENT_ID
             ),
