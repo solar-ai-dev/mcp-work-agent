@@ -20,6 +20,10 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMErrorCode,
     LLMInvocationError,
 )
+from google_work_agent.ports.system.external_call_trace_port import (
+    ExternalCallTraceFinishV1,
+    ExternalCallTraceStartV1,
+)
 
 
 class _Client:
@@ -273,6 +277,114 @@ def test_callback__receives_metadata_from_compiled_langgraph__without_state_payl
     assert all("workflow" in entry["inputs"] for entry in client.created)
     assert all("workflow" in update[1]["outputs"] for update in client.updated)
     assert "'value': 1" not in repr((client.created, client.updated))
+
+
+def test_callback__nests_safe_llm_and_connector_dispatches__under_workflow_root() -> None:
+    client = _Client()
+    callback = LangSmithWorkflowTraceCallback(
+        client=client,
+        project_name="quality",
+        trace_binding=_trace_binding(),
+    )
+    graph_run_id = uuid4()
+    callback.on_chain_start(
+        None,
+        {},
+        run_id=graph_run_id,
+        metadata=_metadata(),
+        name="CompiledStateGraph",
+    )
+
+    llm_handle = callback.begin_external_call(
+        ExternalCallTraceStartV1(
+            schema_version=1,
+            domain_run_id="run-123",
+            call_kind="LLM_INFERENCE",
+            operation="INFER_STRUCTURED",
+            provider="ollama",
+            model_id="qwen3.5:9b",
+            prompt_id="request_understanding.identify_goal",
+            prompt_version="1.0.50",
+            prompt_content_hash="d" * 64,
+            output_schema_id="request-intent-v2",
+        )
+    )
+    connector_handle = callback.begin_external_call(
+        ExternalCallTraceStartV1(
+            schema_version=1,
+            domain_run_id="run-123",
+            call_kind="CONNECTOR_READ",
+            operation="CALL_TOOL",
+            connector_id="google_workspace",
+            tool_id="gmail_search",
+            effect="READ",
+        )
+    )
+    assert llm_handle is not None
+    assert connector_handle is not None
+    callback.finish_external_call(
+        llm_handle,
+        ExternalCallTraceFinishV1(
+            schema_version=1,
+            status="COMPLETED",
+            duration_ms=17,
+            input_tokens=20,
+            output_tokens=5,
+            total_tokens=25,
+        ),
+    )
+    callback.finish_external_call(
+        connector_handle,
+        ExternalCallTraceFinishV1(
+            schema_version=1,
+            status="FAILED",
+            duration_ms=11,
+            result_count=0,
+            has_next_page=False,
+            error_type="ConnectorOperationFailure",
+            safe_error_code="TIMEOUT",
+        ),
+    )
+    callback.on_chain_end({}, run_id=graph_run_id)
+
+    assert [(entry["name"], entry["run_type"]) for entry in client.created] == [
+        ("production_langgraph", "chain"),
+        ("llm:structured_inference", "llm"),
+        ("connector:read", "tool"),
+    ]
+    for child in client.created[1:]:
+        assert child["trace_id"] == graph_run_id
+        assert child["parent_run_id"] == graph_run_id
+        assert child["dotted_order"].startswith(f"{client.created[0]['dotted_order']}.")
+    assert client.created[1]["inputs"] == {
+        "call": {
+            "schema_version": 1,
+            "call_kind": "LLM_INFERENCE",
+            "operation": "INFER_STRUCTURED",
+            "provider": "ollama",
+            "model_id": "qwen3.5:9b",
+            "prompt_id": "request_understanding.identify_goal",
+            "prompt_version": "1.0.50",
+            "prompt_content_hash": "d" * 64,
+            "output_schema_id": "request-intent-v2",
+        }
+    }
+    updates = {str(run_id): update for run_id, update in client.updated}
+    assert updates[llm_handle.trace_run_id]["outputs"]["call"]["total_tokens"] == 25
+    connector_update = updates[connector_handle.trace_run_id]
+    assert connector_update["error"] == "SAFE_ERROR_TYPE:ConnectorOperationFailure"
+    assert connector_update["outputs"]["call"]["safe_error_code"] == "TIMEOUT"
+    assert (
+        callback.begin_external_call(
+            ExternalCallTraceStartV1(
+                schema_version=1,
+                domain_run_id="run-123",
+                call_kind="CONNECTOR_READ",
+                operation="CALL_TOOL",
+            )
+        )
+        is None
+    )
 
 
 def test_callback__exports_typed_failure_code__without_error_message() -> None:

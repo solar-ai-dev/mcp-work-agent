@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from threading import Lock
 from typing import Any, Literal, NamedTuple, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphInterrupt
@@ -19,6 +19,12 @@ from google_work_agent.adapters.langgraph.langsmith_workflow_io_projection impor
     project_langsmith_workflow_payload,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import LLMInvocationError
+from google_work_agent.ports.system.external_call_trace_port import (
+    ExternalCallTraceFinishV1,
+    ExternalCallTraceHandleV1,
+    ExternalCallTracePort,
+    ExternalCallTraceStartV1,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
@@ -77,7 +83,7 @@ class _LangSmithClient(Protocol):
     def close(self, timeout: float | None = None) -> None: ...
 
 
-class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
+class LangSmithWorkflowTraceCallback(BaseCallbackHandler, ExternalCallTracePort):
     """Record graph and node timing with bounded safe input/output projections."""
 
     def __init__(
@@ -94,6 +100,8 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         self._trace_binding = _validated_trace_binding(trace_binding or {})
         self._parents: dict[UUID, UUID] = {}
         self._active: dict[UUID, _ActiveTrace] = {}
+        self._external_active: dict[UUID, _ActiveTrace] = {}
+        self._roots_by_domain_run_id: dict[str, UUID] = {}
         self._lock = Lock()
         self._closed = False
 
@@ -110,7 +118,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         del serialized
         safe_metadata = self._safe_metadata(metadata or {})
         domain_run_id = safe_metadata.get("domain_run_id")
-        if domain_run_id is None:
+        if not isinstance(domain_run_id, str):
             return
         node = safe_metadata.get("graph_node")
         is_root = parent_run_id is None
@@ -159,6 +167,117 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                     metadata=safe_metadata,
                     dotted_order=dotted_order,
                 )
+                if is_root:
+                    self._roots_by_domain_run_id[domain_run_id] = run_id
+
+    def begin_external_call(
+        self, command: ExternalCallTraceStartV1
+    ) -> ExternalCallTraceHandleV1 | None:
+        """Create a payload-free LLM/tool child under the active workflow root."""
+
+        if command.schema_version != 1:
+            return None
+        domain_run_id = command.domain_run_id
+        if not isinstance(domain_run_id, str) or not _SAFE_VALUE.fullmatch(domain_run_id):
+            return None
+        start_time = datetime.now(UTC)
+        trace_run_id = uuid4()
+        with self._lock:
+            if self._closed:
+                return None
+            root_run_id = self._roots_by_domain_run_id.get(domain_run_id)
+            root = None if root_run_id is None else self._active.get(root_run_id)
+            if root is None or root_run_id is None:
+                return None
+            dotted_order = _dotted_order(
+                start_time=start_time,
+                run_id=trace_run_id,
+                parent_dotted_order=root.dotted_order,
+            )
+            safe_metadata = _external_call_metadata(command, root.metadata)
+            inputs = {"call": _external_call_input(command)}
+            name, run_type, kind_tag = _external_run_identity(command.call_kind)
+        try:
+            self._client.create_run(
+                name,
+                inputs,
+                run_type,
+                id=trace_run_id,
+                trace_id=root.trace_id,
+                dotted_order=dotted_order,
+                parent_run_id=root_run_id,
+                project_name=self._project_name,
+                start_time=start_time,
+                extra={"metadata": safe_metadata},
+                tags=[
+                    "google-work-agent",
+                    "development-observability",
+                    "external-dispatch",
+                    kind_tag,
+                ],
+            )
+        except Exception:
+            _LOGGER.warning("LangSmith external call trace start unavailable")
+            return None
+        with self._lock:
+            if self._closed:
+                return None
+            self._external_active[trace_run_id] = _ActiveTrace(
+                trace_id=root.trace_id,
+                parent_run_id=root_run_id,
+                metadata=safe_metadata,
+                dotted_order=dotted_order,
+            )
+        return ExternalCallTraceHandleV1(1, str(trace_run_id))
+
+    def finish_external_call(
+        self,
+        handle: ExternalCallTraceHandleV1,
+        result: ExternalCallTraceFinishV1,
+    ) -> None:
+        """Complete one external child span without changing product execution."""
+
+        if handle.schema_version != 1 or result.schema_version != 1:
+            return
+        try:
+            trace_run_id = UUID(handle.trace_run_id)
+        except ValueError:
+            return
+        with self._lock:
+            active = self._external_active.pop(trace_run_id, None)
+        if active is None:
+            return
+        metadata = dict(active.metadata)
+        error_type = _safe_optional_value(result.error_type)
+        safe_error_code = _safe_optional_value(result.safe_error_code)
+        if error_type is not None:
+            metadata["error_type"] = error_type
+        if safe_error_code is not None:
+            metadata["safe_error_code"] = safe_error_code
+        output = _external_call_output(result)
+        try:
+            self._client.update_run(
+                trace_run_id,
+                trace_id=active.trace_id,
+                dotted_order=active.dotted_order,
+                parent_run_id=active.parent_run_id,
+                end_time=datetime.now(UTC),
+                error=(
+                    None
+                    if result.status == "COMPLETED"
+                    else f"SAFE_ERROR_TYPE:{error_type or 'ExternalCallError'}"
+                ),
+                outputs={"call": output},
+                extra={"metadata": metadata},
+                tags=[
+                    "google-work-agent",
+                    "development-observability",
+                    "external-dispatch",
+                    result.status.lower(),
+                ],
+            )
+        except Exception:
+            _LOGGER.warning("LangSmith external call trace completion unavailable")
 
     def on_chain_end(self, outputs: Any, *, run_id: UUID, **kwargs: Any) -> None:
         del kwargs
@@ -243,7 +362,15 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
     def _finish_tracking(self, run_id: UUID) -> _ActiveTrace | None:
         with self._lock:
             self._parents.pop(run_id, None)
-            return self._active.pop(run_id, None)
+            active = self._active.pop(run_id, None)
+            if active is not None:
+                domain_run_id = active.metadata.get("domain_run_id")
+                if (
+                    isinstance(domain_run_id, str)
+                    and self._roots_by_domain_run_id.get(domain_run_id) == run_id
+                ):
+                    self._roots_by_domain_run_id.pop(domain_run_id, None)
+            return active
 
     def _nearest_active(self, run_id: UUID | None) -> _NearestActiveTrace | None:
         current = run_id
@@ -346,6 +473,86 @@ def _dotted_order(
     if parent_dotted_order is None:
         return current
     return f"{parent_dotted_order}.{current}"
+
+
+def _external_run_identity(
+    call_kind: str,
+) -> tuple[str, Literal["llm", "tool"], str]:
+    if call_kind == "LLM_INFERENCE":
+        return "llm:structured_inference", "llm", "llm"
+    if call_kind == "LLM_SCHEMA_REPAIR":
+        return "llm:schema_repair", "llm", "llm"
+    return "connector:read", "tool", "connector"
+
+
+def _external_call_metadata(
+    command: ExternalCallTraceStartV1,
+    root_metadata: Mapping[str, object],
+) -> dict[str, object]:
+    result = dict(root_metadata)
+    result["external_call_kind"] = command.call_kind
+    for name in (
+        "operation",
+        "provider",
+        "model_id",
+        "prompt_id",
+        "prompt_version",
+        "prompt_content_hash",
+        "output_schema_id",
+        "connector_id",
+        "tool_id",
+        "effect",
+    ):
+        value = _safe_optional_value(getattr(command, name))
+        if value is not None:
+            result[name] = value
+    return result
+
+
+def _external_call_input(command: ExternalCallTraceStartV1) -> dict[str, object]:
+    result: dict[str, object] = {
+        "schema_version": 1,
+        "call_kind": command.call_kind,
+    }
+    for name in (
+        "operation",
+        "provider",
+        "model_id",
+        "prompt_id",
+        "prompt_version",
+        "prompt_content_hash",
+        "output_schema_id",
+        "connector_id",
+        "tool_id",
+        "effect",
+    ):
+        value = _safe_optional_value(getattr(command, name))
+        if value is not None:
+            result[name] = value
+    return result
+
+
+def _external_call_output(result: ExternalCallTraceFinishV1) -> dict[str, object]:
+    output: dict[str, object] = {
+        "schema_version": 1,
+        "status": result.status,
+        "duration_ms": max(0, result.duration_ms),
+    }
+    for name in ("input_tokens", "output_tokens", "total_tokens", "result_count"):
+        value = getattr(result, name)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            output[name] = value
+    if isinstance(result.has_next_page, bool):
+        output["has_next_page"] = result.has_next_page
+    if (error_type := _safe_optional_value(result.error_type)) is not None:
+        output["error_type"] = error_type
+    if (error_code := _safe_optional_value(result.safe_error_code)) is not None:
+        output["safe_error_code"] = error_code
+    return output
+
+
+def _safe_optional_value(value: object) -> str | None:
+    return value if isinstance(value, str) and _SAFE_VALUE.fullmatch(value) else None
 
 
 __all__ = [

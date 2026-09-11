@@ -28,6 +28,11 @@ from google_work_agent.ports.connector.mcp_client_port import (
     MCPToolCallResultV1,
     MCPToolDescriptorV1,
 )
+from google_work_agent.ports.system.external_call_trace_port import (
+    ExternalCallTraceFinishV1,
+    ExternalCallTraceHandleV1,
+    ExternalCallTraceStartV1,
+)
 
 
 @dataclass
@@ -86,6 +91,27 @@ class _Runtime:
         self.client.close()
 
 
+@dataclass
+class _ExternalCallTrace:
+    starts: list[ExternalCallTraceStartV1] = field(default_factory=list)
+    finishes: list[tuple[ExternalCallTraceHandleV1, ExternalCallTraceFinishV1]] = field(
+        default_factory=list
+    )
+
+    def begin_external_call(
+        self, command: ExternalCallTraceStartV1
+    ) -> ExternalCallTraceHandleV1:
+        self.starts.append(command)
+        return ExternalCallTraceHandleV1(1, f"trace-{len(self.starts)}")
+
+    def finish_external_call(
+        self,
+        handle: ExternalCallTraceHandleV1,
+        result: ExternalCallTraceFinishV1,
+    ) -> None:
+        self.finishes.append((handle, result))
+
+
 def _registry(client: _Client) -> ConnectorRuntimeRegistry:
     registry = ConnectorRuntimeRegistry()
     registry.register("google_workspace", _Runtime(client))
@@ -104,6 +130,56 @@ def test_read_adapter_requires__signed_binding_and__projects_bounded_output() ->
 
     assert result.request_id == "r1"
     assert client.calls[0][1] == "gmail_get_thread"
+
+
+def test_read_adapter__actual_mcp_dispatch__excludes_arguments_and_payload() -> None:
+    client = _Client(
+        MCPToolCallResultV1(
+            1,
+            "gmail_search_threads",
+            "OK",
+            {
+                "request_id": "private-request-id",
+                "items": [{"body": "private-mail-body"}],
+                "total_count": 1,
+                "next_page_token": "private-page-token",
+            },
+            None,
+        )
+    )
+    binding = load_signed_tool_registry().bind_required(
+        "google_workspace", "gmail_search_threads", "READ"
+    )
+    trace = _ExternalCallTrace()
+
+    result = McpConnectorReadAdapter(
+        runtime_registry=_registry(client),
+        mcp_client=client,
+        external_call_trace=trace,
+        run_context_provider=lambda: "run-1",
+    ).execute_read(binding, {"query": "private-search-term"})
+
+    assert result.total_count == 1
+    assert trace.starts == [
+        ExternalCallTraceStartV1(
+            schema_version=1,
+            domain_run_id="run-1",
+            call_kind="CONNECTOR_READ",
+            operation="CALL_TOOL",
+            connector_id="google_workspace",
+            tool_id="gmail_search_threads",
+            effect="READ",
+        )
+    ]
+    assert len(trace.finishes) == 1
+    finish = trace.finishes[0][1]
+    assert finish.status == "COMPLETED"
+    assert finish.result_count == 1
+    assert finish.has_next_page is True
+    exported = repr((trace.starts, trace.finishes))
+    assert "private-search-term" not in exported
+    assert "private-mail-body" not in exported
+    assert "private-page-token" not in exported
 
 
 def test_read_adapter_accepts__only_an_explicit__internal_capability_binding() -> None:

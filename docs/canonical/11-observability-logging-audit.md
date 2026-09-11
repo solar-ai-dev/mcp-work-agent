@@ -1,7 +1,7 @@
 # 11. 관측성 · 로그 · 감사 설계서
 
 > **Authority:** observability/log/trace/audit projection, sanitization과 retention. Domain/Workflow lifecycle 의미는 관측 event로 재정의하지 않는다.  
-> **상태:** Draft v2.26 · **기준일:** 2026-09-07 · **외부 Telemetry:** Production 기본 OFF
+> **상태:** Draft v2.27 · **기준일:** 2026-09-11 · **외부 Telemetry:** Production 기본 OFF
 
 ## 0. 목적과 읽는 기준
 
@@ -254,6 +254,8 @@ Confirmation free text, ContextAdjustment requested text, raw checkpoint·contro
 ### 5.6 Opt-in LangSmith Workflow projection
 
 LangSmith Run의 input/output에는 전체 LangGraph State를 전달하지 않는다. 현재 Run에 존재하는 허용된 State field와 branch·status·route/query 종류, 수량·budget, 명시적 `null` 여부만 16 KiB 이하의 versioned projection으로 전달한다. 사용자 요청·업무 본문·Resource ID·검색어, Prompt·Completion, Connector payload는 제외한다.
+
+실제 LLM provider dispatch와 Connector READ Tool dispatch는 해당 workflow root와 같은 Trace의 `llm`·`tool` child run으로 기록한다. Prompt·model·Tool의 불투명 식별자와 상태·지연·token/결과 수 같은 제한된 projection만 허용하며, 호출 인자·Provider 응답·업무 원문은 기록하지 않는다.
 
 이 projection은 Graph·Node 실행을 분석하기 위한 외부 관측값이며 Domain State, routing, checkpoint 또는 실행 성공의 authority가 아니다. 과거 Trace는 소급 변경하지 않는다.
 

@@ -26,6 +26,11 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 from google_work_agent.ports.system.contracts.external_llm_transfer_scope import (
     ExternalLlmTransferScopeV1,
 )
+from google_work_agent.ports.system.external_call_trace_port import (
+    ExternalCallTraceFinishV1,
+    ExternalCallTraceHandleV1,
+    ExternalCallTraceStartV1,
+)
 from google_work_agent.ports.system.hardware_probe_port import HardwareProfileV1
 
 PROMPT = PromptReference(
@@ -120,6 +125,27 @@ class _Repairer:
         return {"answer": "repaired"}
 
 
+@dataclass
+class _ExternalCallTrace:
+    starts: list[ExternalCallTraceStartV1] = field(default_factory=list)
+    finishes: list[tuple[ExternalCallTraceHandleV1, ExternalCallTraceFinishV1]] = field(
+        default_factory=list
+    )
+
+    def begin_external_call(
+        self, command: ExternalCallTraceStartV1
+    ) -> ExternalCallTraceHandleV1:
+        self.starts.append(command)
+        return ExternalCallTraceHandleV1(1, f"trace-{len(self.starts)}")
+
+    def finish_external_call(
+        self,
+        handle: ExternalCallTraceHandleV1,
+        result: ExternalCallTraceFinishV1,
+    ) -> None:
+        self.finishes.append((handle, result))
+
+
 def _scope(*, scope_hash: str = "scope-hash") -> ExternalLlmTransferScopeV1:
     return ExternalLlmTransferScopeV1(1, "run-1", 1, scope_hash, ["user_request"], ["USER_REQUEST"])
 
@@ -132,6 +158,7 @@ def _router(
     consent: bool = True,
     repairer: _Repairer | None = None,
     deployment_profile: str = "LOCAL_CAPABLE",
+    external_call_trace: _ExternalCallTrace | None = None,
 ) -> StructuredInferenceRuntimeRouter:
     settings = settings_view(preferred_llm_mode="API_LLM", external_llm_consent=consent)
     selection = runtime_selection(
@@ -156,6 +183,7 @@ def _router(
         checkpoint=checkpoint,  # type: ignore[arg-type]
         schema_repairer=repairer,
         run_context_provider=lambda: "run-1",
+        external_call_trace=external_call_trace,
         external_scope_projector=lambda _run_id, _source_kinds, _data_classes: _scope(),
     )
 
@@ -388,6 +416,58 @@ def test_json_validation__malformed_response__uses_bounded_schema_repair() -> No
     assert provider.calls == 1
     assert repairer.calls == 1
     assert repairer.failed_outputs == [malformed]
+
+
+def test_actual_provider_and_repair_dispatches__with_trace_port__emit_separate_safe_spans() -> (
+    None
+):
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    provider = _Provider(runtime=ActualRuntime.LOCAL_GPU, content='{"answer":"unterminated')
+    trace = _ExternalCallTrace()
+
+    result = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=provider,
+        repairer=_Repairer(),
+        external_call_trace=trace,
+    ).infer("LOCAL_GPU", PROMPT, {"user_request": "private-input"}, SCHEMA)
+
+    assert result.structured_output == {"answer": "repaired"}
+    assert [entry.call_kind for entry in trace.starts] == [
+        "LLM_INFERENCE",
+        "LLM_SCHEMA_REPAIR",
+    ]
+    assert all(entry.domain_run_id == "run-1" for entry in trace.starts)
+    assert all(entry.prompt_id == "test" for entry in trace.starts)
+    assert [entry[1].status for entry in trace.finishes] == ["COMPLETED", "COMPLETED"]
+    assert trace.finishes[0][1].total_tokens == 2
+    assert "private-input" not in repr((trace.starts, trace.finishes))
+
+
+def test_failed_actual_provider_dispatch__with_trace_port__exports_safe_error_only() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    provider = _Provider(
+        runtime=ActualRuntime.LOCAL_GPU,
+        failure=LLMInvocationError(LLMErrorCode.PROVIDER_TIMEOUT, "private completion"),
+    )
+    trace = _ExternalCallTrace()
+
+    with pytest.raises(LLMInvocationError):
+        _router(
+            checkpoint=checkpoint,
+            api=_Provider(),
+            local=provider,
+            external_call_trace=trace,
+        ).infer("LOCAL_GPU", PROMPT, {"user_request": "private-input"}, SCHEMA)
+
+    assert len(trace.starts) == 1
+    assert len(trace.finishes) == 1
+    failure = trace.finishes[0][1]
+    assert failure.status == "FAILED"
+    assert failure.error_type == "LLMInvocationError"
+    assert failure.safe_error_code == "PROVIDER_TIMEOUT"
+    assert "private completion" not in repr((trace.starts, trace.finishes))
 
 
 def test_runtime_circuit__guard_blocks__before_provider_dispatch() -> None:

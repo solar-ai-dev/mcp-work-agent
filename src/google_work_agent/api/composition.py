@@ -2570,6 +2570,8 @@ def build_production_runtime(
         delegate=McpConnectorReadAdapter(
             runtime_registry=connector_bundle.runtime_registry,
             mcp_client=google_connector.client,
+            external_call_trace=langsmith_callback,
+            run_context_provider=current_provider_dispatch_run_id,
             internal_bindings=(
                 google_workspace_internal_read_binding("search_by_recovery_fingerprint"),
                 github_internal_read_binding("search_by_recovery_fingerprint"),
@@ -2627,6 +2629,7 @@ def build_production_runtime(
     )
     structured_inference_router = cast(StructuredInferenceRuntimeRouter, llm_runtime)
     structured_inference_router.checkpoint = checkpoint
+    structured_inference_router.external_call_trace = langsmith_callback
 
     def _llm_circuit_key(runtime: ActualRuntime) -> ComponentCircuitKey:
         return ComponentCircuitKey(1, "LLM_RUNTIME", None, runtime.value)

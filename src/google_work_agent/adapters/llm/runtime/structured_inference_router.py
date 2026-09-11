@@ -46,6 +46,13 @@ from google_work_agent.ports.system.contracts.observability import (
     ObservabilityContext,
     Severity,
 )
+from google_work_agent.ports.system.external_call_trace_port import (
+    ExternalCallKind,
+    ExternalCallTraceFinishV1,
+    ExternalCallTraceHandleV1,
+    ExternalCallTracePort,
+    ExternalCallTraceStartV1,
+)
 from google_work_agent.ports.system.hardware_probe_port import HardwareProbePort
 from google_work_agent.ports.system.settings_port import SettingsViewV1
 
@@ -76,6 +83,7 @@ class StructuredInferenceRuntimeRouter:
     before_provider_dispatch: Callable[[], None] = lambda: None
     before_runtime_dispatch: Callable[[ActualRuntime], None] = lambda _runtime: None
     run_context_provider: Callable[[], str | None] = lambda: None
+    external_call_trace: ExternalCallTracePort | None = None
     record_runtime_result: Callable[[ActualRuntime, str | None], None] = (
         lambda _runtime, _error_code: None
     )
@@ -548,12 +556,36 @@ class StructuredInferenceRuntimeRouter:
         try:
             self.before_provider_dispatch()
             provider_dispatch_occurred = True
-            payload = provider.invoke_structured(
+            trace_started = time.perf_counter()
+            trace_handle = self._begin_llm_trace(
+                call_kind="LLM_INFERENCE",
+                provider=provider,
                 prompt_ref=prompt_ref,
-                prompt_input=prompt_input,
                 output_schema=output_schema,
-                runtime_policy=self.runtime_policy,
-                api_key=api_key,
+                selected_model_id=selected_model_id,
+            )
+            try:
+                payload = provider.invoke_structured(
+                    prompt_ref=prompt_ref,
+                    prompt_input=prompt_input,
+                    output_schema=output_schema,
+                    runtime_policy=self.runtime_policy,
+                    api_key=api_key,
+                )
+            except Exception as error:
+                self._finish_llm_trace(
+                    trace_handle,
+                    status="FAILED",
+                    started=trace_started,
+                    error=error,
+                )
+                raise
+            self._finish_llm_trace(
+                trace_handle,
+                status="COMPLETED",
+                started=trace_started,
+                input_tokens=payload.input_tokens,
+                output_tokens=payload.output_tokens,
             )
             structured_output, attempts = self._validate_or_repair(
                 provider=provider,
@@ -659,18 +691,40 @@ class StructuredInferenceRuntimeRouter:
         if provider.runtime is ActualRuntime.API_LLM:
             self._require_external_call(external_transfer_scope)
         self.before_provider_dispatch()
-        repaired = self.schema_repairer.repair(
+        trace_started = time.perf_counter()
+        trace_handle = self._begin_llm_trace(
+            call_kind="LLM_SCHEMA_REPAIR",
             provider=provider,
             prompt_ref=prompt_ref,
-            prompt_input=prompt_input,
-            failed_output=candidate,
             output_schema=output_schema,
-            runtime_policy=self.runtime_policy,
-            api_key=api_key,
-            attempt_no=1,
-            max_attempts=self.runtime_policy.structured_output_repair_budget,
-            failure_reason_code=LLMErrorCode.OUTPUT_SCHEMA_INVALID.value,
-            validator_errors=tuple(errors),
+            selected_model_id=None,
+        )
+        try:
+            repaired = self.schema_repairer.repair(
+                provider=provider,
+                prompt_ref=prompt_ref,
+                prompt_input=prompt_input,
+                failed_output=candidate,
+                output_schema=output_schema,
+                runtime_policy=self.runtime_policy,
+                api_key=api_key,
+                attempt_no=1,
+                max_attempts=self.runtime_policy.structured_output_repair_budget,
+                failure_reason_code=LLMErrorCode.OUTPUT_SCHEMA_INVALID.value,
+                validator_errors=tuple(errors),
+            )
+        except Exception as error:
+            self._finish_llm_trace(
+                trace_handle,
+                status="FAILED",
+                started=trace_started,
+                error=error,
+            )
+            raise
+        self._finish_llm_trace(
+            trace_handle,
+            status="COMPLETED",
+            started=trace_started,
         )
         repair_errors = _collect_validation_errors(repaired, output_schema, semantic_validate)
         if repair_errors:
@@ -697,6 +751,71 @@ class StructuredInferenceRuntimeRouter:
                 LLMErrorCode.CONSENT_REQUIRED,
                 "external LLM transfer scope checkpoint is stale",
             )
+
+    def _begin_llm_trace(
+        self,
+        *,
+        call_kind: ExternalCallKind,
+        provider: StructuredLLMProvider,
+        prompt_ref: PromptReference,
+        output_schema: OutputSchemaDefinition,
+        selected_model_id: str | None,
+    ) -> ExternalCallTraceHandleV1 | None:
+        trace = self.external_call_trace
+        if trace is None:
+            return None
+        try:
+            return trace.begin_external_call(
+                ExternalCallTraceStartV1(
+                    schema_version=1,
+                    domain_run_id=self.run_context_provider(),
+                    call_kind=call_kind,
+                    operation=(
+                        "INFER_STRUCTURED"
+                        if call_kind == "LLM_INFERENCE"
+                        else "REPAIR_STRUCTURED_OUTPUT"
+                    ),
+                    provider=provider.provider_name,
+                    model_id=selected_model_id,
+                    prompt_id=prompt_ref.prompt_id,
+                    prompt_version=prompt_ref.prompt_version,
+                    prompt_content_hash=prompt_ref.content_hash,
+                    output_schema_id=output_schema.schema_version,
+                )
+            )
+        except Exception:
+            return None
+
+    def _finish_llm_trace(
+        self,
+        handle: ExternalCallTraceHandleV1 | None,
+        *,
+        status: Literal["COMPLETED", "FAILED"],
+        started: float,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        trace = self.external_call_trace
+        if trace is None or handle is None:
+            return
+        safe_error_code = error.code.value if isinstance(error, LLMInvocationError) else None
+        try:
+            trace.finish_external_call(
+                handle,
+                ExternalCallTraceFinishV1(
+                    schema_version=1,
+                    status=status,
+                    duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=_sum_tokens(input_tokens, output_tokens),
+                    error_type=None if error is None else type(error).__name__,
+                    safe_error_code=safe_error_code,
+                ),
+            )
+        except Exception:
+            return
 
     def _should_fallback(
         self,
