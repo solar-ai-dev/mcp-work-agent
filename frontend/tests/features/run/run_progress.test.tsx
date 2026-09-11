@@ -33,6 +33,19 @@ test("retains more than twelve server rows and expands in place without requests
   fetchSpy.mockRestore();
 });
 
+test("activity rows omit historical disclaimers and state glyphs", () => {
+  const value = snapshot(7);
+  const states = ["RUNNING", "WAITING", "RECORDED", "PARTIAL", "FAILED", "INTERRUPTED", "UNKNOWN"] as const;
+  value.activity!.rows.forEach((row, index) => { row.state = states[index]!; });
+
+  render(<RunProgress snapshot={value} busy={null} onResume={vi.fn()} />);
+
+  expect(screen.queryByText(/실행 시점의 기록/)).not.toBeInTheDocument();
+  for (const summary of screen.getAllByTestId("run-event-progress")) {
+    expect(summary.textContent).toMatch(/^계획 생성 · 계획 \d+ 기록$/);
+  }
+});
+
 test("SSE duplicates, out of order and other Run events cannot fabricate rows", () => {
   const value = snapshot(2);
   const event = { run_id: "other", event_type: "phase_changed", payload: { phase: "ACTION_EXECUTION" } } as RunSseEvent;

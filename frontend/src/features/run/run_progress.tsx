@@ -21,11 +21,9 @@ export function RunProgress({ snapshot, busy, interactive = true, onResume }: {
           const visibleDetails = row.details.filter((detail) => detail.display_text);
           return <details className={`agent-activity-row${row.state === "RUNNING" ? " agent-status-line--active" : ""}`} key={row.execution_id}>
             <summary data-testid="run-event-progress">
-              <span aria-hidden="true">{({ RUNNING: "●", WAITING: "◷", RECORDED: "✓", PARTIAL: "△", FAILED: "!", INTERRUPTED: "–", UNKNOWN: "?" })[row.state]}</span>
-              {" "}{row.role} · {row.label}
+              {row.role} · {row.label}
             </summary>
             <div className="agent-activity-detail">
-              <p className="helper-text">이 실행 시점의 기록입니다. 이후 수정된 현재 계획과 다를 수 있습니다.</p>
               {visibleDetails.length === 0 ? <p>이 단계에 표시할 추가 업무 사실이 없습니다.</p> : (
                 <div className="agent-activity-detail-facts">{visibleDetails.map((detail, index) => (
                   <p key={detail.fact_id ?? `${detail.label}:${detail.value}:${index}`}>
