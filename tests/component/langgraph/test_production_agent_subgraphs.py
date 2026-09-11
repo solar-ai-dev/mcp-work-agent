@@ -403,6 +403,40 @@ class _ComponentConnectorReadPort:
         )
 
 
+class _CollectionConnectorReadPort:
+    def __init__(self, *, item_count: int, has_next_page: bool) -> None:
+        self.item_count = item_count
+        self.has_next_page = has_next_page
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        del tool_arguments
+        self.call_count += 1
+        return ConnectorReadResultV1(
+            schema_version=1,
+            tool_id=binding.tool_id,
+            request_id="component-collection-read-1",
+            output={
+                "items": [
+                    {
+                        "resource_type": "gmail_thread",
+                        "resource_id": f"thread-{index}",
+                        "parent_id": None,
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": {
+                            "subject": "Same title" if index < 2 else f"Status title {index}",
+                            "body": "The current status is ready.",
+                        },
+                    }
+                    for index in range(self.item_count)
+                ]
+            },
+            next_page_token="next-page" if self.has_next_page else None,
+            total_count=self.item_count + (1 if self.has_next_page else 0),
+        )
+
+
 @pytest.mark.parametrize("multiple", [False, True])
 def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple: bool) -> None:
     class Reader:
@@ -785,6 +819,50 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     )
     assert ("assess_sufficiency", "plan_query") in _edge_set(graph)
     assert ("finalize", "finalize") in _edge_set(graph)
+
+
+@pytest.mark.parametrize(
+    ("has_next_page", "expected_continuation"),
+    [(False, "EXHAUSTED"), (True, "HAS_MORE")],
+)
+def test_retrieval__compiled_collection_metadata__is_not_limited_by_rag_evidence_caps(
+    has_next_page: bool,
+    expected_continuation: str,
+) -> None:
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    connector = _CollectionConnectorReadPort(item_count=25, has_next_page=has_next_page)
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    collection = result["retrieval_result"]["collection_results"][0]
+    assert connector.call_count == 1
+    assert collection["continuation_status"] == expected_continuation
+    assert len(collection["items"]) == 25
+    assert len(result["retrieval_result"]["source_resource_refs"]) <= 12
+    assert [item["title"] for item in collection["items"][:2]] == [
+        "Same title",
+        "Same title",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1608,9 +1686,11 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
 
 def test_planning__compiled_normal_path__produces_answer() -> None:
     calls: list[str] = []
+    inputs: list[Mapping[str, object]] = []
 
-    def invoke(prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         calls.append(prompt_id)
+        inputs.append(prompt_input)
         if prompt_id == "planning.outline_answer":
             return {"sections": ["summary"], "evidence_refs": []}
         return {"schema_version": 2, "answer": "done", "evidence_refs": []}
@@ -1625,11 +1705,47 @@ def test_planning__compiled_normal_path__produces_answer() -> None:
             "tool_route_plan": _answer_route_plan(),
             "work_analysis": {},
             "evidence": [],
+            "retrieval_result": {
+                **_retrieval_result(),
+                "collection_results": [
+                    {
+                        "route_id": "route-1",
+                        "resource_type": "gmail_thread",
+                        "continuation_status": "HAS_MORE",
+                        "items": [
+                            {
+                                "resource_ref": "gmail_thread:first",
+                                "resource_type": "gmail_thread",
+                                "title": "Same title",
+                            },
+                            {
+                                "resource_ref": "gmail_thread:second",
+                                "resource_type": "gmail_thread",
+                                "title": "Same title",
+                            },
+                        ],
+                    }
+                ],
+            },
         }
     )
 
     assert result["planning_disposition"] == "ANSWER"
     assert calls == ["planning.outline_answer", "planning.compose_answer"]
+    assert all(
+        item["collection_results"]
+        == [
+            {
+                "resource_type": "gmail_thread",
+                "continuation_status": "HAS_MORE",
+                "items": [
+                    {"item_number": 1, "title": "Same title"},
+                    {"item_number": 2, "title": "Same title"},
+                ],
+            }
+        ]
+        for item in inputs
+    )
     assert ("compose_answer", "outline_answer") in _edge_set(graph)
 
 

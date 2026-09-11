@@ -136,6 +136,7 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
         "excluded_segment_ids",
         "source_resource_refs",
         "source_statuses",
+        "collection_results",
         "availability_results",
         "missing_information",
         "retrieval_rounds",
@@ -255,6 +256,125 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
     ]
     assert result["source_resource_refs"] == ["github_issue:acme/repo#7"]
     assert all(status["resource_type"] != "ISSUE" for status in result["source_statuses"])
+
+
+def test_finalize_retrieval__preserves_collection_metadata_beyond_evidence_budget() -> None:
+    resources = [
+        {
+            "resource_handle": f"gmail_thread:thread-{index}",
+            "resource_type": "gmail_thread",
+            "resource_id": f"thread-{index}",
+            "payload": {"subject": "Same title" if index < 2 else f"Title {index}"},
+        }
+        for index in range(25)
+    ]
+    acquisition = cast(
+        AcquisitionResultV1,
+        {
+            "schema_version": 1,
+            "status": "COMPLETE",
+            "resource_handles": [item["resource_handle"] for item in resources],
+            "source_summaries": [
+                {
+                    "route_id": "route-gmail",
+                    "source": "GMAIL",
+                    "status": "COMPLETE",
+                    "resource_handles": [item["resource_handle"] for item in resources],
+                    "resources": resources,
+                }
+            ],
+            "missing_slots": [],
+            "remaining_budget": {"pages": 2},
+        },
+    )
+    evidence = cast(
+        EvidenceDraftV1,
+        {
+            "schema_version": 1,
+            "evidence_id": "evidence-first",
+            "resource_handle": "gmail_thread:thread-0",
+            "segment_id": "segment-first",
+            "kind": "excerpt",
+            "excerpt": "Same title",
+            "locator": {},
+            "reason_codes": ["CONTEXT"],
+        },
+    )
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-collection",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        selection_result=_selection_output(["segment-first"]),
+        evidence_drafts=[evidence],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=0,
+        read_result_summaries=[
+            {
+                "route_id": "route-gmail",
+                "has_next_page": False,
+                "exhausted": True,
+            }
+        ],
+    )
+
+    collection = result["collection_results"][0]
+    assert collection["continuation_status"] == "EXHAUSTED"
+    assert len(collection["items"]) == 25
+    assert collection["items"][:2] == [
+        {
+            "resource_ref": "gmail_thread:thread-0",
+            "resource_type": "gmail_thread",
+            "title": "Same title",
+        },
+        {
+            "resource_ref": "gmail_thread:thread-1",
+            "resource_type": "gmail_thread",
+            "title": "Same title",
+        },
+    ]
+    assert result["source_resource_refs"] == ["gmail_thread:thread-0"]
+
+
+def test_finalize_retrieval__reports_unfinished_collection_page_without_forcing_coverage() -> None:
+    acquisition = _acquisition_result()
+    acquisition["remaining_budget"]["pages"] = 0
+    acquisition["source_summaries"][0]["route_id"] = "route-gmail"
+    acquisition["source_summaries"][0]["resources"] = [
+        {
+            "resource_handle": "gmail_thread:thread-kim",
+            "resource_type": "gmail_thread",
+            "resource_id": "thread-kim",
+            "payload": {"subject": "Current status"},
+        }
+    ]
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-has-more",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        selection_result={
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": [],
+        },
+        evidence_drafts=[],
+        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        current_round_no=0,
+        read_result_summaries=[
+            {
+                "route_id": "route-gmail",
+                "has_next_page": True,
+                "exhausted": False,
+            }
+        ],
+    )
+
+    assert result["coverage"] == "SUFFICIENT"
+    assert result["collection_results"][0]["continuation_status"] == "HAS_MORE"
 
 
 def test_finalize_retrieval__with_google_resources__retains_exact_resource_types() -> None:

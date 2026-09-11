@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     StateArtifactRefV1,
 )
@@ -31,6 +33,7 @@ def finalize_retrieval_node(
     prior_result: RetrievalResultV1 | None = None,
     prior_artifact_ref: StateArtifactRefV1 | None = None,
     task_review_candidates: list[TaskReviewCandidateV1] | None = None,
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     projection = project_finalize_retrieval_input(state)
     return {
@@ -43,6 +46,7 @@ def finalize_retrieval_node(
             prior_result=prior_result,
             prior_artifact_ref=prior_artifact_ref,
             task_review_candidates=task_review_candidates or [],
+            read_result_summaries=read_result_summaries,
             **projection,
         )
     }

@@ -186,6 +186,23 @@ class RetrievalSourceStatusV1(TypedDict):
     )
 
 
+class RetrievalCollectionItemV1(TypedDict):
+    """Source-owned metadata for one distinct item observed by a collection READ."""
+
+    resource_ref: str
+    resource_type: str
+    title: str | None
+
+
+class RetrievalCollectionResultV1(TypedDict):
+    """Observed collection items kept independently from bounded detailed Evidence."""
+
+    route_id: str
+    resource_type: str
+    continuation_status: Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]
+    items: list[RetrievalCollectionItemV1]
+
+
 class TaskReviewCandidateV1(TypedDict):
     candidate_ref: str
     route_id: str
@@ -211,6 +228,9 @@ class RetrievalResultV1(TypedDict):
     excluded_segment_ids: list[str]
     source_resource_refs: list[str]
     source_statuses: list[RetrievalSourceStatusV1]
+    # Older checkpoints predate collection metadata preservation. Current
+    # producers include the exact observed identities and pagination state.
+    collection_results: NotRequired[list[RetrievalCollectionResultV1]]
     availability_results: list[dict[str, object]]
     missing_information: list[MissingInformationV1]
     retrieval_rounds: int

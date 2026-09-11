@@ -105,6 +105,50 @@ def test_compose_uses__approved_outline_and__emits_v2_candidate() -> None:
     }
 
 
+def test_compose_answer__collection_continuation__does_not_force_single_answer_partial() -> None:
+    captured: dict[str, object] = {}
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {"schema_version": 2, "answer": "최신 상태는 준비 완료입니다.", "evidence_refs": []}
+
+    result = compose_answer(
+        user_request="가장 최근 상태 하나만 알려줘.",
+        request_intent={"requested_effect_hints": ["READ"]},
+        answer_outline={"sections": ["최신 상태"], "evidence_refs": []},
+        work_analysis=None,
+        evidence=[],
+        invoke=invoke,
+        retrieval_result={
+            "coverage": "SUFFICIENT",
+            "collection_results": [
+                {
+                    "route_id": "route-1",
+                    "resource_type": "gmail_thread",
+                    "continuation_status": "HAS_MORE",
+                    "items": [
+                        {
+                            "resource_ref": "gmail_thread:first",
+                            "resource_type": "gmail_thread",
+                            "title": "최신 상태",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    projection = cast(dict[str, object], captured["prompt_input"])
+    assert projection["collection_results"] == [
+        {
+            "resource_type": "gmail_thread",
+            "continuation_status": "HAS_MORE",
+            "items": [{"item_number": 1, "title": "최신 상태"}],
+        }
+    ]
+    assert result["answer"] == "최신 상태는 준비 완료입니다."
+
+
 @pytest.mark.parametrize(
     "answer",
     [

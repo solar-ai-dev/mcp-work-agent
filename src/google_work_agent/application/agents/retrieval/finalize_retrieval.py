@@ -19,6 +19,8 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     EvidenceDraftV1,
     EvidenceSelectionResultV2,
     PersonCandidateV1,
+    RetrievalCollectionItemV1,
+    RetrievalCollectionResultV1,
     RetrievalResultV1,
     RetrievalSourceStatusV1,
     SufficiencyResultV2,
@@ -53,6 +55,7 @@ def finalize_retrieval(
     prior_result: RetrievalResultV1 | None = None,
     prior_artifact_ref: StateArtifactRefV1 | None = None,
     query_attempts: Sequence[QueryAttemptV1] = (),
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
     task_review_candidates: Sequence[TaskReviewCandidateV1] = (),
@@ -113,6 +116,11 @@ def finalize_retrieval(
             acquisition_result,
             evidence_drafts=evidence,
         ),
+        "collection_results": _collection_results(
+            tool_route_plan,
+            acquisition_result,
+            read_result_summaries=read_result_summaries,
+        ),
         "availability_results": [dict(item) for item in (availability_results or [])],
         "missing_information": missing_information_projection(sufficiency_result["issues"]),
         "retrieval_rounds": retrieval_round_count(current_round_no=current_round_no),
@@ -124,6 +132,109 @@ def finalize_retrieval(
             cast(TaskReviewCandidateV1, dict(item)) for item in task_review_candidates
         ],
     }
+
+
+def _collection_results(
+    tool_route_plan: ToolRoutePlanV2,
+    acquisition_result: AcquisitionResultV1,
+    *,
+    read_result_summaries: Sequence[Mapping[str, object]],
+) -> list[RetrievalCollectionResultV1]:
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    single_route_id = routes[0]["route_id"] if len(routes) == 1 else None
+    resources_by_route: dict[str, list[RetrievalCollectionItemV1]] = {
+        route["route_id"]: [] for route in routes
+    }
+    positions_by_route: dict[str, dict[str, int]] = {
+        route["route_id"]: {} for route in routes
+    }
+    for summary in acquisition_result["source_summaries"]:
+        route_id = summary.get("route_id", single_route_id)
+        if not isinstance(route_id, str) or route_id not in resources_by_route:
+            continue
+        raw_resources = summary.get("resources", [])
+        resource_by_ref = {
+            str(resource.get("resource_handle")): resource
+            for resource in cast(list[object], raw_resources)
+            if isinstance(resource, Mapping)
+            and isinstance(resource.get("resource_handle"), str)
+            and resource.get("resource_handle")
+        }
+        handles = cast(list[object], summary.get("resource_handles", []))
+        for raw_handle in handles:
+            if not isinstance(raw_handle, str) or not raw_handle:
+                continue
+            resource = resource_by_ref.get(raw_handle, {})
+            item: RetrievalCollectionItemV1 = {
+                "resource_ref": raw_handle,
+                "resource_type": str(
+                    resource.get("resource_type") or raw_handle.partition(":")[0]
+                ),
+                "title": _collection_title(resource),
+            }
+            prior_position = positions_by_route[route_id].get(raw_handle)
+            if prior_position is None:
+                positions_by_route[route_id][raw_handle] = len(resources_by_route[route_id])
+                resources_by_route[route_id].append(item)
+            elif resources_by_route[route_id][prior_position]["title"] is None:
+                resources_by_route[route_id][prior_position] = item
+    summaries_by_route: dict[str, list[Mapping[str, object]]] = {
+        route["route_id"]: [] for route in routes
+    }
+    for read_summary in read_result_summaries:
+        route_id = read_summary.get("route_id")
+        if isinstance(route_id, str) and route_id in summaries_by_route:
+            summaries_by_route[route_id].append(read_summary)
+    return [
+        {
+            "route_id": route["route_id"],
+            "resource_type": _collection_resource_type(
+                route["route_id"],
+                route["resource_type"],
+                resources_by_route[route["route_id"]],
+            ),
+            "continuation_status": _collection_continuation(
+                summaries_by_route[route["route_id"]]
+            ),
+            "items": resources_by_route[route["route_id"]],
+        }
+        for route in routes
+    ]
+
+
+def _collection_title(resource: Mapping[str, object]) -> str | None:
+    payload = resource.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    for key in ("subject", "title", "summary"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _collection_resource_type(
+    route_id: str,
+    fallback: str,
+    items: Sequence[RetrievalCollectionItemV1],
+) -> str:
+    observed = {item["resource_type"] for item in items if item["resource_type"]}
+    if len(observed) > 1:
+        raise ValueError(f"route {route_id} produced multiple collection resource types")
+    return next(iter(observed), fallback.lower())
+
+
+def _collection_continuation(
+    read_result_summaries: Sequence[Mapping[str, object]],
+) -> Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]:
+    if any(summary.get("has_next_page") is True for summary in read_result_summaries):
+        return "HAS_MORE"
+    if read_result_summaries and all(
+        summary.get("has_next_page") is False and summary.get("exhausted") is True
+        for summary in read_result_summaries
+    ):
+        return "EXHAUSTED"
+    return "UNKNOWN"
 
 
 def _coverage(

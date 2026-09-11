@@ -1940,6 +1940,7 @@ class RetrievalSubgraph:
                 prior_result=prior_result,
                 prior_artifact_ref=prior_artifact_ref,
                 task_review_candidates=list(state.get("task_review_candidates", [])),
+                read_result_summaries=self._bounded_read_result_summaries(state),
             )
             retrieval_result = cast(Any, patch["final_result"])
         self._evidence_store.put(run_id=state["run_id"], evidence_drafts=state["evidence_drafts"])

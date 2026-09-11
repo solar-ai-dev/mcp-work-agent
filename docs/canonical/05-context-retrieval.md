@@ -586,6 +586,17 @@ class AvailableIntervalV1:
     timezone: str
     derived_from_resource_refs: list[str]
 
+class RetrievalCollectionItemV1:
+    resource_ref: str
+    resource_type: str
+    title: str | None
+
+class RetrievalCollectionResultV1:
+    route_id: str
+    resource_type: str
+    continuation_status: Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]
+    items: list[RetrievalCollectionItemV1]
+
 class RetrievalResultV1:
     schema_version: Literal[1]
     meta: StateArtifactMetaV1
@@ -596,6 +607,7 @@ class RetrievalResultV1:
     excluded_segment_ids: list[str]
     source_resource_refs: list[str]
     source_statuses: list[SourceRetrievalStatusV1]
+    collection_results: list[RetrievalCollectionResultV1]  # current producer; old checkpoints may omit
     availability_results: list[AvailableIntervalV1]
     missing_information: list[MissingInformationV1]
     retrieval_rounds: int
@@ -605,6 +617,7 @@ class RetrievalResultV1:
 | --- | --- |
 | 공식 Handoff | 다음 Work Analysis 또는 Planning이 소비할 최소 결과다. |
 | Source별 상태 | 복수 IN Route의 성공·부분 성공·실패·미시도를 각각 보존한다. 전체 `coverage`만으로 모든 Source가 완료됐다고 추론하지 않는다. |
+| 목록 metadata | `collection_results`는 실제 READ에서 관측한 Resource identity·사용자용 제목과 `EXHAUSTED \| HAS_MORE \| UNKNOWN` continuation만 보존한다. 상세 Evidence의 bounded context와 분리하며, 같은 제목이어도 identity가 다르면 별도 항목이다. 이 값은 Query 의미나 전체 Source coverage를 새로 판정하지 않는다. |
 | 제외 의무 | `EvidenceSelectionResultV2.excluded_segment_ids + RetrievalState.exclusion_obligation_segment_ids`를 stable dedup하여 결과에 기록한다. |
 | 제어 신호 | `NEEDS_MORE_DATA`, `NEEDS_CONFIRMATION`, `ROUTE_RECONSIDERATION_REQUIRED`, `BLOCKED`는 결과의 coverage 값이 아니라 `SubgraphReturnV2.disposition`과 Typed `WorkflowSignalV1`로 전달한다. |
 | 부분 결과와 신호 | 확보한 Evidence가 독립적으로 유효하면 `coverage=PARTIAL`과 redirection signal을 함께 반환할 수 있다. |
