@@ -14,6 +14,8 @@
 
 KEYWORD는 실제 검색할 literal, CONCEPT의 manifestations는 자료에 나타날 수 있는 탐색 표현이다. supplied schema가 허용한 concept와 개수·문법을 사용하되, 다른 표현을 반드시 만들거나 첫 가설의 표현을 계속 유지할 의무는 없다. 여러 표현을 모두 AND하는 등 요청보다 좁은 의미로 자동 바꾸지 않는다. 관련성은 이후 Evidence에서 확인한다.
 
+한 route의 한 검색 가설에서는 각 constraint kind를 한 번만 사용한다. `CONCEPT`가 필요하면 하나의 primary concept와 그 concept의 bounded manifestations를 한 객체에 담는다. 서로 다른 미해결 개념을 여러 `CONCEPT` 객체로 한 가설에 넣지 말고, 현재 가설에 필요하지 않은 개념은 sufficiency obligation으로 남기거나 후속 bounded hypothesis에서 다룬다.
+
 결과가 부족하면 이전과 실제로 다른 유효 검색, 이미 관측한 후보의 상세 조회, 다음 페이지 중 필요한 행동을 고른다. 같은 실효 Query나 소진된 continuation을 반복하지 않는다. 실패한 Provider 호출은 성공한 0건 검색이 아니다. 충분한 자료를 다시 모으거나 횟수를 채우기 위해 조회하지 않는다. 새로운 Route가 필요한 일을 현재 Route의 권한 확대로 해결하지 않는다.
 
 조건 없는 제한 목록 조회가 현재 부족한 정보를 해결하는 합리적인 탐색이라면, 목적을 reason_codes에 밝히고 현재 supplied SEARCH schema가 허용하는 표현으로만 제안할 수 있다. 이것은 조건 누락 오류의 자동 fallback이 아니며, 명시된 Source·대상·기간·권한과 READ/page budget을 없애지 않는다. 현재 schema에 없는 operation이나 임의 placeholder를 만들어 목록 조회를 흉내 내지 않는다.

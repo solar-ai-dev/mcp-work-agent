@@ -168,7 +168,15 @@ _INITIAL_SEARCH_SPEC = {
     "required": ["mode", "constraints"],
     "properties": {
         "mode": {"const": "INITIAL"},
-        "constraints": {"type": "array", "minItems": 1, "items": _CONSTRAINT_SCHEMA},
+        "constraints": {
+            "type": "array",
+            "description": (
+                "One effective constraint per kind. A search hypothesis therefore has at "
+                "most one CONCEPT object; its manifestations express that one primary concept."
+            ),
+            "minItems": 1,
+            "items": _CONSTRAINT_SCHEMA,
+        },
     },
 }
 _CHANGED_SEARCH_SPEC = {
@@ -184,7 +192,14 @@ _CHANGED_SEARCH_SPEC = {
             "if": {"properties": {"upsert_constraints": {"maxItems": 0}}},
             "then": {"properties": {"remove_constraint_kinds": {"minItems": 1}}},
             "properties": {
-                "upsert_constraints": {"type": "array", "items": _CONSTRAINT_SCHEMA},
+                "upsert_constraints": {
+                    "type": "array",
+                    "description": (
+                        "One replacement per constraint kind. Use at most one CONCEPT object "
+                        "for the changed hypothesis."
+                    ),
+                    "items": _CONSTRAINT_SCHEMA,
+                },
                 "remove_constraint_kinds": {
                     "type": "array",
                     "uniqueItems": True,
