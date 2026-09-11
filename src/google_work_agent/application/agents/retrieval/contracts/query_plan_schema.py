@@ -28,6 +28,23 @@ _CONSTRAINT_KINDS = [
 _NON_EMPTY_STRING = {"type": "string", "minLength": 1}
 _LOCAL_ISO_PATTERN = r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 
+
+def _unique_constraint_kind_guards() -> list[dict[str, object]]:
+    """Express the canonical one-constraint-per-kind rule to the provider schema."""
+
+    return [
+        {
+            "contains": {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {"kind": {"enum": [kind]}},
+            },
+            "minContains": 0,
+            "maxContains": 1,
+        }
+        for kind in _CONSTRAINT_KINDS
+    ]
+
 _CONSTRAINT_SCHEMA = {
     "oneOf": [
         {
@@ -176,6 +193,7 @@ _INITIAL_SEARCH_SPEC = {
             ),
             "minItems": 1,
             "items": _CONSTRAINT_SCHEMA,
+            "allOf": _unique_constraint_kind_guards(),
         },
     },
 }
@@ -199,6 +217,7 @@ _CHANGED_SEARCH_SPEC = {
                         "for the changed hypothesis."
                     ),
                     "items": _CONSTRAINT_SCHEMA,
+                    "allOf": _unique_constraint_kind_guards(),
                 },
                 "remove_constraint_kinds": {
                     "type": "array",
