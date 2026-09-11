@@ -78,6 +78,8 @@ Local Runtime은 외부 Ollama process다. 제품은 Ollama 설치, 시작, 종�
 
 앱 시작과 Settings 재검사는 실제 Ollama probe와 설치 모델 목록을 읽는다. 검사 결과 규칙은 다음과 같다.
 
+Local readiness는 기존 GPU profile 또는 CPU profile 중 하나가 통과하면 충족한다. CPU profile은 지원 OS·architecture, CPU·RAM 기준, Ollama availability와 선택 모델의 설치·승인을 요구한다. GPU 부재·VRAM 부족은 CPU profile이 통과한 경우 blocking reason이 아니다.
+
 | 검사 결과 | 선택 |
 | --- | --- |
 | 9B만 설치 | 9B 자동 사용 |

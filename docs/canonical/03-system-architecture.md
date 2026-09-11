@@ -62,7 +62,7 @@ mcp-work-agent는 **로컬 Frontend와 Python Layered Modular Monolith로 구성
 | React Frontend | 사용자 화면. 운영에서는 FastAPI가 정적 산출물을 제공 |
 | FastAPI Local Agent Service | REST·SSE, Application·LangGraph·Domain·LLM Router·Persistence |
 | Connector MCP Runtime | Connector별 자식 프로세스·Transport·signed descriptor binding 관리 |
-| Ollama | 검증된 GPU 환경에서 선택적으로 사용하는 별도 로컬 추론 Runtime |
+| Ollama | 검증된 CPU 또는 GPU 환경에서 선택적으로 사용하는 별도 로컬 추론 Runtime |
 
 설치 Artifact에는 Google Workspace MCP Server와 GitHub MCP Server가 포함된다. 전자는 Gmail·Tasks·Calendar를, 후자는 Issue를 제공한다.
 
@@ -718,7 +718,7 @@ Launcher가 Service lifecycle을 소유하고, 종료 시 새로운 작업 admis
 | 공통 Core | React·FastAPI·Agent Core·MCP·SQLite·Keyring Adapter | 동일 Core |
 | 추론 | API LLM Provider만 활성화 | Local AI·Gemini 선택 |
 | Local 의존성 | Ollama Adapter·Local Model 의존성 없음 | Ollama Adapter·Runtime 진단·설치된 지원 모델 검사 |
-| 사용 경로 | CPU-only 사용자·GPU 없는 팀원의 기본 개발·배포 경로 | Local Runtime을 사용할 수 있는 환경 |
+| 사용 경로 | Ollama 없이 API LLM만 사용하는 개발·배포 경로 | CPU 또는 GPU에서 Local Runtime을 사용할 수 있는 환경 |
 
 두 프로필은 동일한 Tool Schema·Policy·Agent Graph·Domain State Machine·테스트 Suite를 사용한다. Evaluation Runner와 non-release candidate artifact는 사용자 배포에 포함하지 않는다.
 

@@ -289,9 +289,9 @@ API LLM 모드에서 Gmail Context를 외부 Provider로 전송하는 것은 사
 
 ### POL-LLM-001 CPU-only
 
-Local AI readiness는 실제 Ollama와 지원 모델 검사 결과로 판단한다. Local이 준비되지 않았다고 Gemini로 자동 전환하지 않는다.
+Local AI readiness는 지원 OS·architecture, CPU·RAM, 실제 Ollama와 선택된 승인 모델 검사로 구성된 CPU profile 또는 기존 GPU·VRAM 조건까지 포함한 GPU profile 중 하나가 통과하면 충족한다. GPU 부재·VRAM 부족만으로 CPU profile을 통과한 Local 실행을 차단하지 않는다. Local이 준비되지 않았다고 Gemini로 자동 전환하지 않는다.
 
-### POL-LLM-002 P0 GPU 사용 가능 환경
+### POL-LLM-002 P0 Local 사용 가능 환경
 
 Settings의 사용자 실행 방식은 `LOCAL_GPU`(Local AI)와 `API_LLM`(Gemini)뿐이다. 사용자용 AUTO는 없다.
 
@@ -315,8 +315,8 @@ Gemini 미준비를 Local로, Local 미준비·OOM·Timeout·Structured Output �
 
 ### POL-LLM-007 배포 프로필
 
-- `API_ONLY`: Ollama·GPU·모델 파일 불필요. CPU-only와 GPU 없는 팀원의 기본 프로필.
-- `LOCAL_CAPABLE`: Ollama 상태·설치 모델 검사와 Local 설정을 포함한다. Local readiness가 확인된 경우에만 Local 기능을 활성화한다.
+- `API_ONLY`: Ollama·GPU·모델 파일 없이 API LLM만 사용하는 프로필.
+- `LOCAL_CAPABLE`: CPU 또는 GPU 환경의 Ollama 상태·설치 모델 검사와 Local 설정을 포함한다. Local readiness가 확인된 경우에만 Local 기능을 활성화한다.
 - 두 프로필은 동일한 LangGraph, Tool Schema, Policy, Test Suite를 사용한다.
 
 ### POL-LLM-008 Local Runtime 비개입

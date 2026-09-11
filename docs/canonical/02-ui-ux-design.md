@@ -648,7 +648,7 @@ Secret, 승인/Claim 권위 값, 전체 Provider 원문을 Browser Storage에 �
 - API_LLM만 표시
 - Ollama·Local 모델 설정·진단 UI 숨김
 - API Key 미설정·연결 실패는 추론이 필요한 요청에 안내하며 메인 화면·저장 이력·Settings 진입은 유지
-- GPU가 없는 팀원과 CPU-only 사용자 기본 경로
+- Ollama 없이 API LLM만 사용하는 사용자 경로
 
 ### LOCAL_CAPABLE
 
