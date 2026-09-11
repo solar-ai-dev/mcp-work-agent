@@ -35,6 +35,27 @@ def test_validate_intent__canonical_candidate__preserves_contract() -> None:
     assert validate_intent(_candidate())["goal"] == "김대리 관련 메일에서 할 일 정리"
 
 
+def test_validate_intent__canonical_duplicate_source_read__remains_rejected() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": ["기존 본문", "기존 수신자"],
+        }
+    ]
+    candidate["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 본문"]},
+            {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 수신자"]},
+        ],
+        "outputs": [],
+    }
+
+    with pytest.raises(RequestUnderstandingValidationError, match="duplicate source read"):
+        validate_intent(candidate)
+
+
 def test_validate_intent__unknown_schema__fails_closed() -> None:
     invalid = deepcopy(_candidate())
     invalid["schema_version"] = 99

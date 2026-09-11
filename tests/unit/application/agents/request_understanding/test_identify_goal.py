@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any, cast
 
@@ -428,6 +429,171 @@ def test_same_resource_read_update__single_responsibility__preserves_both_roles(
     assert candidate["requested_effect_hints"] == ["READ", "UPDATE"]
     assert candidate["requested_resource_hints"] == ["TASK"]
     assert len(runtime.calls) == 1
+
+
+def test_split_source_information__normalizes_once__before_finalize() -> None:
+    exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
+    raw_candidate = {
+        "goal": f"기존 초안 끝에 '{exact_sentence}'만 추가",
+        "completion_conditions": [
+            "기존 수신자와 제목과 본문을 보존한다",
+            f"'{exact_sentence}'를 한 번 추가한다",
+            "메일을 보내지 않는다",
+        ],
+        "constraints": _goal_constraints(
+            search_terms=["Quartz 납품 회신 검토"],
+        ),
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "required_information": ["기존 본문 확인"],
+                },
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "required_information": ["기존 수신자 확인"],
+                },
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        },
+        "analysis_requirement": "NONE",
+    }
+    original_candidate = deepcopy(raw_candidate)
+    runtime = FakeStructuredInferencePort(outputs=[raw_candidate])
+    request = _request(
+        "임시보관함의 'Quartz 납품 회신 검토' 초안 끝에 "
+        f"'{exact_sentence}'만 추가해줘. 보내지는 마."
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+    intent = finalize_intent(
+        candidate,
+        {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+        artifact_id="intent-draft-update",
+        user_request=request.request_text,
+    )
+
+    assert raw_candidate == original_candidate
+    assert len(runtime.calls) == 1
+    assert candidate["resource_responsibilities"] == {
+        "source_reads": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "required_information": ["기존 본문 확인", "기존 수신자 확인"],
+            }
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+    }
+    assert intent["resource_responsibilities"] == candidate["resource_responsibilities"]
+    assert intent["requested_effect_hints"] == ["READ", "UPDATE"]
+    assert intent["requested_resource_hints"] == ["GMAIL_DRAFT"]
+    assert exact_sentence in intent["goal"]
+    assert "메일을 보내지 않는다" in intent["completion_conditions"]
+
+
+def test_source_information_normalization__is_lossless_and_idempotent() -> None:
+    raw_candidate = {
+        "goal": "메일 자료 확인",
+        "completion_conditions": ["필요한 자료를 확인한다"],
+        "constraints": _goal_constraints(),
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "required_information": ["기존 본문", "기존 수신자"],
+                },
+                {
+                    "resource_type": "GMAIL_THREAD",
+                    "required_information": [],
+                },
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "required_information": ["기존 수신자", "기존 제목"],
+                },
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        },
+        "analysis_requirement": "NONE",
+    }
+    original_candidate = deepcopy(raw_candidate)
+
+    normalized = goal_schema.validate_request_goal_candidate(raw_candidate)
+    normalized_again = goal_schema.validate_request_goal_candidate(
+        {
+            **raw_candidate,
+            "resource_responsibilities": deepcopy(normalized["resource_responsibilities"]),
+        }
+    )
+
+    assert raw_candidate == original_candidate
+    assert normalized["resource_responsibilities"] == {
+        "source_reads": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "required_information": ["기존 본문", "기존 수신자", "기존 제목"],
+            },
+            {"resource_type": "GMAIL_THREAD", "required_information": []},
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+    }
+    assert normalized_again["resource_responsibilities"] == normalized[
+        "resource_responsibilities"
+    ]
+    required_information = next(
+        constraint["value"]
+        for constraint in normalized["constraints"]
+        if constraint["field"] == "required_information"
+    )
+    assert required_information == ["기존 본문", "기존 수신자", "기존 제목"]
+
+
+def test_bounded_revision_candidate__uses_same_source_information_normalization() -> None:
+    invalid_candidate = {
+        "goal": "기존 Quartz 초안 수정",
+        "completion_conditions": ["초안을 수정한다"],
+        "constraints": _goal_constraints(
+            search_terms=["Quartz"],
+            status=[_source_status("DRAFT", "GMAIL_DRAFT", "원문에 없는 임시보관함")],
+        ),
+        "resource_responsibilities": _resource_responsibilities(
+            source_type="GMAIL_DRAFT",
+            required_information=["기존 초안"],
+            output_type="GMAIL_DRAFT",
+            output_effect="UPDATE",
+        ),
+        "analysis_requirement": "NONE",
+    }
+    revised_candidate = {
+        **invalid_candidate,
+        "constraints": _goal_constraints(search_terms=["Quartz"]),
+        "resource_responsibilities": {
+            "source_reads": [
+                {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 본문"]},
+                {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 수신자"]},
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        },
+    }
+    runtime = FakeStructuredInferencePort(outputs=[invalid_candidate, revised_candidate])
+
+    candidate, _budget = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=_request("Quartz 초안의 기존 값을 보존해서 수정해줘."),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert len(runtime.calls) == 2
+    assert candidate["resource_responsibilities"]["source_reads"] == [
+        {
+            "resource_type": "GMAIL_DRAFT",
+            "required_information": ["기존 본문", "기존 수신자"],
+        }
+    ]
 
 
 def test_standalone_send__source_scope__does_not_create_status_or_read() -> None:

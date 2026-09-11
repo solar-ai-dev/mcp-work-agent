@@ -515,17 +515,64 @@ def test_unselected_read__with_user_owned_target_gap__asks_before_retrieval() ->
     assert len(runtime.calls) == 1
 
 
-def test_selected_calendar_read__target_resource_gap__uses_bounded_revision() -> None:
+def test_selected_source__with_separate_target_gap__asks_without_revision() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "missing_information_owner": "USER",
                 "missing_fields": ["target_resource"],
             },
+        ]
+    )
+    selected_mail = SelectedResourceRef(
+        "ref-mail-42",
+        "google_workspace",
+        "gmail_thread",
+        "thread-42",
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "선택한 메일을 참고해 별도 일정 대상을 확인",
+        "completion_conditions": ["사용자가 정한 일정 대상을 확인한다"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD", "CALENDAR_EVENT"],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request(
+            "이 메일을 참고해서 그 일정을 확인해줘.",
+            selected_resources=(selected_mail,),
+        ),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["target_resource"],
+    }
+    assert len(runtime.calls) == 1
+    assert runtime.calls[0]["prompt_input"]["selected_resource_refs"] == [
+        {
+            "resource_ref_id": "ref-mail-42",
+            "connector_id": "google_workspace",
+            "resource_type": "gmail_thread",
+            "resource_id": "thread-42",
+            "parent_resource_id": None,
+        }
+    ]
+
+
+def test_selected_calendar_read__event_time_gap__passes_without_revision() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
             {
                 "missing_information_owner": "CONNECTOR",
                 "missing_fields": ["event_time"],
-            },
+            }
         ]
     )
     selected_event = SelectedResourceRef(
@@ -551,10 +598,16 @@ def test_selected_calendar_read__target_resource_gap__uses_bounded_revision() ->
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_TARGET_ALREADY_SELECTED"
-    )
+    assert len(runtime.calls) == 1
+    assert runtime.calls[0]["prompt_input"]["selected_resource_refs"] == [
+        {
+            "resource_ref_id": "ref-event-42",
+            "connector_id": "google_workspace",
+            "resource_type": "calendar_event",
+            "resource_id": "event-42",
+            "parent_resource_id": None,
+        }
+    ]
 
 
 def test_named_gmail_target__retrievable_date__does_not_ask_user() -> None:

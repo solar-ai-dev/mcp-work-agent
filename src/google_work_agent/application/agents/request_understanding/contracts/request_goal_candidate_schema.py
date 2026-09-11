@@ -14,6 +14,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     ConstraintV1,
     RequestGoalCandidateV1,
     RequestUnderstandingValidationError,
+    ResourceResponsibilitiesV1,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     validate_resource_responsibilities,
@@ -370,8 +371,15 @@ def validate_request_goal_candidate(
     root = cast(dict[str, object], value)
     slots = cast(dict[str, object], root["constraints"])
     _validate_semantic_constraint_text(slots, root=root)
-    effects, resources, source_information = derive_requested_resource_fields(
+    normalized_responsibilities = _normalize_source_read_responsibilities(
         cast(Mapping[str, object], root["resource_responsibilities"])
+    )
+    normalized_root = {
+        **root,
+        "resource_responsibilities": normalized_responsibilities,
+    }
+    effects, resources, source_information = derive_requested_resource_fields(
+        normalized_responsibilities
     )
     additional = cast(list[object], slots["additional_constraints"])
     reserved_additional_fields = [
@@ -412,7 +420,7 @@ def validate_request_goal_candidate(
         )
     try:
         responsibilities = validate_resource_responsibilities(
-            root["resource_responsibilities"],
+            normalized_responsibilities,
             effects=effects,
             resource_hints=resources,
             constraints=cast(list[ConstraintV1], normalized_constraints + additional),
@@ -427,13 +435,47 @@ def validate_request_goal_candidate(
             ),
         ) from error
     value = {
-        **root,
+        **normalized_root,
         "constraints": normalized_constraints + additional,
         "requested_effect_hints": effects,
         "requested_resource_hints": resources,
         "resource_responsibilities": responsibilities,
     }
     return cast(RequestGoalCandidateV1, value)
+
+
+def _normalize_source_read_responsibilities(
+    responsibilities: Mapping[str, object],
+) -> ResourceResponsibilitiesV1:
+    source_reads = cast(Sequence[Mapping[str, object]], responsibilities["source_reads"])
+    normalized_sources: list[dict[str, object]] = []
+    source_index_by_resource_type: dict[str, int] = {}
+    for source in source_reads:
+        resource_type = cast(str, source["resource_type"])
+        information = list(cast(Sequence[str], source["required_information"]))
+        source_index = source_index_by_resource_type.get(resource_type)
+        if source_index is None:
+            source_index_by_resource_type[resource_type] = len(normalized_sources)
+            normalized_sources.append(
+                {
+                    "resource_type": resource_type,
+                    "required_information": information,
+                }
+            )
+            continue
+        existing_information = cast(
+            list[str], normalized_sources[source_index]["required_information"]
+        )
+        existing_information.extend(
+            value for value in information if value not in existing_information
+        )
+    return cast(
+        ResourceResponsibilitiesV1,
+        {
+            "source_reads": normalized_sources,
+            "outputs": deepcopy(responsibilities["outputs"]),
+        },
+    )
 
 
 def derive_requested_resource_fields(

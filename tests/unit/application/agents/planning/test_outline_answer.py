@@ -128,6 +128,45 @@ def test_outline_rejects__evidence_outside__current_projection() -> None:
         )
 
 
+def test_outline_collection__allows_relevant_subset_and_order__without_rewriting_output() -> None:
+    captured: dict[str, object] = {}
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {"sections": ["관련: C", "관련: A"], "evidence_refs": []}
+
+    result = outline_answer(
+        user_request="관련된 제목만 중요도순으로 알려줘.",
+        request_intent={"requested_effect_hints": ["READ"]},
+        work_analysis=None,
+        evidence=[],
+        retrieval_result={
+            "collection_results": [
+                {
+                    "route_id": "route-1",
+                    "resource_type": "gmail_thread",
+                    "continuation_status": "EXHAUSTED",
+                    "items": [
+                        {"resource_ref": "gmail_thread:a", "title": "A"},
+                        {"resource_ref": "gmail_thread:b", "title": "B"},
+                        {"resource_ref": "gmail_thread:c", "title": "C"},
+                    ],
+                }
+            ]
+        },
+        invoke=invoke,
+    )
+
+    projection = cast(dict[str, object], captured["prompt_input"])
+    collection = cast(list[dict[str, object]], projection["collection_results"])[0]
+    assert [item["title"] for item in cast(list[dict[str, object]], collection["items"])] == [
+        "A",
+        "B",
+        "C",
+    ]
+    assert result == {"sections": ["관련: C", "관련: A"], "evidence_refs": []}
+
+
 def test_outline__does_not_replace__invalid_evidence_identity() -> None:
     with pytest.raises(ValueError, match="outside"):
         outline_answer(

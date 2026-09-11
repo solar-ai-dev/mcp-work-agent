@@ -149,6 +149,50 @@ def test_compose_answer__collection_continuation__does_not_force_single_answer_p
     assert result["answer"] == "최신 상태는 준비 완료입니다."
 
 
+def test_compose_collection__accepts_relevant_subset_and_order__without_rewriting_answer() -> None:
+    captured: dict[str, object] = {}
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
+        return {
+            "schema_version": 2,
+            "answer": "관련 항목은 C, A 순서입니다.",
+            "evidence_refs": [],
+        }
+
+    result = compose_answer(
+        user_request="관련된 제목만 중요도순으로 알려줘.",
+        request_intent={"requested_effect_hints": ["READ"]},
+        answer_outline={"sections": ["관련: C", "관련: A"], "evidence_refs": []},
+        work_analysis=None,
+        evidence=[],
+        retrieval_result={
+            "collection_results": [
+                {
+                    "route_id": "route-1",
+                    "resource_type": "gmail_thread",
+                    "continuation_status": "EXHAUSTED",
+                    "items": [
+                        {"resource_ref": "gmail_thread:a", "title": "A"},
+                        {"resource_ref": "gmail_thread:b", "title": "B"},
+                        {"resource_ref": "gmail_thread:c", "title": "C"},
+                    ],
+                }
+            ]
+        },
+        invoke=invoke,
+    )
+
+    projection = cast(dict[str, object], captured["prompt_input"])
+    collection = cast(list[dict[str, object]], projection["collection_results"])[0]
+    assert [item["title"] for item in cast(list[dict[str, object]], collection["items"])] == [
+        "A",
+        "B",
+        "C",
+    ]
+    assert result["answer"] == "관련 항목은 C, A 순서입니다."
+
+
 @pytest.mark.parametrize(
     "answer",
     [
