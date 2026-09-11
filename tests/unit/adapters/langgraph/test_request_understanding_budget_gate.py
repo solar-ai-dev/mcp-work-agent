@@ -103,6 +103,7 @@ class _RepairingAgent:
                 "subject": [],
                 "period": [],
                 "status": [],
+                "coverage_requirement": [],
                 "additional_constraints": [],
             },
             "resource_responsibilities": {

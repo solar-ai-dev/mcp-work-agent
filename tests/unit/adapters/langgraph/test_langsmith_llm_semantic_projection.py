@@ -131,6 +131,11 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
                     "field": "search_terms",
                     "value": ["private query literal"],
                 },
+                {
+                    "kind": "SCOPE",
+                    "field": "coverage_requirement",
+                    "value": "EXHAUSTIVE",
+                },
             ],
         },
     )
@@ -138,10 +143,15 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
     assert projection["source_reads"] == {"count": 0, "items": []}
     assert projection["outputs"] == {"count": 0, "items": []}
     assert projection["constraints"] == {
-        "count": 2,
+        "count": 3,
         "items": [
             {"kind": "SOURCE_FILTER", "field": "status", "status_values": ["DRAFT"]},
             {"kind": "USER_REQUIREMENT", "field": "search_terms"},
+            {
+                "kind": "SCOPE",
+                "field": "coverage_requirement",
+                "coverage_requirement": ["EXHAUSTIVE"],
+            },
         ],
     }
     for secret in (
@@ -207,6 +217,7 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
                     "subject": [],
                     "period": [],
                     "status": [],
+                    "coverage_requirement": [],
                     "additional_constraints": [],
                 },
             },

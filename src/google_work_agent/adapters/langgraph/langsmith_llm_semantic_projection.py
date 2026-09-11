@@ -50,6 +50,7 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "kind",
         "field",
         "status_values",
+        "coverage_requirement",
         "goal_candidate",
         "resolution_responsibilities",
         "connector_owned_information_count",
@@ -627,6 +628,7 @@ def _project_goal_constraints(value: object) -> dict[str, object]:
             "subject": "RESOURCE",
             "period": "DATE",
             "status": "SCOPE",
+            "coverage_requirement": "SCOPE",
         }
         for field, kind in kind_by_field.items():
             values = _sequence(mapping.get(field))
@@ -640,6 +642,8 @@ def _project_goal_constraints(value: object) -> dict[str, object]:
                     if (item_mapping := _mapping(item)) is not None
                     if (status := _safe_string(item_mapping.get("value"))) is not None
                 ][:_MAX_COLLECTION_ITEMS]
+            elif field == "coverage_requirement":
+                projected["coverage_requirement"] = _safe_values(values)
             items.append(projected)
         for raw_item in _sequence(mapping.get("additional_constraints")):
             item = _mapping(raw_item)
@@ -662,6 +666,11 @@ def _project_goal_constraints(value: object) -> dict[str, object]:
             _copy_safe_scalar(item, projected_constraint, name)
         if item.get("field") == "status":
             projected_constraint["status_values"] = _safe_values(item.get("value"))
+        elif item.get("field") == "coverage_requirement":
+            value = item.get("value")
+            projected_constraint["coverage_requirement"] = _safe_values(
+                [value] if isinstance(value, str) else value
+            )
         constraint_items.append(projected_constraint)
     return {"count": len(sequence), "items": constraint_items}
 

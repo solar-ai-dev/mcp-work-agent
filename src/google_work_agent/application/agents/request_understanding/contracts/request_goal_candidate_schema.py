@@ -32,6 +32,7 @@ REQUEST_GOAL_SLOT_KINDS = {
     "subject": "RESOURCE",
     "period": "DATE",
     "status": "SCOPE",
+    "coverage_requirement": "SCOPE",
 }
 _MODEL_CONSTRAINT_SLOT_KINDS = {
     field: kind
@@ -77,6 +78,9 @@ for _field, _description in {
     "subject": "사용자가 제목이라고 명시한 값만 둔다. 추정 제목을 만들지 않는다.",
     "period": "날짜가 제한하는 대상의 원문 기간을 보존하고 시간축이나 연도를 추측하지 않는다.",
     "status": "원문에 명시된 source Resource의 상태만 둔다.",
+    "coverage_requirement": (
+        "요청한 collection 범위의 모든 항목을 확인해야 완료되는 경우에만 EXHAUSTIVE를 둔다."
+    ),
 }.items():
     cast(dict[str, object], _NAMED_SEARCH_CONSTRAINT_PROPERTIES[_field])["description"] = (
         _description
@@ -110,6 +114,15 @@ _NAMED_SEARCH_CONSTRAINT_PROPERTIES["status"] = {
             "source_text": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
         },
     },
+}
+_NAMED_SEARCH_CONSTRAINT_PROPERTIES["coverage_requirement"] = {
+    "type": "array",
+    "maxItems": 1,
+    "uniqueItems": True,
+    "items": {"const": "EXHAUSTIVE"},
+    "description": (
+        "모든 항목 확인이 완료 조건이면 EXHAUSTIVE 하나를, 아니면 빈 배열을 둔다."
+    ),
 }
 
 
@@ -227,8 +240,7 @@ _additional_properties.pop("source_resource_type")
 _additional_properties.pop("provenance")
 _additional_field = cast(dict[str, object], _additional_properties["field"])
 _additional_field["description"] = (
-    "명명된 검색 슬롯 밖의 명시적 실행 필드 또는 typed 완료 범위. "
-    "coverage_requirement에는 EXHAUSTIVE만 허용하며 예약 슬롯 이름은 허용하지 않는다."
+    "명명된 검색 슬롯 밖의 명시적 실행 필드. 예약 슬롯 이름은 허용하지 않는다."
 )
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = (
     _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
@@ -322,7 +334,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v12",
+    schema_version="request-goal-candidate-v13",
     json_schema={
         "type": "object",
         "required": [
@@ -359,7 +371,8 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "기간 원문은 DATE.period이며 시간축 판정은 별도 operation이 수행한다. "
                     "한 문장에 사람·프로젝트·업무·답변 지시를 합쳐 검색어로 만들지 않는다. "
                     "요청에 없는 이름 있는 슬롯은 빈 배열로 둔다. Calendar/GitHub 등 "
-                    "그 밖의 명시적 실행 값과 typed 완료 범위는 additional_constraints에 둔다."
+                    "typed 완료 범위는 coverage_requirement에 두고 그 밖의 명시적 실행 값은 "
+                    "additional_constraints에 둔다."
                 ),
             },
             "analysis_requirement": {
@@ -418,7 +431,13 @@ def validate_request_goal_candidate(
             "request goal candidate is invalid: additional constraint uses reserved field"
         )
     normalized_constraints = [
-        {"kind": _MODEL_CONSTRAINT_SLOT_KINDS[field], "field": field, "value": values}
+        {
+            "kind": _MODEL_CONSTRAINT_SLOT_KINDS[field],
+            "field": field,
+            "value": (
+                cast(list[str], values)[0] if field == "coverage_requirement" else values
+            ),
+        }
         for field, values in slots.items()
         if field in _MODEL_CONSTRAINT_SLOT_KINDS and field != "status" and values
     ]

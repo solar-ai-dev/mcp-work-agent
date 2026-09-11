@@ -42,7 +42,7 @@ def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> 
     entry = next(
         item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
     )
-    assert entry["output_schema_version"] == 12
+    assert entry["output_schema_version"] == 13
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
         load_prompt_input_contract(_write(tmp_path, payload))

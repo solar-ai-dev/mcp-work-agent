@@ -50,6 +50,7 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
                     "subject": [],
                     "period": [],
                     "status": [],
+                    "coverage_requirement": [],
                     "additional_constraints": [],
                 },
                 "resource_responsibilities": {

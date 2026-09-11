@@ -84,7 +84,7 @@ class FakeStructuredInferencePort:
             output = self.outputs.pop(0)
             if isinstance(output, Mapping) and "resource_responsibilities" in output:
                 responsibilities = output["resource_responsibilities"]
-                if output_schema_ref.schema_version == "request-goal-candidate-v12":
+                if output_schema_ref.schema_version == "request-goal-candidate-v13":
                     self._pending_resource_responsibilities = responsibilities
                     output = {
                         key: value
