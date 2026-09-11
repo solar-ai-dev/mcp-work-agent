@@ -122,7 +122,7 @@ def test_non_gmail_search__empty_constraints__remains_rejected() -> None:
         )
 
 
-def test_duplicate_constraint_kind__reports_the_rejected_field_path() -> None:
+def test_query_plan__with_duplicate_constraint_kind__reports_rejected_field_path() -> None:
     route = cast(
         InputToolRouteV1,
         {

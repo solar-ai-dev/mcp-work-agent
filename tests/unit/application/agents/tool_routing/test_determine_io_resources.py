@@ -579,7 +579,7 @@ def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> 
     ]
 
 
-def test_no_tool_disposition__cannot_retain_input_resource_routes() -> None:
+def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
     intent = cast(
         RequestIntentV2,
         {

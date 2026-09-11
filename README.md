@@ -67,7 +67,6 @@ Invoke-RestMethod "$($launch.base_url)/health/ready"
 ```powershell
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 .\.venv\Scripts\python.exe -m pytest -q
-$env:GWA_ARCHITECTURE_FINAL_CUTOVER = "1"
 .\.venv\Scripts\python.exe -m pytest tests\architecture -q
 .\.venv\Scripts\ruff.exe check src tests launcher release scripts
 .\.venv\Scripts\mypy.exe src tests launcher release scripts

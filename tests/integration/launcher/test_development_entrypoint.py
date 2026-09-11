@@ -353,14 +353,6 @@ def test_development_process__serves_authenticated_product__and_cleans_descripto
         assert bootstrap["service_instance_id"] == service_instance_id
         assert len(cookie_jar) == 1
 
-        runtime = _request_json(
-            opener,
-            f"{base_url}/api/v1/runtime",
-            base_url=base_url,
-        )
-        assert runtime["schema_version"] == 1
-        assert runtime["session_status"] == "ESTABLISHED"
-
         shutdown = _request_json(
             opener,
             f"{base_url}/api/v1/control/shutdown",

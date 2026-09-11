@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 import re
 from pathlib import Path
 
@@ -10,9 +9,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "google_work_agent"
-FINAL = os.getenv("GWA_ARCHITECTURE_FINAL_CUTOVER") == "1"
-
-
 AGENT_OWNERS = {
     "request_understanding",
     "tool_routing",
@@ -201,13 +197,26 @@ def clean(errors: list[str]) -> None:
 
 
 def test_immediate_canonical__filename__grammar() -> None:
-    clean(
-        [
-            f"forbidden canonical filename: {rel(p)}"
-            for p in pyfiles()
-            if canonical(p) and bad_name(p)
-        ]
-    )
+    allowed_roots = {
+        "domain",
+        "application",
+        "ports",
+        "adapters",
+        "api",
+        "launcher",
+        "__pycache__",
+    }
+    errors = [
+        f"non-canonical top-level owner: {rel(path)}"
+        for path in SRC.iterdir()
+        if path.is_dir() and path.name not in allowed_roots
+    ]
+    for path in pyfiles():
+        if bad_name(path):
+            errors.append(f"forbidden canonical filename: {rel(path)}")
+        if "_compat" in path.parts:
+            errors.append(f"_compat remains: {rel(path)}")
+    clean(errors)
 
 
 def test_immediate_module__package_authority__is_unique() -> None:
@@ -294,8 +303,18 @@ def _agent_operation_errors(root: Path, source: Path, roles: dict[str, set[str]]
             errors.append(f"missing Agent owner: {role}")
             continue
         for operation in sorted(allowed):
-            if not (owner / f"{operation}.py").is_file():
+            expected = owner / f"{operation}.py"
+            if not expected.is_file():
                 errors.append(f"missing Agent operation: {role}.{operation}")
+            found = sorted(base.rglob(f"{operation}.py"))
+            if found != [expected]:
+                found_text = (
+                    ", ".join(path.relative_to(root).as_posix() for path in found) or "NONE"
+                )
+                errors.append(
+                    f"{role}.{operation}: expected only "
+                    f"{expected.relative_to(root).as_posix()}; found {found_text}"
+                )
             if not (
                 root / "tests/unit/application/agents" / role / f"test_{operation}.py"
             ).is_file():
@@ -401,7 +420,7 @@ def test_immediate_api__and_langgraph__target_grammar() -> None:
 
 def test_immediate_dependency__and_provider__boundary() -> None:
     errors: list[str] = []
-    for path in (p for p in pyfiles() if canonical(p)):
+    for path in pyfiles():
         p = parts(path)
         for module in imports(path):
             m = internal(module)
@@ -424,6 +443,14 @@ def test_immediate_dependency__and_provider__boundary() -> None:
                 errors.append(f"Persistence Application import: {rel(path)} -> {module}")
             if p[:2] == ("adapters", "connectors") and m[:1] == ("application",):
                 errors.append(f"Connector Application import: {rel(path)} -> {module}")
+            if (
+                p[:3] == ("adapters", "langgraph", "subgraphs")
+                and m[:3] == ("adapters", "langgraph", "subgraphs")
+                and len(p) > 3
+                and len(m) > 3
+                and p[3] != m[3]
+            ):
+                errors.append(f"Agent peer import: {rel(path)} -> {module}")
             if m[:1] in {("evaluation",), ("experiments",)}:
                 errors.append(f"Production imports Evaluation: {rel(path)} -> {module}")
     clean(errors)
@@ -551,7 +578,15 @@ def test_production_packages__contain_runtime_artifacts__beyond_package_markers(
 
 
 def test_removed_structure_residue__has_zero__production_authorities() -> None:
-    errors: list[str] = []
+    forbidden = (
+        SRC / "domain" / "commands.py",
+        SRC / "domain" / "transitions.py",
+        SRC / "domain" / "guards.py",
+        SRC / "application" / "ports",
+        SRC / "application" / "workflows",
+        SRC / "contracts",
+    )
+    errors = [f"legacy authority remains: {rel(path)}" for path in forbidden if path.exists()]
     forbidden_path = SRC / "ports" / "system" / "contracts" / "application_settings.py"
     if forbidden_path.exists():
         errors.append(f"broad AppSettings authority remains: {rel(forbidden_path)}")
@@ -561,6 +596,23 @@ def test_removed_structure_residue__has_zero__production_authorities() -> None:
             errors.append(f"broad AppSettings reference remains: {rel(path)}")
         if "StaticReadinessAggregator" in source or "StaticLauncherProbeVerifier" in source:
             errors.append(f"production test double remains: {rel(path)}")
+    allowed_contract_packages = {
+        ("application", "prompt_runtime", "contracts"),
+        ("application", "tool_registry", "contracts"),
+        ("ports", "connector", "contracts"),
+        ("ports", "system", "contracts"),
+    }
+    for path in SRC.rglob("contracts"):
+        relative_parts = path.relative_to(SRC).parts
+        if path.is_dir() and not (
+            (
+                len(relative_parts) == 4
+                and relative_parts[:2] == ("application", "agents")
+                and relative_parts[2] in ROLES
+            )
+            or relative_parts in allowed_contract_packages
+        ):
+            errors.append(f"non-owner contract package: {rel(path)}")
     frontend_src = ROOT / "frontend" / "src"
     for pattern in ("*.test.ts", "*.test.tsx", "*.spec.ts", "*.spec.tsx"):
         for path in frontend_src.rglob(pattern):
@@ -627,88 +679,4 @@ def test_static_fixture_data__under_provider_resource_root__uses_strict_json_gra
             json.loads(path.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             errors.append(f"invalid strict UTF-8 JSON fixture: {rel(path)}: {error}")
-    clean(errors)
-
-
-@pytest.mark.skipif(not FINAL, reason="final cutover only: GWA_ARCHITECTURE_FINAL_CUTOVER=1")
-def test_final_top__level__ownership() -> None:
-    allowed = {"domain", "application", "ports", "adapters", "api", "launcher", "__pycache__"}
-    clean(
-        [
-            f"non-canonical top-level owner: {rel(p)}"
-            for p in SRC.iterdir()
-            if p.is_dir() and p.name not in allowed
-        ]
-    )
-
-
-@pytest.mark.skipif(not FINAL, reason="final cutover only: GWA_ARCHITECTURE_FINAL_CUTOVER=1")
-def test_final_forbidden__names_and__compat_zero() -> None:
-    errors: list[str] = []
-    for path in pyfiles():
-        if bad_name(path):
-            errors.append(f"forbidden final filename: {rel(path)}")
-        if "_compat" in path.parts:
-            errors.append(f"_compat remains: {rel(path)}")
-    clean(errors)
-
-
-@pytest.mark.skipif(not FINAL, reason="final cutover only: GWA_ARCHITECTURE_FINAL_CUTOVER=1")
-def test_final_legacy__authorities__retired() -> None:
-    forbidden = [
-        SRC / "domain" / "commands.py",
-        SRC / "domain" / "transitions.py",
-        SRC / "domain" / "guards.py",
-        SRC / "application" / "ports",
-        SRC / "application" / "workflows",
-        SRC / "contracts",
-    ]
-    errors = [f"legacy authority remains: {rel(p)}" for p in forbidden if p.exists()]
-    allowed_contract_packages = {
-        ("application", "prompt_runtime", "contracts"),
-        ("application", "tool_registry", "contracts"),
-        ("ports", "connector", "contracts"),
-        ("ports", "system", "contracts"),
-    }
-    for path in SRC.rglob("contracts"):
-        p = path.relative_to(SRC).parts
-        if path.is_dir() and not (
-            (len(p) == 4 and p[:2] == ("application", "agents") and p[2] in ROLES)
-            or p in allowed_contract_packages
-        ):
-            errors.append(f"non-owner contract package: {rel(path)}")
-    clean(errors)
-
-
-@pytest.mark.skipif(not FINAL, reason="final cutover only: GWA_ARCHITECTURE_FINAL_CUTOVER=1")
-def test_final_agent__one_capability__one_authority() -> None:
-    errors: list[str] = []
-    base = SRC / "application" / "agents"
-    for role, capabilities in ROLES.items():
-        for capability in capabilities:
-            expected = base / role / f"{capability}.py"
-            found = sorted(base.rglob(f"{capability}.py")) if base.exists() else []
-            if found != [expected]:
-                found_text = ", ".join(map(rel, found)) or "NONE"
-                errors.append(
-                    f"{role}.{capability}: expected only {rel(expected)}; found {found_text}"
-                )
-    clean(errors)
-
-
-@pytest.mark.skipif(not FINAL, reason="final cutover only: GWA_ARCHITECTURE_FINAL_CUTOVER=1")
-def test_final_repo__wide_dependency__and_provider_boundary() -> None:
-    errors: list[str] = []
-    for path in pyfiles():
-        p = parts(path)
-        for module in imports(path):
-            m = internal(module)
-            if module.startswith(PROVIDER_PREFIXES) and p[:2] != ("adapters", "connectors"):
-                errors.append(f"Core direct Provider SDK: {rel(path)} -> {module}")
-            if m[:1] in {("evaluation",), ("experiments",)}:
-                errors.append(f"Production imports Evaluation: {rel(path)} -> {module}")
-            if p[0] == "domain" and m and m[0] != "domain":
-                errors.append(f"Domain outward import: {rel(path)} -> {module}")
-            if p[0] == "application" and m[:1] == ("adapters",):
-                errors.append(f"Application concrete Adapter import: {rel(path)} -> {module}")
     clean(errors)

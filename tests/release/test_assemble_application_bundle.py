@@ -168,8 +168,28 @@ def test_signed_bundle__materializes_exact_validated__prompt_file_closure(
         inputs.prompt_manifest.read_bytes()
     )
     assert (prompt_root / "prompt_runtime_input_contract_v1.json").is_file()
-    assert len(tuple((prompt_root / "sources").glob("*.md"))) == 22
-    assert len(tuple((prompt_root / "activation-evidence").rglob("*.json"))) == 132
+    prompt_manifest = json.loads(inputs.prompt_manifest.read_text(encoding="utf-8"))
+    prompt_slots = prompt_manifest["slots"]
+    assert {path.name for path in (prompt_root / "sources").glob("*.md")} == {
+        Path(slot["source"]).name for slot in prompt_slots
+    }
+    evidence_keys = (
+        "dataset",
+        "grader",
+        "node_dev_result",
+        "node_holdout_result",
+        "safety_gate_result",
+        "manifest_approval",
+    )
+    expected_evidence_paths = {
+        Path(slot["activation_evidence"][key]["path"]).as_posix()
+        for slot in prompt_slots
+        for key in evidence_keys
+    }
+    assert {
+        path.relative_to(prompt_root).as_posix()
+        for path in (prompt_root / "activation-evidence").rglob("*.json")
+    } == expected_evidence_paths
     assert "manifests/prompt/unreferenced.txt" not in paths
 
 

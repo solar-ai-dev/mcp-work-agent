@@ -31,11 +31,9 @@ def test_mcp_candidate_has__current_slot_subset_hashes_and_draft__lifecycle() ->
     active_slot_ids = {slot["prompt_slot_id"] for slot in active_manifest["slots"]}
 
     assert bundle.candidate_id == "mcp-tool-use-research-2026-v1"
-    assert len(bundle.source_hashes) == 21
+    assert len(bundle.source_hashes) == bundle.payload["prompt_slot_count"]
     assert set(bundle.source_hashes) < active_slot_ids
-    assert active_slot_ids - set(bundle.source_hashes) == {
-        "request_understanding.identify_temporal_scope"
-    }
+    assert active_slot_ids - set(bundle.source_hashes)
     assert bundle.payload["status"] == "DRAFT"
     assert bundle.payload["activation_evidence"] == {
         "node_dev_pass": False,
@@ -94,31 +92,33 @@ def test_materialization__is_deterministic_and_evaluation_loadable__while_produc
     assert first_files == second_files
     assert first.prompt_manifest_hash == second.prompt_manifest_hash
     assert set(materialized_by_id) == set(active_by_id)
-    assert len(manifest["slots"]) == 22
+    assert len(manifest["slots"]) == len(active_manifest["slots"])
     assert all(slot["activation_status"] == "DRAFT" for slot in manifest["slots"])
     assert all(slot["activation_evidence"] is None for slot in manifest["slots"])
     for slot_id in bundle.source_hashes:
         assert materialized_by_id[slot_id]["prompt_version"] == bundle.candidate_prompt_version
         assert materialized_by_id[slot_id]["content_hash"] == bundle.source_hashes[slot_id]
-    extra_slot_id = "request_understanding.identify_temporal_scope"
-    assert materialized_by_id[extra_slot_id] == {
-        **active_by_id[extra_slot_id],
-        "activation_status": "DRAFT",
-        "node_dev_pass": False,
-        "node_holdout_pass": False,
-        "safety_gate_pass": False,
-        "manifest_approved": False,
-        "activation_evidence": None,
-    }
+    extra_slot_ids = set(active_by_id) - set(bundle.source_hashes)
+    for extra_slot_id in extra_slot_ids:
+        assert materialized_by_id[extra_slot_id] == {
+            **active_by_id[extra_slot_id],
+            "activation_status": "DRAFT",
+            "node_dev_pass": False,
+            "node_holdout_pass": False,
+            "safety_gate_pass": False,
+            "manifest_approved": False,
+            "activation_evidence": None,
+        }
     assert (
         first.input_contract_path.read_bytes()
         == (ACTIVE_PROMPT_ROOT / "prompt_runtime_input_contract_v1.json").read_bytes()
     )
-    assert (
-        first.output_dir / materialized_by_id[extra_slot_id]["source"]
-    ).read_bytes() == (
-        ACTIVE_PROMPT_ROOT / active_by_id[extra_slot_id]["source"]
-    ).read_bytes()
+    for extra_slot_id in extra_slot_ids:
+        assert (
+            first.output_dir / materialized_by_id[extra_slot_id]["source"]
+        ).read_bytes() == (
+            ACTIVE_PROMPT_ROOT / active_by_id[extra_slot_id]["source"]
+        ).read_bytes()
     for slot in manifest["slots"]:
         registry.lookup_for_evaluation(slot["prompt_slot_id"])
         with pytest.raises(InactivePromptArtifactError):

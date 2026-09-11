@@ -216,6 +216,7 @@ def test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_ll
     assert not any(prompt_id.startswith("work_analysis.") for prompt_id in invoked)
     assert invoked == [
         "request_understanding.identify_goal",
+        "request_understanding.detect_ambiguity",
         "planning.outline_answer",
         "planning.compose_answer",
     ]

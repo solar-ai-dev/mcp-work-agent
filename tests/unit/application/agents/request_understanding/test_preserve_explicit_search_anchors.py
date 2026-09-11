@@ -124,7 +124,7 @@ def test_business_concept__paraphrase__is_not_removed_by_substring_guard() -> No
     assert "search_terms" not in fields
 
 
-def test_repeated_explicit_anchor__remains_source_bound() -> None:
+def test_explicit_search_anchor__when_repeated__remains_source_bound() -> None:
     candidate = _candidate()
     candidate["constraints"].append(
         {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["Nimbus"]}

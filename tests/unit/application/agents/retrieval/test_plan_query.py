@@ -219,7 +219,7 @@ def test_retrieval_followup_path__exhausted_identity_search__rejects() -> None:
         ([], 3, False),
     ],
 )
-def test_retrieval_followup_path__format_does_not_override_progress_budget(
+def test_retrieval_followup__with_format_change__preserves_progress_budget(
     constraints: list[dict[str, str]], search_attempt_count: int, expected: bool
 ) -> None:
     attempts = [
@@ -1681,7 +1681,7 @@ def test_calendar_route__without_validated_container__does_not_offer_container_r
     assert projected_routes[0]["supported_constraint_kinds"] == ["TEMPORAL_RANGE"]
 
 
-def test_general_gmail_search__passes_planner_sender_subject_values() -> None:
+def test_general_gmail_search__with_sender_and_subject__passes_values_to_planner() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
@@ -1768,7 +1768,7 @@ def test_general_gmail_search__passes_planner_sender_subject_values() -> None:
     ]
 
 
-def test_general_gmail_search__passes_planner_relation_without_count_rewrite() -> None:
+def test_general_gmail_search__with_relation_constraint__preserves_count_semantics() -> None:
     output = {
         "schema_version": 2,
         "route_queries": [
