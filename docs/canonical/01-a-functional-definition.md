@@ -67,7 +67,7 @@
 
 - **상태:** P0
 - **입력:** 하드웨어, Ollama 상태, 설치 모델, API Key.
-- **처리:** CPU-only 여부, GPU 기준 충족, Ollama 연결, Local 테스트 추론, API 연결을 확인한다.
+- **처리:** 지원 OS·architecture와 CPU·RAM 기준, GPU·VRAM 기준, Ollama 연결, Local 테스트 추론, API 연결을 확인한다. Local readiness는 GPU profile 또는 CPU profile 중 하나가 통과하면 충족한다.
 - **출력:** Ollama 검사 성공/실패, 설치된 지원 모델, Gemini 준비 상태, 현재 선택과 실제 사용 가능 상태.
 - **규칙:** Local 제품 Runtime은 Ollama만 지원하며 지원 모델은 `qwen3.5:9b`, `qwen3.5:4b`다. 제품은 Ollama 설치·model pull·download/provisioning을 수행하지 않는다. 검사 실패와 지원 모델 미설치를 구분한다.
 
@@ -83,8 +83,8 @@
 
 - **상태:** P0 배포 기능
 - **프로필:** `API_ONLY`, `LOCAL_CAPABLE`.
-- **API_ONLY:** Ollama 의존성 없이 실행하며 GPU가 없는 팀원과 CPU-only 사용자에게 제공한다.
-- **LOCAL_CAPABLE:** 실제 Ollama와 설치된 지원 모델을 검사하고 선택·재검사 UI를 제공한다. Installer나 앱이 Ollama·모델을 설치하거나 내려받지 않는다.
+- **API_ONLY:** Ollama 의존성 없이 API LLM만 사용하는 사용자에게 제공한다.
+- **LOCAL_CAPABLE:** CPU 또는 GPU에서 실제 Ollama와 설치된 지원 모델을 검사하고 선택·재검사 UI를 제공한다. Installer나 앱이 Ollama·모델을 설치하거나 내려받지 않는다.
 - **완료 조건:** 동일 제품 Core/Policy 의미를 유지하면서 배포 Artifact 의존성과 Runtime capability가 프로필별로 분리된다.
 
 ### FN-006A Local Runtime 검사와 가용 모델 선택

@@ -937,6 +937,8 @@ Workflow handoff persistence contract tests are mandatory:
 - 9B만/4B만이면 해당 모델을 자동 사용하고, 이전 선택이 unavailable이어도 유일한 지원 모델로 전환한다.
 - 두 모델+유효 선택은 유지하고 두 모델+선택 없음은 사용자 선택을 요구한다.
 - 지원 모델 없음과 inspection failure를 구분하고 current selection/actual model projection을 검증한다.
+- 기존 GPU profile PASS를 유지하고, GPU 부재·VRAM 부족이어도 지원 OS·architecture, CPU·RAM, Ollama와 선택 모델 조건을 충족한 CPU profile은 Local 실행을 허용한다.
+- CPU와 GPU profile이 모두 실패하면 기존 safe reason을 보존하고 Local 실행 전에 중단한다.
 - 진행 중 Run의 binding은 재검사·repair·resume으로 바뀌지 않는다.
 - WORKER/REASONING 역할별 switching, inference 실패 model 교대, Local↔Gemini fallback, 지원 외 모델 선택이 0임을 검증한다.
 - Browser/Prompt/Connector Source supplied URL/path/model/tag/shell fragment가 실행 authority에 도달하지 않음을 검증한다.

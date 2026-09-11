@@ -324,6 +324,7 @@ Ollama는 Product Core에 내장되지 않은 별도 Runtime이다. 제품은 �
 - Ollama Loopback Endpoint
 - 지원 Version
 - 지원 Model ID: `qwen3.5:9b`, `qwen3.5:4b`
+- CPU·RAM Profile
 - GPU·VRAM Profile
 - Structured Output Smoke Test
 - OOM·Timeout
@@ -341,6 +342,7 @@ Runtime Detail 확인
 → Ollama probe 성공/실패 확인
 → 설치된 지원 모델 목록 확인
 → 하나면 자동 선택, 둘이면 persisted 선택 검증
+→ CPU profile 또는 GPU profile 중 하나의 readiness 확인
 → 테스트 추론 결과와 실제 선택 모델 확인
 ```
 

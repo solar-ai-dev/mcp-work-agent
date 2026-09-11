@@ -305,7 +305,6 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
             "OLLAMA_VERSION_UNSUPPORTED",
         ),
         (ProbeResult(AvailabilityState.AVAILABLE), {"ram_total_bytes": 1}, "INSUFFICIENT_RAM"),
-        (ProbeResult(AvailabilityState.AVAILABLE), {"vram_total_bytes": 1}, "INSUFFICIENT_VRAM"),
         (
             ProbeResult(AvailabilityState.AVAILABLE),
             {"operating_system": "LINUX"},
@@ -337,6 +336,35 @@ def test_local_eligibility__fails_closed__for_each_signed_requirement(
     decision = evaluate_local_runtime_eligibility(**values)  # type: ignore[arg-type]
     assert decision.eligible is False
     assert expected_reason in decision.safe_reason_codes
+
+
+@pytest.mark.parametrize(
+    "gpu_overrides",
+    [
+        {"gpu_present": False, "vram_total_bytes": None},
+        {"gpu_present": True, "vram_total_bytes": 1},
+    ],
+)
+def test_local_eligibility__allows_cpu_profile__when_gpu_profile_fails(
+    gpu_overrides: dict[str, object],
+) -> None:
+    model = ApprovedModelInfo(MODEL_ID, "OLLAMA", "1", "1", digest=MODEL_HASH)
+    values: dict[str, object] = {
+        "runtime_selection": _active_selection(model),
+        "operating_system": "WINDOWS",
+        "architecture": "AMD64",
+        "cpu_logical_cores": 8,
+        "ram_total_bytes": 16 * 1024**3,
+        "gpu_present": True,
+        "vram_total_bytes": 8 * 1024**3,
+        "ollama_probe": ProbeResult(AvailabilityState.AVAILABLE),
+    }
+    values.update(gpu_overrides)
+
+    decision = evaluate_local_runtime_eligibility(**values)  # type: ignore[arg-type]
+
+    assert decision.eligible is True
+    assert decision.safe_reason_codes == ()
 
 
 def _active_selection(model: ApprovedModelInfo) -> LlmRuntimeSelectionV1:
