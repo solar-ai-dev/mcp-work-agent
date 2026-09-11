@@ -8,7 +8,7 @@
 
 # 의도 작성
 
-요청 전체에서 원하는 결과를 읽어 `goal`과 `completion_conditions`에 담는다. 일반적인 설명·작성 조언만으로 답할 수 있는 요청과, 개인 자료의 조회나 외부 Resource 변경이 필요한 요청을 구분한다. 문장에 제품명·메일·일정 같은 말이 등장하는 것만으로 조회나 변경을 요구했다고 판단하지 않는다. 인용·예시·가정·부정은 실제 요청과 구분한다.
+요청 전체에서 원하는 결과를 읽어 `goal`과 `completion_conditions`에 담는다. 일반적인 설명·예시·작성 조언인지, 실제 개인 자료의 사실 확인이나 외부 Resource 변경인지 구분한다. 일반 지식과 현재 입력만으로 답할 요청에 개인 자료 조회를 덧붙이지 않는다. 업무·메일·일정 같은 말의 등장이나 연결된 계정의 존재는 조회 요청의 근거가 아니다. 인용·예시·가정·부정은 실제 요청과 구분한다.
 
 기존 내용의 변경을 요청했다면 무엇을 어디에 어떻게 바꿀지 보존한다. 지정 문장, 수정 위치, 유지할 부분, 보내지 말라는 금지를 일반적인 '검토'나 '확인'으로 축소하지 않는다. 사용자 원문에 정확히 주어진 제목·주소·본문 값은 공백·문장부호까지 보존한다. 출처 없는 값과 아직 확정되지 않은 대상은 사실로 만들지 않는다.
 
@@ -31,7 +31,7 @@
 
 `source_reads`에는 필요한 기존 자료와 그 자료에서 확인할 사실·identity를 `resource_type`과 `required_information`으로 쓴다. 목록 자체를 읽는 것이 목적이면 추가 속성을 발명하지 않는다. `outputs`에는 요청한 외부 변경의 `resource_type`과 `CREATE | UPDATE | SEND | DELETE`를 쓴다. 같은 기존 Resource를 읽고 수정하면 양쪽에 같은 Resource 종류가 올 수 있다. Runtime이 파생하는 평면 hint를 출력에 중복 생성하지 않는다.
 
-조회만 필요하면 outputs는 비어 있고, 외부 자료가 필요 없는 설명이면 두 배열이 모두 비어 있다. 독립적인 새 작성에는 관련 없는 기존 자료 READ를 붙이지 않는다. 반대로 기존 Draft·Thread·Task·Event·Issue의 사실이나 identity가 필요하면 source를 생략하지 않는다. 실행 후 Verification은 별도 업무 source가 아니다.
+외부 자료 조회나 변경 없이 답할 수 있는 설명·예시·작성 조언은 `source_reads`와 `outputs`를 모두 비운다. 답변에서 내용을 작성하는 것과 외부에 저장·수정·전송하는 것은 다르다. 실제 자료를 찾아 달라거나 선택한 자료를 설명·수정하라는 요청이면 필요한 source를 유지하고, 일반 답변 경로를 만들기 위해 조회·변경 요구를 지우지 않는다. 조회만 필요하면 `outputs`는 비어 있다. 독립적인 외부 작성·전송은 output만 필요할 수 있으며, 관련 없는 READ를 붙이지 않는다. 기존 Draft·Thread·Task·Event·Issue의 사실이나 identity가 필요하면 source를 보존한다. 실행 후 Verification은 별도 업무 source가 아니다.
 
 CREATE는 새 외부 Resource, UPDATE는 기존 Resource 변경, SEND는 전송, DELETE는 제거다. SEND 본문을 작성하는 내부 과정은 별도 Draft CREATE가 아니다. 기존 Thread의 자료를 참고한 새 메일과 그 Thread에 대한 Reply를 구분한다. Issue close/reopen의 effect는 UPDATE다. Resource/effect는 supplied schema의 조합을 따르고, 지원하지 않는 요구를 다른 작업으로 바꾸어 맞추지 않는다.
 
