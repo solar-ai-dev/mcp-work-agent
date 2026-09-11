@@ -29,6 +29,7 @@ class LangGraphE2EGeminiTransport:
     github_arguments: dict[str, object] | None = None
     github_tool_id: str = "github_create_issue"
     task_modification_patch: dict[str, object] | None = None
+    scenario_override: str | None = None
     _scenario_prompt_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def probe(self, *, api_key: str, timeout_seconds: int) -> ProbeResult:
@@ -55,7 +56,7 @@ class LangGraphE2EGeminiTransport:
     ) -> ProviderResponsePayload:
         del instruction_text, sampling_temperature
         prompt_id = prompt_ref.prompt_id
-        scenario = _scenario(prompt_input)
+        scenario = self.scenario_override or _scenario(prompt_input)
         key = (scenario, prompt_id)
         self._scenario_prompt_counts[key] = self._scenario_prompt_counts.get(key, 0) + 1
         self.invocations.append(
@@ -226,10 +227,19 @@ def _respond(
             "RESTART_RESUME",
             "CALENDAR_CONFIRMATION",
             "GMAIL_CONFIRMATION",
+            "UNRESOLVED_TARGET_CONFIRMATION",
         } and not isinstance(base.get("confirmation_response"), Mapping)
         return {
             "missing_information_owner": "USER" if needs_confirmation else "NONE",
-            "missing_fields": ["attendee" if scenario == "CALENDAR_CONFIRMATION" else "target"]
+            "missing_fields": [
+                "attendee"
+                if scenario == "CALENDAR_CONFIRMATION"
+                else (
+                    "target_resource"
+                    if scenario == "UNRESOLVED_TARGET_CONFIRMATION"
+                    else "target"
+                )
+            ]
             if needs_confirmation
             else [],
         }
@@ -603,6 +613,8 @@ def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:
     if scenario == "TASKS_READ":
         return ["TASK"], [], []
     if scenario == "CALENDAR_READ":
+        return ["CALENDAR"], [], []
+    if scenario == "UNRESOLVED_TARGET_CONFIRMATION":
         return ["CALENDAR"], [], []
     if scenario == "PARTIAL_APPROVAL":
         return ["TASK", "CALENDAR"], ["TASK", "CALENDAR"], ["CREATE", "CREATE"]

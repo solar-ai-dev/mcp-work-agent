@@ -76,7 +76,8 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
                 "description": (
-                    "Empty for NONE; non-empty for USER or CONNECTOR-owned missing information."
+                    "Empty for NONE; non-empty for USER or CONNECTOR-owned missing information. "
+                    "Use target_resource for a USER-owned unresolved target identity."
                 ),
             },
         },
@@ -153,6 +154,7 @@ def detect_ambiguity(
         try:
             candidate = _validate_ambiguity_candidate(
                 result.structured_output,
+                request=request,
                 goal_candidate=goal_candidate,
             )
         except RequestAmbiguityValidationError as error:
@@ -187,6 +189,7 @@ def detect_ambiguity(
             )
             candidate = _validate_ambiguity_candidate(
                 revised.structured_output,
+                request=request,
                 goal_candidate=goal_candidate,
             )
             retry_budget = decision["run_budget"]
@@ -205,6 +208,7 @@ def _confirmation_response_text(
 def _validate_ambiguity_candidate(
     value: object,
     *,
+    request: WorkflowStartRequest,
     goal_candidate: RequestGoalCandidateV1,
 ) -> AmbiguityCandidateV2:
     if not isinstance(value, dict) or set(value) != {
@@ -243,6 +247,20 @@ def _validate_ambiguity_candidate(
                 "$.missing_information_owner",
                 "$.missing_fields",
                 "$.goal_candidate.constraints",
+            ),
+        )
+    if (
+        missing_information_owner == "USER"
+        and "target_resource" in missing_fields
+        and len(request.selected_resources) == 1
+    ):
+        raise RequestAmbiguityValidationError(
+            "the current Run already has one explicitly selected target resource",
+            reason_code="REQUEST_AMBIGUITY_TARGET_ALREADY_SELECTED",
+            affected_field_paths=(
+                "$.missing_information_owner",
+                "$.missing_fields",
+                "$.selected_resource_refs",
             ),
         )
     return cast(

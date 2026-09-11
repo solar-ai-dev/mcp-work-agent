@@ -93,6 +93,52 @@ def test_answer_only__reaches_terminal_through__real_production_composition(
     assert not any(prompt_id.startswith("review.") for prompt_id in invoked)
 
 
+@pytest.mark.parametrize("profile", tuple(GraphProfile))
+def test_unresolved_current_run_target__waits_before__retrieval_or_connector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: GraphProfile,
+) -> None:
+    runtime_root = tmp_path / "unresolved-target" / profile.value
+    transport = LangGraphE2EGeminiTransport(
+        scenario_override="UNRESOLVED_TARGET_CONFIRMATION"
+    )
+    container = _build_container(
+        runtime_root,
+        transport=transport,
+        monkeypatch=monkeypatch,
+        profile=profile,
+    )
+    with TestClient(
+        create_app(container),
+        base_url="http://127.0.0.1:8000",
+        headers=_API_HEADERS,
+    ) as client:
+        _bootstrap(client)
+        connector_events_before_run = _mcp_events(runtime_root)
+        run_id = _start_run(
+            client,
+            _create_conversation(client, "unresolved-target"),
+            "그 일정 언제야?",
+        )
+        snapshot = _wait_for_pending_interrupt(client, run_id)
+
+    assert cast(dict[str, object], snapshot["run"])["status"] == "WAITING_CONFIRMATION"
+    assert cast(dict[str, object], snapshot["pending_interrupt"])["semantic_owner_id"] == (
+        "REQUEST_UNDERSTANDING"
+    )
+    invoked = [
+        str(item["prompt_id"])
+        for item in transport.invocations
+        if item.get("kind") == "invoke"
+    ]
+    assert invoked == [
+        "request_understanding.identify_goal",
+        "request_understanding.detect_ambiguity",
+    ]
+    assert _mcp_events(runtime_root) == connector_events_before_run
+
+
 @pytest.mark.parametrize(
     ("scenario", "expected_tool"),
     [

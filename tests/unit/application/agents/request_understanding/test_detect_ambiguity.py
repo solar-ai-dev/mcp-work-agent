@@ -487,7 +487,7 @@ def test_unselected_read__with_user_owned_target_gap__asks_before_retrieval() ->
         outputs=[
             {
                 "missing_information_owner": "USER",
-                "missing_fields": ["확인할 일정"],
+                "missing_fields": ["target_resource"],
             }
         ]
     )
@@ -510,9 +510,102 @@ def test_unselected_read__with_user_owned_target_gap__asks_before_retrieval() ->
     assert result == {
         "requires_confirmation": True,
         "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
-        "missing_fields": ["확인할 일정"],
+        "missing_fields": ["target_resource"],
     }
     assert len(runtime.calls) == 1
+
+
+def test_selected_calendar_read__target_resource_gap__uses_bounded_revision() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["event_time"],
+            },
+        ]
+    )
+    selected_event = SelectedResourceRef(
+        "ref-event-42",
+        "google_workspace",
+        "calendar_event",
+        "event-42",
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "선택한 일정의 시각 확인",
+        "completion_conditions": ["선택한 일정의 시각을 답한다"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("그 일정 언제야?", selected_resources=(selected_event,)),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_TARGET_ALREADY_SELECTED"
+    )
+
+
+def test_named_gmail_target__retrievable_date__does_not_ask_user() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["launch_date"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "Nimbus 출시 날짜 확인",
+        "completion_conditions": ["메일 근거로 Nimbus 출시 날짜를 답한다"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("Nimbus 출시 날짜만 메일에서 확인해줘."),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 1
+
+
+def test_general_handoff_advice__without_external_resources__skips_ambiguity_inference() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "업무 인수인계 메모의 일반적인 작성 항목 설명",
+        "completion_conditions": ["일반적인 작성 항목을 답한다"],
+        "constraints": [],
+        "requested_effect_hints": [],
+        "requested_resource_hints": [],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_answer_only_request("업무 인수인계 메모에는 보통 뭘 적으면 돼?"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert runtime.calls == []
 
 
 def test_selected_gmail_send__with_missing_recipient__preserves_confirmation() -> None:
