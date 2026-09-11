@@ -1071,7 +1071,11 @@ def test_selected_github_issue__uses_typed_repository__without_unbound_duplicate
                     source_type="GITHUB_ISSUE", required_information=[]
                 ),
                 "analysis_requirement": "NONE",
-            }
+            },
+            {
+                "missing_information_owner": "NONE",
+                "missing_fields": [],
+            },
         ]
     )
     selected = SelectedResourceRef(
@@ -1103,6 +1107,9 @@ def test_selected_github_issue__uses_typed_repository__without_unbound_duplicate
         llm_runtime=runtime,
         request=request,
         goal_candidate=candidate,
+        prompt_ref=_prompt_ref(
+            "request_understanding.detect_ambiguity", "detect_ambiguity"
+        ),
     )
     intent = finalize_intent(
         candidate,

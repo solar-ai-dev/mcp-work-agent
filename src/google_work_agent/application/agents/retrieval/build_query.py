@@ -85,6 +85,7 @@ def build_query(
                 person_candidates
                 if route_by_id[route_id]["resource_type"]
                 in {
+                    "EMAIL",
                     "GMAIL_THREAD",
                     "GMAIL_MESSAGE",
                 }
@@ -275,9 +276,10 @@ def _validate_route_materializability(
                 )
         elif kind == "TEMPORAL_RANGE":
             temporal = cast(TemporalRangeConstraintV1, constraint)
-            if temporal["axis"] != "MESSAGE_TIME":
+            if temporal["axis"] not in {"MESSAGE_TIME", "EVENT_TIME"}:
                 raise RetrievalV2ValidationError(
-                    "Gmail SEARCH requires MESSAGE_TIME for temporal constraints",
+                    "Gmail SEARCH only supports message-time filters "
+                    "or event-time evidence criteria",
                     affected_field_paths=(
                         "$.route_queries[].search_spec.constraints[?(@.kind=='TEMPORAL_RANGE')].axis",
                     ),

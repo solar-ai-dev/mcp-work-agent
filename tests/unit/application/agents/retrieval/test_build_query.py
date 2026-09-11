@@ -417,7 +417,7 @@ def test_build_query__changed_search__accepts_planner_semantic_revision(
     [
         {
             "kind": "TEMPORAL_RANGE",
-            "axis": "EVENT_TIME",
+            "axis": "TASK_SCHEDULED_DATE",
             "start_local": "2026-09-01",
             "end_local": "2026-09-08",
             "timezone": "Asia/Seoul",
@@ -466,6 +466,46 @@ def test_build_query__gmail_search__rejects_constraints_the_projection_cannot_lo
                 )
             },
         )
+
+
+def test_build_query__gmail_search__retains_event_time_for_evidence_matching() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    event_time = {
+        "kind": "TEMPORAL_RANGE",
+        "axis": "EVENT_TIME",
+        "start_local": "2026-09-01",
+        "end_local": "2026-09-08",
+        "timezone": "Asia/Seoul",
+    }
+
+    result = build_query(
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "r",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {"mode": "INITIAL", "constraints": [event_time]},
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+        frozen_routes=[route],
+        route_policies={"r": RouteConstraintPolicy(frozenset({"TEMPORAL_RANGE"}))},
+    )
+
+    assert result[0]["effective_constraints"] == [event_time]
 
 
 def test_build_query__gmail_search__allows_no_translatable_filter() -> None:

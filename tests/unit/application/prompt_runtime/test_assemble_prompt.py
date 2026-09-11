@@ -45,8 +45,9 @@ def test_assemble_prompt__uses_registered_source__and_allowlisted_projection(
     prompt_ref = registry.lookup_by_id("planning.compose_answer")
 
     assembled = assemble_prompt(prompt_ref, _projection(), registry=registry)
+    source = registry.source_text(prompt_ref.prompt_id).rstrip()
 
-    assert assembled.startswith("You are the Planning answer-composition node.")
+    assert assembled.startswith(f"{source}\n\n")
     assert "Product-wide context: mcp-work-agent is a workplace productivity product" in assembled
     assert "workplace productivity product, not a social companion" in assembled
     assert "Product display language is Korean" in assembled
@@ -126,8 +127,9 @@ def test_evaluation_and_development_scope__use_same__draft_base_source() -> None
         registry=registry,
         execution_scope=DEVELOPMENT_SMOKE,
     )
+    source = registry.source_text(prompt_ref.prompt_id).rstrip()
 
-    assert evaluation_assembled.startswith("You are the Planning answer-composition node.")
+    assert evaluation_assembled.startswith(f"{source}\n\n")
     assert development_assembled == evaluation_assembled
 
 

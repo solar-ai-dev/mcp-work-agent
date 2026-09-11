@@ -368,8 +368,9 @@ class _ComponentInferencePort:
 
 
 class _ComponentConnectorReadPort:
-    def __init__(self) -> None:
+    def __init__(self, *, include_body: bool = False) -> None:
         self.call_count = 0
+        self.include_body = include_body
 
     def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
         del tool_arguments
@@ -386,7 +387,14 @@ class _ComponentConnectorReadPort:
                         "parent_id": None,
                         "version": "v1",
                         "related_resource_ids": [],
-                        "payload": {"subject": "Weekly status"},
+                        "payload": {
+                            "subject": "Weekly status",
+                            **(
+                                {"body": "The current weekly status is ready."}
+                                if self.include_body
+                                else {}
+                            ),
+                        },
                     }
                 ]
             },
@@ -929,6 +937,15 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
                         "manifestations": ["회의", "시간변경"],
                     }
                 )
+                cast(Any, result)["route_queries"][0]["search_spec"]["constraints"].append(
+                    {
+                        "kind": "TEMPORAL_RANGE",
+                        "axis": "EVENT_TIME",
+                        "timezone": "Asia/Seoul",
+                        "start_local": "2026-08-31T00:00:00",
+                        "end_local": "2026-09-07T00:00:00",
+                    }
+                )
                 return result
             if prompt_id == "retrieval.select_evidence":
                 self.assessed_resources.append(
@@ -1087,7 +1104,7 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     state["request_intent"] = cast(Any, _intent())
     state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
     llm = _ComponentInferencePort()
-    connector = _ComponentConnectorReadPort()
+    connector = _ComponentConnectorReadPort(include_body=True)
     cache = InMemoryRunRetrievalCache()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
@@ -1128,7 +1145,7 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     assert second["retrieval_result"]["meta"]["revision"] == 2
     assert second["retrieval_result"]["retrieval_rounds"] == 2
     assert connector.call_count == 2
-    assert llm.calls.count("retrieval.plan_query") == 3
+    assert llm.calls.count("retrieval.plan_query") == 2
     attempts = cast(list[dict[str, Any]], second["__context_query_attempts__"])
     assert all(
         next(
@@ -1198,7 +1215,7 @@ def test_retrieval__unchanged_main_back_edge__closes_partial_without_a_second_re
     assert second["retrieval_result"]["retrieval_rounds"] == 1
     assert second["__target__"] == "SOLUTION_PLANNING"
     assert connector.call_count == 1
-    assert llm.calls.count("retrieval.plan_query") == 3
+    assert llm.calls.count("retrieval.plan_query") == 5
 
 
 def test_retrieval__plan_query_finalize__skips_stale_builder_plan() -> None:
@@ -1296,7 +1313,10 @@ def test_retrieval__unchanged_local_followup__closes_partial_without_looping() -
     state = _state(initial_target="context_retriever")
     state["request_intent"] = cast(Any, _intent())
     state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
-    llm = _ComponentInferencePort(retrieval_needs_more=True)
+    llm = _ComponentInferencePort(
+        retrieval_needs_more=True,
+        retrieval_followup_changes_query=False,
+    )
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
@@ -1321,10 +1341,10 @@ def test_retrieval__unchanged_local_followup__closes_partial_without_looping() -
 
     assert result["retrieval_result"]["coverage"] == "PARTIAL"
     assert result["retrieval_result"]["retrieval_rounds"] == 1
-    assert result["retry_budget"]["additional_retrieval_rounds_used"] == 0
+    assert result["retry_budget"]["additional_retrieval_rounds_used"] == 1
     assert result["__target__"] == "SOLUTION_PLANNING"
     assert connector.call_count == 1
-    assert llm.calls.count("retrieval.plan_query") == 1
+    assert llm.calls.count("retrieval.plan_query") == 3
     assert llm.calls.count("retrieval.assess_sufficiency") == 1
 
 
