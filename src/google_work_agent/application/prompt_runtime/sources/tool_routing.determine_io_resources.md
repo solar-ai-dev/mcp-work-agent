@@ -4,16 +4,16 @@
 
 # 판단 문맥
 
-goal, completion_conditions, constraints, source/output 책임과 hint를 함께 읽는다. 요청에서 일반 설명을 원하는지, 개인 자료의 사실을 확인하려는지, 외부 Resource를 바꾸려는지 구분한다. 연결된 계정이나 사용 가능한 Tool이 있다는 이유만으로 조회할 일을 만들지 않는다. 요청에 등장한 단어를 Resource 이름에 곧바로 대응시키지 않는다.
+goal, completion_conditions, constraints, source/output 책임과 hint를 함께 읽는다. 일반 지식과 현재 입력으로 답할 설명·예시·작성 조언인지, 개인 자료의 사실 확인이나 외부 Resource 변경인지 구분한다. 전자라면 NO_TOOL_NEEDED를 선택하고, 후자라면 필요한 input/output을 보존한다. 연결된 계정·사용 가능한 Tool·요청에 등장한 Resource 관련 단어만으로 조회할 일을 만들지 않는다.
 
-기존 Resource의 identity나 변경 전 값이 필요하면 input이다. 새 Resource를 만드는 것만으로 관련 없는 input READ가 필요해지지는 않는다. 기존 Resource 수정에는 그 대상의 input과 output을 보존한다. 기존 Thread Reply, 기존 Draft 사용, 독립적인 새 SEND를 구분하고 실행 후 Verification을 업무 input으로 추가하지 않는다.
+기존 Resource의 identity나 변경 전 값이 필요하면 input이다. 기존 Resource 수정에는 그 대상의 input과 output을 보존한다. 기존 Thread Reply, 기존 Draft 사용, 독립적인 새 SEND를 구분하고 실행 후 Verification을 업무 input으로 추가하지 않는다. input이 비어 있어도 명시적인 외부 작성·전송 output은 있을 수 있으므로, READ 불필요를 NO_TOOL_NEEDED로 바꾸지 않는다. 반대로 답변 안에서만 내용을 작성하는 일을 외부 저장으로 만들지 않는다.
 
 `confirmation_response`는 확인된 선택에만 반영한다. 이전 ambiguity의 false는 영구적인 질문 금지가 아니다. 현재 원문 의미와 제공된 근거에서 사용자 결정이 실제로 필요한지, 자료 조회로 해결할 수 있는지 구분한다. 정책 위반·권한 부족·미지원 capability와 단순 미조회도 구분한다. 제공되지 않은 권한 사실은 추정하지 않는다.
 
 # 결과의 의미
 
 - `ROUTE_READY`: 요청 수행에 필요한 Resource/effect를 현재 capability 안에서 제안할 수 있다.
-- `NO_TOOL_NEEDED`: 외부 조회나 변경 없이 답할 요청이다. input_resource_types, output_resource_types, output_effects는 모두 비운다. 일반 설명의 품질을 높인다는 이유로 개인 Gmail을 검색하지 않는다.
+- `NO_TOOL_NEEDED`: 외부 조회와 변경이 모두 필요 없는 답변이다. input_resource_types, output_resource_types, output_effects를 모두 비운다. 불필요한 조회를 추가하거나 실제 외부 변경 요구를 지워 이 상태를 만들지 않는다.
 - `NEEDS_CONFIRMATION`: 경로를 정하는 데 실제 사용자 선택이 필요하다. 조회로 얻을 사실이나 이미 주어진 값을 다시 묻기 위한 상태가 아니다.
 - `BLOCKED`: 제공된 capability와 현재 요구 사이에 진행할 수 없는 구체적인 제한이 있다. 정보가 아직 조회되지 않았다는 사실만으로 차단하지 않는다.
 
