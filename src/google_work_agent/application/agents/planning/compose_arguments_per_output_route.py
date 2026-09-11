@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google_work_agent.application.agents.planning.bind_gmail_draft_update_identity import (
     bind_gmail_draft_update_identity,
+    project_gmail_draft_editable_source,
 )
 from google_work_agent.application.agents.planning.bind_gmail_thread_reply_identity import (
     bind_gmail_thread_reply_identity,
@@ -203,6 +204,14 @@ def compose_arguments_per_output_route(
                 prompt_input["run_reference_time"] = dict(run_reference_time)
             if modification is not None:
                 prompt_input["modification"] = dict(modification)
+            editable_source = project_gmail_draft_editable_source(
+                route=route,
+                evidence=evidence,
+                source_snapshots=source_snapshots or {},
+                preferred_evidence_refs=objective.get("evidence_refs", []),
+            )
+            if editable_source is not None:
+                prompt_input["editable_source"] = editable_source
             candidate = invoke(PROMPT_ID, prompt_input)
         if candidate.get("schema_version") != 1 or candidate.get("route_id") != route_id:
             raise ValueError("argument candidate escaped its frozen output route")

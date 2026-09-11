@@ -253,6 +253,8 @@ def _exact_intent_candidate(
             analysis_requirement=request_intent["analysis_requirement"],
             input_reason_codes=(("GMAIL_THREAD", "REQUESTED_INPUT"),),
         )
+    if set(effect_values) == {"READ"}:
+        resource_types = _collapse_gmail_search_inputs(resource_types)
     if len(resource_types) != 1:
         return None
     resource_type = resource_types[0]
@@ -310,9 +312,9 @@ def _resource_responsibility_candidate(
     responsibilities = request_intent.get("resource_responsibilities")
     if not responsibilities:
         return None
-    input_resources = tuple(
+    input_resources = _collapse_gmail_search_inputs(tuple(
         item["resource_type"] for item in responsibilities["source_reads"]
-    )
+    ))
     output_pairs = tuple(
         (item["resource_type"], EffectType(item["effect"]))
         for item in responsibilities["outputs"]
@@ -326,6 +328,15 @@ def _resource_responsibility_candidate(
             (resource_type, "REQUESTED_INPUT") for resource_type in input_resources
         ),
     )
+
+
+def _collapse_gmail_search_inputs(resource_types: tuple[str, ...]) -> tuple[str, ...]:
+    """Use the searchable Thread route when Message and Thread describe one Gmail READ."""
+
+    unique = tuple(dict.fromkeys(resource_types))
+    if {"GMAIL_THREAD", "GMAIL_MESSAGE"}.issubset(unique):
+        return tuple(item for item in unique if item != "GMAIL_MESSAGE")
+    return unique
 
 
 def _selected_read_candidate(

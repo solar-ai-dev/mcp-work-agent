@@ -183,7 +183,7 @@
       "runtime_node_id": "planning.compose_arguments_per_output_route",
       "input_schema_version": 1,
       "required_root_fields": ["output_route", "action_objective", "tool_schema"],
-      "optional_root_fields": ["request_intent", "work_analysis", "evidence", "confirmation_response", "run_reference_time", "modification"],
+      "optional_root_fields": ["request_intent", "work_analysis", "evidence", "confirmation_response", "run_reference_time", "modification", "editable_source"],
       "output_schema_version": 1
     },
     {

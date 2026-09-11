@@ -340,7 +340,7 @@ def test_build_query__changed_search__accepts_planner_semantic_revision(
     anchors = {
         "TEMPORAL_RANGE": {
             "kind": "TEMPORAL_RANGE",
-            "axis": "EVENT_TIME",
+            "axis": "MESSAGE_TIME",
             "start_local": "2026-09-01",
             "end_local": "2026-09-08",
             "timezone": "Asia/Seoul",
@@ -357,7 +357,7 @@ def test_build_query__changed_search__accepts_planner_semantic_revision(
         "STATUS_SCOPE": {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
     }
     changed = {
-        "TEMPORAL_RANGE": {**anchors[kind], "axis": "MESSAGE_TIME"},
+        "TEMPORAL_RANGE": {**anchors[kind], "end_local": "2026-09-09"},
         "PARTICIPANT": {
             **anchors[kind],
             "participants": [{"role": "ANY", "identity": "two@example.test"}],
@@ -408,12 +408,69 @@ def test_build_query__changed_search__accepts_planner_semantic_revision(
             "remove_constraint_kinds": [kind] if remove else [],
         },
     }
-    result = build_query(plan, prior_plans={"r": prior}, **kwargs)[0]
-
     if remove:
-        assert result["effective_constraints"] == []
-    else:
-        assert cast(SemanticRetrievalConstraintV1, changed) in result["effective_constraints"]
+        with pytest.raises(RetrievalV2ValidationError, match="translatable constraint"):
+            build_query(plan, prior_plans={"r": prior}, **kwargs)
+        return
+    result = build_query(plan, prior_plans={"r": prior}, **kwargs)[0]
+    assert cast(SemanticRetrievalConstraintV1, changed) in result["effective_constraints"]
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        {
+            "kind": "TEMPORAL_RANGE",
+            "axis": "EVENT_TIME",
+            "start_local": "2026-09-01",
+            "end_local": "2026-09-08",
+            "timezone": "Asia/Seoul",
+        },
+        {
+            "kind": "PARTICIPANT",
+            "participants": [{"role": "ATTENDEE", "identity": "one@example.test"}],
+            "match_mode": "ALL",
+        },
+        {"kind": "STATUS_SCOPE", "values": ["ANY"]},
+    ],
+)
+def test_build_query__gmail_search__rejects_constraints_the_projection_cannot_lower(
+    constraint: dict[str, object],
+) -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "r",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "r",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": [constraint]},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    with pytest.raises(RetrievalV2ValidationError):
+        build_query(
+            plan,
+            frozen_routes=[route],
+            route_policies={
+                "r": RouteConstraintPolicy(
+                    frozenset({"TEMPORAL_RANGE", "PARTICIPANT", "STATUS_SCOPE"})
+                )
+            },
+        )
 
 
 def test_build_query__followup_hypothesis_change__preserves_explicit_constraint() -> None:

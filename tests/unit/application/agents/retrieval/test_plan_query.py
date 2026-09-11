@@ -67,6 +67,93 @@ def _tool_route_plan(*, allowed_read_tool_ids: list[str]) -> ToolRoutePlanV2:
     )
 
 
+def test_plan_query__gmail_unmaterializable_candidate__uses_semantic_revision() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    invalid = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "STATUS_SCOPE", "values": ["ANY"]}],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    revised = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "CONCEPT", "concept": "출시", "manifestations": ["출시"]}
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[invalid, revised])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+
+    result, budget, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": []},
+            "input_routes": [route],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={
+            "route-1": RouteConstraintPolicy(frozenset({"CONCEPT", "STATUS_SCOPE"}))
+        },
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert result == revised
+    assert llm_invoked is True
+    assert len(runtime.calls) == 2
+    assert budget["semantic_revisions_used_by_failure"]
+    repair_input = cast(dict[str, object], runtime.calls[1]["prompt_input"])
+    failure_record = cast(dict[str, object], repair_input["failure_record"])
+    assert failure_record["affected_field_paths"] == [
+        "$.route_queries[].search_spec.constraints"
+    ]
+
+
 def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
     assert not has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
@@ -310,6 +397,96 @@ def test_explicit_resource_id__materializes_detail_fetch__without_llm() -> None:
             "reason_codes": ["EXPLICIT_RESOURCE_ID"],
             "search_spec": None,
             "detail_candidate_ref": "gmail_draft:r976635311795334843",
+        }
+    ]
+
+
+def test_draft_update__searches_only_user_bound_source_title__without_llm() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-draft",
+            "resource_type": "GMAIL_DRAFT",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_drafts", "gmail_get_draft"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    intent = {
+        "goal": "초안 끝에 새 문장을 추가한다.",
+        "completion_conditions": ["8월 21일 입고 준비를 확인 중입니다.를 추가한다."],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": "Quartz 납품 회신 검토",
+                "provenance": {
+                    "source": "USER_REQUEST",
+                    "start_offset": 8,
+                    "end_offset": 22,
+                },
+            },
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "business_concepts",
+                "value": ["8월 21일", "입고 준비"],
+            },
+        ],
+        "requested_effect_hints": ["READ", "UPDATE"],
+        "requested_resource_hints": ["GMAIL_DRAFT"],
+    }
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": intent, "input_routes": [route]},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={
+            "route-draft": RouteConstraintPolicy(
+                frozenset({"KEYWORD", "STATUS_SCOPE"}),
+                frozenset({"STATUS_SCOPE"}),
+            )
+        },
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert result["route_queries"] == [
+        {
+            "route_id": "route-draft",
+            "operation": "SEARCH",
+            "reason_codes": ["EXACT_DRAFT_SOURCE_LOOKUP"],
+            "search_spec": {
+                "mode": "INITIAL",
+                "constraints": [
+                    {
+                        "kind": "KEYWORD",
+                        "terms": ["Quartz 납품 회신 검토"],
+                        "match_mode": "PHRASE",
+                    },
+                    {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
+                ],
+            },
+            "detail_candidate_ref": None,
         }
     ]
 

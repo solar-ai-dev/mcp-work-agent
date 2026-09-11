@@ -12,6 +12,7 @@ from google_work_agent.application.agents.retrieval.build_query import (
     build_query,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    RetrievalV2ValidationError,
     SourceFetchPlanV1,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -257,6 +258,37 @@ def test_gmail_draft_search__for_frozen_draft_route__uses_draft_operation() -> N
 
     assert tool_id == "gmail_search_drafts"
     assert arguments == {"query": '"Quartz 납품 회신 검토"', "page_size": 20}
+
+
+def test_gmail_search__unmaterializable_checkpoint_plan__raises_typed_validation_error() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "route-gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {"kind": "STATUS_SCOPE", "values": ["ANY"]},
+            ],
+        },
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-gmail",
+            "connector_id": "google_workspace",
+            "resource_type": "GMAIL_THREAD",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+        },
+    )
+
+    with pytest.raises(RetrievalV2ValidationError) as raised:
+        execute_read_projection.project_connector_call(plan, route=route, page_size=20)
+
+    assert raised.value.affected_field_paths == (
+        "$.source_fetch_plans[].effective_constraints",
+    )
 
 
 @pytest.mark.parametrize("axis", ["MESSAGE_TIME", "EVENT_TIME"])

@@ -52,6 +52,66 @@ def test_gmail_draft_update__patch_preserves__unrequested_observed_values() -> N
     assert result["arguments"] == {"draft_id": "draft-actual", "payload": PAYLOAD}
 
 
+def test_gmail_draft_update__unchanged_patch__is_not_an_action_preview() -> None:
+    with pytest.raises(PlanningArgumentBindingError, match="does not change"):
+        _compose(model_draft_id=None, payload={"body": "기존 본문"})
+
+
+def test_gmail_draft_update__argument_prompt__receives_bounded_editable_source() -> None:
+    prompt_inputs: list[dict[str, object]] = []
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {
+            **ROUTE,
+            "schema_version": 1,
+            "argument_schema": planning_tool_argument_schema("gmail_update_draft"),
+            "immutable_arguments": {},
+        },
+    )
+
+    compose_arguments_per_output_route(
+        [ROUTE],
+        objectives=[
+            {
+                "schema_version": 1,
+                "route_id": "r1",
+                "objective": "Append the requested sentence to the current body",
+                "target_semantics": "GMAIL_DRAFT",
+                "scope_constraints": [],
+                "evidence_refs": ["draft-evidence"],
+            }
+        ],
+        bound_tool_schemas=[bound],
+        request_intent={},
+        evidence=[
+            {
+                "evidence_id": "draft-evidence",
+                "resource_handle": "gmail_draft:draft-actual",
+            }
+        ],
+        source_snapshots={"draft-evidence": {**PAYLOAD, "body": "기존 본문"}},
+        invoke=lambda _, value: (
+            prompt_inputs.append(dict(value))
+            or {
+                "schema_version": 1,
+                "route_id": "r1",
+                "arguments": {"payload": {"body": "기존 본문\n추가 문장"}},
+                "evidence_refs": ["draft-evidence"],
+            }
+        ),
+    )
+
+    assert prompt_inputs[0]["editable_source"] == {
+        "to": ["recipient@example.com"],
+        "cc": [],
+        "bcc": [],
+        "subject": "Quartz 납품 회신 검토",
+        "body": "기존 본문",
+        "attachments": [],
+    }
+    assert "thread_id" not in cast(dict[str, object], prompt_inputs[0]["editable_source"])
+
+
 def test_gmail_draft_update__model_schema_accepts_patch__and_rejects_source_identity() -> None:
     schema = tool_argument_candidate_output_schema(
         {

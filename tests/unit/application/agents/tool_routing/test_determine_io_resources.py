@@ -349,6 +349,68 @@ def test_existing_gmail_thread_reply__thread_input_hint__routes_through_retrieva
     assert runtime.calls == []
 
 
+@pytest.mark.parametrize("with_responsibilities", [False, True])
+def test_gmail_read__message_and_thread__use_one_searchable_thread_route(
+    with_responsibilities: bool,
+) -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
+            "goal": "find one mail",
+            "completion_conditions": ["report whether the mail exists"],
+            "constraints": [],
+            "requested_effect_hints": ["READ"],
+            "requested_resource_hints": ["GMAIL_MESSAGE", "GMAIL_THREAD"],
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+            **(
+                {
+                    "resource_responsibilities": {
+                        "source_reads": [
+                            {"resource_type": "GMAIL_MESSAGE", "required_information": ["body"]},
+                            {"resource_type": "GMAIL_THREAD", "required_information": ["subject"]},
+                        ],
+                        "outputs": [],
+                    }
+                }
+                if with_responsibilities
+                else {}
+            ),
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-read",
+        conversation_id="conversation",
+        workflow_key="thread",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="find the mail",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[])
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate.input_resource_types == ("GMAIL_THREAD",)
+    assert candidate.output_pairs == ()
+    assert runtime.calls == []
+
+
 def test_cross_resource_responsibilities__project_deterministically__to_input_and_output() -> None:
     intent = cast(
         RequestIntentV2,

@@ -62,11 +62,54 @@ def bind_gmail_draft_update_identity(
     unknown = set(patch) - set(snapshot)
     if unknown:
         raise PlanningArgumentBindingError("Gmail Draft UPDATE patch contains unknown fields")
+    if all(snapshot[name] == value for name, value in patch.items()):
+        raise PlanningArgumentBindingError("Gmail Draft UPDATE patch does not change the source")
     return {
         **arguments,
         "draft_id": draft_id,
         "payload": {**snapshot, **dict(patch)},
     }, list(dict.fromkeys(evidence_refs))
+
+
+def project_gmail_draft_editable_source(
+    *,
+    route: Mapping[str, object],
+    evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]],
+    preferred_evidence_refs: Sequence[str],
+) -> dict[str, object] | None:
+    """Project one current Draft's editable values without exposing provider identity fields."""
+
+    if not _is_gmail_draft_update_route(route):
+        return None
+    preferred = set(preferred_evidence_refs)
+    candidates: dict[str, dict[str, object]] = {}
+    for item in evidence:
+        handle = item.get("resource_handle")
+        evidence_ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
+        if (
+            not isinstance(handle, str)
+            or not handle.startswith("gmail_draft:")
+            or not isinstance(evidence_ref, str)
+            or not evidence_ref
+            or (preferred and evidence_ref not in preferred)
+        ):
+            continue
+        snapshot = source_snapshots.get(evidence_ref)
+        if snapshot is None:
+            continue
+        validated = _validated_snapshot(snapshot)
+        existing = candidates.get(handle)
+        if existing is not None and existing != validated:
+            return None
+        candidates[handle] = validated
+    if len(candidates) != 1:
+        return None
+    snapshot = next(iter(candidates.values()))
+    return {
+        name: snapshot[name]
+        for name in ("to", "cc", "bcc", "subject", "body", "attachments")
+    }
 
 
 def _validated_snapshot(value: Mapping[str, object]) -> dict[str, object]:
@@ -106,4 +149,4 @@ def _is_gmail_draft_update_route(route: Mapping[str, object]) -> bool:
     )
 
 
-__all__ = ["bind_gmail_draft_update_identity"]
+__all__ = ["bind_gmail_draft_update_identity", "project_gmail_draft_editable_source"]

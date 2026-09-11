@@ -47,6 +47,8 @@ def sanitize_user_visible_answer(
                 and any(value in line for value in resource_ids)
             )
         )
+        for resource_id in sorted(set(resource_ids), key=len, reverse=True):
+            result = result.replace(resource_id, reference_label)
     for ref in sorted(set(internal_refs), key=len, reverse=True):
         if ref:
             result = re.sub(r"(?<![\w])" + re.escape(ref) + r"(?![\w])", reference_label, result)

@@ -527,7 +527,10 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
             mapping = {"DRAFT": "in:drafts", "SENT": "in:sent"}
             terms.extend(mapping[item] for item in constraint["values"] if item in mapping)
     if not terms:
-        raise ValueError("EMAIL retrieval requires a translatable constraint")
+        raise RetrievalV2ValidationError(
+            "Gmail SEARCH requires at least one translatable constraint",
+            affected_field_paths=("$.source_fetch_plans[].effective_constraints",),
+        )
     return " ".join(terms)
 
 
@@ -541,7 +544,12 @@ def _gmail_participant_query(constraint: ParticipantConstraintV1) -> str:
         identity = validate_participant_identity(person["identity"])
         role = person["role"]
         if role == "ATTENDEE":
-            raise ValueError("Gmail cannot enforce Calendar attendee membership")
+            raise RetrievalV2ValidationError(
+                "Gmail SEARCH cannot enforce Calendar attendee membership",
+                affected_field_paths=(
+                    "$.source_fetch_plans[].effective_constraints[?(@.kind=='PARTICIPANT')]",
+                ),
+            )
         prefixes = (
             ["from:", "to:"]
             if role == "ANY"

@@ -11,11 +11,14 @@ from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ParticipantConstraintV1,
     RetrievalConstraintKindV1,
     RetrievalV2ValidationError,
     RouteQueryIntentV2,
     SemanticRetrievalConstraintV1,
     SourceFetchPlanV1,
+    StatusScopeConstraintV1,
+    TemporalRangeConstraintV1,
     validate_retrieval_query_plan_v2,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
@@ -171,6 +174,11 @@ def _build_one(
             selected_person_identities=selected_person_identities,
         )
     resource_type = route["resource_type"]
+    _validate_route_materializability(
+        operation=operation,
+        resource_type=resource_type,
+        constraints=effective,
+    )
     normalized = _normalize_constraints(effective)
     query_identity = _query_identity(route, operation, normalized, query["detail_candidate_ref"])
     if operation == "NEXT_PAGE" and prior_plan is not None:
@@ -237,6 +245,59 @@ def _effective_constraints(
     if not policy.required_kinds.issubset(kinds):
         raise RetrievalV2ValidationError("effective constraints omit a required kind")
     return effective
+
+
+def _validate_route_materializability(
+    *,
+    operation: object,
+    resource_type: str,
+    constraints: Sequence[SemanticRetrievalConstraintV1],
+) -> None:
+    """Reject semantic plans that the frozen route cannot lower without data loss."""
+
+    if operation != "SEARCH" or resource_type not in {
+        "EMAIL",
+        "GMAIL_THREAD",
+        "GMAIL_MESSAGE",
+        "GMAIL_DRAFT",
+    }:
+        return
+
+    has_query_term = False
+    for constraint in constraints:
+        kind = constraint["kind"]
+        if kind in {"CONCEPT", "KEYWORD", "RESOURCE_REF", "CONTAINER_REF"}:
+            has_query_term = True
+        elif kind == "PARTICIPANT":
+            participant = cast(ParticipantConstraintV1, constraint)
+            if any(item["role"] == "ATTENDEE" for item in participant["participants"]):
+                raise RetrievalV2ValidationError(
+                    "Gmail SEARCH cannot enforce Calendar attendee membership",
+                    affected_field_paths=(
+                        "$.route_queries[].search_spec.constraints[?(@.kind=='PARTICIPANT')]",
+                    ),
+                )
+            has_query_term = True
+        elif kind == "TEMPORAL_RANGE":
+            temporal = cast(TemporalRangeConstraintV1, constraint)
+            if temporal["axis"] != "MESSAGE_TIME":
+                raise RetrievalV2ValidationError(
+                    "Gmail SEARCH requires MESSAGE_TIME for temporal constraints",
+                    affected_field_paths=(
+                        "$.route_queries[].search_spec.constraints[?(@.kind=='TEMPORAL_RANGE')].axis",
+                    ),
+                )
+            has_query_term = True
+        elif kind == "STATUS_SCOPE":
+            status = cast(StatusScopeConstraintV1, constraint)
+            if any(value in {"DRAFT", "SENT"} for value in status["values"]):
+                has_query_term = True
+
+    if not has_query_term:
+        raise RetrievalV2ValidationError(
+            "Gmail SEARCH requires at least one translatable constraint",
+            affected_field_paths=("$.route_queries[].search_spec.constraints",),
+        )
 
 
 def _validate_changed_removals(

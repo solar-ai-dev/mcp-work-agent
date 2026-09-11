@@ -20,3 +20,20 @@ def test_sanitize_user_visible_answer__foreign_source_quote__retains_observed_te
     )
     assert "東京" in result
     assert "未確認" not in result
+
+
+def test_sanitize_user_visible_answer__calendar_resource_id__never_reaches_user() -> None:
+    calendar_id = (
+        "dd71b689b7998b1f11638971f2d71117187fc29f5cfe6c5e612e46ae744af886"
+        "@group.calendar.google.com"
+    )
+
+    result = sanitize_user_visible_answer(
+        f"캘린더: {calendar_id}\n다음 일정은 9월 10일 오전 10시입니다.",
+        internal_refs=[],
+        internal_resource_ids=[calendar_id],
+        user_request="그 일정 언제야?",
+    )
+
+    assert calendar_id not in result
+    assert "9월 10일 오전 10시" in result

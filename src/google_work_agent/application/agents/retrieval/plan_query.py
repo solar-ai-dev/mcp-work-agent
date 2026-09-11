@@ -144,6 +144,14 @@ def deterministic_initial_query_plan(
     )
     if exact_detail is not None:
         return exact_detail
+    draft_source_plan = _exact_gmail_draft_source_plan(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        route_policies=route_policies,
+        is_followup="current_round_no" in prompt_input,
+    )
+    if draft_source_plan is not None:
+        return draft_source_plan
     calendar_plan = _exact_calendar_conflict_check_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
@@ -161,6 +169,77 @@ def deterministic_initial_query_plan(
         validated_container_refs=validated_container_refs,
         is_followup="current_round_no" in prompt_input,
     )
+
+
+def _exact_gmail_draft_source_plan(
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    is_followup: bool,
+) -> RetrievalQueryPlanV2 | None:
+    """Search an existing Draft by the one user-bound lookup literal before editing it."""
+    if is_followup or len(frozen_routes) != 1:
+        return None
+    route = frozen_routes[0]
+    if route["resource_type"] != "GMAIL_DRAFT" or not route["required"]:
+        return None
+    request_intent = prompt_input.get("request_intent")
+    if not isinstance(request_intent, Mapping):
+        return None
+    effects = _string_collection(request_intent.get("requested_effect_hints"))
+    if "UPDATE" not in effects or not effects.issubset({"READ", "UPDATE"}):
+        return None
+    lookup_literal = _one_user_bound_search_literal(request_intent.get("constraints"))
+    policy = route_policies.get(route["route_id"])
+    if (
+        lookup_literal is None
+        or policy is None
+        or not {"KEYWORD", "STATUS_SCOPE"}.issubset(policy.supported_kinds)
+        or route_operation_tool_id(route, "SEARCH") is None
+    ):
+        return None
+    return {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": route["route_id"],
+                "operation": "SEARCH",
+                "reason_codes": ["EXACT_DRAFT_SOURCE_LOOKUP"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "KEYWORD", "terms": [lookup_literal], "match_mode": "PHRASE"},
+                        {"kind": "STATUS_SCOPE", "values": ["DRAFT"]},
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+
+def _one_user_bound_search_literal(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+    literals: list[str] = []
+    for constraint in value:
+        if (
+            not isinstance(constraint, Mapping)
+            or constraint.get("kind") != "USER_REQUIREMENT"
+            or constraint.get("field") != "search_terms"
+        ):
+            continue
+        provenance = constraint.get("provenance")
+        if not isinstance(provenance, Mapping) or provenance.get("source") != "USER_REQUEST":
+            continue
+        raw = constraint.get("value")
+        terms = raw if isinstance(raw, list) else [raw]
+        if not all(isinstance(term, str) and term.strip() for term in terms):
+            return None
+        literals.extend(term.strip() for term in cast(list[str], terms))
+    unique = tuple(dict.fromkeys(literals))
+    return unique[0] if len(unique) == 1 else None
 
 
 def deterministic_query_plan(

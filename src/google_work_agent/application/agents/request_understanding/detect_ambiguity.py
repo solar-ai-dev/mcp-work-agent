@@ -110,7 +110,10 @@ def detect_ambiguity(
             },
             retry_budget,
         )
-    if _is_retrieval_first_read(goal_candidate=goal_candidate) or _is_general_answer_only(
+    if _is_selected_read_target(
+        request=request,
+        goal_candidate=goal_candidate,
+    ) or _is_general_answer_only(
         request=request,
         goal_candidate=goal_candidate,
     ):
@@ -357,15 +360,17 @@ def _normalize_information_need(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
-def _is_retrieval_first_read(*, goal_candidate: RequestGoalCandidateV1) -> bool:
-    """Defer missing source facts to Retrieval for every read-only request.
+def _is_selected_read_target(
+    *,
+    request: WorkflowStartRequest,
+    goal_candidate: RequestGoalCandidateV1,
+) -> bool:
+    """Skip a second target decision only when the user already selected the READ source."""
 
-    A READ can finish with partial or absent evidence; it does not need a
-    user-owned value before the frozen Connector route has been queried.
-    """
-
-    return set(goal_candidate["requested_effect_hints"]) == {"READ"} and bool(
-        goal_candidate["requested_resource_hints"]
+    return (
+        bool(request.selected_resources)
+        and set(goal_candidate["requested_effect_hints"]) == {"READ"}
+        and bool(goal_candidate["requested_resource_hints"])
     )
 
 
