@@ -105,6 +105,7 @@ class _ComponentInferencePort:
         github_retrieval: bool = False,
         request_reconsideration: bool = False,
         duplicate_found: bool = False,
+        searchable_target: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -113,6 +114,7 @@ class _ComponentInferencePort:
         self.retrieval_followup_changes_query = retrieval_followup_changes_query
         self.request_reconsideration = request_reconsideration
         self.duplicate_found = duplicate_found
+        self.searchable_target = searchable_target
         self.calls: list[str] = []
         self.inputs: dict[str, list[dict[str, object]]] = {}
 
@@ -147,6 +149,23 @@ class _ComponentInferencePort:
     def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
         has_confirmation = isinstance(projection.get("confirmation_response"), Mapping)
         if prompt_id == "request_understanding.identify_goal":
+            if self.searchable_target:
+                return {
+                    "goal": "confirm shipment criteria and owner from related mail",
+                    "completion_conditions": ["return an evidence-backed answer"],
+                    "constraints": {
+                        "search_terms": ["Project Anchor"],
+                        "business_concepts": ["shipment"],
+                        "person": [],
+                        "sender": [],
+                        "recipient": [],
+                        "subject": [],
+                        "period": [],
+                        "status": [],
+                        "additional_constraints": [],
+                    },
+                    "analysis_requirement": "NONE",
+                }
             needs_action = self.request_confirmation or has_confirmation
             return {
                 "goal": "schedule team sync" if needs_action else "summarize status",
@@ -165,6 +184,16 @@ class _ComponentInferencePort:
                 "analysis_requirement": "NONE",
             }
         if prompt_id == "request_understanding.identify_resource_responsibilities":
+            if self.searchable_target:
+                return {
+                    "source_reads": [
+                        {
+                            "resource_type": "GMAIL_THREAD",
+                            "required_information": ["shipment criteria", "owner"],
+                        }
+                    ],
+                    "outputs": [],
+                }
             needs_action = self.request_confirmation or has_confirmation
             return (
                 {
@@ -182,6 +211,16 @@ class _ComponentInferencePort:
                 }
             )
         if prompt_id == "request_understanding.detect_ambiguity":
+            if self.searchable_target:
+                first_attempt = self.calls.count(prompt_id) == 1
+                return {
+                    "missing_information_owner": "USER" if first_attempt else "CONNECTOR",
+                    "missing_fields": (
+                        ["target_resource"]
+                        if first_attempt
+                        else ["shipment criteria and owner"]
+                    ),
+                }
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
                 "missing_information_owner": "USER" if needs_confirmation else "NONE",
@@ -551,6 +590,7 @@ def _state(
     *,
     initial_target: str = "request_understanding",
     selected_resources: tuple[SelectedResourceRef, ...] = (),
+    request_text: str = "summarize status",
 ) -> GraphState:
     request = WorkflowStartRequest(
         run_id="component-run-1",
@@ -558,7 +598,7 @@ def _state(
         workflow_key="component-thread-1",
         entry_mode="AGENT_SEARCH",
         requested_mode="AUTO",
-        request_text="summarize status",
+        request_text=request_text,
         selected_resource_ids=(),
         run_budget=build_default_run_budget(),
         correlation=WorkflowCorrelationContext("component-request-1", None, "1"),
@@ -725,6 +765,35 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         "request_understanding.identify_resource_responsibilities",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
+
+
+def test_request_understanding__compiled_searchable_target__revises_false_confirmation() -> None:
+    llm = _ComponentInferencePort(searchable_target=True)
+    graph = RequestUnderstandingSubgraph(
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=_confirm_early,
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(_state(request_text="Project Anchor shipment status"))
+
+    assert result["request_intent"]["ambiguity"] == {
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
+    }
+    assert llm.calls.count("request_understanding.detect_ambiguity") == 2
+    resolution = llm.inputs["request_understanding.detect_ambiguity"][0][
+        "resolution_responsibilities"
+    ]
+    assert resolution["searchable_target_anchor_count"] == 1
+    assert resolution["connector_owned_source_count"] == 1
 
 
 def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:

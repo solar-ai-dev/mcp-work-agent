@@ -53,8 +53,10 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "goal_candidate",
         "resolution_responsibilities",
         "connector_owned_information_count",
+        "connector_owned_source_count",
         "connector_owned_resource_types",
         "resolved_resource_count",
+        "searchable_target_anchor_count",
         "missing_information_owner",
         "missing_fields",
         "values",
@@ -260,15 +262,21 @@ def _project_ambiguity_input(value: Mapping[object, object]) -> dict[str, object
             if (safe := _safe_string(item_mapping.get("resource_type"))) is not None
         }
     )
+    resolution_projection: dict[str, object] = {
+        "connector_owned_information_count": len(connector_owned),
+        "connector_owned_resource_types": connector_types[:_MAX_COLLECTION_ITEMS],
+        "resolved_resource_count": len(resolved),
+    }
+    if responsibilities is not None:
+        for name in ("searchable_target_anchor_count", "connector_owned_source_count"):
+            count = responsibilities.get(name)
+            if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                resolution_projection[name] = count
     return {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
         "selected_resource_count": _count(value.get("selected_resource_refs")),
         "goal_candidate": goal_projection,
-        "resolution_responsibilities": {
-            "connector_owned_information_count": len(connector_owned),
-            "connector_owned_resource_types": connector_types[:_MAX_COLLECTION_ITEMS],
-            "resolved_resource_count": len(resolved),
-        },
+        "resolution_responsibilities": resolution_projection,
         "has_confirmation_response": _present(value.get("confirmation_response")),
     }
 

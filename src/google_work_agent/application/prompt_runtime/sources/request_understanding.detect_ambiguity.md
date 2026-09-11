@@ -6,6 +6,8 @@
 
 `user_request`와 `selected_resource_refs`에서 사용자가 말하고 선택한 것을 확인한다. `goal_candidate`와 `resolution_responsibilities.connector_owned_information`은 앞 단계의 해석과 정보 요구다. 형식이 검증됐다는 이유만으로 그 해석이 항상 옳다고 가정하지 않는다. `resolved_resource_refs`는 이미 결속된 대상의 identity로 소비한다. `confirmation_response`는 해당 질문에 대한 현재 Run의 응답만 해결한다.
 
+`resolution_responsibilities.searchable_target_anchor_count`는 현재 Run의 검증된 검색 대상 constraint 수이고 `connector_owned_source_count`는 Connector가 읽을 source 책임 수다. 둘 다 0보다 크면 exact Resource identity가 아직 없다는 이유만으로 `USER/target_resource`를 만들지 않는다. 이 사실은 recipient·시간·대안 선택처럼 실제로 남은 다른 사용자 결정을 해결하지 않는다.
+
 # 판단
 
 요청의 대상과 완료 조건을 먼저 확인하고, 빠진 것이 대상의 속성인지 사용자가 뜻하는 대상 자체인지 구분한다. READ라는 이유만으로 판단을 생략하지 않고, WRITE라는 이유만으로 질문하지도 않는다.

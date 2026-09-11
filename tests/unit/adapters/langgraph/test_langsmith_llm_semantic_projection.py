@@ -38,6 +38,8 @@ def test_detect_ambiguity_input__keeps_typed_counts__without_business_content() 
                     }
                 ],
                 "resolved_resource_refs": [],
+                "searchable_target_anchor_count": 1,
+                "connector_owned_source_count": 1,
             },
             "confirmation_response": None,
         },
@@ -63,6 +65,8 @@ def test_detect_ambiguity_input__keeps_typed_counts__without_business_content() 
             "connector_owned_information_count": 1,
             "connector_owned_resource_types": ["CALENDAR_EVENT"],
             "resolved_resource_count": 0,
+            "searchable_target_anchor_count": 1,
+            "connector_owned_source_count": 1,
         },
         "has_confirmation_response": False,
     }
