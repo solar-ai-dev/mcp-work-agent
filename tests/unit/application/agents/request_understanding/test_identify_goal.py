@@ -606,7 +606,11 @@ def test_default_repository__stays_system_owned__without_user_constraint_or_conf
                     source_type="GITHUB_ISSUE", required_information=[]
                 ),
                 "analysis_requirement": "NONE",
-            }
+            },
+            {
+                "missing_information_owner": "NONE",
+                "missing_fields": [],
+            },
         ]
     )
     candidate = identify_goal(
@@ -622,7 +626,12 @@ def test_default_repository__stays_system_owned__without_user_constraint_or_conf
             "timezone": "Asia/Seoul",
         },
     }
-    ambiguity = detect_ambiguity(llm_runtime=runtime, request=request, goal_candidate=candidate)
+    ambiguity = detect_ambiguity(
+        llm_runtime=runtime,
+        request=request,
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref("request_understanding.detect_ambiguity", "detect_ambiguity"),
+    )
     assert ambiguity["requires_confirmation"] is False
     assert all(item["field"] != "repository" for item in candidate["constraints"])
     intent = finalize_intent(
@@ -651,7 +660,11 @@ def test_explicit_repository__omitted_by_inference__retains_current_run_authorit
                     source_type="GITHUB_ISSUE", required_information=[]
                 ),
                 "analysis_requirement": "NONE",
-            }
+            },
+            {
+                "missing_information_owner": "NONE",
+                "missing_fields": [],
+            },
         ]
     )
 
@@ -664,6 +677,7 @@ def test_explicit_repository__omitted_by_inference__retains_current_run_authorit
         llm_runtime=runtime,
         request=request,
         goal_candidate=candidate,
+        prompt_ref=_prompt_ref("request_understanding.detect_ambiguity", "detect_ambiguity"),
     )
     intent = finalize_intent(
         candidate,
