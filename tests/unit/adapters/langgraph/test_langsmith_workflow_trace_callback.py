@@ -8,6 +8,9 @@ from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 
 from google_work_agent.adapters.langgraph.invocation import WorkflowInvocationCoordinator
+from google_work_agent.adapters.langgraph.langsmith_workflow_io_projection import (
+    project_langsmith_workflow_payload,
+)
 from google_work_agent.adapters.langgraph.langsmith_workflow_trace_callback import (
     LangSmithWorkflowTraceCallback,
     create_langsmith_workflow_trace_callback,
@@ -111,7 +114,15 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
 
     callback.on_chain_start(
         {"raw": "serialized-secret"},
-        {"messages": ["private-mail-body"]},
+        {
+            "workflow_phase": "REQUEST_ANALYSIS",
+            "run_input": {
+                "entry_mode": "AGENT_SEARCH",
+                "requested_mode": "LOCAL_GPU",
+                "user_request": "private-mail-body",
+                "selected_resource_refs": [],
+            },
+        },
         run_id=graph_run_id,
         metadata=_metadata(),
         name="CompiledStateGraph",
@@ -126,7 +137,26 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
     )
     callback.on_chain_start(
         None,
-        {"raw": "node-secret"},
+        {
+            "request_intent": {
+                "schema_version": 2,
+                "goal": "node-secret",
+                "ambiguity": {
+                    "requires_confirmation": False,
+                    "reason_codes": [],
+                    "missing_fields": [],
+                },
+                "requested_effect_hints": ["READ"],
+                "requested_resource_hints": ["GMAIL_THREAD"],
+                "constraints": [
+                    {
+                        "kind": "KEYWORD",
+                        "field": "subject",
+                        "value": "private-search-term",
+                    }
+                ],
+            }
+        },
         run_id=node_run_id,
         parent_run_id=internal_run_id,
         metadata=_metadata(
@@ -136,7 +166,16 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
         name="request_understanding",
     )
     callback.on_chain_end(
-        {"structured_output": "private-model-output"},
+        {
+            "request_intent": None,
+            "retry_budget": {
+                "schema_version": 2,
+                "profile": "NORMAL",
+                "llm_calls_used": 1,
+                "llm_call_limit": 14,
+            },
+            "structured_output": "private-model-output",
+        },
         run_id=node_run_id,
     )
     callback.on_chain_end({}, run_id=internal_run_id)
@@ -146,9 +185,28 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
         "production_langgraph",
         "node:request_understanding",
     ]
-    assert all(entry["inputs"] == {} for entry in client.created)
     root_trace = client.created[0]
     node_trace = client.created[1]
+    assert root_trace["inputs"]["workflow"]["fields"] == {
+        "run_input": {
+            "entry_mode": "AGENT_SEARCH",
+            "has_user_request": True,
+            "requested_mode": "LOCAL_GPU",
+            "selected_resource_refs": {"count": 0},
+        },
+        "workflow_phase": "REQUEST_ANALYSIS",
+    }
+    assert node_trace["inputs"]["workflow"]["fields"]["request_intent"] == {
+        "ambiguity": {
+            "missing_fields": {"count": 0},
+            "reason_codes": {"count": 0, "values": []},
+            "requires_confirmation": False,
+        },
+        "constraints": {"count": 1, "items": [{"kind": "KEYWORD"}]},
+        "requested_effect_hints": {"count": 1, "values": ["READ"]},
+        "requested_resource_hints": {"count": 1, "values": ["GMAIL_THREAD"]},
+        "schema_version": 2,
+    }
     assert root_trace["trace_id"] == graph_run_id
     assert root_trace["parent_run_id"] is None
     assert root_trace["dotted_order"].endswith(str(graph_run_id))
@@ -169,21 +227,22 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
     assert "private-mail-body" not in exported
     assert "private-model-output" not in exported
     assert "private/checkpoint/namespace" not in exported
-    assert all(update[1]["outputs"] == {} for update in client.updated)
-    created_dotted_order = {
-        entry["id"]: entry["dotted_order"] for entry in client.created
+    node_update = next(update for update in client.updated if update[0] == node_run_id)[1]
+    assert node_update["outputs"]["workflow"]["fields"] == {
+        "request_intent": {"value_state": "NULL"},
+        "retry_budget": {
+            "llm_call_limit": 14,
+            "llm_calls_used": 1,
+            "profile": "NORMAL",
+            "schema_version": 2,
+        },
     }
+    created_dotted_order = {entry["id"]: entry["dotted_order"] for entry in client.created}
     assert all(
-        update[1]["dotted_order"] == created_dotted_order[update[0]]
-        for update in client.updated
+        update[1]["dotted_order"] == created_dotted_order[update[0]] for update in client.updated
     )
-    created_parent = {
-        entry["id"]: entry["parent_run_id"] for entry in client.created
-    }
-    assert all(
-        update[1]["parent_run_id"] == created_parent[update[0]]
-        for update in client.updated
-    )
+    created_parent = {entry["id"]: entry["parent_run_id"] for entry in client.created}
+    assert all(update[1]["parent_run_id"] == created_parent[update[0]] for update in client.updated)
 
 
 def test_callback__receives_metadata_from_compiled_langgraph__without_state_payload() -> None:
@@ -211,8 +270,8 @@ def test_callback__receives_metadata_from_compiled_langgraph__without_state_payl
         "production_langgraph",
         "node:request_understanding",
     ]
-    assert all(entry["inputs"] == {} for entry in client.created)
-    assert all(update[1]["outputs"] == {} for update in client.updated)
+    assert all("workflow" in entry["inputs"] for entry in client.created)
+    assert all("workflow" in update[1]["outputs"] for update in client.updated)
     assert "'value': 1" not in repr((client.created, client.updated))
 
 
@@ -283,7 +342,7 @@ def test_callback__records_interrupt_without_failure__and_never_breaks_workflow(
     unavailable.close()
 
 
-def test_callback_factory__payload_hiding_and_idempotent_close__are_forced(
+def test_callback_factory__safe_projection_client__enables_io_and_idempotent_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clients: list[_Client] = []
@@ -308,8 +367,8 @@ def test_callback_factory__payload_hiding_and_idempotent_close__are_forced(
         "api_url": "https://api.smith.langchain.com",
         "api_key": "secret-key",
         "auto_batch_tracing": True,
-        "hide_inputs": True,
-        "hide_outputs": True,
+        "hide_inputs": False,
+        "hide_outputs": False,
         "omit_traced_runtime_info": True,
     }
     callback.close()
@@ -359,3 +418,105 @@ def test_callback__partial_or_unsafe_trace_binding__is_rejected() -> None:
             project_name="quality",
             trace_binding={**_trace_binding(), "question_id": "unsafe value"},
         )
+
+
+def test_io_projection__safe_payload__keeps_contract_shape_without_business_content() -> None:
+    projection = project_langsmith_workflow_payload(
+        {
+            "workflow_phase": "CONTEXT_RETRIEVAL",
+            "query_plan": {
+                "schema_version": 2,
+                "route_queries": [
+                    {
+                        "route_id": "private-route-id",
+                        "operation": "SEARCH",
+                        "reason_codes": ["INITIAL_QUERY"],
+                        "search_spec": {
+                            "mode": "INITIAL",
+                            "constraints": [
+                                {
+                                    "kind": "CONCEPT",
+                                    "concept": "private-concept",
+                                    "manifestations": ["private-manifestation"],
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+            "retrieval_result": {
+                "schema_version": 1,
+                "coverage": "PARTIAL",
+                "evidence_refs": ["private-evidence-id"],
+                "source_resource_refs": ["private-resource-id"],
+                "source_statuses": [
+                    {
+                        "route_id": "private-route-id",
+                        "resource_type": "GMAIL_THREAD",
+                        "status": "COMPLETE",
+                        "observed_resource_count": 0,
+                        "failure_kind": "NOT_FOUND",
+                    }
+                ],
+            },
+            "planning_result": {
+                "schema_version": 2,
+                "answer": "private-answer",
+                "evidence_refs": ["private-evidence-id"],
+            },
+            "llm_provider_result": {"raw_completion": "private-completion"},
+        }
+    )
+
+    exported = repr(projection)
+    projected_fields = projection["fields"]
+    assert isinstance(projected_fields, dict)
+    assert projected_fields["query_plan"] == {
+        "route_queries": {
+            "count": 1,
+            "items": [
+                {
+                    "operation": "SEARCH",
+                    "reason_codes": {"count": 1, "values": ["INITIAL_QUERY"]},
+                    "search_spec": {
+                        "constraints": {"count": 1, "items": [{"kind": "CONCEPT"}]},
+                        "mode": "INITIAL",
+                    },
+                }
+            ],
+        },
+        "schema_version": 2,
+    }
+    retrieval_result = projected_fields["retrieval_result"]
+    assert isinstance(retrieval_result, dict)
+    assert retrieval_result["source_statuses"] == {
+        "count": 1,
+        "items": [
+            {
+                "failure_kind": "NOT_FOUND",
+                "observed_resource_count": 0,
+                "resource_type": "GMAIL_THREAD",
+                "status": "COMPLETE",
+            }
+        ],
+    }
+    assert projected_fields["llm_provider_result"] == {"value_state": "PRESENT"}
+    for private_value in (
+        "private-route-id",
+        "private-concept",
+        "private-manifestation",
+        "private-evidence-id",
+        "private-resource-id",
+        "private-answer",
+        "private-completion",
+    ):
+        assert private_value not in exported
+
+
+def test_io_projection__null_presence__distinguishes_omitted_from_explicit_null() -> None:
+    omitted = project_langsmith_workflow_payload({})
+    cleared = project_langsmith_workflow_payload({"request_intent": None})
+
+    assert omitted["state_fields"] == []
+    assert cleared["state_fields"] == ["request_intent"]
+    assert cleared["fields"] == {"request_intent": {"value_state": "NULL"}}

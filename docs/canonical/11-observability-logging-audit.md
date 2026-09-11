@@ -251,6 +251,12 @@ Confirmation free text, ContextAdjustment requested text, raw checkpoint·contro
 
 재인증·복구의 후속 처리 결정은 외부 효과 성공이나 Verification 완료를 뜻하지 않는다.
 
+### 5.6 Opt-in LangSmith Workflow projection
+
+LangSmith Run의 input/output에는 전체 LangGraph State를 전달하지 않는다. 현재 Run에 존재하는 허용된 State field와 branch·status·route/query 종류, 수량·budget, 명시적 `null` 여부만 16 KiB 이하의 versioned projection으로 전달한다. 사용자 요청·업무 본문·Resource ID·검색어, Prompt·Completion, Connector payload는 제외한다.
+
+이 projection은 Graph·Node 실행을 분석하기 위한 외부 관측값이며 Domain State, routing, checkpoint 또는 실행 성공의 authority가 아니다. 과거 Trace는 소급 변경하지 않는다.
+
 ## 6. Audit 필수 Event
 
 P0 Audit는 **Application-level append-only**다. 암호학적 Tamper Evidence는 P1 검토 사항이다.

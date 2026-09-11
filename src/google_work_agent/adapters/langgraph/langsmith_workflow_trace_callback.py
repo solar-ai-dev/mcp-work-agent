@@ -15,6 +15,9 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphInterrupt
 from langsmith import Client
 
+from google_work_agent.adapters.langgraph.langsmith_workflow_io_projection import (
+    project_langsmith_workflow_payload,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import LLMInvocationError
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,7 +78,7 @@ class _LangSmithClient(Protocol):
 
 
 class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
-    """Record graph and node timing without exporting workflow inputs or outputs."""
+    """Record graph and node timing with bounded safe input/output projections."""
 
     def __init__(
         self,
@@ -104,7 +107,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        del serialized, inputs
+        del serialized
         safe_metadata = self._safe_metadata(metadata or {})
         domain_run_id = safe_metadata.get("domain_run_id")
         if domain_run_id is None:
@@ -126,9 +129,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
             dotted_order = _dotted_order(
                 start_time=start_time,
                 run_id=run_id,
-                parent_dotted_order=(
-                    None if parent_trace is None else parent_trace.dotted_order
-                ),
+                parent_dotted_order=(None if parent_trace is None else parent_trace.dotted_order),
             )
         name = "production_langgraph" if is_root else f"node:{node}"
         tags = ["google-work-agent", "development-observability", "langgraph"]
@@ -136,7 +137,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         try:
             self._client.create_run(
                 name,
-                {},
+                {"workflow": project_langsmith_workflow_payload(inputs)},
                 "chain",
                 id=run_id,
                 trace_id=trace_id,
@@ -160,7 +161,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 )
 
     def on_chain_end(self, outputs: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        del outputs, kwargs
+        del kwargs
         active = self._finish_tracking(run_id)
         if active is None:
             return
@@ -171,7 +172,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 dotted_order=active.dotted_order,
                 parent_run_id=active.parent_run_id,
                 end_time=datetime.now(UTC),
-                outputs={},
+                outputs={"workflow": project_langsmith_workflow_payload(outputs)},
             )
         except Exception:
             _LOGGER.warning("LangSmith workflow trace completion unavailable")
@@ -198,8 +199,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
             affected_field_paths = _safe_affected_field_paths(error)
             if affected_field_paths:
                 metadata["affected_field_path_hashes"] = [
-                    sha256(path.encode("utf-8")).hexdigest()[:16]
-                    for path in affected_field_paths
+                    sha256(path.encode("utf-8")).hexdigest()[:16] for path in affected_field_paths
                 ]
             if isinstance(error, LLMInvocationError):
                 metadata["provider_dispatch_occurred"] = error.provider_dispatch_occurred
@@ -213,7 +213,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 parent_run_id=active.parent_run_id,
                 end_time=datetime.now(UTC),
                 error=safe_error,
-                outputs={},
+                outputs={"workflow": project_langsmith_workflow_payload({})},
                 extra={"metadata": metadata},
                 tags=tags,
             )
@@ -240,9 +240,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
         except Exception:
             _LOGGER.warning("LangSmith workflow trace close unavailable")
 
-    def _finish_tracking(
-        self, run_id: UUID
-    ) -> _ActiveTrace | None:
+    def _finish_tracking(self, run_id: UUID) -> _ActiveTrace | None:
         with self._lock:
             self._parents.pop(run_id, None)
             return self._active.pop(run_id, None)
@@ -280,9 +278,7 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler):
                 result[target] = value
         namespace = metadata.get("langgraph_checkpoint_ns")
         if isinstance(namespace, str) and namespace:
-            result["checkpoint_namespace_hash"] = sha256(namespace.encode("utf-8")).hexdigest()[
-                :16
-            ]
+            result["checkpoint_namespace_hash"] = sha256(namespace.encode("utf-8")).hexdigest()[:16]
         return result
 
 
@@ -292,7 +288,7 @@ def create_langsmith_workflow_trace_callback(
     project_name: str,
     trace_binding: Mapping[str, str] | None = None,
 ) -> LangSmithWorkflowTraceCallback:
-    """Build the only LangSmith client with raw payload export disabled."""
+    """Build the only LangSmith client used by the safe workflow projection."""
 
     if not api_key.strip():
         raise ValueError("LangSmith API key is required")
@@ -300,8 +296,8 @@ def create_langsmith_workflow_trace_callback(
         api_url="https://api.smith.langchain.com",
         api_key=api_key.strip(),
         auto_batch_tracing=True,
-        hide_inputs=True,
-        hide_outputs=True,
+        hide_inputs=False,
+        hide_outputs=False,
         omit_traced_runtime_info=True,
     )
     return LangSmithWorkflowTraceCallback(
@@ -336,9 +332,7 @@ def _safe_affected_field_paths(error: BaseException) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
     return tuple(
-        path
-        for path in value[:16]
-        if isinstance(path, str) and _SAFE_FIELD_PATH.fullmatch(path)
+        path for path in value[:16] if isinstance(path, str) and _SAFE_FIELD_PATH.fullmatch(path)
     )
 
 
