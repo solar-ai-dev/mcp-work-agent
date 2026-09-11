@@ -622,6 +622,15 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         "request-goal-candidate-v11",
         "request-resource-responsibilities-v1",
     ]
+    assert runtime.calls[1]["prompt_input"]["goal_candidate"] == {
+        "goal": "기존 업무 자료를 바탕으로 메일 초안을 저장한다",
+        "completion_conditions": ["메일 초안 Preview를 준비한다", "메일을 보내지 않는다"],
+        "constraints": _goal_constraints(
+            search_terms=["Atlas"],
+            recipient=["person@example.test"],
+        ),
+        "analysis_requirement": "NONE",
+    }
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {"resource_type": "TASK", "required_information": ["준비 상황"]},

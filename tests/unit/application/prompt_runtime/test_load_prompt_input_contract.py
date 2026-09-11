@@ -42,7 +42,7 @@ def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> 
     entry = next(
         item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
     )
-    assert entry["output_schema_version"] == 10
+    assert entry["output_schema_version"] == 11
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
         load_prompt_input_contract(_write(tmp_path, payload))
@@ -64,6 +64,27 @@ def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
             },
         },
     )
+
+
+def test_resource_responsibility_contract__requires_preceding_goal_candidate() -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        "request_understanding.identify_resource_responsibilities",
+        {
+            "user_request": "request",
+            "selected_resource_refs": [],
+            "goal_candidate": {},
+        },
+    )
+    with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
+        contract.validate_projection(
+            "request_understanding.identify_resource_responsibilities",
+            {
+                "user_request": "request",
+                "selected_resource_refs": [],
+            },
+        )
 
 
 def test_compose_arguments_contract__accepts_current__request_intent_projection() -> None:

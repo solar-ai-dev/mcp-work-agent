@@ -86,10 +86,14 @@ def identify_goal(
         prompt_input,
         IDENTIFY_GOAL_OUTPUT_SCHEMA,
     )
+    responsibility_input = _resource_responsibility_prompt_input(
+        prompt_input,
+        goal_candidate=result.structured_output,
+    )
     responsibility_result = llm_runtime.infer(
         request.requested_mode,
         resolved_responsibility_prompt_ref,
-        prompt_input,
+        responsibility_input,
         IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
     )
     return _validated_candidate(
@@ -133,10 +137,14 @@ def identify_goal_with_budget(
             prompt_input,
             IDENTIFY_GOAL_OUTPUT_SCHEMA,
         )
+        responsibility_input = _resource_responsibility_prompt_input(
+            prompt_input,
+            goal_candidate=result.structured_output,
+        )
         responsibility_result = llm_runtime.infer(
             request.requested_mode,
             resolved_responsibility_prompt_ref,
-            prompt_input,
+            responsibility_input,
             IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
         )
         goal_output = result.structured_output
@@ -179,7 +187,10 @@ def identify_goal_with_budget(
                 request.requested_mode,
                 resolved_responsibility_prompt_ref,
                 {
-                    "base_projection": prompt_input,
+                    "base_projection": _resource_responsibility_prompt_input(
+                        prompt_input,
+                        goal_candidate=revised_goal.structured_output,
+                    ),
                     "candidate_output": responsibility_output,
                     "failure_record": failure_record,
                 },
@@ -195,6 +206,19 @@ def identify_goal_with_budget(
             )
             retry_budget = decision["run_budget"]
         return candidate, merge_provider_dispatch_usage(retry_budget)
+
+
+def _resource_responsibility_prompt_input(
+    prompt_input: Mapping[str, object],
+    *,
+    goal_candidate: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind resource-role inference to the preceding goal interpretation."""
+
+    return {
+        **prompt_input,
+        "goal_candidate": dict(goal_candidate),
+    }
 
 
 def _prompt_input(

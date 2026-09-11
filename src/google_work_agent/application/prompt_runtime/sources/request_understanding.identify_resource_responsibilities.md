@@ -4,7 +4,7 @@
 
 # 입력의 의미
 
-`user_request`는 현재 Run의 원문이고 `selected_resource_refs`는 사용자가 이번 요청에 선택한 Resource identity다. 선택은 source identity의 근거이지 내용을 이미 읽었다는 뜻은 아니다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`이 있으면 새 관측과 현재 요청을 함께 보되 이전 모델 해석을 원문보다 우선하지 않는다. `run_reference_time`은 Resource 역할의 근거가 아니다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.
+`user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. Resource 역할은 두 입력을 함께 소비하되 `goal_candidate`가 원문과 충돌하면 원문을 우선한다. `selected_resource_refs`는 사용자가 이번 요청에 선택한 Resource identity다. 선택은 source identity의 근거이지 내용을 이미 읽었다는 뜻은 아니다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`이 있으면 새 관측과 현재 요청을 함께 보되 이전 모델 해석을 원문보다 우선하지 않는다. `run_reference_time`은 Resource 역할의 근거가 아니다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.
 
 # source_reads
 

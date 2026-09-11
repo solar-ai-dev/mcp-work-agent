@@ -67,7 +67,12 @@ class PromptRuntimeInputContractEntryV1:
             "work_analysis.assess_information_gaps": 2,
             "work_analysis.assess_operational_risks": 2,
         }.get(self.prompt_slot_id, 1)
-        input_versions = {3, 4} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}
+        if self.prompt_slot_id == "retrieval.select_evidence":
+            input_versions = {3, 4}
+        elif self.prompt_slot_id == "request_understanding.identify_resource_responsibilities":
+            input_versions = {3}
+        else:
+            input_versions = {1, 2}
         if (
             self.input_schema_version not in input_versions
             or self.output_schema_version != output_version

@@ -185,12 +185,16 @@ def sanitize_llm_semantic_projection(value: object) -> dict[str, object] | None:
 
 
 def _project_identify_input(value: Mapping[object, object]) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
         "selected_resource_count": _count(value.get("selected_resource_refs")),
         "has_confirmation_response": _present(value.get("confirmation_response")),
         "has_request_reconsideration": _present(value.get("request_reconsideration")),
     }
+    goal_candidate = _mapping(value.get("goal_candidate"))
+    if goal_candidate is not None:
+        result["goal_candidate"] = _project_goal_candidate(goal_candidate)
+    return result
 
 
 def _project_goal_candidate(value: Mapping[object, object]) -> dict[str, object]:
@@ -558,19 +562,55 @@ def _project_outputs(value: object) -> dict[str, object]:
 
 
 def _project_goal_constraints(value: object) -> dict[str, object]:
+    mapping = _mapping(value)
+    if mapping is not None:
+        items: list[dict[str, object]] = []
+        kind_by_field = {
+            "search_terms": "USER_REQUIREMENT",
+            "business_concepts": "USER_REQUIREMENT",
+            "person": "PERSON",
+            "sender": "PERSON",
+            "recipient": "PERSON",
+            "subject": "RESOURCE",
+            "period": "DATE",
+            "status": "SCOPE",
+        }
+        for field, kind in kind_by_field.items():
+            values = _sequence(mapping.get(field))
+            if not values:
+                continue
+            projected: dict[str, object] = {"kind": kind, "field": field}
+            if field == "status":
+                projected["status_values"] = [
+                    status
+                    for item in values
+                    if (item_mapping := _mapping(item)) is not None
+                    if (status := _safe_string(item_mapping.get("value"))) is not None
+                ][:_MAX_COLLECTION_ITEMS]
+            items.append(projected)
+        for raw_item in _sequence(mapping.get("additional_constraints")):
+            item = _mapping(raw_item)
+            if item is None:
+                continue
+            projected = {}
+            for name in ("kind", "field"):
+                _copy_safe_scalar(item, projected, name)
+            items.append(projected)
+        return {"count": len(items), "items": items[:_MAX_COLLECTION_ITEMS]}
+
     sequence = _sequence(value)
-    items: list[dict[str, object]] = []
+    constraint_items: list[dict[str, object]] = []
     for raw_item in sequence[:_MAX_COLLECTION_ITEMS]:
         item = _mapping(raw_item)
         if item is None:
             continue
-        projected: dict[str, object] = {}
+        projected_constraint: dict[str, object] = {}
         for name in ("kind", "field"):
-            _copy_safe_scalar(item, projected, name)
+            _copy_safe_scalar(item, projected_constraint, name)
         if item.get("field") == "status":
-            projected["status_values"] = _safe_values(item.get("value"))
-        items.append(projected)
-    return {"count": len(sequence), "items": items}
+            projected_constraint["status_values"] = _safe_values(item.get("value"))
+        constraint_items.append(projected_constraint)
+    return {"count": len(sequence), "items": constraint_items}
 
 
 def _project_query_constraints(value: object) -> dict[str, object]:

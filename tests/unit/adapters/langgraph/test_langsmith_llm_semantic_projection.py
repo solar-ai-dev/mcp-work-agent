@@ -184,6 +184,44 @@ def test_resource_responsibility_output__keeps_roles__without_business_literals(
     assert "private event time" not in repr(projection)
 
 
+def test_resource_responsibility_input__shows_upstream_shape__without_literals() -> None:
+    projection = project_llm_semantic_input(
+        "request_understanding.identify_resource_responsibilities",
+        {
+            "user_request": "private request",
+            "selected_resource_refs": [],
+            "goal_candidate": {
+                "goal": "private goal",
+                "completion_conditions": ["private completion"],
+                "analysis_requirement": "NONE",
+                "constraints": {
+                    "search_terms": ["private project"],
+                    "business_concepts": [],
+                    "person": [],
+                    "sender": [],
+                    "recipient": ["private@example.test"],
+                    "subject": [],
+                    "period": [],
+                    "status": [],
+                    "additional_constraints": [],
+                },
+            },
+        },
+    )
+
+    assert projection["goal_candidate"]["constraints"] == {
+        "count": 2,
+        "items": [
+            {"kind": "USER_REQUIREMENT", "field": "search_terms"},
+            {"kind": "PERSON", "field": "recipient"},
+        ],
+    }
+    exported = repr(projection)
+    assert "private project" not in exported
+    assert "private@example.test" not in exported
+    assert "private goal" not in exported
+
+
 def test_plan_query__keeps_candidate_shape__without_query_literals_or_refs() -> None:
     semantic_input = project_llm_semantic_input(
         "retrieval.plan_query",
