@@ -68,8 +68,10 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "missing_information_owner": {
                 "enum": ["NONE", "USER", "CONNECTOR"],
                 "description": (
-                    "NONE when nothing is missing; USER only for a user-owned choice; "
-                    "CONNECTOR for facts retrievable from selected or routed resources."
+                    "NONE when nothing is missing; USER when the target identity itself "
+                    "still requires a user choice; CONNECTOR only for target attributes "
+                    "retrievable after the target is selected or explicitly identifiable "
+                    "from current-request constraints."
                 ),
             },
             "missing_fields": {
