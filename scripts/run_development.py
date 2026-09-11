@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from launcher.bootstrap_secret import create_bootstrap_secret
 from launcher.development_entrypoint import (
     DEVELOPMENT_GITHUB_APP_CLIENT_ID,
-    DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID,
+    read_development_google_oauth_client_id,
     read_development_langsmith_environment,
     read_development_sampling_environment,
 )
@@ -45,9 +45,7 @@ def development_runtime_config(
         runtime_root=(runtime_root or PROJECT_ROOT / "runtime" / "development").resolve(),
         working_directory=PROJECT_ROOT,
         mcp_manifest_version=MCP_MANIFEST_VERSION,
-        oauth_client_id=os.environ.get(
-            "GOOGLE_OAUTH_CLIENT_ID", DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
-        ),
+        oauth_client_id=read_development_google_oauth_client_id(),
         mcp_module_name=mcp_module_name,
         prompt_manifest_path=prompt_manifest_path,
         github_oauth_client_id=os.environ.get(
