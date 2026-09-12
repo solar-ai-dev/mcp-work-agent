@@ -75,6 +75,8 @@ class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
     __context_read_result_handles__: list[str]
     __context_read_bindings__: dict[str, ReadResultBindingV1]
     __context_segment_handles__: list[str]
+    __context_sufficiency_output__: SufficiencyResultV2 | None
+    __context_current_round_no__: int | None
 
 
 class ContextRetrievalLocalState(GraphState):
@@ -103,8 +105,8 @@ class ContextRetrievalLocalState(GraphState):
     __context_agent_local__: NotRequired[AgentLocalStateV1]
     __context_rag_candidates__: NotRequired[list[RagCandidateV1]]
     __context_selection_output__: NotRequired[EvidenceSelectionResultV2]
-    __context_sufficiency_output__: NotRequired[SufficiencyResultV2]
-    __context_current_round_no__: NotRequired[int]
+    __context_sufficiency_output__: NotRequired[SufficiencyResultV2 | None]
+    __context_current_round_no__: NotRequired[int | None]
     __context_followup_planner_input__: NotRequired[dict[str, object]]
     __context_followup_operation__: NotRequired[str]
     __context_next_page_handles__: NotRequired[dict[str, str]]

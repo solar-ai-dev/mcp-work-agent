@@ -9,10 +9,12 @@ from langgraph.types import Command
 
 from google_work_agent.adapters.langgraph.main.state import (
     CONTEXT_CANONICAL_PLANS_KEY,
+    CONTEXT_CURRENT_ROUND_NO_KEY,
     CONTEXT_QUERY_ATTEMPTS_KEY,
     CONTEXT_READ_BINDINGS_KEY,
     CONTEXT_READ_RESULT_HANDLES_KEY,
     CONTEXT_SEGMENT_HANDLES_KEY,
+    CONTEXT_SUFFICIENCY_OUTPUT_KEY,
     GraphState,
     request_from_run_input_state,
 )
@@ -221,6 +223,8 @@ class WorkflowInvocationCoordinator:
                             CONTEXT_READ_RESULT_HANDLES_KEY: [],
                             CONTEXT_READ_BINDINGS_KEY: {},
                             CONTEXT_SEGMENT_HANDLES_KEY: [],
+                            CONTEXT_SUFFICIENCY_OUTPUT_KEY: None,
+                            CONTEXT_CURRENT_ROUND_NO_KEY: None,
                             "exclusion_obligation_segment_ids": [],
                             "user_interrupt": None,
                         },

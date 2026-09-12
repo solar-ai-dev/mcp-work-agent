@@ -163,13 +163,14 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
 def test_finalize_route__same_request_and_routes__preserves_input_plan_identity() -> None:
     catalog = _catalog()
     ids = iter(f"id-{index}" for index in range(30))
+    candidate = SemanticRouteCandidate(
+        ("GMAIL_THREAD",),
+        (),
+        "ANSWER",
+        "REQUIRED",
+    )
     binding = bind_registry_candidates(
-        candidate=SemanticRouteCandidate(
-            ("GMAIL_THREAD",),
-            (),
-            "ANSWER",
-            "REQUIRED",
-        ),
+        candidate=candidate,
         tool_catalog=catalog,
         id_factory=lambda: next(ids),
     )
@@ -193,10 +194,18 @@ def test_finalize_route__same_request_and_routes__preserves_input_plan_identity(
     )
     first_plan = first["tool_route_plan"]
     assert first_plan is not None
+    repeated_binding = bind_registry_candidates(
+        candidate=candidate,
+        tool_catalog=catalog,
+        id_factory=lambda: next(ids),
+    )
+    assert repeated_binding.input_routes[0]["route_id"] != (
+        first_plan["input_plan"]["input_routes"][0]["route_id"]
+    )
 
     repeated = finalize_route(
         request_intent=intent,
-        binding=binding,
+        binding=repeated_binding,
         selected_tools={},
         tool_catalog=catalog,
         id_factory=lambda: next(ids),

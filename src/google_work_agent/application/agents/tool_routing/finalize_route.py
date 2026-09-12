@@ -115,7 +115,7 @@ def _freeze_plan(
     )
     reuse_previous_input = (
         previous_input_plan is not None
-        and previous_input_plan["input_routes"] == input_routes
+        and _same_input_route_semantics(previous_input_plan["input_routes"], input_routes)
         and (reuse_input_plan or previous_input_is_for_request)
     )
     input_revision = (
@@ -165,6 +165,26 @@ def _freeze_plan(
         "output_plan": output_plan,
         "tool_registry_version": tool_catalog.contract_version,
     }
+
+
+def _same_input_route_semantics(
+    previous_routes: list[InputToolRouteV1],
+    current_routes: list[InputToolRouteV1],
+) -> bool:
+    """Compare frozen READ authority without transient route identities."""
+
+    def semantics(route: InputToolRouteV1) -> tuple[object, ...]:
+        return (
+            route["resource_type"],
+            route["connector_id"],
+            tuple(route["allowed_read_tool_ids"]),
+            route["required"],
+            tuple(route["reason_codes"]),
+        )
+
+    return [semantics(route) for route in previous_routes] == [
+        semantics(route) for route in current_routes
+    ]
 
 
 def _request_intent_ref(request_intent: RequestIntentV2) -> StateArtifactRefV1:

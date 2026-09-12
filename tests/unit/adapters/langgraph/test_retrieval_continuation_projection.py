@@ -126,6 +126,25 @@ def test_restore_retrieval_continuation__old_checkpoint__uses_fresh_read() -> No
     }
 
 
+def test_restore_retrieval_continuation__new_run__does_not_inherit_stale_fields() -> None:
+    assert retrieval_continuation_projection.restore_retrieval_continuation(
+        {
+            "__context_canonical_plans__": {"stale": {"route_id": "stale"}},
+            "__context_query_attempts__": [{"route_id": "stale"}],
+            "__context_read_result_handles__": ["stale-read"],
+            "__context_read_bindings__": {"stale-read": {"route_id": "stale"}},
+            "__context_segment_handles__": ["stale-segment"],
+        },
+        has_prior_result=False,
+    ) == {
+        "canonical_plans": {},
+        "query_attempts": [],
+        "read_result_handles": [],
+        "read_bindings": {},
+        "segment_handles": [],
+    }
+
+
 def test_restore_retrieval_continuation__partial_checkpoint__rejects() -> None:
     with pytest.raises(ValueError, match="incomplete"):
         retrieval_continuation_projection.restore_retrieval_continuation(

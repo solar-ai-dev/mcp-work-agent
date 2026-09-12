@@ -539,13 +539,27 @@ class RetrievalSubgraph:
         self._transition_run(request.run_id, "begin_retrieval")
         invocation_id = self._id_factory()
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
-        current_round_no = initialize_current_round_no(
-            prior_result=state.get("retrieval_result"),
-            tool_route_plan=tool_route_plan,
+        prior_sufficiency = state.get(CONTEXT_SUFFICIENCY_OUTPUT_KEY)
+        persisted_round_no = state.get(CONTEXT_CURRENT_ROUND_NO_KEY)
+        resumes_route_reconsideration = (
+            isinstance(prior_sufficiency, Mapping)
+            and prior_sufficiency.get("status") == "ROUTE_RECONSIDERATION_REQUIRED"
         )
+        if resumes_route_reconsideration:
+            if not isinstance(persisted_round_no, int):
+                raise ValueError("retrieval route continuation is missing its round identity")
+            current_round_no = advance_current_round_no(
+                current_round_no=persisted_round_no,
+                is_followup=True,
+            )
+        else:
+            current_round_no = initialize_current_round_no(
+                prior_result=state.get("retrieval_result"),
+                tool_route_plan=tool_route_plan,
+            )
         continuation = restore_retrieval_continuation(
             state,
-            has_prior_result=current_round_no > 0,
+            has_prior_result=resumes_route_reconsideration or current_round_no > 0,
         )
         local_state = build_agent_local_state(
             agent_role="context_retriever",
@@ -590,7 +604,8 @@ class RetrievalSubgraph:
             CONTEXT_SEGMENT_HANDLES_KEY: list(continuation["segment_handles"]),
             CONTEXT_QUERY_ATTEMPTS_KEY: list(continuation["query_attempts"]),
             CONTEXT_CANONICAL_PLANS_KEY: dict(continuation["canonical_plans"]),
-            CONTEXT_ROUND_PREADVANCED_KEY: current_round_no > 0,
+            CONTEXT_ROUND_PREADVANCED_KEY: resumes_route_reconsideration
+            or current_round_no > 0,
             "trace_context": merge_trace_context(
                 state,
                 graph_profile=self._graph_profile.value,
@@ -611,6 +626,18 @@ class RetrievalSubgraph:
         # this subgraph -- only Supervisor constructs it.
         retrieval_required = _retrieval_required_signal(state.get("workflow_signal"))
         pending_need = _pending_retrieval_need(state.get("pending_user_retrieval_need"))
+        if resumes_route_reconsideration:
+            if not continuation["canonical_plans"] or not continuation["query_attempts"]:
+                raise ValueError("retrieval route continuation has no prior query facts")
+            route_sufficiency = cast(SufficiencyResultV2, prior_sufficiency)
+            next_state[CONTEXT_SUFFICIENCY_OUTPUT_KEY] = route_sufficiency
+            next_state["sufficiency"] = route_sufficiency
+            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
+                current_round_no=current_round_no,
+                prior_query_attempts=list(continuation["query_attempts"]),
+                unresolved_sufficiency_issues=route_sufficiency["issues"],
+                read_result_summaries=self._bounded_read_result_summaries(next_state),
+            )
         if retrieval_required is not None or pending_need is not None:
             next_state["workflow_signal"] = None
             needs = (
@@ -1078,7 +1105,9 @@ class RetrievalSubgraph:
         }
         if should_plan_followup:
             next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
-                current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
+                current_round_no=_require_state_value(
+                    state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+                ),
                 prior_query_attempts=list(state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])),
                 unresolved_sufficiency_issues=cast(
                     list[dict[str, object]], list(sufficiency_result["issues"])
@@ -1324,10 +1353,14 @@ class RetrievalSubgraph:
 
     def _execute_read_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         round_no = (
-            state[CONTEXT_CURRENT_ROUND_NO_KEY]
+            _require_state_value(
+                state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+            )
             if state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True
             else advance_current_round_no(
-                current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
+                current_round_no=_require_state_value(
+                    state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+                ),
                 is_followup=state.get(CONTEXT_FOLLOWUP_OPERATION_KEY)
                 in {"SEARCH", "NEXT_PAGE", "READ"},
             )
@@ -1727,7 +1760,9 @@ class RetrievalSubgraph:
             evidence_supported_partial_possible=bool(working_state["evidence_drafts"]),
             can_acquire_new_information=False,
         )
-        current_round_no = working_state[CONTEXT_CURRENT_ROUND_NO_KEY]
+        current_round_no = _require_state_value(
+            working_state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+        )
         if working_state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True:
             current_round_no = max(0, current_round_no - 1)
         local_state = cast(AgentLocalStateV1, working_state[CONTEXT_AGENT_LOCAL_KEY])
@@ -1995,7 +2030,9 @@ class RetrievalSubgraph:
                     state["acquisition_result"], "acquisition_result"
                 ),
                 evidence_drafts=state["evidence_drafts"],
-                current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
+                current_round_no=_require_state_value(
+                    state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+                ),
                 prior_result=prior_result,
                 prior_artifact_ref=prior_artifact_ref,
                 task_review_candidates=list(state.get("task_review_candidates", [])),
@@ -2049,8 +2086,9 @@ class RetrievalSubgraph:
         merged.pop(CONTEXT_AGENT_LOCAL_KEY, None)
         merged.pop(CONTEXT_RAG_CANDIDATES_KEY, None)
         merged.pop(CONTEXT_SELECTION_OUTPUT_KEY, None)
-        merged.pop(CONTEXT_SUFFICIENCY_OUTPUT_KEY, None)
-        merged.pop(CONTEXT_CURRENT_ROUND_NO_KEY, None)
+        if result["status"] != "ROUTE_RECONSIDERATION_REQUIRED":
+            merged[CONTEXT_SUFFICIENCY_OUTPUT_KEY] = None
+            merged[CONTEXT_CURRENT_ROUND_NO_KEY] = None
         merged.pop(CONTEXT_ROUND_PREADVANCED_KEY, None)
         # Keep bounded read identities until terminal cleanup so a Main
         # Analysis/Review back-edge can extend the exact prior query.

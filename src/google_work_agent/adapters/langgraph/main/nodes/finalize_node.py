@@ -41,6 +41,8 @@ def finalize_node(
         "__context_read_result_handles__": [],
         "__context_read_bindings__": {},
         "__context_segment_handles__": [],
+        "__context_sufficiency_output__": None,
+        "__context_current_round_no__": None,
     }
 
 

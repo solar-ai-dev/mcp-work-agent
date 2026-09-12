@@ -58,6 +58,13 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.review.contracts.review_findings import (
     ReviewSemanticInvoker,
 )
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    bind_registry_candidates,
+)
+from google_work_agent.application.agents.tool_routing.contracts.semantic_route_candidate import (
+    SemanticRouteCandidate,
+)
+from google_work_agent.application.agents.tool_routing.finalize_route import finalize_route
 from google_work_agent.application.prompt_runtime.prompt_registry import DEVELOPMENT_SMOKE
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
@@ -2199,6 +2206,127 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
         "manifestations": ["status-1"],
     }
     assert len(attempts) == 2
+
+
+def test_retrieval__route_reconsideration__preserves_inflight_query_facts() -> None:
+    class RouteReconsiderationInference(_ComponentInferencePort):
+        def _response(
+            self, prompt_id: str, projection: Mapping[str, object]
+        ) -> dict[str, object]:
+            if prompt_id == "retrieval.assess_sufficiency":
+                return {
+                    "schema_version": 2,
+                    "status": "ROUTE_RECONSIDERATION_REQUIRED",
+                    "issues": [
+                        {
+                            "slot": "requested_fact",
+                            "issue_type": "MISSING",
+                            "required": True,
+                            "resolution_source": "ROUTE",
+                            "safety_critical": False,
+                            "reason_codes": ["NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT"],
+                        }
+                    ],
+                }
+            return super()._response(prompt_id, projection)
+
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    catalog = load_development_tool_registry()
+    semantic = SemanticRouteCandidate(
+        ("GMAIL_THREAD",),
+        (),
+        "ANSWER",
+        "REQUIRED",
+    )
+    first_binding = bind_registry_candidates(
+        candidate=semantic,
+        tool_catalog=catalog,
+        id_factory=lambda: "route-1",
+    )
+    first_route = finalize_route(
+        request_intent=cast(Any, state["request_intent"]),
+        binding=first_binding,
+        selected_tools={},
+        tool_catalog=catalog,
+        id_factory=_IdFactory(),
+    )["tool_route_plan"]
+    assert first_route is not None
+    state["tool_route_plan"] = first_route
+    llm = RouteReconsiderationInference()
+    connector = _CollectionConnectorReadPort(item_count=20, has_next_page=True)
+    cache = InMemoryRunRetrievalCache()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=catalog,
+        read_result_cache=cache,
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        first = graph.invoke(state)
+
+    assert first["retrieval_result"] is None
+    assert first["acquisition_result"]["resource_handles"]
+    assert first["__context_current_round_no__"] == 0
+    assert first["__context_sufficiency_output__"]["status"] == (
+        "ROUTE_RECONSIDERATION_REQUIRED"
+    )
+    assert len(first["__context_query_attempts__"]) == 1
+    first_handle_count = len(first["__context_read_result_handles__"])
+
+    repeated_binding = bind_registry_candidates(
+        candidate=semantic,
+        tool_catalog=catalog,
+        id_factory=lambda: "new-route-id",
+    )
+    rerouted = finalize_route(
+        request_intent=cast(Any, state["request_intent"]),
+        binding=repeated_binding,
+        selected_tools={},
+        tool_catalog=catalog,
+        id_factory=_IdFactory(),
+        previous_plan=first_route,
+    )["tool_route_plan"]
+    assert rerouted is not None
+    assert rerouted["input_plan"] is first_route["input_plan"]
+
+    with provider_dispatch_execution_scope():
+        second = graph.invoke(
+            {
+                **first,
+                "tool_route_plan": rerouted,
+                "workflow_signal": None,
+            }
+        )
+
+    followup = llm.inputs["retrieval.plan_query"][1]
+    assert followup["current_round_no"] == 1
+    assert len(cast(list[object], followup["prior_query_attempts"])) == 1
+    assert len(cast(list[object], followup["read_result_summaries"])) == 1
+    read_summary = cast(list[dict[str, object]], followup["read_result_summaries"])[0]
+    assert read_summary["has_next_page"] is True
+    assert read_summary["query_identity_hash"]
+    issues = cast(list[dict[str, object]], followup["unresolved_sufficiency_issues"])
+    assert issues[0]["reason_codes"] == ["NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT"]
+    prior_attempt = cast(list[dict[str, object]], followup["prior_query_attempts"])[0]
+    assert prior_attempt["query_attempt_id"]
+    assert prior_attempt["normalized_intent_constraints"]
+    assert connector.call_count == 2
+    assert len(second["__context_query_attempts__"]) == 2
+    assert len(second["__context_read_result_handles__"]) == first_handle_count + 1
+    assert second["__context_query_attempts__"][1]["operation_kind"] == "SEARCH"
 
 
 def test_retrieval__unchanged_main_back_edge__closes_partial_without_a_second_read() -> None:

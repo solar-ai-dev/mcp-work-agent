@@ -160,6 +160,8 @@ def test_cache_restart__replaces_stale__pending_retrieval_task() -> None:
                 "__context_read_result_handles__": [],
                 "__context_read_bindings__": {},
                 "__context_segment_handles__": [],
+                "__context_sufficiency_output__": None,
+                "__context_current_round_no__": None,
                 "exclusion_obligation_segment_ids": [],
                 "user_interrupt": None,
             },

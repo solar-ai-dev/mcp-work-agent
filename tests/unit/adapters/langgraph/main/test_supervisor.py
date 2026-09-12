@@ -1,7 +1,7 @@
 """Main LangGraph supervisor routing and lifecycle matrix."""
 
 import json
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -819,6 +819,31 @@ def test_review_route__reconsideration_routes__to_tool_route() -> None:
     assert signal is not None
     assert signal["kind"] == "ROUTE_RECONSIDERATION_REQUIRED"
     assert decision["state_update"]["plan_review"] == _review_result("ROUTE_RECONSIDERATION")
+
+
+def test_retrieval_route_reconsideration__preserves_inflight_acquisition() -> None:
+    state = _state(workflow_phase=WorkflowPhase.CONTEXT_RETRIEVAL)
+    state["acquisition_result"] = cast(
+        Any,
+        {
+            "schema_version": 1,
+            "status": "COMPLETE",
+            "source_summaries": [],
+            "resource_handles": ["gmail_thread:thread-1"],
+            "missing_slots": [],
+            "remaining_budget": {"pages": 1},
+        },
+    )
+
+    decision = route_supervisor(
+        phase=WorkflowPhase.CONTEXT_RETRIEVAL,
+        state=state,
+        result={"disposition": "ROUTE_RECONSIDERATION_REQUIRED", "typed_result": None},
+    )
+
+    assert decision["target"] == SupervisorTarget.TOOL_ROUTE.value
+    assert "acquisition_result" not in decision["state_update"]
+    assert decision["state_update"]["retrieval_result"] is None
 
 
 def test_additional_acquisition_budget__deny_preserves_partial__result_kind_when_present() -> None:

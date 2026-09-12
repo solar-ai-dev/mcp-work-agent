@@ -112,18 +112,20 @@ def route_reconsideration(
         if phase is WorkflowPhase.PLAN_REVIEW
         else {"plan_review": None}
     )
+    state_update = base_supervisor_state_update(
+        WorkflowPhase.TOOL_ROUTING,
+        workflow_signal=signal,
+        retrieval_result=None,
+        work_analysis_result=None,
+        planning_result=None,
+        **review_update,
+    )
+    if phase is not WorkflowPhase.CONTEXT_RETRIEVAL:
+        state_update["acquisition_result"] = None
     return make_supervisor_decision(
         target=SupervisorTarget.TOOL_ROUTE,
         next_phase=WorkflowPhase.TOOL_ROUTING,
-        state_update=base_supervisor_state_update(
-            WorkflowPhase.TOOL_ROUTING,
-            workflow_signal=signal,
-            acquisition_result=None,
-            retrieval_result=None,
-            work_analysis_result=None,
-            planning_result=None,
-            **review_update,
-        ),
+        state_update=state_update,
         reason_code=signal["reason_codes"][0],
     )
 
