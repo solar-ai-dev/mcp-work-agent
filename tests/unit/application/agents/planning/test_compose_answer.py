@@ -8,6 +8,7 @@ import pytest
 from google_work_agent.application.agents.planning.compose_answer import (
     MAX_USER_VISIBLE_ANSWER_CHARS,
     answer_draft_output_schema,
+    answer_semantic_repair_output_schema,
     compose_answer,
 )
 
@@ -24,9 +25,27 @@ def test_answer_draft_schema__binds_citations__to_approved_outline() -> None:
     }
     assert properties["answer"] == {
         "type": "string",
+        "description": (
+            "Final user-visible prose only. Do not include JSON, XML, objects, arrays, "
+            "serialized schemas, or code blocks in this string."
+        ),
         "minLength": 1,
         "maxLength": MAX_USER_VISIBLE_ANSWER_CHARS,
     }
+
+
+def test_answer_semantic_repair_schema__binds_citations__without_answer_field() -> None:
+    schema = answer_semantic_repair_output_schema(["e2", "e1", "e1"])
+    properties = cast(dict[str, Any], schema.json_schema)["properties"]
+
+    assert "answer" not in properties
+    assert properties["evidence_refs"] == {
+        "type": "array",
+        "uniqueItems": True,
+        "maxItems": 2,
+        "items": {"type": "string", "enum": ["e1", "e2"]},
+    }
+    assert cast(dict[str, Any], properties["sections"])["minItems"] == 1
 
 
 @pytest.mark.parametrize("uncertain", [False, True])
@@ -664,6 +683,270 @@ def test_compose_rejects__serialized_internal_object__as_user_answer() -> None:
                 "evidence_refs": ["e1"],
             },
         )
+
+
+def test_compose_answer__prose_failure__renders_one_structured_repair_without_raw_answer() -> None:
+    invalid_answer = '{"sections":[],"evidence_refs":["e1"]}'
+    projections: list[Mapping[str, object]] = []
+
+    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        projections.append(prompt_input)
+        if len(projections) == 1:
+            return {
+                "schema_version": 2,
+                "answer": invalid_answer,
+                "evidence_refs": ["e1"],
+            }
+        return {
+            "schema_version": 1,
+            "sections": [
+                {
+                    "heading": "확인 결과",
+                    "items": [
+                        {"label": "일정", "value": "9월 15일 오후 4시"},
+                        {"label": "장소", "value": "3층 회의실 B"},
+                        {"label": "요청사항", "value": "분기 보고서 초안 검토"},
+                    ],
+                }
+            ],
+            "evidence_refs": ["e1"],
+        }
+
+    result = compose_answer(
+        user_request="선택한 메일의 핵심 내용을 3줄로 요약해줘",
+        request_intent={"goal": "summary"},
+        answer_outline={"sections": ["핵심 내용"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[{"evidence_id": "e1", "excerpt": "회의 일정 안내"}],
+        invoke=invoke,
+    )
+
+    assert result["answer"] == (
+        "## 확인 결과\n- 일정: 9월 15일 오후 4시\n- 장소: 3층 회의실 B\n"
+        "- 요청사항: 분기 보고서 초안 검토"
+    )
+    assert len(projections) == 2
+    assert set(projections[1]) == {"base_projection", "candidate_output", "failure_record"}
+    assert projections[1]["base_projection"] == projections[0]
+    assert projections[1]["candidate_output"] is None
+    failure = cast(Mapping[str, object], projections[1]["failure_record"])
+    assert failure["failure_reason_code"] == "COMPOSE_ANSWER_PROSE_INVALID"
+    assert failure["experiment_disposition"] == "RUN_REVISION"
+    assert failure["affected_field_paths"] == ["$.answer"]
+    assert invalid_answer not in repr(projections[1])
+
+
+def test_compose_answer__prose_failure_twice__stops_after_one_revision() -> None:
+    calls = 0
+
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "schema_version": 2,
+            "answer": '{"sections":[]}',
+            "evidence_refs": ["e1"],
+        }
+
+    with pytest.raises(ValueError, match="user-visible prose") as raised:
+        compose_answer(
+            user_request="요약해줘.",
+            request_intent={"goal": "summary"},
+            answer_outline={"sections": ["핵심"], "evidence_refs": ["e1"]},
+            work_analysis=None,
+            evidence=[{"evidence_id": "e1"}],
+            invoke=invoke,
+        )
+
+    assert calls == 2
+    assert raised.value.reason_code == "COMPOSE_ANSWER_PROSE_INVALID"
+
+
+def test_compose_answer__structured_repair__rejects_serialized_item_value() -> None:
+    calls = 0
+
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "schema_version": 2,
+                "answer": '{"sections":[]}',
+                "evidence_refs": ["e1"],
+            }
+        return {
+            "schema_version": 1,
+            "sections": [
+                {
+                    "heading": "",
+                    "items": [{"label": "", "value": '{"internal":"object"}'}],
+                }
+            ],
+            "evidence_refs": ["e1"],
+        }
+
+    with pytest.raises(ValueError, match="user-visible prose") as raised:
+        compose_answer(
+            user_request="요약해줘.",
+            request_intent={"goal": "summary"},
+            answer_outline={"sections": ["핵심"], "evidence_refs": ["e1"]},
+            work_analysis=None,
+            evidence=[{"evidence_id": "e1"}],
+            invoke=invoke,
+        )
+
+    assert calls == 2
+    assert raised.value.reason_code == "COMPOSE_ANSWER_PROSE_INVALID"
+
+
+def test_compose_answer__structured_repair__renders_serialized_semantic_collection() -> None:
+    calls = 0
+
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "schema_version": 2,
+                "answer": '{"sections":[]}',
+                "evidence_refs": ["e1"],
+            }
+        return {
+            "schema_version": 1,
+            "sections": [
+                {
+                    "heading": "확인 결과",
+                    "items": [
+                        {
+                            "label": "요약",
+                            "value": '[{"항목":"첫 번째"},{"항목":"두 번째"}]',
+                        }
+                    ],
+                }
+            ],
+            "evidence_refs": ["e1"],
+        }
+
+    result = compose_answer(
+        user_request="핵심 내용을 알려줘.",
+        request_intent={"goal": "내용 확인"},
+        answer_outline={"sections": ["핵심"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[{"evidence_id": "e1"}],
+        invoke=invoke,
+    )
+
+    assert calls == 2
+    assert result == {
+        "schema_version": 2,
+        "answer": "## 확인 결과\n- 요약: 항목: 첫 번째; 항목: 두 번째",
+        "evidence_refs": ["e1"],
+    }
+
+
+def test_compose_answer__structured_repair__omits_serialized_optional_decorations() -> None:
+    calls = 0
+
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "schema_version": 2,
+                "answer": '{"sections":[]}',
+                "evidence_refs": ["e1"],
+            }
+        return {
+            "schema_version": 1,
+            "sections": [
+                {
+                    "heading": '[{"section_title":"internal"}]',
+                    "items": [
+                        {
+                            "label": '{"label":"internal"}',
+                            "value": "회의 일정은 9월 15일 오후 4시입니다.",
+                        }
+                    ],
+                }
+            ],
+            "evidence_refs": ["e1"],
+        }
+
+    result = compose_answer(
+        user_request="회의 일정을 알려줘.",
+        request_intent={"goal": "일정 확인"},
+        answer_outline={"sections": ["일정"], "evidence_refs": ["e1"]},
+        work_analysis=None,
+        evidence=[{"evidence_id": "e1"}],
+        invoke=invoke,
+    )
+
+    assert calls == 2
+    assert result == {
+        "schema_version": 2,
+        "answer": "- 회의 일정은 9월 15일 오후 4시입니다.",
+        "evidence_refs": ["e1"],
+    }
+
+
+def test_compose_answer__structured_repair__reuses_evidence_scope_validation() -> None:
+    calls = 0
+
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "schema_version": 2,
+                "answer": '{"sections":[]}',
+                "evidence_refs": ["e1"],
+            }
+        return {
+            "schema_version": 1,
+            "sections": [
+                {"heading": "", "items": [{"label": "", "value": "요약 내용"}]}
+            ],
+            "evidence_refs": ["outside"],
+        }
+
+    with pytest.raises(ValueError, match="outside") as raised:
+        compose_answer(
+            user_request="요약해줘.",
+            request_intent={"goal": "summary"},
+            answer_outline={"sections": ["핵심"], "evidence_refs": ["e1"]},
+            work_analysis=None,
+            evidence=[{"evidence_id": "e1"}],
+            invoke=invoke,
+        )
+
+    assert calls == 2
+    assert raised.value.reason_code == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
+
+
+def test_compose_answer__non_prose_validation_failure__does_not_run_revision() -> None:
+    calls = 0
+
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "schema_version": 2,
+            "answer": "확인한 내용을 요약했습니다.",
+            "evidence_refs": ["outside"],
+        }
+
+    with pytest.raises(ValueError, match="outside") as raised:
+        compose_answer(
+            user_request="요약해줘.",
+            request_intent={"goal": "summary"},
+            answer_outline={"sections": ["핵심"], "evidence_refs": ["e1"]},
+            work_analysis=None,
+            evidence=[{"evidence_id": "e1"}],
+            invoke=invoke,
+        )
+
+    assert calls == 1
+    assert raised.value.reason_code == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
 
 
 def test_compose_answer__with_nested_section_string__projects_natural_markdown() -> None:

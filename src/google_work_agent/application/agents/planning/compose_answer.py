@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -27,6 +28,9 @@ from google_work_agent.application.agents.planning.sanitize_user_visible_answer 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     validate_temporal_range_constraint,
 )
+from google_work_agent.application.prompt_runtime.contracts.failure_record import (
+    build_failure_record_v1,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 PROMPT_ID = "planning.compose_answer"
@@ -51,8 +55,84 @@ ANSWER_DRAFT_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "schema_version": {"const": 2},
             "answer": {
                 "type": "string",
+                "description": (
+                    "Final user-visible prose only. Do not include JSON, XML, objects, arrays, "
+                    "serialized schemas, or code blocks in this string."
+                ),
                 "minLength": 1,
                 "maxLength": MAX_USER_VISIBLE_ANSWER_CHARS,
+            },
+            "evidence_refs": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+)
+
+ANSWER_SEMANTIC_REPAIR_OUTPUT_SCHEMA = OutputSchemaDefinition(
+    schema_version="planning-answer-semantic-repair-v1",
+    json_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["schema_version", "sections", "evidence_refs"],
+        "properties": {
+            "schema_version": {"const": 1},
+            "sections": {
+                "type": "array",
+                "description": (
+                    "Semantic sections for deterministic rendering. Do not return an answer "
+                    "field or a serialized response."
+                ),
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["heading", "items"],
+                    "properties": {
+                        "heading": {
+                            "type": "string",
+                            "description": (
+                                "Optional short plain-text section heading; use an empty string "
+                                "when no heading is needed. Do not serialize JSON, XML, a schema, "
+                                "or a code block."
+                            ),
+                            "maxLength": 160,
+                        },
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 12,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["label", "value"],
+                                "properties": {
+                                    "label": {
+                                        "type": "string",
+                                        "description": (
+                                            "Optional concise plain-text semantic label; use an "
+                                            "empty string when no label is needed. Do not "
+                                            "serialize JSON, XML, a schema, or a code block."
+                                        ),
+                                        "maxLength": 120,
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": (
+                                            "One atomic fact, request, conclusion, or summary "
+                                            "content item. Do not serialize JSON, XML, a schema, "
+                                            "or a code block."
+                                        ),
+                                        "minLength": 1,
+                                        "maxLength": 1_200,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
             },
             "evidence_refs": {
                 "type": "array",
@@ -76,6 +156,25 @@ def answer_draft_output_schema(allowed_evidence_refs: Sequence[str]) -> OutputSc
     }
     return OutputSchemaDefinition(
         schema_version=ANSWER_DRAFT_CANDIDATE_OUTPUT_SCHEMA.schema_version,
+        json_schema=json_schema,
+    )
+
+
+def answer_semantic_repair_output_schema(
+    allowed_evidence_refs: Sequence[str],
+) -> OutputSchemaDefinition:
+    """Bind structured-repair citations to the current answer outline."""
+
+    json_schema = deepcopy(ANSWER_SEMANTIC_REPAIR_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], json_schema["properties"])
+    properties["evidence_refs"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "maxItems": len(set(allowed_evidence_refs)),
+        "items": {"type": "string", "enum": sorted(set(allowed_evidence_refs))},
+    }
+    return OutputSchemaDefinition(
+        schema_version=ANSWER_SEMANTIC_REPAIR_OUTPUT_SCHEMA.schema_version,
         json_schema=json_schema,
     )
 
@@ -158,6 +257,181 @@ def compose_answer(
             )
         return _with_partial_scope(task_projection.draft, retrieval_result)
     candidate = invoke(PROMPT_ID, prompt_input)
+    try:
+        return _validate_answer_candidate(
+            candidate,
+            prompt_input=prompt_input,
+            answer_outline=answer_outline,
+            approved_evidence=approved_evidence,
+            user_request=user_request,
+            retrieval_result=retrieval_result,
+        )
+    except _ComposeAnswerValidationError as error:
+        if error.reason_code != "COMPOSE_ANSWER_PROSE_INVALID":
+            raise
+        repair_candidate = invoke(
+            PROMPT_ID,
+            {
+                "base_projection": prompt_input,
+                "candidate_output": None,
+                "failure_record": build_failure_record_v1(
+                    failure_reason_code=error.reason_code,
+                    failure_origin="LLM_OUTPUT",
+                    detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                    runtime_disposition="RETRYABLE",
+                    experiment_disposition="RUN_REVISION",
+                    affected_field_paths=error.affected_field_paths,
+                    evidence_refs=answer_outline["evidence_refs"],
+                ),
+            },
+        )
+        rendered_candidate = _render_semantic_repair_candidate(repair_candidate)
+        return _validate_answer_candidate(
+            rendered_candidate,
+            prompt_input=prompt_input,
+            answer_outline=answer_outline,
+            approved_evidence=approved_evidence,
+            user_request=user_request,
+            retrieval_result=retrieval_result,
+        )
+
+
+def _render_semantic_repair_candidate(
+    candidate: Mapping[str, object],
+) -> AnswerDraftCandidateV2:
+    if candidate.get("schema_version") != 1:
+        raise _invalid_semantic_repair()
+    sections = candidate.get("sections")
+    refs = candidate.get("evidence_refs")
+    if not isinstance(sections, list) or not sections:
+        raise _invalid_semantic_repair()
+    rendered_sections: list[str] = []
+    for section_index, section in enumerate(sections):
+        if not isinstance(section, Mapping) or set(section) != {"heading", "items"}:
+            raise _invalid_semantic_repair()
+        heading = _semantic_repair_fragment(
+            section.get("heading"),
+            allow_empty=True,
+            field_path=f"$.sections[{section_index}].heading",
+        )
+        items = section.get("items")
+        if not isinstance(items, list) or not items:
+            raise _invalid_semantic_repair()
+        lines: list[str] = []
+        for item_index, item in enumerate(items):
+            if not isinstance(item, Mapping) or set(item) != {"label", "value"}:
+                raise _invalid_semantic_repair()
+            label = _semantic_repair_fragment(
+                item.get("label"),
+                allow_empty=True,
+                field_path=f"$.sections[{section_index}].items[{item_index}].label",
+            )
+            value = _semantic_repair_fragment(
+                item.get("value"),
+                allow_empty=False,
+                field_path=f"$.sections[{section_index}].items[{item_index}].value",
+            )
+            lines.append(f"- {label}: {value}" if label else f"- {value}")
+        rendered_sections.append("\n".join([*([] if not heading else [f"## {heading}"]), *lines]))
+    return {
+        "schema_version": 2,
+        "answer": "\n\n".join(rendered_sections),
+        "evidence_refs": cast(list[str], refs),
+    }
+
+
+def _semantic_repair_fragment(
+    value: object,
+    *,
+    allow_empty: bool,
+    field_path: str,
+) -> str:
+    if not isinstance(value, str):
+        raise _invalid_semantic_repair(field_path)
+    stripped = value.strip()
+    if not stripped:
+        if allow_empty:
+            return ""
+        raise _invalid_semantic_repair(field_path)
+    if (
+        stripped.startswith(("{", "["))
+        or "```" in stripped
+        or (stripped.startswith("<") and stripped.endswith(">"))
+    ):
+        if allow_empty:
+            return ""
+        if stripped.startswith(("{", "[")):
+            rendered = _render_serialized_semantic_value(stripped)
+            if rendered:
+                return rendered
+        raise _invalid_semantic_repair(field_path)
+    return stripped
+
+
+def _render_serialized_semantic_value(value: str) -> str:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return ""
+
+    def render(item: object, *, depth: int) -> list[str]:
+        if depth > 3 or isinstance(item, bool) or item is None:
+            return []
+        if isinstance(item, str):
+            text = item.strip()
+            if not text or text.startswith(("{", "[", "<")) or "```" in text:
+                return []
+            return [text]
+        if isinstance(item, (int, float)):
+            return [str(item)]
+        if isinstance(item, list):
+            if not item or len(item) > 12:
+                return []
+            rendered_items: list[str] = []
+            for child in item:
+                parts = render(child, depth=depth + 1)
+                if not parts:
+                    return []
+                rendered_items.extend(parts)
+            return rendered_items
+        if not isinstance(item, Mapping) or not item or len(item) > 12:
+            return []
+        if any(
+            not isinstance(key, str)
+            or key.strip().casefold() in {"internal", "schema_version", "evidence_refs", "answer"}
+            for key in item
+        ):
+            return []
+        rendered_fields: list[str] = []
+        for key, child in item.items():
+            parts = render(child, depth=depth + 1)
+            if not parts:
+                return []
+            label = key.strip()
+            rendered_fields.append(f"{label}: {'; '.join(parts)}")
+        return rendered_fields
+
+    parts = render(parsed, depth=0)
+    return "; ".join(parts)
+
+
+def _invalid_semantic_repair(field_path: str = "$.sections") -> _ComposeAnswerValidationError:
+    return _ComposeAnswerValidationError(
+        "compose_answer answer must be user-visible prose",
+        reason_code="COMPOSE_ANSWER_PROSE_INVALID",
+        field_path=field_path,
+    )
+
+
+def _validate_answer_candidate(
+    candidate: Mapping[str, object],
+    *,
+    prompt_input: Mapping[str, object],
+    answer_outline: AnswerOutlineV1,
+    approved_evidence: Sequence[Mapping[str, object]],
+    user_request: str,
+    retrieval_result: Mapping[str, object] | None,
+) -> AnswerDraftCandidateV2:
     schema_version = candidate.get("schema_version")
     answer = candidate.get("answer")
     refs = candidate.get("evidence_refs")
@@ -330,7 +604,9 @@ def _evidence_ref(item: Mapping[str, object]) -> str | None:
 
 __all__ = [
     "ANSWER_DRAFT_CANDIDATE_OUTPUT_SCHEMA",
+    "ANSWER_SEMANTIC_REPAIR_OUTPUT_SCHEMA",
     "MAX_USER_VISIBLE_ANSWER_CHARS",
     "answer_draft_output_schema",
+    "answer_semantic_repair_output_schema",
     "compose_answer",
 ]
