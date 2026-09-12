@@ -545,6 +545,54 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
+def test_source_status_revision__preserves_unaffected_semantic_owner_outputs() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "기존 메일 대화에 답장",
+                "completion_conditions": ["같은 대화에 답장을 보낸다"],
+                "constraints": _goal_constraints(search_terms=["Quartz"]),
+                "analysis_requirement": "NONE",
+            },
+            _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["납품 일정", "답장 대상 대화 identity"],
+                output_type="GMAIL_MESSAGE",
+                output_effect="SEND",
+            ),
+            {"statuses": [_source_status("SENT", "GMAIL_THREAD", "보낸 편지함")]},
+            {"statuses": []},
+        ]
+    )
+
+    candidate, budget = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=_request("Quartz 납품 일정 확인했다고 답장 보내줘."),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    prompt_ids = [call["prompt_ref"].prompt_id for call in runtime.calls]
+    assert prompt_ids == [
+        "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_source_status",
+        "request_understanding.identify_source_status",
+    ]
+    assert candidate["resource_responsibilities"] == {
+        "source_reads": [
+            {
+                "resource_type": "GMAIL_THREAD",
+                "required_information": ["납품 일정", "답장 대상 대화 identity"],
+            }
+        ],
+        "outputs": [{"resource_type": "GMAIL_MESSAGE", "effect": "SEND"}],
+    }
+    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+
+
 def test_thread_reply__without_explicit_source_status__does_not_create_status() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
@@ -948,7 +996,7 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_bounded_revision__with_source_information__uses_same_normalization() -> None:
+def test_source_status_revision__with_source_information__preserves_responsibilities() -> None:
     invalid_candidate = {
         "goal": "기존 Quartz 초안 수정",
         "completion_conditions": ["초안을 수정한다"],
@@ -964,18 +1012,7 @@ def test_bounded_revision__with_source_information__uses_same_normalization() ->
         ),
         "analysis_requirement": "NONE",
     }
-    revised_candidate = {
-        **invalid_candidate,
-        "constraints": _goal_constraints(search_terms=["Quartz"]),
-        "resource_responsibilities": {
-            "source_reads": [
-                {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 본문"]},
-                {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 수신자"]},
-            ],
-            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
-        },
-    }
-    runtime = FakeStructuredInferencePort(outputs=[invalid_candidate, revised_candidate])
+    runtime = FakeStructuredInferencePort(outputs=[invalid_candidate, {"statuses": []}])
 
     candidate, _budget = identify_goal_with_budget(
         llm_runtime=runtime,
@@ -984,11 +1021,11 @@ def test_bounded_revision__with_source_information__uses_same_normalization() ->
         retry_budget=build_default_run_budget(),
     )
 
-    assert len(runtime.calls) == 10
+    assert len(runtime.calls) == 6
     assert candidate["resource_responsibilities"]["source_reads"] == [
         {
             "resource_type": "GMAIL_DRAFT",
-            "required_information": ["기존 본문", "기존 수신자"],
+            "required_information": ["기존 초안"],
         }
     ]
 
@@ -1680,7 +1717,7 @@ def test_existing_resource_update__with_missing_source__revises_source_owner() -
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_semantic_revision__invented_source_need__may_be_removed() -> None:
+def test_source_status_revision__does_not_reinterpret_independent_source_need() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -1699,17 +1736,7 @@ def test_semantic_revision__invented_source_need__may_be_removed() -> None:
                 ),
                 "analysis_requirement": "NONE",
             },
-            {
-                "goal": "새 메일 전송",
-                "completion_conditions": ["새 메시지를 보낸다"],
-                "constraints": _goal_constraints(
-                    recipient=["person@example.test"], subject=["안내"]
-                ),
-                "resource_responsibilities": _resource_responsibilities(
-                    output_type="GMAIL_MESSAGE", output_effect="SEND"
-                ),
-                "analysis_requirement": "NONE",
-            },
+            {"statuses": []},
         ]
     )
 
@@ -1720,10 +1747,15 @@ def test_semantic_revision__invented_source_need__may_be_removed() -> None:
         retry_budget=build_default_run_budget(),
     )
 
-    assert candidate["requested_effect_hints"] == ["SEND"]
-    assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
-    assert candidate["resource_responsibilities"]["source_reads"] == []
-    assert len(runtime.calls) == 10
+    assert candidate["requested_effect_hints"] == ["READ", "SEND"]
+    assert candidate["requested_resource_hints"] == ["GMAIL_THREAD", "GMAIL_MESSAGE"]
+    assert candidate["resource_responsibilities"]["source_reads"] == [
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": ["발명된 기존 대화 identity"],
+        }
+    ]
+    assert len(runtime.calls) == 6
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
@@ -1749,18 +1781,7 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
                 ),
                 "analysis_requirement": "NONE",
             },
-            {
-                "goal": "기존 메일을 확인해 답장",
-                "completion_conditions": ["확인한 납품 주소를 반영해 답장한다"],
-                "constraints": _goal_constraints(search_terms=["Project Anchor"]),
-                "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD",
-                    required_information=["기존 메일의 납품 주소"],
-                    output_type="GMAIL_MESSAGE",
-                    output_effect="SEND",
-                ),
-                "analysis_requirement": "NONE",
-            },
+            {"statuses": []},
         ]
     )
 
@@ -1779,16 +1800,19 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
             "required_information": ["기존 메일의 납품 주소"],
         }
     ]
-    assert len(runtime.calls) == 10
+    assert len(runtime.calls) == 6
     revision_input = runtime.calls[5]["prompt_input"]
-    assert revision_input["base_projection"] == {
-        "user_request": request.request_text,
-        "selected_resource_refs": [],
-        "run_reference_time": {
-            "reference_time": "1970-01-01T09:00:00+09:00",
-            "timezone": "Asia/Seoul",
-        },
-    }
+    base_projection = cast(dict[str, object], revision_input["base_projection"])
+    assert base_projection["user_request"] == request.request_text
+    assert base_projection["source_reads"] == [
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": ["기존 메일의 납품 주소"],
+        }
+    ]
+    assert base_projection["outputs"] == [
+        {"resource_type": "GMAIL_MESSAGE", "effect": "SEND"}
+    ]
 
 
 def test_semantic_revision__validated_selected_resource__remains_bound() -> None:
@@ -1813,13 +1837,7 @@ def test_semantic_revision__validated_selected_resource__remains_bound() -> None
                 ),
                 "analysis_requirement": "NONE",
             },
-            {
-                "goal": "선택한 메일 요약",
-                "completion_conditions": ["요약을 답한다"],
-                "constraints": _goal_constraints(),
-                "resource_responsibilities": _resource_responsibilities(),
-                "analysis_requirement": "NONE",
-            },
+            {"statuses": []},
         ]
     )
 
@@ -1833,7 +1851,10 @@ def test_semantic_revision__validated_selected_resource__remains_bound() -> None
     assert candidate["requested_effect_hints"] == ["READ"]
     assert candidate["requested_resource_hints"] == ["GMAIL_THREAD"]
     assert candidate["resource_responsibilities"]["source_reads"] == [
-        {"resource_type": "GMAIL_THREAD", "required_information": []}
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": ["선택한 메일 내용"],
+        }
     ]
 
 

@@ -351,54 +351,8 @@ def identify_goal_with_budget(
                 )
                 retry_budget = decision["run_budget"]
                 return candidate, merge_provider_dispatch_usage(retry_budget)
-            revised_goal = llm_runtime.infer(
-                request.requested_mode,
-                resolved_prompt_ref,
-                {
-                    "base_projection": prompt_input,
-                    "candidate_output": goal_output,
-                    "failure_record": failure_record,
-                },
-                IDENTIFY_GOAL_OUTPUT_SCHEMA,
-            )
-            goal_output = revised_goal.structured_output
-            prohibition_output = identify_effect_prohibitions(
-                llm_runtime=llm_runtime,
-                requested_mode=request.requested_mode,
-                prompt_ref=resolved_effect_prohibition_prompt_ref,
-                prompt_input=prompt_input,
-                goal_candidate=goal_output,
-                effect_candidates=effect_candidates,
-                candidate_output=prohibition_output,
-                failure_record=failure_record,
-            )
-            source_output = identify_source_dependencies(
-                llm_runtime=llm_runtime,
-                requested_mode=request.requested_mode,
-                prompt_ref=resolved_source_dependency_prompt_ref,
-                prompt_input=prompt_input,
-                goal_candidate=goal_output,
-                source_candidates=source_dependency_candidates,
-                candidate_output=source_output,
-                failure_record=failure_record,
-            )
-            output_output = identify_output_responsibilities(
-                llm_runtime=llm_runtime,
-                requested_mode=request.requested_mode,
-                prompt_ref=resolved_output_responsibility_prompt_ref,
-                prompt_input=prompt_input,
-                goal_candidate=goal_output,
-                output_candidates=output_responsibility_candidates,
-                effect_prohibitions=prohibition_output,
-                candidate_output=output_output,
-                failure_record=failure_record,
-            )
-            responsibilities = merge_resource_responsibilities(
-                source_decisions=source_output,
-                output_decisions=output_output,
-                source_candidates=source_dependency_candidates,
-                output_candidates=output_responsibility_candidates,
-            )
+            if error.reason_code != "REQUEST_STATUS_PROVENANCE_MISMATCH":
+                raise
             source_status_output = identify_source_status(
                 llm_runtime=llm_runtime,
                 requested_mode=request.requested_mode,
