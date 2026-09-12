@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
@@ -153,36 +154,52 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
         assert secret not in repr(projection)
 
 
-def test_resource_responsibility_output__keeps_roles__without_business_literals() -> None:
+def test_resource_role_output__keeps_roles__without_business_literals() -> None:
     projection = project_llm_semantic_output(
         "request_understanding.identify_resource_responsibilities",
         {
-            "source_reads": [
+            "resource_decisions": [
                 {
                     "resource_type": "TASK",
+                    "role": "SOURCE",
                     "required_information": ["private task state"],
                 },
                 {
                     "resource_type": "CALENDAR_EVENT",
+                    "role": "SOURCE",
                     "required_information": ["private event time"],
                 },
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "role": "OUTPUT",
+                    "effect": "CREATE",
+                },
             ],
-            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
         },
     )
 
     assert projection == {
         "projection_version": 1,
-        "source_reads": {
-            "count": 2,
+        "resource_decisions": {
+            "count": 3,
             "items": [
-                {"resource_type": "TASK", "required_information_count": 1},
-                {"resource_type": "CALENDAR_EVENT", "required_information_count": 1},
+                {
+                    "resource_type": "TASK",
+                    "role": "SOURCE",
+                    "required_information_count": 1,
+                },
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "role": "SOURCE",
+                    "required_information_count": 1,
+                },
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "role": "OUTPUT",
+                    "effect": "CREATE",
+                    "required_information_count": 0,
+                },
             ],
-        },
-        "outputs": {
-            "count": 1,
-            "items": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
         },
     }
     assert "private task state" not in repr(projection)
@@ -267,6 +284,13 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
         {
             "user_request": "private request",
             "selected_resource_refs": [],
+            "resource_candidates": [
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
+                    "allowed_output_effects": ["CREATE", "UPDATE"],
+                }
+            ],
             "goal_candidate": {
                 "goal": "private goal",
                 "completion_conditions": ["private completion"],
@@ -287,11 +311,22 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
         },
     )
 
-    assert projection["goal_candidate"]["constraints"] == {
+    goal_candidate = cast(dict[str, object], projection["goal_candidate"])
+    assert goal_candidate["constraints"] == {
         "count": 2,
         "items": [
             {"kind": "USER_REQUIREMENT", "field": "search_terms"},
             {"kind": "PERSON", "field": "recipient"},
+        ],
+    }
+    assert projection["resource_candidates"] == {
+        "count": 1,
+        "items": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
+                "allowed_output_effects": ["CREATE", "UPDATE"],
+            }
         ],
     }
     exported = repr(projection)

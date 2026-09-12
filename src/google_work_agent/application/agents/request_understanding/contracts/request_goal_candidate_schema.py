@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    REQUEST_RESOURCE_TYPES,
     SOURCE_STATUS_VALUES_BY_RESOURCE,
     WRITE_EFFECT_RESOURCE_TYPES,
     ActionEffectValue,
@@ -43,18 +44,6 @@ _MODEL_CONSTRAINT_SLOT_KINDS = {
     for field, kind in REQUEST_GOAL_SLOT_KINDS.items()
     if field not in {"required_information", "status"}
 }
-_RESOURCE_TYPES = [
-    "GMAIL_THREAD",
-    "GMAIL_MESSAGE",
-    "GMAIL_DRAFT",
-    "GMAIL_ATTACHMENT",
-    "TASK_LIST",
-    "TASK",
-    "CALENDAR",
-    "CALENDAR_EVENT",
-    "CALENDAR_FREEBUSY",
-    "GITHUB_ISSUE",
-]
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
@@ -240,7 +229,7 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                 "additionalProperties": False,
                 "required": ["resource_type", "required_information"],
                 "properties": {
-                    "resource_type": {"enum": _RESOURCE_TYPES},
+                    "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "required_information": {
                         "type": "array",
                         "uniqueItems": True,
@@ -277,7 +266,7 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                     for effect, resource_types in WRITE_EFFECT_RESOURCE_TYPES.items()
                 ],
                 "properties": {
-                    "resource_type": {"enum": _RESOURCE_TYPES},
+                    "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "effect": {"enum": ["CREATE", "UPDATE", "SEND", "DELETE"]},
                 },
             },
@@ -291,7 +280,7 @@ _DERIVED_EFFECT_HINTS_SCHEMA = {
 }
 _DERIVED_RESOURCE_HINTS_SCHEMA = {
     "type": "array",
-    "items": {"enum": _RESOURCE_TYPES},
+    "items": {"enum": list(REQUEST_RESOURCE_TYPES)},
     "uniqueItems": True,
 }
 
@@ -353,12 +342,6 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
     },
 )
 
-IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-resource-responsibilities-v1",
-    json_schema=deepcopy(_RESOURCE_RESPONSIBILITY_SCHEMA),
-)
-
-
 def validate_request_goal_candidate(
     value: object,
     *,
@@ -373,7 +356,7 @@ def validate_request_goal_candidate(
     root = cast(dict[str, object], value)
     slots = cast(dict[str, object], root["constraints"])
     _validate_semantic_constraint_text(slots)
-    normalized_responsibilities = validate_resource_responsibility_candidate(
+    normalized_responsibilities = _validate_resource_responsibilities_shape(
         resource_responsibilities
     )
     normalized_root = {
@@ -456,12 +439,12 @@ def validate_request_goal_candidate(
     return cast(RequestGoalCandidateV1, value)
 
 
-def validate_resource_responsibility_candidate(
+def _validate_resource_responsibilities_shape(
     value: object,
 ) -> ResourceResponsibilitiesV1:
     errors = validate_output_schema(
         value,
-        IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA.json_schema,
+        _RESOURCE_RESPONSIBILITY_SCHEMA,
     )
     if errors:
         raise ValueError(f"resource responsibility candidate is invalid: {'; '.join(errors)}")
@@ -604,10 +587,8 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
 
 __all__ = [
     "IDENTIFY_GOAL_OUTPUT_SCHEMA",
-    "IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA",
     "RequestGoalSemanticValidationError",
     "REQUEST_GOAL_SLOT_KINDS",
     "validate_normalized_request_goal_candidate",
     "validate_request_goal_candidate",
-    "validate_resource_responsibility_candidate",
 ]

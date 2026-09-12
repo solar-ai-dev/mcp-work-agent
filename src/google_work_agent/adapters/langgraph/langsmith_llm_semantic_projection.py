@@ -55,6 +55,10 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "status_values",
         "coverage_requirement",
         "goal_candidate",
+        "resource_candidates",
+        "resource_decisions",
+        "allowed_roles",
+        "allowed_output_effects",
         "resolution_responsibilities",
         "connector_owned_information_count",
         "connector_owned_source_count",
@@ -133,9 +137,10 @@ def project_llm_semantic_input(prompt_id: str, value: object) -> dict[str, objec
         return _unavailable()
     if prompt_id == "request_understanding.identify_source_status":
         result = _project_source_status_input(mapping)
+    elif prompt_id == "request_understanding.identify_resource_responsibilities":
+        result = _project_resource_role_input(mapping)
     elif prompt_id in {
         "request_understanding.identify_goal",
-        "request_understanding.identify_resource_responsibilities",
     }:
         result = _project_identify_input(mapping)
     elif prompt_id == "request_understanding.detect_ambiguity":
@@ -162,7 +167,7 @@ def project_llm_semantic_output(prompt_id: str, value: object) -> dict[str, obje
     if prompt_id == "request_understanding.identify_goal":
         result = _project_goal_candidate(mapping)
     elif prompt_id == "request_understanding.identify_resource_responsibilities":
-        result = _project_resource_responsibilities_candidate(mapping)
+        result = _project_resource_role_decision_candidate(mapping)
     elif prompt_id == "request_understanding.identify_source_status":
         result = _project_source_status_candidate(mapping)
     elif prompt_id == "request_understanding.detect_ambiguity":
@@ -211,6 +216,26 @@ def _project_identify_input(value: Mapping[object, object]) -> dict[str, object]
     return result
 
 
+def _project_resource_role_input(value: Mapping[object, object]) -> dict[str, object]:
+    result = _project_identify_input(value)
+    candidates = _sequence(value.get("resource_candidates"))
+    items: list[dict[str, object]] = []
+    for raw_candidate in candidates[:_MAX_COLLECTION_ITEMS]:
+        candidate = _mapping(raw_candidate)
+        if candidate is None:
+            continue
+        projected: dict[str, object] = {
+            "allowed_roles": _safe_values(candidate.get("allowed_roles")),
+            "allowed_output_effects": _safe_values(
+                candidate.get("allowed_output_effects")
+            ),
+        }
+        _copy_safe_scalar(candidate, projected, "resource_type")
+        items.append(projected)
+    result["resource_candidates"] = {"count": len(candidates), "items": items}
+    return result
+
+
 def _project_goal_candidate(value: Mapping[object, object]) -> dict[str, object]:
     result: dict[str, object] = {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
@@ -230,13 +255,24 @@ def _project_goal_candidate(value: Mapping[object, object]) -> dict[str, object]
     return result
 
 
-def _project_resource_responsibilities_candidate(
+def _project_resource_role_decision_candidate(
     value: Mapping[object, object],
 ) -> dict[str, object]:
+    decisions = _sequence(value.get("resource_decisions"))
+    items: list[dict[str, object]] = []
+    for raw_decision in decisions[:_MAX_COLLECTION_ITEMS]:
+        decision = _mapping(raw_decision)
+        if decision is None:
+            continue
+        projected: dict[str, object] = {
+            "required_information_count": _count(decision.get("required_information"))
+        }
+        for name in ("resource_type", "role", "effect"):
+            _copy_safe_scalar(decision, projected, name)
+        items.append(projected)
     return {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
-        "source_reads": _project_source_reads(value.get("source_reads")),
-        "outputs": _project_outputs(value.get("outputs")),
+        "resource_decisions": {"count": len(decisions), "items": items},
     }
 
 

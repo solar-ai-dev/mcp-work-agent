@@ -18,6 +18,12 @@ from google_work_agent.adapters.langgraph.profiles.profile_registry import Graph
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.graph import (
     RequestUnderstandingSubgraph,
 )
+from google_work_agent.application.agents.request_understanding.identify_resource_roles import (
+    build_resource_role_candidates,
+)
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     account_provider_dispatch,
     provider_dispatch_execution_scope,
@@ -125,11 +131,34 @@ class _RepairingAgent:
         input_projection: Mapping[str, object],
         output_schema_ref: OutputSchemaDefinition,
     ) -> StructuredInferenceResultV1:
-        del requested_mode, input_projection, output_schema_ref
+        del requested_mode, output_schema_ref
         result = self.invoke_structured()
         output = result.structured_output
         if prompt_ref.prompt_id == "request_understanding.identify_resource_responsibilities":
-            output = cast(dict[str, object], output["resource_responsibilities"])
+            responsibilities = cast(Mapping[str, object], output["resource_responsibilities"])
+            task_source = cast(list[Mapping[str, object]], responsibilities["source_reads"])[0]
+            base = cast(
+                Mapping[str, object],
+                input_projection.get("base_projection", input_projection),
+            )
+            candidates = cast(list[Mapping[str, object]], base["resource_candidates"])
+            output = {
+                "resource_decisions": [
+                    (
+                        {
+                            "resource_type": candidate["resource_type"],
+                            "role": "SOURCE",
+                            "required_information": task_source["required_information"],
+                        }
+                        if candidate["resource_type"] == "TASK"
+                        else {
+                            "resource_type": candidate["resource_type"],
+                            "role": "NONE",
+                        }
+                    )
+                    for candidate in candidates
+                ]
+            }
         elif prompt_ref.prompt_id == "request_understanding.identify_source_status":
             output = {"statuses": []}
         else:
@@ -163,6 +192,9 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph._identify_goal_prompt_ref = PROMPT_REF
     subgraph._identify_resource_responsibilities_prompt_ref = RESPONSIBILITY_PROMPT_REF
     subgraph._identify_source_status_prompt_ref = SOURCE_STATUS_PROMPT_REF
+    subgraph._resource_role_candidates = build_resource_role_candidates(
+        load_signed_tool_registry()
+    )
     subgraph._graph_profile = GraphProfile.SIX_ROLE_BASELINE
     return subgraph
 

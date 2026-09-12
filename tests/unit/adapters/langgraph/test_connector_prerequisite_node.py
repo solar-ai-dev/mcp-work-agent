@@ -84,6 +84,7 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
     identifiers = iter(f"id-{index}" for index in range(100))
     subgraph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_signed_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope="DEVELOPMENT_SMOKE",
         id_factory=identifiers.__next__,
@@ -120,8 +121,8 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
     assert output["finalize_intent"]["result_kind"] == "PARTIAL"
     assert "GitHub" in output["finalize_intent"]["prerequisite_message"]
     assert output["user_interrupt"] is None
-    assert len(llm.calls) == 1
-    assert output["trace_context"]["llm_call_count"] == 1
+    assert len(llm.calls) == 3
+    assert output["trace_context"]["llm_call_count"] == 0
     assert output["admitted_connector_ids"] == []
     confirm.assert_not_called()
 

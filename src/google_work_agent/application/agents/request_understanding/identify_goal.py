@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from google_work_agent.application.agents.preserve_exact_user_literals import (
@@ -47,13 +47,13 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
-    IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
     RequestGoalSemanticValidationError,
     derive_requested_resource_fields,
     validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
-    validate_resource_responsibility_candidate,
 )
+from .contracts.resource_role_decision import ResourceRoleCandidateV1
+from .identify_resource_roles import identify_resource_roles
 from .identify_source_status import identify_source_status
 from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
 
@@ -62,6 +62,7 @@ def identify_goal(
     *,
     llm_runtime: StructuredInferencePort,
     request: WorkflowStartRequest,
+    resource_role_candidates: Sequence[ResourceRoleCandidateV1],
     prompt_ref: PromptReference | None = None,
     responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
@@ -93,18 +94,13 @@ def identify_goal(
         prompt_input,
         IDENTIFY_GOAL_OUTPUT_SCHEMA,
     )
-    responsibility_input = _resource_responsibility_prompt_input(
-        prompt_input,
+    _, responsibilities = identify_resource_roles(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_responsibility_prompt_ref,
+        prompt_input=prompt_input,
         goal_candidate=result.structured_output,
-    )
-    responsibility_result = llm_runtime.infer(
-        request.requested_mode,
-        resolved_responsibility_prompt_ref,
-        responsibility_input,
-        IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
-    )
-    responsibilities = validate_resource_responsibility_candidate(
-        responsibility_result.structured_output
+        resource_candidates=resource_role_candidates,
     )
     source_status_output = identify_source_status(
         llm_runtime=llm_runtime,
@@ -128,6 +124,7 @@ def identify_goal_with_budget(
     llm_runtime: StructuredInferencePort,
     request: WorkflowStartRequest,
     retry_budget: RunBudgetV2,
+    resource_role_candidates: Sequence[ResourceRoleCandidateV1],
     prompt_ref: PromptReference | None = None,
     responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
@@ -161,19 +158,15 @@ def identify_goal_with_budget(
             prompt_input,
             IDENTIFY_GOAL_OUTPUT_SCHEMA,
         )
-        responsibility_input = _resource_responsibility_prompt_input(
-            prompt_input,
-            goal_candidate=result.structured_output,
-        )
-        responsibility_result = llm_runtime.infer(
-            request.requested_mode,
-            resolved_responsibility_prompt_ref,
-            responsibility_input,
-            IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
-        )
         goal_output = result.structured_output
-        responsibility_output: object = responsibility_result.structured_output
-        responsibilities = validate_resource_responsibility_candidate(responsibility_output)
+        responsibility_output, responsibilities = identify_resource_roles(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_responsibility_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+            resource_candidates=resource_role_candidates,
+        )
         source_status_output = identify_source_status(
             llm_runtime=llm_runtime,
             requested_mode=request.requested_mode,
@@ -217,23 +210,16 @@ def identify_goal_with_budget(
                 },
                 IDENTIFY_GOAL_OUTPUT_SCHEMA,
             )
-            revised_responsibilities = llm_runtime.infer(
-                request.requested_mode,
-                resolved_responsibility_prompt_ref,
-                {
-                    "base_projection": _resource_responsibility_prompt_input(
-                        prompt_input,
-                        goal_candidate=revised_goal.structured_output,
-                    ),
-                    "candidate_output": responsibility_output,
-                    "failure_record": failure_record,
-                },
-                IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
-            )
             goal_output = revised_goal.structured_output
-            responsibility_output = revised_responsibilities.structured_output
-            responsibilities = validate_resource_responsibility_candidate(
-                responsibility_output
+            responsibility_output, responsibilities = identify_resource_roles(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_responsibility_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                resource_candidates=resource_role_candidates,
+                candidate_output=responsibility_output,
+                failure_record=failure_record,
             )
             source_status_output = identify_source_status(
                 llm_runtime=llm_runtime,
@@ -254,19 +240,6 @@ def identify_goal_with_budget(
             )
             retry_budget = decision["run_budget"]
         return candidate, merge_provider_dispatch_usage(retry_budget)
-
-
-def _resource_responsibility_prompt_input(
-    prompt_input: Mapping[str, object],
-    *,
-    goal_candidate: Mapping[str, object],
-) -> dict[str, object]:
-    """Bind resource-role inference to the preceding goal interpretation."""
-
-    return {
-        **prompt_input,
-        "goal_candidate": dict(goal_candidate),
-    }
 
 
 def _prompt_input(

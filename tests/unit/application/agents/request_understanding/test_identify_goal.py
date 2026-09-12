@@ -26,8 +26,15 @@ from google_work_agent.application.agents.request_understanding.identify_goal im
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal_with_budget as _identify_goal_with_budget,
 )
+from google_work_agent.application.agents.request_understanding.identify_resource_roles import (
+    build_resource_role_candidates,
+    build_resource_role_decision_output_schema,
+)
 from google_work_agent.application.agents.request_understanding.identify_source_status import (
     build_identify_source_status_output_schema,
+)
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
@@ -52,9 +59,11 @@ _GMAIL_CONSTRAINT_KINDS = {
     "period": "DATE",
     "coverage_requirement": "SCOPE",
 }
+_RESOURCE_ROLE_CANDIDATES = build_resource_role_candidates(load_signed_tool_registry())
 
 
 def identify_goal(**kwargs: Any) -> Any:
+    kwargs.setdefault("resource_role_candidates", _RESOURCE_ROLE_CANDIDATES)
     kwargs.setdefault(
         "responsibility_prompt_ref",
         _prompt_ref(
@@ -73,6 +82,7 @@ def identify_goal(**kwargs: Any) -> Any:
 
 
 def identify_goal_with_budget(**kwargs: Any) -> Any:
+    kwargs.setdefault("resource_role_candidates", _RESOURCE_ROLE_CANDIDATES)
     kwargs.setdefault(
         "responsibility_prompt_ref",
         _prompt_ref(
@@ -90,7 +100,7 @@ def identify_goal_with_budget(**kwargs: Any) -> Any:
     return _identify_goal_with_budget(**kwargs)
 
 
-def detect_ambiguity(**kwargs: object) -> AmbiguityV1:
+def detect_ambiguity(**kwargs: Any) -> AmbiguityV1:
     ambiguity, _ = _detect_ambiguity_with_budget(
         **kwargs,
         retry_budget=build_default_run_budget(),
@@ -363,6 +373,44 @@ def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
     }
 
 
+def _resource_role_decisions(
+    *,
+    source_types: dict[str, list[str]] | None = None,
+    output_types: dict[str, str] | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    source_types = source_types or {}
+    output_types = output_types or {}
+    decisions: list[dict[str, object]] = []
+    for candidate in _RESOURCE_ROLE_CANDIDATES:
+        resource_type = candidate["resource_type"]
+        information = source_types.get(resource_type)
+        effect = output_types.get(resource_type)
+        if information is not None and effect is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE_AND_OUTPUT",
+                    "required_information": information,
+                    "effect": effect,
+                }
+            )
+        elif information is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE",
+                    "required_information": information,
+                }
+            )
+        elif effect is not None:
+            decisions.append(
+                {"resource_type": resource_type, "role": "OUTPUT", "effect": effect}
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "role": "NONE"})
+    return {"resource_decisions": decisions}
+
+
 def test_source_status__task_update_output__does_not_become_completed_source_scope() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
@@ -438,7 +486,9 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
     )
 
     assert not any(item["field"] == "status" for item in candidate["constraints"])
-    assert runtime.calls[5]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    revision_input = cast(dict[str, object], runtime.calls[5]["prompt_input"])
+    failure_record = cast(dict[str, object], revision_input["failure_record"])
+    assert failure_record["failure_reason_code"] == (
         "REQUEST_STATUS_PROVENANCE_MISMATCH"
     )
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
@@ -486,7 +536,7 @@ def test_cross_resource_read_write__without_typed_responsibility__rejects_before
         ]
     )
 
-    with pytest.raises(ValueError, match="resource responsibility candidate"):
+    with pytest.raises(ValueError, match="Resource role decision candidate"):
         identify_goal(
             llm_runtime=runtime,
             request=_request("기존 자료에서 일정을 확인해 관련 메시지를 보내줘."),
@@ -721,7 +771,7 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
         "request-goal-candidate-v14",
-        "request-resource-responsibilities-v1",
+        "request-resource-role-decision-candidate-v1",
         "request-source-status-v1",
     ]
     assert runtime.calls[1]["prompt_input"]["goal_candidate"] == {
@@ -733,6 +783,9 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         ),
         "analysis_requirement": "NONE",
     }
+    assert runtime.calls[1]["prompt_input"]["resource_candidates"] == list(
+        _RESOURCE_ROLE_CANDIDATES
+    )
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {"resource_type": "TASK", "required_information": ["준비 상황"]},
@@ -991,32 +1044,32 @@ def test_request_goal_schema__rejects_non_typed_collection_scope() -> None:
 def test_request_goal_schema__accepts_supported_output_pairs__before_application(
     effect: str, resource_type: str
 ) -> None:
-    candidate = _resource_responsibilities(
-        output_type=resource_type,
-        output_effect=effect,
+    candidate = _resource_role_decisions(
+        output_types={resource_type: effect},
     )
 
     assert (
         validate_output_schema(
             candidate,
-            goal_schema.IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA.json_schema,
+            build_resource_role_decision_output_schema(
+                _RESOURCE_ROLE_CANDIDATES
+            ).json_schema,
         )
         == []
     )
 
 
 def test_request_goal_schema__rejects_unsupported_output_pair__before_application() -> None:
-    candidate = _resource_responsibilities(
-        output_type="GMAIL_MESSAGE",
-        output_effect="CREATE",
+    candidate = _resource_role_decisions(
+        output_types={"GMAIL_MESSAGE": "CREATE"},
     )
 
     errors = validate_output_schema(
         candidate,
-        goal_schema.IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA.json_schema,
+        build_resource_role_decision_output_schema(_RESOURCE_ROLE_CANDIDATES).json_schema,
     )
 
-    assert "$.outputs[0].resource_type must be one of" in errors[0]
+    assert errors
 
 
 def test_request_goal_validator__with_empty_responsibility_text__rejects_candidate() -> None:
@@ -1605,7 +1658,7 @@ def test_identify_goal__workspace_effect_without_resource_hint__fails_contract()
         ]
     )
 
-    with pytest.raises(ValueError, match="resource responsibility candidate"):
+    with pytest.raises(ValueError, match="Resource role decision candidate"):
         identify_goal(
             llm_runtime=runtime,
             request=_request("내 캘린더에 일정을 만들어줘"),
@@ -2119,7 +2172,7 @@ def test_existing_gmail_thread_reply__incompatible_output_resource__rejects_outp
         ]
     )
 
-    with pytest.raises(ValueError, match="resource responsibility candidate"):
+    with pytest.raises(ValueError, match="Resource role decision candidate"):
         identify_goal(
             llm_runtime=runtime,
             request=_request(
@@ -2131,6 +2184,10 @@ def test_existing_gmail_thread_reply__incompatible_output_resource__rejects_outp
 
 
 def test_identify_goal__duplicate_output_responsibilities__rejects_output() -> None:
+    decisions = _resource_role_decisions(output_types={"GMAIL_MESSAGE": "SEND"})[
+        "resource_decisions"
+    ]
+    duplicated_decisions = [*decisions, dict(decisions[0])]
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -2140,19 +2197,13 @@ def test_identify_goal__duplicate_output_responsibilities__rejects_output() -> N
                     recipient=["qhdrbdhkdwks2@gmail.com"],
                     subject=["[GWA E2E #197] SEND"],
                 ),
-                "resource_responsibilities": {
-                    "source_reads": [],
-                    "outputs": [
-                        {"resource_type": "GMAIL_MESSAGE", "effect": "SEND"},
-                        {"resource_type": "GMAIL_MESSAGE", "effect": "SEND"},
-                    ],
-                },
                 "analysis_requirement": "NONE",
-            }
+            },
+            {"resource_decisions": duplicated_decisions},
         ]
     )
 
-    with pytest.raises(ValueError, match="resource responsibility candidate"):
+    with pytest.raises(ValueError, match="Resource role decision candidate"):
         identify_goal(
             llm_runtime=runtime,
             request=_request("기존 메일 대화를 찾아 답장해."),
@@ -2186,7 +2237,7 @@ def test_identify_goal__write_effect_without_compatible_resource__rejects_output
         ]
     )
 
-    with pytest.raises(ValueError, match="resource responsibility candidate"):
+    with pytest.raises(ValueError, match="Resource role decision candidate"):
         identify_goal(
             llm_runtime=runtime,
             request=_request("외부 업무를 수행해."),

@@ -79,11 +79,15 @@ class FakeStructuredInferencePort:
                 "output_schema": output_schema_ref,
             }
         )
+        output: object
         if (
-            output_schema_ref.schema_version == "request-resource-responsibilities-v1"
+            output_schema_ref.schema_version == "request-resource-role-decision-candidate-v1"
             and self._pending_resource_responsibilities is not None
         ):
-            output = self._pending_resource_responsibilities
+            output = _resource_role_decisions_from_responsibilities(
+                self._pending_resource_responsibilities,
+                input_projection=input_projection,
+            )
             self._pending_resource_responsibilities = None
         elif output_schema_ref.schema_version == "request-source-status-v1":
             if self._pending_source_statuses is not None:
@@ -111,11 +115,24 @@ class FakeStructuredInferencePort:
                         for key, value in output.items()
                         if key != "resource_responsibilities"
                     }
-                elif (
-                    output_schema_ref.schema_version
-                    == "request-resource-responsibilities-v1"
+                elif output_schema_ref.schema_version == (
+                    "request-resource-role-decision-candidate-v1"
                 ):
-                    output = responsibilities
+                    output = _resource_role_decisions_from_responsibilities(
+                        responsibilities,
+                        input_projection=input_projection,
+                    )
+            elif (
+                output_schema_ref.schema_version
+                == "request-resource-role-decision-candidate-v1"
+                and isinstance(output, Mapping)
+                and "source_reads" in output
+                and "outputs" in output
+            ):
+                output = _resource_role_decisions_from_responsibilities(
+                    output,
+                    input_projection=input_projection,
+                )
             if (
                 output_schema_ref.schema_version == "request-goal-candidate-v14"
                 and isinstance(output, Mapping)
@@ -145,6 +162,78 @@ class FakeStructuredInferencePort:
             latency_ms=1,
             fallback_reason=None,
         )
+
+
+def _resource_role_decisions_from_responsibilities(
+    value: object,
+    *,
+    input_projection: Mapping[str, object],
+) -> dict[str, object]:
+    responsibilities = cast(Mapping[str, object], value)
+    sources: dict[str, dict[str, object]] = {}
+    for item in cast(Sequence[object], responsibilities["source_reads"]):
+        if not isinstance(item, Mapping):
+            continue
+        source = cast(Mapping[str, object], item)
+        resource_type = cast(str, source["resource_type"])
+        current = sources.setdefault(
+            resource_type,
+            {"resource_type": resource_type, "required_information": []},
+        )
+        information = cast(list[str], current["required_information"])
+        for value in cast(Sequence[str], source["required_information"]):
+            if value not in information:
+                information.append(value)
+    outputs = {
+        cast(str, output["resource_type"]): output
+        for item in cast(Sequence[object], responsibilities["outputs"])
+        if isinstance(item, Mapping)
+        for output in [cast(Mapping[str, object], item)]
+    }
+    base_projection = input_projection.get("base_projection")
+    base = (
+        cast(Mapping[str, object], base_projection)
+        if isinstance(base_projection, Mapping)
+        else input_projection
+    )
+    candidates = cast(Sequence[Mapping[str, object]], base["resource_candidates"])
+    decisions: list[dict[str, object]] = []
+    for candidate in candidates:
+        resource_type = cast(str, candidate["resource_type"])
+        selected_source = sources.get(resource_type)
+        selected_output = outputs.get(resource_type)
+        if selected_source is not None and selected_output is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE_AND_OUTPUT",
+                    "required_information": list(
+                        cast(Sequence[str], selected_source["required_information"])
+                    ),
+                    "effect": selected_output["effect"],
+                }
+            )
+        elif selected_source is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE",
+                    "required_information": list(
+                        cast(Sequence[str], selected_source["required_information"])
+                    ),
+                }
+            )
+        elif selected_output is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "OUTPUT",
+                    "effect": selected_output["effect"],
+                }
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "role": "NONE"})
+    return {"resource_decisions": decisions}
 
 
 @dataclass

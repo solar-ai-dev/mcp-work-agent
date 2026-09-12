@@ -75,6 +75,7 @@ def test_resource_responsibility_contract__requires_preceding_goal_candidate() -
             "user_request": "request",
             "selected_resource_refs": [],
             "goal_candidate": {},
+            "resource_candidates": [],
         },
     )
     with pytest.raises(PromptRuntimeInputContractError, match="missing required"):

@@ -34,7 +34,20 @@ ConstraintKindValue = Literal[
     "PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"
 ]
 ActionEffectValue = Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]
+WriteEffectValue = Literal["CREATE", "UPDATE", "SEND", "DELETE"]
 ConstraintProvenanceSource = Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
+REQUEST_RESOURCE_TYPES: tuple[str, ...] = (
+    "GMAIL_THREAD",
+    "GMAIL_MESSAGE",
+    "GMAIL_DRAFT",
+    "GMAIL_ATTACHMENT",
+    "TASK_LIST",
+    "TASK",
+    "CALENDAR",
+    "CALENDAR_EVENT",
+    "CALENDAR_FREEBUSY",
+    "GITHUB_ISSUE",
+)
 SOURCE_STATUS_VALUES_BY_RESOURCE: dict[str, frozenset[str]] = {
     "GMAIL_THREAD": frozenset({"ANY", "DRAFT", "SENT"}),
     "GMAIL_MESSAGE": frozenset({"ANY", "DRAFT", "SENT"}),
@@ -80,7 +93,7 @@ class SourceResourceResponsibilityV1(TypedDict):
 
 class OutputResourceResponsibilityV1(TypedDict):
     resource_type: str
-    effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+    effect: WriteEffectValue
 
 
 class ResourceResponsibilitiesV1(TypedDict):

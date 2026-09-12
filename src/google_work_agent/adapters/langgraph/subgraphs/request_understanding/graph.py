@@ -29,6 +29,9 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
     RequestUnderstandingParentOutputState,
     RequestUnderstandingStateV2,
 )
+from google_work_agent.application.agents.request_understanding.identify_resource_roles import (
+    build_resource_role_candidates,
+)
 from google_work_agent.application.agents.request_understanding.identify_temporal_scope import (
     needs_temporal_scope,
 )
@@ -38,6 +41,7 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
     load_prompt_reference,
 )
+from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
     CheckConnectorPrerequisitesHandler,
 )
@@ -88,6 +92,7 @@ class RequestUnderstandingSubgraph:
         self,
         *,
         llm_runtime: StructuredInferencePort,
+        tool_catalog: SignedToolRegistry,
         prompt_manifest_path: Path | None,
         prompt_execution_scope: PromptExecutionScope = PRODUCT_RELEASE,
         id_factory: Callable[[], str],
@@ -98,6 +103,7 @@ class RequestUnderstandingSubgraph:
         connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
+        self._resource_role_candidates = build_resource_role_candidates(tool_catalog)
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
         self._identify_goal_prompt_ref = load_prompt_reference(
             "request_understanding.identify_goal",
@@ -190,11 +196,11 @@ class RequestUnderstandingSubgraph:
             prompt_ref=self._identify_goal_prompt_ref,
             responsibility_prompt_ref=self._identify_resource_responsibilities_prompt_ref,
             source_status_prompt_ref=self._identify_source_status_prompt_ref,
+            resource_role_candidates=self._resource_role_candidates,
         )
         calls_used = max(
             0,
-            patch["retry_budget"]["llm_calls_used"]
-            - state["retry_budget"]["llm_calls_used"],
+            patch["retry_budget"]["llm_calls_used"] - state["retry_budget"]["llm_calls_used"],
         )
         return {
             **current_run_fields,

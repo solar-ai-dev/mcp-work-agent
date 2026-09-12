@@ -185,30 +185,21 @@ class _ComponentInferencePort:
             }
         if prompt_id == "request_understanding.identify_resource_responsibilities":
             if self.searchable_target:
-                return {
-                    "source_reads": [
-                        {
-                            "resource_type": "GMAIL_THREAD",
-                            "required_information": ["shipment criteria", "owner"],
-                        }
-                    ],
-                    "outputs": [],
-                }
+                return _resource_role_decisions(
+                    projection,
+                    source_types={"GMAIL_THREAD": ["shipment criteria", "owner"]},
+                )
             needs_action = self.request_confirmation or has_confirmation
             return (
-                {
-                    "source_reads": [],
-                    "outputs": [{"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}],
-                }
+                _resource_role_decisions(
+                    projection,
+                    output_types={"CALENDAR_EVENT": "CREATE"},
+                )
                 if needs_action
-                else {
-                    "source_reads": (
-                        [{"resource_type": "GITHUB_ISSUE", "required_information": []}]
-                        if self.github_retrieval
-                        else []
-                    ),
-                    "outputs": [],
-                }
+                else _resource_role_decisions(
+                    projection,
+                    source_types={"GITHUB_ISSUE": []} if self.github_retrieval else {},
+                )
             )
         if prompt_id == "request_understanding.identify_source_status":
             return {"statuses": []}
@@ -769,6 +760,46 @@ def _merge_decision(
     }
 
 
+def _resource_role_decisions(
+    projection: Mapping[str, object],
+    *,
+    source_types: Mapping[str, list[str]] | None = None,
+    output_types: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    sources = source_types or {}
+    outputs = output_types or {}
+    decisions: list[dict[str, object]] = []
+    candidates = cast(list[Mapping[str, object]], projection["resource_candidates"])
+    for candidate in candidates:
+        resource_type = cast(str, candidate["resource_type"])
+        information = sources.get(resource_type)
+        effect = outputs.get(resource_type)
+        if information is not None and effect is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE_AND_OUTPUT",
+                    "required_information": information,
+                    "effect": effect,
+                }
+            )
+        elif information is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE",
+                    "required_information": information,
+                }
+            )
+        elif effect is not None:
+            decisions.append(
+                {"resource_type": resource_type, "role": "OUTPUT", "effect": effect}
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "role": "NONE"})
+    return {"resource_decisions": decisions}
+
+
 def _confirm_early(_state: object) -> tuple[None, dict[str, object]]:
     return None, {"__target__": "end", "__workflow_control__": {"stage": "PAUSED"}}
 
@@ -781,6 +812,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     llm = _ComponentInferencePort()
     graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -806,6 +838,7 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
     llm = _ComponentInferencePort(searchable_target=True)
     graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -824,9 +857,12 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
         "missing_fields": [],
     }
     assert llm.calls.count("request_understanding.detect_ambiguity") == 2
-    resolution = llm.inputs["request_understanding.detect_ambiguity"][0][
-        "resolution_responsibilities"
-    ]
+    resolution = cast(
+        Mapping[str, object],
+        llm.inputs["request_understanding.detect_ambiguity"][0][
+            "resolution_responsibilities"
+        ],
+    )
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
 
@@ -1947,6 +1983,7 @@ def test_request_confirmation__interrupts_and_resumes__same_owner() -> None:
 
     request_graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -2008,6 +2045,7 @@ def test_reconsideration_confirmation__preserves_prior_intent__and_revises_artif
 
     request_graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),

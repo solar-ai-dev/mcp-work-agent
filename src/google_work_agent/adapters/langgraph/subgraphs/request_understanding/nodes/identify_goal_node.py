@@ -4,6 +4,9 @@ from google_work_agent.adapters.langgraph.agent_kernel import ensure_llm_call_bu
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state import (
     RequestUnderstandingStateV2,
 )
+from google_work_agent.application.agents.request_understanding.contracts import (
+    resource_role_decision,
+)
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal_with_budget,
 )
@@ -22,6 +25,7 @@ def identify_goal_node(
     prompt_ref: PromptReference | None,
     responsibility_prompt_ref: PromptReference | None,
     source_status_prompt_ref: PromptReference | None,
+    resource_role_candidates: tuple[resource_role_decision.ResourceRoleCandidateV1, ...],
 ) -> RequestUnderstandingStateV2:
     projection = project_identify_goal_input(state)
     ensure_llm_call_budget(state, provider_calls_requested=3)
@@ -29,6 +33,7 @@ def identify_goal_node(
         llm_runtime=llm_runtime,
         request=projection["request"],
         retry_budget=state["retry_budget"],
+        resource_role_candidates=resource_role_candidates,
         prompt_ref=prompt_ref,
         responsibility_prompt_ref=responsibility_prompt_ref,
         source_status_prompt_ref=source_status_prompt_ref,

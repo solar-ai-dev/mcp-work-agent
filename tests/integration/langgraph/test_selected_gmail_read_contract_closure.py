@@ -25,6 +25,9 @@ from google_work_agent.application.agents.request_understanding.finalize_intent 
     finalize_intent,
 )
 from google_work_agent.application.agents.request_understanding.identify_goal import identify_goal
+from google_work_agent.application.agents.request_understanding.identify_resource_roles import (
+    build_resource_role_candidates,
+)
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     build_query,
@@ -119,6 +122,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         ]
     )
 
+    catalog = load_signed_tool_registry()
     goal = identify_goal(
         llm_runtime=runtime,
         request=request,
@@ -127,6 +131,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
             "request_understanding.identify_resource_responsibilities"
         ),
         source_status_prompt_ref=_prompt("request_understanding.identify_source_status"),
+        resource_role_candidates=build_resource_role_candidates(catalog),
     )
     ambiguity, _ = _detect_ambiguity_with_budget(
         llm_runtime=runtime,
@@ -141,7 +146,6 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         artifact_id="intent-1",
         user_request=request.request_text,
     )
-    catalog = load_signed_tool_registry()
     candidate, retry_budget = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,

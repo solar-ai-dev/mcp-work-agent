@@ -63,6 +63,7 @@ class PromptRuntimeInputContractEntryV1:
         output_version = {
             "retrieval.select_evidence": 3,
             "request_understanding.identify_goal": 14,
+            "request_understanding.identify_resource_responsibilities": 2,
             "request_understanding.detect_ambiguity": 2,
             "work_analysis.detect_duplicate_conflict_candidates": 3,
             "work_analysis.assess_information_gaps": 2,
@@ -71,7 +72,7 @@ class PromptRuntimeInputContractEntryV1:
         if self.prompt_slot_id == "retrieval.select_evidence":
             input_versions = {3, 4}
         elif self.prompt_slot_id == "request_understanding.identify_resource_responsibilities":
-            input_versions = {3}
+            input_versions = {4}
         elif self.prompt_slot_id == "request_understanding.identify_source_status":
             input_versions = {1}
         else:
