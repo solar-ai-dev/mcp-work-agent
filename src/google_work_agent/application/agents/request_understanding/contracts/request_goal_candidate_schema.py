@@ -28,6 +28,11 @@ from google_work_agent.application.agents.request_understanding.validate_intent 
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
+from .coverage_requirement_decision import (
+    CoverageRequirementDecisionV1,
+    normalize_coverage_requirement_constraint,
+)
+
 REQUEST_GOAL_SLOT_KINDS = {
     "search_terms": "USER_REQUIREMENT",
     "business_concepts": "USER_REQUIREMENT",
@@ -43,7 +48,7 @@ REQUEST_GOAL_SLOT_KINDS = {
 _MODEL_CONSTRAINT_SLOT_KINDS = {
     field: kind
     for field, kind in REQUEST_GOAL_SLOT_KINDS.items()
-    if field not in {"required_information", "status"}
+    if field not in {"required_information", "status", "coverage_requirement"}
 }
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
@@ -71,24 +76,10 @@ for _field, _description in {
     "recipient": "누가 받았는지 명시된 경우만 두고 본문에 등장하는 사람과 구분한다.",
     "subject": "사용자가 제목이라고 명시한 값만 둔다. 추정 제목을 만들지 않는다.",
     "period": "날짜가 제한하는 대상의 원문 기간을 보존하고 시간축이나 연도를 추측하지 않는다.",
-    "coverage_requirement": (
-        "요청한 collection 범위의 모든 항목을 확인해야 완료되는 경우에만 EXHAUSTIVE를 둔다."
-    ),
 }.items():
     cast(dict[str, object], _NAMED_SEARCH_CONSTRAINT_PROPERTIES[_field])["description"] = (
         _description
     )
-_NAMED_SEARCH_CONSTRAINT_PROPERTIES["coverage_requirement"] = {
-    "type": "array",
-    "maxItems": 1,
-    "uniqueItems": True,
-    "items": {"const": "EXHAUSTIVE"},
-    "description": (
-        "모든 항목 확인이 완료 조건이면 EXHAUSTIVE 하나를, 아니면 빈 배열을 둔다."
-    ),
-}
-
-
 _CONSTRAINT_LIST_SCHEMA = {
     "type": "array",
     "items": {
@@ -291,7 +282,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v15",
+    schema_version="request-goal-candidate-v16",
     json_schema={
         "type": "object",
         "required": [
@@ -328,8 +319,7 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "기간 원문은 DATE.period이며 시간축 판정은 별도 operation이 수행한다. "
                     "한 문장에 사람·프로젝트·업무·답변 지시를 합쳐 검색어로 만들지 않는다. "
                     "요청에 없는 이름 있는 슬롯은 빈 배열로 둔다. Calendar/GitHub 등 "
-                    "typed 완료 범위는 coverage_requirement에 두고 그 밖의 명시적 실행 값은 "
-                    "additional_constraints에 둔다."
+                    "그 밖의 명시적 실행 값은 additional_constraints에 둔다."
                 ),
             },
             "analysis_requirement": {
@@ -352,6 +342,7 @@ def validate_request_goal_candidate(
     value: object,
     *,
     resource_responsibilities: object,
+    coverage_requirement: CoverageRequirementDecisionV1,
     source_statuses: object | None = None,
     schema: OutputSchemaDefinition = IDENTIFY_GOAL_OUTPUT_SCHEMA,
     provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
@@ -388,16 +379,15 @@ def validate_request_goal_candidate(
             {
                 "kind": _MODEL_CONSTRAINT_SLOT_KINDS[field],
                 "field": field,
-                "value": (
-                    cast(list[str], values)[0]
-                    if field == "coverage_requirement"
-                    else values
-                ),
+                "value": values,
             }
             for field, values in slots.items()
             if field in _MODEL_CONSTRAINT_SLOT_KINDS and values
         ],
     )
+    coverage_constraint = normalize_coverage_requirement_constraint(coverage_requirement)
+    if coverage_constraint is not None:
+        normalized_constraints.append(coverage_constraint)
     if source_information:
         normalized_constraints.append(
             {

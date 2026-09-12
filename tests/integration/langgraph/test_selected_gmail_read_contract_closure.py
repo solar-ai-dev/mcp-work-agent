@@ -128,6 +128,9 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         llm_runtime=runtime,
         request=request,
         prompt_ref=_prompt("request_understanding.identify_goal"),
+        coverage_requirement_prompt_ref=_prompt(
+            "request_understanding.identify_coverage_requirement"
+        ),
         effect_prohibition_prompt_ref=_prompt("request_understanding.identify_effect_prohibitions"),
         source_dependency_prompt_ref=_prompt("request_understanding.identify_source_dependencies"),
         output_responsibility_prompt_ref=_prompt(
@@ -215,9 +218,10 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
     assert arguments == {"thread_id": "thread-42"}
     assert [cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
+        "request_understanding.identify_coverage_requirement",
         "request_understanding.identify_effect_prohibitions",
-        "request_understanding.identify_source_dependencies",
         "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_source_dependencies",
         "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
     ]

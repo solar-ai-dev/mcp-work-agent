@@ -37,7 +37,10 @@ from google_work_agent.ports.llm.structured_inference_port import StructuredInfe
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
-from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
+from google_work_agent.ports.system.contracts.workflow_execution import (
+    SelectedResourceRef,
+    WorkflowStartRequest,
+)
 
 _SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset(
     {"search_terms", "subject", "search_criteria_subject"}
@@ -162,6 +165,7 @@ def detect_ambiguity(
             candidate = _validate_ambiguity_candidate(
                 result.structured_output,
                 goal_candidate=goal_candidate,
+                selected_resources=request.selected_resources,
             )
         except RequestAmbiguityValidationError as error:
             signature = build_semantic_failure_signature_v1(
@@ -196,6 +200,7 @@ def detect_ambiguity(
             candidate = _validate_ambiguity_candidate(
                 revised.structured_output,
                 goal_candidate=goal_candidate,
+                selected_resources=request.selected_resources,
             )
             retry_budget = decision["run_budget"]
         retry_budget = merge_provider_dispatch_usage(retry_budget)
@@ -214,6 +219,7 @@ def _validate_ambiguity_candidate(
     value: object,
     *,
     goal_candidate: RequestGoalCandidateV1,
+    selected_resources: Sequence[SelectedResourceRef],
 ) -> AmbiguityCandidateV2:
     if not isinstance(value, dict) or set(value) != {
         "missing_information_owner",
@@ -256,8 +262,16 @@ def _validate_ambiguity_candidate(
     if (
         missing_information_owner == "USER"
         and "target_resource" in missing_fields
-        and _searchable_target_anchor_count(goal_candidate) > 0
-        and _connector_owned_source_count(goal_candidate) > 0
+        and (
+            (
+                _searchable_target_anchor_count(goal_candidate) > 0
+                and _connector_owned_source_count(goal_candidate) > 0
+            )
+            or _single_requested_target_is_selected(
+                goal_candidate,
+                selected_resources=selected_resources,
+            )
+        )
     ):
         raise RequestAmbiguityValidationError(
             "searchable connector target was reclassified as a user-owned identity choice",
@@ -335,13 +349,33 @@ def _overlaps_connector_owned_information(
     *,
     goal_candidate: RequestGoalCandidateV1,
 ) -> bool:
+    attribute_fields = [item for item in missing_fields if item != "target_resource"]
     connector_information = [
         item["information"] for item in _connector_owned_information(goal_candidate)
     ]
     return any(
         _same_information_need(missing, owned)
-        for missing in missing_fields
+        for missing in attribute_fields
         for owned in connector_information
+    )
+
+
+def _single_requested_target_is_selected(
+    goal_candidate: RequestGoalCandidateV1,
+    *,
+    selected_resources: Sequence[SelectedResourceRef],
+) -> bool:
+    requested_types = {
+        item.strip().upper()
+        for item in goal_candidate["requested_resource_hints"]
+        if item.strip()
+    }
+    if len(requested_types) != 1:
+        return False
+    requested_type = next(iter(requested_types))
+    return any(
+        item.resource_type.strip().upper() == requested_type
+        for item in selected_resources
     )
 
 

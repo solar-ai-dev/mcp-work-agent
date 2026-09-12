@@ -206,6 +206,31 @@ def test_atomic_responsibility_outputs__keep_decisions__without_business_literal
     assert "private event time" not in repr(source_projection)
 
 
+def test_coverage_requirement__projects_only_bounded_semantics() -> None:
+    semantic_input = project_llm_semantic_input(
+        "request_understanding.identify_coverage_requirement",
+        {
+            "user_request": "private request",
+            "goal": "private goal",
+            "completion_conditions": ["private completion"],
+        },
+    )
+    semantic_output = project_llm_semantic_output(
+        "request_understanding.identify_coverage_requirement",
+        {"coverage_requirement": ["EXHAUSTIVE"]},
+    )
+
+    assert semantic_input == {
+        "projection_version": 1,
+        "completion_condition_count": 1,
+    }
+    assert semantic_output == {
+        "projection_version": 1,
+        "coverage_requirement": ["EXHAUSTIVE"],
+    }
+    assert "private" not in repr((semantic_input, semantic_output))
+
+
 def test_effect_prohibition_projection__keeps_only_effect_enums() -> None:
     semantic_input = project_llm_semantic_input(
         "request_understanding.identify_effect_prohibitions",
@@ -345,6 +370,7 @@ def test_atomic_responsibility_inputs__show_bounded_candidates__without_literals
         "request_understanding.identify_source_dependencies",
         {
             **base,
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
             "source_candidates": [
                 {
                     "resource_type": "GMAIL_DRAFT",
@@ -385,6 +411,10 @@ def test_atomic_responsibility_inputs__show_bounded_candidates__without_literals
                 "owned_fact_kinds": ["draft_identity", "recipients", "subject", "body"],
             }
         ],
+    }
+    assert source_projection["outputs"] == {
+        "count": 1,
+        "items": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
     }
     assert output_projection["output_candidates"] == {
         "count": 1,

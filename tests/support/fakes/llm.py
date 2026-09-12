@@ -63,6 +63,11 @@ class FakeStructuredInferencePort:
         init=False,
         repr=False,
     )
+    _pending_coverage_requirement: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def infer(
         self,
@@ -88,6 +93,7 @@ class FakeStructuredInferencePort:
                 self._pending_resource_responsibilities,
                 input_projection=input_projection,
             )
+            self._pending_resource_responsibilities = None
         elif (
             output_schema_ref.schema_version == "request-output-responsibility-decision-v1"
             and self._pending_resource_responsibilities is not None
@@ -96,7 +102,18 @@ class FakeStructuredInferencePort:
                 self._pending_resource_responsibilities,
                 input_projection=input_projection,
             )
-            self._pending_resource_responsibilities = None
+        elif output_schema_ref.schema_version == "request-coverage-requirement-v1":
+            if self._pending_coverage_requirement is not None:
+                output = {"coverage_requirement": self._pending_coverage_requirement}
+                self._pending_coverage_requirement = None
+            elif (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "coverage_requirement" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                output = {"coverage_requirement": []}
         elif output_schema_ref.schema_version == "request-effect-prohibition-decision-v1":
             if (
                 self.outputs
@@ -142,6 +159,7 @@ class FakeStructuredInferencePort:
                     "request-goal-candidate-v13",
                     "request-goal-candidate-v14",
                     "request-goal-candidate-v15",
+                    "request-goal-candidate-v16",
                 }:
                     self._pending_resource_responsibilities = responsibilities
                     output = {
@@ -166,13 +184,18 @@ class FakeStructuredInferencePort:
                 and "source_reads" in output
                 and "outputs" in output
             ):
+                self._pending_resource_responsibilities = output
                 output = _output_responsibility_decisions_from_responsibilities(
                     output,
                     input_projection=input_projection,
                 )
             if (
                 output_schema_ref.schema_version
-                in {"request-goal-candidate-v14", "request-goal-candidate-v15"}
+                in {
+                    "request-goal-candidate-v14",
+                    "request-goal-candidate-v15",
+                    "request-goal-candidate-v16",
+                }
                 and isinstance(output, Mapping)
                 and isinstance(output.get("constraints"), Mapping)
                 and "status" in cast(Mapping[str, object], output["constraints"])
@@ -183,6 +206,26 @@ class FakeStructuredInferencePort:
                     **output,
                     "constraints": {
                         key: value for key, value in constraints.items() if key != "status"
+                    },
+                }
+            if (
+                output_schema_ref.schema_version == "request-goal-candidate-v16"
+                and isinstance(output, Mapping)
+                and isinstance(output.get("constraints"), Mapping)
+                and "coverage_requirement" in cast(
+                    Mapping[str, object], output["constraints"]
+                )
+            ):
+                constraints = cast(Mapping[str, object], output["constraints"])
+                self._pending_coverage_requirement = constraints.get(
+                    "coverage_requirement", []
+                )
+                output = {
+                    **output,
+                    "constraints": {
+                        key: value
+                        for key, value in constraints.items()
+                        if key != "coverage_requirement"
                     },
                 }
         if isinstance(output, Exception):

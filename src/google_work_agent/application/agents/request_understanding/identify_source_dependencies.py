@@ -14,7 +14,10 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 
-from .contracts.request_intent import REQUEST_RESOURCE_TYPES
+from .contracts.request_intent import (
+    REQUEST_RESOURCE_TYPES,
+    OutputResourceResponsibilityV1,
+)
 from .contracts.source_dependency_decision import (
     SourceDependencyCandidateV1,
     SourceDependencyDecisionCandidateV1,
@@ -190,6 +193,7 @@ def identify_source_dependencies(
     prompt_input: Mapping[str, object],
     goal_candidate: Mapping[str, object],
     source_candidates: Sequence[SourceDependencyCandidateV1],
+    outputs: Sequence[OutputResourceResponsibilityV1],
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
 ) -> SourceDependencyDecisionCandidateV1:
@@ -199,6 +203,7 @@ def identify_source_dependencies(
         **prompt_input,
         "goal_candidate": dict(goal_candidate),
         "source_candidates": [deepcopy(candidate) for candidate in source_candidates],
+        "outputs": [deepcopy(output) for output in outputs],
     }
     inference_input: Mapping[str, object] = base_projection
     if candidate_output is not None or failure_record is not None:

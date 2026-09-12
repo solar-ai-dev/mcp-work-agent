@@ -24,6 +24,7 @@ def identify_goal_node(
     *,
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference | None,
+    coverage_requirement_prompt_ref: PromptReference | None,
     effect_prohibition_prompt_ref: PromptReference | None,
     source_dependency_prompt_ref: PromptReference | None,
     output_responsibility_prompt_ref: PromptReference | None,
@@ -36,7 +37,7 @@ def identify_goal_node(
     ],
 ) -> RequestUnderstandingStateV2:
     projection = project_identify_goal_input(state)
-    ensure_llm_call_budget(state, provider_calls_requested=5)
+    ensure_llm_call_budget(state, provider_calls_requested=6)
     candidate, retry_budget = identify_goal_with_budget(
         llm_runtime=llm_runtime,
         request=projection["request"],
@@ -44,6 +45,7 @@ def identify_goal_node(
         source_dependency_candidates=source_dependency_candidates,
         output_responsibility_candidates=output_responsibility_candidates,
         prompt_ref=prompt_ref,
+        coverage_requirement_prompt_ref=coverage_requirement_prompt_ref,
         effect_prohibition_prompt_ref=effect_prohibition_prompt_ref,
         source_dependency_prompt_ref=source_dependency_prompt_ref,
         output_responsibility_prompt_ref=output_responsibility_prompt_ref,

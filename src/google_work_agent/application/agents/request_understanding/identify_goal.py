@@ -45,6 +45,7 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
+from .contracts.coverage_requirement_decision import CoverageRequirementDecisionV1
 from .contracts.output_responsibility_decision import OutputResponsibilityCandidateV1
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
@@ -54,6 +55,7 @@ from .contracts.request_goal_candidate_schema import (
     validate_request_goal_candidate,
 )
 from .contracts.source_dependency_decision import SourceDependencyCandidateV1
+from .identify_coverage_requirement import identify_coverage_requirement
 from .identify_effect_prohibitions import (
     build_effect_prohibition_candidates,
     identify_effect_prohibitions,
@@ -64,7 +66,10 @@ from .identify_output_responsibilities import (
 )
 from .identify_source_dependencies import identify_source_dependencies
 from .identify_source_status import identify_source_status
-from .merge_resource_responsibilities import merge_resource_responsibilities
+from .merge_resource_responsibilities import (
+    merge_resource_responsibilities,
+    project_output_responsibilities,
+)
 from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
 
 
@@ -75,6 +80,7 @@ def identify_goal(
     source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
     output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
     prompt_ref: PromptReference | None = None,
+    coverage_requirement_prompt_ref: PromptReference | None = None,
     effect_prohibition_prompt_ref: PromptReference | None = None,
     source_dependency_prompt_ref: PromptReference | None = None,
     output_responsibility_prompt_ref: PromptReference | None = None,
@@ -87,6 +93,13 @@ def identify_goal(
     resolved_manifest_path = manifest_path or default_prompt_manifest_path()
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
         "request_understanding.identify_goal", resolved_manifest_path
+    )
+    resolved_coverage_requirement_prompt_ref = (
+        coverage_requirement_prompt_ref
+        or load_prompt_reference(
+            "request_understanding.identify_coverage_requirement",
+            resolved_manifest_path,
+        )
     )
     resolved_source_dependency_prompt_ref = source_dependency_prompt_ref or load_prompt_reference(
         "request_understanding.identify_source_dependencies",
@@ -118,6 +131,13 @@ def identify_goal(
         prompt_input,
         IDENTIFY_GOAL_OUTPUT_SCHEMA,
     )
+    coverage_requirement = identify_coverage_requirement(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_coverage_requirement_prompt_ref,
+        prompt_input=prompt_input,
+        goal_candidate=result.structured_output,
+    )
     effect_prohibitions = identify_effect_prohibitions(
         llm_runtime=llm_runtime,
         requested_mode=request.requested_mode,
@@ -125,14 +145,6 @@ def identify_goal(
         prompt_input=prompt_input,
         goal_candidate=result.structured_output,
         effect_candidates=build_effect_prohibition_candidates(output_responsibility_candidates),
-    )
-    source_decisions = identify_source_dependencies(
-        llm_runtime=llm_runtime,
-        requested_mode=request.requested_mode,
-        prompt_ref=resolved_source_dependency_prompt_ref,
-        prompt_input=prompt_input,
-        goal_candidate=result.structured_output,
-        source_candidates=source_dependency_candidates,
     )
     output_decisions = identify_output_responsibilities(
         llm_runtime=llm_runtime,
@@ -142,6 +154,19 @@ def identify_goal(
         goal_candidate=result.structured_output,
         output_candidates=output_responsibility_candidates,
         effect_prohibitions=effect_prohibitions,
+    )
+    outputs = project_output_responsibilities(
+        output_decisions=output_decisions,
+        output_candidates=output_responsibility_candidates,
+    )
+    source_decisions = identify_source_dependencies(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_source_dependency_prompt_ref,
+        prompt_input=prompt_input,
+        goal_candidate=result.structured_output,
+        source_candidates=source_dependency_candidates,
+        outputs=outputs,
     )
     responsibilities = merge_resource_responsibilities(
         source_decisions=source_decisions,
@@ -160,6 +185,7 @@ def identify_goal(
     return _validated_candidate(
         result.structured_output,
         resource_responsibilities=responsibilities,
+        coverage_requirement=coverage_requirement,
         source_statuses=source_status_output,
         request=request,
         confirmation_response=confirmation_response,
@@ -174,6 +200,7 @@ def identify_goal_with_budget(
     source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
     output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
     prompt_ref: PromptReference | None = None,
+    coverage_requirement_prompt_ref: PromptReference | None = None,
     effect_prohibition_prompt_ref: PromptReference | None = None,
     source_dependency_prompt_ref: PromptReference | None = None,
     output_responsibility_prompt_ref: PromptReference | None = None,
@@ -187,6 +214,13 @@ def identify_goal_with_budget(
     resolved_manifest_path = manifest_path or default_prompt_manifest_path()
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
         "request_understanding.identify_goal", resolved_manifest_path
+    )
+    resolved_coverage_requirement_prompt_ref = (
+        coverage_requirement_prompt_ref
+        or load_prompt_reference(
+            "request_understanding.identify_coverage_requirement",
+            resolved_manifest_path,
+        )
     )
     resolved_source_dependency_prompt_ref = source_dependency_prompt_ref or load_prompt_reference(
         "request_understanding.identify_source_dependencies",
@@ -220,6 +254,13 @@ def identify_goal_with_budget(
             IDENTIFY_GOAL_OUTPUT_SCHEMA,
         )
         goal_output = result.structured_output
+        coverage_requirement = identify_coverage_requirement(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_coverage_requirement_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+        )
         effect_candidates = build_effect_prohibition_candidates(output_responsibility_candidates)
         prohibition_output = identify_effect_prohibitions(
             llm_runtime=llm_runtime,
@@ -228,14 +269,6 @@ def identify_goal_with_budget(
             prompt_input=prompt_input,
             goal_candidate=goal_output,
             effect_candidates=effect_candidates,
-        )
-        source_output = identify_source_dependencies(
-            llm_runtime=llm_runtime,
-            requested_mode=request.requested_mode,
-            prompt_ref=resolved_source_dependency_prompt_ref,
-            prompt_input=prompt_input,
-            goal_candidate=goal_output,
-            source_candidates=source_dependency_candidates,
         )
         try:
             output_output = identify_output_responsibilities(
@@ -276,6 +309,19 @@ def identify_goal_with_budget(
                 failure_record=failure_record,
             )
             retry_budget = decision["run_budget"]
+        outputs = project_output_responsibilities(
+            output_decisions=output_output,
+            output_candidates=output_responsibility_candidates,
+        )
+        source_output = identify_source_dependencies(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_source_dependency_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+            source_candidates=source_dependency_candidates,
+            outputs=outputs,
+        )
         responsibilities = merge_resource_responsibilities(
             source_decisions=source_output,
             output_decisions=output_output,
@@ -294,6 +340,7 @@ def identify_goal_with_budget(
             candidate = _validated_candidate(
                 goal_output,
                 resource_responsibilities=responsibilities,
+                coverage_requirement=coverage_requirement,
                 source_statuses=source_status_output,
                 request=request,
                 confirmation_response=confirmation_response,
@@ -323,6 +370,7 @@ def identify_goal_with_budget(
                     prompt_input=prompt_input,
                     goal_candidate=goal_output,
                     source_candidates=source_dependency_candidates,
+                    outputs=outputs,
                     candidate_output=source_output,
                     failure_record=failure_record,
                 )
@@ -345,6 +393,7 @@ def identify_goal_with_budget(
                 candidate = _validated_candidate(
                     goal_output,
                     resource_responsibilities=responsibilities,
+                    coverage_requirement=coverage_requirement,
                     source_statuses=source_status_output,
                     request=request,
                     confirmation_response=confirmation_response,
@@ -362,6 +411,13 @@ def identify_goal_with_budget(
                 IDENTIFY_GOAL_OUTPUT_SCHEMA,
             )
             goal_output = revised_goal.structured_output
+            coverage_requirement = identify_coverage_requirement(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_coverage_requirement_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+            )
             prohibition_output = identify_effect_prohibitions(
                 llm_runtime=llm_runtime,
                 requested_mode=request.requested_mode,
@@ -370,16 +426,6 @@ def identify_goal_with_budget(
                 goal_candidate=goal_output,
                 effect_candidates=effect_candidates,
                 candidate_output=prohibition_output,
-                failure_record=failure_record,
-            )
-            source_output = identify_source_dependencies(
-                llm_runtime=llm_runtime,
-                requested_mode=request.requested_mode,
-                prompt_ref=resolved_source_dependency_prompt_ref,
-                prompt_input=prompt_input,
-                goal_candidate=goal_output,
-                source_candidates=source_dependency_candidates,
-                candidate_output=source_output,
                 failure_record=failure_record,
             )
             output_output = identify_output_responsibilities(
@@ -391,6 +437,21 @@ def identify_goal_with_budget(
                 output_candidates=output_responsibility_candidates,
                 effect_prohibitions=prohibition_output,
                 candidate_output=output_output,
+                failure_record=failure_record,
+            )
+            outputs = project_output_responsibilities(
+                output_decisions=output_output,
+                output_candidates=output_responsibility_candidates,
+            )
+            source_output = identify_source_dependencies(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_source_dependency_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                source_candidates=source_dependency_candidates,
+                outputs=outputs,
+                candidate_output=source_output,
                 failure_record=failure_record,
             )
             responsibilities = merge_resource_responsibilities(
@@ -412,6 +473,7 @@ def identify_goal_with_budget(
             candidate = _validated_candidate(
                 goal_output,
                 resource_responsibilities=responsibilities,
+                coverage_requirement=coverage_requirement,
                 source_statuses=source_status_output,
                 request=request,
                 confirmation_response=confirmation_response,
@@ -453,6 +515,7 @@ def _validated_candidate(
     value: object,
     *,
     resource_responsibilities: object,
+    coverage_requirement: CoverageRequirementDecisionV1,
     source_statuses: object,
     request: WorkflowStartRequest,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
@@ -467,6 +530,7 @@ def _validated_candidate(
         validate_request_goal_candidate(
             value,
             resource_responsibilities=resource_responsibilities,
+            coverage_requirement=coverage_requirement,
             source_statuses=source_statuses,
             provenance_sources=provenance_sources,
         ),

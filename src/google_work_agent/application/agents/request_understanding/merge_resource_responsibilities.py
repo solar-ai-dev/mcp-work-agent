@@ -32,10 +32,6 @@ def merge_resource_responsibilities(
     source_by_resource = {
         decision["resource_type"]: decision for decision in source_decisions["source_dependencies"]
     }
-    output_by_resource = {
-        decision["resource_type"]: decision
-        for decision in output_decisions["output_responsibilities"]
-    }
     source_reads = [
         SourceResourceResponsibilityV1(
             resource_type=candidate["resource_type"],
@@ -46,7 +42,25 @@ def merge_resource_responsibilities(
         for candidate in source_candidates
         if source_by_resource[candidate["resource_type"]]["dependency"] == "SOURCE_REQUIRED"
     ]
-    outputs = [
+    outputs = project_output_responsibilities(
+        output_decisions=output_decisions,
+        output_candidates=output_candidates,
+    )
+    return ResourceResponsibilitiesV1(source_reads=source_reads, outputs=outputs)
+
+
+def project_output_responsibilities(
+    *,
+    output_decisions: OutputResponsibilityDecisionCandidateV1,
+    output_candidates: tuple[OutputResponsibilityCandidateV1, ...],
+) -> list[OutputResourceResponsibilityV1]:
+    """Project validated output decisions into the canonical bounded shape."""
+
+    output_by_resource = {
+        decision["resource_type"]: decision
+        for decision in output_decisions["output_responsibilities"]
+    }
+    return [
         OutputResourceResponsibilityV1(
             resource_type=candidate["resource_type"],
             effect=cast(
@@ -57,7 +71,6 @@ def merge_resource_responsibilities(
         for candidate in output_candidates
         if output_by_resource[candidate["resource_type"]]["effect"] != "NONE"
     ]
-    return ResourceResponsibilitiesV1(source_reads=source_reads, outputs=outputs)
 
 
-__all__ = ["merge_resource_responsibilities"]
+__all__ = ["merge_resource_responsibilities", "project_output_responsibilities"]
