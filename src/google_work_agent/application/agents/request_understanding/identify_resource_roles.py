@@ -64,6 +64,7 @@ def build_resource_role_candidates(
     """Project the signed Tool Registry into one deterministic Resource choice set."""
 
     read_resource_types: set[str] = set()
+    read_tool_ids_by_resource: dict[str, set[str]] = {}
     registered_effects_by_resource: dict[str, set[str]] = {}
     known_resource_types = set(REQUEST_RESOURCE_TYPES)
     for entry in tool_catalog.entries:
@@ -72,6 +73,7 @@ def build_resource_role_candidates(
             raise ValueError(f"registered Resource is absent from request catalog: {resource_type}")
         if entry.effect == "READ":
             read_resource_types.add(resource_type)
+            read_tool_ids_by_resource.setdefault(resource_type, set()).add(entry.tool_id)
             continue
         allowed_resource_types = WRITE_EFFECT_RESOURCE_TYPES.get(entry.effect)
         if allowed_resource_types is None or resource_type not in allowed_resource_types:
@@ -103,6 +105,7 @@ def build_resource_role_candidates(
             ResourceRoleCandidateV1(
                 resource_type=resource_type,
                 allowed_roles=[role for role in _ROLE_ORDER if role in allowed_roles],
+                read_tool_ids=sorted(read_tool_ids_by_resource.get(resource_type, set())),
                 allowed_output_effects=output_effects,
             )
         )

@@ -75,13 +75,23 @@ def test_registry_candidates__preserve_catalog_order_and_capability_intersection
     assert by_resource["GMAIL_DRAFT"] == {
         "resource_type": "GMAIL_DRAFT",
         "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
+        "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
         "allowed_output_effects": ["CREATE", "UPDATE"],
     }
     assert by_resource["GMAIL_THREAD"] == {
         "resource_type": "GMAIL_THREAD",
         "allowed_roles": ["NONE", "SOURCE"],
+        "read_tool_ids": ["gmail_get_thread", "gmail_search_threads"],
         "allowed_output_effects": [],
     }
+    assert by_resource["TASK"]["read_tool_ids"] == [
+        "tasks_get_task",
+        "tasks_list_tasks",
+    ]
+    assert by_resource["CALENDAR_EVENT"]["read_tool_ids"] == [
+        "calendar_get_event",
+        "calendar_list_events",
+    ]
 
 
 def test_cross_source_draft__normalizes_role_decisions_to_existing_contract() -> None:

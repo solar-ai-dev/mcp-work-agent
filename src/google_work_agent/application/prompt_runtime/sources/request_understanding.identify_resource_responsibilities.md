@@ -4,7 +4,7 @@
 
 # 입력의 의미
 
-`user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `resource_candidates`는 현재 Runtime이 허용한 Resource와 역할·output effect의 닫힌 목록이다. `effect_prohibitions`는 별도 operation이 판정한 명시적 write effect 금지이며, `FORBIDDEN` effect는 선택하지 않는다. 후보를 추가·삭제·중복하지 않고 각 후보를 정확히 한 번 판정한다.
+`user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `resource_candidates`는 현재 Runtime이 허용한 Resource와 역할·READ tool·output effect의 닫힌 목록이다. `read_tool_ids`는 그 Resource에 저장된 기존 사실·identity·상태를 읽을 수 있다는 등록 근거이며 Tool 선택 지시가 아니다. `effect_prohibitions`는 별도 operation이 판정한 명시적 write effect 금지이며, `FORBIDDEN` effect는 선택하지 않는다. 후보를 추가·삭제·중복하지 않고 각 후보를 정확히 한 번 판정한다.
 
 `selected_resource_refs`는 사용자가 이번 요청에 선택한 Resource identity다. 선택은 기존 Resource를 가리키는 근거이지 내용을 이미 읽었다는 뜻은 아니다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`이 있으면 새 관측과 현재 요청을 함께 보되 이전 모델 해석을 원문보다 우선하지 않는다. `run_reference_time`은 Resource 역할의 근거가 아니다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.
 
@@ -13,7 +13,7 @@
 다음 순서를 완료한 뒤 각 Resource 후보를 정확히 한 번 판정한다.
 
 1. 사용자가 만들거나 변경하라고 한 최종 Resource와 effect를 OUTPUT 후보로 정한다.
-2. 그 최종 Answer 또는 Output의 내용을 만들기 전에, 사용자가 실제로 참고·확인·종합하라고 한 기존 Resource를 모두 찾는다. 각 기존 Resource가 가진 사실·identity·현재 상태가 결과의 입력이면 별도 SOURCE 후보다. 새 Output을 작성할 수 있다는 추측으로 명시된 upstream dependency를 생략하지 않는다.
+2. 그 최종 Answer 또는 Output의 내용을 만들기 전에, 사용자가 실제로 참고·확인·종합하라고 한 기존 Resource를 모두 찾는다. 각 후보의 `resource_type`과 `read_tool_ids`를 함께 보고 어떤 기존 Resource가 요청된 사실·identity·현재 상태를 소유하는지 후보별로 대조한다. 그 사실이 결과의 입력이면 해당 Resource는 별도 SOURCE 후보다. 새 Output을 작성할 수 있다는 추측으로 명시된 upstream dependency를 생략하거나, upstream 사실을 새 Output Resource가 이미 소유한 것처럼 바꾸지 않는다.
 3. 각 SOURCE 후보에서 실제로 알아야 할 내용을 `required_information`에 쓴다. OUTPUT의 작성 내용과 SOURCE에서 읽을 사실을 서로 바꾸지 않는다.
 4. 사용자가 요청한 OUTPUT effect가 금지되지 않았는지 확인한다. Schema가 허용한 `effect`만 선택한다.
 5. 각 Resource에 SOURCE와 OUTPUT이 모두 있으면 `SOURCE_AND_OUTPUT`, SOURCE만 있으면 `SOURCE`, OUTPUT만 있으면 `OUTPUT`, 둘 다 없으면 `NONE`이다. `NONE`을 선택하기 전에 해당 Resource가 앞에서 찾은 upstream dependency인지 다시 확인한다.

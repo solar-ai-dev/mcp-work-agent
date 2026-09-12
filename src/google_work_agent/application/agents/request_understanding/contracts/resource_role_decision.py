@@ -12,6 +12,7 @@ ResourceRoleValue = Literal["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"]
 class ResourceRoleCandidateV1(TypedDict):
     resource_type: str
     allowed_roles: list[ResourceRoleValue]
+    read_tool_ids: list[str]
     allowed_output_effects: list[WriteEffectValue]
 
 

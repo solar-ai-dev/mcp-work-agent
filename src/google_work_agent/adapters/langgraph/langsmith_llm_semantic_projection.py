@@ -62,6 +62,7 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "effect_prohibitions",
         "prohibition",
         "allowed_roles",
+        "read_tool_ids",
         "allowed_output_effects",
         "resolution_responsibilities",
         "connector_owned_information_count",
@@ -234,6 +235,7 @@ def _project_resource_role_input(value: Mapping[object, object]) -> dict[str, ob
             continue
         projected: dict[str, object] = {
             "allowed_roles": _safe_values(candidate.get("allowed_roles")),
+            "read_tool_ids": _safe_values(candidate.get("read_tool_ids")),
             "allowed_output_effects": _safe_values(
                 candidate.get("allowed_output_effects")
             ),

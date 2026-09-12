@@ -331,6 +331,7 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
                 {
                     "resource_type": "GMAIL_DRAFT",
                     "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
+                    "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
                     "allowed_output_effects": ["CREATE", "UPDATE"],
                 }
             ],
@@ -371,6 +372,7 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
             {
                 "resource_type": "GMAIL_DRAFT",
                 "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
+                "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
                 "allowed_output_effects": ["CREATE", "UPDATE"],
             }
         ],
