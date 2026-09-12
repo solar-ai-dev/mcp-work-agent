@@ -6,6 +6,9 @@ from typing import cast
 
 import pytest
 
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema,
+)
 from google_work_agent.application.prompt_runtime.contracts.prompt_runtime_input_contract import (
     REQUIRED_PROMPT_SLOT_IDS,
     PromptRuntimeInputContractError,
@@ -42,10 +45,19 @@ def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> 
     entry = next(
         item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
     )
-    assert entry["output_schema_version"] == 14
+    assert entry["output_schema_version"] == 15
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
         load_prompt_input_contract(_write(tmp_path, payload))
+
+
+def test_goal_contract__active_output_schema__matches_runtime_binding() -> None:
+    contract = load_prompt_input_contract()
+    entry = contract.entry("request_understanding.identify_goal")
+
+    assert request_goal_candidate_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.schema_version.endswith(
+        f"-v{entry.output_schema_version}"
+    )
 
 
 def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
