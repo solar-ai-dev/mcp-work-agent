@@ -584,6 +584,90 @@ def test_unselected_read__with_user_owned_target_gap__asks_before_retrieval() ->
     assert len(runtime.calls) == 1
 
 
+def test_unselected_read__target_identity_named_as_connector_need__still_asks_user() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "일정 시각 확인",
+        "completion_conditions": ["선택한 일정의 시각을 답한다"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["target_resource", "event_time"],
+                }
+            ],
+            "outputs": [],
+        },
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("그 일정 언제야?"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["target_resource"],
+    }
+    assert len(runtime.calls) == 1
+
+
+def test_selected_calendar_read__target_identity_cannot_be_asked_again() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["event_time"],
+            },
+        ]
+    )
+    selected_event = SelectedResourceRef(
+        "ref-event-42",
+        "google_workspace",
+        "calendar_event",
+        "event-42",
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "선택한 일정의 시각 확인",
+        "completion_conditions": ["선택한 일정의 시각을 답한다"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("그 일정 언제야?", selected_resources=(selected_event,)),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
+    )
+
+
 def test_selected_source__with_separate_target_gap__asks_without_revision() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[

@@ -37,11 +37,12 @@ from google_work_agent.ports.llm.structured_inference_port import StructuredInfe
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
-from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
-
-_SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset(
-    {"search_terms", "subject", "search_criteria_subject"}
+from google_work_agent.ports.system.contracts.workflow_execution import (
+    SelectedResourceRef,
+    WorkflowStartRequest,
 )
+
+_SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset({"search_terms", "subject", "search_criteria_subject"})
 
 
 class AmbiguityCandidateV2(TypedDict):
@@ -162,6 +163,7 @@ def detect_ambiguity(
             candidate = _validate_ambiguity_candidate(
                 result.structured_output,
                 goal_candidate=goal_candidate,
+                selected_resources=request.selected_resources,
             )
         except RequestAmbiguityValidationError as error:
             signature = build_semantic_failure_signature_v1(
@@ -196,6 +198,7 @@ def detect_ambiguity(
             candidate = _validate_ambiguity_candidate(
                 revised.structured_output,
                 goal_candidate=goal_candidate,
+                selected_resources=request.selected_resources,
             )
             retry_budget = decision["run_budget"]
         retry_budget = merge_provider_dispatch_usage(retry_budget)
@@ -214,6 +217,7 @@ def _validate_ambiguity_candidate(
     value: object,
     *,
     goal_candidate: RequestGoalCandidateV1,
+    selected_resources: Sequence[SelectedResourceRef],
 ) -> AmbiguityCandidateV2:
     if not isinstance(value, dict) or set(value) != {
         "missing_information_owner",
@@ -251,6 +255,23 @@ def _validate_ambiguity_candidate(
                 "$.missing_information_owner",
                 "$.missing_fields",
                 "$.goal_candidate.constraints",
+            ),
+        )
+    if (
+        missing_information_owner == "USER"
+        and "target_resource" in missing_fields
+        and _selected_target_identity_is_resolved(
+            goal_candidate,
+            selected_resources=selected_resources,
+        )
+    ):
+        raise RequestAmbiguityValidationError(
+            "a selected current-run target was reclassified as unresolved",
+            reason_code="REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT",
+            affected_field_paths=(
+                "$.missing_information_owner",
+                "$.missing_fields",
+                "$.selected_resource_refs",
             ),
         )
     if (
@@ -320,8 +341,7 @@ def _searchable_target_anchor_count(goal_candidate: RequestGoalCandidateV1) -> i
     return sum(
         1
         for constraint in goal_candidate["constraints"]
-        if constraint["field"] in _SEARCHABLE_TARGET_ANCHOR_FIELDS
-        and bool(constraint["value"])
+        if constraint["field"] in _SEARCHABLE_TARGET_ANCHOR_FIELDS and bool(constraint["value"])
     )
 
 
@@ -341,8 +361,27 @@ def _overlaps_connector_owned_information(
     return any(
         _same_information_need(missing, owned)
         for missing in missing_fields
+        if missing != "target_resource"
         for owned in connector_information
     )
+
+
+def _selected_target_identity_is_resolved(
+    goal_candidate: RequestGoalCandidateV1,
+    *,
+    selected_resources: Sequence[SelectedResourceRef],
+) -> bool:
+    selected_types = {
+        item.resource_type.strip().upper()
+        for item in selected_resources
+        if item.resource_type.strip()
+    }
+    if not selected_types:
+        return False
+    requested_types = {
+        item.strip().upper() for item in goal_candidate["requested_resource_hints"] if item.strip()
+    }
+    return not requested_types or requested_types.issubset(selected_types)
 
 
 def _connector_owned_information(
