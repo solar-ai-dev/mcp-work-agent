@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "algorithm": "SHA-256",
+  "generated_at": "2026-09-13T08:36:53.2303694+09:00",
+  "files": [
+    {
+      "path": "decisions.json",
+      "sha256": "85ecd598384f06a2817548646e7f4dbd2a1db0f5b4a6d3f6e9000b247749118e",
+      "size_bytes": 5517
+    },
+    {
+      "path": "findings.json",
+      "sha256": "f6214133cf6b658364a556f9807d9c372746215da93185da2c0c63dc7da78786",
+      "size_bytes": 15193
+    },
+    {
+      "path": "inventory.json",
+      "sha256": "d27956afe9fb982d59b109eda0bff28c26398570d5e3a18c0281a1889146f774",
+      "size_bytes": 819430
+    },
+    {
+      "path": "progress.md",
+      "sha256": "cc493caba90f288908f58a46bc0b1c1f2789d6da24b1976408a64af71f26050a",
+      "size_bytes": 1736
+    },
+    {
+      "path": "README.md",
+      "sha256": "a100468386d8cf20af680c61e7a5c26911f1455b173388b1138114381d76003c",
+      "size_bytes": 7265
+    },
+    {
+      "path": "smoke-summary.json",
+      "sha256": "022fbb9831dd6287364aaf3bf0df4e20ef40db3bdec60eb9b17f252b9a73923b",
+      "size_bytes": 4542
+    },
+    {
+      "path": "test-runs.json",
+      "sha256": "f782fc40c2dfac64239f08bb83423dcd743a919fb3ab23f4435481ffc059a07e",
+      "size_bytes": 5128
+    }
+  ]
+}

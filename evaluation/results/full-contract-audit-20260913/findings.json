@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "analysis_started_at_head": "23e08df05c2679d472dc746d00304185108d15b6",
+  "reviewed_product_sha": "05d226423b0a6b7295dea0b60ad50b519159d155",
+  "artifact_preparation_head": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+  "summary": {
+    "inventory_total": 2306,
+    "reviewed": 2306,
+    "unreviewed": 0,
+    "confirmed_defects": 14,
+    "verified_fixes": 14,
+    "immediate_fix_unresolved": 0,
+    "duplicate_reductions": 1,
+    "responsibility_overreach_corrections": 2,
+    "internal_responsibility_splits": 1,
+    "pending_user_decisions": 4,
+    "node_semantic_failures": 5,
+    "external_blockers": 1
+  },
+  "review_matrix": [
+    {"kind": "PRODUCTION_FILE", "count": 793, "review": "PASS_WITH_FINDINGS", "basis": "ownership/import/static gates + full pytest"},
+    {"kind": "CONNECTOR_FILE", "count": 63, "review": "PASS", "basis": "registered tool/capability/READ-WRITE lifecycle tests"},
+    {"kind": "PROJECTION_FILE", "count": 64, "review": "PASS_WITH_FINDINGS", "basis": "producer-consumer contract tests and smoke traces"},
+    {"kind": "VALIDATOR_GUARD_FILE", "count": 16, "review": "PASS_WITH_FINDINGS", "basis": "positive/negative schema and semantic candidate tests"},
+    {"kind": "EXCHANGE_ARTIFACT_FILE", "count": 142, "review": "PASS", "basis": "schema/state/type gates"},
+    {"kind": "PERSISTENCE_CHECKPOINT_FILE", "count": 51, "review": "PASS", "basis": "persistence, resume, recovery, lifecycle integration"},
+    {"kind": "PROMPT_RUNTIME_FILE", "count": 34, "review": "PASS_WITH_FINDINGS", "basis": "source/manifest/input/caller/provider binding exact-set"},
+    {"kind": "API_ENTRYPOINT", "count": 49, "review": "PASS", "basis": "application/API integration and command tests"},
+    {"kind": "LANGGRAPH_REGISTRATION", "count": 87, "review": "PASS_WITH_FINDINGS", "basis": "compiled graph/router/back-edge tests"},
+    {"kind": "SEMANTIC_OWNER_OPERATION", "count": 87, "review": "PASS_WITH_NODE_SEMANTIC_FAILURES", "basis": "owner contract review + 9B smoke"},
+    {"kind": "PRODUCT_LLM_CALLER", "count": 28, "review": "PASS_WITH_NODE_SEMANTIC_FAILURES", "basis": "all caller/source/input/schema/revision/provider paths"},
+    {"kind": "PROMPT_SOURCE", "count": 28, "review": "PASS_WITH_ONE_OVERREACH_FIXED", "basis": "manifest exact-set and owner responsibility audit"},
+    {"kind": "TEST_ARTIFACT", "count": 685, "review": "PASS_WITH_E2E_PENDING", "basis": "full collection/execution; stale assertions and fixtures classified"},
+    {"kind": "DATASET_ARTIFACT", "count": 33, "review": "STRUCTURE_PASS_LIVE_NOT_RUN", "basis": "workspace validator and 78 unit checks"},
+    {"kind": "EVALUATION_ARTIFACT", "count": 146, "review": "STRUCTURE_PASS_LIVE_NOT_RUN", "basis": "workspace/hash/gold separation checks"}
+  ],
+  "fixed_findings": [
+    {
+      "finding_id": "FIX-001",
+      "concern": "Prompt Runtime",
+      "owner": "request_understanding.identify_goal",
+      "boundary": "Prompt source -> manifest schema binding -> runtime caller",
+      "defect": "active goal output schema metadata did not identify the current schema authority",
+      "classification": "CONFIRMED_CONTRACT_DEFECT",
+      "change": "align goal schema binding metadata without changing RequestIntent public shape",
+      "commit": "93625cd5",
+      "validation": "Prompt registry/input-contract/manifest exact-set",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-002",
+      "concern": "Request Understanding revision",
+      "owner": "identify_source_status",
+      "boundary": "status provenance failure -> revision owner -> revalidation",
+      "defect": "status-local semantic failure could regenerate unrelated goal/source/output meaning",
+      "classification": "RESPONSIBILITY_OVERREACH",
+      "change": "scope revision to source-status owner and preserve unaffected semantic artifacts",
+      "commit": "708576ad",
+      "validation": "owner-local revision and compiled Request Understanding tests",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-003",
+      "concern": "Request Understanding source dependency",
+      "owner": "identify_source_dependencies",
+      "boundary": "registry candidates -> LLM input -> exact-set decision",
+      "defect": "candidate projection did not sufficiently distinguish item-owned facts from container access facts",
+      "classification": "CONFIRMED_INPUT_PROJECTION_DEFECT",
+      "change": "provide bounded owner-local owned_fact_kinds and require non-empty information for SOURCE_REQUIRED",
+      "commit": "8bbe6256",
+      "validation": "source/item/container positive and negative contract tests",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-004",
+      "concern": "Test architecture",
+      "owner": "test naming gate",
+      "boundary": "test symbol -> repository architecture gate",
+      "defect": "request regression names violated current test naming grammar",
+      "classification": "CONFIRMED_TEST_DEFECT",
+      "change": "rename tests without assertion or product behavior changes",
+      "commit": "fd151759",
+      "validation": "repository architecture naming gate",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-005",
+      "concern": "Explicit constraint preservation",
+      "owner": "Request Understanding explicit date preservation",
+      "boundary": "goal candidate -> normalization -> RequestIntent constraints",
+      "defect": "valid explicit relative/absolute dates outside a narrow prior vocabulary could be removed",
+      "classification": "CONFIRMED_NORMALIZATION_DEFECT",
+      "change": "preserve unlisted explicit dates while keeping quoted-title false-positive filtering",
+      "commit": "01604e04",
+      "validation": "date/title counter-suite and compiled Request Understanding",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-006",
+      "concern": "Retrieval continuation",
+      "owner": "current query/page chain projection",
+      "boundary": "read summaries -> current page continuation -> sufficiency",
+      "defect": "stale HAS_MORE from an earlier page could survive a later EXHAUSTED page",
+      "classification": "CONFIRMED_STATE_PROJECTION_DEFECT",
+      "change": "derive continuation from the current valid page chain",
+      "commit": "6f2861e5",
+      "validation": "pagination/sufficiency/compiled retrieval regressions",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-007",
+      "concern": "Prompt Runtime source status",
+      "owner": "identify_source_status",
+      "boundary": "LLM allowed values -> schema binding -> provenance validator",
+      "defect": "Prompt/schema binding could expose a source-status choice outside the owner-local active schema",
+      "classification": "CONFIRMED_SCHEMA_BINDING_DEFECT",
+      "change": "align source-status schema binding and retain provenance validation",
+      "commit": "ba2c4b6d",
+      "validation": "ANY exclusion, explicit COMPLETED/CLOSED provenance, manifest tests",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-008",
+      "concern": "Work Analysis Prompt",
+      "owner": "resolve_entity_relations",
+      "boundary": "relation Prompt -> relation schema -> duplicate/conflict owner",
+      "defect": "relation instruction duplicated duplicate/conflict responsibility owned by a separate operation",
+      "classification": "DUPLICATE_AUTHORITY_AND_OVERREACH",
+      "change": "remove only the duplicate/conflict instruction; keep schema and owning operation",
+      "commit": "4f61afd6",
+      "validation": "Prompt exact-set and Work Analysis component tests",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-009",
+      "concern": "Typed test contracts",
+      "owner": "tests/support fixtures",
+      "boundary": "fixture candidate -> current v3 schema/consumer",
+      "defect": "legacy fixture shapes no longer represented the active typed contract",
+      "classification": "CONFIRMED_TEST_CONTRACT_DEFECT",
+      "change": "align fixtures without weakening production validators",
+      "commit": "055646a0",
+      "validation": "433 direct tests and full mypy baseline",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-010",
+      "concern": "Retrieval cache rehydration",
+      "owner": "materialized SourceSegment selection",
+      "boundary": "initial normalize -> cache rehydrate -> RAG",
+      "defect": "rehydration recomputed round-robin preference using later state and changed the exact segment set",
+      "classification": "CONFIRMED_DETERMINISM_DEFECT",
+      "change": "rehydrate the stored materialized segment IDs in exact order and fail closed if identity is absent",
+      "commit": "fa6ff26d",
+      "validation": "65-resource/24-segment reproduction plus 597 retrieval-adjacent tests",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-011",
+      "concern": "Observability",
+      "owner": "production graph invocation trace",
+      "boundary": "prepare_start checkpoint materialization -> actual graph start",
+      "defect": "pre-materialization could create an empty duplicate LangSmith production root",
+      "classification": "CONFIRMED_OBSERVABILITY_DEFECT",
+      "change": "clear callbacks for checkpoint-only preparation and let actual start own the root",
+      "commit": "ac21cce8",
+      "validation": "348 invocation/LangGraph tests and remote 6/6 single-root traces",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-012",
+      "concern": "Test architecture",
+      "owner": "retrieval regression naming",
+      "boundary": "test symbol -> repository architecture gate",
+      "defect": "one retrieval regression name violated the current grammar",
+      "classification": "CONFIRMED_TEST_DEFECT",
+      "change": "rename only the test symbol",
+      "commit": "05d22642",
+      "validation": "architecture naming gate",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-013",
+      "concern": "Production-composition E2E",
+      "owner": "Review invocation expectation",
+      "boundary": "current Review graph -> E2E assertion",
+      "defect": "the E2E asserted that a current registered Review inspector must not run",
+      "classification": "CONFIRMED_STALE_TEST_ASSERTION",
+      "change": "assert the current inspector invocation without changing Product code",
+      "commit": "871abf9c",
+      "validation": "approved-write E2E 3/3 Graph profiles",
+      "status": "FIXED_VERIFIED"
+    },
+    {
+      "finding_id": "FIX-014",
+      "concern": "Operational measurement tooling",
+      "owner": "scripts/measure_local_runtime.py",
+      "boundary": "measurement composition -> current identify_goal_node caller contract",
+      "defect": "the script omitted four atomic Prompt refs and two registry-derived candidate sets; documented mypy invocation also duplicated package bases",
+      "classification": "CONFIRMED_TOOLING_CONTRACT_DEFECT",
+      "change": "bind current Prompt refs/candidates and make the documented full mypy command executable",
+      "commit": "f8f5ed5d",
+      "validation": "Ruff and mypy 1,723 source files",
+      "status": "FIXED_VERIFIED"
+    }
+  ],
+  "semantic_findings": [
+    {
+      "finding_id": "SEM-001",
+      "owner": "request_understanding.identify_output_responsibilities",
+      "case": "selected-calendar-event",
+      "input_status": "NORMAL_AND_COMPLETE",
+      "candidate": "unexpected GMAIL_MESSAGE/SEND",
+      "schema_validator_normalizer": "represented and preserved the candidate as designed",
+      "classification": "NODE_SEMANTIC_FAIL_PENDING_DECISION",
+      "first_failure_evidence": "Run 61325f85-709c-4de3-9b3f-3c66cd9d250b"
+    },
+    {
+      "finding_id": "SEM-002",
+      "owner": "request_understanding.identify_source_dependencies",
+      "case": "atlas-cross-source-draft",
+      "input_status": "NORMAL_AND_COMPLETE_WITH_10_TYPED_CANDIDATES",
+      "candidate": "GMAIL_DRAFT source selected; TASK/CALENDAR_EVENT omitted",
+      "schema_validator_normalizer": "correct alternative is expressible; invalid business meaning is structurally valid",
+      "classification": "NODE_SEMANTIC_FAIL_PENDING_DECISION",
+      "first_failure_evidence": "Run ec5d3ac5-5ce5-443e-9baa-3a96b682a746"
+    },
+    {
+      "finding_id": "SEM-003",
+      "owner": "planning.compose_arguments_per_output_route",
+      "case": "quartz-draft-update",
+      "input_status": "correct source/output/evidence",
+      "candidate": "no-op update patch",
+      "schema_validator_normalizer": "binding validator correctly rejected unchanged Draft",
+      "classification": "NODE_SEMANTIC_FAIL",
+      "first_failure_evidence": "Run c725aa58-e622-4d0c-9399-3b28909aaaa3"
+    },
+    {
+      "finding_id": "SEM-004",
+      "owner": "retrieval.plan_query",
+      "case": "juniper-all-titles",
+      "input_status": "EXHAUSTIVE completion meaning present",
+      "candidate": "narrow initial keyword hypothesis",
+      "schema_validator_normalizer": "valid query; Provider returned one distinct thread at the first acquisition",
+      "classification": "NODE_SEMANTIC_FAIL_QUERY_QUALITY",
+      "first_failure_evidence": "Run fb18e728-2cab-43d4-b822-a9196b2af3bb"
+    },
+    {
+      "finding_id": "SEM-005",
+      "owner": "retrieval.plan_query",
+      "case": "atlas-q19",
+      "input_status": "required Gmail source and search constraints present",
+      "candidate": "status-only broad query followed by bounded details",
+      "schema_validator_normalizer": "valid query; wrong evidence set produced a grounded but wrong business answer",
+      "classification": "NODE_SEMANTIC_FAIL_QUERY_QUALITY",
+      "first_failure_evidence": "Run 3ffca642-793d-45ab-8b0c-5c09d04fc9e9"
+    }
+  ],
+  "normal_critical_boundaries": [
+    {"boundary": "Approval -> Claim -> BeginExecutionAttempt -> Connector WRITE -> Verification", "result": "PASS", "evidence": "186 lifecycle/write tests; Smoke WRITE 0"},
+    {"boundary": "Prompt source/manifest/input-contract/caller exact-set", "result": "PASS", "evidence": "28/28 slots; targeted 511-test batch"},
+    {"boundary": "route reconsideration -> same-Run Retrieval continuation", "result": "PASS", "evidence": "compiled continuation tests"},
+    {"boundary": "budget stop -> PARTIAL/evidence-preserving finalization", "result": "PASS", "evidence": "Retrieval deterministic and component tests"},
+    {"boundary": "source status explicit provenance", "result": "PASS", "evidence": "COMPLETED/CLOSED positive and mismatch negative tests"},
+    {"boundary": "selected Resource exact detail binding", "result": "PASS", "evidence": "selected Resource integration and one Live Connector detail call"},
+    {"boundary": "ContextPreview including GitHub", "result": "PASS", "evidence": "frontend/resource projection tests"}
+  ],
+  "external_blockers": [
+    {
+      "id": "EXT-001",
+      "scope": "Dataset 115-question Product Live and actual Provider WRITE",
+      "reason": "current dataset is a readable development corpus without a canonical automatic Product runner; full provider provisioning and write approval scope are not established",
+      "status": "BLOCKED_NOT_RUN"
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "batches": [
+    {
+      "id": "TR-001",
+      "sha": "055646a0",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q",
+      "scope": "full non-browser regression at the then-current contract",
+      "result": "3816 passed, 1 warning",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-002",
+      "sha": "05d226423b0a6b7295dea0b60ad50b519159d155",
+      "command": "production compiled LangGraph smoke runner, six cases serially",
+      "scope": "qwen3.5:9b + actual Google Workspace READ + LangSmith",
+      "result": "6 executed; Business PASS 1, FAIL 5; root traces 6/6; WRITE 0",
+      "exit_code": 0,
+      "started_at": "2026-09-12T23:02:49.931857+00:00",
+      "artifact": "smoke-summary.json"
+    },
+    {
+      "id": "TR-003",
+      "sha": "05d226423b0a6b7295dea0b60ad50b519159d155",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q",
+      "scope": "full Python regression including deterministic production-composition E2E",
+      "result": "3874 passed, 9 failed, 1 warning",
+      "exit_code": 1,
+      "duration_seconds": 479.12,
+      "failure_classification": "3 stale Review assertions; 6 PROFILE_LLM_LIMIT_EXHAUSTED across two scenarios and three profiles"
+    },
+    {
+      "id": "TR-004",
+      "sha": "871abf9c",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q tests/e2e/test_langgraph_real_production.py::test_approved_write_executes__claims_and_verifies__through_real_mcp",
+      "scope": "fixed stale Review assertion, all Graph profiles",
+      "result": "3 passed, 1 warning",
+      "exit_code": 0,
+      "duration_seconds": 15.24
+    },
+    {
+      "id": "TR-005",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q tests/architecture tests/unit/application/prompt_runtime tests/unit/llm/test_prompt_repair_schema_repairer.py tests/component/langgraph/test_production_agent_subgraphs.py tests/integration/langgraph",
+      "scope": "architecture, Prompt Runtime, schema repair, compiled subgraphs and LangGraph integration",
+      "result": "511 passed",
+      "exit_code": 0,
+      "duration_seconds": 39.50
+    },
+    {
+      "id": "TR-006",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\ruff.exe check src tests launcher release scripts",
+      "scope": "Python lint",
+      "result": "PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-007",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\mypy.exe --explicit-package-bases src tests launcher release scripts",
+      "scope": "full documented type gate",
+      "result": "Success: no issues found in 1723 source files",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-008",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\python.exe -m compileall -q src launcher release scripts tests",
+      "scope": "Python compile gate",
+      "result": "PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-009",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": "npx vitest run",
+      "working_directory": "frontend",
+      "scope": "Frontend unit/component/architecture",
+      "result": "41 files, 266 tests passed",
+      "exit_code": 0,
+      "duration_seconds": 19.04
+    },
+    {
+      "id": "TR-010",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": "npm --prefix frontend run typecheck; lint; build (serial commands)",
+      "scope": "Frontend type/lint/production build",
+      "result": "PASS / PASS / PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-011",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\python.exe evaluation/check_workspace.py",
+      "scope": "dataset structure, links, Prompt separation, email scope and hashes",
+      "result": "PASS; business semantics and Live explicitly NOT TESTED",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-012",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": "..\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+      "working_directory": "evaluation",
+      "scope": "evaluation workspace tools",
+      "result": "78 passed, 1 skipped (platform symlink unavailable)",
+      "exit_code": 0,
+      "duration_seconds": 3.561
+    }
+  ],
+  "non_result_invocations": [
+    {
+      "command": "python -m mypy .",
+      "reason": "not the repository documented gate; exposed evaluation import/package-base setup and was replaced by the corrected documented command",
+      "counted_as_product_failure": false
+    },
+    {
+      "command": "unittest discover from repository root",
+      "reason": "wrong working directory relative to evaluation README; repeated once from evaluation/",
+      "counted_as_product_failure": false
+    },
+    {
+      "command": "npm --prefix frontend test -- --run",
+      "reason": "npm invocation entered Vitest watch after 266 tests passed; terminated and repeated with npx vitest run",
+      "counted_as_product_failure": false
+    }
+  ]
+}
