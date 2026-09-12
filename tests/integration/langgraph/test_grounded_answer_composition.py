@@ -145,3 +145,109 @@ def test_grounded_answer__production_graph__composes_instead_of_dumping_source(c
             {"case": case, "nodes": nodes, "prompts": calls, "final": final}, ensure_ascii=False
         )
     )
+
+
+def test_grounded_answer__production_graph__rejects_schema_shaped_answer_string() -> None:
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, projection: Mapping[str, object]) -> Mapping[str, object]:
+        base_projection = projection.get("base_projection", projection)
+        assert isinstance(base_projection, Mapping)
+        load_prompt_input_contract().validate_projection(prompt_id, base_projection)
+        calls.append(prompt_id)
+        if prompt_id == "planning.outline_answer":
+            return {"sections": ["요약"], "evidence_refs": ["e1"]}
+        assert prompt_id == "planning.compose_answer"
+        return {
+            "schema_version": 2,
+            "answer": '{"sections":[],"evidence_refs":["e1"]}',
+            "evidence_refs": ["e1"],
+        }
+
+    graph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=cast(PlanningSemanticInvoker, invoke)),
+    ).build()
+
+    with pytest.raises(ValueError, match="answer must be user-visible prose"):
+        graph.invoke(
+            {
+                "user_request": "선택한 메일의 핵심 내용을 3줄로 요약해줘",
+                "request_intent": {
+                    "goal": "선택한 메일 요약",
+                    "requested_effect_hints": ["READ"],
+                    "analysis_requirement": "NONE",
+                },
+                "tool_route_plan": {
+                    "output_plan": {"output_mode": "ANSWER", "output_routes": []}
+                },
+                "evidence": [{"evidence_id": "e1", "excerpt": "회의 일정 안내"}],
+                "retrieval_result": {"coverage": "SUFFICIENT"},
+            }
+        )
+    assert calls == [
+        "planning.outline_answer",
+        "planning.compose_answer",
+        "planning.compose_answer",
+    ]
+
+
+def test_grounded_answer__production_graph__repairs_prose_once_and_completes() -> None:
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, projection: Mapping[str, object]) -> Mapping[str, object]:
+        base_projection = projection.get("base_projection", projection)
+        assert isinstance(base_projection, Mapping)
+        load_prompt_input_contract().validate_projection(prompt_id, base_projection)
+        calls.append(prompt_id)
+        if prompt_id == "planning.outline_answer":
+            return {"sections": ["요약"], "evidence_refs": ["e1"]}
+        assert prompt_id == "planning.compose_answer"
+        if calls.count(prompt_id) == 1:
+            return {
+                "schema_version": 2,
+                "answer": '{"sections":[],"evidence_refs":["e1"]}',
+                "evidence_refs": ["e1"],
+            }
+        assert set(projection) == {"base_projection", "candidate_output", "failure_record"}
+        assert projection["candidate_output"] is None
+        failure = cast(Mapping[str, object], projection["failure_record"])
+        assert failure["failure_reason_code"] == "COMPOSE_ANSWER_PROSE_INVALID"
+        return {
+            "schema_version": 1,
+            "sections": [
+                {
+                    "heading": "핵심 내용",
+                    "items": [
+                        {"label": "일정", "value": "9월 15일 오후 4시"},
+                        {"label": "장소", "value": "3층 회의실 B"},
+                    ],
+                }
+            ],
+            "evidence_refs": ["e1"],
+        }
+
+    graph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=cast(PlanningSemanticInvoker, invoke)),
+    ).build()
+    result = graph.invoke(
+        {
+            "user_request": "선택한 메일의 핵심 내용을 3줄로 요약해줘",
+            "request_intent": {
+                "goal": "선택한 메일 요약",
+                "requested_effect_hints": ["READ"],
+                "analysis_requirement": "NONE",
+            },
+            "tool_route_plan": {"output_plan": {"output_mode": "ANSWER", "output_routes": []}},
+            "evidence": [{"evidence_id": "e1", "excerpt": "회의 일정 안내"}],
+            "retrieval_result": {"coverage": "SUFFICIENT"},
+        }
+    )
+
+    assert calls == [
+        "planning.outline_answer",
+        "planning.compose_answer",
+        "planning.compose_answer",
+    ]
+    assert result["final_result"]["answer"] == (
+        "## 핵심 내용\n- 일정: 9월 15일 오후 4시\n- 장소: 3층 회의실 B"
+    )
