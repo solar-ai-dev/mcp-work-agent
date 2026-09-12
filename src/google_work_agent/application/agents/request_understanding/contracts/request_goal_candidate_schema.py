@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import cast
@@ -190,6 +191,11 @@ _additional_properties = cast(dict[str, object], _additional_items["properties"]
 _additional_properties.pop("source_resource_type")
 _additional_properties.pop("provenance")
 _additional_field = cast(dict[str, object], _additional_properties["field"])
+_additional_field["pattern"] = (
+    r"^(?!(?:"
+    + "|".join(re.escape(field) for field in sorted(REQUEST_GOAL_SLOT_KINDS))
+    + r")$).+$"
+)
 _additional_field["description"] = (
     "명명된 검색 슬롯 밖의 명시적 실행 필드. 예약 슬롯 이름은 허용하지 않는다."
 )
@@ -285,7 +291,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v14",
+    schema_version="request-goal-candidate-v15",
     json_schema={
         "type": "object",
         "required": [

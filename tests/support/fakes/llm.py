@@ -141,6 +141,7 @@ class FakeStructuredInferencePort:
                 if output_schema_ref.schema_version in {
                     "request-goal-candidate-v13",
                     "request-goal-candidate-v14",
+                    "request-goal-candidate-v15",
                 }:
                     self._pending_resource_responsibilities = responsibilities
                     output = {
@@ -170,7 +171,8 @@ class FakeStructuredInferencePort:
                     input_projection=input_projection,
                 )
             if (
-                output_schema_ref.schema_version == "request-goal-candidate-v14"
+                output_schema_ref.schema_version
+                in {"request-goal-candidate-v14", "request-goal-candidate-v15"}
                 and isinstance(output, Mapping)
                 and isinstance(output.get("constraints"), Mapping)
                 and "status" in cast(Mapping[str, object], output["constraints"])

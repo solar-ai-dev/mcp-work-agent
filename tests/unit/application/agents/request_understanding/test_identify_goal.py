@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import replace
 from typing import Any, cast
@@ -823,7 +824,7 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         "request_understanding.identify_source_status",
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
-        "request-goal-candidate-v14",
+        "request-goal-candidate-v15",
         "request-effect-prohibition-decision-v1",
         "request-source-dependency-decision-v1",
         "request-output-responsibility-decision-v1",
@@ -1097,7 +1098,7 @@ def test_gmail_goal__empty_array_text__cannot_become_a_person(value: str, valid:
             identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
 
 
-def test_request_goal_schema__for_ollama_output__contains_no_patterns() -> None:
+def test_request_goal_schema__additional_field_pattern__matches_validator_invariant() -> None:
     def collect_patterns(value: object) -> list[str]:
         if isinstance(value, dict):
             return [
@@ -1108,7 +1109,108 @@ def test_request_goal_schema__for_ollama_output__contains_no_patterns() -> None:
             return [pattern for item in value for pattern in collect_patterns(item)]
         return []
 
-    assert collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema) == []
+    patterns = collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema)
+
+    assert len(patterns) == 1
+    pattern = patterns[0]
+    assert all(re.search(pattern, field) is None for field in goal_schema.REQUEST_GOAL_SLOT_KINDS)
+    assert re.search(pattern, "action") is not None
+
+
+@pytest.mark.parametrize("field", sorted(goal_schema.REQUEST_GOAL_SLOT_KINDS))
+def test_request_goal_schema__reserved_additional_field__rejects_output(field: str) -> None:
+    kind = goal_schema.REQUEST_GOAL_SLOT_KINDS[field]
+    value = "EXHAUSTIVE" if field == "coverage_requirement" else "explicit value"
+    candidate = {
+        "goal": "요청한 결과를 준비한다",
+        "completion_conditions": ["요청한 결과가 준비된다"],
+        "constraints": _goal_constraints(
+            {"kind": kind, "field": field, "value": value}
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    errors = validate_output_schema(
+        candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema
+    )
+
+    assert any("must match pattern" in error for error in errors)
+
+
+def test_request_goal_schema__atlas_reserved_status__rejects_at_output_schema() -> None:
+    candidate = {
+        "goal": "기존 자료를 바탕으로 초안을 준비한다",
+        "completion_conditions": ["초안을 준비하고 보내지 않는다"],
+        "constraints": _goal_constraints(
+            {"kind": "EMAIL", "field": "action", "value": "draft"},
+            {"kind": "EMAIL", "field": "status", "value": "not sent"},
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    errors = validate_output_schema(
+        candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema
+    )
+
+    assert any(
+        "$.constraints.additional_constraints[1].field must match pattern" in error
+        for error in errors
+    )
+    assert not any(
+        "$.constraints.additional_constraints[0].field" in error for error in errors
+    )
+
+
+def test_request_goal_schema__non_reserved_additional_field__remains_valid() -> None:
+    candidate = {
+        "goal": "요청한 결과를 준비한다",
+        "completion_conditions": ["요청한 결과가 준비된다"],
+        "constraints": _goal_constraints(
+            {"kind": "EMAIL", "field": "action", "value": "draft"},
+            search_terms=["Atlas"],
+            recipient=["person@example.test"],
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    assert not validate_output_schema(
+        candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema
+    )
+
+
+def test_request_goal_validator__reserved_additional_field__remains_defense_in_depth() -> None:
+    candidate = {
+        "goal": "요청한 결과를 준비한다",
+        "completion_conditions": ["요청한 결과가 준비된다"],
+        "constraints": _goal_constraints(
+            {"kind": "EMAIL", "field": "status", "value": "not sent"}
+        ),
+        "analysis_requirement": "NONE",
+    }
+    permissive_json_schema = deepcopy(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema)
+    constraint_schema = cast(
+        dict[str, Any], cast(dict[str, Any], permissive_json_schema["properties"])["constraints"]
+    )
+    additional_schema = cast(
+        dict[str, Any],
+        cast(dict[str, Any], constraint_schema["properties"])["additional_constraints"],
+    )
+    item_schema = cast(dict[str, Any], additional_schema["items"])
+    field_schema = cast(
+        dict[str, Any], cast(dict[str, Any], item_schema["properties"])["field"]
+    )
+    field_schema.pop("pattern")
+    permissive_schema = OutputSchemaDefinition(
+        schema_version="request-goal-candidate-permissive-test",
+        json_schema=permissive_json_schema,
+    )
+
+    with pytest.raises(ValueError, match="additional constraint uses reserved field"):
+        goal_schema.validate_request_goal_candidate(
+            candidate,
+            resource_responsibilities=_resource_responsibilities(),
+            schema=permissive_schema,
+        )
 
 
 def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope() -> None:
