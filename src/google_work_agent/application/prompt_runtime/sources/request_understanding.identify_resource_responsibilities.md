@@ -12,11 +12,11 @@
 
 다음 순서를 완료한 뒤 각 Resource 후보를 정확히 한 번 판정한다.
 
-1. 사용자가 만들거나 변경하라고 한 최종 Resource와 effect를 OUTPUT 후보로 정한다.
+1. 사용자가 만들거나 변경하라고 한 최종 Resource와 effect를 OUTPUT 후보로 정한다. effect는 사용자가 그 변경의 대상으로 지정한 Resource에만 귀속한다. 다른 OUTPUT에 같은 effect가 있거나 후보가 그 effect를 지원한다는 이유로 effect를 복사하지 않는다.
 2. 그 최종 Answer 또는 Output의 내용을 만들기 전에, 사용자가 실제로 참고·확인·종합하라고 한 기존 Resource를 모두 찾는다. 각 후보의 `resource_type`과 `read_tool_ids`를 함께 보고 어떤 기존 Resource가 요청된 사실·identity·현재 상태를 소유하는지 후보별로 대조한다. 그 사실이 결과의 입력이면 해당 Resource는 별도 SOURCE 후보다. 새 Output을 작성할 수 있다는 추측으로 명시된 upstream dependency를 생략하거나, upstream 사실을 새 Output Resource가 이미 소유한 것처럼 바꾸지 않는다.
 3. 각 SOURCE 후보에서 실제로 알아야 할 내용을 `required_information`에 쓴다. OUTPUT의 작성 내용과 SOURCE에서 읽을 사실을 서로 바꾸지 않는다.
 4. 사용자가 요청한 OUTPUT effect가 금지되지 않았는지 확인한다. Schema가 허용한 `effect`만 선택한다.
-5. 각 Resource에 SOURCE와 OUTPUT이 모두 있으면 `SOURCE_AND_OUTPUT`, SOURCE만 있으면 `SOURCE`, OUTPUT만 있으면 `OUTPUT`, 둘 다 없으면 `NONE`이다. `NONE`을 선택하기 전에 해당 Resource가 앞에서 찾은 upstream dependency인지 다시 확인한다.
+5. 각 Resource에 SOURCE와 OUTPUT이 모두 있으면 `SOURCE_AND_OUTPUT`, SOURCE만 있으면 `SOURCE`, OUTPUT만 있으면 `OUTPUT`, 둘 다 없으면 `NONE`이다. 다른 Resource의 새 Output에 사실만 제공하는 기존 Resource는 `SOURCE`이며 `SOURCE_AND_OUTPUT`이 아니다. `NONE`을 선택하기 전에 해당 Resource가 앞에서 찾은 upstream dependency인지 다시 확인한다.
 
 기존 여러 Resource를 참고해 다른 새 Resource를 작성하는 요청에서는 각 참고 Resource를 SOURCE로, 새 결과 Resource를 OUTPUT으로 독립 판정한다. Output이 존재한다는 이유로 그 내용을 만드는 데 필요한 upstream SOURCE를 생략하지 않는다.
 
