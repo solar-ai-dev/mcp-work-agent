@@ -1583,16 +1583,16 @@ test("TST-UI-203 resource row supports focus, selection, and keyboard-accessible
 
   const row = await screen.findByRole("button", { name: /첫 번째 자료/ });
   await user.click(row);
-  expect(row).toHaveAttribute("aria-pressed", "true");
+  expect(row).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByRole("checkbox", { name: "첫 번째 자료 선택" })).not.toBeChecked();
   const resourceSidebar = screen.getByRole("complementary", { name: "자료 탐색" });
-  expect(within(resourceSidebar).getByRole("dialog", { name: "자료 상세 창" })).toBeInTheDocument();
-  expect(within(screen.getByRole("region", { name: "에이전트 대화" })).queryByRole("dialog", { name: "자료 상세 창" })).not.toBeInTheDocument();
+  expect(within(resourceSidebar).getByRole("region", { name: "첫 번째 자료 상세" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "에이전트 대화" })).queryByRole("region", { name: "첫 번째 자료 상세" })).not.toBeInTheDocument();
   expect(screen.queryByText("요청에서 제외")).not.toBeInTheDocument();
   expect(screen.queryByText("요청에 포함")).not.toBeInTheDocument();
-  await user.click(within(resourceSidebar).getByRole("button", { name: "자료 상세 닫기" }));
-  expect(screen.queryByRole("dialog", { name: "자료 상세 창" })).not.toBeInTheDocument();
-  expect(row).toHaveAttribute("aria-pressed", "false");
+  await user.click(row);
+  expect(screen.queryByRole("region", { name: "첫 번째 자료 상세" })).not.toBeInTheDocument();
+  expect(row).toHaveAttribute("aria-expanded", "false");
   expect(screen.getByRole("tab", { name: /^메일/ })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: /^태스크/ })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "캘린더" })).toBeInTheDocument();
@@ -2526,18 +2526,19 @@ test("Tasks date-sort refresh invalidates its cached result and rebuilds it from
   expect(requests.some((request) => request.path === "/api/v1/resources/tasks/count")).toBe(false);
 });
 
-test("resource detail drawer closes to the active source list and does not retain previous focus", async () => {
+test("resource detail expands inside its source row and does not retain previous focus", async () => {
   const user = userEvent.setup();
   installUiContractFetch();
   render(<App />);
 
   const firstResource = await screen.findByRole("button", { name: /첫 번째 자료/ });
-  expect(screen.queryByRole("dialog", { name: "자료 상세 창" })).not.toBeInTheDocument();
+  expect(firstResource).toHaveAttribute("aria-expanded", "false");
   await user.click(firstResource);
   expect(await screen.findByText("실제 메일 본문입니다.")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "자료 상세 닫기" }));
-  expect(screen.queryByRole("dialog", { name: "자료 상세 창" })).not.toBeInTheDocument();
-  expect(firstResource).toHaveAttribute("aria-pressed", "false");
+  expect(firstResource).toHaveAttribute("aria-expanded", "true");
+  await user.click(firstResource);
+  expect(screen.queryByText("실제 메일 본문입니다.")).not.toBeInTheDocument();
+  expect(firstResource).toHaveAttribute("aria-expanded", "false");
 
   await user.click(screen.getByRole("tab", { name: /캘린더/ }));
   expect(screen.queryByText("실제 메일 본문입니다.")).not.toBeInTheDocument();
@@ -2548,10 +2549,10 @@ test("resource detail drawer closes to the active source list and does not retai
   expect(screen.getByText("시작 시간")).toBeInTheDocument();
   expect(screen.getByText("종료 시간")).toBeInTheDocument();
   expect(screen.queryByText("2026-08-10T09:00:00+09:00")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "자료 상세 닫기" }));
+  await user.click(screen.getByRole("button", { name: /프로젝트 검토/ }));
 
   await user.click(screen.getByRole("tab", { name: /태스크/ }));
-  expect(screen.queryByRole("dialog", { name: "자료 상세 창" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "프로젝트 검토 상세" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "프로젝트 검토" })).not.toBeInTheDocument();
 });
 

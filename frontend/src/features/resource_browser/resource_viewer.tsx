@@ -45,12 +45,11 @@ type PresentedResource = {
 type Props = {
   focusedItem: ResourceItem;
   emptyMessage: string;
-  onClose: () => void;
   onOpenContainer: () => void;
   presentResource: (item: ResourceItem) => PresentedResource;
 };
 
-export function ResourceViewer({ focusedItem, emptyMessage, onClose, onOpenContainer, presentResource }: Props): JSX.Element {
+export function ResourceViewer({ focusedItem, emptyMessage, onOpenContainer, presentResource }: Props): JSX.Element {
   const [gmailDetail, setGmailDetail] = useState<GmailDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
   const [taskDetail, setTaskDetail] = useState<TaskDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
   const [calendarDetail, setCalendarDetail] = useState<CalendarDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
@@ -93,28 +92,26 @@ export function ResourceViewer({ focusedItem, emptyMessage, onClose, onOpenConta
   }, [focusedItem, loadCalendarDetail, loadGmailDetail, loadTaskDetail]);
 
   return (
-    <section className="resource-detail-drawer" role="dialog" aria-label="자료 상세 창">
-      <header className="resource-detail-drawer-header">
-        <strong>자료 상세</strong>
-        <button className="icon-button icon-button--plain" type="button" aria-label="자료 상세 닫기" title="닫기" onClick={onClose}>×</button>
-      </header>
-      <div className="resource-detail-drawer-body">
-        <ResourceDetail
-          focusItem={focusedItem}
-          gmailDetail={gmailDetail}
-          taskDetail={taskDetail}
-          calendarDetail={calendarDetail}
-          onRetryGmailDetail={() => { void loadGmailDetail(focusedItem.resource_id); }}
-          onRetryTaskDetail={() => { void loadTaskDetail(focusedItem); }}
-          onRetryCalendarDetail={() => { void loadCalendarDetail(focusedItem); }}
-          onDownloadGmailAttachment={(messageId, attachmentId) => { void downloadAttachment(messageId, attachmentId); }}
-          onDrillInto={onOpenContainer}
-          presentResource={presentResource}
-          metadataEntriesFor={metadataEntries}
-          emptyMessage={emptyMessage}
-          formatMailboxIdentity={mailbox}
-        />
-      </div>
+    <section
+      className="resource-accordion-detail"
+      role="region"
+      aria-label={`${presentResource(focusedItem).title ?? "제목 없음"} 상세`}
+    >
+      <ResourceDetail
+        focusItem={focusedItem}
+        gmailDetail={gmailDetail}
+        taskDetail={taskDetail}
+        calendarDetail={calendarDetail}
+        onRetryGmailDetail={() => { void loadGmailDetail(focusedItem.resource_id); }}
+        onRetryTaskDetail={() => { void loadTaskDetail(focusedItem); }}
+        onRetryCalendarDetail={() => { void loadCalendarDetail(focusedItem); }}
+        onDownloadGmailAttachment={(messageId, attachmentId) => { void downloadAttachment(messageId, attachmentId); }}
+        onDrillInto={onOpenContainer}
+        presentResource={presentResource}
+        metadataEntriesFor={metadataEntries}
+        emptyMessage={emptyMessage}
+        formatMailboxIdentity={mailbox}
+      />
     </section>
   );
 }

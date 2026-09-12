@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ResourceItem } from "../../api/contract";
 
 export type CalendarMonthRange = {
@@ -17,6 +18,8 @@ type Props = {
   onNextMonth: () => void;
   onSelectDate: (date: string) => void;
   onSelectEvent: (item: ResourceItem) => void;
+  focusedResourceId: string | null;
+  renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -63,6 +66,8 @@ export function CalendarMonthView({
   onNextMonth,
   onSelectDate,
   onSelectEvent,
+  focusedResourceId,
+  renderExpandedResource,
 }: Props): JSX.Element {
   const range = calendarMonthRange(monthAnchor);
   const eventDays = new Map(range.days.map((day) => [day, [] as ResourceItem[]]));
@@ -111,10 +116,11 @@ export function CalendarMonthView({
             <ul>
               {selectedItems.map((item) => (
                 <li key={item.resource_id}>
-                  <button type="button" onClick={() => onSelectEvent(item)}>
+                  <button type="button" aria-expanded={focusedResourceId === item.resource_id} onClick={() => onSelectEvent(item)}>
                     <time>{eventTimeLabel(item, selectedDate, timezone)}</time>
                     <span>{item.title || "제목 정보 없음"}</span>
                   </button>
+                  {focusedResourceId === item.resource_id ? renderExpandedResource(item) : null}
                 </li>
               ))}
             </ul>

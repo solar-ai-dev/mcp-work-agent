@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ResourceItem } from "../../api/contract";
 import type { GitHubIssuesController } from "./github_controller";
 
@@ -11,9 +11,10 @@ type Props = {
   focusedResourceId: string | null;
   onToggleResource: (resourceId: string) => void;
   onFocusResource: (item: ResourceItem) => void;
+  renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
 
-export function GitHubPanel({ github, repository, hasAllowedRepositories, onOpenSettings, selectedResourceIds, focusedResourceId, onToggleResource, onFocusResource }: Props): JSX.Element {
+export function GitHubPanel({ github, repository, hasAllowedRepositories, onOpenSettings, selectedResourceIds, focusedResourceId, onToggleResource, onFocusResource, renderExpandedResource }: Props): JSX.Element {
   const [filter, setFilter] = useState("");
   const visibleItems = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("ko-KR");
@@ -58,11 +59,12 @@ export function GitHubPanel({ github, repository, hasAllowedRepositories, onOpen
                 <label className="resource-select-control" title="선택 요청에 포함">
                   <input type="checkbox" aria-label={`${item.title || "제목 없음"} 선택`} checked={selected} onChange={() => onToggleResource(item.resource_id)} />
                 </label>
-                <button className="resource-summary" type="button" aria-pressed={focused} onClick={() => onFocusResource(item)}>
+                <button className="resource-summary" type="button" aria-expanded={focused} onClick={() => onFocusResource(item)}>
                   <span className="row-mail-meta"><span className="row-sender">#{item.metadata.issue_number}</span><span className="row-meta">{item.metadata.issue_state === "CLOSED" ? "닫힘" : "열림"}</span></span>
                   <strong className="row-title">{item.title || "제목 없음"}</strong>
                   {item.metadata.description ? <span className="row-snippet">{item.metadata.description}</span> : null}
                 </button>
+                {focused ? renderExpandedResource(item) : null}
               </li>
             );
           })}

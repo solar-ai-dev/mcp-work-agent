@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ResourceItem } from "../../api/contract";
 
 type TasksPanelController = {
@@ -40,9 +40,10 @@ type TasksPanelProps = {
   presentResource: (item: ResourceItem) => ResourcePresentation;
   pastDays: (item: ResourceItem) => number | null;
   formatCompletedAt: (item: ResourceItem) => string | null;
+  renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
 
-export function TasksPanel({ tasks, filter, onFilterChange, selection, visibleItems, sections, pageIndexes, hasNextPage, presentResource, pastDays, formatCompletedAt }: TasksPanelProps): JSX.Element {
+export function TasksPanel({ tasks, filter, onFilterChange, selection, visibleItems, sections, pageIndexes, hasNextPage, presentResource, pastDays, formatCompletedAt, renderExpandedResource }: TasksPanelProps): JSX.Element {
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -64,7 +65,7 @@ export function TasksPanel({ tasks, filter, onFilterChange, selection, visibleIt
         <label className="resource-select-control" title="선택 항목에 포함">
           <input type="checkbox" aria-label={`${presentation.title ?? "제목 정보 없음"} 선택`} checked={selected} onChange={() => selection.onToggleResource(item.resource_id)} />
         </label>
-        <button className="resource-summary" type="button" aria-pressed={focused} onClick={() => selection.onFocusResource(item)}>
+        <button className="resource-summary" type="button" aria-expanded={focused} onClick={() => selection.onFocusResource(item)}>
           <span className="task-row-main">
             <strong className="row-title">{presentation.title ?? "제목 정보 없음"}</strong>
             {(tasks.sort !== "scheduled_date" && presentation.time) || overdueDays !== null ? <span className="row-meta task-row-date">{overdueDays !== null ? `${overdueDays}일 지남` : presentation.time}</span> : null}
@@ -72,6 +73,7 @@ export function TasksPanel({ tasks, filter, onFilterChange, selection, visibleIt
           {presentation.secondary ? <span className="row-secondary">{presentation.secondary}</span> : null}
           {presentation.snippet ? <span className="row-snippet">{presentation.snippet}</span> : null}
         </button>
+        {focused ? renderExpandedResource(item) : null}
       </li>
     );
   };
@@ -108,7 +110,13 @@ export function TasksPanel({ tasks, filter, onFilterChange, selection, visibleIt
           {tasks.completed.loading ? <p className="muted">완료됨 로딩 중</p> : null}
           {tasks.completed.error ? <p className="status-bad">{tasks.completed.error}</p> : null}
           {!tasks.completed.loading && !tasks.completed.error && tasks.completed.initialized && tasks.completed.items.length === 0 ? <p className="muted">완료된 할 일이 없습니다.</p> : null}
-          {tasks.completed.items.slice(0, (tasks.completed.pageIndex + 1) * 20).map((item) => <button key={item.resource_id} className="completed-task-row" type="button" onClick={() => selection.onFocusResource(item)}><span className="completed-task-title">✓ {presentResource(item).title ?? "제목 정보 없음"}</span>{formatCompletedAt(item) ? <span className="completed-task-date">완료일: {formatCompletedAt(item)}</span> : null}</button>)}
+          {tasks.completed.items.slice(0, (tasks.completed.pageIndex + 1) * 20).map((item) => {
+            const focused = selection.focusedResourceId === item.resource_id;
+            return <div className="completed-task-entry" key={item.resource_id}>
+              <button className="completed-task-row" type="button" aria-expanded={focused} onClick={() => selection.onFocusResource(item)}><span className="completed-task-title">✓ {presentResource(item).title ?? "제목 정보 없음"}</span>{formatCompletedAt(item) ? <span className="completed-task-date">완료일: {formatCompletedAt(item)}</span> : null}</button>
+              {focused ? renderExpandedResource(item) : null}
+            </div>;
+          })}
           {!tasks.completed.loading && !tasks.completed.error && tasks.completed.items.length > (tasks.completed.pageIndex + 1) * 20 ? <button className="button-secondary" type="button" onClick={tasks.showMoreCompleted}>더 보기</button> : null}
         </div> : null}
       </section>

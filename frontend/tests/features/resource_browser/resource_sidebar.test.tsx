@@ -171,9 +171,10 @@ test("네 Resource 사이 전환 시 이전 상세를 제거하고 GitHub Issue�
   expect(await screen.findByText("Runtime closure")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: "Runtime closure 선택" }));
   fireEvent.click(screen.getByRole("button", { name: /Runtime closure/ }));
-  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ activeSource: "github", focusedItem: issue, selectedContext: expect.objectContaining({ resourceIds: [issue.resource_id] }) })));
+  expect(screen.getByRole("region", { name: "Runtime closure 상세" })).toBeInTheDocument();
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ activeSource: "github", selectedContext: expect.objectContaining({ resourceIds: [issue.resource_id] }) })));
   fireEvent.click(screen.getByRole("tab", { name: /메일/ }));
-  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ activeSource: "gmail", focusedItem: null, selectedContext: expect.objectContaining({ resourceIds: [] }) })));
+  await waitFor(() => expect(onProjectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ activeSource: "gmail", selectedContext: expect.objectContaining({ resourceIds: [] }) })));
   expect(screen.queryByText("Runtime closure")).not.toBeInTheDocument();
 
   rerender(<ResourceSidebar {...sidebarProps({ scopeKey: "session|github:disconnected", githubAccountId: null, githubConnected: false, onProjectionChange })} />);

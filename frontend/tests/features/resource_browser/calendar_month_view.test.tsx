@@ -39,6 +39,8 @@ test("builds a Sunday-start month grid and renders markers plus the selected dat
       onNextMonth={vi.fn()}
       onSelectDate={onSelectDate}
       onSelectEvent={vi.fn()}
+      focusedResourceId="event-1"
+      renderExpandedResource={(item) => <div>{item.title} 상세 원문</div>}
     />,
   );
 
@@ -47,6 +49,7 @@ test("builds a Sunday-start month grid and renders markers plus the selected dat
   expect(screen.getByRole("button", { name: "2026-08-10 일정 2개" })).toBeInTheDocument();
   expect(screen.getByText("09:00")).toBeInTheDocument();
   expect(screen.getByText("종일")).toBeInTheDocument();
+  expect(screen.getByText("회의 상세 원문")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "2026-08-11 일정 1개" }));
   expect(onSelectDate).toHaveBeenCalledWith("2026-08-11");
@@ -65,6 +68,8 @@ test("does not render an event marker outside an all-day event's exclusive end d
       onNextMonth={vi.fn()}
       onSelectDate={vi.fn()}
       onSelectEvent={vi.fn()}
+      focusedResourceId={null}
+      renderExpandedResource={() => null}
     />,
   );
 

@@ -625,6 +625,27 @@ def test_gmail_ui_detail__converts_nested_html__when_plain_is_missing(
     assert "bad" not in str(detail["body"])
 
 
+def test_gmail_ui_detail__removes_conditional_html_markers_from_plain_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = (
+        "<!--[if !mso]><!--><div>첫 번째 원문</div><!--<![endif]-->\n"
+        "<!--[if false]><!--><p>두 번째 원문</p><!--<![endif]-->"
+    )
+    message = _gmail_message("message-1", "2000", body)
+    monkeypatch.setattr(server, "_google_api", lambda *_args, **_kwargs: {"messages": [message]})
+
+    detail = verified_server._tool_call(
+        _state(),
+        tool_name="gmail_get_ui_thread_detail",
+        arguments={"thread_id": "thread-1"},
+    )
+
+    assert detail["body"] == "첫 번째 원문\n두 번째 원문"
+    assert "<!--[if" not in str(detail["body"])
+    assert "<![endif]" not in str(detail["body"])
+
+
 def test_gmail_ui__detail_allows_missing__or_malformed_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

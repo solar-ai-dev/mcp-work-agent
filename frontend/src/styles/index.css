@@ -192,41 +192,6 @@ main.panel .panel-body {
   overflow: hidden;
 }
 
-.resource-detail-drawer {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--panel);
-}
-
-.resource-detail-drawer-header {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  min-height: 3.25rem;
-  padding: 0.65rem 1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.resource-detail-drawer-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: 0.8rem 1rem;
-}
-
-.resource-detail-drawer .resource-viewer {
-  margin: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
-}
-
 main.panel .panel-header {
   min-height: 0;
   padding: 0.45rem 1.25rem 0;
@@ -326,6 +291,23 @@ main.panel .panel-header > div:first-child .muted {
   accent-color: var(--accent);
 }
 
+.resource-accordion-detail {
+  margin: 0.72rem -0.15rem -0.2rem -1.78rem;
+  padding: 0.8rem 0.2rem 0.2rem;
+  border-top: 1px solid color-mix(in srgb, var(--border), transparent 25%);
+}
+.resource-accordion-detail .resource-viewer {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+.calendar-selected-events .resource-accordion-detail,
+.completed-task-entry .resource-accordion-detail {
+  margin: 0.55rem 0 0;
+  padding: 0.7rem 0 0;
+}
 .resource-viewer {
   position: relative;
   flex: 0 0 auto;
@@ -337,24 +319,6 @@ main.panel .panel-header > div:first-child .muted {
 }
 .resource-viewer.resource-viewer--empty {
   min-height: 4.5rem;
-}
-/* The toggle is rendered as the literal last word of the (JS-truncated)
-   preview text, so it's always fused right after the last visible
-   character rather than pinned to a fixed offset. Styled as muted body
-   text, not an accent/link color, so it reads as part of the sentence. */
-.resource-inline-toggle {
-  all: unset;
-  display: inline;
-  color: var(--muted);
-  font: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.resource-inline-toggle:hover,
-.resource-inline-toggle:focus-visible {
-  color: var(--text);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .resource-viewer h2 { font-size: 1.3rem; letter-spacing: -0.02em; margin: 0.6rem 2.5rem 0 0; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
@@ -382,6 +346,7 @@ main.panel .panel-header > div:first-child .muted {
 .completed-tasks { margin-top: .7rem; border-top: 1px solid var(--border); padding-top: .55rem; }
 .completed-tasks-toggle { width: 100%; border: 0; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-weight: 700; padding: .2rem 0; text-align: left; }
 .completed-tasks-content { display: grid; gap: .35rem; margin-top: .35rem; }
+.completed-task-entry { min-width: 0; }
 .completed-task-row { display: grid; gap: .1rem; background: transparent; border: 0; color: var(--text); cursor: pointer; font: inherit; overflow: hidden; padding: .25rem 0 .25rem .25rem; text-align: left; }
 .completed-task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .completed-task-date { color: var(--muted); font-size: .86em; white-space: nowrap; }

@@ -1,4 +1,3 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   CalendarResourceDetailResponse,
   GmailResourceDetailResponse,
@@ -6,117 +5,6 @@ import type {
   TaskResourceDetailResponse,
 } from "../../api/contract";
 import { AttachmentList } from "../attachment";
-
-const CLAMP_LINES = 3;
-const MORE_SUFFIX = "… 더보기";
-
-// Finds the longest prefix of `text` that, together with MORE_SUFFIX, still
-// renders within `maxHeight` inside a detached clone of `container` -- so
-// the compact preview's "더보기" ends up as the literal last word of the
-// rendered text (fused, not a separately positioned element) while the cut
-// point itself still reflects the real 3-line box, not a character count.
-function truncateToHeight(container: HTMLElement, text: string, maxHeight: number): string | null {
-  const style = getComputedStyle(container);
-  const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-  const measurer = document.createElement("div");
-  measurer.style.position = "fixed";
-  measurer.style.visibility = "hidden";
-  measurer.style.pointerEvents = "none";
-  measurer.style.left = "-9999px";
-  measurer.style.top = "0";
-  measurer.style.width = `${container.clientWidth - paddingX}px`;
-  measurer.style.font = style.font;
-  measurer.style.lineHeight = style.lineHeight;
-  measurer.style.whiteSpace = style.whiteSpace;
-  measurer.style.overflowWrap = style.overflowWrap;
-  measurer.style.wordBreak = style.wordBreak;
-  document.body.appendChild(measurer);
-
-  try {
-    measurer.textContent = text;
-    if (measurer.scrollHeight <= maxHeight) return null;
-
-    let lo = 0;
-    let hi = text.length;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      measurer.textContent = `${text.slice(0, mid).trimEnd()}${MORE_SUFFIX}`;
-      if (measurer.scrollHeight <= maxHeight) {
-        lo = mid;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    return text.slice(0, lo).trimEnd();
-  } finally {
-    document.body.removeChild(measurer);
-  }
-}
-
-// Renders `text` truncated to fit 3 actual rendered lines, with "… 더보기"
-// appended as the literal end of that truncated string (so it always sits
-// right after the last visible character, never detached at a fixed
-// offset), or the full text with a trailing "접기" once expanded. The cut
-// point is found by rendering candidate substrings in an offscreen clone
-// and comparing heights -- not a character-count threshold -- so it tracks
-// the real 3-line limit regardless of how wide the card is or how the
-// source text wraps.
-function ClampedText({
-  text,
-  className,
-  isExpanded,
-  onToggleExpanded,
-}: {
-  text: string;
-  className?: string;
-  isExpanded: boolean;
-  onToggleExpanded: () => void;
-}): JSX.Element {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [compact, setCompact] = useState<{ text: string; isOverflowing: boolean }>({
-    text,
-    isOverflowing: false,
-  });
-
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (!container) {
-      setCompact({ text, isOverflowing: false });
-      return;
-    }
-    const lineHeight = parseFloat(getComputedStyle(container).lineHeight);
-    const maxHeight = Number.isFinite(lineHeight) ? lineHeight * CLAMP_LINES + 1 : Infinity;
-    const truncated = truncateToHeight(container, text, maxHeight);
-    setCompact(truncated === null ? { text, isOverflowing: false } : { text: truncated, isOverflowing: true });
-  }, [text]);
-
-  if (isExpanded) {
-    return (
-      <div className={className}>
-        {text}
-        {compact.isOverflowing ? (
-          <>
-            {" "}
-            <button type="button" className="resource-inline-toggle" onClick={onToggleExpanded}>
-              접기
-            </button>
-          </>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className={className}>
-      {compact.text}
-      {compact.isOverflowing ? (
-        <button type="button" className="resource-inline-toggle" onClick={onToggleExpanded}>
-          {MORE_SUFFIX}
-        </button>
-      ) : null}
-    </div>
-  );
-}
 
 export type GmailDetailState = {
   resourceId: string | null;
@@ -175,12 +63,6 @@ export function ResourceDetail({
   emptyMessage,
   formatMailboxIdentity,
 }: ResourceDetailProps): JSX.Element {
-  const [isExpanded, setIsExpanded] = useState(false);
-  // A newly focused resource always starts as a compact preview.
-  useEffect(() => {
-    setIsExpanded(false);
-  }, [focusItem?.resource_id]);
-
   const canonicalUrl = focusItem
     ? gmailDetail.detail?.resource_id === focusItem.resource_id
       ? gmailDetail.detail.canonical_url
@@ -190,7 +72,7 @@ export function ResourceDetail({
 
   return (
     <section
-      className={`resource-viewer${focusItem ? "" : " resource-viewer--empty"}${isExpanded ? " resource-viewer--expanded" : ""}`}
+      className={`resource-viewer${focusItem ? "" : " resource-viewer--empty"}`}
       aria-label="선택 자료 상세"
     >
       {focusItem ? (
@@ -230,8 +112,6 @@ export function ResourceDetail({
             onRetry={onRetryGmailDetail}
             onDownloadAttachment={onDownloadGmailAttachment}
             formatMailboxIdentity={formatMailboxIdentity}
-            isExpanded={isExpanded}
-            onToggleExpanded={() => setIsExpanded((current) => !current)}
           />
         ) : focusItem.resource_type === "task" ? (
           <TaskDetailViewer state={taskDetail} onRetry={onRetryTaskDetail} />
@@ -246,13 +126,7 @@ export function ResourceDetail({
                 {metadataEntries.map(([key, value]) => (
                   <div key={key}>
                     <dt>{key}</dt>
-                    <dd>
-                      <ClampedText
-                        text={value}
-                        isExpanded={isExpanded}
-                        onToggleExpanded={() => setIsExpanded((current) => !current)}
-                      />
-                    </dd>
+                    <dd>{value}</dd>
                   </div>
                 ))}
               </dl>
@@ -343,15 +217,11 @@ function GmailDetailViewer({
   onRetry,
   onDownloadAttachment,
   formatMailboxIdentity,
-  isExpanded,
-  onToggleExpanded,
 }: {
   state: GmailDetailState;
   onRetry: () => void;
   onDownloadAttachment: (messageId: string, attachmentId: string) => void;
   formatMailboxIdentity: (name: string | null, email: string | null) => string | null;
-  isExpanded: boolean;
-  onToggleExpanded: () => void;
 }): JSX.Element {
   if (state.status === "loading") {
     return (
@@ -391,12 +261,7 @@ function GmailDetailViewer({
         {detail.subject ? <h2>{detail.subject}</h2> : null}
       </header>
       {detail.body ? (
-        <ClampedText
-          text={detail.body}
-          className="gmail-detail-body"
-          isExpanded={isExpanded}
-          onToggleExpanded={onToggleExpanded}
-        />
+        <div className="gmail-detail-body">{detail.body}</div>
       ) : (
         <p className="viewer-empty">표시할 메일 내용이 없습니다.</p>
       )}

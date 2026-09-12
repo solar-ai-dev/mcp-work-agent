@@ -167,9 +167,20 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
     const item = items.find((candidate) => candidate.resource_id === resourceId);
     if (item) toggleItem(item);
   }, [toggleItem]);
-  const openFocusedContainer = useCallback((): void => {
-    if (focusedItem?.parent_id) setParentId(focusedItem.parent_id);
-  }, [focusedItem]);
+  const toggleFocusedItem = useCallback((item: ResourceItem): void => {
+    setFocusedItem((current) => current && isSameResourceIdentity(current, item) ? null : item);
+  }, []);
+  const renderExpandedResource = useCallback((item: ResourceItem): JSX.Element | null => {
+    if (!focusedItem || !isSameResourceIdentity(focusedItem, item)) return null;
+    return (
+      <ResourceViewer
+        focusedItem={item}
+        emptyMessage={emptyMessage(source)}
+        onOpenContainer={() => { if (item.parent_id) setParentId(item.parent_id); }}
+        presentResource={presentResource}
+      />
+    );
+  }, [focusedItem, source]);
 
   useEffect(() => {
     setSource((current) => current && visibleSources.includes(current) ? current : visibleSources[0] ?? null);
@@ -257,20 +268,11 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
             {githubRepositories.map((repository) => <option key={repository} value={repository}>{repository}</option>)}
           </select></label>
         </div> : null}
-        {googleConnected && source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: setFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} /> : null}
-        {googleConnected && source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: setFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} /> : null}
-        {googleConnected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
-        {githubConnected && source === "github" ? <GitHubPanel github={github} repository={githubRepository} hasAllowedRepositories={githubRepositories.length > 0} onOpenSettings={onOpenSettings} selectedResourceIds={selectedContext.resourceIds} focusedResourceId={focusedItem?.resource_id ?? null} onToggleResource={(resourceId) => toggleByResourceId(resourceId, github.items)} onFocusResource={setFocusedItem} /> : null}
+        {googleConnected && source === "gmail" ? <GmailPanel gmail={gmail} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, gmail.items), onFocusResource: toggleFocusedItem }} pagination={{ pageIndexes: pageIndexes(gmail.pageIndex, gmail.totalCount, gmail.items.length), hasNextPage: gmail.pageIndex + 1 < pageCount(gmail.totalCount, gmail.items.length) || (gmail.totalCount === null && gmail.nextPageToken !== null), onGoToPage: (pageIndex) => void gmail.loadPage(pageIndex) }} presentResource={presentResource} renderExpandedResource={renderExpandedResource} /> : null}
+        {googleConnected && source === "tasks" ? <TasksPanel tasks={tasks} filter={filter} onFilterChange={setFilter} selection={{ selectedResourceIds: selectedContext.resourceIds, focusedResourceId: focusedItem?.resource_id ?? null, onToggleResource: (resourceId) => toggleByResourceId(resourceId, tasks.items), onFocusResource: toggleFocusedItem }} visibleItems={visibleTaskItems} sections={taskSections} pageIndexes={pageIndexes(tasks.pageIndex, tasks.totalCount, tasks.items.length)} hasNextPage={tasks.pageIndex + 1 < pageCount(tasks.totalCount, tasks.items.length) || (tasks.totalCount === null && tasks.nextPageToken !== null)} presentResource={presentResource} pastDays={pastScheduledDays} formatCompletedAt={(item) => formatCompletedTaskDate(item.metadata.completed_at ?? null, timezone)} renderExpandedResource={renderExpandedResource} /> : null}
+        {googleConnected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={toggleFocusedItem} focusedResourceId={focusedItem?.resource_id ?? null} renderExpandedResource={renderExpandedResource} /> : null}
+        {githubConnected && source === "github" ? <GitHubPanel github={github} repository={githubRepository} hasAllowedRepositories={githubRepositories.length > 0} onOpenSettings={onOpenSettings} selectedResourceIds={selectedContext.resourceIds} focusedResourceId={focusedItem?.resource_id ?? null} onToggleResource={(resourceId) => toggleByResourceId(resourceId, github.items)} onFocusResource={toggleFocusedItem} renderExpandedResource={renderExpandedResource} /> : null}
       </div>
-      {focusedItem ? (
-        <ResourceViewer
-          focusedItem={focusedItem}
-          emptyMessage={emptyMessage(source)}
-          onClose={() => setFocusedItem(null)}
-          onOpenContainer={openFocusedContainer}
-          presentResource={presentResource}
-        />
-      ) : null}
     </aside>
   );
 }

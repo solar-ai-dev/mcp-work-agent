@@ -942,7 +942,7 @@ def _gmail_message_body(message: dict[str, object]) -> str | None:
     html_parts: list[str] = []
     _collect_gmail_body_parts(payload, plain_parts=plain_parts, html_parts=html_parts)
     if plain_parts:
-        return _optional_text("\n\n".join(plain_parts))
+        return _readable_gmail_plain_text("\n\n".join(plain_parts))
     if html_parts:
         parser = _ReadableHtmlParser()
         parser.feed("\n".join(html_parts))
@@ -1043,6 +1043,21 @@ class _ReadableHtmlParser(HTMLParser):
     def readable_text(self) -> str | None:
         lines = [" ".join(line.split()) for line in "".join(self._chunks).splitlines()]
         return _optional_text("\n".join(line for line in lines if line))
+
+
+_CONDITIONAL_HTML_MARKER = re.compile(
+    r"(?:<!--\s*\[if\b|<!--\s*<!\s*\[endif\]|<!\s*\[endif\]\s*-->)",
+    flags=re.IGNORECASE,
+)
+
+
+def _readable_gmail_plain_text(value: str) -> str | None:
+    if not _CONDITIONAL_HTML_MARKER.search(value):
+        return _optional_text(value)
+    parser = _ReadableHtmlParser()
+    parser.feed(value)
+    parser.close()
+    return parser.readable_text()
 
 
 def _email_identity(value: str | None) -> tuple[str | None, str | None]:

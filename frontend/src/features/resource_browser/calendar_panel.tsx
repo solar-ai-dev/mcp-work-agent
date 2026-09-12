@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { CalendarMonthView } from "./calendar_month_view";
 import type { ResourceItem } from "../../api/contract";
 
@@ -18,6 +19,8 @@ type Props = {
   filter: string;
   onFilterChange: (filter: string) => void;
   onFocusEvent: (item: ResourceItem) => void;
+  focusedResourceId: string | null;
+  renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
 
 export function CalendarPanel({
@@ -26,6 +29,8 @@ export function CalendarPanel({
   filter,
   onFilterChange,
   onFocusEvent,
+  focusedResourceId,
+  renderExpandedResource,
 }: Props): JSX.Element {
   return (
     <>
@@ -50,6 +55,8 @@ export function CalendarPanel({
           onNextMonth={calendar.goNextMonth}
           onSelectDate={calendar.selectDate}
           onSelectEvent={onFocusEvent}
+          focusedResourceId={focusedResourceId}
+          renderExpandedResource={renderExpandedResource}
         />
       ) : null}
     </>
