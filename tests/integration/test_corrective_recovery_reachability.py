@@ -24,9 +24,9 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 )
 from tests.support.checkpoint import sqlite_checkpoint
 from tests.support.corrective_plan_persistence import (
-    _aggregate_snapshot,
-    _persist,
-    _prepare,
+    corrective_aggregate_snapshot,
+    persist_corrective_plan,
+    prepare_corrective_persistence,
 )
 from tests.support.resolve_recovery_adapter import (
     RecoveryResolutionKind,
@@ -57,17 +57,19 @@ def test_save_only_publish__failure_is_typed__and_leaves_run_nonterminal(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "corrective-production-reachability.db"
-    harness, state, draft = _prepare(database_path, fail_publish_once=True)
+    harness, state, draft = prepare_corrective_persistence(
+        database_path, fail_publish_once=True
+    )
 
     with pytest.raises(
         CorrectivePlanContinuationRequired,
         match="injected publish failure",
     ) as caught:
-        _persist(harness, state, draft)
+        persist_corrective_plan(harness, state, draft)
 
     assert caught.value.run_id == "run-1"
     assert caught.value.plan_id == "reserved-plan-2"
-    snapshot = _aggregate_snapshot(database_path)
+    snapshot = corrective_aggregate_snapshot(database_path)
     assert snapshot["plans"] == [
         ("old-plan", 1, "SUPERSEDED"),
         ("reserved-plan-2", 2, "DRAFT"),
@@ -190,7 +192,7 @@ def test_resolve_recovery__command_replay_returns__original_reserved_plan(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "corrective-command-replay.db"
-    harness, _, _ = _prepare(database_path)
+    harness, _, _ = prepare_corrective_persistence(database_path)
 
     replay = ResolveMismatchRecoveryService(
         unit_of_work_factory=cast(Any, harness._unit_of_work_factory),

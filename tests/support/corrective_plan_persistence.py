@@ -165,7 +165,7 @@ def _seed_recovery_aggregate(database_path: Path) -> None:
         unit_of_work.commit()
 
 
-class _CorrectivePersistenceHarness:
+class CorrectivePersistenceHarness:
     def __init__(self, database_path: Path, *, fail_publish_once: bool = False) -> None:
         self._unit_of_work_factory = sqlite_unit_of_work_factory(database_path)
         self._now_ms = lambda: 10
@@ -267,7 +267,7 @@ def _resolve_corrective(database_path: Path) -> None:
 
 
 def _state_and_draft(
-    harness: _CorrectivePersistenceHarness,
+    harness: CorrectivePersistenceHarness,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     harness._evidence_store.put(
         run_id="run-1",
@@ -372,14 +372,14 @@ def _state_and_draft(
     return state, draft
 
 
-def _prepare(
+def prepare_corrective_persistence(
     database_path: Path,
     *,
     fail_publish_once: bool = False,
-) -> tuple[_CorrectivePersistenceHarness, dict[str, Any], dict[str, Any]]:
+) -> tuple[CorrectivePersistenceHarness, dict[str, Any], dict[str, Any]]:
     _seed_recovery_aggregate(database_path)
     _resolve_corrective(database_path)
-    harness = _CorrectivePersistenceHarness(
+    harness = CorrectivePersistenceHarness(
         database_path,
         fail_publish_once=fail_publish_once,
     )
@@ -387,8 +387,8 @@ def _prepare(
     return harness, state, draft
 
 
-def _persist(
-    harness: _CorrectivePersistenceHarness,
+def persist_corrective_plan(
+    harness: CorrectivePersistenceHarness,
     state: dict[str, Any],
     draft: dict[str, Any],
 ) -> str:
@@ -400,7 +400,7 @@ def _persist(
     )
 
 
-def _aggregate_snapshot(database_path: Path) -> dict[str, Any]:
+def corrective_aggregate_snapshot(database_path: Path) -> dict[str, Any]:
     connection = connect_sqlite(database_path)
     try:
         plans = [
@@ -496,7 +496,7 @@ def _aggregate_snapshot(database_path: Path) -> dict[str, Any]:
         connection.close()
 
 
-def _assert_published_snapshot(snapshot: dict[str, Any]) -> None:
+def assert_published_corrective_snapshot(snapshot: dict[str, Any]) -> None:
     assert snapshot["plans"] == [
         ("old-plan", 1, "SUPERSEDED"),
         ("reserved-plan-2", 2, "WAITING_APPROVAL"),
@@ -528,26 +528,28 @@ def assert_reserved_corrective_plan_preserves_plan_identity_and_remaps_children(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "corrective-persistence.db"
-    harness, state, draft = _prepare(database_path)
+    harness, state, draft = prepare_corrective_persistence(database_path)
 
-    assert _persist(harness, state, draft) == "reserved-plan-2"
+    assert persist_corrective_plan(harness, state, draft) == "reserved-plan-2"
     assert state["__reserved_corrective_plan_id__"] is None
     assert harness.save_calls == 1
     assert harness.publish_calls == 1
 
-    _assert_published_snapshot(_aggregate_snapshot(database_path))
+    assert_published_corrective_snapshot(corrective_aggregate_snapshot(database_path))
 
 
 def assert_save_success_publish_failure_retries_with_publish_only(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "corrective-publish-retry.db"
-    harness, state, draft = _prepare(database_path, fail_publish_once=True)
+    harness, state, draft = prepare_corrective_persistence(
+        database_path, fail_publish_once=True
+    )
 
     with pytest.raises(RuntimeError, match="injected publish failure"):
-        _persist(harness, state, draft)
+        persist_corrective_plan(harness, state, draft)
 
-    after_failure = _aggregate_snapshot(database_path)
+    after_failure = corrective_aggregate_snapshot(database_path)
     assert after_failure["plans"] == [
         ("old-plan", 1, "SUPERSEDED"),
         ("reserved-plan-2", 2, "DRAFT"),
@@ -564,12 +566,12 @@ def assert_save_success_publish_failure_retries_with_publish_only(
     assert harness.save_calls == 1
     assert harness.publish_calls == 1
 
-    assert _persist(harness, state, draft) == "reserved-plan-2"
+    assert persist_corrective_plan(harness, state, draft) == "reserved-plan-2"
     assert harness.save_calls == 1
     assert harness.publish_calls == 2
     assert state["__reserved_corrective_plan_id__"] is None
 
-    _assert_published_snapshot(_aggregate_snapshot(database_path))
+    assert_published_corrective_snapshot(corrective_aggregate_snapshot(database_path))
 
 
 def assert_candidate_drift_after_committed_save_fails_closed(
@@ -577,10 +579,12 @@ def assert_candidate_drift_after_committed_save_fails_closed(
     drift_kind: str,
 ) -> None:
     database_path = tmp_path / f"corrective-drift-{drift_kind}.db"
-    harness, state, draft = _prepare(database_path, fail_publish_once=True)
+    harness, state, draft = prepare_corrective_persistence(
+        database_path, fail_publish_once=True
+    )
 
     with pytest.raises(RuntimeError, match="injected publish failure"):
-        _persist(harness, state, draft)
+        persist_corrective_plan(harness, state, draft)
 
     drifted = deepcopy(draft)
     if drift_kind == "arguments":
@@ -591,9 +595,9 @@ def assert_candidate_drift_after_committed_save_fails_closed(
         drifted["actions"][1]["evidence_refs"] = ["old-evidence-1"]
 
     with pytest.raises(ValueError, match="Save receipt|persisted corrective"):
-        _persist(harness, state, drifted)
+        persist_corrective_plan(harness, state, drifted)
 
-    after_drift = _aggregate_snapshot(database_path)
+    after_drift = corrective_aggregate_snapshot(database_path)
     assert after_drift["plans"] == [
         ("old-plan", 1, "SUPERSEDED"),
         ("reserved-plan-2", 2, "DRAFT"),
@@ -612,24 +616,24 @@ def assert_already_published_replay_has_no_second_save_or_publish_side_effect(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "corrective-published-replay.db"
-    harness, state, draft = _prepare(database_path)
+    harness, state, draft = prepare_corrective_persistence(database_path)
 
-    assert _persist(harness, state, draft) == "reserved-plan-2"
-    first_snapshot = _aggregate_snapshot(database_path)
+    assert persist_corrective_plan(harness, state, draft) == "reserved-plan-2"
+    first_snapshot = corrective_aggregate_snapshot(database_path)
     assert harness.save_calls == 1
     assert harness.publish_calls == 1
 
     # Simulate a stale checkpoint that survived after the durable Publish
     # commit but before the one-shot marker update was checkpointed.
     state["__reserved_corrective_plan_id__"] = "reserved-plan-2"
-    assert _persist(harness, state, draft) == "reserved-plan-2"
+    assert persist_corrective_plan(harness, state, draft) == "reserved-plan-2"
 
     assert state["__reserved_corrective_plan_id__"] is None
     assert harness.save_calls == 1
     assert harness.publish_calls == 1
-    second_snapshot = _aggregate_snapshot(database_path)
+    second_snapshot = corrective_aggregate_snapshot(database_path)
     assert second_snapshot == first_snapshot
-    _assert_published_snapshot(second_snapshot)
+    assert_published_corrective_snapshot(second_snapshot)
 
 
 def assert_reserved_corrective_marker_survives_failed_compiled_checkpoint_and_is_consumed(

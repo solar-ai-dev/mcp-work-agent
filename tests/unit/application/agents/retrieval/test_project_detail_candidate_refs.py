@@ -1,4 +1,4 @@
-from tests.support.context_retrieval import _acquisition_result
+from tests.support.context_retrieval import acquisition_result
 
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
@@ -10,7 +10,7 @@ from google_work_agent.application.agents.retrieval.project_detail_candidate_ref
 
 def test_project_detail_candidate_refs__selection_empty__retains_acquired_candidate() -> None:
     assert project_detail_candidate_refs(
-        evidence_drafts=[], acquisition_result=_acquisition_result()
+        evidence_drafts=[], acquisition_result=acquisition_result()
     ) == ["gmail_thread:thread-kim"]
 
 
@@ -27,7 +27,7 @@ def test_project_detail_candidate_refs__selected_first__deduplicates_acquisition
             "reason_codes": ["SUPPORTS"],
         }
     ]
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["resource_handles"] = [
         "gmail_thread:other",
         "gmail_thread:selected",

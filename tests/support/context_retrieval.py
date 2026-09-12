@@ -126,7 +126,7 @@ class FakeLLMRuntime:
         return result
 
 
-def _intent() -> RequestIntentV2:
+def request_intent() -> RequestIntentV2:
     return {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
@@ -144,7 +144,9 @@ def _intent() -> RequestIntentV2:
     }
 
 
-def _tool_route_plan(routes: Sequence[Mapping[str, object]] | None = None) -> ToolRoutePlanV2:
+def tool_route_plan(
+    routes: Sequence[Mapping[str, object]] | None = None,
+) -> ToolRoutePlanV2:
     input_routes = (
         [dict(route) for route in routes]
         if routes is not None
@@ -177,14 +179,14 @@ def _tool_route_plan(routes: Sequence[Mapping[str, object]] | None = None) -> To
     )
 
 
-def _run_budget(*, used: int) -> RunBudgetV2:
+def run_budget(*, used: int) -> RunBudgetV2:
     return {
         **build_default_run_budget(),
         "additional_retrieval_rounds_used": used,
     }
 
 
-def _acquisition_result() -> AcquisitionResultV1:
+def acquisition_result() -> AcquisitionResultV1:
     return {
         "schema_version": 1,
         "status": "COMPLETE",
@@ -206,7 +208,7 @@ def _acquisition_result() -> AcquisitionResultV1:
     }
 
 
-def _selection_output(selected_segment_ids: list[str]) -> EvidenceSelectionResultV2:
+def selection_output(selected_segment_ids: list[str]) -> EvidenceSelectionResultV2:
     return {
         "schema_version": 2,
         "selected_segment_ids": selected_segment_ids,
@@ -260,7 +262,7 @@ _STATUS_ISSUE: dict[str, SufficiencyIssueV2] = {
 }
 
 
-def _sufficiency_output(
+def sufficiency_result_fixture(
     status: ContextStatusValue,
     *,
     ambiguity: dict[str, object] | None = None,
@@ -283,7 +285,7 @@ def _sufficiency_output(
     return {"schema_version": 2, "status": status, "issues": issues}
 
 
-def _llm_result(payload: object) -> StructuredLLMResult:
+def llm_result(payload: object) -> StructuredLLMResult:
     return StructuredLLMResult(
         structured_output=payload,
         provider="fake",

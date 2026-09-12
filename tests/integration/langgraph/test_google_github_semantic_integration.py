@@ -6,9 +6,9 @@ from typing import Any, cast
 import pytest
 from tests.support.context_retrieval import (
     SUFFICIENCY_PROMPT_REF,
-    _acquisition_result,
-    _intent,
-    _tool_route_plan,
+    acquisition_result,
+    request_intent,
+    tool_route_plan,
 )
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
@@ -345,12 +345,12 @@ def test_failed_github_route__successful_google_evidence__preserves_gap(
     write: bool,
     expected: str,
 ) -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = []
     intent["requested_resource_hints"] = ["GMAIL_THREAD", "GITHUB_ISSUE"]
     intent["requested_effect_hints"] = ["READ", "CREATE"] if write else ["READ"]
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["source_summaries"][0]["route_id"] = "gmail"
     acquisition["source_summaries"].append(
         {
@@ -372,7 +372,7 @@ def test_failed_github_route__successful_google_evidence__preserves_gap(
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan([GOOGLE, GITHUB]),
+        tool_route_plan=tool_route_plan([GOOGLE, GITHUB]),
         acquisition_result=acquisition,
         evidence_drafts=[
             {
@@ -396,7 +396,7 @@ def test_failed_github_route__successful_google_evidence__preserves_gap(
 
 def test_same_connector_routes__source_statuses__remain_independent() -> None:
     second = {**GITHUB, "route_id": "github-second"}
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["source_summaries"] = [
         {
             "source": "GITHUB",
@@ -406,7 +406,7 @@ def test_same_connector_routes__source_statuses__remain_independent() -> None:
         }
     ]
     statuses = source_statuses_prompt_projection(
-        tool_route_plan=_tool_route_plan([GITHUB, second]),
+        tool_route_plan=tool_route_plan([GITHUB, second]),
         acquisition_result=acquisition,
     )
     assert [item["status"] for item in statuses] == ["COMPLETE", "NOT_ATTEMPTED"]

@@ -31,11 +31,11 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowResumeRequest,
 )
 from tests.support.corrective_plan_persistence import (
-    _aggregate_snapshot,
-    _assert_published_snapshot,
-    _CorrectivePersistenceHarness,
-    _persist,
-    _prepare,
+    CorrectivePersistenceHarness,
+    assert_published_corrective_snapshot,
+    corrective_aggregate_snapshot,
+    persist_corrective_plan,
+    prepare_corrective_persistence,
 )
 
 
@@ -54,7 +54,7 @@ class _CountingEmptyEvidenceStore(RunScopedEvidenceStore):
         return super().resolve(run_id=run_id, evidence_refs=evidence_refs)
 
 
-class _RestartRuntimeHarness(_CorrectivePersistenceHarness):
+class _RestartRuntimeHarness(CorrectivePersistenceHarness):
     def __init__(self, database_path: Path) -> None:
         super().__init__(database_path)
         self._graph: Any = None
@@ -104,12 +104,12 @@ class _RestartRuntimeHarness(_CorrectivePersistenceHarness):
 def _compile_corrective_persistence_graph(
     *,
     connection: sqlite3.Connection,
-    runtime: _CorrectivePersistenceHarness,
+    runtime: CorrectivePersistenceHarness,
 ) -> Any:
     def persist_node(state: GraphState) -> dict[str, object]:
         draft = state["planning_result"]
         assert draft is not None
-        _persist(
+        persist_corrective_plan(
             runtime,
             cast(dict[str, Any], state),
             cast(dict[str, Any], draft),
@@ -146,7 +146,7 @@ def test_restart_after__save_commit_uses__only_durable_materialization(
     # Process A owns current-run Retrieval evidence and commits Save, then the
     # Publish boundary fails. The failed graph task and reserved marker remain
     # in the checkpoint DB.
-    process_a, state, draft = _prepare(
+    process_a, state, draft = prepare_corrective_persistence(
         domain_database_path,
         fail_publish_once=True,
     )
@@ -170,7 +170,7 @@ def test_restart_after__save_commit_uses__only_durable_materialization(
     finally:
         checkpoint_a.close()
 
-    after_process_a = _aggregate_snapshot(domain_database_path)
+    after_process_a = corrective_aggregate_snapshot(domain_database_path)
     assert after_process_a["run_status"] == "PLANNING"
     assert after_process_a["plans"][-1] == ("reserved-plan-2", 2, "DRAFT")
     assert after_process_a["trace_counts"] == {"WRITE_PLAN_SAVED": 1}
@@ -215,8 +215,8 @@ def test_restart_after__save_commit_uses__only_durable_materialization(
     assert process_b.save_calls == 0
     assert process_b.publish_calls == 1
 
-    final = _aggregate_snapshot(domain_database_path)
-    _assert_published_snapshot(final)
+    final = corrective_aggregate_snapshot(domain_database_path)
+    assert_published_corrective_snapshot(final)
     assert final["rev3_count"] == 0
     assert len(final["new_actions"]) == 2
     assert len(final["new_evidence_ids"]) == 2

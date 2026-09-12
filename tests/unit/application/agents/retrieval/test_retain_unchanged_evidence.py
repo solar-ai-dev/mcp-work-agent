@@ -7,9 +7,9 @@ import pytest
 from tests.support.context_retrieval import (
     SELECT_PROMPT_REF,
     FakeLLMRuntime,
-    _intent,
-    _llm_result,
-    _run_budget,
+    llm_result,
+    request_intent,
+    run_budget,
 )
 
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
@@ -89,7 +89,7 @@ def test_retain_evidence__inconsistent_checkpoint__does_not_silently_repair() ->
 def test_retain_evidence__detail_rejects_preview__keeps_other_sources(
     excluded: list[str],
 ) -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result({
+    runtime = FakeLLMRuntime(deque([llm_result({
         "schema_version": 3, "segment_assessments": {
             key: {"role": "EXCLUDED", "relevance_reason": "본문에서 다른 행사로 확인됨"}
             for key in ("preview", "body")
@@ -98,7 +98,9 @@ def test_retain_evidence__detail_rejects_preview__keeps_other_sources(
     segments = _segments()
     result, _ = select_evidence(
         llm_runtime=runtime, prompt_ref=SELECT_PROMPT_REF, revision_prompt_ref=SELECT_PROMPT_REF,
-        requested_mode="LOCAL_GPU", request_intent=_intent(), retry_budget=_run_budget(used=0),
+        requested_mode="LOCAL_GPU",
+        request_intent=request_intent(),
+        retry_budget=run_budget(used=0),
         segments=segments, prior_selection=_selection(), source_fetch_plans=[_plan()],
         exclusion_obligation_segment_ids=excluded,
         rag_candidates=[{"segment_id": segment.segment_id,

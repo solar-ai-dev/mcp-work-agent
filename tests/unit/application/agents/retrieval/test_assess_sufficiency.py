@@ -7,12 +7,12 @@ import pytest
 from tests.support.context_retrieval import (
     SUFFICIENCY_PROMPT_REF,
     FakeLLMRuntime,
-    _acquisition_result,
-    _intent,
-    _llm_result,
-    _run_budget,
-    _sufficiency_output,
-    _tool_route_plan,
+    acquisition_result,
+    llm_result,
+    request_intent,
+    run_budget,
+    sufficiency_result_fixture,
+    tool_route_plan,
 )
 
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.nodes.assess_sufficiency_node import (
@@ -28,6 +28,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceDraftV1,
+    PersonCandidateV1,
     SufficiencyResultV2,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -37,11 +38,11 @@ from google_work_agent.ports.llm.structured_inference_contracts import OutputSch
 
 
 def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = []
     runtime = FakeLLMRuntime(deque())
-    route_plan = _tool_route_plan()
+    route_plan = tool_route_plan()
     route = route_plan["input_plan"]["input_routes"][0]
     route["resource_type"] = "GMAIL_THREAD"
     route["allowed_read_tool_ids"] = ["gmail_search_threads", "gmail_get_thread"]
@@ -51,8 +52,8 @@ def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() 
         requested_mode="LOCAL_GPU",
         request_intent=intent,
         tool_route_plan=route_plan,
-        acquisition_result=_acquisition_result(),
-        retry_budget=_run_budget(used=0),
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=0),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -72,12 +73,12 @@ def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() 
 
 
 def test_existing_gmail_thread_reply__search_candidate__requires_detail_without_llm() -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = []
     intent["requested_effect_hints"] = ["READ", "SEND"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD", "GMAIL_MESSAGE"]
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-gmail",
@@ -108,9 +109,9 @@ def test_existing_gmail_thread_reply__search_candidate__requires_detail_without_
     result = deterministic_sufficiency(
         request_intent=intent,
         tool_route_plan=route_plan,
-        acquisition_result=_acquisition_result(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result is not None
@@ -119,12 +120,12 @@ def test_existing_gmail_thread_reply__search_candidate__requires_detail_without_
 
 
 def test_existing_gmail_thread_reply__detailed_identity__is_sufficient_without_llm() -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = []
     intent["requested_effect_hints"] = ["READ", "SEND"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD", "GMAIL_MESSAGE"]
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-gmail",
@@ -158,7 +159,7 @@ def test_existing_gmail_thread_reply__detailed_identity__is_sufficient_without_l
         requested_mode="LOCAL_GPU",
         request_intent=intent,
         tool_route_plan=route_plan,
-        acquisition_result=_acquisition_result(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -175,7 +176,7 @@ def test_existing_gmail_thread_reply__detailed_identity__is_sufficient_without_l
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
         attempted_detail_candidate_refs=["gmail_thread:thread-kim"],
         query_attempts=[
             cast(
@@ -230,8 +231,8 @@ def test_sufficiency_node__page_inventory__does_not_force_more_data(
     has_next: bool,
     exhausted: bool,
 ) -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = []
     result = cast(
@@ -245,20 +246,13 @@ def test_sufficiency_node__page_inventory__does_not_force_more_data(
                     "selected_segment_ids": [],
                     "excluded_segment_ids": [],
                 },
-                "read_result_summaries": [
-                    {
-                        "route_id": "route-gmail",
-                        "has_next_page": has_next,
-                        "exhausted": exhausted,
-                    }
-                ],
             },
             llm_runtime=runtime,
             prompt_ref=SUFFICIENCY_PROMPT_REF,
             requested_mode="LOCAL_GPU",
-            tool_route_plan=_tool_route_plan(),
-            acquisition_result=_acquisition_result(),
-            retry_budget=_run_budget(used=0),
+            tool_route_plan=tool_route_plan(),
+            acquisition_result=acquisition_result(),
+            retry_budget=run_budget(used=0),
             evidence_drafts=[
                 {
                     "schema_version": 1,
@@ -269,6 +263,13 @@ def test_sufficiency_node__page_inventory__does_not_force_more_data(
                     "excerpt": "현재 확인한 한 개의 자료",
                     "locator": {},
                     "reason_codes": ["SUPPORTS"],
+                }
+            ],
+            read_result_summaries=[
+                {
+                    "route_id": "route-gmail",
+                    "has_next_page": has_next,
+                    "exhausted": exhausted,
                 }
             ],
         )["sufficiency"],
@@ -284,8 +285,8 @@ def test_exhaustive_collection__with_next_page__guards_llm_sufficiency(
     has_next_page: bool,
     expected_status: str,
 ) -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = [
         {
@@ -300,9 +301,9 @@ def test_exhaustive_collection__with_next_page__guards_llm_sufficiency(
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
-        retry_budget=_run_budget(used=0),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=0),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -342,8 +343,8 @@ def test_exhaustive_collection__with_next_page__guards_llm_sufficiency(
 
 
 def test_exhaustive_collection__exhausted_followup_budget__closes_as_partial() -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = [
         {
@@ -358,9 +359,9 @@ def test_exhaustive_collection__exhausted_followup_budget__closes_as_partial() -
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
-        retry_budget=_run_budget(used=2),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=2),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -386,18 +387,18 @@ def test_exhaustive_collection__exhausted_followup_budget__closes_as_partial() -
 
 
 def test_event_year_uncertainty__cannot_be_promoted_by__generic_continue_guard() -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["constraints"] = []
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
-        retry_budget=_run_budget(used=0),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=0),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -442,9 +443,9 @@ def test_sufficiency_node__target_access_failure__stops_without_search_or_write(
     expected: str,
 ) -> None:
     runtime = FakeLLMRuntime(deque())
-    budget = _run_budget(used=0)
+    budget = run_budget(used=0)
     original_budget = deepcopy(budget)
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["status"] = "FAILED"
     acquisition["resource_handles"] = []
     acquisition["source_summaries"] = [
@@ -462,7 +463,7 @@ def test_sufficiency_node__target_access_failure__stops_without_search_or_write(
         SufficiencyResultV2,
         assess_sufficiency_node(
             {
-                "request_intent": {**_intent(), "requested_effect_hints": [effect]},
+                "request_intent": {**request_intent(), "requested_effect_hints": [effect]},
                 "evidence_selection": {
                     "schema_version": 2,
                     "evidence_drafts": [],
@@ -473,7 +474,7 @@ def test_sufficiency_node__target_access_failure__stops_without_search_or_write(
             llm_runtime=runtime,
             prompt_ref=SUFFICIENCY_PROMPT_REF,
             requested_mode="AUTO",
-            tool_route_plan=_tool_route_plan(
+            tool_route_plan=tool_route_plan(
                 [
                     {
                         "route_id": "route-github",
@@ -498,14 +499,14 @@ def test_sufficiency_node__target_access_failure__stops_without_search_or_write(
 
 
 def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=replace(SUFFICIENCY_PROMPT_REF, prompt_id="retrieval.assess_sufficiency"),
         requested_mode="AUTO",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -518,7 +519,7 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
         read_result_summaries=[
             {
                 "route_id": "route-gmail",
@@ -554,9 +555,9 @@ def test_assess_sufficiency__emits_a__typed_bounded_disposition() -> None:
 
 def test_retrieval_followup__reentry__charges_one_additional_round() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
-        _sufficiency_output("NEEDS_MORE_DATA"),
-        request_intent=_intent(),
-        retry_budget=_run_budget(used=0),
+        sufficiency_result_fixture("NEEDS_MORE_DATA"),
+        request_intent=request_intent(),
+        retry_budget=run_budget(used=0),
         evidence_supported_partial_possible=True,
         can_acquire_new_information=True,
     )
@@ -568,9 +569,9 @@ def test_retrieval_followup__reentry__charges_one_additional_round() -> None:
 
 def test_retrieval_followup__exhausted_read_with_evidence__normalizes_to_partial() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
-        _sufficiency_output("NEEDS_MORE_DATA"),
-        request_intent=_intent(),
-        retry_budget=_run_budget(used=2),
+        sufficiency_result_fixture("NEEDS_MORE_DATA"),
+        request_intent=request_intent(),
+        retry_budget=run_budget(used=2),
         evidence_supported_partial_possible=True,
         can_acquire_new_information=True,
     )
@@ -582,9 +583,9 @@ def test_retrieval_followup__exhausted_read_with_evidence__normalizes_to_partial
 
 def test_retrieval_followup__selected_direct_read_without_new_path__closes() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
-        _sufficiency_output("NEEDS_MORE_DATA"),
-        request_intent=_intent(),
-        retry_budget=_run_budget(used=0),
+        sufficiency_result_fixture("NEEDS_MORE_DATA"),
+        request_intent=request_intent(),
+        retry_budget=run_budget(used=0),
         evidence_supported_partial_possible=True,
         can_acquire_new_information=False,
     )
@@ -596,9 +597,9 @@ def test_retrieval_followup__selected_direct_read_without_new_path__closes() -> 
 
 def test_retrieval_followup__empty_read__closes_without_confirmation() -> None:
     result, budget, should_retrieve_more = authorize_retrieval_followup(
-        _sufficiency_output("NEEDS_MORE_DATA"),
-        request_intent=_intent(),
-        retry_budget=_run_budget(used=1),
+        sufficiency_result_fixture("NEEDS_MORE_DATA"),
+        request_intent=request_intent(),
+        retry_budget=run_budget(used=1),
         evidence_supported_partial_possible=False,
         can_acquire_new_information=False,
     )
@@ -610,9 +611,9 @@ def test_retrieval_followup__empty_read__closes_without_confirmation() -> None:
 
 def test_assess_sufficiency__complete_selected_gmail_read__skips_llm() -> None:
     runtime = FakeLLMRuntime()
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-gmail",
@@ -631,7 +632,7 @@ def test_assess_sufficiency__complete_selected_gmail_read__skips_llm() -> None:
         requested_mode="LOCAL_GPU",
         request_intent=intent,
         tool_route_plan=route_plan,
-        acquisition_result=_acquisition_result(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -644,7 +645,7 @@ def test_assess_sufficiency__complete_selected_gmail_read__skips_llm() -> None:
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
@@ -657,8 +658,8 @@ def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
     resource: str,
     incomplete: str | None,
 ) -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
     intent["requested_effect_hints"] = ["CREATE"]
     intent["requested_resource_hints"] = [resource]
     intent["analysis_requirement"] = "NONE"
@@ -707,7 +708,7 @@ def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
                 "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
             },
         ]
-    route_plan = _tool_route_plan(routes)
+    route_plan = tool_route_plan(routes)
     route_plan["output_plan"] = {
         "schema_version": 1,
         "meta": {"artifact_id": "route-out-1", "revision": 1, "based_on": []},
@@ -725,7 +726,7 @@ def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
             }
         ],
     }
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["resource_handles"] = ["calendar:primary", "calendar_freebusy:primary:hash"]
     acquisition["source_summaries"] = [
         {
@@ -755,7 +756,7 @@ def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
         tool_route_plan=route_plan,
         acquisition_result=acquisition,
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     if incomplete is None:
@@ -767,18 +768,18 @@ def test_assess_sufficiency__only_complete_create_policy_reads__skip_llm(
 
 
 def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    acquisition = _acquisition_result()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    acquisition = acquisition_result()
 
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result["status"] == "NEEDS_MORE_DATA"
@@ -789,7 +790,7 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
 def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
     failed: bool,
 ) -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["source_summaries"][0].update(
         status="FAILED" if failed else "COMPLETE",
         resource_count=0,
@@ -802,11 +803,11 @@ def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
     reasons = {code for issue in result["issues"] for code in issue["reason_codes"]}
     expected_reason = (
@@ -818,7 +819,7 @@ def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
 
 
 def test_bounded_read_stop__with_existing_evidence__does_not_invalidate_result() -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["status"] = "PARTIAL"
     acquisition["source_summaries"].append(
         {
@@ -840,16 +841,16 @@ def test_bounded_read_stop__with_existing_evidence__does_not_invalidate_result()
             "continuation_status": "UNKNOWN",
         }
     )
-    intent = _intent()
+    intent = request_intent()
     intent["constraints"] = []
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
 
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[
             {
@@ -863,7 +864,7 @@ def test_bounded_read_stop__with_existing_evidence__does_not_invalidate_result()
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
@@ -877,7 +878,7 @@ def test_bounded_read_stop__with_existing_evidence__does_not_invalidate_result()
 def test_bounded_read_stop__without_evidence__closes_by_effect_safety(
     effects: list[str], expected_status: str
 ) -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["status"] = "PARTIAL"
     acquisition["resource_handles"] = []
     acquisition["source_summaries"] = [
@@ -900,7 +901,7 @@ def test_bounded_read_stop__without_evidence__closes_by_effect_safety(
             "continuation_status": "UNKNOWN",
         }
     ]
-    intent = _intent()
+    intent = request_intent()
     intent["requested_effect_hints"] = cast(Any, effects)
     runtime = FakeLLMRuntime(deque())
 
@@ -909,10 +910,10 @@ def test_bounded_read_stop__without_evidence__closes_by_effect_safety(
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result["status"] == expected_status
@@ -921,7 +922,7 @@ def test_bounded_read_stop__without_evidence__closes_by_effect_safety(
 
 
 def test_complete_empty_scope__when_exhausted__returns_bounded_no_match() -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["resource_handles"] = []
     acquisition["source_summaries"][0].update(
         resource_count=0,
@@ -938,11 +939,11 @@ def test_complete_empty_scope__when_exhausted__returns_bounded_no_match() -> Non
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
@@ -953,19 +954,19 @@ def test_complete_empty_scope__when_exhausted__returns_bounded_no_match() -> Non
 def test_mail_to_task__empty_mail__does_not_substitute_task_policy_evidence(
     mail_count: int,
 ) -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    acquisition = _acquisition_result()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    acquisition = acquisition_result()
     acquisition["source_summaries"][0]["resource_count"] = mail_count
     acquisition["source_summaries"][0]["resource_handles"] = []
     acquisition["resource_handles"] = ["task:existing"]
-    intent = _intent()
+    intent = request_intent()
     intent["requested_effect_hints"] = ["READ", "CREATE"]
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[
             {
@@ -979,7 +980,7 @@ def test_mail_to_task__empty_mail__does_not_substitute_task_policy_evidence(
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
     assert result["status"] == "NEEDS_MORE_DATA"
     assert result["issues"][-1]["reason_codes"] == [
@@ -1006,8 +1007,8 @@ def test_assess_sufficiency__analysis_request__requires_each_selected_thread_det
     person: bool,
     concept: bool,
 ) -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
     intent["analysis_requirement"] = analysis
     intent["constraints"] = [{"kind": "TIME", "field": "temporal_axis", "value": axis}]
     if person:
@@ -1018,7 +1019,7 @@ def test_assess_sufficiency__analysis_request__requires_each_selected_thread_det
         )
     intent["requested_effect_hints"] = ["READ"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-gmail",
@@ -1043,7 +1044,7 @@ def test_assess_sufficiency__analysis_request__requires_each_selected_thread_det
         }
         for name in ("first", "second")
     ]
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["source_summaries"][0]["resource_handles"] = [
         item["resource_handle"] for item in evidence
     ]
@@ -1056,7 +1057,7 @@ def test_assess_sufficiency__analysis_request__requires_each_selected_thread_det
         tool_route_plan=route_plan,
         acquisition_result=acquisition,
         evidence_drafts=evidence,
-        retry_budget=_run_budget(used=used),
+        retry_budget=run_budget(used=used),
         attempted_detail_candidate_refs=["gmail_thread:first"],
     )
 
@@ -1068,11 +1069,11 @@ def test_assess_sufficiency__analysis_request__requires_each_selected_thread_det
 def test_detail_followup__hydration_only__does_not_charge_search_rounds(
     detail_used: int, allowed: bool
 ) -> None:
-    budget = _run_budget(used=2)
+    budget = run_budget(used=2)
     budget["detail_fetches_used"] = detail_used
     result, updated, followup = authorize_retrieval_followup(
-        _sufficiency_output("NEEDS_MORE_DATA"),
-        request_intent=_intent(),
+        sufficiency_result_fixture("NEEDS_MORE_DATA"),
+        request_intent=request_intent(),
         retry_budget=budget,
         evidence_supported_partial_possible=True,
         can_acquire_new_information=True,
@@ -1098,12 +1099,12 @@ def test_assess_sufficiency__safety_critical_gap__blocks_before_candidate_detail
             }
         ],
     }
-    runtime = FakeLLMRuntime(deque([_llm_result(blocked_google_gap)]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(blocked_google_gap)]))
+    intent = request_intent()
     intent["analysis_requirement"] = "REQUIRED"
     intent["requested_effect_hints"] = ["READ"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-gmail",
@@ -1122,7 +1123,7 @@ def test_assess_sufficiency__safety_critical_gap__blocks_before_candidate_detail
         requested_mode="LOCAL_GPU",
         request_intent=intent,
         tool_route_plan=route_plan,
-        acquisition_result=_acquisition_result(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -1135,7 +1136,7 @@ def test_assess_sufficiency__safety_critical_gap__blocks_before_candidate_detail
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result["status"] == "BLOCKED"
@@ -1144,12 +1145,12 @@ def test_assess_sufficiency__safety_critical_gap__blocks_before_candidate_detail
 
 
 def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
-    intent = _intent()
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
     intent["analysis_requirement"] = "REQUIRED"
     intent["requested_effect_hints"] = ["READ"]
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-gmail",
@@ -1175,7 +1176,7 @@ def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() 
         for name in ("first", "second")
     ]
 
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["source_summaries"][0]["resource_handles"] = [
         item["resource_handle"] for item in evidence
     ]
@@ -1187,7 +1188,7 @@ def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() 
         tool_route_plan=route_plan,
         acquisition_result=acquisition,
         evidence_drafts=evidence,
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
         attempted_detail_candidate_refs=["gmail_thread:first", "gmail_thread:second"],
     )
 
@@ -1195,15 +1196,15 @@ def test_assess_sufficiency__all_candidate_details_acquired__accepts_analysis() 
 
 
 def test_assess_sufficiency__user_owned_missing_choice__is_not_reassigned() -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("NEEDS_CONFIRMATION"))]))
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("NEEDS_CONFIRMATION"))]))
 
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -1216,7 +1217,7 @@ def test_assess_sufficiency__user_owned_missing_choice__is_not_reassigned() -> N
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result["status"] == "NEEDS_CONFIRMATION"
@@ -1238,15 +1239,15 @@ def test_assess_sufficiency__new_candidate_conflict__remains_a_user_choice() -> 
             }
         ],
     }
-    runtime = FakeLLMRuntime(deque([_llm_result(conflict)]))
+    runtime = FakeLLMRuntime(deque([llm_result(conflict)]))
 
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -1259,7 +1260,7 @@ def test_assess_sufficiency__new_candidate_conflict__remains_a_user_choice() -> 
                 "reason_codes": ["CONTEXT"],
             }
         ],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
         attempted_detail_candidate_refs=["gmail_thread:one"],
     )
 
@@ -1268,13 +1269,13 @@ def test_assess_sufficiency__new_candidate_conflict__remains_a_user_choice() -> 
 
 
 def test_observed_person_candidates__introduce_user_choice__after_clear_request() -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["ambiguity"] = {
         "requires_confirmation": False,
+        "reason_codes": [],
         "missing_fields": [],
-        "ambiguous_fields": [],
     }
-    candidates = [
+    candidates: list[PersonCandidateV1] = [
         {
             "mention": "김대리",
             "identity": identity,
@@ -1289,10 +1290,10 @@ def test_observed_person_candidates__introduce_user_choice__after_clear_request(
 
     result = deterministic_sufficiency(
         request_intent=intent,
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
         person_candidates=candidates,
     )
 
@@ -1311,9 +1312,9 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
         "reason_codes": ["DETAIL_REQUIRED"],
     }
     runtime = FakeLLMRuntime(
-        deque([_llm_result({"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": [issue]})])
+        deque([llm_result({"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": [issue]})])
     )
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-github",
@@ -1350,11 +1351,11 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="AUTO",
-        request_intent=_intent(),
+        request_intent=request_intent(),
         tool_route_plan=route_plan,
         acquisition_result=acquisition,
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     prompt_input = cast(dict[str, object], runtime.calls[0]["prompt_input"])
@@ -1389,17 +1390,17 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
 
 
 def test_google_insufficiency__with_existing_source__retains_google() -> None:
-    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("NEEDS_MORE_DATA"))]))
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("NEEDS_MORE_DATA"))]))
 
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="AUTO",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         evidence_drafts=[],
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result["status"] == "NEEDS_MORE_DATA"
@@ -1435,7 +1436,7 @@ def test_google_insufficiency__with_existing_source__retains_google() -> None:
 def test_selected_resource_mutation__complete_target_read__does_not_require_future_values(
     tool: str, gap: str | None
 ) -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["requested_effect_hints"] = ["UPDATE"]
     intent["constraints"] = [
@@ -1449,7 +1450,7 @@ def test_selected_resource_mutation__complete_target_read__does_not_require_futu
         "required": True,
         "reason_codes": ["RESOURCE_SELECTED"],
     }
-    plan = _tool_route_plan([route])
+    plan = tool_route_plan([route])
     plan["output_plan"] = {
         "schema_version": 1,
         "meta": plan["input_plan"]["meta"],
@@ -1465,7 +1466,7 @@ def test_selected_resource_mutation__complete_target_read__does_not_require_futu
             }
         ],
     }
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["resource_handles"] = ["github_issue:owner/repo#7"]
     acquisition["source_summaries"] = [
         {
@@ -1515,7 +1516,7 @@ def test_selected_resource_mutation__complete_target_read__does_not_require_futu
         tool_route_plan=plan,
         acquisition_result=acquisition,
         evidence_drafts=evidence,
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
     if gap is not None:
         assert result is None
@@ -1550,7 +1551,7 @@ def test_selected_google_resource_action__complete_detail_read__is_sufficient(
     handle: str,
     tool: str,
 ) -> None:
-    intent = _intent()
+    intent = request_intent()
     intent["analysis_requirement"] = "NONE"
     intent["requested_effect_hints"] = ["READ", effect]
     intent["constraints"] = [
@@ -1564,7 +1565,7 @@ def test_selected_google_resource_action__complete_detail_read__is_sufficient(
         "required": True,
         "reason_codes": ["RESOURCE_SELECTED"],
     }
-    plan = _tool_route_plan([route])
+    plan = tool_route_plan([route])
     plan["output_plan"] = {
         "schema_version": 1,
         "meta": plan["input_plan"]["meta"],
@@ -1580,7 +1581,7 @@ def test_selected_google_resource_action__complete_detail_read__is_sufficient(
             }
         ],
     }
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["resource_handles"] = [handle]
     acquisition["source_summaries"] = [
         {
@@ -1613,7 +1614,7 @@ def test_selected_google_resource_action__complete_detail_read__is_sufficient(
         tool_route_plan=plan,
         acquisition_result=acquisition,
         evidence_drafts=evidence,
-        retry_budget=_run_budget(used=0),
+        retry_budget=run_budget(used=0),
     )
 
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}

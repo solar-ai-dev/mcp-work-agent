@@ -1,11 +1,11 @@
 from typing import cast
 
 from tests.support.context_retrieval import (
-    _acquisition_result,
-    _intent,
-    _selection_output,
-    _sufficiency_output,
-    _tool_route_plan,
+    acquisition_result,
+    request_intent,
+    selection_output,
+    sufficiency_result_fixture,
+    tool_route_plan,
 )
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
@@ -22,10 +22,10 @@ from google_work_agent.application.agents.retrieval.finalize_retrieval import (
 def test_finalize_retrieval__unresolved_event_year__cannot_report_sufficient_coverage() -> None:
     result = finalize_retrieval(
         artifact_id="retrieval-yearless",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
-        selection_result=_selection_output(["segment-1"]),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
+        selection_result=selection_output(["segment-1"]),
         evidence_drafts=[
             {
                 "schema_version": 1,
@@ -38,7 +38,7 @@ def test_finalize_retrieval__unresolved_event_year__cannot_report_sufficient_cov
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=1,
         query_attempts=[
             cast(
@@ -83,13 +83,13 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
             "retrieval_rounds": 1,
         },
     )
-    selection = _selection_output(["segment-1"])
+    selection = selection_output(["segment-1"])
     selection["excluded_segment_ids"] = ["segment-model"]
     result = finalize_retrieval(
         artifact_id="unused-new-id",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         selection_result=selection,
         evidence_drafts=[
             {
@@ -103,7 +103,7 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
                 "reason_codes": ["SUPPORTS"],
             }
         ],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=2,
         availability_results=[
             {
@@ -151,9 +151,9 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
 def test_finalize_retrieval__after_active_result_invalidation__continues_durable_head() -> None:
     result = finalize_retrieval(
         artifact_id="unused-new-id",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
-        acquisition_result=_acquisition_result(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition_result(),
         selection_result={
             "schema_version": 2,
             "evidence_drafts": [],
@@ -161,7 +161,7 @@ def test_finalize_retrieval__after_active_result_invalidation__continues_durable
             "excluded_segment_ids": [],
         },
         evidence_drafts=[],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=0,
         prior_artifact_ref={"artifact_id": "retrieval-head", "revision": 4},
     )
@@ -172,7 +172,7 @@ def test_finalize_retrieval__after_active_result_invalidation__continues_durable
 
 
 def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() -> None:
-    route_plan = _tool_route_plan(
+    route_plan = tool_route_plan(
         [
             {
                 "route_id": "route-github",
@@ -218,7 +218,7 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
             "remaining_budget": {},
         },
     )
-    selection = _selection_output(["segment-7"])
+    selection = selection_output(["segment-7"])
     evidence = cast(
         EvidenceDraftV1,
         {
@@ -235,12 +235,12 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
 
     result = finalize_retrieval(
         artifact_id="retrieval-github",
-        request_intent=_intent(),
+        request_intent=request_intent(),
         tool_route_plan=route_plan,
         acquisition_result=acquisition,
         selection_result=selection,
         evidence_drafts=[evidence],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=0,
     )
 
@@ -307,12 +307,12 @@ def test_finalize_retrieval__beyond_evidence_budget__preserves_collection_metada
 
     result = finalize_retrieval(
         artifact_id="retrieval-collection",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
-        selection_result=_selection_output(["segment-first"]),
+        selection_result=selection_output(["segment-first"]),
         evidence_drafts=[evidence],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=0,
         read_result_summaries=[
             {
@@ -342,7 +342,7 @@ def test_finalize_retrieval__beyond_evidence_budget__preserves_collection_metada
 
 
 def test_finalize_retrieval__with_unfinished_page__does_not_force_coverage() -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["remaining_budget"]["pages"] = 0
     acquisition["source_summaries"][0]["route_id"] = "route-gmail"
     acquisition["source_summaries"][0]["resources"] = [
@@ -356,8 +356,8 @@ def test_finalize_retrieval__with_unfinished_page__does_not_force_coverage() -> 
 
     result = finalize_retrieval(
         artifact_id="retrieval-has-more",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         selection_result={
             "schema_version": 2,
@@ -366,7 +366,7 @@ def test_finalize_retrieval__with_unfinished_page__does_not_force_coverage() -> 
             "excluded_segment_ids": [],
         },
         evidence_drafts=[],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=0,
         read_result_summaries=[
             {
@@ -382,7 +382,7 @@ def test_finalize_retrieval__with_unfinished_page__does_not_force_coverage() -> 
 
 
 def test_finalize_retrieval__with_bounded_scope__preserves_incomplete_coverage() -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["status"] = "PARTIAL"
     acquisition["source_summaries"][0].update(
         route_id="route-gmail",
@@ -414,8 +414,8 @@ def test_finalize_retrieval__with_bounded_scope__preserves_incomplete_coverage()
 
     result = finalize_retrieval(
         artifact_id="retrieval-partial-scope",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         selection_result={
             "schema_version": 2,
@@ -424,7 +424,7 @@ def test_finalize_retrieval__with_bounded_scope__preserves_incomplete_coverage()
             "excluded_segment_ids": [],
         },
         evidence_drafts=[],
-        sufficiency_result=_sufficiency_output("PARTIAL"),
+        sufficiency_result=sufficiency_result_fixture("PARTIAL"),
         current_round_no=0,
         read_result_summaries=[
             {"route_id": "route-gmail", "has_next_page": False, "exhausted": True}
@@ -447,7 +447,7 @@ def test_finalize_retrieval__with_google_resources__retains_exact_resource_types
         ("TASK", "TASKS", "task"),
         ("CALENDAR_EVENT", "CALENDAR", "calendar_event"),
     ):
-        route_plan = _tool_route_plan(
+        route_plan = tool_route_plan(
             [
                 {
                     "route_id": "route-google",
@@ -459,7 +459,7 @@ def test_finalize_retrieval__with_google_resources__retains_exact_resource_types
                 }
             ]
         )
-        acquisition = _acquisition_result()
+        acquisition = acquisition_result()
         summary = acquisition["source_summaries"][0]
         summary["route_id"] = "route-google"
         summary["source"] = source
@@ -467,7 +467,7 @@ def test_finalize_retrieval__with_google_resources__retains_exact_resource_types
 
         result = finalize_retrieval(
             artifact_id="retrieval-google",
-            request_intent=_intent(),
+            request_intent=request_intent(),
             tool_route_plan=route_plan,
             acquisition_result=acquisition,
             selection_result={
@@ -477,7 +477,7 @@ def test_finalize_retrieval__with_google_resources__retains_exact_resource_types
                 "excluded_segment_ids": [],
             },
             evidence_drafts=[],
-            sufficiency_result=_sufficiency_output("SUFFICIENT"),
+            sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
             current_round_no=0,
         )
 
@@ -485,7 +485,7 @@ def test_finalize_retrieval__with_google_resources__retains_exact_resource_types
 
 
 def test_finalize_retrieval__complete_empty_read__is_observed_sufficient_coverage() -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["status"] = "COMPLETE"
     acquisition["resource_handles"] = []
     acquisition["source_summaries"][0]["status"] = "COMPLETE"
@@ -494,8 +494,8 @@ def test_finalize_retrieval__complete_empty_read__is_observed_sufficient_coverag
 
     result = finalize_retrieval(
         artifact_id="retrieval-empty",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         selection_result={
             "schema_version": 2,
@@ -504,7 +504,7 @@ def test_finalize_retrieval__complete_empty_read__is_observed_sufficient_coverag
             "excluded_segment_ids": [],
         },
         evidence_drafts=[],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=0,
     )
 
@@ -512,7 +512,7 @@ def test_finalize_retrieval__complete_empty_read__is_observed_sufficient_coverag
 
 
 def test_finalize_retrieval__no_fetch_needed__requires_not_attempted_sources() -> None:
-    acquisition = _acquisition_result()
+    acquisition = acquisition_result()
     acquisition["status"] = "NOT_ATTEMPTED"
     acquisition["resource_handles"] = []
     acquisition["source_summaries"][0]["status"] = "NOT_ATTEMPTED"
@@ -521,8 +521,8 @@ def test_finalize_retrieval__no_fetch_needed__requires_not_attempted_sources() -
 
     result = finalize_retrieval(
         artifact_id="retrieval-not-attempted",
-        request_intent=_intent(),
-        tool_route_plan=_tool_route_plan(),
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
         acquisition_result=acquisition,
         selection_result={
             "schema_version": 2,
@@ -531,7 +531,7 @@ def test_finalize_retrieval__no_fetch_needed__requires_not_attempted_sources() -
             "excluded_segment_ids": [],
         },
         evidence_drafts=[],
-        sufficiency_result=_sufficiency_output("SUFFICIENT"),
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
         current_round_no=0,
     )
 

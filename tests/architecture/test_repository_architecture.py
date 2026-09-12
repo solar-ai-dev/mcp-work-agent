@@ -554,6 +554,12 @@ def test_test_modules__import_only_support__not_peer_tests() -> None:
                 imported_modules.add(".".join((*anchor, *((node.module or "").split(".")))))
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported_modules.add(node.module)
+                if node.module.startswith("tests.support"):
+                    errors.extend(
+                        f"private support import: {rel(path)} -> {node.module}.{alias.name}"
+                        for alias in node.names
+                        if alias.name.startswith("_")
+                    )
         for module in imported_modules:
             if not module.startswith("tests.") or module.startswith("tests.support"):
                 continue
