@@ -154,56 +154,56 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
         assert secret not in repr(projection)
 
 
-def test_resource_role_output__keeps_roles__without_business_literals() -> None:
-    projection = project_llm_semantic_output(
-        "request_understanding.identify_resource_responsibilities",
+def test_atomic_responsibility_outputs__keep_decisions__without_business_literals() -> None:
+    source_projection = project_llm_semantic_output(
+        "request_understanding.identify_source_dependencies",
         {
-            "resource_decisions": [
+            "source_dependencies": [
                 {
                     "resource_type": "TASK",
-                    "role": "SOURCE",
+                    "dependency": "SOURCE_REQUIRED",
                     "required_information": ["private task state"],
                 },
                 {
                     "resource_type": "CALENDAR_EVENT",
-                    "role": "SOURCE",
+                    "dependency": "SOURCE_REQUIRED",
                     "required_information": ["private event time"],
-                },
-                {
-                    "resource_type": "GMAIL_DRAFT",
-                    "role": "OUTPUT",
-                    "effect": "CREATE",
                 },
             ],
         },
     )
+    output_projection = project_llm_semantic_output(
+        "request_understanding.identify_output_responsibilities",
+        {"output_responsibilities": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]},
+    )
 
-    assert projection == {
+    assert source_projection == {
         "projection_version": 1,
-        "resource_decisions": {
-            "count": 3,
+        "source_dependencies": {
+            "count": 2,
             "items": [
                 {
                     "resource_type": "TASK",
-                    "role": "SOURCE",
+                    "dependency": "SOURCE_REQUIRED",
                     "required_information_count": 1,
                 },
                 {
                     "resource_type": "CALENDAR_EVENT",
-                    "role": "SOURCE",
+                    "dependency": "SOURCE_REQUIRED",
                     "required_information_count": 1,
-                },
-                {
-                    "resource_type": "GMAIL_DRAFT",
-                    "role": "OUTPUT",
-                    "effect": "CREATE",
-                    "required_information_count": 0,
                 },
             ],
         },
     }
-    assert "private task state" not in repr(projection)
-    assert "private event time" not in repr(projection)
+    assert output_projection == {
+        "projection_version": 1,
+        "output_responsibilities": {
+            "count": 1,
+            "items": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        },
+    }
+    assert "private task state" not in repr(source_projection)
+    assert "private event time" not in repr(source_projection)
 
 
 def test_effect_prohibition_projection__keeps_only_effect_enums() -> None:
@@ -260,9 +260,7 @@ def test_source_status_projection__shows_fixed_shape__without_source_literals() 
                 "constraints": {"search_terms": ["private anchor"]},
                 "analysis_requirement": "NONE",
             },
-            "source_reads": [
-                {"resource_type": "TASK", "required_information": ["private fact"]}
-            ],
+            "source_reads": [{"resource_type": "TASK", "required_information": ["private fact"]}],
             "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
             "allowed_status_values": [
                 {
@@ -321,44 +319,55 @@ def test_source_status_projection__shows_fixed_shape__without_source_literals() 
         assert secret not in exported
 
 
-def test_resource_responsibility_input__shows_upstream_shape__without_literals() -> None:
-    projection = project_llm_semantic_input(
-        "request_understanding.identify_resource_responsibilities",
+def test_atomic_responsibility_inputs__show_bounded_candidates__without_literals() -> None:
+    base = {
+        "user_request": "private request",
+        "selected_resource_refs": [],
+        "goal_candidate": {
+            "goal": "private goal",
+            "completion_conditions": ["private completion"],
+            "analysis_requirement": "NONE",
+            "constraints": {
+                "search_terms": ["private project"],
+                "business_concepts": [],
+                "person": [],
+                "sender": [],
+                "recipient": ["private@example.test"],
+                "subject": [],
+                "period": [],
+                "status": [],
+                "coverage_requirement": [],
+                "additional_constraints": [],
+            },
+        },
+    }
+    source_projection = project_llm_semantic_input(
+        "request_understanding.identify_source_dependencies",
         {
-            "user_request": "private request",
-            "selected_resource_refs": [],
-            "resource_candidates": [
+            **base,
+            "source_candidates": [
                 {
                     "resource_type": "GMAIL_DRAFT",
-                    "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
                     "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
+                }
+            ],
+        },
+    )
+    output_projection = project_llm_semantic_input(
+        "request_understanding.identify_output_responsibilities",
+        {
+            **base,
+            "output_candidates": [
+                {
+                    "resource_type": "GMAIL_DRAFT",
                     "allowed_output_effects": ["CREATE", "UPDATE"],
                 }
             ],
-            "effect_prohibitions": [
-                {"effect": "SEND", "prohibition": "FORBIDDEN"}
-            ],
-            "goal_candidate": {
-                "goal": "private goal",
-                "completion_conditions": ["private completion"],
-                "analysis_requirement": "NONE",
-                "constraints": {
-                    "search_terms": ["private project"],
-                    "business_concepts": [],
-                    "person": [],
-                    "sender": [],
-                    "recipient": ["private@example.test"],
-                    "subject": [],
-                    "period": [],
-                    "status": [],
-                    "coverage_requirement": [],
-                    "additional_constraints": [],
-                },
-            },
+            "effect_prohibitions": [{"effect": "SEND", "prohibition": "FORBIDDEN"}],
         },
     )
 
-    goal_candidate = cast(dict[str, object], projection["goal_candidate"])
+    goal_candidate = cast(dict[str, object], source_projection["goal_candidate"])
     assert goal_candidate["constraints"] == {
         "count": 2,
         "items": [
@@ -366,22 +375,29 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
             {"kind": "PERSON", "field": "recipient"},
         ],
     }
-    assert projection["resource_candidates"] == {
+    assert source_projection["source_candidates"] == {
         "count": 1,
         "items": [
             {
                 "resource_type": "GMAIL_DRAFT",
-                "allowed_roles": ["NONE", "SOURCE", "OUTPUT", "SOURCE_AND_OUTPUT"],
                 "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
+            }
+        ],
+    }
+    assert output_projection["output_candidates"] == {
+        "count": 1,
+        "items": [
+            {
+                "resource_type": "GMAIL_DRAFT",
                 "allowed_output_effects": ["CREATE", "UPDATE"],
             }
         ],
     }
-    assert projection["effect_prohibitions"] == {
+    assert output_projection["effect_prohibitions"] == {
         "count": 1,
         "items": [{"effect": "SEND", "prohibition": "FORBIDDEN"}],
     }
-    exported = repr(projection)
+    exported = repr((source_projection, output_projection))
     assert "private project" not in exported
     assert "private@example.test" not in exported
     assert "private goal" not in exported

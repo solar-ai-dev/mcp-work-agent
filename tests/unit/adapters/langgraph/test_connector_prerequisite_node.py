@@ -121,7 +121,7 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
     assert output["finalize_intent"]["result_kind"] == "PARTIAL"
     assert "GitHub" in output["finalize_intent"]["prerequisite_message"]
     assert output["user_interrupt"] is None
-    assert len(llm.calls) == 3
+    assert len(llm.calls) == 5
     assert output["trace_context"]["llm_call_count"] == 0
     assert output["admitted_connector_ids"] == []
     confirm.assert_not_called()

@@ -228,13 +228,13 @@ def _respond(
                     "effect": candidate["effect"],
                     "prohibition": "NOT_FORBIDDEN",
                 }
-                for candidate in cast(
-                    Sequence[Mapping[str, object]], base["effect_candidates"]
-                )
+                for candidate in cast(Sequence[Mapping[str, object]], base["effect_candidates"])
             ]
         }
-    if prompt_id == "request_understanding.identify_resource_responsibilities":
-        return _goal_resource_role_decisions(base, scenario)
+    if prompt_id == "request_understanding.identify_source_dependencies":
+        return _goal_source_dependency_decisions(base, scenario)
+    if prompt_id == "request_understanding.identify_output_responsibilities":
+        return _goal_output_responsibility_decisions(base, scenario)
     if prompt_id == "request_understanding.identify_source_status":
         return {"statuses": []}
     if prompt_id == "request_understanding.detect_ambiguity":
@@ -250,9 +250,7 @@ def _respond(
                 "attendee"
                 if scenario == "CALENDAR_CONFIRMATION"
                 else (
-                    "target_resource"
-                    if scenario == "UNRESOLVED_TARGET_CONFIRMATION"
-                    else "target"
+                    "target_resource" if scenario == "UNRESOLVED_TARGET_CONFIRMATION" else "target"
                 )
             ]
             if needs_confirmation
@@ -597,7 +595,7 @@ def _goal_resource_responsibilities(scenario: str) -> dict[str, object]:
     }
 
 
-def _goal_resource_role_decisions(
+def _goal_source_dependency_decisions(
     projection: Mapping[str, object], scenario: str
 ) -> dict[str, object]:
     responsibilities = _goal_resource_responsibilities(scenario)
@@ -605,40 +603,42 @@ def _goal_resource_role_decisions(
         str(item["resource_type"]): list(cast(list[str], item["required_information"]))
         for item in cast(list[Mapping[str, object]], responsibilities["source_reads"])
     }
-    outputs = {
-        str(item["resource_type"]): str(item["effect"])
-        for item in cast(list[Mapping[str, object]], responsibilities["outputs"])
-    }
-    candidates = cast(list[Mapping[str, object]], projection["resource_candidates"])
+    candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
     decisions: list[dict[str, object]] = []
     for candidate in candidates:
         resource_type = str(candidate["resource_type"])
         required_information = source_reads.get(resource_type)
-        effect = outputs.get(resource_type)
-        if required_information is not None and effect is not None:
+        if required_information is not None:
             decisions.append(
                 {
                     "resource_type": resource_type,
-                    "role": "SOURCE_AND_OUTPUT",
-                    "required_information": required_information,
-                    "effect": effect,
-                }
-            )
-        elif required_information is not None:
-            decisions.append(
-                {
-                    "resource_type": resource_type,
-                    "role": "SOURCE",
+                    "dependency": "SOURCE_REQUIRED",
                     "required_information": required_information,
                 }
-            )
-        elif effect is not None:
-            decisions.append(
-                {"resource_type": resource_type, "role": "OUTPUT", "effect": effect}
             )
         else:
-            decisions.append({"resource_type": resource_type, "role": "NONE"})
-    return {"resource_decisions": decisions}
+            decisions.append({"resource_type": resource_type, "dependency": "SOURCE_NOT_REQUIRED"})
+    return {"source_dependencies": decisions}
+
+
+def _goal_output_responsibility_decisions(
+    projection: Mapping[str, object], scenario: str
+) -> dict[str, object]:
+    responsibilities = _goal_resource_responsibilities(scenario)
+    outputs = {
+        str(item["resource_type"]): str(item["effect"])
+        for item in cast(list[Mapping[str, object]], responsibilities["outputs"])
+    }
+    candidates = cast(list[Mapping[str, object]], projection["output_candidates"])
+    return {
+        "output_responsibilities": [
+            {
+                "resource_type": candidate["resource_type"],
+                "effect": outputs.get(str(candidate["resource_type"]), "NONE"),
+            }
+            for candidate in candidates
+        ]
+    }
 
 
 def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:

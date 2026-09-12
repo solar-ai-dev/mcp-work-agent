@@ -84,22 +84,41 @@ def test_select_evidence_contract__matches_the__live_typed_projection() -> None:
         )
 
 
-def test_resource_responsibility_contract__requires_preceding_goal_candidate() -> None:
+@pytest.mark.parametrize(
+    ("slot_id", "candidate_field", "additional_fields"),
+    [
+        (
+            "request_understanding.identify_source_dependencies",
+            "source_candidates",
+            {},
+        ),
+        (
+            "request_understanding.identify_output_responsibilities",
+            "output_candidates",
+            {"effect_prohibitions": []},
+        ),
+    ],
+)
+def test_atomic_responsibility_contracts__require_goal_and_runtime_candidates(
+    slot_id: str,
+    candidate_field: str,
+    additional_fields: dict[str, object],
+) -> None:
     contract = load_prompt_input_contract()
 
     contract.validate_projection(
-        "request_understanding.identify_resource_responsibilities",
+        slot_id,
         {
             "user_request": "request",
             "selected_resource_refs": [],
             "goal_candidate": {},
-            "resource_candidates": [],
-            "effect_prohibitions": [],
+            candidate_field: [],
+            **additional_fields,
         },
     )
     with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
         contract.validate_projection(
-            "request_understanding.identify_resource_responsibilities",
+            slot_id,
             {
                 "user_request": "request",
                 "selected_resource_refs": [],
@@ -200,9 +219,7 @@ def test_action_objective_contract__matches_the__live_typed_projection() -> None
         "evidence": [],
         "work_analysis": {},
     }
-    contract.validate_projection(
-        "planning.draft_action_objective_per_output_route", projection
-    )
+    contract.validate_projection("planning.draft_action_objective_per_output_route", projection)
 
     with pytest.raises(PromptRuntimeInputContractError, match="unknown Product Prompt fields"):
         contract.validate_projection(

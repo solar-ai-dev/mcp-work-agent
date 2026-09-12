@@ -29,8 +29,11 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
     RequestUnderstandingParentOutputState,
     RequestUnderstandingStateV2,
 )
-from google_work_agent.application.agents.request_understanding.identify_resource_roles import (
-    build_resource_role_candidates,
+from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_responsibilities,
+)
+from google_work_agent.application.agents.request_understanding import (
+    identify_source_dependencies as source_dependencies,
 )
 from google_work_agent.application.agents.request_understanding.identify_temporal_scope import (
     needs_temporal_scope,
@@ -103,15 +106,25 @@ class RequestUnderstandingSubgraph:
         connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
-        self._resource_role_candidates = build_resource_role_candidates(tool_catalog)
+        self._source_dependency_candidates = source_dependencies.build_source_dependency_candidates(
+            tool_catalog
+        )
+        self._output_responsibility_candidates = (
+            output_responsibilities.build_output_responsibility_candidates(tool_catalog)
+        )
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
         self._identify_goal_prompt_ref = load_prompt_reference(
             "request_understanding.identify_goal",
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
-        self._identify_resource_responsibilities_prompt_ref = load_prompt_reference(
-            "request_understanding.identify_resource_responsibilities",
+        self._identify_source_dependencies_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_source_dependencies",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_output_responsibilities_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_output_responsibilities",
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
@@ -200,9 +213,11 @@ class RequestUnderstandingSubgraph:
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_goal_prompt_ref,
             effect_prohibition_prompt_ref=self._identify_effect_prohibitions_prompt_ref,
-            responsibility_prompt_ref=self._identify_resource_responsibilities_prompt_ref,
+            source_dependency_prompt_ref=self._identify_source_dependencies_prompt_ref,
+            output_responsibility_prompt_ref=self._identify_output_responsibilities_prompt_ref,
             source_status_prompt_ref=self._identify_source_status_prompt_ref,
-            resource_role_candidates=self._resource_role_candidates,
+            source_dependency_candidates=self._source_dependency_candidates,
+            output_responsibility_candidates=self._output_responsibility_candidates,
         )
         calls_used = max(
             0,
@@ -219,7 +234,8 @@ class RequestUnderstandingSubgraph:
                 prompt_ref=self._identify_goal_prompt_ref,
                 additional_prompt_refs=(
                     self._identify_effect_prohibitions_prompt_ref,
-                    self._identify_resource_responsibilities_prompt_ref,
+                    self._identify_source_dependencies_prompt_ref,
+                    self._identify_output_responsibilities_prompt_ref,
                     self._identify_source_status_prompt_ref,
                 ),
                 llm_call_increment=calls_used,

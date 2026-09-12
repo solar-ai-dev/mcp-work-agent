@@ -51,12 +51,20 @@
       "output_schema_version": 1
     },
     {
-      "prompt_slot_id": "request_understanding.identify_resource_responsibilities",
+      "prompt_slot_id": "request_understanding.identify_source_dependencies",
       "runtime_node_id": "request.identify_goal",
-      "input_schema_version": 6,
-      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "resource_candidates", "effect_prohibitions"],
+      "input_schema_version": 1,
+      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "source_candidates"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
-      "output_schema_version": 2
+      "output_schema_version": 1
+    },
+    {
+      "prompt_slot_id": "request_understanding.identify_output_responsibilities",
+      "runtime_node_id": "request.identify_goal",
+      "input_schema_version": 1,
+      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "output_candidates", "effect_prohibitions"],
+      "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
+      "output_schema_version": 1
     },
     {
       "prompt_slot_id": "request_understanding.identify_source_status",

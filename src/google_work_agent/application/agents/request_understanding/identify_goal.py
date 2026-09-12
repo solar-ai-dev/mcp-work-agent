@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
 from google_work_agent.application.agents.preserve_exact_user_literals import (
@@ -45,6 +45,7 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
+from .contracts.output_responsibility_decision import OutputResponsibilityCandidateV1
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
     RequestGoalSemanticValidationError,
@@ -52,16 +53,18 @@ from .contracts.request_goal_candidate_schema import (
     validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
 )
-from .contracts.resource_role_decision import ResourceRoleCandidateV1
+from .contracts.source_dependency_decision import SourceDependencyCandidateV1
 from .identify_effect_prohibitions import (
     build_effect_prohibition_candidates,
     identify_effect_prohibitions,
 )
-from .identify_resource_roles import (
-    ProhibitedResourceRoleDecisionError,
-    identify_resource_roles,
+from .identify_output_responsibilities import (
+    ProhibitedOutputResponsibilityDecisionError,
+    identify_output_responsibilities,
 )
+from .identify_source_dependencies import identify_source_dependencies
 from .identify_source_status import identify_source_status
+from .merge_resource_responsibilities import merge_resource_responsibilities
 from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
 
 
@@ -69,10 +72,12 @@ def identify_goal(
     *,
     llm_runtime: StructuredInferencePort,
     request: WorkflowStartRequest,
-    resource_role_candidates: Sequence[ResourceRoleCandidateV1],
+    source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
+    output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
     prompt_ref: PromptReference | None = None,
     effect_prohibition_prompt_ref: PromptReference | None = None,
-    responsibility_prompt_ref: PromptReference | None = None,
+    source_dependency_prompt_ref: PromptReference | None = None,
+    output_responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
@@ -83,9 +88,16 @@ def identify_goal(
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
         "request_understanding.identify_goal", resolved_manifest_path
     )
-    resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
-        "request_understanding.identify_resource_responsibilities",
+    resolved_source_dependency_prompt_ref = source_dependency_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_source_dependencies",
         resolved_manifest_path,
+    )
+    resolved_output_responsibility_prompt_ref = (
+        output_responsibility_prompt_ref
+        or load_prompt_reference(
+            "request_understanding.identify_output_responsibilities",
+            resolved_manifest_path,
+        )
     )
     resolved_effect_prohibition_prompt_ref = effect_prohibition_prompt_ref or load_prompt_reference(
         "request_understanding.identify_effect_prohibitions",
@@ -112,16 +124,30 @@ def identify_goal(
         prompt_ref=resolved_effect_prohibition_prompt_ref,
         prompt_input=prompt_input,
         goal_candidate=result.structured_output,
-        effect_candidates=build_effect_prohibition_candidates(resource_role_candidates),
+        effect_candidates=build_effect_prohibition_candidates(output_responsibility_candidates),
     )
-    _, responsibilities = identify_resource_roles(
+    source_decisions = identify_source_dependencies(
         llm_runtime=llm_runtime,
         requested_mode=request.requested_mode,
-        prompt_ref=resolved_responsibility_prompt_ref,
+        prompt_ref=resolved_source_dependency_prompt_ref,
         prompt_input=prompt_input,
         goal_candidate=result.structured_output,
-        resource_candidates=resource_role_candidates,
+        source_candidates=source_dependency_candidates,
+    )
+    output_decisions = identify_output_responsibilities(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_output_responsibility_prompt_ref,
+        prompt_input=prompt_input,
+        goal_candidate=result.structured_output,
+        output_candidates=output_responsibility_candidates,
         effect_prohibitions=effect_prohibitions,
+    )
+    responsibilities = merge_resource_responsibilities(
+        source_decisions=source_decisions,
+        output_decisions=output_decisions,
+        source_candidates=source_dependency_candidates,
+        output_candidates=output_responsibility_candidates,
     )
     source_status_output = identify_source_status(
         llm_runtime=llm_runtime,
@@ -145,10 +171,12 @@ def identify_goal_with_budget(
     llm_runtime: StructuredInferencePort,
     request: WorkflowStartRequest,
     retry_budget: RunBudgetV2,
-    resource_role_candidates: Sequence[ResourceRoleCandidateV1],
+    source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
+    output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
     prompt_ref: PromptReference | None = None,
     effect_prohibition_prompt_ref: PromptReference | None = None,
-    responsibility_prompt_ref: PromptReference | None = None,
+    source_dependency_prompt_ref: PromptReference | None = None,
+    output_responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
@@ -160,9 +188,16 @@ def identify_goal_with_budget(
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
         "request_understanding.identify_goal", resolved_manifest_path
     )
-    resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
-        "request_understanding.identify_resource_responsibilities",
+    resolved_source_dependency_prompt_ref = source_dependency_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_source_dependencies",
         resolved_manifest_path,
+    )
+    resolved_output_responsibility_prompt_ref = (
+        output_responsibility_prompt_ref
+        or load_prompt_reference(
+            "request_understanding.identify_output_responsibilities",
+            resolved_manifest_path,
+        )
     )
     resolved_effect_prohibition_prompt_ref = effect_prohibition_prompt_ref or load_prompt_reference(
         "request_understanding.identify_effect_prohibitions",
@@ -185,7 +220,7 @@ def identify_goal_with_budget(
             IDENTIFY_GOAL_OUTPUT_SCHEMA,
         )
         goal_output = result.structured_output
-        effect_candidates = build_effect_prohibition_candidates(resource_role_candidates)
+        effect_candidates = build_effect_prohibition_candidates(output_responsibility_candidates)
         prohibition_output = identify_effect_prohibitions(
             llm_runtime=llm_runtime,
             requested_mode=request.requested_mode,
@@ -194,17 +229,25 @@ def identify_goal_with_budget(
             goal_candidate=goal_output,
             effect_candidates=effect_candidates,
         )
+        source_output = identify_source_dependencies(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_source_dependency_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+            source_candidates=source_dependency_candidates,
+        )
         try:
-            responsibility_output, responsibilities = identify_resource_roles(
+            output_output = identify_output_responsibilities(
                 llm_runtime=llm_runtime,
                 requested_mode=request.requested_mode,
-                prompt_ref=resolved_responsibility_prompt_ref,
+                prompt_ref=resolved_output_responsibility_prompt_ref,
                 prompt_input=prompt_input,
                 goal_candidate=goal_output,
-                resource_candidates=resource_role_candidates,
+                output_candidates=output_responsibility_candidates,
                 effect_prohibitions=prohibition_output,
             )
-        except ProhibitedResourceRoleDecisionError as error:
+        except ProhibitedOutputResponsibilityDecisionError as error:
             signature = build_semantic_failure_signature_v1(
                 node_id="request.identify_goal",
                 failure_reason_codes=[error.reason_code],
@@ -221,18 +264,24 @@ def identify_goal_with_budget(
                 affected_field_paths=list(error.affected_field_paths),
                 failure_context_ids=[str(error)],
             )
-            responsibility_output, responsibilities = identify_resource_roles(
+            output_output = identify_output_responsibilities(
                 llm_runtime=llm_runtime,
                 requested_mode=request.requested_mode,
-                prompt_ref=resolved_responsibility_prompt_ref,
+                prompt_ref=resolved_output_responsibility_prompt_ref,
                 prompt_input=prompt_input,
                 goal_candidate=goal_output,
-                resource_candidates=resource_role_candidates,
+                output_candidates=output_responsibility_candidates,
                 effect_prohibitions=prohibition_output,
                 candidate_output=error.candidate_output,
                 failure_record=failure_record,
             )
             retry_budget = decision["run_budget"]
+        responsibilities = merge_resource_responsibilities(
+            source_decisions=source_output,
+            output_decisions=output_output,
+            source_candidates=source_dependency_candidates,
+            output_candidates=output_responsibility_candidates,
+        )
         source_status_output = identify_source_status(
             llm_runtime=llm_runtime,
             requested_mode=request.requested_mode,
@@ -266,6 +315,42 @@ def identify_goal_with_budget(
                 affected_field_paths=list(error.affected_field_paths),
                 failure_context_ids=[str(error)],
             )
+            if error.reason_code == "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED":
+                source_output = identify_source_dependencies(
+                    llm_runtime=llm_runtime,
+                    requested_mode=request.requested_mode,
+                    prompt_ref=resolved_source_dependency_prompt_ref,
+                    prompt_input=prompt_input,
+                    goal_candidate=goal_output,
+                    source_candidates=source_dependency_candidates,
+                    candidate_output=source_output,
+                    failure_record=failure_record,
+                )
+                responsibilities = merge_resource_responsibilities(
+                    source_decisions=source_output,
+                    output_decisions=output_output,
+                    source_candidates=source_dependency_candidates,
+                    output_candidates=output_responsibility_candidates,
+                )
+                source_status_output = identify_source_status(
+                    llm_runtime=llm_runtime,
+                    requested_mode=request.requested_mode,
+                    prompt_ref=resolved_source_status_prompt_ref,
+                    prompt_input=prompt_input,
+                    goal_candidate=goal_output,
+                    responsibilities=responsibilities,
+                    candidate_output=source_status_output,
+                    failure_record=failure_record,
+                )
+                candidate = _validated_candidate(
+                    goal_output,
+                    resource_responsibilities=responsibilities,
+                    source_statuses=source_status_output,
+                    request=request,
+                    confirmation_response=confirmation_response,
+                )
+                retry_budget = decision["run_budget"]
+                return candidate, merge_provider_dispatch_usage(retry_budget)
             revised_goal = llm_runtime.infer(
                 request.requested_mode,
                 resolved_prompt_ref,
@@ -287,16 +372,32 @@ def identify_goal_with_budget(
                 candidate_output=prohibition_output,
                 failure_record=failure_record,
             )
-            responsibility_output, responsibilities = identify_resource_roles(
+            source_output = identify_source_dependencies(
                 llm_runtime=llm_runtime,
                 requested_mode=request.requested_mode,
-                prompt_ref=resolved_responsibility_prompt_ref,
+                prompt_ref=resolved_source_dependency_prompt_ref,
                 prompt_input=prompt_input,
                 goal_candidate=goal_output,
-                resource_candidates=resource_role_candidates,
-                effect_prohibitions=prohibition_output,
-                candidate_output=responsibility_output,
+                source_candidates=source_dependency_candidates,
+                candidate_output=source_output,
                 failure_record=failure_record,
+            )
+            output_output = identify_output_responsibilities(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_output_responsibility_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                output_candidates=output_responsibility_candidates,
+                effect_prohibitions=prohibition_output,
+                candidate_output=output_output,
+                failure_record=failure_record,
+            )
+            responsibilities = merge_resource_responsibilities(
+                source_decisions=source_output,
+                output_decisions=output_output,
+                source_candidates=source_dependency_candidates,
+                output_candidates=output_responsibility_candidates,
             )
             source_status_output = identify_source_status(
                 llm_runtime=llm_runtime,

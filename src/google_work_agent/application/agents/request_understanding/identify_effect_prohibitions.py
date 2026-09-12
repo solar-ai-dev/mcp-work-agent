@@ -17,8 +17,8 @@ from .contracts.effect_prohibition_decision import (
     EffectProhibitionCandidateV1,
     EffectProhibitionDecisionCandidateV1,
 )
+from .contracts.output_responsibility_decision import OutputResponsibilityCandidateV1
 from .contracts.request_intent import WriteEffectValue
-from .contracts.resource_role_decision import ResourceRoleCandidateV1
 
 _WRITE_EFFECT_ORDER: tuple[WriteEffectValue, ...] = (
     "CREATE",
@@ -29,9 +29,9 @@ _WRITE_EFFECT_ORDER: tuple[WriteEffectValue, ...] = (
 
 
 def build_effect_prohibition_candidates(
-    resource_candidates: Sequence[ResourceRoleCandidateV1],
+    resource_candidates: Sequence[OutputResponsibilityCandidateV1],
 ) -> tuple[EffectProhibitionCandidateV1, ...]:
-    """Project the role candidates into the one supported write-effect set."""
+    """Project output candidates into the one supported write-effect set."""
 
     supported_effects = {
         effect
@@ -74,9 +74,7 @@ def build_effect_prohibition_output_schema(
                         "required": ["effect", "prohibition"],
                         "properties": {
                             "effect": {"enum": effects},
-                            "prohibition": {
-                                "enum": ["FORBIDDEN", "NOT_FORBIDDEN"]
-                            },
+                            "prohibition": {"enum": ["FORBIDDEN", "NOT_FORBIDDEN"]},
                         },
                     },
                     "allOf": [

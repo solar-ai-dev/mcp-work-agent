@@ -5,7 +5,8 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
     RequestUnderstandingStateV2,
 )
 from google_work_agent.application.agents.request_understanding.contracts import (
-    resource_role_decision,
+    output_responsibility_decision,
+    source_dependency_decision,
 )
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal_with_budget,
@@ -24,20 +25,28 @@ def identify_goal_node(
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference | None,
     effect_prohibition_prompt_ref: PromptReference | None,
-    responsibility_prompt_ref: PromptReference | None,
+    source_dependency_prompt_ref: PromptReference | None,
+    output_responsibility_prompt_ref: PromptReference | None,
     source_status_prompt_ref: PromptReference | None,
-    resource_role_candidates: tuple[resource_role_decision.ResourceRoleCandidateV1, ...],
+    source_dependency_candidates: tuple[
+        source_dependency_decision.SourceDependencyCandidateV1, ...
+    ],
+    output_responsibility_candidates: tuple[
+        output_responsibility_decision.OutputResponsibilityCandidateV1, ...
+    ],
 ) -> RequestUnderstandingStateV2:
     projection = project_identify_goal_input(state)
-    ensure_llm_call_budget(state, provider_calls_requested=4)
+    ensure_llm_call_budget(state, provider_calls_requested=5)
     candidate, retry_budget = identify_goal_with_budget(
         llm_runtime=llm_runtime,
         request=projection["request"],
         retry_budget=state["retry_budget"],
-        resource_role_candidates=resource_role_candidates,
+        source_dependency_candidates=source_dependency_candidates,
+        output_responsibility_candidates=output_responsibility_candidates,
         prompt_ref=prompt_ref,
         effect_prohibition_prompt_ref=effect_prohibition_prompt_ref,
-        responsibility_prompt_ref=responsibility_prompt_ref,
+        source_dependency_prompt_ref=source_dependency_prompt_ref,
+        output_responsibility_prompt_ref=output_responsibility_prompt_ref,
         source_status_prompt_ref=source_status_prompt_ref,
         confirmation_response=projection.get("confirmation_response"),
         request_reconsideration=projection.get("request_reconsideration"),

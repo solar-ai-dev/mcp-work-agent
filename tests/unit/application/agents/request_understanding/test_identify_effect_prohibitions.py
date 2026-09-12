@@ -9,14 +9,11 @@ from tests.support.fakes.llm import FakeStructuredInferencePort
 from google_work_agent.application.agents.request_understanding import (
     identify_effect_prohibitions as effect_prohibitions,
 )
+from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_responsibilities,
+)
 from google_work_agent.application.agents.request_understanding.contracts import (
     effect_prohibition_decision,
-)
-from google_work_agent.application.agents.request_understanding.identify_resource_roles import (
-    ProhibitedResourceRoleDecisionError,
-    build_resource_role_candidates,
-    build_resource_role_decision_output_schema,
-    validate_resource_role_decision_candidate,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
@@ -24,10 +21,10 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
 
-_RESOURCE_CANDIDATES = build_resource_role_candidates(load_signed_tool_registry())
-_EFFECT_CANDIDATES = effect_prohibitions.build_effect_prohibition_candidates(
-    _RESOURCE_CANDIDATES
+_RESOURCE_CANDIDATES = output_responsibilities.build_output_responsibility_candidates(
+    load_signed_tool_registry()
 )
+_EFFECT_CANDIDATES = effect_prohibitions.build_effect_prohibition_candidates(_RESOURCE_CANDIDATES)
 
 
 def _prompt() -> PromptReference:
@@ -60,20 +57,19 @@ def _prohibitions(*forbidden: str) -> dict[str, object]:
     }
 
 
-def _role_decisions(*, gmail_message_effect: str | None = None) -> dict[str, object]:
+def _output_decisions(*, gmail_message_effect: str | None = None) -> dict[str, object]:
     decisions: list[dict[str, object]] = []
     for candidate in _RESOURCE_CANDIDATES:
         if candidate["resource_type"] == "GMAIL_MESSAGE" and gmail_message_effect is not None:
             decisions.append(
                 {
                     "resource_type": "GMAIL_MESSAGE",
-                    "role": "OUTPUT",
                     "effect": gmail_message_effect,
                 }
             )
         else:
-            decisions.append({"resource_type": candidate["resource_type"], "role": "NONE"})
-    return {"resource_decisions": decisions}
+            decisions.append({"resource_type": candidate["resource_type"], "effect": "NONE"})
+    return {"output_responsibilities": decisions}
 
 
 def test_effect_candidates__reuse_runtime_supported_effect_exact_set() -> None:
@@ -98,9 +94,7 @@ def test_effect_prohibition_schema__rejects_non_exact_candidate_set(mutation: st
 
     errors = validate_output_schema(
         value,
-        effect_prohibitions.build_effect_prohibition_output_schema(
-            _EFFECT_CANDIDATES
-        ).json_schema,
+        effect_prohibitions.build_effect_prohibition_output_schema(_EFFECT_CANDIDATES).json_schema,
     )
 
     assert errors
@@ -115,7 +109,7 @@ def test_effect_prohibition_schema__rejects_non_exact_candidate_set(mutation: st
             frozenset({"SEND"}),
         ),
         ("메일을 전송한다.", _prohibitions(), frozenset()),
-        ('금지 문구를 Draft 본문에 인용한다.', _prohibitions(), frozenset()),
+        ("금지 문구를 Draft 본문에 인용한다.", _prohibitions(), frozenset()),
         ("가정 상황을 설명한다.", _prohibitions(), frozenset()),
     ],
 )
@@ -148,41 +142,42 @@ def test_send_prohibition__removes_send_variant_and_defends_post_inference() -> 
         ),
     )
     forbidden = effect_prohibitions.prohibited_effects(prohibitions)
-    invalid = _role_decisions(gmail_message_effect="SEND")
+    invalid = _output_decisions(gmail_message_effect="SEND")
 
     assert validate_output_schema(
         invalid,
-        build_resource_role_decision_output_schema(
+        output_responsibilities.build_output_responsibility_output_schema(
             _RESOURCE_CANDIDATES,
             prohibited_effects=forbidden,
         ).json_schema,
     )
-    with pytest.raises(ProhibitedResourceRoleDecisionError) as excinfo:
-        validate_resource_role_decision_candidate(
+    with pytest.raises(
+        output_responsibilities.ProhibitedOutputResponsibilityDecisionError
+    ) as excinfo:
+        output_responsibilities.validate_output_responsibility_candidate(
             invalid,
-            resource_candidates=_RESOURCE_CANDIDATES,
+            output_candidates=_RESOURCE_CANDIDATES,
             prohibited_effects=forbidden,
         )
     assert excinfo.value.reason_code == "REQUEST_PROHIBITED_OUTPUT_EFFECT_SELECTED"
-    assert excinfo.value.affected_field_paths == ("$.resource_decisions[1].effect",)
+    assert excinfo.value.affected_field_paths == ("$.output_responsibilities[0].effect",)
 
 
 def test_send_not_forbidden__keeps_send_variant_available() -> None:
-    candidate = _role_decisions(gmail_message_effect="SEND")
+    candidate = _output_decisions(gmail_message_effect="SEND")
 
-    result = validate_resource_role_decision_candidate(
+    result = output_responsibilities.validate_output_responsibility_candidate(
         candidate,
-        resource_candidates=_RESOURCE_CANDIDATES,
+        output_candidates=_RESOURCE_CANDIDATES,
         prohibited_effects=(),
     )
 
     message = next(
         decision
-        for decision in result["resource_decisions"]
+        for decision in result["output_responsibilities"]
         if decision["resource_type"] == "GMAIL_MESSAGE"
     )
     assert message == {
         "resource_type": "GMAIL_MESSAGE",
-        "role": "OUTPUT",
         "effect": "SEND",
     }

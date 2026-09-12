@@ -19,7 +19,8 @@ _SUPPORTED_PROMPTS = frozenset(
     {
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
-        "request_understanding.identify_resource_responsibilities",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
         "retrieval.plan_query",
@@ -56,12 +57,14 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "status_values",
         "coverage_requirement",
         "goal_candidate",
-        "resource_candidates",
-        "resource_decisions",
+        "source_candidates",
+        "output_candidates",
+        "source_dependencies",
+        "output_responsibilities",
         "effect_candidates",
         "effect_prohibitions",
         "prohibition",
-        "allowed_roles",
+        "dependency",
         "read_tool_ids",
         "allowed_output_effects",
         "resolution_responsibilities",
@@ -144,8 +147,10 @@ def project_llm_semantic_input(prompt_id: str, value: object) -> dict[str, objec
         result = _project_source_status_input(mapping)
     elif prompt_id == "request_understanding.identify_effect_prohibitions":
         result = _project_effect_prohibition_input(mapping)
-    elif prompt_id == "request_understanding.identify_resource_responsibilities":
-        result = _project_resource_role_input(mapping)
+    elif prompt_id == "request_understanding.identify_source_dependencies":
+        result = _project_source_dependency_input(mapping)
+    elif prompt_id == "request_understanding.identify_output_responsibilities":
+        result = _project_output_responsibility_input(mapping)
     elif prompt_id in {
         "request_understanding.identify_goal",
     }:
@@ -175,8 +180,10 @@ def project_llm_semantic_output(prompt_id: str, value: object) -> dict[str, obje
         result = _project_goal_candidate(mapping)
     elif prompt_id == "request_understanding.identify_effect_prohibitions":
         result = _project_effect_prohibition_candidate(mapping)
-    elif prompt_id == "request_understanding.identify_resource_responsibilities":
-        result = _project_resource_role_decision_candidate(mapping)
+    elif prompt_id == "request_understanding.identify_source_dependencies":
+        result = _project_source_dependency_candidate(mapping)
+    elif prompt_id == "request_understanding.identify_output_responsibilities":
+        result = _project_output_responsibility_candidate(mapping)
     elif prompt_id == "request_understanding.identify_source_status":
         result = _project_source_status_candidate(mapping)
     elif prompt_id == "request_understanding.detect_ambiguity":
@@ -225,24 +232,39 @@ def _project_identify_input(value: Mapping[object, object]) -> dict[str, object]
     return result
 
 
-def _project_resource_role_input(value: Mapping[object, object]) -> dict[str, object]:
+def _project_source_dependency_input(value: Mapping[object, object]) -> dict[str, object]:
     result = _project_identify_input(value)
-    candidates = _sequence(value.get("resource_candidates"))
+    candidates = _sequence(value.get("source_candidates"))
     items: list[dict[str, object]] = []
     for raw_candidate in candidates[:_MAX_COLLECTION_ITEMS]:
         candidate = _mapping(raw_candidate)
         if candidate is None:
             continue
         projected: dict[str, object] = {
-            "allowed_roles": _safe_values(candidate.get("allowed_roles")),
-            "read_tool_ids": _safe_values(candidate.get("read_tool_ids")),
-            "allowed_output_effects": _safe_values(
-                candidate.get("allowed_output_effects")
-            ),
+            "read_tool_ids": _safe_values(candidate.get("read_tool_ids"))
         }
         _copy_safe_scalar(candidate, projected, "resource_type")
         items.append(projected)
-    result["resource_candidates"] = {"count": len(candidates), "items": items}
+    result["source_candidates"] = {"count": len(candidates), "items": items}
+    return result
+
+
+def _project_output_responsibility_input(
+    value: Mapping[object, object],
+) -> dict[str, object]:
+    result = _project_identify_input(value)
+    candidates = _sequence(value.get("output_candidates"))
+    items: list[dict[str, object]] = []
+    for raw_candidate in candidates[:_MAX_COLLECTION_ITEMS]:
+        candidate = _mapping(raw_candidate)
+        if candidate is None:
+            continue
+        projected: dict[str, object] = {
+            "allowed_output_effects": _safe_values(candidate.get("allowed_output_effects"))
+        }
+        _copy_safe_scalar(candidate, projected, "resource_type")
+        items.append(projected)
+    result["output_candidates"] = {"count": len(candidates), "items": items}
     result["effect_prohibitions"] = _project_effect_prohibition_items(
         value.get("effect_prohibitions")
     )
@@ -272,9 +294,7 @@ def _project_effect_prohibition_candidate(
 ) -> dict[str, object]:
     return {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
-        "effect_prohibitions": _project_effect_prohibition_items(
-            value.get("effect_prohibitions")
-        ),
+        "effect_prohibitions": _project_effect_prohibition_items(value.get("effect_prohibitions")),
     }
 
 
@@ -311,10 +331,10 @@ def _project_goal_candidate(value: Mapping[object, object]) -> dict[str, object]
     return result
 
 
-def _project_resource_role_decision_candidate(
+def _project_source_dependency_candidate(
     value: Mapping[object, object],
 ) -> dict[str, object]:
-    decisions = _sequence(value.get("resource_decisions"))
+    decisions = _sequence(value.get("source_dependencies"))
     items: list[dict[str, object]] = []
     for raw_decision in decisions[:_MAX_COLLECTION_ITEMS]:
         decision = _mapping(raw_decision)
@@ -323,12 +343,31 @@ def _project_resource_role_decision_candidate(
         projected: dict[str, object] = {
             "required_information_count": _count(decision.get("required_information"))
         }
-        for name in ("resource_type", "role", "effect"):
+        for name in ("resource_type", "dependency"):
             _copy_safe_scalar(decision, projected, name)
         items.append(projected)
     return {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
-        "resource_decisions": {"count": len(decisions), "items": items},
+        "source_dependencies": {"count": len(decisions), "items": items},
+    }
+
+
+def _project_output_responsibility_candidate(
+    value: Mapping[object, object],
+) -> dict[str, object]:
+    decisions = _sequence(value.get("output_responsibilities"))
+    items: list[dict[str, object]] = []
+    for raw_decision in decisions[:_MAX_COLLECTION_ITEMS]:
+        decision = _mapping(raw_decision)
+        if decision is None:
+            continue
+        projected: dict[str, object] = {}
+        for name in ("resource_type", "effect"):
+            _copy_safe_scalar(decision, projected, name)
+        items.append(projected)
+    return {
+        "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
+        "output_responsibilities": {"count": len(decisions), "items": items},
     }
 
 
@@ -364,9 +403,7 @@ def _project_source_status_candidate(value: Mapping[object, object]) -> dict[str
         status = _mapping(raw_status)
         if status is None:
             continue
-        projected: dict[str, object] = {
-            "status_values": _safe_values([status.get("value")])
-        }
+        projected: dict[str, object] = {"status_values": _safe_values([status.get("value")])}
         resource_type = _safe_string(status.get("source_resource_type"))
         if resource_type is not None:
             projected["resource_type"] = resource_type
@@ -541,9 +578,7 @@ def _project_evidence_input(value: Mapping[object, object]) -> dict[str, object]
         "request_intent": _project_intent_summary(_mapping(value.get("request_intent"))),
         "ranked_segment_count": _count(value.get("ranked_segments")),
         "sufficiency_feedback_count": _count(value.get("sufficiency_feedback")),
-        "temporal_constraint_shapes": _project_query_constraints(
-            value.get("temporal_constraints")
-        ),
+        "temporal_constraint_shapes": _project_query_constraints(value.get("temporal_constraints")),
         "has_confirmation_response": _present(value.get("confirmation_response")),
     }
 
@@ -583,15 +618,11 @@ def _project_sufficiency_input(value: Mapping[object, object]) -> dict[str, obje
     return {
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
         "request_intent": _project_intent_summary(_mapping(value.get("request_intent"))),
-        "completion_condition_count": _completion_condition_count(
-            value.get("request_intent")
-        ),
+        "completion_condition_count": _completion_condition_count(value.get("request_intent")),
         "selected_evidence_count": _count(value.get("selected_evidence")),
         "source_statuses": {"count": len(statuses), "items": status_items},
         "budget_state": _safe_number_mapping(value.get("budget_state")),
-        "temporal_constraint_shapes": _project_query_constraints(
-            value.get("temporal_constraints")
-        ),
+        "temporal_constraint_shapes": _project_query_constraints(value.get("temporal_constraints")),
         "read_result_summary_count": len(read_result_summaries),
         "has_next_page_count": _true_field_count(
             read_result_summaries,
@@ -667,9 +698,7 @@ def _project_compose_answer_input(value: Mapping[object, object]) -> dict[str, o
         "request_intent": _project_intent_summary(_mapping(value.get("request_intent"))),
         "evidence_count": _count(value.get("evidence")),
         "outline_evidence_count": _count(None if outline is None else outline.get("evidence_refs")),
-        "temporal_constraint_shapes": _project_query_constraints(
-            value.get("temporal_constraints")
-        ),
+        "temporal_constraint_shapes": _project_query_constraints(value.get("temporal_constraints")),
         "collection_result_count": _count(value.get("collection_results")),
         "missing_information_count": _count(value.get("missing_information")),
         "has_confirmation_response": _present(value.get("confirmation_response")),
@@ -723,11 +752,7 @@ def _safe_number_mapping(value: object) -> dict[str, object]:
 
 
 def _safe_field_identifier(value: object) -> str | None:
-    return (
-        value
-        if isinstance(value, str) and _SAFE_FIELD_IDENTIFIER.fullmatch(value)
-        else None
-    )
+    return value if isinstance(value, str) and _SAFE_FIELD_IDENTIFIER.fullmatch(value) else None
 
 
 def _project_source_reads(value: object) -> dict[str, object]:
@@ -900,7 +925,7 @@ def _sanitize_mapping(value: Mapping[object, object], *, depth: int) -> dict[str
     if depth > _MAX_DEPTH:
         return {}
     result: dict[str, object] = {}
-    for raw_key, raw_value in list(value.items())[:_MAX_COLLECTION_ITEMS * 2]:
+    for raw_key, raw_value in list(value.items())[: _MAX_COLLECTION_ITEMS * 2]:
         if not isinstance(raw_key, str) or raw_key not in _ALLOWED_PROJECTION_KEYS:
             continue
         sanitized = _sanitize_value(raw_value, depth=depth + 1)

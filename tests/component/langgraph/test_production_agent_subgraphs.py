@@ -218,32 +218,38 @@ class _ComponentInferencePort:
                     )
                 ]
             }
-        if prompt_id == "request_understanding.identify_resource_responsibilities":
+        if prompt_id == "request_understanding.identify_source_dependencies":
             if self.cross_source_draft:
-                return _resource_role_decisions(
+                return _source_dependency_decisions(
                     projection,
                     source_types={
                         "TASK": ["work status"],
                         "CALENDAR_EVENT": ["schedule"],
                     },
-                    output_types={"GMAIL_DRAFT": "CREATE"},
                 )
             if self.searchable_target:
-                return _resource_role_decisions(
+                return _source_dependency_decisions(
                     projection,
                     source_types={"GMAIL_THREAD": ["shipment criteria", "owner"]},
                 )
             needs_action = self.request_confirmation or has_confirmation
             return (
-                _resource_role_decisions(
-                    projection,
-                    output_types={"CALENDAR_EVENT": "CREATE"},
-                )
+                _source_dependency_decisions(projection)
                 if needs_action
-                else _resource_role_decisions(
+                else _source_dependency_decisions(
                     projection,
                     source_types={"GITHUB_ISSUE": []} if self.github_retrieval else {},
                 )
+            )
+        if prompt_id == "request_understanding.identify_output_responsibilities":
+            needs_action = self.request_confirmation or has_confirmation
+            return _output_responsibility_decisions(
+                projection,
+                output_types=(
+                    {"GMAIL_DRAFT": "CREATE"}
+                    if self.cross_source_draft
+                    else ({"CALENDAR_EVENT": "CREATE"} if needs_action else {})
+                ),
             )
         if prompt_id == "request_understanding.identify_source_status":
             return {"statuses": []}
@@ -253,9 +259,7 @@ class _ComponentInferencePort:
                 return {
                     "missing_information_owner": "USER" if first_attempt else "CONNECTOR",
                     "missing_fields": (
-                        ["target_resource"]
-                        if first_attempt
-                        else ["shipment criteria and owner"]
+                        ["target_resource"] if first_attempt else ["shipment criteria and owner"]
                     ),
                 }
             needs_confirmation = self.request_confirmation and not has_confirmation
@@ -812,44 +816,46 @@ def _merge_decision(
     }
 
 
-def _resource_role_decisions(
+def _source_dependency_decisions(
     projection: Mapping[str, object],
     *,
     source_types: Mapping[str, list[str]] | None = None,
-    output_types: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     sources = source_types or {}
-    outputs = output_types or {}
     decisions: list[dict[str, object]] = []
-    candidates = cast(list[Mapping[str, object]], projection["resource_candidates"])
+    candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
     for candidate in candidates:
         resource_type = cast(str, candidate["resource_type"])
         information = sources.get(resource_type)
-        effect = outputs.get(resource_type)
-        if information is not None and effect is not None:
+        if information is not None:
             decisions.append(
                 {
                     "resource_type": resource_type,
-                    "role": "SOURCE_AND_OUTPUT",
-                    "required_information": information,
-                    "effect": effect,
-                }
-            )
-        elif information is not None:
-            decisions.append(
-                {
-                    "resource_type": resource_type,
-                    "role": "SOURCE",
+                    "dependency": "SOURCE_REQUIRED",
                     "required_information": information,
                 }
-            )
-        elif effect is not None:
-            decisions.append(
-                {"resource_type": resource_type, "role": "OUTPUT", "effect": effect}
             )
         else:
-            decisions.append({"resource_type": resource_type, "role": "NONE"})
-    return {"resource_decisions": decisions}
+            decisions.append({"resource_type": resource_type, "dependency": "SOURCE_NOT_REQUIRED"})
+    return {"source_dependencies": decisions}
+
+
+def _output_responsibility_decisions(
+    projection: Mapping[str, object],
+    *,
+    output_types: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    outputs = output_types or {}
+    candidates = cast(list[Mapping[str, object]], projection["output_candidates"])
+    return {
+        "output_responsibilities": [
+            {
+                "resource_type": candidate["resource_type"],
+                "effect": outputs.get(cast(str, candidate["resource_type"]), "NONE"),
+            }
+            for candidate in candidates
+        ]
+    }
 
 
 def _confirm_early(_state: object) -> tuple[None, dict[str, object]]:
@@ -881,7 +887,8 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     assert llm.calls == [
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
-        "request_understanding.identify_resource_responsibilities",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
@@ -912,9 +919,7 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
     assert llm.calls.count("request_understanding.detect_ambiguity") == 2
     resolution = cast(
         Mapping[str, object],
-        llm.inputs["request_understanding.detect_ambiguity"][0][
-            "resolution_responsibilities"
-        ],
+        llm.inputs["request_understanding.detect_ambiguity"][0]["resolution_responsibilities"],
     )
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
@@ -947,10 +952,8 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
     }
-    role_input = llm.inputs[
-        "request_understanding.identify_resource_responsibilities"
-    ][0]
-    assert {item["effect"]: item["prohibition"] for item in role_input["effect_prohibitions"]}[
+    output_input = llm.inputs["request_understanding.identify_output_responsibilities"][0]
+    assert {item["effect"]: item["prohibition"] for item in output_input["effect_prohibitions"]}[
         "SEND"
     ] == "FORBIDDEN"
     source_status_input = llm.inputs["request_understanding.identify_source_status"][0]
@@ -958,9 +961,7 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         "TASK",
         "CALENDAR_EVENT",
     ]
-    assert source_status_input["outputs"] == [
-        {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
-    ]
+    assert source_status_input["outputs"] == [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]
 
 
 def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
@@ -1191,9 +1192,7 @@ def test_retrieval__compiled_exhaustive_collection__reads_unread_page_before_fin
 
     assert connector.call_count == 2
     assert llm.calls.count("retrieval.assess_sufficiency") == 2
-    assert result["retrieval_result"]["collection_results"][0][
-        "continuation_status"
-    ] == "EXHAUSTED"
+    assert result["retrieval_result"]["collection_results"][0]["continuation_status"] == "EXHAUSTED"
 
 
 @pytest.mark.parametrize(
