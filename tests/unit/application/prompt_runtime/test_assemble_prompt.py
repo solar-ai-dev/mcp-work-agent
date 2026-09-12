@@ -65,6 +65,52 @@ def test_assemble_prompt__uses_registered_source__and_allowlisted_projection(
     assert '"answer": "```json ... ```"' in assembled
 
 
+def test_output_responsibility_prompt__assembles_semantic_contrast_examples(
+    tmp_path: Path,
+) -> None:
+    manifest_path, contract_path = copy_prompt_runtime_artifacts(tmp_path)
+    prompt_id = "request_understanding.identify_output_responsibilities"
+    activate_prompt_slot(manifest_path, prompt_id)
+    registry = PromptRegistry(manifest_path, contract_path)
+    prompt_ref = registry.lookup_by_id(prompt_id)
+
+    assembled = assemble_prompt(
+        prompt_ref,
+        {
+            "user_request": "이 메일에서 날짜, 시간, 장소, 요청사항만 뽑아줘.",
+            "selected_resource_refs": [
+                {
+                    "connector_id": "google_workspace",
+                    "resource_type": "gmail_thread",
+                    "resource_id": "thread-1",
+                }
+            ],
+            "goal_candidate": {"goal": "선택한 메일에서 필요한 정보를 답한다"},
+            "output_candidates": [
+                {"resource_type": "GMAIL_MESSAGE", "allowed_output_effects": ["SEND"]},
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "allowed_output_effects": ["CREATE", "UPDATE"],
+                },
+                {"resource_type": "TASK", "allowed_output_effects": ["CREATE"]},
+            ],
+            "effect_prohibitions": [
+                {"effect": effect, "prohibition": "NOT_FORBIDDEN"}
+                for effect in ("CREATE", "UPDATE", "SEND", "DELETE")
+            ],
+        },
+        registry=registry,
+    )
+
+    assert prompt_ref.prompt_version == "1.0.1"
+    assert "참조하거나 읽는 Source Resource와 외부 변경의 대상 Resource" in assembled
+    assert "정보를 Answer로 제공하는 일은 외부 Resource를" in assembled
+    assert "effect가 가능하거나 `NOT_FORBIDDEN`이라는 사실" in assembled
+    assert '요청: "이 메일 내용을 요약해줘."' in assembled
+    assert '요청: "이 메일 내용으로 할 일을 만들어줘."' in assembled
+    assert '요청: "이 메일 읽고 그 내용으로 태스크를 만들어줘."' in assembled
+
+
 def test_assemble_prompt_rejects__forbidden_previous_run__and_evaluation_fields(
     tmp_path: Path,
 ) -> None:
