@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "project": "google-work-agent-development",
+  "experiment_id": "contract-audit-pre-smoke-six-20260913",
+  "raw_payload_included": false,
+  "runs": [
+    {
+      "run_id": "180e8b44-9497-4170-aea5-4ebdd4d278ad",
+      "roots": [
+        {"root_id": "01a09736-1eb7-7b30-bad4-8e1d5e80c752", "status": "success", "span_count": 1, "node": 0, "llm": 0, "connector": 0, "kind": "orchestration"},
+        {"root_id": "01a09736-1ed6-7ad3-8d55-1dae6a612521", "status": "success", "span_count": 13, "node": 6, "llm": 6, "connector": 0, "kind": "initial execution"},
+        {"root_id": "01a09737-7d89-7e83-b22f-7eb08ff39479", "status": "error", "span_count": 12, "node": 3, "llm": 8, "connector": 0, "kind": "confirmation resume"}
+      ],
+      "node_order": ["initialize", "request_understanding", "identify_goal", "identify_temporal_scope", "detect_ambiguity", "finalize_intent", "confirmation resume", "request_understanding", "identify_goal"],
+      "failure": {"safe_error_code": "LLM_CALL_BUDGET_EXHAUSTED", "domain_reason": "PROFILE_LLM_LIMIT_EXHAUSTED"}
+    },
+    {
+      "run_id": "b8dc45fd-d746-4846-93a5-c40d43bf288e",
+      "root_id": "01a09739-398d-7db2-b045-9ea30a4c1443",
+      "status": "error",
+      "span_count": 24,
+      "node": 15,
+      "llm": 8,
+      "connector": 0,
+      "node_order": ["initialize", "request_understanding", "identify_goal", "identify_temporal_scope", "detect_ambiguity", "finalize_intent", "tool_route", "determine_io_resources", "bind_registry_candidates", "select_tool_if_needed", "finalize_route", "validate_route", "retrieval_entry", "context_retriever", "plan_query"],
+      "failure": {"stage": "QUERY_PLAN_VALIDATOR", "rule": "RETRIEVAL_ROUTE_SCOPE_VIOLATION", "paths": ["$.route_queries[].detail_candidate_ref"]}
+    },
+    {
+      "run_id": "26b0eb24-37fe-4074-a49e-8be3b6f15e04",
+      "root_id": "01a0973a-6354-7683-aca2-2cb2eb2a1ee3",
+      "status": "success",
+      "span_count": 141,
+      "node": 113,
+      "llm": 14,
+      "connector": 13,
+      "node_order": ["request_understanding", "tool_route", "plan_query", "build_query", "execute_read", "normalize_segments", "rag_retrieve", "select_evidence", "assess_sufficiency", "planning", "outline_answer", "compose_answer", "terminal_commit"],
+      "failure": {"semantic_owner": "identify_goal", "secondary": "assess_sufficiency / answer truthfulness"}
+    },
+    {
+      "run_id": "e9cfabd1-9c3a-4be9-8d88-7e2045ebc7e4",
+      "root_id": "01a0973c-86d2-7792-b9bc-5cf92f7e862e",
+      "status": "success",
+      "span_count": 141,
+      "node": 113,
+      "llm": 14,
+      "connector": 13,
+      "node_order": ["request_understanding", "tool_route", "plan_query", "build_query", "execute_read", "normalize_segments", "rag_retrieve", "select_evidence", "assess_sufficiency", "planning", "outline_answer", "compose_answer", "terminal_commit"],
+      "failure": null
+    },
+    {
+      "run_id": "7118fe0b-d0ea-4948-b10b-76146c74ea6c",
+      "root_id": "01a0973e-65a6-70f1-b406-b1db2f36df55",
+      "status": "error",
+      "span_count": 6,
+      "node": 2,
+      "llm": 2,
+      "connector": 0,
+      "node_order": ["request_understanding", "identify_goal", "schema repair"],
+      "failure": {"stage": "POST_INFERENCE_VALIDATION", "rule": "OUTPUT_SCHEMA_INVALID", "paths": ["$.constraints.additional_constraints[0].field"]}
+    },
+    {
+      "run_id": "93146f90-4f45-42ad-95ef-c5752df9028c",
+      "root_id": "01a0973f-9841-7431-a814-e2243dfa5542",
+      "status": "error",
+      "span_count": 40,
+      "node": 26,
+      "llm": 12,
+      "connector": 1,
+      "node_order": ["request_understanding", "tool_route", "plan_query", "build_query", "execute_read", "normalize_segments", "rag_retrieve", "select_evidence", "assess_sufficiency", "planning", "draft_action_objective_per_output_route", "compose_arguments_per_output_route"],
+      "failure": {"error_type": "PlanningArgumentBindingError", "owner": "compose_arguments_per_output_route"}
+    }
+  ]
+}

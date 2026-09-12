@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "case": "Atlas q19",
+  "run_id": "e9cfabd1-9c3a-4be9-8d88-7e2045ebc7e4",
+  "langgraph_thread_id": "60f9e8b9-4469-4f91-afd6-df954a0bc054",
+  "business": "PASS",
+  "contract": "PASS",
+  "terminal": "COMPLETED",
+  "truthfulness": "PASS",
+  "safety": "NOT_REACHED",
+  "request_understanding": {
+    "source_reads": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+    "outputs": [],
+    "ambiguity_owner": "CONNECTOR",
+    "confirmation_required": false
+  },
+  "retrieval": {
+    "initial_query": {"operation": "SEARCH", "mode": "INITIAL", "constraint_kinds": ["KEYWORD"], "duplicate_constraint_kind": false},
+    "provider_result_count": 20,
+    "has_next_page": true,
+    "continuation": "HAS_MORE",
+    "connector_reads": 13,
+    "evidence_count": 8,
+    "sufficiency": "SUFFICIENT",
+    "route_reconsideration": false
+  },
+  "first_failure": null,
+  "counts": {"llm": 14, "connector_read": 13, "resource_ref": 7, "evidence": 8, "action": 0, "approval": 0, "provider_write": 0, "send": 0},
+  "final_response": "Atlas 물건의 최종 출고 기준일은 2026년 8월 19일 오전이며, 출고 연락은 지민이 담당합니다.",
+  "trace": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a0973c-86d2-7792-b9bc-5cf92f7e862e/run/01a0973c-86d2-7792-b9bc-5cf92f7e862e"
+}

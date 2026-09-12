@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "case": "Selected Event",
+  "run_id": "b8dc45fd-d746-4846-93a5-c40d43bf288e",
+  "langgraph_thread_id": "5bdbe08a-5ede-4e42-aee8-a808946c5d4b",
+  "entry_mode": "RESOURCE_SELECTED",
+  "business": "FAIL",
+  "contract": "FAIL",
+  "terminal": "BLOCKED",
+  "truthfulness": "PASS",
+  "safety": "PASS",
+  "semantic": {
+    "selected_resource_count": 1,
+    "source_dependencies": [{"resource_type": "CALENDAR_EVENT", "dependency": "SOURCE_REQUIRED"}],
+    "unexpected_outputs": [{"resource_type": "GMAIL_MESSAGE", "effect": "SEND"}],
+    "ambiguity_owner": "CONNECTOR",
+    "ambiguity_missing_fields": ["start", "end"]
+  },
+  "validation": {
+    "stage": "QUERY_PLAN_VALIDATOR",
+    "rule": "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+    "affected_field_paths": ["$.route_queries[].detail_candidate_ref"],
+    "candidate_operation": "DETAIL_FETCH",
+    "detail_candidate_ref_present": true
+  },
+  "first_failure": {
+    "owner": "request_understanding.identify_output_responsibilities",
+    "producer": "LLM semantic output",
+    "reason": "조회 질문에서 GMAIL_MESSAGE/SEND output을 생성",
+    "secondary": "selected Event DETAIL_FETCH candidate가 route-scope validator에서 거절되어 Connector 미도달"
+  },
+  "counts": {"llm": 8, "connector_read": 0, "resource_ref": 1, "evidence": 0, "action": 0, "approval": 0, "provider_write": 0, "send": 0},
+  "final_response": "요청을 처리하는 중 내부 검증에 실패해 결과나 변경안을 준비하지 못했습니다. 외부 변경은 실행하지 않았습니다. 잠시 후 다시 요청해 주세요.",
+  "trace": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a09739-398d-7db2-b045-9ea30a4c1443/run/01a09739-398d-7db2-b045-9ea30a4c1443"
+}
