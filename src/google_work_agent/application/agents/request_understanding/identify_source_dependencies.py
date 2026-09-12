@@ -151,7 +151,7 @@ def build_source_dependency_output_schema(
                 "dependency": {"const": "SOURCE_REQUIRED"},
                 "required_information": {
                     "type": "array",
-                    "minItems": 0,
+                    "minItems": 1,
                     "maxItems": 8,
                     "uniqueItems": True,
                     "items": dict(_NONEMPTY_INFORMATION_SCHEMA),
@@ -179,7 +179,7 @@ def build_source_dependency_output_schema(
         ],
     }
     return OutputSchemaDefinition(
-        schema_version="request-source-dependency-decision-v1",
+        schema_version="request-source-dependency-decision-v2",
         json_schema={
             "type": "object",
             "additionalProperties": False,

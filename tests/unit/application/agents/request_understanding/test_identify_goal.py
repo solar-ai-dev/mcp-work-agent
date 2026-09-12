@@ -871,7 +871,7 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
         "request-goal-candidate-v15",
         "request-effect-prohibition-decision-v1",
-        "request-source-dependency-decision-v1",
+        "request-source-dependency-decision-v2",
         "request-output-responsibility-decision-v1",
         "request-source-status-v2",
     ]
@@ -2103,7 +2103,7 @@ def test_identify_goal__inference_omits_topic__preserves_only_verbatim_request()
                 "completion_conditions": ["Summarize schedule information"],
                 "constraints": _goal_constraints(),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD", required_information=["message_history"]
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -2122,7 +2122,7 @@ def test_identify_goal__inference_omits_topic__preserves_only_verbatim_request()
     assert "end" not in by_field
     assert by_field["original_search_request"] == [request_text]
     assert "search_terms" not in by_field
-    assert "required_information" not in by_field
+    assert by_field["required_information"] == ["message_history"]
     assert candidate["analysis_requirement"] == "NONE"
 
 

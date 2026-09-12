@@ -130,7 +130,9 @@ class _RepairingAgent:
                 "additional_constraints": [],
             },
             "resource_responsibilities": {
-                "source_reads": [{"resource_type": "TASK", "required_information": []}],
+                "source_reads": [
+                    {"resource_type": "TASK", "required_information": ["task_identity"]}
+                ],
                 "outputs": [],
             },
             "analysis_requirement": "REQUIRED",

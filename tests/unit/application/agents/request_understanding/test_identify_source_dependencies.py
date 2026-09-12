@@ -109,6 +109,15 @@ def test_source_validation__with_cross_resource_request__preserves_dependencies(
     )
 
 
+def test_source_schema__source_required__requires_non_empty_information() -> None:
+    candidate = _decisions(sources={"TASK": []})
+
+    assert validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+
+
 @pytest.mark.parametrize(
     ("required_resource", "excluded_related_resource", "required_information"),
     [

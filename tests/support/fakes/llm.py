@@ -81,7 +81,7 @@ class FakeStructuredInferencePort:
         )
         output: object
         if (
-            output_schema_ref.schema_version == "request-source-dependency-decision-v1"
+            output_schema_ref.schema_version == "request-source-dependency-decision-v2"
             and self._pending_resource_responsibilities is not None
         ):
             output = _source_dependency_decisions_from_responsibilities(
@@ -153,7 +153,7 @@ class FakeStructuredInferencePort:
                         if key != "resource_responsibilities"
                     }
             elif (
-                output_schema_ref.schema_version == "request-source-dependency-decision-v1"
+                output_schema_ref.schema_version == "request-source-dependency-decision-v2"
                 and isinstance(output, Mapping)
                 and "source_reads" in output
                 and "outputs" in output
@@ -237,13 +237,18 @@ def _source_dependency_decisions_from_responsibilities(
         resource_type = cast(str, candidate["resource_type"])
         selected_source = sources.get(resource_type)
         if selected_source is not None:
+            required_information = list(
+                cast(Sequence[str], selected_source["required_information"])
+            )
+            if not required_information:
+                required_information = [
+                    cast(str, cast(Sequence[object], candidate["owned_fact_kinds"])[0])
+                ]
             decisions.append(
                 {
                     "resource_type": resource_type,
                     "dependency": "SOURCE_REQUIRED",
-                    "required_information": list(
-                        cast(Sequence[str], selected_source["required_information"])
-                    ),
+                    "required_information": required_information,
                 }
             )
         else:

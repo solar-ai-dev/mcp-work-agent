@@ -62,7 +62,7 @@
       "node_state": "INITIAL",
       "purpose": "identify_source_dependencies",
       "input_schema_version": 2,
-      "output_schema_version": 1,
+      "output_schema_version": 2,
       "source": "sources/request_understanding.identify_source_dependencies.md",
       "activation_evidence": null
     },

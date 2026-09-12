@@ -606,6 +606,9 @@ def _goal_source_dependency_decisions(
         resource_type = str(candidate["resource_type"])
         required_information = source_reads.get(resource_type)
         if required_information is not None:
+            if not required_information:
+                owned_fact_kinds = cast(list[object], candidate["owned_fact_kinds"])
+                required_information = [str(owned_fact_kinds[0])]
             decisions.append(
                 {
                     "resource_type": resource_type,
