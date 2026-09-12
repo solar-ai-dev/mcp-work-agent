@@ -297,11 +297,10 @@ class ToolCallingLLMProvider(Protocol):
 class SchemaRepairer(Protocol):
     """Optional repair boundary for one invalid structured payload.
 
-    Covers both JSON-schema-shape failures and semantic/contract-validator
-    failures -- both are routed through the same one-attempt-per-node-call
-    budget (``RuntimePolicy.structured_output_repair_budget``). A real
-    implementation must re-invoke the same routed ``provider`` so the
-    repair call uses the same runtime/model that produced ``failed_output``.
+    Covers JSON-schema-shape failures only. Semantic/contract failures use
+    their owning Agent's bounded semantic-revision path. A real implementation
+    must re-invoke the same routed ``provider`` so the repair call uses the
+    same runtime/model that produced ``failed_output``.
     """
 
     def repair(

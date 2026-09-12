@@ -57,6 +57,18 @@ AMBIGUITY_SCHEMA = OutputSchemaDefinition(
         "additionalProperties": False,
     },
 )
+SCOPED_REPAIR_SCHEMA = OutputSchemaDefinition(
+    "scoped-repair-v1",
+    {
+        "type": "object",
+        "required": ["answer", "semantic_decision"],
+        "properties": {
+            "answer": {"type": "string"},
+            "semantic_decision": {"enum": ["KEEP", "CHANGE"]},
+        },
+        "additionalProperties": False,
+    },
+)
 
 
 @dataclass
@@ -455,6 +467,66 @@ def test_json_validation__malformed_response__uses_bounded_schema_repair() -> No
     assert repairer.failed_outputs == [malformed]
 
 
+def test_schema_repair__reported_field_only__is_accepted() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    repairer = _Repairer(repaired={"answer": "fixed", "semantic_decision": "KEEP"})
+
+    result = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=_Provider(
+            runtime=ActualRuntime.LOCAL_GPU,
+            content={"answer": 42, "semantic_decision": "KEEP"},
+        ),
+        repairer=repairer,
+    ).infer("LOCAL_GPU", PROMPT, {"user_request": "hello"}, SCOPED_REPAIR_SCHEMA)
+
+    assert result.structured_output == {"answer": "fixed", "semantic_decision": "KEEP"}
+    assert repairer.calls == 1
+
+
+def test_schema_repair__unaffected_semantic_change__is_rejected() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    repairer = _Repairer(repaired={"answer": "fixed", "semantic_decision": "CHANGE"})
+    router = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=_Provider(
+            runtime=ActualRuntime.LOCAL_GPU,
+            content={"answer": 42, "semantic_decision": "KEEP"},
+        ),
+        repairer=repairer,
+    )
+
+    with pytest.raises(
+        LLMInvocationError,
+        match="schema repair changed fields outside the reported failure scope",
+    ) as raised:
+        router.infer("LOCAL_GPU", PROMPT, {"user_request": "hello"}, SCOPED_REPAIR_SCHEMA)
+
+    assert raised.value.code is LLMErrorCode.OUTPUT_SCHEMA_INVALID
+    assert raised.value.affected_field_paths == ("$.semantic_decision",)
+    assert repairer.calls == 1
+
+
+def test_valid_first_output__without_schema_error__skips_repair() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    repairer = _Repairer()
+
+    result = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=_Provider(
+            runtime=ActualRuntime.LOCAL_GPU,
+            content={"answer": "valid", "semantic_decision": "KEEP"},
+        ),
+        repairer=repairer,
+    ).infer("LOCAL_GPU", PROMPT, {"user_request": "hello"}, SCOPED_REPAIR_SCHEMA)
+
+    assert result.structured_output == {"answer": "valid", "semantic_decision": "KEEP"}
+    assert repairer.calls == 0
+
+
 def test_actual_provider_and_repair_dispatches__with_trace_port__emit_separate_safe_spans() -> (
     None
 ):
@@ -575,9 +647,7 @@ def test_supported_prompt_trace__projection_failure__does_not_change_provider_re
 def test_schema_repair_trace__keeps_initial_and_repaired_candidates__separate() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     trace = _ExternalCallTrace()
-    repairer = _Repairer(
-        repaired={"missing_information_owner": "CONNECTOR", "missing_fields": ["event_time"]}
-    )
+    repairer = _Repairer(repaired={"missing_information_owner": "NONE", "missing_fields": []})
 
     result = _router(
         checkpoint=checkpoint,
@@ -595,10 +665,7 @@ def test_schema_repair_trace__keeps_initial_and_repaired_candidates__separate() 
         AMBIGUITY_SCHEMA,
     )
 
-    assert result.structured_output == {
-        "missing_information_owner": "CONNECTOR",
-        "missing_fields": ["event_time"],
-    }
+    assert result.structured_output == {"missing_information_owner": "NONE", "missing_fields": []}
     assert [item.call_kind for item in trace.starts] == [
         "LLM_INFERENCE",
         "LLM_SCHEMA_REPAIR",
@@ -610,8 +677,8 @@ def test_schema_repair_trace__keeps_initial_and_repaired_candidates__separate() 
     }
     assert trace.finishes[1][1].safe_semantic_output == {
         "projection_version": 1,
-        "missing_information_owner": "CONNECTOR",
-        "missing_fields": {"count": 1, "values": ["event_time"]},
+        "missing_information_owner": "NONE",
+        "missing_fields": {"count": 0},
     }
 
 

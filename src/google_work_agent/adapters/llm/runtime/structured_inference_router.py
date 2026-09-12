@@ -15,6 +15,9 @@ from google_work_agent.adapters.langgraph.langsmith_llm_semantic_projection impo
 )
 from google_work_agent.adapters.llm.runtime.llm_credential_router import LlmCredentialRouter
 from google_work_agent.adapters.llm.runtime.llm_runtime_status_router import LlmRuntimeStatusRouter
+from google_work_agent.adapters.llm.runtime.schema_repair_scope import (
+    find_out_of_scope_schema_repair_changes,
+)
 from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
     LocalModelCatalogUnavailableError,
 )
@@ -759,6 +762,18 @@ class StructuredInferenceRuntimeRouter:
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
                 "schema repair did not produce a valid payload: " + "; ".join(repair_errors[-8:]),
                 affected_field_paths=_validation_error_paths(repair_errors),
+            )
+        out_of_scope_changes = find_out_of_scope_schema_repair_changes(
+            failed_output=candidate,
+            repaired_output=repaired,
+            affected_field_paths=_validation_error_paths(errors),
+            output_schema=output_schema.json_schema,
+        )
+        if out_of_scope_changes:
+            raise LLMInvocationError(
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "schema repair changed fields outside the reported failure scope",
+                affected_field_paths=out_of_scope_changes,
             )
         return repaired, 2
 
