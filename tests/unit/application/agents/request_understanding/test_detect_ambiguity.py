@@ -626,6 +626,195 @@ def test_unselected_read__target_identity_named_as_connector_need__still_asks_us
     assert len(runtime.calls) == 1
 
 
+def test_unselected_calendar_event_identity__is_user_owned_target_identity() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["event_identity"],
+            }
+        ]
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("그 일정 언제야?"),
+        goal_candidate=_calendar_event_identity_candidate(),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["event_identity"],
+    }
+    assert len(runtime.calls) == 1
+
+
+def test_searchable_calendar_event_identity__keeps_target_anchor_conflict() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["event_identity"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["start"],
+            },
+        ]
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("Nimbus 일정을 찾아서 언제인지 알려줘."),
+        goal_candidate=_calendar_event_identity_candidate(searchable=True),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
+    )
+
+
+def test_selected_calendar_event_identity__keeps_target_resolved_conflict() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["event_identity"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["start"],
+            },
+        ]
+    )
+    selected_event = SelectedResourceRef(
+        "ref-event-42",
+        "google_workspace",
+        "calendar_event",
+        "event-42",
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("그 일정 언제야?", selected_resources=(selected_event,)),
+        goal_candidate=_calendar_event_identity_candidate(),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
+    )
+
+
+def test_connector_owned_event_attribute__keeps_resolution_owner_conflict() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["start"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["start"],
+            },
+        ]
+    )
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("Nimbus 일정이 언제인지 알려줘."),
+        goal_candidate=_calendar_event_identity_candidate(),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
+    )
+
+
+def test_event_container_identity__is_not_reclassified_as_event_target_identity() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["calendar_identity"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["calendar_identity"],
+            },
+        ]
+    )
+    candidate = _calendar_event_identity_candidate()
+    responsibilities = cast(dict[str, Any], candidate["resource_responsibilities"])
+    source_reads = cast(list[dict[str, Any]], responsibilities["source_reads"])
+    source_reads[0]["required_information"] = ["calendar_identity"]
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("어느 캘린더에서 일정을 확인해야 하는지 찾아줘."),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
+    assert len(runtime.calls) == 2
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
+    )
+
+
+def test_unselected_task_identity__uses_same_user_owned_target_contract() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["task_identity"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "대상 할 일 확인",
+        "completion_conditions": ["선택한 할 일을 답한다"],
+        "constraints": [],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["TASK"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "TASK",
+                    "required_information": ["task_identity", "title"],
+                }
+            ],
+            "outputs": [],
+        },
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("그 할 일 보여줘."),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["task_identity"],
+    }
+    assert len(runtime.calls) == 1
+
+
 def test_selected_calendar_read__target_identity_cannot_be_asked_again() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
@@ -991,6 +1180,39 @@ def _github_candidate(repository: str) -> RequestGoalCandidateV1:
         "constraints": [{"kind": "RESOURCE", "field": "repository", "value": repository}],
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": ["GITHUB_ISSUE"],
+        "analysis_requirement": "NONE",
+    }
+
+
+def _calendar_event_identity_candidate(
+    *,
+    searchable: bool = False,
+) -> RequestGoalCandidateV1:
+    return {
+        "goal": "일정 시각 확인",
+        "completion_conditions": ["대상 일정의 시각을 답한다"],
+        "constraints": (
+            [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "search_terms",
+                    "value": ["Nimbus"],
+                }
+            ]
+            if searchable
+            else []
+        ),
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["event_identity", "start"],
+                }
+            ],
+            "outputs": [],
+        },
         "analysis_requirement": "NONE",
     }
 

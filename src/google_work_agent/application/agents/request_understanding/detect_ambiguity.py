@@ -42,6 +42,8 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowStartRequest,
 )
 
+from .identify_source_dependencies import resource_identity_fact_kind
+
 _SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset({"search_terms", "subject", "search_criteria_subject"})
 
 
@@ -244,9 +246,14 @@ def _validate_ambiguity_candidate(
             reason_code="REQUEST_AMBIGUITY_OWNER_FIELDS_MISMATCH",
             affected_field_paths=("$.missing_information_owner", "$.missing_fields"),
         )
+    target_identity_resource_types = _target_identity_resource_types(
+        missing_fields,
+        goal_candidate=goal_candidate,
+    )
     if missing_information_owner == "USER" and _overlaps_connector_owned_information(
         missing_fields,
         goal_candidate=goal_candidate,
+        target_identity_fields=frozenset(target_identity_resource_types),
     ):
         raise RequestAmbiguityValidationError(
             "retrieval-owned information was reclassified as a user-owned choice",
@@ -259,10 +266,15 @@ def _validate_ambiguity_candidate(
         )
     if (
         missing_information_owner == "USER"
-        and "target_resource" in missing_fields
+        and ("target_resource" in missing_fields or target_identity_resource_types)
         and _selected_target_identity_is_resolved(
             goal_candidate,
             selected_resources=selected_resources,
+            resource_specific_target_types=frozenset(
+                resource_type
+                for resource_types in target_identity_resource_types.values()
+                for resource_type in resource_types
+            ),
         )
     ):
         raise RequestAmbiguityValidationError(
@@ -276,7 +288,7 @@ def _validate_ambiguity_candidate(
         )
     if (
         missing_information_owner == "USER"
-        and "target_resource" in missing_fields
+        and ("target_resource" in missing_fields or target_identity_resource_types)
         and _searchable_target_anchor_count(goal_candidate) > 0
         and _connector_owned_source_count(goal_candidate) > 0
     ):
@@ -354,6 +366,7 @@ def _overlaps_connector_owned_information(
     missing_fields: Sequence[str],
     *,
     goal_candidate: RequestGoalCandidateV1,
+    target_identity_fields: frozenset[str],
 ) -> bool:
     connector_information = [
         item["information"] for item in _connector_owned_information(goal_candidate)
@@ -361,15 +374,37 @@ def _overlaps_connector_owned_information(
     return any(
         _same_information_need(missing, owned)
         for missing in missing_fields
-        if missing != "target_resource"
+        if missing != "target_resource" and missing not in target_identity_fields
         for owned in connector_information
     )
+
+
+def _target_identity_resource_types(
+    missing_fields: Sequence[str],
+    *,
+    goal_candidate: RequestGoalCandidateV1,
+) -> dict[str, frozenset[str]]:
+    responsibilities = goal_candidate.get("resource_responsibilities")
+    if not responsibilities:
+        return {}
+    identity_resource_types: dict[str, set[str]] = {}
+    for source_read in responsibilities["source_reads"]:
+        resource_type = source_read["resource_type"].strip().upper()
+        identity_fact_kind = resource_identity_fact_kind(resource_type)
+        if identity_fact_kind is None or identity_fact_kind not in missing_fields:
+            continue
+        identity_resource_types.setdefault(identity_fact_kind, set()).add(resource_type)
+    return {
+        field: frozenset(resource_types)
+        for field, resource_types in identity_resource_types.items()
+    }
 
 
 def _selected_target_identity_is_resolved(
     goal_candidate: RequestGoalCandidateV1,
     *,
     selected_resources: Sequence[SelectedResourceRef],
+    resource_specific_target_types: frozenset[str],
 ) -> bool:
     selected_types = {
         item.resource_type.strip().upper()
@@ -378,6 +413,8 @@ def _selected_target_identity_is_resolved(
     }
     if not selected_types:
         return False
+    if resource_specific_target_types:
+        return bool(selected_types & resource_specific_target_types)
     requested_types = {
         item.strip().upper() for item in goal_candidate["requested_resource_hints"] if item.strip()
     }

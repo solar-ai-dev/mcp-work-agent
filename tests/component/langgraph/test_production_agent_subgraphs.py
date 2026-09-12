@@ -113,6 +113,7 @@ class _ComponentInferencePort:
         request_reconsideration: bool = False,
         duplicate_found: bool = False,
         searchable_target: bool = False,
+        unresolved_calendar_identity: bool = False,
         cross_source_draft: bool = False,
         container_retrieval: bool = False,
         calendar_event_query: bool = False,
@@ -125,6 +126,7 @@ class _ComponentInferencePort:
         self.request_reconsideration = request_reconsideration
         self.duplicate_found = duplicate_found
         self.searchable_target = searchable_target
+        self.unresolved_calendar_identity = unresolved_calendar_identity
         self.cross_source_draft = cross_source_draft
         self.container_retrieval = container_retrieval
         self.calendar_event_query = calendar_event_query
@@ -196,6 +198,23 @@ class _ComponentInferencePort:
                     },
                     "analysis_requirement": "NONE",
                 }
+            if self.unresolved_calendar_identity:
+                return {
+                    "goal": "confirm the target event time",
+                    "completion_conditions": ["return the selected event time"],
+                    "constraints": {
+                        "search_terms": [],
+                        "business_concepts": ["event time"],
+                        "person": [],
+                        "sender": [],
+                        "recipient": [],
+                        "subject": [],
+                        "period": [],
+                        "coverage_requirement": [],
+                        "additional_constraints": [],
+                    },
+                    "analysis_requirement": "NONE",
+                }
             needs_action = self.request_confirmation or has_confirmation
             return {
                 "goal": "schedule team sync" if needs_action else "summarize status",
@@ -243,6 +262,11 @@ class _ComponentInferencePort:
                     projection,
                     source_types={"GMAIL_THREAD": ["shipment criteria", "owner"]},
                 )
+            if self.unresolved_calendar_identity:
+                return _source_dependency_decisions(
+                    projection,
+                    source_types={"CALENDAR_EVENT": ["event_identity", "start"]},
+                )
             needs_action = self.request_confirmation or has_confirmation
             return (
                 _source_dependency_decisions(projection)
@@ -265,6 +289,11 @@ class _ComponentInferencePort:
         if prompt_id == "request_understanding.identify_source_status":
             return {"statuses": []}
         if prompt_id == "request_understanding.detect_ambiguity":
+            if self.unresolved_calendar_identity:
+                return {
+                    "missing_information_owner": "USER",
+                    "missing_fields": ["event_identity"],
+                }
             if self.searchable_target:
                 first_attempt = self.calls.count(prompt_id) == 1
                 return {
@@ -1096,6 +1125,40 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
     )
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
+
+
+def test_request_understanding__compiled_resource_identity__requests_confirmation() -> None:
+    llm = _ComponentInferencePort(unresolved_calendar_identity=True)
+    captured_ambiguity: dict[str, object] = {}
+
+    def confirm_inline(
+        state: Mapping[str, object],
+    ) -> tuple[None, dict[str, object]]:
+        captured_ambiguity.update(cast(Mapping[str, object], state["ambiguity_candidate"]))
+        return _confirm_early(state)
+
+    graph = RequestUnderstandingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=confirm_inline,
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(_state(request_text="그 일정 언제야?"))
+
+    assert result["__workflow_control__"] == {"stage": "PAUSED"}
+    assert captured_ambiguity == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["event_identity"],
+    }
+    assert llm.calls.count("request_understanding.detect_ambiguity") == 1
 
 
 def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_send_ban() -> None:

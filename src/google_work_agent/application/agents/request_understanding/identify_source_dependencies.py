@@ -86,6 +86,13 @@ _OWNED_FACT_KINDS_BY_RESOURCE: dict[str, tuple[str, ...]] = {
 }
 
 
+def resource_identity_fact_kind(resource_type: str) -> str | None:
+    """Return the existing candidate metadata's own-Resource identity fact."""
+
+    owned_fact_kinds = _OWNED_FACT_KINDS_BY_RESOURCE.get(resource_type.strip().upper())
+    return None if not owned_fact_kinds else owned_fact_kinds[0]
+
+
 def build_source_dependency_candidates(
     tool_catalog: SignedToolRegistry,
 ) -> tuple[SourceDependencyCandidateV1, ...]:
@@ -255,5 +262,6 @@ __all__ = [
     "build_source_dependency_candidates",
     "build_source_dependency_output_schema",
     "identify_source_dependencies",
+    "resource_identity_fact_kind",
     "validate_source_dependency_candidate",
 ]

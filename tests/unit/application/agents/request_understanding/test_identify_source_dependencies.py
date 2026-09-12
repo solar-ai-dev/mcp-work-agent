@@ -67,6 +67,9 @@ def test_registry_candidates__are_exact_read_capabilities() -> None:
     assert "completion_status" in by_resource["TASK"]["owned_fact_kinds"]
     assert "start" in by_resource["CALENDAR_EVENT"]["owned_fact_kinds"]
     assert "start" not in by_resource["CALENDAR"]["owned_fact_kinds"]
+    assert source_dependencies.resource_identity_fact_kind("CALENDAR_EVENT") == "event_identity"
+    assert source_dependencies.resource_identity_fact_kind("TASK") == "task_identity"
+    assert source_dependencies.resource_identity_fact_kind("UNKNOWN") is None
 
 
 @pytest.mark.parametrize(
