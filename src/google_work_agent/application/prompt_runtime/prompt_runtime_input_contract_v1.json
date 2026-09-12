@@ -101,9 +101,9 @@
     {
       "prompt_slot_id": "retrieval.select_evidence",
       "runtime_node_id": "retrieval.select_evidence",
-      "input_schema_version": 4,
+      "input_schema_version": 5,
       "required_root_fields": ["request_intent", "ranked_segments", "temporal_constraints"],
-      "optional_root_fields": ["confirmation_response", "sufficiency_feedback"],
+      "optional_root_fields": ["sufficiency_feedback"],
       "output_schema_version": 3
     },
     {

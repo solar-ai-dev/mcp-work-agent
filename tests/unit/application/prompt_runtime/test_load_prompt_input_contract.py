@@ -66,6 +66,24 @@ def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
     )
 
 
+def test_select_evidence_contract__matches_the__live_typed_projection() -> None:
+    contract = load_prompt_input_contract()
+
+    projection: dict[str, object] = {
+        "request_intent": {},
+        "ranked_segments": [],
+        "temporal_constraints": [],
+        "sufficiency_feedback": [],
+    }
+    contract.validate_projection("retrieval.select_evidence", projection)
+
+    with pytest.raises(PromptRuntimeInputContractError, match="unknown Product Prompt fields"):
+        contract.validate_projection(
+            "retrieval.select_evidence",
+            {**projection, "confirmation_response": {}},
+        )
+
+
 def test_resource_responsibility_contract__requires_preceding_goal_candidate() -> None:
     contract = load_prompt_input_contract()
 

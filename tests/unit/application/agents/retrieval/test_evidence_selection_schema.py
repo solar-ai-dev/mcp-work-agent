@@ -117,4 +117,4 @@ def test_source_assessment_schema__runtime_version__matches_prompt_and_manifest(
     json_schema = cast(dict[str, Any], schema.json_schema)
     version = json_schema["properties"]["schema_version"]["enum"][0]
     assert version == contract.output_schema_version == slot["output_schema_version"] == 3
-    assert contract.input_schema_version == slot["input_schema_version"] == 4
+    assert contract.input_schema_version == slot["input_schema_version"] == 5
