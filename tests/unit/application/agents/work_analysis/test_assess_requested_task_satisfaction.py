@@ -46,7 +46,30 @@ def test_task_satisfaction__with_complete_empty_observation__returns_not_satisfi
     assert len(runtime.calls) == 1
 
 
-def test_task_satisfaction__with_incomplete_observation__rejects_determinate_result() -> None:
+@pytest.mark.parametrize(
+    "source_statuses",
+    [
+        [
+            {
+                "route_id": "task-read",
+                "resource_type": "TASK",
+                "status": "PARTIAL",
+                "observed_resource_count": 1,
+            }
+        ],
+        [
+            {
+                "route_id": "task-read",
+                "resource_type": "TASK",
+                "status": "COMPLETE",
+                "observed_resource_count": 1,
+            }
+        ],
+    ],
+)
+def test_task_satisfaction__without_empty_or_item_evidence__rejects_determinate_result(
+    source_statuses: list[dict[str, object]],
+) -> None:
     runtime = WorkAnalysisRuntimeFake(
         {
             "requested_work_status": "NOT_SATISFIED",
@@ -61,16 +84,7 @@ def test_task_satisfaction__with_incomplete_observation__rejects_determinate_res
         assess_requested_task_satisfaction(
             work_facts=[],
             evidence=[],
-            source_state={
-                "source_statuses": [
-                    {
-                        "route_id": "task-read",
-                        "resource_type": "TASK",
-                        "status": "PARTIAL",
-                        "observed_resource_count": 0,
-                    }
-                ]
-            },
+            source_state={"source_statuses": source_statuses},
             request_intent={"requested_effect_hints": ["CREATE"]},
             llm_runtime=runtime,
             prompt_ref=prompt_ref(
