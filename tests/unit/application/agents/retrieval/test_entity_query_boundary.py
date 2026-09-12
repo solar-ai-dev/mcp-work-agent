@@ -62,6 +62,30 @@ def _plan(identity: str) -> dict[str, object]:
     }
 
 
+def _provider_candidate(identity: str) -> dict[str, object]:
+    return {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                "route_id": "g",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "detail_candidate_ref": None,
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": {
+                        "participant": {
+                            "kind": "PARTICIPANT",
+                            "participants": [{"role": "SENDER", "identity": identity}],
+                            "match_mode": "ALL",
+                        }
+                    },
+                },
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize("identity", ["김대리", "김철수 대리", "@default", "primary", 'a"@b.com'])
 def test_participant_validation__unresolved_or_unsafe__rejects_schema_builder_and_checkpoint(
     identity: str,
@@ -148,14 +172,16 @@ def test_model_participant__current_request_email__rejects_invented_email() -> N
         route_operations={"g": ["SEARCH"]},
         allowed_participant_identities=resolve_request_participants(prompt_input),
     )
-    assert validate_output_schema(_plan("kim@example.com"), schema.json_schema) == []
-    assert validate_output_schema(_plan("invented@example.com"), schema.json_schema)
+    assert validate_output_schema(_provider_candidate("kim@example.com"), schema.json_schema) == []
+    assert validate_output_schema(_provider_candidate("invented@example.com"), schema.json_schema)
     unresolved_schema = bind_retrieval_query_plan_output_schema(
         route_ids=["g"],
         route_operations={"g": ["SEARCH"]},
         allowed_participant_identities=[],
     )
-    assert validate_output_schema(_plan("invented@example.com"), unresolved_schema.json_schema)
+    assert validate_output_schema(
+        _provider_candidate("invented@example.com"), unresolved_schema.json_schema
+    )
 
 
 def test_participant_search__any_role__does_not_use_body_keyword() -> None:
