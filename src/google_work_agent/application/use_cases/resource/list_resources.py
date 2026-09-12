@@ -201,7 +201,6 @@ class ListResourcesHandler:
                 "gmail",
                 query.query.strip(),
                 str(query.page_size),
-                "metadata" if query.include_thread_metadata else "no-metadata",
             ),
         )
         return _project_page("gmail", page)

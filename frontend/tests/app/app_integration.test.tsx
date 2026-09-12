@@ -2149,6 +2149,75 @@ test("uses list-only Gmail requests for unvisited intermediate pages and hydrate
     .toBe(callsBeforeSelectingIntermediate + 1);
 });
 
+test("loads Gmail page 3 when page 2 is uncached and keeps one opaque pagination chain", async () => {
+  const user = userEvent.setup();
+  const pageTwoPrefetch = deferred<Response>();
+  const pageResponses: Record<string, Promise<Response>> = { "page-2": pageTwoPrefetch.promise };
+  const requests = installUiContractFetch({
+    gmailBatch: true,
+    gmailCount: 80,
+    gmailPageResponses: pageResponses,
+  });
+  render(<App />);
+
+  await screen.findByText("자료 1");
+  await waitFor(() => expect(requests.filter((request) => request.path.includes("page_token=page-2"))).toHaveLength(1));
+  pageTwoPrefetch.resolve(jsonFetchResponse({
+    error_code: "UPSTREAM_UNAVAILABLE",
+    user_message: "prefetch unavailable",
+    retryable: true,
+    request_id: "request-1",
+    api_contract_version: "1",
+  }, 502));
+  await pageTwoPrefetch.promise;
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  pageResponses["page-2"] = Promise.resolve(gmailPageResponse(2, 80));
+
+  await user.click(screen.getByRole("button", { name: "3" }));
+  expect(await screen.findByText("자료 41")).toBeInTheDocument();
+
+  const pageTwoRequests = requests.filter((request) => request.path.includes("page_token=page-2"));
+  expect(pageTwoRequests).toHaveLength(2);
+  expect(pageTwoRequests[1]?.path).toContain("include_thread_metadata=false");
+  expect(requests.find((request) => request.path.includes("page_token=page-3"))?.path)
+    .not.toContain("include_thread_metadata=false");
+});
+
+test("loads Gmail page 3 from page 1 when page 2 is cached", async () => {
+  const user = userEvent.setup();
+  const requests = installUiContractFetch({ gmailBatch: true, gmailCount: 80 });
+  render(<App />);
+
+  await screen.findByText("자료 1");
+  await user.click(await screen.findByRole("button", { name: "2" }));
+  expect(await screen.findByText("자료 21")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "1" }));
+  expect(await screen.findByText("자료 1")).toBeInTheDocument();
+  const requestsBeforeJump = requests.length;
+
+  await user.click(screen.getByRole("button", { name: "3" }));
+  expect(await screen.findByText("자료 41")).toBeInTheDocument();
+  expect(requests.filter((request) => request.path.includes("page_token=page-2"))).toHaveLength(1);
+  expect(requests.length).toBeGreaterThan(requestsBeforeJump);
+});
+
+test("returns from Gmail page 3 through cached pages 2 and 1 without new reads", async () => {
+  const user = userEvent.setup();
+  const requests = installUiContractFetch({ gmailBatch: true, gmailCount: 80 });
+  render(<App />);
+
+  await screen.findByText("자료 1");
+  await user.click(await screen.findByRole("button", { name: "3" }));
+  expect(await screen.findByText("자료 41")).toBeInTheDocument();
+  const requestsBeforeReturn = requests.length;
+
+  await user.click(screen.getByRole("button", { name: "2" }));
+  expect(await screen.findByText("자료 21")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "1" }));
+  expect(await screen.findByText("자료 1")).toBeInTheDocument();
+  expect(requests).toHaveLength(requestsBeforeReturn);
+});
+
 test("selects the requested Gmail page during loading and restores the last loaded page on failure", async () => {
   const user = userEvent.setup();
   const pageFive = deferred<Response>();

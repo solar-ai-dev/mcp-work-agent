@@ -257,6 +257,30 @@ class _ResourceServiceStub:
         return datetime(2026, 1, 1, tzinfo=UTC)
 
 
+class _GmailPaginationServiceStub(_ResourceServiceStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gmail_metadata_modes: list[bool] = []
+
+    def list_gmail_threads(
+        self,
+        *,
+        query: str,
+        page_token: str | None,
+        page_size: int,
+        include_thread_metadata: bool = True,
+    ) -> ResourceListPage:
+        del query, page_size
+        self.gmail_page_tokens.append(page_token)
+        self.gmail_metadata_modes.append(include_thread_metadata)
+        next_token = {
+            None: "provider-gmail-page-2",
+            "provider-gmail-page-2": "provider-gmail-page-3",
+            "provider-gmail-page-3": None,
+        }[page_token]
+        return ResourceListPage(source="gmail", items=(), next_page_token=next_token)
+
+
 def _token_factory(values: Iterator[str]) -> Callable[[], str]:
     return lambda: next(values)
 
@@ -286,6 +310,88 @@ def test_provider_page_token__is_replaced_by__server_local_handle() -> None:
 
     assert raw.gmail_page_tokens == [None, "provider-next-gmail"]
     assert second.next_page_token is None
+
+
+def test_gmail_pagination_chain__supports_page_1_to_2() -> None:
+    raw = _GmailPaginationServiceStub()
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(
+            token_factory=_token_factory(iter(("local-page-2", "local-page-3")))
+        ),
+    )
+
+    first = service.list_gmail_threads(query="in:inbox", page_token=None, page_size=20)
+    second = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=first.next_page_token,
+        page_size=20,
+    )
+
+    assert second.next_page_token == "local-page-3"
+    assert raw.gmail_page_tokens == [None, "provider-gmail-page-2"]
+    assert raw.gmail_metadata_modes == [True, True]
+
+
+def test_gmail_pagination_chain__supports_page_1_to_3_with_page_2_uncached() -> None:
+    raw = _GmailPaginationServiceStub()
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(
+            token_factory=_token_factory(iter(("local-page-2", "local-page-3")))
+        ),
+    )
+
+    first = service.list_gmail_threads(query="in:inbox", page_token=None, page_size=20)
+    intermediate = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=first.next_page_token,
+        page_size=20,
+        include_thread_metadata=False,
+    )
+    target = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=intermediate.next_page_token,
+        page_size=20,
+    )
+
+    assert target.next_page_token is None
+    assert raw.gmail_page_tokens == [
+        None,
+        "provider-gmail-page-2",
+        "provider-gmail-page-3",
+    ]
+    assert raw.gmail_metadata_modes == [True, False, True]
+
+
+def test_gmail_pagination_chain__supports_page_1_to_3_with_page_2_cached() -> None:
+    raw = _GmailPaginationServiceStub()
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(
+            token_factory=_token_factory(iter(("local-page-2", "local-page-3")))
+        ),
+    )
+
+    first = service.list_gmail_threads(query="in:inbox", page_token=None, page_size=20)
+    cached = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=first.next_page_token,
+        page_size=20,
+    )
+    target = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=cached.next_page_token,
+        page_size=20,
+    )
+
+    assert target.next_page_token is None
+    assert raw.gmail_page_tokens == [
+        None,
+        "provider-gmail-page-2",
+        "provider-gmail-page-3",
+    ]
+    assert raw.gmail_metadata_modes == [True, True, True]
 
 
 def test_provider_token_cannot__be_replayed_as__a_local_continuation() -> None:
