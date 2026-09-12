@@ -755,7 +755,7 @@ review.recheck
 
 이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
 
-`prompt-runtime-input-contract-v1`은 위 25개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
+`prompt-runtime-input-contract-v1`은 위 28개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
 
 Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
@@ -773,7 +773,7 @@ prompt_runtime_input_contract:
       output_schema_version: integer
 ```
 
-`entries[].prompt_slot_id`는 위 25개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+`entries[].prompt_slot_id`는 위 28개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
 
 ### 9.3-B Tool Routing 선택 Prompt 입력
 
@@ -847,7 +847,7 @@ Offline candidate evaluation 전용이다. Product user runtime과 분리하고 
 | 검증 결과 | Node DEV/HOLDOUT/Safety 결과 artifact path/hash |
 | 승인 | Manifest Approval artifact path/hash |
 
-모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 25개 exact Slot의 source hash와 이 evidence chain을 검증한다.
+모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 28개 exact Slot의 source hash와 이 evidence chain을 검증한다.
 
 #### Gate Sampling
 

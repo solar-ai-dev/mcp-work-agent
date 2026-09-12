@@ -420,7 +420,7 @@ Local SLLM의 다음 LLM 책임은 서로 다른 PromptRef와 최소 Typed Proje
 
 | 구분 | LLM 책임 |
 | --- | --- |
-| Work Analysis | `extract_work_facts`<br>`resolve_entity_relations`<br>`resolve_temporal_dependencies`<br>`detect_duplicate_conflict_candidates`<br>`assess_information_gaps`<br>`assess_operational_risks` |
+| Work Analysis | `extract_work_facts`<br>`resolve_entity_relations`<br>`resolve_temporal_dependencies`<br>`detect_duplicate_conflict_candidates`<br>`assess_requested_task_satisfaction`<br>`assess_action_necessity`<br>`assess_information_gaps`<br>`assess_operational_risks` |
 | Planning | `draft_action_objective_per_output_route`<br>`compose_arguments_per_output_route` |
 | Review | `inspect_goal_and_evidence`<br>`inspect_action_scope_and_route`<br>`inspect_constraints_and_policy_summary` |
 

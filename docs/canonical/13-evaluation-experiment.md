@@ -1279,7 +1279,7 @@ Prompt topology candidate는 `06/15`의 current atomic responsibility set을 사
 
 | 후보 | 구성 |
 | --- | --- |
-| `ATOMIC_SLLM` | Work Analysis의 facts·entity/temporal relations·duplicate/conflict candidates·gaps·risks, Planning의 action objective·arguments, Review의 goal/evidence·scope/route·constraints/policy 판단을 분리한다. |
+| `ATOMIC_SLLM` | Work Analysis의 facts·entity/temporal relations·duplicate/conflict candidates·requested Task satisfaction·route action necessity·gaps·risks, Planning의 action objective·arguments, Review의 goal/evidence·scope/route·constraints/policy 판단을 분리한다. |
 | `FUSED_REFERENCE` | 강한 Runtime에서 인접 atomic node를 조건부 fuse한다. |
 
 ### 25.2 평가 대상 atomic LLM responsibilities
@@ -1289,6 +1289,8 @@ work_analysis.extract_work_facts
 work_analysis.resolve_entity_relations
 work_analysis.resolve_temporal_dependencies
 work_analysis.detect_duplicate_conflict_candidates
+work_analysis.assess_requested_task_satisfaction
+work_analysis.assess_action_necessity
 work_analysis.assess_information_gaps
 work_analysis.assess_operational_risks
 planning.compose_answer

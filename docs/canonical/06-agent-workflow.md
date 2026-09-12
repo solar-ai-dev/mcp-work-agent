@@ -776,7 +776,7 @@ class RequestIntentV2:
 | 필드·상황 | 해석 |
 | --- | --- |
 | requested hints | 사용자 요청의 의미적 힌트다. Registry Tool 이름이 아니며 목표·완료조건·제약 밖의 Route나 Arguments를 허용하지 않는다. |
-| resource_responsibilities | 기존 source를 조회해 다른 output에 Write하는 교차-Resource 요청에서만 source/output 해결 책임을 보존한다. `source_reads`는 Connector가 해결할 required_information을, `outputs`는 사용자 요청의 Write effect를 가진다. 같은 Resource type을 양쪽에 중복하지 않으며 requested hints와 정확히 일치해야 한다. |
+| resource_responsibilities | 현재 atomic Request Understanding 경로가 source/output 해결 책임을 보존한다. `source_reads`는 Connector가 해결할 기존 사실·identity인 required_information을, `outputs`는 사용자 요청의 Write effect를 가진다. UPDATE/DELETE처럼 기존 Resource를 바꾸는 요청은 같은 Resource type이 source와 output에 함께 있어야 하며, 파생 requested hints와 정확히 일치해야 한다. |
 | ambiguity candidate | `missing_information_owner: NONE \| USER \| CONNECTOR`를 반환한다. CONNECTOR는 Retrieval로 해소하고 USER만 Confirmation으로 보낸다. candidate-only 분류를 확정 AmbiguityV1에 저장하지 않는다. |
 | RESOURCE_SELECTED | 검증된 selected_resource_refs를 identify_goal·detect_ambiguity에 동일하게 전달한다. READ로 얻을 수 있는 본문·제목·발신자는 user-owned missing choice가 아니다. |
 | 실제 사용자 선택 | recipient·시간·범위 등 사용자만 결정할 값은 선택 Resource가 있어도 자동 보완하지 않는다. Write의 필수 선택 누락은 Confirmation을 유지한다. |
@@ -793,10 +793,10 @@ class RequestIntentV2:
 
 #### Source/output resolution responsibility
 
-- 두 개 이상의 Resource가 `READ + Write`로 결합되는 요청은 `resource_responsibilities` 없이 확정하지 않는다. 평면 resource/effect 목록을 downstream이 다시 source/output으로 분류하게 두지 않는다.
+- 현재 atomic Request Understanding 경로는 단일·교차 Resource 여부와 무관하게 `resource_responsibilities`를 확정한다. nullable 표현은 compatibility 입력을 위한 것이며, 평면 resource/effect 목록을 정상 downstream이 다시 source/output으로 분류하게 두지 않는다.
 - `source_reads`의 각 항목은 `resource_type`과 Connector가 해결할 기존 사실 또는 exact resource identity인 `required_information`을 가진다. Retrieval 전 부재는 user-owned missing choice가 아니다.
 - `outputs`의 각 항목은 `resource_type`과 `CREATE | UPDATE | SEND | DELETE` 중 하나인 `effect`를 가진다. 같은 Write 결과의 Verification reread는 별도 source read 책임으로 만들지 않는다.
-- source/output 책임을 투영한 Resource와 Effect 집합은 `requested_resource_hints`와 `requested_effect_hints`에 정확히 일치해야 한다. 불일치·중복 역할·SOURCE/OUTPUT 의미 충돌은 Provider 호출 전 Request Understanding validator가 거절한다.
+- source/output 책임을 투영한 Resource와 Effect 집합은 `requested_resource_hints`와 `requested_effect_hints`에 정확히 일치해야 한다. 불일치·중복 항목·지원하지 않는 Resource/effect 조합과 같은 Resource UPDATE/DELETE의 source 누락은 Provider 호출 전 Request Understanding validator가 거절한다.
 - Tool Route는 검증된 책임을 IN Resource와 OUT Resource/Effect로 결정적으로 투영한다. Tool 이름과 Registry binding은 계속 Tool Route owner가 소유한다.
 
 **GitHub repository와 선택 Issue**
@@ -1228,7 +1228,7 @@ class RequestUnderstandingStateV2:
 
 | 책임 | 처리 |
 | --- | --- |
-| `determine_io_resources` | 사용자 의미에서 IN Resource와 OUT Resource·Effect를 판단한다. 실제 Tool 이름은 생성하지 않는다. |
+| `determine_io_resources` | 정상 current Intent에서는 확정된 `resource_responsibilities`를 IN Resource와 OUT Resource·Effect로 결정적으로 투영한다. responsibilities가 없는 compatibility Intent에서만 bounded LLM fallback으로 기존 hints의 역할을 복원하며 새 Resource/effect를 고르지 않는다. 실제 Tool 이름은 생성하지 않는다. |
 | `bind_registry_candidates` | Signed Tool Registry의 Resource·Effect·Schema 적합성으로 실제 후보를 결정적으로 결합한다. |
 | `select_tool_if_needed` | 후보 하나는 결정적으로 확정하고, 여러 후보의 의미 선택이 필요한 경우에만 해당 Route의 후보 안에서 선택한다. |
 | `finalize_route / validate_route` | Route와 Registry binding을 확정·검증해 Main State에 병합한다. downstream은 Tool을 재선택하지 않는다. |
