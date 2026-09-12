@@ -880,7 +880,9 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
 
 def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
     state = _state(initial_target="tool_route")
-    state["request_intent"] = cast(Any, _intent())
+    intent = _intent()
+    intent["requested_effect_hints"] = []
+    state["request_intent"] = cast(Any, intent)
     llm = _ComponentInferencePort()
     graph = ToolRoutingSubgraph(
         llm_runtime=llm,
@@ -897,7 +899,7 @@ def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
         result = graph.invoke(state)
 
     assert result["tool_route_plan"]["output_plan"]["output_mode"] == "ANSWER"
-    assert llm.calls == ["tool_routing.determine_io_resources"]
+    assert llm.calls == []
     assert ("finalize_route", "determine_io_resources") in _edge_set(graph)
 
 

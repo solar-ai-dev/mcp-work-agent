@@ -552,7 +552,18 @@ def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> 
         input_schema_version="v1",
         output_schema_version="v1",
     )
-    runtime = FakeStructuredInferencePort(outputs=[{"schema_version": 0}, _valid_output()])
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {"schema_version": 0},
+            {
+                "schema_version": 1,
+                "input_resource_types": [],
+                "output_resource_types": ["TASK", "CALENDAR"],
+                "output_effects": ["CREATE"],
+                "disposition": "ROUTE_READY",
+            },
+        ]
+    )
 
     determine_io_resources(
         llm_runtime=runtime,
@@ -588,7 +599,7 @@ def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
             "goal": "answer without external resources",
             "completion_conditions": ["answered"],
             "constraints": [],
-            "requested_effect_hints": [],
+            "requested_effect_hints": ["READ"],
             "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
             "analysis_requirement": "REQUIRED",
             "ambiguity": {
@@ -621,10 +632,10 @@ def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
             },
             {
                 "schema_version": 1,
-                "input_resource_types": [],
+                "input_resource_types": ["EMAIL", "TASK"],
                 "output_resource_types": [],
                 "output_effects": [],
-                "disposition": "NO_TOOL_NEEDED",
+                "disposition": "ROUTE_READY",
             },
         ]
     )
@@ -651,7 +662,7 @@ def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
     )
 
     assert len(runtime.calls) == 2
-    assert candidate.input_resource_types == ()
+    assert candidate.input_resource_types == ("GMAIL_THREAD", "TASK")
     assert candidate.output_pairs == ()
     assert candidate.output_mode == "ANSWER"
     revision_input = cast(Mapping[str, object], runtime.calls[1]["prompt_input"])
@@ -719,8 +730,98 @@ def test_semantic_route_schema__with_requested_writes__permits_only_those_effect
         cast(Mapping[str, object], schema["properties"])["output_effects"],
     )
     assert output_effects["items"] == {"enum": ["CREATE"]}
+    properties = cast(Mapping[str, object], schema["properties"])
+    assert cast(Mapping[str, object], properties["input_resource_types"])["items"] == {
+        "enum": ["TASK"]
+    }
+    assert cast(Mapping[str, object], properties["output_resource_types"])["items"] == {
+        "enum": ["TASK"]
+    }
     assert candidate.input_resource_types == ("TASK",)
     assert candidate.output_pairs == (("TASK", EffectType.CREATE),)
+
+
+def test_legacy_fallback__cannot_drop_a_validated_output_effect() -> None:
+    intent = cast(
+        RequestIntentV2,
+        {
+            "schema_version": 2,
+            "meta": {"artifact_id": "intent-multi-write", "revision": 1, "based_on": []},
+            "goal": "create a task and calendar event",
+            "completion_conditions": ["both are proposed"],
+            "constraints": [],
+            "requested_effect_hints": ["CREATE", "UPDATE"],
+            "requested_resource_hints": ["TASK", "CALENDAR_EVENT"],
+            "analysis_requirement": "REQUIRED",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+    )
+    request = WorkflowStartRequest(
+        run_id="run-multi-write",
+        conversation_id="conversation-multi-write",
+        workflow_key="thread-multi-write",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="LOCAL_GPU",
+        request_text="create a task and update an event",
+        selected_resource_ids=(),
+        selected_resources=(),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "schema_version": 1,
+                "input_resource_types": [],
+                "output_resource_types": ["TASK"],
+                "output_effects": ["CREATE"],
+                "disposition": "ROUTE_READY",
+            },
+            {
+                "schema_version": 1,
+                "input_resource_types": [],
+                "output_resource_types": ["TASK", "CALENDAR"],
+                "output_effects": ["CREATE", "UPDATE"],
+                "disposition": "ROUTE_READY",
+            },
+        ]
+    )
+
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=request,
+        retry_budget=build_default_run_budget(),
+        prompt_ref=PromptReference(
+            prompt_bundle_version="test",
+            prompt_id="tool_routing.determine_io_resources",
+            prompt_version="1",
+            content_hash="hash",
+            agent_role="tool_routing",
+            subgraph_name="tool_routing",
+            node_name="determine_io_resources",
+            node_state="INITIAL",
+            purpose="determine_io_resources",
+            input_schema_version="v1",
+            output_schema_version="v1",
+        ),
+    )
+
+    assert len(runtime.calls) == 2
+    assert candidate.output_pairs == (
+        ("TASK", EffectType.CREATE),
+        ("CALENDAR_EVENT", EffectType.UPDATE),
+    )
+    failure_record = cast(
+        Mapping[str, object],
+        cast(Mapping[str, object], runtime.calls[1]["prompt_input"])["failure_record"],
+    )
+    assert failure_record["failure_reason_code"] == "TOOL_ROUTE_EFFECT_MISMATCH"
 
 
 def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
