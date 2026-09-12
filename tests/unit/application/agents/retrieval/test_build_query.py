@@ -22,6 +22,137 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 )
 
 
+@pytest.mark.parametrize(
+    "semantic_constraint",
+    [
+        {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ALL"},
+        {
+            "kind": "CONCEPT",
+            "concept": "schedule",
+            "manifestations": ["인쇄소", "납기"],
+        },
+    ],
+)
+def test_build_query__calendar_event_search__preserves_supported_discovery_constraint(
+    semantic_constraint: SemanticRetrievalConstraintV1,
+) -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "calendar-event-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "allowed_read_tool_ids": ["calendar_list_events"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "calendar-event-route",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [semantic_constraint],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    fetch = build_query(
+        plan,
+        frozen_routes=[route],
+        route_policies={
+            "calendar-event-route": RouteConstraintPolicy(
+                cast(
+                    Any,
+                    frozenset({"CONTAINER_REF", "TEMPORAL_RANGE", "KEYWORD", "CONCEPT"}),
+                ),
+                cast(Any, frozenset({"CONTAINER_REF"})),
+            )
+        },
+        validated_container_refs={"calendar-event-route": ["calendar-1"]},
+    )[0]
+
+    assert {constraint["kind"] for constraint in fetch["effective_constraints"]} == {
+        semantic_constraint["kind"],
+        "CONTAINER_REF",
+    }
+    preserved = next(
+        constraint
+        for constraint in fetch["effective_constraints"]
+        if constraint["kind"] == semantic_constraint["kind"]
+    )
+    if semantic_constraint["kind"] == "CONCEPT":
+        assert preserved["concept"] == semantic_constraint["concept"]
+        assert set(preserved["manifestations"]) == set(semantic_constraint["manifestations"])
+    else:
+        assert preserved == semantic_constraint
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "tool_id", "operation", "supported"),
+    [
+        ("CALENDAR", "calendar_list_calendars", "SEARCH", {"CONTAINER_REF"}),
+        (
+            "CALENDAR_FREEBUSY",
+            "calendar_query_freebusy",
+            "FREEBUSY",
+            {"CONTAINER_REF", "TEMPORAL_RANGE"},
+        ),
+        ("TASK", "tasks_list_tasks", "SEARCH", {"CONTAINER_REF"}),
+        ("GITHUB_ISSUE", "github_list_issues", "SEARCH", {"CONTAINER_REF", "STATUS_SCOPE"}),
+    ],
+)
+def test_build_query__unsupported_item_keyword__stays_blocked(
+    resource_type: str,
+    tool_id: str,
+    operation: str,
+    supported: set[str],
+) -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "connector_id": "github" if resource_type == "GITHUB_ISSUE" else "google_workspace",
+            "resource_type": resource_type,
+            "allowed_read_tool_ids": [tool_id],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": operation,
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ALL"}
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    with pytest.raises(RetrievalV2ValidationError, match="constraint kind is unsupported"):
+        build_query(
+            plan,
+            frozen_routes=[route],
+            route_policies={
+                "route-1": RouteConstraintPolicy(cast(Any, frozenset(supported)))
+            },
+        )
+
+
 @pytest.mark.parametrize("matching", [True, False])
 def test_build_query__detail_then_page__uses_search_continuation(matching: bool) -> None:
     route = cast(

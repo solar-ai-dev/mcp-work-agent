@@ -426,6 +426,124 @@ def test_gmail_draft_search__for_frozen_draft_route__uses_draft_operation() -> N
     assert arguments == {"query": '"Quartz 납품 회신 검토"', "page_size": 20}
 
 
+def test_calendar_event_search__lowers_keyword_and_concept_without_gmail_syntax() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "route-calendar-event",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ALL"},
+                {
+                    "kind": "CONCEPT",
+                    "concept": "인쇄소 일정",
+                    "manifestations": ["인쇄소", "납기"],
+                },
+                {
+                    "kind": "CONTAINER_REF",
+                    "container_refs": ["calendar-1"],
+                },
+            ],
+        },
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-calendar-event",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "allowed_read_tool_ids": ["calendar_list_events", "calendar_get_event"],
+        },
+    )
+
+    tool_id, arguments = execute_read_projection.project_connector_call(
+        plan, route=route, page_size=20
+    )
+
+    assert tool_id == "calendar_list_events"
+    assert arguments["query"] == "Atlas 인쇄소 납기"
+    assert "{" not in arguments["query"]
+    assert '"' not in arguments["query"]
+
+
+def test_calendar_event_search__preserves_keyword_query_and_temporal_bounds() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "route-calendar-event",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "operation_kind": "SEARCH",
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "PHRASE"},
+                {
+                    "kind": "TEMPORAL_RANGE",
+                    "axis": "EVENT_TIME",
+                    "start_local": "2026-09-01T00:00:00",
+                    "end_local": "2026-09-30T23:59:59",
+                    "timezone": "Asia/Seoul",
+                },
+                {"kind": "CONTAINER_REF", "container_refs": ["calendar-1"]},
+            ],
+        },
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-calendar-event",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "allowed_read_tool_ids": ["calendar_list_events"],
+        },
+    )
+
+    _, arguments = execute_read_projection.project_connector_call(plan, route=route, page_size=20)
+
+    assert arguments["query"] == "Atlas"
+    assert arguments["time_min"] == "2026-09-01T00:00:00+09:00"
+    assert arguments["time_max"] == "2026-09-30T23:59:59+09:00"
+
+
+def test_calendar_event_detail_fetch__does_not_project_search_query() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "route-calendar-event",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "operation_kind": "DETAIL_FETCH",
+            "effective_constraints": [
+                {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ALL"}
+            ],
+        },
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-calendar-event",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+            "allowed_read_tool_ids": ["calendar_get_event"],
+        },
+    )
+
+    tool_id, arguments = execute_read_projection.project_connector_call(
+        plan,
+        route=route,
+        page_size=20,
+        detail_resource={
+            "resource_type": "calendar_event",
+            "resource_id": "event-1",
+            "parent_id": "calendar-1",
+        },
+    )
+
+    assert tool_id == "calendar_get_event"
+    assert arguments == {"calendar_id": "calendar-1", "event_id": "event-1"}
+
+
 def test_gmail_search__status_any_only__lowers_to_unfiltered_query() -> None:
     plan = cast(
         SourceFetchPlanV1,

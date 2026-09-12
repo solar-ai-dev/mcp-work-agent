@@ -41,6 +41,14 @@ _NONEMPTY_STRING: JsonSchema = {"type": "string", "minLength": 1}
 _NULLABLE_STRING: JsonSchema = {"type": ["string", "null"]}
 
 
+_QUERY_STRING: JsonSchema = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 2048,
+    "pattern": r"^[^\x00-\x1f]*$",
+}
+
+
 _BOOLEAN: JsonSchema = {"type": "boolean"}
 
 
@@ -339,6 +347,7 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
         _page_input(
             "calendar_id",
             extra={
+                "query": _QUERY_STRING,
                 "time_min": _NULLABLE_STRING,
                 "time_max": _NULLABLE_STRING,
                 "single_events": _BOOLEAN,

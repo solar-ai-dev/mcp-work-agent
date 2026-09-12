@@ -108,6 +108,7 @@ class _ComponentInferencePort:
         searchable_target: bool = False,
         cross_source_draft: bool = False,
         container_retrieval: bool = False,
+        calendar_event_query: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -119,6 +120,7 @@ class _ComponentInferencePort:
         self.searchable_target = searchable_target
         self.cross_source_draft = cross_source_draft
         self.container_retrieval = container_retrieval
+        self.calendar_event_query = calendar_event_query
         self.calls: list[str] = []
         self.inputs: dict[str, list[dict[str, object]]] = {}
 
@@ -289,6 +291,34 @@ class _ComponentInferencePort:
                 "selected_tool_id": selected,
             }
         if prompt_id == "retrieval.plan_query":
+            if self.calendar_event_query:
+                route = cast(list[Mapping[str, object]], projection["input_routes"])[0]
+                return {
+                    "schema_version": 2,
+                    "route_queries": [
+                        {
+                            "route_id": route["route_id"],
+                            "operation": "SEARCH",
+                            "reason_codes": ["USER_REQUEST"],
+                            "search_spec": {
+                                "mode": "INITIAL",
+                                "constraints": [
+                                    {
+                                        "kind": "KEYWORD",
+                                        "terms": ["Atlas"],
+                                        "match_mode": "ALL",
+                                    },
+                                    {
+                                        "kind": "CONCEPT",
+                                        "concept": "schedule",
+                                        "manifestations": ["인쇄소", "납기"],
+                                    },
+                                ],
+                            },
+                            "detail_candidate_ref": None,
+                        }
+                    ],
+                }
             if self.container_retrieval:
                 routes = cast(list[Mapping[str, object]], projection["input_routes"])
                 return {
@@ -1411,6 +1441,50 @@ def test_retrieval__compiled_container_scope__allows_current_authorized_45_reads
     } == set(calendars)
     assert result["retry_budget"]["source_page_calls_used"] == 45
     assert result["retry_budget"]["max_source_page_calls"] == 50
+
+
+def test_retrieval__compiled_calendar_event_search__preserves_query_to_connector() -> None:
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _container_read_route_plan("CALENDAR_EVENT"))
+    connector = _ContainerConnectorReadPort("calendar_event")
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(calendar_event_query=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+        authorized_calendar_ids_provider=lambda: ("calendar-1",),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.arguments == [
+        {
+            "calendar_id": "calendar-1",
+            "page_size": 20,
+            "single_events": True,
+            "order_by": "startTime",
+            "query": "납기 인쇄소 Atlas",
+        }
+    ]
+    plan = result["__context_canonical_plans__"]["route-1"]
+    assert [constraint["kind"] for constraint in plan["effective_constraints"]] == [
+        "CONCEPT",
+        "CONTAINER_REF",
+        "KEYWORD",
+    ]
 
 
 def test_retrieval__compiled_budget_exhaustion__projects_terminal_partial() -> None:

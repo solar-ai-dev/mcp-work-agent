@@ -90,6 +90,7 @@ def test_representative_valid__inputs_are__accepted() -> None:
         "calendar_list_events",
         {
             "calendar_id": "primary",
+            "query": "Atlas",
             "page_token": None,
             "page_size": 20,
             "time_min": "2026-08-20T00:00:00Z",

@@ -793,6 +793,7 @@ def test_calendar_event_list__expands_recurring_events_and__preserves_all_day_da
         _state(),
         {
             "calendar_id": "work@example.com",
+            "query": "Atlas 인쇄소",
             "time_min": "2026-08-10T00:00:00Z",
             "time_max": "2026-11-08T00:00:00Z",
             "single_events": True,
@@ -807,6 +808,7 @@ def test_calendar_event_list__expands_recurring_events_and__preserves_all_day_da
         "params": {
             "maxResults": "10",
             "pageToken": "events-page-1",
+            "q": "Atlas 인쇄소",
             "timeMin": "2026-08-10T00:00:00Z",
             "timeMax": "2026-11-08T00:00:00Z",
             "singleEvents": "true",

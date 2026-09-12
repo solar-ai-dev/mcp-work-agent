@@ -340,11 +340,20 @@ def _runtime_route_constraint_policies(
         "ISSUE": frozenset({"CONTAINER_REF", "STATUS_SCOPE"}),
         "CALENDAR": frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
     }
+    calendar_event_search_kinds = frozenset(
+        {"TEMPORAL_RANGE", "CONTAINER_REF", "KEYWORD", "CONCEPT"}
+    )
     return {
         route["route_id"]: RouteConstraintPolicy(
             supported_kinds=cast(
                 frozenset[RetrievalConstraintKindV1],
-                supported_by_resource[coarse_resource_category(route["resource_type"])],
+                (
+                    calendar_event_search_kinds
+                    if route["resource_type"] == "CALENDAR_EVENT"
+                    else supported_by_resource[
+                        coarse_resource_category(route["resource_type"])
+                    ]
+                ),
             ),
             required_kinds=(
                 frozenset({"CONTAINER_REF"})

@@ -155,6 +155,9 @@ def project_connector_call(
             temporal = _optional_temporal_bounds(plan)
             if temporal is not None:
                 arguments["time_min"], arguments["time_max"] = temporal
+            query = _calendar_event_query(plan)
+            if query is not None:
+                arguments["query"] = query
     else:
         raise ValueError(f"unsupported retrieval resource_type: {resource}")
     return tool_id, cast(dict[str, JsonValue], arguments)
@@ -527,6 +530,30 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
             mapping = {"DRAFT": "in:drafts", "SENT": "in:sent"}
             terms.extend(mapping[item] for item in constraint["values"] if item in mapping)
     return " ".join(terms)
+
+
+def _calendar_event_query(plan: SourceFetchPlanV1) -> str | None:
+    """Lower Calendar Event discovery terms without introducing provider DSL."""
+
+    terms: list[str] = []
+    for constraint in plan["effective_constraints"]:
+        if constraint["kind"] == "KEYWORD":
+            terms.extend(constraint["terms"])
+        elif constraint["kind"] == "CONCEPT":
+            terms.extend(constraint["manifestations"])
+    if not terms:
+        return None
+    query = " ".join(terms)
+    if len(query) > 2048 or any(ord(character) < 32 for character in query):
+        raise RetrievalV2ValidationError(
+            "Calendar Event query contains unsupported text",
+            reason_code="QUERY_LITERAL_UNSUPPORTED",
+            affected_field_paths=(
+                "$.source_fetch_plans[].effective_constraints[?(@.kind=='KEYWORD')].terms[]",
+                "$.source_fetch_plans[].effective_constraints[?(@.kind=='CONCEPT')].manifestations[]",
+            ),
+        )
+    return query
 
 
 def _gmail_literal(value: str) -> str:
