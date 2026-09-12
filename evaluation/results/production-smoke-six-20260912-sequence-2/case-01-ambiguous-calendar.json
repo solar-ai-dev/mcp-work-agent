@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "case": "대상 없는 일정",
+  "business": "FAIL",
+  "terminal": "BLOCKED",
+  "run_id": "2f807447-ce02-4b26-a9ee-49fb93d2115b",
+  "trace_id": "01a095f4-fe2c-7d41-901a-138a19313137",
+  "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095f4-fe2c-7d41-901a-138a19313137/run/01a095f4-fe2c-7d41-901a-138a19313137",
+  "semantic_input": {
+    "selected_resource_count": 0,
+    "resolved_resource_count": 0,
+    "searchable_target_anchor_count": 0,
+    "connector_owned_source_count": 1,
+    "connector_owned_resource_types": ["CALENDAR_EVENT"]
+  },
+  "semantic_output": {
+    "missing_information_owner": "USER",
+    "missing_field_count": 1,
+    "missing_field_value": "UNRECOVERED_BY_SAFE_PROJECTION",
+    "bounded_revision_count": 1
+  },
+  "validation": {
+    "stage": "POST_INFERENCE_VALIDATION",
+    "rule": "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT",
+    "paths": ["$.missing_information_owner", "$.missing_fields", "$.goal_candidate.constraints"]
+  },
+  "first_failure": "request_understanding.detect_ambiguity validator",
+  "result": "확인 질문 미도달; 내부 검증 실패 안내",
+  "llm_calls": 8,
+  "connector_reads": 0,
+  "provider_writes": 0,
+  "provider_sends": 0
+}

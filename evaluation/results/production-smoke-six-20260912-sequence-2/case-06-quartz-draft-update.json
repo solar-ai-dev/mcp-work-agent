@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "case": "Quartz Draft 수정",
+  "business": "FAIL",
+  "terminal": "RECOVERY_REQUIRED",
+  "run_id": "f3e96b3d-fa5a-4fc0-ae6d-45aafe4ad2b2",
+  "trace_id": "01a095fe-ff84-7611-9ab8-d6683c5b4ba4",
+  "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095fe-ff84-7611-9ab8-d6683c5b4ba4/run/01a095fe-ff84-7611-9ab8-d6683c5b4ba4",
+  "request_understanding": {
+    "source_reads": ["GMAIL_DRAFT"],
+    "outputs": ["GMAIL_DRAFT / UPDATE"],
+    "forbidden_effects": ["SEND"],
+    "coverage_output": ["EXHAUSTIVE"],
+    "coverage_expected": []
+  },
+  "retrieval": {
+    "connector_reads": 1,
+    "source_page_calls": 1,
+    "collection_items": 1,
+    "continuation": "EXHAUSTED",
+    "selected_evidence": 1,
+    "sufficiency": "SUFFICIENT"
+  },
+  "terminal_blocker": {
+    "node": "planning.compose_arguments_per_output_route",
+    "error_type": "PlanningArgumentBindingError",
+    "safe_detail": "exact binding message is not exported by the safe LangSmith projection"
+  },
+  "preview_reached": false,
+  "waiting_approval_reached": false,
+  "actions": 0,
+  "approvals": 0,
+  "llm_calls": 11,
+  "provider_writes": 0,
+  "provider_sends": 0
+}

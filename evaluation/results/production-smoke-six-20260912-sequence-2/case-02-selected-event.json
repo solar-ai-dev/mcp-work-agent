@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "case": "Selected Event 일정",
+  "business": "FAIL",
+  "terminal": "BLOCKED",
+  "run_id": "d7dd3cd2-d45a-4019-bc8f-fb234bad3301",
+  "trace_id": "01a095f6-662e-7443-82fd-eb727afe16f8",
+  "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095f6-662e-7443-82fd-eb727afe16f8/run/01a095f6-662e-7443-82fd-eb727afe16f8",
+  "semantic_input": {
+    "selected_resource_count": 1,
+    "resolved_resource_count": 1
+  },
+  "first_wrong_output": {
+    "producer": "request_understanding.identify_output_responsibilities",
+    "unexpected_output": "GMAIL_MESSAGE / SEND"
+  },
+  "retrieval": {
+    "candidate_operation": "DETAIL_FETCH",
+    "connector_reads": 0,
+    "validation_stage": "QUERY_PLAN_VALIDATOR",
+    "validation_rule": "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+    "affected_field_paths": ["$.route_queries[].detail_candidate_ref"]
+  },
+  "result": "선택 Event detail READ 미도달; 내부 검증 실패 안내",
+  "llm_calls": 9,
+  "provider_writes": 0,
+  "provider_sends": 0
+}
