@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "case_id": "case-01-ambiguous-calendar",
+  "domain_run_id": "3770d38d-3940-4a15-b18a-829590c5d7ff",
+  "langgraph_thread_id": "b96f1753-2bba-433f-8ab7-14ce7486f74e",
+  "root_trace_ids": [
+    "01a095cb-445a-7891-ada7-d358c5d394c2",
+    "01a095cb-4482-72a3-8904-5b374ae8a7a5"
+  ],
+  "root_trace_urls": [
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095cb-445a-7891-ada7-d358c5d394c2/run/01a095cb-445a-7891-ada7-d358c5d394c2",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095cb-4482-72a3-8904-5b374ae8a7a5/run/01a095cb-4482-72a3-8904-5b374ae8a7a5"
+  ],
+  "root_trace_connected": true,
+  "node_sequence": [
+    "production_langgraph",
+    "request_understanding.identify_goal",
+    "request_understanding.identify_source_dependencies",
+    "request_understanding.detect_ambiguity",
+    "blocked"
+  ],
+  "status_transition": "RUNNING → BLOCKED",
+  "typed_semantic_output_summary": {
+    "identify_goal": "CALENDAR_EVENT source dependency retained",
+    "detect_ambiguity_input": {
+      "selected_resource_count": 0,
+      "resolved_resource_count": 0,
+      "searchable_target_anchor_count": 0,
+      "connector_owned_source_count": 1
+    },
+    "llm_candidate": "USER / target_resource",
+    "validator": "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT",
+    "result": "올바른 LLM candidate가 validator에서 거절되어 BLOCKED"
+  },
+  "validator_result": {
+    "stage": "POST_INFERENCE_SEMANTIC_VALIDATION",
+    "reason": "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT",
+    "affected_path": "missing_information_owner / missing_fields"
+  },
+  "connector_observation": "confirmation 전 Connector READ 0",
+  "llm_calls": 7,
+  "connector_reads": 0,
+  "provider_writes": 0,
+  "provider_sends": 0,
+  "first_failure_node": "request_understanding.detect_ambiguity post-inference validator",
+  "secondary_failure": null,
+  "redaction": {
+    "raw_provider_payload": "excluded",
+    "raw_prompt_completion": "excluded",
+    "credentials_and_tokens": "excluded",
+    "resource_identity_values": "excluded"
+  }
+}

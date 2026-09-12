@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "case_id": "case-04-juniper-collection",
+  "domain_run_id": "da40c498-4863-4fbd-90e8-87d439ae422a",
+  "langgraph_thread_id": "17f14a8b-7b6b-4c6c-a51a-558c6aae8a01",
+  "root_trace_ids": [
+    "01a095cd-5e95-7c22-9fd5-071afb32adf5",
+    "01a095cd-5eb8-7040-9276-d18d3eb03f7c"
+  ],
+  "root_trace_urls": [
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095cd-5e95-7c22-9fd5-071afb32adf5/run/01a095cd-5e95-7c22-9fd5-071afb32adf5",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095cd-5eb8-7040-9276-d18d3eb03f7c/run/01a095cd-5eb8-7040-9276-d18d3eb03f7c"
+  ],
+  "root_trace_connected": true,
+  "node_sequence": [
+    "production_langgraph",
+    "request_understanding.identify_goal",
+    "tool_routing",
+    "retrieval.plan_query(SEARCH)",
+    "gmail_search",
+    "retrieval.normalize_segments",
+    "retrieval.rag_retrieve",
+    "retrieval.select_evidence",
+    "detail_fetch × 12",
+    "retrieval.assess_sufficiency(SUFFICIENT)",
+    "compose_answer",
+    "completed"
+  ],
+  "status_transition": "RUNNING → COMPLETED",
+  "typed_semantic_output_summary": {
+    "coverage_requirement": "누락",
+    "initial_query": "SEARCH; KEYWORD/ANY; validator PASS",
+    "first_page": {
+      "result_count": 20,
+      "has_next_page": true
+    },
+    "follow_up": "DETAIL_FETCH 12회; NEXT_PAGE 0회",
+    "sufficiency": "LLM SUFFICIENT; collection guard 미적용",
+    "answer": "20건만 반환하면서 전체를 확인했다고 표현"
+  },
+  "validator_result": {
+    "stage": "PASS",
+    "reason": null,
+    "affected_path": null
+  },
+  "connector_observation": "첫 page 20, has_next_page=true; SEARCH 1 + DETAIL_FETCH 12; Evidence 8",
+  "llm_calls": 14,
+  "connector_reads": 13,
+  "provider_writes": 0,
+  "provider_sends": 0,
+  "first_failure_node": "request_understanding.identify_goal LLM producer",
+  "secondary_failure": "assess_sufficiency가 has_next_page=true 상태를 SUFFICIENT로 종료",
+  "redaction": {
+    "raw_provider_payload": "excluded",
+    "raw_prompt_completion": "excluded",
+    "credentials_and_tokens": "excluded",
+    "resource_identity_values": "excluded"
+  }
+}

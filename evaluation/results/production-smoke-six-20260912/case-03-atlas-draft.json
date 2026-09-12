@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "case_id": "case-03-atlas-draft",
+  "case_name": "Atlas cross-source Draft",
+  "product_sha": "835b3aa471ecd1def5280dfd7dcfe4167a4977d4",
+  "business_result": "FAIL",
+  "initial_run_id": "2958fb8e-bd14-4a27-baa1-bbdf9c810eed",
+  "langgraph_thread_id": "d920775a-d4d8-430b-a1ed-d0d2a3686bd3",
+  "trace_ids": [
+    "01a095d0-113f-7d60-a346-d71475b3693f",
+    "01a095d0-1166-7f62-8733-e04f263e5b5b"
+  ],
+  "trace_urls": [
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d0-113f-7d60-a346-d71475b3693f/run/01a095d0-113f-7d60-a346-d71475b3693f",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d0-1166-7f62-8733-e04f263e5b5b/run/01a095d0-1166-7f62-8733-e04f263e5b5b"
+  ],
+  "intermediate_waits": [
+    "부당한 WAITING_CONFIRMATION / resume 0"
+  ],
+  "final_terminal": "WAITING_CONFIRMATION",
+  "terminal_result_kind": null,
+  "first_failure_node": "request_understanding.identify_source_dependencies LLM producer",
+  "first_failure_owner": "request_understanding.identify_source_dependencies",
+  "expected_semantic": {
+    "source_reads": [
+      "TASK",
+      "CALENDAR_EVENT"
+    ],
+    "outputs": [
+      "GMAIL_DRAFT / CREATE"
+    ],
+    "forbidden_effects": [
+      "SEND"
+    ],
+    "terminal": "WAITING_APPROVAL → same-Run approval → COMPLETED"
+  },
+  "actual_semantic": {
+    "candidate_set": [
+      "TASK",
+      "CALENDAR_EVENT"
+    ],
+    "source_dependency_decisions": [
+      "TASK / SOURCE_NOT_REQUIRED",
+      "CALENDAR_EVENT / SOURCE_NOT_REQUIRED"
+    ],
+    "outputs": [
+      "GMAIL_DRAFT / CREATE"
+    ],
+    "forbidden_effects": [
+      "SEND"
+    ],
+    "downstream": "source_reads=[] 이후 USER / target_resource로 WAITING_CONFIRMATION"
+  },
+  "answer_or_preview_summary": "Task/Calendar 자료 조회 없이 대상 확인 질문으로 중단",
+  "secondary_failure": "detect_ambiguity가 유실된 source 책임을 바탕으로 USER / target_resource 생성",
+  "next_fix_owner": "identify_source_dependencies role-decision producer",
+  "llm_calls": 6,
+  "connector_reads": 0,
+  "provider_writes": 0,
+  "provider_sends": 0,
+  "resource_ref_count": 0,
+  "evidence_count": 0,
+  "action_count": 0,
+  "approval_count": 0,
+  "confirmation_resumes": 0,
+  "approval_resumes": 0,
+  "rerun_to_pass": false,
+  "run_state": {
+    "status": "WAITING_CONFIRMATION",
+    "terminal_result_kind": null,
+    "version": 2,
+    "started_at": "2026-09-12T13:30:36.197000+00:00",
+    "finished_at": null
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "case_id": "case-06-quartz-draft-update",
+  "case_name": "Quartz Draft 수정",
+  "product_sha": "835b3aa471ecd1def5280dfd7dcfe4167a4977d4",
+  "business_result": "PASS",
+  "initial_run_id": "786b9c52-b311-42de-b8f6-88825158adb9",
+  "langgraph_thread_id": "f0740d59-c5e6-4123-8859-586ea540d2c0",
+  "trace_ids": [
+    "01a095d0-7782-7742-9cba-4d49256e19e4",
+    "01a095d0-77b2-7c12-b334-e87e7f217c54",
+    "01a095d1-53cb-7bc2-ae4f-11d19f1cd255",
+    "01a095d1-55f4-7523-b59b-feb86aa6a454",
+    "01a095d1-5613-7a92-a40b-f395212cfa15"
+  ],
+  "trace_urls": [
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d0-7782-7742-9cba-4d49256e19e4/run/01a095d0-7782-7742-9cba-4d49256e19e4",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d0-77b2-7c12-b334-e87e7f217c54/run/01a095d0-77b2-7c12-b334-e87e7f217c54",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d1-53cb-7bc2-ae4f-11d19f1cd255/run/01a095d1-53cb-7bc2-ae4f-11d19f1cd255",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d1-55f4-7523-b59b-feb86aa6a454/run/01a095d1-55f4-7523-b59b-feb86aa6a454",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095d1-5613-7a92-a40b-f395212cfa15/run/01a095d1-5613-7a92-a40b-f395212cfa15"
+  ],
+  "intermediate_waits": [
+    "WAITING_APPROVAL → same-Run 승인 1회"
+  ],
+  "final_terminal": "COMPLETED",
+  "terminal_result_kind": "SUCCESS",
+  "first_failure_node": null,
+  "first_failure_owner": null,
+  "expected_semantic": {
+    "source": "existing GMAIL_DRAFT",
+    "output": "same GMAIL_DRAFT / UPDATE",
+    "forbidden_effects": [
+      "SEND"
+    ],
+    "preview": "기존 값 보존 + 지정 문장 정확히 1회 추가"
+  },
+  "actual_semantic": {
+    "responsibility": "GMAIL_DRAFT SOURCE_AND_OUTPUT / UPDATE",
+    "forbidden_effects": [
+      "SEND"
+    ],
+    "retrieval": "기존 Draft READ 1회; Evidence 2",
+    "preview_checks": {
+      "correct_target": true,
+      "effect_update": true,
+      "preserved_recipient_subject_body": true,
+      "requested_append_once": true,
+      "send_action_absent": true
+    },
+    "execution": "approval consumed; attempt 1 SUCCEEDED; verification VERIFIED"
+  },
+  "answer_or_preview_summary": "정확한 UPDATE Preview 승인 후 Draft 1회 수정 및 검증 완료",
+  "secondary_failure": null,
+  "next_fix_owner": null,
+  "llm_calls": 13,
+  "connector_reads": 1,
+  "provider_writes": 1,
+  "provider_sends": 0,
+  "resource_ref_count": 1,
+  "evidence_count": 2,
+  "action_count": 1,
+  "approval_count": 1,
+  "confirmation_resumes": 0,
+  "approval_resumes": 1,
+  "rerun_to_pass": false,
+  "run_state": {
+    "status": "COMPLETED",
+    "terminal_result_kind": "SUCCESS",
+    "version": 6,
+    "started_at": "2026-09-12T13:31:02.362000+00:00",
+    "finished_at": "2026-09-12T13:32:01.964000+00:00"
+  }
+}
