@@ -192,7 +192,7 @@ def project_acquisition_result(
             }
         )
     for plan, failure_code in failed_reads:
-        if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED"}:
+        if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED", "BUDGET_EXHAUSTED"}:
             raise ValueError("unsupported terminal READ failure projection")
         summaries.append(
             {

@@ -817,6 +817,54 @@ def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
     assert runtime.calls == []
 
 
+def test_budget_exhausted_source__fails_closed_with_existing_evidence() -> None:
+    acquisition = _acquisition_result()
+    acquisition["status"] = "PARTIAL"
+    acquisition["source_summaries"].append(
+        {
+            "schema_version": 1,
+            "route_id": "route-gmail",
+            "source": "GMAIL",
+            "connector_id": "google_workspace",
+            "status": "FAILED",
+            "required": True,
+            "error_code": "BUDGET_EXHAUSTED",
+            "resource_count": 0,
+            "resource_handles": [],
+            "resources": [],
+        }
+    )
+    runtime = FakeLLMRuntime(deque())
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "evidence-1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "segment-1",
+                "kind": "excerpt",
+                "excerpt": "Supported partial fact",
+                "locator": None,
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        retry_budget=_run_budget(used=0),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert any(
+        "SOURCE_BUDGET_EXHAUSTED" in issue["reason_codes"] for issue in result["issues"]
+    )
+    assert runtime.calls == []
+
+
 @pytest.mark.parametrize("mail_count", [0, 1])
 def test_mail_to_task__empty_mail__does_not_substitute_task_policy_evidence(
     mail_count: int,

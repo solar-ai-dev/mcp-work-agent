@@ -1413,6 +1413,49 @@ def test_retrieval__compiled_container_scope__allows_current_authorized_45_reads
     assert result["retry_budget"]["max_source_page_calls"] == 50
 
 
+def test_retrieval__compiled_budget_exhaustion__projects_terminal_partial() -> None:
+    state = _state(initial_target="context_retriever")
+    intent = _intent()
+    intent["requested_resource_hints"] = ["GMAIL_THREAD"]
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    state["retry_budget"]["connector_calls_used"] = state["retry_budget"][
+        "max_connector_calls"
+    ]
+    state["retry_budget"]["source_page_calls_used"] = state["retry_budget"][
+        "max_source_page_calls"
+    ]
+    connector = _ComponentConnectorReadPort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.call_count == 0
+    assert result["retrieval_result"]["coverage"] == "PARTIAL"
+    assert result["retrieval_result"]["source_statuses"][0]["status"] == "FAILED"
+    assert any(
+        "SOURCE_BUDGET_EXHAUSTED" in item["reason_codes"]
+        for item in result["retrieval_result"]["missing_information"]
+    )
+
+
 def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selection() -> None:
     task_counts = (2, 2, 1, 0, 2, 0, 2, 0, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 3)
 

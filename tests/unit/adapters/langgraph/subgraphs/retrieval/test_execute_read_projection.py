@@ -127,6 +127,96 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
     assert len(hydrated["source_summaries"]) == 2
 
 
+def test_budget_exhausted_read__preserves_successful_acquisition_as_partial() -> None:
+    successful_plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "calendar-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+        },
+    )
+    failed_plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "calendar-detail-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+        },
+    )
+    successful_read = ConnectorReadResultV1(
+        1,
+        "calendar_list_events",
+        "request",
+        {
+            "items": [
+                {
+                    "resource_type": "calendar_event",
+                    "resource_id": "event-1",
+                    "parent_id": "calendar-1",
+                    "version": "etag-1",
+                    "related_resource_ids": ["calendar-1"],
+                    "payload": {"title": "Existing event"},
+                }
+            ]
+        },
+        None,
+        1,
+    )
+
+    result = execute_read_projection.project_acquisition_result(
+        [(successful_plan, successful_read)],
+        remaining_budget={"details": 0},
+        failed_reads=[(failed_plan, "BUDGET_EXHAUSTED")],
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["resource_handles"] == ["calendar_event:event-1"]
+    by_route = {item["route_id"]: item for item in result["source_summaries"]}
+    assert by_route["calendar-route"]["status"] == "COMPLETE"
+    assert by_route["calendar-detail-route"]["status"] == "FAILED"
+    assert by_route["calendar-detail-route"]["error_code"] == "BUDGET_EXHAUSTED"
+
+
+@pytest.mark.parametrize("failure_code", ["NOT_FOUND", "PERMISSION_DENIED"])
+def test_terminal_read_failure_projection__retains_existing_codes(failure_code: str) -> None:
+    failed_plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "failed-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+        },
+    )
+
+    result = execute_read_projection.project_acquisition_result(
+        [],
+        remaining_budget={},
+        failed_reads=[(failed_plan, failure_code)],
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["source_summaries"][0]["error_code"] == failure_code
+
+
+def test_terminal_read_failure_projection__rejects_unknown_failure_code() -> None:
+    failed_plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "failed-route",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_EVENT",
+        },
+    )
+
+    with pytest.raises(ValueError, match="unsupported terminal READ failure projection"):
+        execute_read_projection.project_acquisition_result(
+            [],
+            remaining_budget={},
+            failed_reads=[(failed_plan, "UNKNOWN_FAILURE")],
+        )
+
+
 def test_calendar_event_projection__checkpoint_sanitization__preserves_write_evidence() -> None:
     plan = cast(
         SourceFetchPlanV1,
