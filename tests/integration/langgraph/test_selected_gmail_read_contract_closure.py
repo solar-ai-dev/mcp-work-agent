@@ -127,6 +127,9 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         llm_runtime=runtime,
         request=request,
         prompt_ref=_prompt("request_understanding.identify_goal"),
+        effect_prohibition_prompt_ref=_prompt(
+            "request_understanding.identify_effect_prohibitions"
+        ),
         responsibility_prompt_ref=_prompt(
             "request_understanding.identify_resource_responsibilities"
         ),
@@ -207,6 +210,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
     assert arguments == {"thread_id": "thread-42"}
     assert [cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_resource_responsibilities",
         "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",

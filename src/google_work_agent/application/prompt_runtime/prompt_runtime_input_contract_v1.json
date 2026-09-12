@@ -43,10 +43,18 @@
       "output_schema_version": 14
     },
     {
+      "prompt_slot_id": "request_understanding.identify_effect_prohibitions",
+      "runtime_node_id": "request.identify_goal",
+      "input_schema_version": 1,
+      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "effect_candidates"],
+      "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
+      "output_schema_version": 1
+    },
+    {
       "prompt_slot_id": "request_understanding.identify_resource_responsibilities",
       "runtime_node_id": "request.identify_goal",
-      "input_schema_version": 4,
-      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "resource_candidates"],
+      "input_schema_version": 5,
+      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "resource_candidates", "effect_prohibitions"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
       "output_schema_version": 2
     },

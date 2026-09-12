@@ -89,6 +89,33 @@ class FakeStructuredInferencePort:
                 input_projection=input_projection,
             )
             self._pending_resource_responsibilities = None
+        elif output_schema_ref.schema_version == "request-effect-prohibition-decision-v1":
+            if (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "effect_prohibitions" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                base_projection = input_projection.get("base_projection")
+                base = (
+                    cast(Mapping[str, object], base_projection)
+                    if isinstance(base_projection, Mapping)
+                    else input_projection
+                )
+                output = {
+                    "effect_prohibitions": [
+                        {
+                            "effect": candidate["effect"],
+                            "prohibition": "NOT_FORBIDDEN",
+                        }
+                        for raw_candidate in cast(
+                            Sequence[object], base["effect_candidates"]
+                        )
+                        if isinstance(raw_candidate, Mapping)
+                        for candidate in [cast(Mapping[str, object], raw_candidate)]
+                    ]
+                }
         elif output_schema_ref.schema_version == "request-source-status-v1":
             if self._pending_source_statuses is not None:
                 output = {"statuses": self._pending_source_statuses}

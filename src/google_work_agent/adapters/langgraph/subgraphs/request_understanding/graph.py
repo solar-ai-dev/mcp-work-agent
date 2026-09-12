@@ -115,6 +115,11 @@ class RequestUnderstandingSubgraph:
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
+        self._identify_effect_prohibitions_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_effect_prohibitions",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
         self._identify_source_status_prompt_ref = load_prompt_reference(
             "request_understanding.identify_source_status",
             manifest_path,
@@ -194,6 +199,7 @@ class RequestUnderstandingSubgraph:
             working_state,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_goal_prompt_ref,
+            effect_prohibition_prompt_ref=self._identify_effect_prohibitions_prompt_ref,
             responsibility_prompt_ref=self._identify_resource_responsibilities_prompt_ref,
             source_status_prompt_ref=self._identify_source_status_prompt_ref,
             resource_role_candidates=self._resource_role_candidates,
@@ -212,6 +218,7 @@ class RequestUnderstandingSubgraph:
                 llm_call_id=f"{request.run_id}:request.identify_goal",
                 prompt_ref=self._identify_goal_prompt_ref,
                 additional_prompt_refs=(
+                    self._identify_effect_prohibitions_prompt_ref,
                     self._identify_resource_responsibilities_prompt_ref,
                     self._identify_source_status_prompt_ref,
                 ),

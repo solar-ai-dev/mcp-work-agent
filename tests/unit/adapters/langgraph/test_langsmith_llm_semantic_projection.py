@@ -206,6 +206,49 @@ def test_resource_role_output__keeps_roles__without_business_literals() -> None:
     assert "private event time" not in repr(projection)
 
 
+def test_effect_prohibition_projection__keeps_only_effect_enums() -> None:
+    semantic_input = project_llm_semantic_input(
+        "request_understanding.identify_effect_prohibitions",
+        {
+            "user_request": "private request",
+            "selected_resource_refs": [],
+            "goal_candidate": {
+                "goal": "private goal",
+                "completion_conditions": ["private completion"],
+            },
+            "effect_candidates": [
+                {"effect": "CREATE"},
+                {"effect": "SEND"},
+            ],
+        },
+    )
+    semantic_output = project_llm_semantic_output(
+        "request_understanding.identify_effect_prohibitions",
+        {
+            "effect_prohibitions": [
+                {"effect": "CREATE", "prohibition": "NOT_FORBIDDEN"},
+                {"effect": "SEND", "prohibition": "FORBIDDEN"},
+            ]
+        },
+    )
+
+    assert semantic_input["effect_candidates"] == {
+        "count": 2,
+        "items": [{"effect": "CREATE"}, {"effect": "SEND"}],
+    }
+    assert semantic_output["effect_prohibitions"] == {
+        "count": 2,
+        "items": [
+            {"effect": "CREATE", "prohibition": "NOT_FORBIDDEN"},
+            {"effect": "SEND", "prohibition": "FORBIDDEN"},
+        ],
+    }
+    exported = repr((semantic_input, semantic_output))
+    assert "private request" not in exported
+    assert "private goal" not in exported
+    assert "private completion" not in exported
+
+
 def test_source_status_projection__shows_fixed_shape__without_source_literals() -> None:
     semantic_input = project_llm_semantic_input(
         "request_understanding.identify_source_status",
@@ -291,6 +334,9 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
                     "allowed_output_effects": ["CREATE", "UPDATE"],
                 }
             ],
+            "effect_prohibitions": [
+                {"effect": "SEND", "prohibition": "FORBIDDEN"}
+            ],
             "goal_candidate": {
                 "goal": "private goal",
                 "completion_conditions": ["private completion"],
@@ -328,6 +374,10 @@ def test_resource_responsibility_input__shows_upstream_shape__without_literals()
                 "allowed_output_effects": ["CREATE", "UPDATE"],
             }
         ],
+    }
+    assert projection["effect_prohibitions"] == {
+        "count": 1,
+        "items": [{"effect": "SEND", "prohibition": "FORBIDDEN"}],
     }
     exported = repr(projection)
     assert "private project" not in exported

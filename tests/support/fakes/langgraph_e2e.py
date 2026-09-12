@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -220,6 +220,18 @@ def _respond(
             "completion_conditions": ["E2E terminal outcome"],
             "constraints": [],
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
+        }
+    if prompt_id == "request_understanding.identify_effect_prohibitions":
+        return {
+            "effect_prohibitions": [
+                {
+                    "effect": candidate["effect"],
+                    "prohibition": "NOT_FORBIDDEN",
+                }
+                for candidate in cast(
+                    Sequence[Mapping[str, object]], base["effect_candidates"]
+                )
+            ]
         }
     if prompt_id == "request_understanding.identify_resource_responsibilities":
         return _goal_resource_role_decisions(base, scenario)

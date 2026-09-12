@@ -64,6 +64,11 @@ RESPONSIBILITY_PROMPT_REF = replace(
     prompt_id="request_understanding.identify_resource_responsibilities",
     purpose="identify_resource_responsibilities",
 )
+EFFECT_PROHIBITION_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_effect_prohibitions",
+    purpose="identify_effect_prohibitions",
+)
 SOURCE_STATUS_PROMPT_REF = replace(
     PROMPT_REF,
     prompt_id="request_understanding.identify_source_status",
@@ -159,6 +164,22 @@ class _RepairingAgent:
                     for candidate in candidates
                 ]
             }
+        elif prompt_ref.prompt_id == "request_understanding.identify_effect_prohibitions":
+            base = cast(
+                Mapping[str, object],
+                input_projection.get("base_projection", input_projection),
+            )
+            output = {
+                "effect_prohibitions": [
+                    {
+                        "effect": candidate["effect"],
+                        "prohibition": "NOT_FORBIDDEN",
+                    }
+                    for candidate in cast(
+                        list[Mapping[str, object]], base["effect_candidates"]
+                    )
+                ]
+            }
         elif prompt_ref.prompt_id == "request_understanding.identify_source_status":
             output = {"statuses": []}
         else:
@@ -190,6 +211,7 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph = object.__new__(RequestUnderstandingSubgraph)
     subgraph._llm_runtime = agent if agent is not None else cast(Any, _NeverCalledAgent())
     subgraph._identify_goal_prompt_ref = PROMPT_REF
+    subgraph._identify_effect_prohibitions_prompt_ref = EFFECT_PROHIBITION_PROMPT_REF
     subgraph._identify_resource_responsibilities_prompt_ref = RESPONSIBILITY_PROMPT_REF
     subgraph._identify_source_status_prompt_ref = SOURCE_STATUS_PROMPT_REF
     subgraph._resource_role_candidates = build_resource_role_candidates(
@@ -255,5 +277,5 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
 
     result = subgraph._identify_goal_node(cast(Any, state))
 
-    assert agent.calls == 3
-    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 9
+    assert agent.calls == 4
+    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 11

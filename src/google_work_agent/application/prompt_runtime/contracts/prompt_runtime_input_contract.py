@@ -11,6 +11,7 @@ PROMPT_RUNTIME_INPUT_CONTRACT_SCHEMA_VERSION: Final = 1
 
 REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "request_understanding.identify_goal": "request.identify_goal",
+    "request_understanding.identify_effect_prohibitions": "request.identify_goal",
     "request_understanding.identify_resource_responsibilities": "request.identify_goal",
     "request_understanding.identify_source_status": "request.identify_goal",
     "request_understanding.identify_temporal_scope": "request.identify_temporal_scope",
@@ -75,7 +76,7 @@ class PromptRuntimeInputContractEntryV1:
         if self.prompt_slot_id == "retrieval.select_evidence":
             input_versions = {3, 4, 5}
         elif self.prompt_slot_id == "request_understanding.identify_resource_responsibilities":
-            input_versions = {4}
+            input_versions = {5}
         elif self.prompt_slot_id == "request_understanding.identify_source_status":
             input_versions = {1}
         else:

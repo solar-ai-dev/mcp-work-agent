@@ -23,18 +23,20 @@ def identify_goal_node(
     *,
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference | None,
+    effect_prohibition_prompt_ref: PromptReference | None,
     responsibility_prompt_ref: PromptReference | None,
     source_status_prompt_ref: PromptReference | None,
     resource_role_candidates: tuple[resource_role_decision.ResourceRoleCandidateV1, ...],
 ) -> RequestUnderstandingStateV2:
     projection = project_identify_goal_input(state)
-    ensure_llm_call_budget(state, provider_calls_requested=3)
+    ensure_llm_call_budget(state, provider_calls_requested=4)
     candidate, retry_budget = identify_goal_with_budget(
         llm_runtime=llm_runtime,
         request=projection["request"],
         retry_budget=state["retry_budget"],
         resource_role_candidates=resource_role_candidates,
         prompt_ref=prompt_ref,
+        effect_prohibition_prompt_ref=effect_prohibition_prompt_ref,
         responsibility_prompt_ref=responsibility_prompt_ref,
         source_status_prompt_ref=source_status_prompt_ref,
         confirmation_response=projection.get("confirmation_response"),

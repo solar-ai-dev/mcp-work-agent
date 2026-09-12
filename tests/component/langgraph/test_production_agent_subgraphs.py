@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from itertools import count
 from typing import Any, cast
 
@@ -106,6 +106,7 @@ class _ComponentInferencePort:
         request_reconsideration: bool = False,
         duplicate_found: bool = False,
         searchable_target: bool = False,
+        cross_source_draft: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -115,6 +116,7 @@ class _ComponentInferencePort:
         self.request_reconsideration = request_reconsideration
         self.duplicate_found = duplicate_found
         self.searchable_target = searchable_target
+        self.cross_source_draft = cross_source_draft
         self.calls: list[str] = []
         self.inputs: dict[str, list[dict[str, object]]] = {}
 
@@ -149,6 +151,23 @@ class _ComponentInferencePort:
     def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
         has_confirmation = isinstance(projection.get("confirmation_response"), Mapping)
         if prompt_id == "request_understanding.identify_goal":
+            if self.cross_source_draft:
+                return {
+                    "goal": "prepare a draft from existing work facts",
+                    "completion_conditions": ["prepare the draft", "do not send it"],
+                    "constraints": {
+                        "search_terms": ["Project Anchor"],
+                        "business_concepts": [],
+                        "person": [],
+                        "sender": [],
+                        "recipient": ["person@example.test"],
+                        "subject": [],
+                        "period": [],
+                        "coverage_requirement": [],
+                        "additional_constraints": [],
+                    },
+                    "analysis_requirement": "NONE",
+                }
             if self.searchable_target:
                 return {
                     "goal": "confirm shipment criteria and owner from related mail",
@@ -183,7 +202,32 @@ class _ComponentInferencePort:
                 },
                 "analysis_requirement": "NONE",
             }
+        if prompt_id == "request_understanding.identify_effect_prohibitions":
+            return {
+                "effect_prohibitions": [
+                    {
+                        "effect": candidate["effect"],
+                        "prohibition": (
+                            "FORBIDDEN"
+                            if self.cross_source_draft and candidate["effect"] == "SEND"
+                            else "NOT_FORBIDDEN"
+                        ),
+                    }
+                    for candidate in cast(
+                        Sequence[Mapping[str, object]], projection["effect_candidates"]
+                    )
+                ]
+            }
         if prompt_id == "request_understanding.identify_resource_responsibilities":
+            if self.cross_source_draft:
+                return _resource_role_decisions(
+                    projection,
+                    source_types={
+                        "TASK": ["work status"],
+                        "CALENDAR_EVENT": ["schedule"],
+                    },
+                    output_types={"GMAIL_DRAFT": "CREATE"},
+                )
             if self.searchable_target:
                 return _resource_role_decisions(
                     projection,
@@ -836,6 +880,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     assert result["request_intent"]["goal"] == "summarize status"
     assert llm.calls == [
         "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_resource_responsibilities",
         "request_understanding.identify_source_status",
     ]
@@ -873,6 +918,49 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
     )
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
+
+
+def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_send_ban() -> None:
+    llm = _ComponentInferencePort(cross_source_draft=True)
+    graph = RequestUnderstandingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=_confirm_early,
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(_state(request_text="prepare a draft from work and schedule"))
+
+    assert result["request_intent"]["resource_responsibilities"] == {
+        "source_reads": [
+            {"resource_type": "TASK", "required_information": ["work status"]},
+            {
+                "resource_type": "CALENDAR_EVENT",
+                "required_information": ["schedule"],
+            },
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+    }
+    role_input = llm.inputs[
+        "request_understanding.identify_resource_responsibilities"
+    ][0]
+    assert {item["effect"]: item["prohibition"] for item in role_input["effect_prohibitions"]}[
+        "SEND"
+    ] == "FORBIDDEN"
+    source_status_input = llm.inputs["request_understanding.identify_source_status"][0]
+    assert [item["resource_type"] for item in source_status_input["source_reads"]] == [
+        "TASK",
+        "CALENDAR_EVENT",
+    ]
+    assert source_status_input["outputs"] == [
+        {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
+    ]
 
 
 def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from typing import Literal, cast
 
@@ -14,10 +14,12 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 
+from .contracts.effect_prohibition_decision import EffectProhibitionDecisionCandidateV1
 from .contracts.request_intent import (
     REQUEST_RESOURCE_TYPES,
     WRITE_EFFECT_RESOURCE_TYPES,
     OutputResourceResponsibilityV1,
+    RequestGoalSemanticValidationError,
     ResourceResponsibilitiesV1,
     SourceResourceResponsibilityV1,
     WriteEffectValue,
@@ -27,6 +29,7 @@ from .contracts.resource_role_decision import (
     ResourceRoleDecisionCandidateV1,
     ResourceRoleValue,
 )
+from .identify_effect_prohibitions import prohibited_effects as resolve_prohibited_effects
 
 _ROLE_ORDER: tuple[ResourceRoleValue, ...] = (
     "NONE",
@@ -41,6 +44,18 @@ _WRITE_EFFECT_ORDER: tuple[WriteEffectValue, ...] = (
     "DELETE",
 )
 _NONEMPTY_INFORMATION_SCHEMA = {"type": "string", "minLength": 1}
+
+
+class ProhibitedResourceRoleDecisionError(RequestGoalSemanticValidationError):
+    """Carry the rejected role candidate into the existing bounded revision path."""
+
+    def __init__(self, *, candidate_output: object, affected_field_paths: Sequence[str]) -> None:
+        super().__init__(
+            "resource role output selects an explicitly prohibited effect",
+            reason_code="REQUEST_PROHIBITED_OUTPUT_EFFECT_SELECTED",
+            affected_field_paths=affected_field_paths,
+        )
+        self.candidate_output = deepcopy(candidate_output)
 
 
 def build_resource_role_candidates(
@@ -98,6 +113,8 @@ def build_resource_role_candidates(
 
 def build_resource_role_decision_output_schema(
     candidates: Sequence[ResourceRoleCandidateV1],
+    *,
+    prohibited_effects: Collection[WriteEffectValue] = (),
 ) -> OutputSchemaDefinition:
     """Build the bounded role-discriminated schema for the current registry."""
 
@@ -112,9 +129,16 @@ def build_resource_role_decision_output_schema(
         for candidate in candidates
         if "SOURCE" in candidate["allowed_roles"]
     ]
-    writable_candidates = [
-        candidate for candidate in candidates if candidate["allowed_output_effects"]
-    ]
+    prohibited = set(prohibited_effects)
+    effects_by_resource: dict[str, list[WriteEffectValue]] = {}
+    for candidate in candidates:
+        allowed_effects = [
+            effect
+            for effect in candidate["allowed_output_effects"]
+            if effect not in prohibited
+        ]
+        if allowed_effects:
+            effects_by_resource[candidate["resource_type"]] = allowed_effects
     role_variants: list[dict[str, object]] = [
         _decision_variant(
             role="NONE",
@@ -132,11 +156,7 @@ def build_resource_role_decision_output_schema(
                 output_effects_by_resource={},
             )
         )
-    if writable_candidates:
-        effects_by_resource = {
-            candidate["resource_type"]: list(candidate["allowed_output_effects"])
-            for candidate in writable_candidates
-        }
+    if effects_by_resource:
         output_only_effects_by_resource = {
             resource_type: [
                 effect for effect in effects if effect not in {"UPDATE", "DELETE"}
@@ -214,15 +234,26 @@ def identify_resource_roles(
     prompt_input: Mapping[str, object],
     goal_candidate: Mapping[str, object],
     resource_candidates: Sequence[ResourceRoleCandidateV1],
+    effect_prohibitions: EffectProhibitionDecisionCandidateV1 | None = None,
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
 ) -> tuple[ResourceRoleDecisionCandidateV1, ResourceResponsibilitiesV1]:
     """Infer only roles from the runtime-owned candidate set."""
 
+    prohibited = (
+        frozenset()
+        if effect_prohibitions is None
+        else resolve_prohibited_effects(effect_prohibitions)
+    )
     base_projection = {
         **prompt_input,
         "goal_candidate": dict(goal_candidate),
         "resource_candidates": [deepcopy(candidate) for candidate in resource_candidates],
+        "effect_prohibitions": (
+            []
+            if effect_prohibitions is None
+            else deepcopy(effect_prohibitions["effect_prohibitions"])
+        ),
     }
     inference_input: Mapping[str, object] = base_projection
     if candidate_output is not None or failure_record is not None:
@@ -237,11 +268,15 @@ def identify_resource_roles(
         requested_mode,
         prompt_ref,
         inference_input,
-        build_resource_role_decision_output_schema(resource_candidates),
+        build_resource_role_decision_output_schema(
+            resource_candidates,
+            prohibited_effects=prohibited,
+        ),
     )
     decisions = validate_resource_role_decision_candidate(
         result.structured_output,
         resource_candidates=resource_candidates,
+        prohibited_effects=prohibited,
     )
     return decisions, normalize_resource_role_decisions(
         decisions,
@@ -253,8 +288,19 @@ def validate_resource_role_decision_candidate(
     value: object,
     *,
     resource_candidates: Sequence[ResourceRoleCandidateV1],
+    prohibited_effects: Collection[WriteEffectValue] = (),
 ) -> ResourceRoleDecisionCandidateV1:
-    schema = build_resource_role_decision_output_schema(resource_candidates)
+    prohibited = set(prohibited_effects)
+    conflict_paths = _prohibited_effect_paths(value, prohibited_effects=prohibited)
+    if conflict_paths:
+        raise ProhibitedResourceRoleDecisionError(
+            candidate_output=value,
+            affected_field_paths=conflict_paths,
+        )
+    schema = build_resource_role_decision_output_schema(
+        resource_candidates,
+        prohibited_effects=prohibited,
+    )
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
         raise ValueError(f"Resource role decision candidate is invalid: {'; '.join(errors)}")
@@ -277,6 +323,23 @@ def validate_resource_role_decision_candidate(
                     f"[{information_index}] has no semantic text"
                 )
     return cast(ResourceRoleDecisionCandidateV1, deepcopy(value))
+
+
+def _prohibited_effect_paths(
+    value: object,
+    *,
+    prohibited_effects: Collection[WriteEffectValue],
+) -> tuple[str, ...]:
+    if not prohibited_effects or not isinstance(value, Mapping):
+        return ()
+    raw_decisions = value.get("resource_decisions")
+    if not isinstance(raw_decisions, Sequence) or isinstance(raw_decisions, (str, bytes)):
+        return ()
+    return tuple(
+        f"$.resource_decisions[{index}].effect"
+        for index, decision in enumerate(raw_decisions)
+        if isinstance(decision, Mapping) and decision.get("effect") in prohibited_effects
+    )
 
 
 def normalize_resource_role_decisions(
@@ -361,6 +424,7 @@ def _decision_variant(
 
 
 __all__ = [
+    "ProhibitedResourceRoleDecisionError",
     "build_resource_role_candidates",
     "build_resource_role_decision_output_schema",
     "identify_resource_roles",

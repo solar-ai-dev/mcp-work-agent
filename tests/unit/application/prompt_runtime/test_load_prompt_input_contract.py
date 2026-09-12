@@ -94,6 +94,7 @@ def test_resource_responsibility_contract__requires_preceding_goal_candidate() -
             "selected_resource_refs": [],
             "goal_candidate": {},
             "resource_candidates": [],
+            "effect_prohibitions": [],
         },
     )
     with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
@@ -102,6 +103,29 @@ def test_resource_responsibility_contract__requires_preceding_goal_candidate() -
             {
                 "user_request": "request",
                 "selected_resource_refs": [],
+            },
+        )
+
+
+def test_effect_prohibition_contract__requires_goal_and_runtime_effect_candidates() -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        "request_understanding.identify_effect_prohibitions",
+        {
+            "user_request": "request",
+            "selected_resource_refs": [],
+            "goal_candidate": {},
+            "effect_candidates": [],
+        },
+    )
+    with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
+        contract.validate_projection(
+            "request_understanding.identify_effect_prohibitions",
+            {
+                "user_request": "request",
+                "selected_resource_refs": [],
+                "goal_candidate": {},
             },
         )
 

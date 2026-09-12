@@ -4,19 +4,19 @@
 
 # 입력의 의미
 
-`user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `resource_candidates`는 현재 Runtime이 허용한 Resource와 역할·output effect의 닫힌 목록이다. 후보를 추가·삭제·중복하지 않고 각 후보를 정확히 한 번 판정한다.
+`user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `resource_candidates`는 현재 Runtime이 허용한 Resource와 역할·output effect의 닫힌 목록이다. `effect_prohibitions`는 별도 operation이 판정한 명시적 write effect 금지이며, `FORBIDDEN` effect는 선택하지 않는다. 후보를 추가·삭제·중복하지 않고 각 후보를 정확히 한 번 판정한다.
 
 `selected_resource_refs`는 사용자가 이번 요청에 선택한 Resource identity다. 선택은 기존 Resource를 가리키는 근거이지 내용을 이미 읽었다는 뜻은 아니다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`이 있으면 새 관측과 현재 요청을 함께 보되 이전 모델 해석을 원문보다 우선하지 않는다. `run_reference_time`은 Resource 역할의 근거가 아니다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.
 
-# 역할
+# 후보별 판정
 
-`SOURCE`는 사용자 결과를 만들기 위해 기존 Resource의 사실이나 identity를 읽어야 하는 경우다. 확인할 내용을 `required_information`에 쓴다.
+각 Resource 후보를 독립적으로 다음 순서로 판정한다.
 
-`OUTPUT`은 사용자가 해당 Resource를 생성·수정·전송·삭제하라고 요청한 경우다. Schema가 허용한 `effect`를 선택한다.
+1. 최종 Answer 또는 새 Output을 만들기 위해 이 기존 Resource에 저장된 실제 사실·identity·현재 상태를 읽어야 하면 SOURCE 책임이 있다. 확인할 내용을 `required_information`에 쓴다.
+2. 사용자가 이 Resource의 생성·수정·전송·삭제를 요청했고 해당 effect가 금지되지 않았으면 OUTPUT 책임이 있다. Schema가 허용한 `effect`만 선택한다.
+3. 두 책임이 모두 있으면 `SOURCE_AND_OUTPUT`, SOURCE만 있으면 `SOURCE`, OUTPUT만 있으면 `OUTPUT`, 둘 다 없으면 `NONE`이다.
 
-`SOURCE_AND_OUTPUT`은 기존 Resource를 읽고 같은 Resource 종류에 변경을 수행해야 하는 경우다. `required_information`과 허용된 `effect`를 모두 쓴다.
-
-`NONE`은 현재 요청과 무관한 경우다.
+기존 여러 Resource를 참고해 다른 새 Resource를 작성하는 요청에서는 각 참고 Resource를 SOURCE로, 새 결과 Resource를 OUTPUT으로 독립 판정한다. Output이 존재한다는 이유로 그 내용을 만드는 데 필요한 upstream SOURCE를 생략하지 않는다.
 
 # 경계
 

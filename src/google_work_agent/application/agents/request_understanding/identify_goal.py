@@ -53,7 +53,14 @@ from .contracts.request_goal_candidate_schema import (
     validate_request_goal_candidate,
 )
 from .contracts.resource_role_decision import ResourceRoleCandidateV1
-from .identify_resource_roles import identify_resource_roles
+from .identify_effect_prohibitions import (
+    build_effect_prohibition_candidates,
+    identify_effect_prohibitions,
+)
+from .identify_resource_roles import (
+    ProhibitedResourceRoleDecisionError,
+    identify_resource_roles,
+)
 from .identify_source_status import identify_source_status
 from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
 
@@ -64,6 +71,7 @@ def identify_goal(
     request: WorkflowStartRequest,
     resource_role_candidates: Sequence[ResourceRoleCandidateV1],
     prompt_ref: PromptReference | None = None,
+    effect_prohibition_prompt_ref: PromptReference | None = None,
     responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
@@ -77,6 +85,10 @@ def identify_goal(
     )
     resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
         "request_understanding.identify_resource_responsibilities",
+        resolved_manifest_path,
+    )
+    resolved_effect_prohibition_prompt_ref = effect_prohibition_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_effect_prohibitions",
         resolved_manifest_path,
     )
     resolved_source_status_prompt_ref = source_status_prompt_ref or load_prompt_reference(
@@ -94,6 +106,14 @@ def identify_goal(
         prompt_input,
         IDENTIFY_GOAL_OUTPUT_SCHEMA,
     )
+    effect_prohibitions = identify_effect_prohibitions(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_effect_prohibition_prompt_ref,
+        prompt_input=prompt_input,
+        goal_candidate=result.structured_output,
+        effect_candidates=build_effect_prohibition_candidates(resource_role_candidates),
+    )
     _, responsibilities = identify_resource_roles(
         llm_runtime=llm_runtime,
         requested_mode=request.requested_mode,
@@ -101,6 +121,7 @@ def identify_goal(
         prompt_input=prompt_input,
         goal_candidate=result.structured_output,
         resource_candidates=resource_role_candidates,
+        effect_prohibitions=effect_prohibitions,
     )
     source_status_output = identify_source_status(
         llm_runtime=llm_runtime,
@@ -126,6 +147,7 @@ def identify_goal_with_budget(
     retry_budget: RunBudgetV2,
     resource_role_candidates: Sequence[ResourceRoleCandidateV1],
     prompt_ref: PromptReference | None = None,
+    effect_prohibition_prompt_ref: PromptReference | None = None,
     responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
@@ -140,6 +162,10 @@ def identify_goal_with_budget(
     )
     resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
         "request_understanding.identify_resource_responsibilities",
+        resolved_manifest_path,
+    )
+    resolved_effect_prohibition_prompt_ref = effect_prohibition_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_effect_prohibitions",
         resolved_manifest_path,
     )
     resolved_source_status_prompt_ref = source_status_prompt_ref or load_prompt_reference(
@@ -159,14 +185,54 @@ def identify_goal_with_budget(
             IDENTIFY_GOAL_OUTPUT_SCHEMA,
         )
         goal_output = result.structured_output
-        responsibility_output, responsibilities = identify_resource_roles(
+        effect_candidates = build_effect_prohibition_candidates(resource_role_candidates)
+        prohibition_output = identify_effect_prohibitions(
             llm_runtime=llm_runtime,
             requested_mode=request.requested_mode,
-            prompt_ref=resolved_responsibility_prompt_ref,
+            prompt_ref=resolved_effect_prohibition_prompt_ref,
             prompt_input=prompt_input,
             goal_candidate=goal_output,
-            resource_candidates=resource_role_candidates,
+            effect_candidates=effect_candidates,
         )
+        try:
+            responsibility_output, responsibilities = identify_resource_roles(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_responsibility_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                resource_candidates=resource_role_candidates,
+                effect_prohibitions=prohibition_output,
+            )
+        except ProhibitedResourceRoleDecisionError as error:
+            signature = build_semantic_failure_signature_v1(
+                node_id="request.identify_goal",
+                failure_reason_codes=[error.reason_code],
+            )
+            decision = approve_semantic_revision(retry_budget, signature=signature)
+            if decision["decision"] == BudgetDecision.DENY.value:
+                raise
+            failure_record = build_failure_record_v1(
+                failure_reason_code=error.reason_code,
+                failure_origin="LLM_OUTPUT",
+                detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE",
+                experiment_disposition="RUN_REVISION",
+                affected_field_paths=list(error.affected_field_paths),
+                failure_context_ids=[str(error)],
+            )
+            responsibility_output, responsibilities = identify_resource_roles(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_responsibility_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                resource_candidates=resource_role_candidates,
+                effect_prohibitions=prohibition_output,
+                candidate_output=error.candidate_output,
+                failure_record=failure_record,
+            )
+            retry_budget = decision["run_budget"]
         source_status_output = identify_source_status(
             llm_runtime=llm_runtime,
             requested_mode=request.requested_mode,
@@ -211,6 +277,16 @@ def identify_goal_with_budget(
                 IDENTIFY_GOAL_OUTPUT_SCHEMA,
             )
             goal_output = revised_goal.structured_output
+            prohibition_output = identify_effect_prohibitions(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_effect_prohibition_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                effect_candidates=effect_candidates,
+                candidate_output=prohibition_output,
+                failure_record=failure_record,
+            )
             responsibility_output, responsibilities = identify_resource_roles(
                 llm_runtime=llm_runtime,
                 requested_mode=request.requested_mode,
@@ -218,6 +294,7 @@ def identify_goal_with_budget(
                 prompt_input=prompt_input,
                 goal_candidate=goal_output,
                 resource_candidates=resource_role_candidates,
+                effect_prohibitions=prohibition_output,
                 candidate_output=responsibility_output,
                 failure_record=failure_record,
             )
