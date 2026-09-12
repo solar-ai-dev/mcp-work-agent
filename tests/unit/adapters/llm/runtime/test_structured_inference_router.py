@@ -275,7 +275,7 @@ def test_source_dependency_prompt__uses_only_its_sampling_temperature_override()
     )
     router.infer("API_LLM", PROMPT, {"user_request": "hello"}, SCHEMA)
 
-    assert [policy.sampling_temperature for policy in api.runtime_policies] == [0.10, 0.2]
+    assert [policy.sampling_temperature for policy in api.runtime_policies] == [0.05, 0.2]
     assert [policy.sampling_seed for policy in api.runtime_policies] == [1729, 1729]
 
 

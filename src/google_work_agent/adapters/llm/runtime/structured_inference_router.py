@@ -66,7 +66,7 @@ from google_work_agent.ports.system.settings_port import SettingsViewV1
 _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = (
     "request_understanding.identify_source_dependencies"
 )
-_IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE = 0.10
+_IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE = 0.05
 
 
 @dataclass(frozen=True, slots=True)
