@@ -134,6 +134,9 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
     project_person_candidates,
     resolve_supported_person_identities,
 )
+from google_work_agent.application.agents.retrieval.normalize_segments import (
+    rehydrate_normalized_segments,
+)
 from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
     plan_candidate_detail,
 )
@@ -806,21 +809,27 @@ class RetrievalSubgraph:
         acquisition_result = _require_state_value(
             working_state["acquisition_result"], "acquisition_result"
         )
-        patch = normalize_segments_node(
-            cast(
-                Any,
-                {
-                    "operation_inputs": {
-                        "normalize_segments": {
-                            "acquisition_result": acquisition_result,
-                            "preferred_segment_ids": self._preferred_segment_ids(state),
-                        }
-                    }
-                },
-            )
-        )
-        segments = cast(list[Any], patch["normalized_segments"])
         expected_ids = state.get("segments")
+        if expected_ids is None:
+            patch = normalize_segments_node(
+                cast(
+                    Any,
+                    {
+                        "operation_inputs": {
+                            "normalize_segments": {
+                                "acquisition_result": acquisition_result,
+                                "preferred_segment_ids": self._preferred_segment_ids(state),
+                            }
+                        }
+                    },
+                )
+            )
+            segments = cast(list[Any], patch["normalized_segments"])
+        else:
+            segments = cast(
+                list[Any],
+                rehydrate_normalized_segments(acquisition_result, expected_ids),
+            )
         actual_ids = [segment.segment_id for segment in segments]
         if expected_ids is not None and actual_ids != expected_ids:
             raise ValueError("stable segment identity changed within one retrieval round")

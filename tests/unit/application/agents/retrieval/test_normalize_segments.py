@@ -10,6 +10,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     ContextBudget,
     normalize_segments,
+    rehydrate_normalized_segments,
 )
 from google_work_agent.application.agents.retrieval.select_evidence import (
     materialize_evidence_drafts,
@@ -657,6 +658,82 @@ def test_mixed_sources__full_preferred_google_budget__still_retains_new_github()
     )
     assert {segment.source for segment in mixed} == {"GMAIL", "GITHUB"}
     assert mixed[0].segment_id == prior[0].segment_id
+
+
+def test_rehydrate_normalized_segments__preserves_exact_materialized_selection() -> None:
+    task_resources = [
+        {
+            "resource_handle": f"task:task-{index}",
+            "resource_type": "task",
+            "resource_id": f"task-{index}",
+            "parent_id": "task-list-1",
+            "version": "v1",
+            "payload": {"title": f"Task {index}", "status": "needsAction"},
+        }
+        for index in range(24)
+    ]
+    calendar_resource = {
+        "resource_handle": "calendar:calendar-1",
+        "resource_type": "calendar",
+        "resource_id": "calendar-1",
+        "version": "v1",
+        "payload": {"summary": "Calendar"},
+    }
+    acquisition = cast(
+        AcquisitionResultV1,
+        {
+            "schema_version": 1,
+            "status": "COMPLETE",
+            "resource_handles": [
+                *(item["resource_handle"] for item in task_resources),
+                calendar_resource["resource_handle"],
+            ],
+            "source_summaries": [
+                {
+                    "route_id": "task-route",
+                    "connector_id": "google_workspace",
+                    "source": "TASKS",
+                    "status": "COMPLETE",
+                    "resource_handles": [item["resource_handle"] for item in task_resources],
+                    "resources": task_resources,
+                },
+                {
+                    "route_id": "calendar-route",
+                    "connector_id": "google_workspace",
+                    "source": "CALENDAR",
+                    "status": "COMPLETE",
+                    "resource_handles": [calendar_resource["resource_handle"]],
+                    "resources": [calendar_resource],
+                },
+            ],
+            "missing_slots": [],
+            "remaining_budget": {},
+        },
+    )
+
+    materialized = normalize_segments(acquisition)
+    materialized_ids = [segment.segment_id for segment in materialized]
+    reselection_ids = [
+        segment.segment_id
+        for segment in normalize_segments(acquisition, preferred_segment_ids=materialized_ids)
+    ]
+    rehydrated = rehydrate_normalized_segments(acquisition, materialized_ids)
+
+    assert len(materialized_ids) == 24
+    assert {segment.source for segment in materialized} == {"TASKS"}
+    assert reselection_ids != materialized_ids
+    assert {segment.source for segment in rehydrated} == {"TASKS"}
+    assert [segment.segment_id for segment in rehydrated] == materialized_ids
+
+
+def test_rehydrate_normalized_segments__changed_identity__fails_closed() -> None:
+    acquisition = _result("same content")
+    materialized_ids = [segment.segment_id for segment in normalize_segments(acquisition)]
+    resources = cast(list[dict[str, object]], acquisition["source_summaries"][0]["resources"])
+    resources[0]["version"] = "v2"
+
+    with pytest.raises(ValueError, match="stable segment identity changed"):
+        rehydrate_normalized_segments(acquisition, materialized_ids)
 
 
 def test_github_acquisition__google_connector_attribution__fails_closed() -> None:

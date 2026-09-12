@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import ceil
 from typing import Literal, cast
 
@@ -162,6 +162,35 @@ def normalize_segments(
         max_segments=context_budget.max_segments,
         preferred_segment_ids=preferred_segment_ids,
     )
+
+
+def rehydrate_normalized_segments(
+    acquisition_result: AcquisitionResultV1,
+    segment_ids: Sequence[str],
+    *,
+    context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
+) -> list[SourceSegment]:
+    """Resolve one materialized segment selection without selecting it again."""
+
+    expected_ids = list(segment_ids)
+    if len(expected_ids) != len(set(expected_ids)):
+        raise ValueError("materialized segment IDs must be unique")
+    expanded_budget = replace(
+        context_budget,
+        max_segments=max(
+            context_budget.max_segments,
+            len(expected_ids) + len(acquisition_result["resource_handles"]),
+        ),
+    )
+    candidates = normalize_segments(
+        acquisition_result,
+        context_budget=expanded_budget,
+        preferred_segment_ids=expected_ids,
+    )
+    by_id = {segment.segment_id: segment for segment in candidates}
+    if any(segment_id not in by_id for segment_id in expected_ids):
+        raise ValueError("stable segment identity changed within one retrieval round")
+    return [by_id[segment_id] for segment_id in expected_ids]
 
 
 def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
@@ -542,6 +571,7 @@ __all__ = [
     "DEFAULT_CONTEXT_BUDGET",
     "RetrievalValidationError",
     "SourceSegment",
+    "rehydrate_normalized_segments",
     "_chunk_text",
     "_estimate_tokens",
     "_resource_text",

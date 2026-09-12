@@ -1645,6 +1645,9 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
     task_counts = (2, 2, 1, 0, 2, 0, 2, 0, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 3)
 
     class MultiSourceInference(_ComponentInferencePort):
+        def __init__(self) -> None:
+            super().__init__(retrieval_needs_more=True)
+
         def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
             if prompt_id == "retrieval.plan_query":
                 routes = cast(list[Mapping[str, object]], projection["input_routes"])
@@ -1796,7 +1799,7 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
     with provider_dispatch_execution_scope():
         for update in graph.stream(state, stream_mode="updates"):
             updates.append(cast(dict[str, object], update))
-            if "rag_retrieve" in update:
+            if "assess_sufficiency" in update:
                 break
 
     assert connector.calls == [
@@ -1811,7 +1814,7 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
     assert len(cast(list[object], normalize_update["__context_read_result_handles__"])) == 24
     assert len(cast(list[object], normalize_update["__context_segment_handles__"])) == 65
     assert len(cast(list[object], normalize_update["segments"])) == 24
-    assert any("rag_retrieve" in update for update in updates)
+    assert any("assess_sufficiency" in update for update in updates)
 
 
 @pytest.mark.parametrize(
