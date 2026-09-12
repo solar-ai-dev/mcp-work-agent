@@ -31,9 +31,18 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
 )
 from google_work_agent.adapters.llm.runtime.llm_credential_router import SessionMemorySecretStore
 from google_work_agent.api.composition import ProductionRuntimeConfig, build_production_runtime
+from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_responsibilities,
+)
+from google_work_agent.application.agents.request_understanding import (
+    identify_source_dependencies as source_dependencies,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     DEVELOPMENT_SMOKE,
     load_prompt_reference,
+)
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
 )
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     provider_dispatch_execution_scope,
@@ -41,6 +50,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.application.use_cases.setting.update_settings import UpdateSettingsCommand
 from google_work_agent.ports.llm.local_model_profile import SELECTABLE_LOCAL_MODEL_IDS
+from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
 from google_work_agent.ports.llm.structured_inference_port import (
     StructuredInferencePort,
     StructuredInferenceResultV1,
@@ -97,13 +107,38 @@ def _measure(directory: str, *, prompt_manifest_path: Path | None = None) -> Non
         # production event recording as diagnostic events, without a fake FK.
         runtime.run_context_provider = lambda: None
         observed = ObservedInference(runtime)
-        prompt = load_prompt_reference(
-            "request_understanding.identify_goal",
-            manifest_path=prompt_manifest_path,
-            execution_scope=DEVELOPMENT_SMOKE,
-        )
+
+        def prompt_reference(prompt_id: str) -> PromptReference:
+            return load_prompt_reference(
+                prompt_id,
+                manifest_path=prompt_manifest_path,
+                execution_scope=DEVELOPMENT_SMOKE,
+            )
+
+        prompt = prompt_reference("request_understanding.identify_goal")
+        tool_catalog = load_signed_tool_registry()
         node = partial(
-            identify_goal_node.identify_goal_node, llm_runtime=observed, prompt_ref=prompt
+            identify_goal_node.identify_goal_node,
+            llm_runtime=observed,
+            prompt_ref=prompt,
+            effect_prohibition_prompt_ref=prompt_reference(
+                "request_understanding.identify_effect_prohibitions"
+            ),
+            source_dependency_prompt_ref=prompt_reference(
+                "request_understanding.identify_source_dependencies"
+            ),
+            output_responsibility_prompt_ref=prompt_reference(
+                "request_understanding.identify_output_responsibilities"
+            ),
+            source_status_prompt_ref=prompt_reference(
+                "request_understanding.identify_source_status"
+            ),
+            source_dependency_candidates=source_dependencies.build_source_dependency_candidates(
+                tool_catalog
+            ),
+            output_responsibility_candidates=(
+                output_responsibilities.build_output_responsibility_candidates(tool_catalog)
+            ),
         )
         profile = container.llm_runtime_selection.local_model_profile
         builder = StateGraph(RequestUnderstandingStateV2)

@@ -69,7 +69,7 @@ Invoke-RestMethod "$($launch.base_url)/health/ready"
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m pytest tests\architecture -q
 .\.venv\Scripts\ruff.exe check src tests launcher release scripts
-.\.venv\Scripts\mypy.exe src tests launcher release scripts
+.\.venv\Scripts\mypy.exe --explicit-package-bases src tests launcher release scripts
 .\.venv\Scripts\python.exe -m compileall -q src launcher release scripts tests
 
 npm --prefix frontend test -- --run
