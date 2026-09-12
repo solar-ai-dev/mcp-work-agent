@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Required, TypedDict, cast
 
+from google_work_agent.ports.system.settings_port import MAX_SOURCE_PAGE_CALLS_PER_RUN
+
 
 class BudgetProfile(StrEnum):
     NORMAL = "NORMAL"
@@ -203,7 +205,7 @@ def build_default_run_budget(
     started_at_ms: int = 0,
     max_execution_ms: int = 900_000,
     max_connector_calls: int = 50,
-    max_source_page_calls: int = 8,
+    max_source_page_calls: int = MAX_SOURCE_PAGE_CALLS_PER_RUN,
     max_detail_fetches: int = 12,
     max_context_tokens: int = 16_000,
     max_retry_attempts: int = 2,
@@ -219,7 +221,9 @@ def build_default_run_budget(
             "connector_calls_used": 0,
             "max_connector_calls": max_connector_calls,
             "source_page_calls_used": 0,
-            "max_source_page_calls": min(max_source_page_calls, 8),
+            "max_source_page_calls": min(
+                max_source_page_calls, MAX_SOURCE_PAGE_CALLS_PER_RUN
+            ),
             "detail_fetches_used": 0,
             "max_detail_fetches": min(max_detail_fetches, 12),
             "context_tokens_used": 0,
@@ -275,7 +279,7 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         _require_int(value[field], field, minimum=0)
     if value["absolute_llm_call_limit"] not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
         raise ValueError("run budget absolute_llm_call_limit must be 24 or 36")
-    if int(value["max_source_page_calls"]) > 8:
+    if int(value["max_source_page_calls"]) > MAX_SOURCE_PAGE_CALLS_PER_RUN:
         raise ValueError("run budget max_source_page_calls exceeds retrieval hard bound")
     if int(value["max_detail_fetches"]) > 12:
         raise ValueError("run budget max_detail_fetches exceeds retrieval hard bound")

@@ -58,6 +58,8 @@ def test_selection_gate__checks_exact_scope__before_io(
             gate(connector, tool, arguments)
     assert gate.default_target("tasks", "@default") is None
     assert gate.default_target("calendar", "primary") is None
+    assert gate.authorized_targets("tasks") == ("two", "three")
+    assert gate.authorized_targets("calendar") == ("two", "three")
     assert gate.browse_target("tasks", "@default") == "two"
 
 
@@ -70,6 +72,7 @@ def test_selection_gate__account_change_and_empty_selection__never_fall_back(
         google_resource_account_id="google:1",
     )
     gate = RequireResourceSelectionHandler(lambda: settings, lambda _: "google:2")
+    assert gate.authorized_targets("tasks") == ()
     assert gate.default_target("tasks", "@default") is None
     with pytest.raises(ConnectorOperationFailure):
         gate("google_workspace", "tasks_list_tasks", {"task_list_id": "two"})

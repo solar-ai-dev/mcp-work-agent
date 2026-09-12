@@ -9,6 +9,8 @@ from google_work_agent.ports.system.contracts.operational_command_replay import 
     OperationalReconcileResultV1,
 )
 
+MAX_SOURCE_PAGE_CALLS_PER_RUN = 50
+
 
 @dataclass(frozen=True, slots=True)
 class PanelPreferencesV1:
@@ -139,4 +141,5 @@ __all__ = [
     "SettingsPatchV1",
     "SettingsPort",
     "SettingsViewV1",
+    "MAX_SOURCE_PAGE_CALLS_PER_RUN",
 ]

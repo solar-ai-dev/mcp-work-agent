@@ -1639,7 +1639,7 @@ ABSOLUTE_MAX_LLM_CALLS=36
 | compatibility | 새 Run의 absolute 상한은 36이다. 이미 저장된 상한 24의 Run은 resume·profile 승격·merge에서도 24를 유지하며 재작성하지 않는다. |
 | counter | 음수가 아니며 단조 증가한다. Profile 승격으로 사용량을 초기화하지 않는다. |
 | 집행 범위 | LLM·Repair·Revision·Retrieval 외에도 per-Run Connector call, Context token, Retry, 최대 실행 시간을 검사한다. elapsed time은 ClockPort로 확인한다. |
-| Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=8`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |
+| Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=50`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |
 | 초과 직전 | 다음 outbound/LLM operation을 막고 bounded failure/recovery result를 반환한다. |
 
 위 수치는 현재 실행 상한이다. 실험 case 수나 최적 성능의 목표값을 뜻하지 않으며, 반복 전략 자체를 고정하지 않는다.

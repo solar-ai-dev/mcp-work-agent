@@ -106,6 +106,7 @@ from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     build_query_attempt,
     followup_planner_projection,
+    materialize_container_read_plans,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
@@ -159,6 +160,9 @@ from google_work_agent.application.agents.retrieval.resolve_availability import 
     AvailableIntervalV1,
     BusyIntervalV1,
     resolve_availability,
+)
+from google_work_agent.application.agents.retrieval.resolve_route_container_scopes import (
+    resolve_route_container_scopes,
 )
 from google_work_agent.application.agents.retrieval.retain_unchanged_evidence import (
     preferred_detail_evidence_ids,
@@ -415,6 +419,8 @@ class RetrievalSubgraph:
         timezone_provider: Callable[[], str],
         default_tasklist_id_provider: Callable[[], str | None] | None = None,
         default_calendar_id_provider: Callable[[], str | None] | None = None,
+        authorized_tasklist_ids_provider: Callable[[], Sequence[str]] | None = None,
+        authorized_calendar_ids_provider: Callable[[], Sequence[str]] | None = None,
         repository_access: GetRepositoryAccessHandler | None = None,
         load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
         update_run_budget: Callable[
@@ -462,6 +468,8 @@ class RetrievalSubgraph:
         # existing (pre-existing, unrelated to this change) behavior.
         self._default_tasklist_id_provider = default_tasklist_id_provider
         self._default_calendar_id_provider = default_calendar_id_provider
+        self._authorized_tasklist_ids_provider = authorized_tasklist_ids_provider
+        self._authorized_calendar_ids_provider = authorized_calendar_ids_provider
 
     def build(self) -> Any:
         graph = StateGraph(
@@ -1077,23 +1085,28 @@ class RetrievalSubgraph:
         Google defaults retain their existing behavior. GitHub routes consume
         only current-Run RequestIntent/SelectedResourceRef authority.
         """
-        tasklist_id = (
-            None
-            if self._default_tasklist_id_provider is None
-            else self._default_tasklist_id_provider()
+        tasklist_ids = (
+            tuple(self._authorized_tasklist_ids_provider())
+            if self._authorized_tasklist_ids_provider is not None
+            else ()
         )
-        calendar_id = (
-            None
-            if self._default_calendar_id_provider is None
-            else self._default_calendar_id_provider()
+        calendar_ids = (
+            tuple(self._authorized_calendar_ids_provider())
+            if self._authorized_calendar_ids_provider is not None
+            else ()
         )
-        result: dict[str, list[str]] = {}
-        for route in frozen_routes:
-            category = coarse_resource_category(route["resource_type"])
-            if category == "TASK" and tasklist_id:
-                result[route["route_id"]] = [tasklist_id]
-            elif category == "CALENDAR" and calendar_id:
-                result[route["route_id"]] = [calendar_id]
+        if not tasklist_ids and self._default_tasklist_id_provider is not None:
+            tasklist_id = self._default_tasklist_id_provider()
+            tasklist_ids = () if tasklist_id is None else (tasklist_id,)
+        if not calendar_ids and self._default_calendar_id_provider is not None:
+            calendar_id = self._default_calendar_id_provider()
+            calendar_ids = () if calendar_id is None else (calendar_id,)
+        result = resolve_route_container_scopes(
+            frozen_routes=frozen_routes,
+            selected_resources=request_from_state(state).selected_resources,
+            authorized_tasklist_ids=tasklist_ids,
+            authorized_calendar_ids=calendar_ids,
+        )
         github_routes = [
             route
             for route in frozen_routes
@@ -1289,14 +1302,16 @@ class RetrievalSubgraph:
                 in {"SEARCH", "NEXT_PAGE", "READ"},
             )
         )
-        plans = cast(
-            list[SourceFetchPlanV1],
-            [
-                state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
-                for query in _require_state_value(state.get("query_plan"), "query_plan")[
-                    "route_queries"
-                ]
-            ],
+        plans = materialize_container_read_plans(
+            cast(
+                list[SourceFetchPlanV1],
+                [
+                    state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
+                    for query in _require_state_value(state.get("query_plan"), "query_plan")[
+                        "route_queries"
+                    ]
+                ],
+            )
         )
         route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         routes = {route["route_id"]: route for route in route_plan["input_plan"]["input_routes"]}

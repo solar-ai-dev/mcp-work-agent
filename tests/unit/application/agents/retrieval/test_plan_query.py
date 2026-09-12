@@ -415,7 +415,7 @@ def test_calendar_search__still_requires_validated_container() -> None:
     )
 
     with pytest.raises(
-        RetrievalV2ValidationError, match="requires one validated container"
+        RetrievalV2ValidationError, match="requires validated container scope"
     ) as caught:
         plan_query(
             llm_runtime=runtime,
@@ -1714,13 +1714,9 @@ def test_exact_task_create_precondition__extra_source_route__uses_semantic_plann
             [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
             {"task-lists": ["@default"]},
         ),
-        (
-            [{"kind": "RESOURCE", "field": "title", "value": "Submit report"}],
-            {"tasks": ["list-a", "list-b"], "task-lists": ["@default"]},
-        ),
     ],
 )
-def test_exact_task_create_precondition__invalid_title_or_container__uses_semantic_planner(
+def test_exact_task_create_precondition__invalid_title_or_missing_container__uses_semantic_planner(
     constraints: list[dict[str, object]],
     container_refs: dict[str, list[str]],
 ) -> None:

@@ -16,6 +16,7 @@ from google_work_agent.ports.system.contracts.operational_command_replay import 
     OperationalReconcileResultV1,
 )
 from google_work_agent.ports.system.settings_port import (
+    MAX_SOURCE_PAGE_CALLS_PER_RUN,
     GitHubRepositoryDefaultV1,
     PanelPreferencesV1,
     SettingsPatchV1,
@@ -77,7 +78,7 @@ def _default_settings() -> SettingsViewV1:
         calendar_buffer_minutes=0,
         max_run_execution_ms=900_000,
         max_connector_calls_per_run=50,
-        max_source_page_calls_per_run=8,
+        max_source_page_calls_per_run=MAX_SOURCE_PAGE_CALLS_PER_RUN,
         max_detail_fetches_per_run=12,
         max_context_tokens_per_run=16_000,
         max_retry_attempts_per_run=2,
@@ -403,6 +404,8 @@ def _validate_settings(settings: SettingsViewV1) -> None:
     )
     if any(value <= 0 for value in positive) or settings.max_retry_attempts_per_run < 0:
         raise ValueError("runtime budgets and circuit settings are invalid")
+    if settings.max_source_page_calls_per_run > MAX_SOURCE_PAGE_CALLS_PER_RUN:
+        raise ValueError("max_source_page_calls_per_run exceeds the product limit")
 
 
 def _validate_hhmm(value: str) -> None:

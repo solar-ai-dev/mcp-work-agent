@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,6 +71,8 @@ def build_pre_analysis_subgraphs(
     timezone_provider: Callable[[], str],
     default_tasklist_id_provider: Callable[[], str | None] | None = None,
     default_calendar_id_provider: Callable[[], str | None] | None = None,
+    authorized_tasklist_ids_provider: Callable[[], Sequence[str]] | None = None,
+    authorized_calendar_ids_provider: Callable[[], Sequence[str]] | None = None,
     repository_access: GetRepositoryAccessHandler | None = None,
     connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
@@ -125,6 +127,8 @@ def build_pre_analysis_subgraphs(
             timezone_provider=timezone_provider,
             default_tasklist_id_provider=default_tasklist_id_provider,
             default_calendar_id_provider=default_calendar_id_provider,
+            authorized_tasklist_ids_provider=authorized_tasklist_ids_provider,
+            authorized_calendar_ids_provider=authorized_calendar_ids_provider,
             update_run_budget=update_run_budget,
         ).build(),
     )

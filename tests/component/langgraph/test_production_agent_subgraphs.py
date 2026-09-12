@@ -107,6 +107,7 @@ class _ComponentInferencePort:
         duplicate_found: bool = False,
         searchable_target: bool = False,
         cross_source_draft: bool = False,
+        container_retrieval: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -117,6 +118,7 @@ class _ComponentInferencePort:
         self.duplicate_found = duplicate_found
         self.searchable_target = searchable_target
         self.cross_source_draft = cross_source_draft
+        self.container_retrieval = container_retrieval
         self.calls: list[str] = []
         self.inputs: dict[str, list[dict[str, object]]] = {}
 
@@ -287,6 +289,31 @@ class _ComponentInferencePort:
                 "selected_tool_id": selected,
             }
         if prompt_id == "retrieval.plan_query":
+            if self.container_retrieval:
+                routes = cast(list[Mapping[str, object]], projection["input_routes"])
+                return {
+                    "schema_version": 2,
+                    "route_queries": [
+                        {
+                            "route_id": route["route_id"],
+                            "operation": "SEARCH",
+                            "reason_codes": ["USER_REQUEST"],
+                            "search_spec": {
+                                "mode": "INITIAL",
+                                "constraints": [
+                                    {
+                                        "kind": "CONTAINER_REF",
+                                        "container_refs": [
+                                            cast(list[str], route["container_refs"])[0]
+                                        ],
+                                    }
+                                ],
+                            },
+                            "detail_candidate_ref": None,
+                        }
+                        for route in routes
+                    ],
+                }
             current_round_no = projection.get("current_round_no")
             search_spec: dict[str, object] = (
                 {
@@ -559,6 +586,54 @@ class _PagedCollectionConnectorReadPort:
         )
 
 
+class _ContainerConnectorReadPort:
+    def __init__(self, resource_type: str) -> None:
+        self.resource_type = resource_type
+        self.arguments: list[dict[str, Any]] = []
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        self.arguments.append(dict(tool_arguments))
+        resource_type = (
+            "task"
+            if "task_list_id" in tool_arguments
+            else "calendar_event"
+            if "calendar_id" in tool_arguments
+            else self.resource_type
+        )
+        container_id = cast(
+            str,
+            tool_arguments.get("task_list_id") or tool_arguments.get("calendar_id"),
+        )
+        payload = (
+            {"title": f"Task from {container_id}", "status": "needsAction", "due": None}
+            if resource_type == "task"
+            else {
+                "title": f"Event from {container_id}",
+                "start": "2026-09-12T09:00:00+09:00",
+                "end": "2026-09-12T10:00:00+09:00",
+            }
+        )
+        return ConnectorReadResultV1(
+            1,
+            binding.tool_id,
+            f"container-read-{len(self.arguments)}",
+            {
+                "items": [
+                    {
+                        "resource_type": resource_type,
+                        "resource_id": f"item-{len(self.arguments)}",
+                        "parent_id": container_id,
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": payload,
+                    }
+                ]
+            },
+            None,
+            1,
+        )
+
+
 @pytest.mark.parametrize("multiple", [False, True])
 def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple: bool) -> None:
     class Reader:
@@ -778,6 +853,64 @@ def _task_create_route_plan() -> dict[str, object]:
                 "selected_tool_id": "tasks_create_task",
                 "reason_codes": ["USER_REQUEST"],
             }
+        ],
+    }
+    return result
+
+
+def _container_read_route_plan(resource_type: str) -> dict[str, object]:
+    result = _answer_route_plan()
+    result["input_plan"] = {
+        "schema_version": 1,
+        "meta": {
+            "artifact_id": "input-container-1",
+            "revision": 1,
+            "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+        },
+        "input_routes": [
+            {
+                "route_id": "route-1",
+                "resource_type": resource_type,
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": [
+                    "tasks_list_tasks"
+                    if resource_type == "TASK"
+                    else "calendar_list_events"
+                ],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            }
+        ],
+    }
+    return result
+
+
+def _task_and_calendar_read_route_plan() -> dict[str, object]:
+    result = _answer_route_plan()
+    result["input_plan"] = {
+        "schema_version": 1,
+        "meta": {
+            "artifact_id": "input-container-1",
+            "revision": 1,
+            "based_on": [{"artifact_id": "intent-1", "revision": 1}],
+        },
+        "input_routes": [
+            {
+                "route_id": "task-route",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasks"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+            {
+                "route_id": "calendar-route",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
         ],
     }
     return result
@@ -1078,6 +1211,7 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
         "NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT"
     ]
     assert result["retrieval_result"]["evidence_refs"]
+
     assert connector.call_count == 1
     binding = next(iter(result["__context_read_bindings__"].values()))
     assert binding["source_fetch_plan"]["query_identity_hash"] == binding["query_identity_hash"]
@@ -1120,6 +1254,116 @@ def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     )
     assert ("assess_sufficiency", "plan_query") in _edge_set(graph)
     assert ("finalize", "finalize") in _edge_set(graph)
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "container_type", "parent_key", "resource_value"),
+    [
+        ("TASK", "TASK_LIST", "task_list_id", "task"),
+        ("CALENDAR_EVENT", "CALENDAR", "calendar_id", "calendar_event"),
+    ],
+)
+@pytest.mark.parametrize("explicit", [False, True])
+def test_retrieval__compiled_container_scope__fans_out_or_honors_explicit_selection(
+    resource_type: str,
+    container_type: str,
+    parent_key: str,
+    resource_value: str,
+    explicit: bool,
+) -> None:
+    selected = (
+        (
+            SelectedResourceRef(
+                "selected-container",
+                "google_workspace",
+                container_type,
+                "container-b",
+            ),
+        )
+        if explicit
+        else ()
+    )
+    state = _state(initial_target="context_retriever", selected_resources=selected)
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _container_read_route_plan(resource_type))
+    connector = _ContainerConnectorReadPort(resource_value)
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(container_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+        authorized_tasklist_ids_provider=(
+            (lambda: ("container-a", "container-b")) if resource_type == "TASK" else None
+        ),
+        authorized_calendar_ids_provider=(
+            (lambda: ("container-a", "container-b"))
+            if resource_type == "CALENDAR_EVENT"
+            else None
+        ),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert [arguments[parent_key] for arguments in connector.arguments] == (
+        ["container-b"] if explicit else ["container-a", "container-b"]
+    )
+    assert all(isinstance(arguments[parent_key], str) for arguments in connector.arguments)
+    assert result["retrieval_result"]["source_statuses"][0]["status"] == "COMPLETE"
+
+
+def test_retrieval__compiled_container_scope__allows_current_authorized_45_reads() -> None:
+    task_lists = tuple(f"task-list-{index}" for index in range(22))
+    calendars = tuple(f"calendar-{index}" for index in range(23))
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _task_and_calendar_read_route_plan())
+    connector = _ContainerConnectorReadPort("mixed")
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(container_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+        authorized_tasklist_ids_provider=lambda: task_lists,
+        authorized_calendar_ids_provider=lambda: calendars,
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert len(connector.arguments) == 45
+    assert all("task_list_id" in arguments for arguments in connector.arguments[:22])
+    assert {
+        arguments["task_list_id"] for arguments in connector.arguments[:22]
+    } == set(task_lists)
+    assert all("calendar_id" in arguments for arguments in connector.arguments[22:])
+    assert {
+        arguments["calendar_id"] for arguments in connector.arguments[22:]
+    } == set(calendars)
+    assert result["retry_budget"]["source_page_calls_used"] == 45
+    assert result["retry_budget"]["max_source_page_calls"] == 50
 
 
 @pytest.mark.parametrize(

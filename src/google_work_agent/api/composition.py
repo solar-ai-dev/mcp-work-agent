@@ -2765,6 +2765,12 @@ def build_production_runtime(
             default_calendar_id_provider=lambda: resource_selection.default_target(
                 "calendar", DEFAULT_CALENDAR_ID
             ),
+            authorized_tasklist_ids_provider=lambda: resource_selection.authorized_targets(
+                "tasks"
+            ),
+            authorized_calendar_ids_provider=lambda: resource_selection.authorized_targets(
+                "calendar"
+            ),
             attachment_verifier=attachment_staging,
             observability_callbacks=(
                 () if langsmith_callback is None else (langsmith_callback,)

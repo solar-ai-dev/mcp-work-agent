@@ -779,11 +779,17 @@ RETRIEVAL_PAGE_SIZE=<configured>
 MAX_RETRIEVAL_ROUNDS=3
 MAX_ADDITIONAL_RETRIEVAL_ROUNDS=2
 MAX_PAGES_PER_SOURCE_PER_ROUND=2
-MAX_TOTAL_SOURCE_PAGES=8
+MAX_TOTAL_SOURCE_PAGES=50
 MAX_METADATA_CANDIDATES_PER_SOURCE=40
 MAX_DETAIL_FETCH_PER_SOURCE=5
 MAX_TOTAL_DETAIL_RESOURCES=12
 ```
+
+Task와 Calendar Event READ에서 현재 Run의 명시적 Resource/Container 선택이 없으면,
+계정에 결속된 `selected_tasklist_ids` / `selected_calendar_ids` 전체가 검증된 Container
+scope다. Semantic Query는 이 scope를 보존하고, Connector 경계에서는 Container 하나당
+하나의 concrete READ로 fan-out한다. 명시 선택이 있으면 그 Container만 사용하며, 허용
+scope 밖 ID는 dispatch 전에 거절한다.
 
 ## 14. Cache와 영속 경계
 

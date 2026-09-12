@@ -98,13 +98,62 @@ def build_query(
     ]
 
 
+def materialize_container_read_plans(
+    plans: Sequence[SourceFetchPlanV1],
+) -> list[SourceFetchPlanV1]:
+    """Fan one authorized semantic scope out into single-container provider plans."""
+    materialized: list[SourceFetchPlanV1] = []
+    for plan in plans:
+        container = next(
+            (
+                constraint
+                for constraint in plan["effective_constraints"]
+                if constraint["kind"] == "CONTAINER_REF"
+            ),
+            None,
+        )
+        if (
+            container is None
+            or plan["operation_kind"] not in {"SEARCH", "FREEBUSY"}
+            or plan["resource_type"] not in {"TASK", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+            or len(container["container_refs"]) == 1
+        ):
+            materialized.append(plan)
+            continue
+        for ref in container["container_refs"]:
+            constraints = [
+                (
+                    {"kind": "CONTAINER_REF", "container_refs": [ref]}
+                    if constraint["kind"] == "CONTAINER_REF"
+                    else constraint
+                )
+                for constraint in plan["effective_constraints"]
+            ]
+            normalized = _normalize_constraints(
+                cast(list[SemanticRetrievalConstraintV1], constraints)
+            )
+            materialized.append(
+                {
+                    **plan,
+                    "effective_constraints": normalized,
+                    "query_identity_hash": _query_identity(
+                        cast(InputToolRouteV1, plan),
+                        plan["operation_kind"],
+                        normalized,
+                        plan["detail_candidate_ref"],
+                    ),
+                }
+            )
+    return materialized
+
+
 def bind_required_container_constraints(
     plan: object,
     *,
     route_policies: Mapping[str, RouteConstraintPolicy],
     validated_container_refs: Mapping[str, Collection[str]] | None,
 ) -> object:
-    """Inject only a pre-validated required container into INITIAL SEARCH."""
+    """Bind the complete code-owned container scope to each required SEARCH."""
     if not isinstance(plan, Mapping):
         return plan
     bound = deepcopy(dict(plan))
@@ -125,23 +174,31 @@ def bind_required_container_constraints(
         ):
             continue
         refs = list(dict.fromkeys((validated_container_refs or {}).get(route_id, ())))
-        if len(refs) != 1:
+        if not refs:
             raise RetrievalV2ValidationError(
-                f"route {route_id} requires one validated container authority"
+                f"route {route_id} requires validated container authority"
             )
         search_spec = raw_query.get("search_spec")
-        if not isinstance(search_spec, dict) or search_spec.get("mode") != "INITIAL":
+        if not isinstance(search_spec, dict):
             continue
-        constraints = search_spec.get("constraints")
+        constraints = (
+            search_spec.get("constraints")
+            if search_spec.get("mode") == "INITIAL"
+            else (
+                search_spec.get("constraint_delta", {}).get("upsert_constraints")
+                if isinstance(search_spec.get("constraint_delta"), dict)
+                else None
+            )
+        )
         if not isinstance(constraints, list):
             continue
-        if not any(
-            isinstance(constraint, Mapping) and constraint.get("kind") == "CONTAINER_REF"
+        constraints[:] = [
+            constraint
             for constraint in constraints
-        ):
-            constraints.append({"kind": "CONTAINER_REF", "container_refs": refs})
+            if not (isinstance(constraint, Mapping) and constraint.get("kind") == "CONTAINER_REF")
+        ]
+        constraints.append({"kind": "CONTAINER_REF", "container_refs": refs})
     return bound
-
 
 def _build_one(
     query: RouteQueryIntentV2,

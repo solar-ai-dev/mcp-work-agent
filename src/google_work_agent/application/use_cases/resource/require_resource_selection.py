@@ -28,16 +28,24 @@ class RequireResourceSelectionHandler:
     current_account_id: Callable[[str], str | None]
     repository_access: GetRepositoryAccessHandler | None = None
 
-    def default_target(self, source: str, legacy_fallback: str) -> str | None:
+    def authorized_targets(self, source: str) -> tuple[str, ...]:
+        """Return the account-bound container scope selected for provider READs."""
         settings = self.settings()
         selected = (
             settings.selected_tasklist_ids if source == "tasks" else settings.selected_calendar_ids
         )
-        if selected is not None:
-            if settings.google_resource_account_id != self.current_account_id("google_workspace"):
-                return None
-            return selected[0] if len(selected) == 1 else None
-        return None
+        if (
+            selected is None
+            or settings.google_resource_account_id
+            != self.current_account_id("google_workspace")
+        ):
+            return ()
+        return tuple(dict.fromkeys(selected))
+
+    def default_target(self, source: str, legacy_fallback: str) -> str | None:
+        del legacy_fallback
+        selected = self.authorized_targets(source)
+        return selected[0] if len(selected) == 1 else None
 
     def __call__(self, connector_id: str, tool_id: str, arguments: dict[str, JsonValue]) -> None:
         settings = self.settings()

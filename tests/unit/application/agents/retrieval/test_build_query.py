@@ -7,6 +7,7 @@ from google_work_agent.application.agents.retrieval.build_query import (
     QueryUnchangedAfterFailureError,
     RouteConstraintPolicy,
     build_query,
+    materialize_container_read_plans,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalQueryPlanV2,
@@ -172,6 +173,60 @@ def test_build_query__preserves_exact__frozen_resource_type() -> None:
         build_query(
             reordered, frozen_routes=[route], route_policies=policies, prior_plans={"r1": original}
         )
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "tool_id"),
+    [("TASK", "tasks_list_tasks"), ("CALENDAR_EVENT", "calendar_list_events")],
+)
+def test_build_query__multi_container_scope__materializes_one_plan_per_provider_read(
+    resource_type: str,
+    tool_id: str,
+) -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "connector_id": "google_workspace",
+            "resource_type": resource_type,
+            "allowed_read_tool_ids": [tool_id],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": []},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    semantic = build_query(
+        plan,
+        frozen_routes=[route],
+        route_policies={
+            "route-1": RouteConstraintPolicy(
+                frozenset({"CONTAINER_REF"}), frozenset({"CONTAINER_REF"})
+            )
+        },
+        validated_container_refs={"route-1": ["container-a", "container-b"]},
+    )
+    concrete = materialize_container_read_plans(semantic)
+
+    assert len(semantic) == 1
+    assert semantic[0]["effective_constraints"] == [
+        {"kind": "CONTAINER_REF", "container_refs": ["container-a", "container-b"]}
+    ]
+    assert [item["effective_constraints"] for item in concrete] == [
+        [{"kind": "CONTAINER_REF", "container_refs": ["container-a"]}],
+        [{"kind": "CONTAINER_REF", "container_refs": ["container-b"]}],
+    ]
+    assert len({item["query_identity_hash"] for item in concrete}) == 2
 
 
 def test_build_query__phrase_order_and_repetition__define_execution_and_identity() -> None:

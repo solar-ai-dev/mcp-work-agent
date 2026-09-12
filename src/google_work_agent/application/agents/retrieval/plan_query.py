@@ -331,7 +331,7 @@ def _exact_calendar_conflict_check_plan(
             policy is None
             or "CONTAINER_REF" not in policy.supported_kinds
             or "TEMPORAL_RANGE" not in policy.supported_kinds
-            or len(container_refs) != 1
+            or not container_refs
         ):
             return None
         operation = "FREEBUSY" if route["resource_type"] == "CALENDAR_FREEBUSY" else "SEARCH"
@@ -344,7 +344,7 @@ def _exact_calendar_conflict_check_plan(
                 "search_spec": {
                     "mode": "INITIAL",
                     "constraints": [
-                        {"kind": "CONTAINER_REF", "container_refs": [container_refs[0]]},
+                        {"kind": "CONTAINER_REF", "container_refs": list(container_refs)},
                         {"kind": "TEMPORAL_RANGE", "axis": axis, **temporal},
                     ],
                 },
@@ -399,7 +399,7 @@ def _exact_task_duplicate_check_plan(
         if (
             policy is None
             or "CONTAINER_REF" not in policy.supported_kinds
-            or len(container_refs) != 1
+            or not container_refs
         ):
             return None
         route_queries.append(
@@ -410,7 +410,7 @@ def _exact_task_duplicate_check_plan(
                 "search_spec": {
                     "mode": "INITIAL",
                     "constraints": [
-                        {"kind": "CONTAINER_REF", "container_refs": [container_refs[0]]}
+                        {"kind": "CONTAINER_REF", "container_refs": list(container_refs)}
                     ],
                 },
                 "detail_candidate_ref": None,
@@ -667,10 +667,10 @@ def plan_query(
     for route_id, policy in route_policies.items():
         if (
             "CONTAINER_REF" in policy.required_kinds
-            and len(set((validated_container_refs or {}).get(route_id, ()))) != 1
+            and not set((validated_container_refs or {}).get(route_id, ()))
         ):
             raise RetrievalV2ValidationError(
-                f"route {route_id} requires one validated container",
+                f"route {route_id} requires validated container scope",
                 reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
                 affected_field_paths=("$.validated_container_refs",),
                 validation_stage="QUERY_PLAN_VALIDATOR",

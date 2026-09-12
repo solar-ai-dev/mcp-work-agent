@@ -34,8 +34,15 @@ def test_default_run__budget_is_valid__and_checkpoint_safe() -> None:
     assert budget["llm_calls_used"] == 0
     assert budget["started_at_ms"] == 0
     assert budget["absolute_llm_call_limit"] == ABSOLUTE_MAX_LLM_CALLS
+    assert budget["max_source_page_calls"] == 50
     assert budget["schema_repairs_used_by_node"] == {}
     assert budget["semantic_revisions_used_by_failure"] == {}
+
+
+def test_run_budget__source_page_hard_bound_is_fifty() -> None:
+    assert build_default_run_budget(max_source_page_calls=51)["max_source_page_calls"] == 50
+    with pytest.raises(ValueError, match="source_page_calls exceeds retrieval hard bound"):
+        validate_run_budget_v2({**build_default_run_budget(), "max_source_page_calls": 51})
 
 
 def test_run_budget_validator__rejects_invalid_counters__profile_and_duplicates() -> None:

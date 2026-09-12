@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from copy import deepcopy
 from functools import partial
 from hashlib import sha256
@@ -413,6 +413,8 @@ class _WorkflowRuntimeComposition:
         work_hours_provider: Callable[[], CalendarWorkHours] | None = None,
         default_tasklist_id_provider: Callable[[], str | None] | None = None,
         default_calendar_id_provider: Callable[[], str | None] | None = None,
+        authorized_tasklist_ids_provider: Callable[[], Sequence[str]] | None = None,
+        authorized_calendar_ids_provider: Callable[[], Sequence[str]] | None = None,
         attachment_verifier: Any | None = None,
         resume_target_registry: ResumeTargetRegistry | None = None,
         sse_event_buffer: SseEventBufferPort | None = None,
@@ -442,6 +444,8 @@ class _WorkflowRuntimeComposition:
         self._timezone_provider = timezone_provider or (lambda: "Asia/Seoul")
         self._default_tasklist_id_provider = default_tasklist_id_provider
         self._default_calendar_id_provider = default_calendar_id_provider
+        self._authorized_tasklist_ids_provider = authorized_tasklist_ids_provider
+        self._authorized_calendar_ids_provider = authorized_calendar_ids_provider
         self._cancel_signal_lock = Lock()
         self._cancel_signals: set[str] = set()
         self._checkpointer = self._checkpoint_port
@@ -594,6 +598,8 @@ class _WorkflowRuntimeComposition:
             timezone_provider=self._timezone_provider,
             default_tasklist_id_provider=self._default_tasklist_id_provider,
             default_calendar_id_provider=self._default_calendar_id_provider,
+            authorized_tasklist_ids_provider=self._authorized_tasklist_ids_provider,
+            authorized_calendar_ids_provider=self._authorized_calendar_ids_provider,
             load_retrieval_head=self._checkpoint_port.load_retrieval_head,
             update_run_budget=self._checkpoint_port.update_run_budget,
         )
