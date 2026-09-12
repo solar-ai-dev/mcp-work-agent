@@ -66,6 +66,7 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "prohibition",
         "dependency",
         "read_tool_ids",
+        "owned_fact_kinds",
         "allowed_output_effects",
         "resolution_responsibilities",
         "connector_owned_information_count",
@@ -241,7 +242,8 @@ def _project_source_dependency_input(value: Mapping[object, object]) -> dict[str
         if candidate is None:
             continue
         projected: dict[str, object] = {
-            "read_tool_ids": _safe_values(candidate.get("read_tool_ids"))
+            "read_tool_ids": _safe_values(candidate.get("read_tool_ids")),
+            "owned_fact_kinds": _safe_values(candidate.get("owned_fact_kinds")),
         }
         _copy_safe_scalar(candidate, projected, "resource_type")
         items.append(projected)

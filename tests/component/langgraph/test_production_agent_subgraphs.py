@@ -952,6 +952,17 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
     }
+    source_input = llm.inputs["request_understanding.identify_source_dependencies"][0]
+    source_candidates = {
+        item["resource_type"]: item for item in source_input["source_candidates"]
+    }
+    assert source_candidates["TASK_LIST"]["owned_fact_kinds"] == [
+        "task_list_identity",
+        "task_list_title",
+    ]
+    assert "completion_status" in source_candidates["TASK"]["owned_fact_kinds"]
+    assert "start" in source_candidates["CALENDAR_EVENT"]["owned_fact_kinds"]
+    assert "start" not in source_candidates["CALENDAR"]["owned_fact_kinds"]
     output_input = llm.inputs["request_understanding.identify_output_responsibilities"][0]
     assert {item["effect"]: item["prohibition"] for item in output_input["effect_prohibitions"]}[
         "SEND"

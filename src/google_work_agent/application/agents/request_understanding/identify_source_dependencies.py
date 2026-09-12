@@ -22,6 +22,69 @@ from .contracts.source_dependency_decision import (
 
 _NONEMPTY_INFORMATION_SCHEMA = {"type": "string", "minLength": 1}
 
+_OWNED_FACT_KINDS_BY_RESOURCE: dict[str, tuple[str, ...]] = {
+    "GMAIL_THREAD": (
+        "thread_identity",
+        "subject",
+        "participants",
+        "message_history",
+        "timestamps",
+    ),
+    "GMAIL_MESSAGE": (
+        "message_identity",
+        "subject",
+        "sender",
+        "recipients",
+        "body",
+        "timestamp",
+        "labels",
+    ),
+    "GMAIL_DRAFT": (
+        "draft_identity",
+        "recipients",
+        "subject",
+        "body",
+        "attachments",
+    ),
+    "GMAIL_ATTACHMENT": (
+        "attachment_identity",
+        "filename",
+        "mime_type",
+        "content",
+    ),
+    "TASK_LIST": ("task_list_identity", "task_list_title"),
+    "TASK": (
+        "task_identity",
+        "title",
+        "notes",
+        "due",
+        "completion_status",
+        "task_list_identity",
+    ),
+    "CALENDAR": ("calendar_identity", "calendar_title", "calendar_metadata"),
+    "CALENDAR_EVENT": (
+        "event_identity",
+        "title",
+        "start",
+        "end",
+        "location",
+        "description",
+        "attendees",
+        "status",
+        "calendar_identity",
+    ),
+    "CALENDAR_FREEBUSY": ("calendar_identity", "busy_time_ranges"),
+    "GITHUB_ISSUE": (
+        "issue_identity",
+        "repository_identity",
+        "title",
+        "body",
+        "state",
+        "labels",
+        "assignees",
+    ),
+}
+
 
 def build_source_dependency_candidates(
     tool_catalog: SignedToolRegistry,
@@ -40,6 +103,7 @@ def build_source_dependency_candidates(
         SourceDependencyCandidateV1(
             resource_type=resource_type,
             read_tool_ids=sorted(read_tool_ids_by_resource[resource_type]),
+            owned_fact_kinds=list(_OWNED_FACT_KINDS_BY_RESOURCE[resource_type]),
         )
         for resource_type in REQUEST_RESOURCE_TYPES
         if resource_type in read_tool_ids_by_resource
@@ -57,6 +121,10 @@ def build_source_dependency_output_schema(
     resource_types = [candidate["resource_type"] for candidate in candidates]
     if not resource_types or len(resource_types) != len(set(resource_types)):
         raise ValueError("source dependency candidates must be non-empty and unique")
+    for candidate in candidates:
+        owned_fact_kinds = candidate["owned_fact_kinds"]
+        if not owned_fact_kinds or len(owned_fact_kinds) != len(set(owned_fact_kinds)):
+            raise ValueError("source dependency candidates require unique owned fact kinds")
     variants: list[dict[str, object]] = [
         {
             "type": "object",

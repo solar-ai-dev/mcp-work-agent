@@ -349,6 +349,7 @@ def test_atomic_responsibility_inputs__show_bounded_candidates__without_literals
                 {
                     "resource_type": "GMAIL_DRAFT",
                     "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
+                    "owned_fact_kinds": ["draft_identity", "recipients", "subject", "body"],
                 }
             ],
         },
@@ -381,6 +382,7 @@ def test_atomic_responsibility_inputs__show_bounded_candidates__without_literals
             {
                 "resource_type": "GMAIL_DRAFT",
                 "read_tool_ids": ["gmail_get_draft", "gmail_search_drafts"],
+                "owned_fact_kinds": ["draft_identity", "recipients", "subject", "body"],
             }
         ],
     }

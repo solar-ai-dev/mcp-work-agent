@@ -705,12 +705,14 @@ Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identi
 
 `SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
 
-Current required Product-LLM Prompt Slot set은 아래 25개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
+Current required Product-LLM Prompt Slot set은 아래 28개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
 
 | Runtime Node | `prompt_slot_id` (= `prompt_id`) |
 | --- | --- |
 | `request.identify_goal` | `request_understanding.identify_goal` |
-| `request.identify_goal` | `request_understanding.identify_resource_responsibilities` |
+| `request.identify_goal` | `request_understanding.identify_effect_prohibitions` |
+| `request.identify_goal` | `request_understanding.identify_source_dependencies` |
+| `request.identify_goal` | `request_understanding.identify_output_responsibilities` |
 | `request.identify_goal` | `request_understanding.identify_source_status` |
 | `request.identify_temporal_scope` | `request_understanding.identify_temporal_scope` |
 | `request.detect_ambiguity` | `request_understanding.detect_ambiguity` |
@@ -741,6 +743,7 @@ Current PromptRef 집합은 current LLM responsibility에 실제 caller가 있�
 **현재 사용하지 않는 broad predecessor PromptRef**
 
 ```text
+request_understanding.identify_resource_responsibilities
 work_analysis.resolve_relations
 review.inspect
 review.recheck

@@ -60,6 +60,13 @@ def test_registry_candidates__are_exact_read_capabilities() -> None:
         "tasks_get_task",
         "tasks_list_tasks",
     ]
+    assert by_resource["TASK_LIST"]["owned_fact_kinds"] == [
+        "task_list_identity",
+        "task_list_title",
+    ]
+    assert "completion_status" in by_resource["TASK"]["owned_fact_kinds"]
+    assert "start" in by_resource["CALENDAR_EVENT"]["owned_fact_kinds"]
+    assert "start" not in by_resource["CALENDAR"]["owned_fact_kinds"]
 
 
 @pytest.mark.parametrize(
@@ -97,3 +104,33 @@ def test_source_validation__preserves_cross_resource_dependencies() -> None:
         )
         == candidate
     )
+
+
+@pytest.mark.parametrize(
+    ("required_resource", "excluded_related_resource", "required_information"),
+    [
+        ("TASK", "TASK_LIST", "현재 상태"),
+        ("TASK_LIST", "TASK", "목록 identity"),
+        ("CALENDAR_EVENT", "CALENDAR", "시작 시각"),
+        ("CALENDAR", "CALENDAR_EVENT", "calendar identity"),
+        ("GMAIL_MESSAGE", "GMAIL_THREAD", "개별 본문"),
+        ("GMAIL_THREAD", "GMAIL_MESSAGE", "대화 이력"),
+    ],
+)
+def test_source_validation__distinct_resource_fact_owner__is_preserved(
+    required_resource: str,
+    excluded_related_resource: str,
+    required_information: str,
+) -> None:
+    candidate = _decisions(sources={required_resource: [required_information]})
+
+    validated = source_dependencies.validate_source_dependency_candidate(
+        candidate,
+        source_candidates=_CANDIDATES,
+    )
+    by_resource = {
+        decision["resource_type"]: decision for decision in validated["source_dependencies"]
+    }
+
+    assert by_resource[required_resource]["dependency"] == "SOURCE_REQUIRED"
+    assert by_resource[excluded_related_resource]["dependency"] == "SOURCE_NOT_REQUIRED"

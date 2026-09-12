@@ -10,6 +10,7 @@ SourceDependencyValue = Literal["SOURCE_REQUIRED", "SOURCE_NOT_REQUIRED"]
 class SourceDependencyCandidateV1(TypedDict):
     resource_type: str
     read_tool_ids: list[str]
+    owned_fact_kinds: list[str]
 
 
 class SourceDependencyDecisionV1(TypedDict):
