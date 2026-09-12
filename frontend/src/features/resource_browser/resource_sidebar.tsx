@@ -4,6 +4,7 @@ import { listCalendars, listTaskLists } from "./api/list_resources";
 import { CalendarPanel } from "./calendar_panel";
 import { GmailPanel } from "./gmail_panel";
 import { GitHubPanel } from "./github_panel";
+import { ResourceViewer } from "./resource_viewer";
 import { TasksPanel } from "./tasks_panel";
 import { useCalendar } from "./calendar_controller";
 import { useGmail } from "./gmail_controller";
@@ -15,13 +16,8 @@ export type ResourceSource = "gmail" | "tasks" | "calendar" | "github";
 
 export type ResourceBrowserProjection = {
   activeSource: ResourceSource | null;
-  focusedItem: ResourceItem | null;
   selectedContext: SelectedResourceContext;
   composerPrompt: string;
-  emptyMessage: string;
-  focusedItemSelected: boolean;
-  toggleFocusedSelection: () => void;
-  openFocusedContainer: () => void;
 };
 
 type Props = {
@@ -71,9 +67,6 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
     () => buildSelectedResourceContext(selectedItems, (item) => presentResource(item).title ?? "제목 없음"),
     [selectedItems],
   );
-  const focusedItemSelected = focusedItem !== null
-    && selectedContext.items.some((item) => isSameResourceIdentity(item, focusedItem));
-
   useEffect(() => {
     const availableItems = source === "gmail"
       ? gmail.items
@@ -174,9 +167,6 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
     const item = items.find((candidate) => candidate.resource_id === resourceId);
     if (item) toggleItem(item);
   }, [toggleItem]);
-  const toggleFocusedSelection = useCallback((): void => {
-    if (focusedItem) toggleItem(focusedItem);
-  }, [focusedItem, toggleItem]);
   const openFocusedContainer = useCallback((): void => {
     if (focusedItem?.parent_id) setParentId(focusedItem.parent_id);
   }, [focusedItem]);
@@ -219,15 +209,10 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
     if (source === "gmail" && !gmail.loaded) return;
     onProjectionChange({
       activeSource: source,
-      focusedItem,
       selectedContext,
       composerPrompt: composerPrompt(source),
-      emptyMessage: emptyMessage(source),
-      focusedItemSelected,
-      toggleFocusedSelection,
-      openFocusedContainer,
     });
-  }, [focusedItem, focusedItemSelected, gmail.loaded, onProjectionChange, openFocusedContainer, selectedContext, source, toggleFocusedSelection]);
+  }, [gmail.loaded, onProjectionChange, selectedContext, source]);
 
   const visibleTaskItems = useMemo(() => {
     if (source !== "tasks") return [];
@@ -239,7 +224,7 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
   const taskSections = useMemo(() => source === "tasks" && tasks.sort === "scheduled_date" ? groupTasksByScheduledDate(visibleTaskItems) : null, [source, tasks.sort, visibleTaskItems]);
 
   return (
-    <aside className="panel resource-panel">
+    <aside className="panel resource-panel" aria-label="자료 탐색">
       <div className="panel-body">
         <div className="resource-tabbar">
           <div className="resource-tabs" role="tablist" aria-label="자료 종류">
@@ -277,6 +262,15 @@ export function ResourceSidebar({ scopeKey, googleAccountId, githubAccountId, go
         {googleConnected && source === "calendar" ? <CalendarPanel calendar={calendar} timezone={timezone} filter={filter} onFilterChange={setFilter} onFocusEvent={setFocusedItem} /> : null}
         {githubConnected && source === "github" ? <GitHubPanel github={github} repository={githubRepository} hasAllowedRepositories={githubRepositories.length > 0} onOpenSettings={onOpenSettings} selectedResourceIds={selectedContext.resourceIds} focusedResourceId={focusedItem?.resource_id ?? null} onToggleResource={(resourceId) => toggleByResourceId(resourceId, github.items)} onFocusResource={setFocusedItem} /> : null}
       </div>
+      {focusedItem ? (
+        <ResourceViewer
+          focusedItem={focusedItem}
+          emptyMessage={emptyMessage(source)}
+          onClose={() => setFocusedItem(null)}
+          onOpenContainer={openFocusedContainer}
+          presentResource={presentResource}
+        />
+      ) : null}
     </aside>
   );
 }

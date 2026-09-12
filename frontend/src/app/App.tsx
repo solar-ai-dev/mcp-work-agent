@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import { ConversationHistoryPanel, useConversation } from "../features/conversation";
-import { ResourceSidebar, ResourceViewer, type ResourceBrowserProjection } from "../features/resource_browser";
+import { ResourceSidebar, type ResourceBrowserProjection } from "../features/resource_browser";
 import { getRuntime, type RuntimeSummary } from "../features/diagnostics";
 import {
   SettingsDrawer,
@@ -35,13 +35,8 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [resourceProjection, setResourceProjection] = useState<ResourceBrowserProjection>({
     activeSource: null,
-    focusedItem: null,
     selectedContext: { items: [], resourceIds: [], selectionHandles: [], labels: [] },
     composerPrompt: "선택한 메일에 대해 질문하거나 업무를 요청하세요...",
-    emptyMessage: "자료를 불러오는 중입니다.",
-    focusedItemSelected: false,
-    toggleFocusedSelection: () => undefined,
-    openFocusedContainer: () => undefined,
   });
   const conversation = useConversation({
     selectedResourceHandles: resourceProjection.selectedContext.selectionHandles,
@@ -284,10 +279,7 @@ function AuthenticatedWorkspace({ initial }: { initial: StartupFlowContext }): J
           onProjectionChange={setResourceProjection}
         />
 
-        <CenterWorkspace
-          resourceViewer={<ResourceViewer projection={resourceProjection} />}
-          conversationViewModel={conversationViewModel}
-        />
+        <CenterWorkspace conversationViewModel={conversationViewModel} />
 
         <ConversationHistoryPanel
           conversations={conversations}

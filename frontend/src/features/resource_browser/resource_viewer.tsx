@@ -13,8 +13,6 @@ import {
   getTaskResourceDetail,
 } from "./api/get_resource_detail";
 import { ResourceDetail } from "./resource_detail";
-import type { ResourceBrowserProjection } from "./resource_sidebar";
-import { presentResource } from "./resource_sidebar";
 
 type GmailDetailState = {
   resourceId: string | null;
@@ -37,9 +35,22 @@ type CalendarDetailState = {
   error: string | null;
 };
 
-type Props = { projection: ResourceBrowserProjection };
+type PresentedResource = {
+  title: string | null;
+  secondary: string | null;
+  snippet: string | null;
+  time: string | null;
+};
 
-export function ResourceViewer({ projection }: Props): JSX.Element {
+type Props = {
+  focusedItem: ResourceItem;
+  emptyMessage: string;
+  onClose: () => void;
+  onOpenContainer: () => void;
+  presentResource: (item: ResourceItem) => PresentedResource;
+};
+
+export function ResourceViewer({ focusedItem, emptyMessage, onClose, onOpenContainer, presentResource }: Props): JSX.Element {
   const [gmailDetail, setGmailDetail] = useState<GmailDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
   const [taskDetail, setTaskDetail] = useState<TaskDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
   const [calendarDetail, setCalendarDetail] = useState<CalendarDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
@@ -72,34 +83,39 @@ export function ResourceViewer({ projection }: Props): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const item = projection.focusedItem;
+    const item = focusedItem;
     setGmailDetail({ resourceId: null, status: "idle", detail: null, error: null });
     setTaskDetail({ resourceId: null, status: "idle", detail: null, error: null });
     setCalendarDetail({ resourceId: null, status: "idle", detail: null, error: null });
     if (item?.resource_type === "gmail_thread") void loadGmailDetail(item.resource_id);
     else if (item?.resource_type === "task") void loadTaskDetail(item);
     else if (item?.resource_type === "calendar_event") void loadCalendarDetail(item);
-  }, [loadCalendarDetail, loadGmailDetail, loadTaskDetail, projection.focusedItem]);
+  }, [focusedItem, loadCalendarDetail, loadGmailDetail, loadTaskDetail]);
 
   return (
-    <>
-      {projection.focusedItem ? <button className="button-secondary" type="button" aria-pressed={projection.focusedItemSelected} onClick={projection.toggleFocusedSelection}>{projection.focusedItemSelected ? "요청에서 제외" : "요청에 포함"}</button> : null}
-      <ResourceDetail
-        focusItem={projection.focusedItem}
-        gmailDetail={gmailDetail}
-        taskDetail={taskDetail}
-        calendarDetail={calendarDetail}
-        onRetryGmailDetail={() => { if (projection.focusedItem) void loadGmailDetail(projection.focusedItem.resource_id); }}
-        onRetryTaskDetail={() => { if (projection.focusedItem) void loadTaskDetail(projection.focusedItem); }}
-        onRetryCalendarDetail={() => { if (projection.focusedItem) void loadCalendarDetail(projection.focusedItem); }}
-        onDownloadGmailAttachment={(messageId, attachmentId) => { void downloadAttachment(messageId, attachmentId); }}
-        onDrillInto={projection.openFocusedContainer}
-        presentResource={presentResource}
-        metadataEntriesFor={metadataEntries}
-        emptyMessage={projection.emptyMessage}
-        formatMailboxIdentity={mailbox}
-      />
-    </>
+    <section className="resource-detail-drawer" role="dialog" aria-label="자료 상세 창">
+      <header className="resource-detail-drawer-header">
+        <strong>자료 상세</strong>
+        <button className="icon-button icon-button--plain" type="button" aria-label="자료 상세 닫기" title="닫기" onClick={onClose}>×</button>
+      </header>
+      <div className="resource-detail-drawer-body">
+        <ResourceDetail
+          focusItem={focusedItem}
+          gmailDetail={gmailDetail}
+          taskDetail={taskDetail}
+          calendarDetail={calendarDetail}
+          onRetryGmailDetail={() => { void loadGmailDetail(focusedItem.resource_id); }}
+          onRetryTaskDetail={() => { void loadTaskDetail(focusedItem); }}
+          onRetryCalendarDetail={() => { void loadCalendarDetail(focusedItem); }}
+          onDownloadGmailAttachment={(messageId, attachmentId) => { void downloadAttachment(messageId, attachmentId); }}
+          onDrillInto={onOpenContainer}
+          presentResource={presentResource}
+          metadataEntriesFor={metadataEntries}
+          emptyMessage={emptyMessage}
+          formatMailboxIdentity={mailbox}
+        />
+      </div>
+    </section>
   );
 }
 

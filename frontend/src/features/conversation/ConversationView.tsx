@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { Fragment, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import type { ConversationMessage, RunAction, RunContext, RunSnapshot } from "../../api/contract";
 import type { StagedAttachmentDescriptor } from "../attachment";
 import { ActionPlanCard } from "../approval";
@@ -40,9 +40,9 @@ export type ConversationViewModel = {
   onOpenDiagnostics: () => void;
 };
 
-export type ConversationViewProps = { children: ReactNode; viewModel: ConversationViewModel };
+export type ConversationViewProps = { viewModel: ConversationViewModel };
 
-export function ConversationView({ children, viewModel }: ConversationViewProps): JSX.Element {
+export function ConversationView({ viewModel }: ConversationViewProps): JSX.Element {
   const { controller, resourceContext, formatTime, onOpenSettings, onOpenDiagnostics } = viewModel;
   const { selectedConversationId, historyMessages, runSnapshot, runSnapshots, runContext, latestRunEvent, confirmationText, setConfirmationText, composerText, composerError, setComposerText, setComposerError, busyCommand, handleStartRun, handleApprove, handleSimpleAction, handleAttachDescriptors, handleCancelRun, handleResumeRun, handleAdjustContext, handleConfirmation, handleResolveRecovery } = controller;
   const timelineMessages = mergeConversationMessages(
@@ -77,7 +77,6 @@ export function ConversationView({ children, viewModel }: ConversationViewProps)
     <>
       <div className="panel-body">
         <div className="central-scroll-area" ref={timelineRef}>
-          {children}
           <section className="agent-workspace" aria-label="에이전트 대화">
             <section className="card-list">
               {groupMessagesByDate(timelineMessages).map(({ message, separatorLabel }) => (

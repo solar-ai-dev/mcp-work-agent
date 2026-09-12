@@ -75,7 +75,7 @@ test("terminal snapshot message appears immediately and is deduplicated from his
     onOpenDiagnostics: vi.fn(),
   } satisfies ConversationViewModel;
 
-  render(<ConversationView viewModel={viewModel}><div /></ConversationView>);
+  render(<ConversationView viewModel={viewModel} />);
 
   expect(screen.getAllByText(finalMessage.content)).toHaveLength(1);
   expect(screen.queryByText("stale history copy")).not.toBeInTheDocument();
@@ -124,7 +124,7 @@ test("each retained Run keeps its Activity beside its own request and final answ
     controller,
     resourceContext: { selectedResourceIds: [], selectedResourceLabels: [], composerPrompt: "" },
     formatTime: String, onOpenSettings: vi.fn(), onOpenDiagnostics: vi.fn(),
-  }}><div /></ConversationView>);
+  }} />);
 
   expect(screen.getAllByLabelText("에이전트 진행")).toHaveLength(2);
   expect(screen.getByText(/요청 A를 분석했습니다/)).toBeVisible();
@@ -175,7 +175,7 @@ test("retained Run snapshot messages survive a failed history refresh", () => {
     controller,
     resourceContext: { selectedResourceIds: [], selectedResourceLabels: [], composerPrompt: "" },
     formatTime: String, onOpenSettings: vi.fn(), onOpenDiagnostics: vi.fn(),
-  }}><div /></ConversationView>);
+  }} />);
 
   expect(screen.getByText("요청 A")).toBeVisible();
   expect(screen.getByText("보존된 최종 답변 A")).toBeVisible();
