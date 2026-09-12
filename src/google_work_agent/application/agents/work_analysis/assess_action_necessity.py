@@ -43,9 +43,7 @@ ACTION_NECESSITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "additionalProperties": False,
                     "properties": {
                         "route_id": {"type": "string", "minLength": 1},
-                        "status": {
-                            "enum": ["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
-                        },
+                        "status": {"enum": ["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]},
                         "reason": {"type": "string", "minLength": 1},
                         "evidence_refs": {
                             "type": "array",
@@ -85,19 +83,36 @@ def assess_action_necessity(
     task_routes = [route for route in routes if _is_task_create(route)]
     if len(task_routes) > 1:
         raise ValueError("Task duplicate review cannot bind multiple CREATE routes")
-    if task_routes and duplicate_conflict_assessment["requested_work_status"] == (
-        "NOT_APPLICABLE"
-    ):
+    if task_routes and duplicate_conflict_assessment["requested_work_status"] == ("NOT_APPLICABLE"):
         raise ValueError("Task CREATE requires the owning duplicate assessment")
     if not routes:
         return {"route_assessments": []}
+
+    derived_task_assessment = (
+        _derive_task_route_assessment(
+            task_routes[0],
+            duplicate_conflict_assessment=duplicate_conflict_assessment,
+        )
+        if task_routes
+        else None
+    )
+    model_routes = [
+        route
+        for route in routes
+        if derived_task_assessment is None
+        or route["route_id"] != derived_task_assessment["route_id"]
+    ]
+    if not model_routes:
+        if derived_task_assessment is None:
+            raise AssertionError("a model-free route requires a derived Task assessment")
+        return {"route_assessments": [derived_task_assessment]}
 
     candidate_refs = {
         str(item["candidate_ref"])
         for item in task_review_candidates
         if isinstance(item.get("candidate_ref"), str) and item["candidate_ref"]
     } | set(duplicate_conflict_assessment["matched_candidate_refs"])
-    route_ids = {str(route["route_id"]) for route in routes}
+    route_ids = {str(route["route_id"]) for route in model_routes}
     output_schema = _bound_output_schema(
         route_ids=route_ids,
         allowed_evidence_refs=allowed_evidence_refs,
@@ -108,7 +123,7 @@ def assess_action_necessity(
         prompt_ref,
         {
             "request_intent": dict(request_intent),
-            "output_routes": routes,
+            "output_routes": model_routes,
             "work_facts": [dict(item) for item in work_facts],
             "evidence": [dict(item) for item in evidence],
             "source_statuses": [dict(item) for item in source_statuses],
@@ -132,17 +147,60 @@ def assess_action_necessity(
             item["evidence_refs"] or item["candidate_refs"]
         ):
             raise ValueError("NOT_REQUIRED action necessity requires a current observation")
-    if task_routes:
+    if task_routes and derived_task_assessment is None:
         _validate_task_route_assessment(
             next(item for item in assessments if item["route_id"] == task_routes[0]["route_id"]),
             duplicate_conflict_assessment=duplicate_conflict_assessment,
         )
     by_route = {item["route_id"]: item for item in assessments}
+    if derived_task_assessment is not None:
+        by_route[derived_task_assessment["route_id"]] = derived_task_assessment
     return {"route_assessments": [by_route[str(route["route_id"])] for route in routes]}
 
 
-def action_necessity_llm_required(output_routes: Sequence[Mapping[str, object]]) -> bool:
-    return bool(output_routes)
+def action_necessity_llm_required(
+    output_routes: Sequence[Mapping[str, object]],
+    *,
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1,
+) -> bool:
+    return any(
+        not _is_task_create(route)
+        or duplicate_conflict_assessment["requested_work_status"] == "NOT_SATISFIED"
+        for route in output_routes
+    )
+
+
+def _derive_task_route_assessment(
+    route: Mapping[str, object],
+    *,
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1,
+) -> RouteActionNecessityV1 | None:
+    status = duplicate_conflict_assessment["requested_work_status"]
+    route_id = str(route["route_id"])
+    if status == "SATISFIED":
+        return cast(
+            RouteActionNecessityV1,
+            {
+                "route_id": route_id,
+                "status": "NOT_REQUIRED",
+                "reason": "REQUESTED_TASK_ALREADY_SATISFIED",
+                "evidence_refs": list(duplicate_conflict_assessment["evidence_refs"]),
+                "candidate_refs": list(duplicate_conflict_assessment["matched_candidate_refs"]),
+            },
+        )
+    if status == "UNDETERMINED":
+        return cast(
+            RouteActionNecessityV1,
+            {
+                "route_id": route_id,
+                "status": "UNDETERMINED",
+                "reason": duplicate_conflict_assessment["requested_work_reason"]
+                or "TASK_DUPLICATE_REVIEW_UNDETERMINED",
+                "evidence_refs": list(duplicate_conflict_assessment["evidence_refs"]),
+                "candidate_refs": list(duplicate_conflict_assessment["matched_candidate_refs"]),
+            },
+        )
+    return None
 
 
 def _validate_task_route_assessment(

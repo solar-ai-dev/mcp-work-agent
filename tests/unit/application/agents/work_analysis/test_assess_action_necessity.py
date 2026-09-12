@@ -29,8 +29,8 @@ def test_task_create__duplicate_owner_satisfied__becomes_route_no_action() -> No
             "route_assessments": [
                 {
                     "route_id": "task-create",
-                    "status": "NOT_REQUIRED",
-                    "reason": "existing Task satisfies the request",
+                    "status": "REQUIRED",
+                    "reason": "model must not override the duplicate owner",
                     "evidence_refs": [],
                     "candidate_refs": ["task:1"],
                 }
@@ -60,10 +60,30 @@ def test_task_create__duplicate_owner_satisfied__becomes_route_no_action() -> No
 
     assert result["route_assessments"][0]["status"] == "NOT_REQUIRED"
     assert result["route_assessments"][0]["candidate_refs"] == ["task:1"]
-    assert len(runtime.calls) == 1
-    assert runtime.calls[0]["prompt_input"]["duplicate_conflict_assessment"] == (
-        _duplicate("SATISFIED")
+    assert runtime.calls == []
+
+
+def test_task_create__undetermined_duplicate_owner__does_not_call_second_llm() -> None:
+    runtime = WorkAnalysisRuntimeFake({"route_assessments": []})
+
+    result = assess_action_necessity(
+        request_intent={},
+        output_routes=[
+            {"route_id": "task-create", "resource_type": "TASK", "effect": "CREATE"}
+        ],
+        work_facts=[],
+        evidence=[],
+        source_statuses=[],
+        task_review_candidates=[],
+        duplicate_conflict_assessment=_duplicate("UNDETERMINED"),
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref("work_analysis.assess_action_necessity", "assess_action_necessity"),
+        allowed_evidence_refs=set(),
+        requested_mode="AUTO",
     )
+
+    assert result["route_assessments"][0]["status"] == "UNDETERMINED"
+    assert runtime.calls == []
 
 
 def test_task_nonduplicate__still_uses_request_conditions__before_required() -> None:

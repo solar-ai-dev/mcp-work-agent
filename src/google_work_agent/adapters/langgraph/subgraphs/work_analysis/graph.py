@@ -495,7 +495,17 @@ class WorkAnalysisSubgraph:
         plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         output_plan = plan["output_plan"]
         routes = [] if output_plan["output_mode"] == "ANSWER" else output_plan["output_routes"]
-        llm_required = action_necessity.action_necessity_llm_required(routes)
+        duplicate_assessment = cast(
+            DuplicateConflictAssessmentV1,
+            _require_state_value(
+                state.get("duplicate_conflict_assessment"),
+                "duplicate_conflict_assessment",
+            ),
+        )
+        llm_required = action_necessity.action_necessity_llm_required(
+            routes,
+            duplicate_conflict_assessment=duplicate_assessment,
+        )
         if llm_required:
             ensure_llm_call_budget(state)
         patch = assess_action_necessity_node(

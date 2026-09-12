@@ -1842,7 +1842,7 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     ]
 
 
-def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> None:
+def test_work_analysis__satisfied_duplicate__does_not_ask_second_llm_to_override() -> None:
     state = _state(initial_target="work_analysis")
     intent = _intent()
     intent["requested_effect_hints"] = ["CREATE"]
@@ -1894,15 +1894,9 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
         ],
     )
 
-    def confirm_inline(
-        working: Mapping[str, object],
-    ) -> tuple[ConfirmationResponseProjectionV1, None]:
-        user_interrupt = cast(Mapping[str, object], working["user_interrupt"])
-        resume = interrupt(dict(user_interrupt))
-        return cast(ConfirmationResponseProjectionV1, resume["confirmation_response"]), None
-
+    llm = _ComponentInferencePort(work_fact_count=1, duplicate_found=True)
     work_analysis = WorkAnalysisSubgraph(
-        llm_runtime=_ComponentInferencePort(work_fact_count=1, duplicate_found=True),
+        llm_runtime=llm,
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -1910,7 +1904,7 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
         transition_run=lambda _run_id, _transition: None,
         merge_decision=cast(Any, _merge_decision),
         evidence_store=evidence_store,
-        confirm_inline=confirm_inline,
+        confirm_inline=cast(Any, _confirm_early),
     ).build()
     wrapper = StateGraph(GraphState)
     wrapper.add_node("work_analysis", work_analysis)
@@ -1920,12 +1914,20 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
     config: RunnableConfig = {"configurable": {"thread_id": "duplicate-override-thread"}}
 
     with provider_dispatch_execution_scope():
-        interrupted = graph.invoke(state, config)
+        result = graph.invoke(state, config)
 
-    payload = interrupted["__interrupt__"][0].value
-    assert payload["origin_target"] == "analysis.assess_operational_risks"
-    assert payload["policy_confirmation"]["confirmation_kind"] == "DUPLICATE_OVERRIDE"
-    assert graph.get_state(config).next == ("work_analysis",)
+    analysis = result["work_analysis_result"]
+    assert analysis["action_necessity"] == "NOT_REQUIRED"
+    assert analysis["route_action_necessities"] == [
+        {
+            "route_id": "output-task-route",
+            "status": "NOT_REQUIRED",
+            "reason": "REQUESTED_TASK_ALREADY_SATISFIED",
+            "evidence_refs": ["task-evidence"],
+            "candidate_refs": ["task:existing-1"],
+        }
+    ]
+    assert "work_analysis.assess_action_necessity" not in llm.calls
 
 
 def test_planning__compiled_normal_path__produces_answer() -> None:
