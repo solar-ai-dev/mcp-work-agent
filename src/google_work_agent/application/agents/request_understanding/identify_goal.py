@@ -443,17 +443,6 @@ def _confirmation_response_text(
     return value["selected_option"] or value["free_text"]
 
 
-_EXPLICIT_DATE_SIGNAL = re.compile(
-    r"(?i)(?:"
-    r"\d{1,4}\s*(?:년|[-./])\s*\d{1,2}"
-    r"|\d{1,2}\s*월\s*\d{1,2}\s*일"
-    r"|오늘|내일|모레|이번\s*주|다음\s*주|다음\s*달|주말"
-    r"|월요일|화요일|수요일|목요일|금요일|토요일|일요일"
-    r"|까지|마감|기한|날짜|due|deadline|today|tomorrow|next\s+(?:week|month)"
-    r")"
-)
-
-
 def _apply_quoted_literal_authority(
     candidate: RequestGoalCandidateV1,
     *,
@@ -476,18 +465,14 @@ def _apply_quoted_literal_authority(
             ]
         constraint = {**constraint, "value": value}
         constraints.append(constraint)
-    outside_has_date_signal = _EXPLICIT_DATE_SIGNAL.search(outside_literals) is not None
     quoted_text = " ".join(quoted_literals)
     constraints = [
         constraint
         for constraint in constraints
         if constraint["kind"] != "DATE"
         or (
-            outside_has_date_signal
-            and (
-                not _date_value_appears_in_text(constraint["value"], quoted_text)
-                or _date_value_appears_in_text(constraint["value"], outside_literals)
-            )
+            not _date_value_appears_in_text(constraint["value"], quoted_text)
+            or _date_value_appears_in_text(constraint["value"], outside_literals)
         )
     ]
     responsibilities = candidate["resource_responsibilities"]

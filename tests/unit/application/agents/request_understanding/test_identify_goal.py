@@ -2317,6 +2317,37 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
     ] == expected_dates
 
 
+def test_identify_goal__with_unlisted_relative_date__preserves_date_outside_title() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "분기 정리 할 일 생성",
+                "completion_conditions": ["사흘 뒤 수행할 할 일을 생성한다"],
+                "constraints": _goal_constraints(
+                    {"kind": "RESOURCE", "field": "title", "value": "분기 정리"},
+                    period=["사흘 뒤"],
+                ),
+                "resource_responsibilities": _resource_responsibilities(
+                    output_type="TASK", output_effect="CREATE"
+                ),
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request('"분기 정리" 할 일을 사흘 뒤에 하도록 등록해 줘.'),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert [
+        constraint["value"]
+        for constraint in candidate["constraints"]
+        if constraint["kind"] == "DATE"
+    ] == [["사흘 뒤"]]
+
+
 def test_new_gmail_send__verification_reread__is_not_a_source_read() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
