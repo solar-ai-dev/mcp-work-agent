@@ -119,33 +119,25 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
         {
             "goal": "private natural language goal",
             "analysis_requirement": "NONE",
-            "constraints": [
-                {
-                    "kind": "SOURCE_FILTER",
-                    "field": "status",
-                    "value": ["DRAFT"],
-                    "source_text": "private source text",
-                },
-                {
-                    "kind": "USER_REQUIREMENT",
-                    "field": "search_terms",
-                    "value": ["private query literal"],
-                },
-                {
-                    "kind": "SCOPE",
-                    "field": "coverage_requirement",
-                    "value": "EXHAUSTIVE",
-                },
-            ],
+            "constraints": {
+                "search_terms": ["private query literal"],
+                "business_concepts": [],
+                "person": [],
+                "sender": [],
+                "recipient": [],
+                "subject": [],
+                "period": [],
+                "coverage_requirement": ["EXHAUSTIVE"],
+                "additional_constraints": [],
+            },
         },
     )
 
     assert projection["source_reads"] == {"count": 0, "items": []}
     assert projection["outputs"] == {"count": 0, "items": []}
     assert projection["constraints"] == {
-        "count": 3,
+        "count": 2,
         "items": [
-            {"kind": "SOURCE_FILTER", "field": "status", "status_values": ["DRAFT"]},
             {"kind": "USER_REQUIREMENT", "field": "search_terms"},
             {
                 "kind": "SCOPE",
@@ -156,7 +148,6 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
     }
     for secret in (
         "private natural language goal",
-        "private source text",
         "private query literal",
     ):
         assert secret not in repr(projection)
@@ -196,6 +187,78 @@ def test_resource_responsibility_output__keeps_roles__without_business_literals(
     }
     assert "private task state" not in repr(projection)
     assert "private event time" not in repr(projection)
+
+
+def test_source_status_projection__shows_fixed_shape__without_source_literals() -> None:
+    semantic_input = project_llm_semantic_input(
+        "request_understanding.identify_source_status",
+        {
+            "user_request": "private request",
+            "selected_resource_refs": [],
+            "goal_candidate": {
+                "goal": "private goal",
+                "constraints": {"search_terms": ["private anchor"]},
+                "analysis_requirement": "NONE",
+            },
+            "source_reads": [
+                {"resource_type": "TASK", "required_information": ["private fact"]}
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+            "allowed_status_values": [
+                {
+                    "resource_type": "TASK",
+                    "values": ["ANY", "COMPLETED", "INCOMPLETE"],
+                }
+            ],
+        },
+    )
+    semantic_output = project_llm_semantic_output(
+        "request_understanding.identify_source_status",
+        {
+            "statuses": [
+                {
+                    "value": "COMPLETED",
+                    "source_resource_type": "TASK",
+                    "source": "USER_REQUEST",
+                    "source_text": "private source literal",
+                }
+            ]
+        },
+    )
+
+    assert semantic_input["source_reads"] == {
+        "count": 1,
+        "items": [{"resource_type": "TASK", "required_information_count": 1}],
+    }
+    assert semantic_input["outputs"] == {
+        "count": 1,
+        "items": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+    }
+    assert semantic_input["allowed_status_values"] == {
+        "count": 1,
+        "items": [
+            {
+                "resource_type": "TASK",
+                "values": ["ANY", "COMPLETED", "INCOMPLETE"],
+            }
+        ],
+    }
+    assert semantic_output == {
+        "projection_version": 1,
+        "statuses": {
+            "count": 1,
+            "items": [{"status_values": ["COMPLETED"], "resource_type": "TASK"}],
+        },
+    }
+    exported = repr((semantic_input, semantic_output))
+    for secret in (
+        "private request",
+        "private goal",
+        "private anchor",
+        "private fact",
+        "private source literal",
+    ):
+        assert secret not in exported
 
 
 def test_resource_responsibility_input__shows_upstream_shape__without_literals() -> None:

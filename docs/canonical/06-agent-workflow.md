@@ -1192,7 +1192,9 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 
 | 책임 | 처리 |
 | --- | --- |
-| `identify_goal` | 목표·완료조건·제약 후보를 만든다. 원문 period를 보존한다. |
+| `identify_goal` | 목표·완료조건·일반 제약·분석 필요 후보를 만든다. Resource 역할과 source status를 만들지 않으며 원문 period를 보존한다. |
+| `identify_resource_responsibilities` | 확정 전 goal 후보와 current-Run 입력을 소비해 기존 `source_reads`와 요청된 `outputs`를 분리한다. |
+| `identify_source_status` | 확정된 `source_reads.resource_type`만 대상으로 추가 source 상태 범위를 판단한다. output effect·Resource 역할·Tool·Query는 바꾸지 않는다. |
 | `identify_temporal_scope` | Gmail period가 있을 때 `MESSAGE_TIME \| EVENT_TIME`을 판단한다. 없으면 pass-through한다. 일반 코드의 키워드·정규식으로 이 의미를 교체하지 않는다. |
 | `detect_ambiguity` | 사용자 선택 누락과 Connector READ로 해소할 정보를 구분한다. 초기 연결 검사에는 §5.3의 같은 Application use case를 사용한다. |
 | `finalize_intent → validate_intent` | 실제 current-run source text와 identity-bearing 후보를 대조해 provenance를 부여하고 확정한다. |
@@ -1779,7 +1781,7 @@ registered node/resume target set이 변경되면 compiled Resume Target Registr
 
 | node_id | subgraph | type | 주요 입력 | 주요 출력 |
 | --- | --- | --- | --- | --- |
-| `request.identify_goal` | request_understanding | LLM | request | goal candidate |
+| `request.identify_goal` | request_understanding | LLM | request | goal 후보 → resource 책임 → source status를 순서대로 조립한 goal candidate |
 | `request.identify_temporal_scope` | request_understanding | LLM/conditional | request + goal period/context | temporal axis를 더한 goal candidate |
 | `request.detect_ambiguity` | request_understanding | LLM/conditional | request + goal | ambiguity |
 | `request.finalize` | request_understanding | deterministic | local candidates | `finalize_intent → validate_intent → RequestIntentV2` |

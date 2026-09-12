@@ -42,7 +42,7 @@ def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> 
     entry = next(
         item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
     )
-    assert entry["output_schema_version"] == 13
+    assert entry["output_schema_version"] == 14
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
         load_prompt_input_contract(_write(tmp_path, payload))
@@ -83,6 +83,33 @@ def test_resource_responsibility_contract__requires_preceding_goal_candidate() -
             {
                 "user_request": "request",
                 "selected_resource_refs": [],
+            },
+        )
+
+
+def test_source_status_contract__requires_fixed_source_and_output_roles() -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        "request_understanding.identify_source_status",
+        {
+            "user_request": "request",
+            "selected_resource_refs": [],
+            "goal_candidate": {},
+            "source_reads": [],
+            "outputs": [],
+            "allowed_status_values": [],
+        },
+    )
+    with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
+        contract.validate_projection(
+            "request_understanding.identify_source_status",
+            {
+                "user_request": "request",
+                "selected_resource_refs": [],
+                "goal_candidate": {},
+                "source_reads": [],
+                "outputs": [],
             },
         )
 

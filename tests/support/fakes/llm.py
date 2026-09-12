@@ -58,6 +58,11 @@ class FakeStructuredInferencePort:
         init=False,
         repr=False,
     )
+    _pending_source_statuses: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def infer(
         self,
@@ -80,11 +85,26 @@ class FakeStructuredInferencePort:
         ):
             output = self._pending_resource_responsibilities
             self._pending_resource_responsibilities = None
+        elif output_schema_ref.schema_version == "request-source-status-v1":
+            if self._pending_source_statuses is not None:
+                output = {"statuses": self._pending_source_statuses}
+                self._pending_source_statuses = None
+            elif (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "statuses" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                output = {"statuses": []}
         else:
             output = self.outputs.pop(0)
             if isinstance(output, Mapping) and "resource_responsibilities" in output:
                 responsibilities = output["resource_responsibilities"]
-                if output_schema_ref.schema_version == "request-goal-candidate-v13":
+                if output_schema_ref.schema_version in {
+                    "request-goal-candidate-v13",
+                    "request-goal-candidate-v14",
+                }:
                     self._pending_resource_responsibilities = responsibilities
                     output = {
                         key: value
@@ -96,6 +116,20 @@ class FakeStructuredInferencePort:
                     == "request-resource-responsibilities-v1"
                 ):
                     output = responsibilities
+            if (
+                output_schema_ref.schema_version == "request-goal-candidate-v14"
+                and isinstance(output, Mapping)
+                and isinstance(output.get("constraints"), Mapping)
+                and "status" in cast(Mapping[str, object], output["constraints"])
+            ):
+                constraints = cast(Mapping[str, object], output["constraints"])
+                self._pending_source_statuses = constraints.get("status", [])
+                output = {
+                    **output,
+                    "constraints": {
+                        key: value for key, value in constraints.items() if key != "status"
+                    },
+                }
         if isinstance(output, Exception):
             raise output
         if self.validate_schema:

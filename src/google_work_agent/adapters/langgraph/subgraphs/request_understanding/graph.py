@@ -109,6 +109,11 @@ class RequestUnderstandingSubgraph:
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
+        self._identify_source_status_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_source_status",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
         self._identify_temporal_scope_prompt_ref = load_prompt_reference(
             "request_understanding.identify_temporal_scope",
             manifest_path,
@@ -184,6 +189,7 @@ class RequestUnderstandingSubgraph:
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_goal_prompt_ref,
             responsibility_prompt_ref=self._identify_resource_responsibilities_prompt_ref,
+            source_status_prompt_ref=self._identify_source_status_prompt_ref,
         )
         calls_used = max(
             0,
@@ -199,7 +205,10 @@ class RequestUnderstandingSubgraph:
                 node_name="identify_goal",
                 llm_call_id=f"{request.run_id}:request.identify_goal",
                 prompt_ref=self._identify_goal_prompt_ref,
-                additional_prompt_refs=(self._identify_resource_responsibilities_prompt_ref,),
+                additional_prompt_refs=(
+                    self._identify_resource_responsibilities_prompt_ref,
+                    self._identify_source_status_prompt_ref,
+                ),
                 llm_call_increment=calls_used,
                 invocation_id=invocation_id,
                 agent_invocation_increment=1 if is_first_node else 0,

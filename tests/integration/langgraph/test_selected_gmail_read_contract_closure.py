@@ -126,6 +126,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         responsibility_prompt_ref=_prompt(
             "request_understanding.identify_resource_responsibilities"
         ),
+        source_status_prompt_ref=_prompt("request_understanding.identify_source_status"),
     )
     ambiguity, _ = _detect_ambiguity_with_budget(
         llm_runtime=runtime,
@@ -203,6 +204,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
     assert [cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
         "request_understanding.identify_resource_responsibilities",
+        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
     ]
 

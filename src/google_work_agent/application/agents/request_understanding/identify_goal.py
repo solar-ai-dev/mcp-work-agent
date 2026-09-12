@@ -52,7 +52,9 @@ from .contracts.request_goal_candidate_schema import (
     derive_requested_resource_fields,
     validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
+    validate_resource_responsibility_candidate,
 )
+from .identify_source_status import identify_source_status
 from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
 
 
@@ -62,6 +64,7 @@ def identify_goal(
     request: WorkflowStartRequest,
     prompt_ref: PromptReference | None = None,
     responsibility_prompt_ref: PromptReference | None = None,
+    source_status_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
@@ -73,6 +76,10 @@ def identify_goal(
     )
     resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
         "request_understanding.identify_resource_responsibilities",
+        resolved_manifest_path,
+    )
+    resolved_source_status_prompt_ref = source_status_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_source_status",
         resolved_manifest_path,
     )
     prompt_input = _prompt_input(
@@ -96,9 +103,21 @@ def identify_goal(
         responsibility_input,
         IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
     )
+    responsibilities = validate_resource_responsibility_candidate(
+        responsibility_result.structured_output
+    )
+    source_status_output = identify_source_status(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_source_status_prompt_ref,
+        prompt_input=prompt_input,
+        goal_candidate=result.structured_output,
+        responsibilities=responsibilities,
+    )
     return _validated_candidate(
         result.structured_output,
-        resource_responsibilities=responsibility_result.structured_output,
+        resource_responsibilities=responsibilities,
+        source_statuses=source_status_output,
         request=request,
         confirmation_response=confirmation_response,
     )
@@ -111,6 +130,7 @@ def identify_goal_with_budget(
     retry_budget: RunBudgetV2,
     prompt_ref: PromptReference | None = None,
     responsibility_prompt_ref: PromptReference | None = None,
+    source_status_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
@@ -123,6 +143,10 @@ def identify_goal_with_budget(
     )
     resolved_responsibility_prompt_ref = responsibility_prompt_ref or load_prompt_reference(
         "request_understanding.identify_resource_responsibilities",
+        resolved_manifest_path,
+    )
+    resolved_source_status_prompt_ref = source_status_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_source_status",
         resolved_manifest_path,
     )
     prompt_input = _prompt_input(
@@ -148,11 +172,21 @@ def identify_goal_with_budget(
             IDENTIFY_RESOURCE_RESPONSIBILITIES_OUTPUT_SCHEMA,
         )
         goal_output = result.structured_output
-        responsibility_output = responsibility_result.structured_output
+        responsibility_output: object = responsibility_result.structured_output
+        responsibilities = validate_resource_responsibility_candidate(responsibility_output)
+        source_status_output = identify_source_status(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_source_status_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+            responsibilities=responsibilities,
+        )
         try:
             candidate = _validated_candidate(
                 goal_output,
-                resource_responsibilities=responsibility_output,
+                resource_responsibilities=responsibilities,
+                source_statuses=source_status_output,
                 request=request,
                 confirmation_response=confirmation_response,
             )
@@ -198,9 +232,23 @@ def identify_goal_with_budget(
             )
             goal_output = revised_goal.structured_output
             responsibility_output = revised_responsibilities.structured_output
+            responsibilities = validate_resource_responsibility_candidate(
+                responsibility_output
+            )
+            source_status_output = identify_source_status(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_source_status_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                responsibilities=responsibilities,
+                candidate_output=source_status_output,
+                failure_record=failure_record,
+            )
             candidate = _validated_candidate(
                 goal_output,
-                resource_responsibilities=responsibility_output,
+                resource_responsibilities=responsibilities,
+                source_statuses=source_status_output,
                 request=request,
                 confirmation_response=confirmation_response,
             )
@@ -254,6 +302,7 @@ def _validated_candidate(
     value: object,
     *,
     resource_responsibilities: object,
+    source_statuses: object,
     request: WorkflowStartRequest,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
 ) -> RequestGoalCandidateV1:
@@ -267,6 +316,7 @@ def _validated_candidate(
         validate_request_goal_candidate(
             value,
             resource_responsibilities=resource_responsibilities,
+            source_statuses=source_statuses,
             provenance_sources=provenance_sources,
         ),
         request_text=request.request_text,

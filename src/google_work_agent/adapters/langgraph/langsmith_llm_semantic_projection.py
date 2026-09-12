@@ -19,6 +19,7 @@ _SUPPORTED_PROMPTS = frozenset(
     {
         "request_understanding.identify_goal",
         "request_understanding.identify_resource_responsibilities",
+        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
         "retrieval.plan_query",
         "tool_routing.determine_io_resources",
@@ -41,6 +42,8 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "requested_resource_hints",
         "source_reads",
         "outputs",
+        "allowed_status_values",
+        "statuses",
         "constraints",
         "count",
         "items",
@@ -128,7 +131,9 @@ def project_llm_semantic_input(prompt_id: str, value: object) -> dict[str, objec
     mapping = _prompt_mapping(value)
     if prompt_id not in _SUPPORTED_PROMPTS or mapping is None:
         return _unavailable()
-    if prompt_id in {
+    if prompt_id == "request_understanding.identify_source_status":
+        result = _project_source_status_input(mapping)
+    elif prompt_id in {
         "request_understanding.identify_goal",
         "request_understanding.identify_resource_responsibilities",
     }:
@@ -158,6 +163,8 @@ def project_llm_semantic_output(prompt_id: str, value: object) -> dict[str, obje
         result = _project_goal_candidate(mapping)
     elif prompt_id == "request_understanding.identify_resource_responsibilities":
         result = _project_resource_responsibilities_candidate(mapping)
+    elif prompt_id == "request_understanding.identify_source_status":
+        result = _project_source_status_candidate(mapping)
     elif prompt_id == "request_understanding.detect_ambiguity":
         result = _project_ambiguity_output(mapping)
     elif prompt_id == "retrieval.plan_query":
@@ -230,6 +237,51 @@ def _project_resource_responsibilities_candidate(
         "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
         "source_reads": _project_source_reads(value.get("source_reads")),
         "outputs": _project_outputs(value.get("outputs")),
+    }
+
+
+def _project_source_status_input(value: Mapping[object, object]) -> dict[str, object]:
+    allowed_items: list[dict[str, object]] = []
+    allowed_values = _sequence(value.get("allowed_status_values"))
+    for raw_item in allowed_values[:_MAX_COLLECTION_ITEMS]:
+        item = _mapping(raw_item)
+        if item is None:
+            continue
+        projected: dict[str, object] = {"values": _safe_values(item.get("values"))}
+        _copy_safe_scalar(item, projected, "resource_type")
+        allowed_items.append(projected)
+    goal = _mapping(value.get("goal_candidate"))
+    return {
+        "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
+        "selected_resource_count": _count(value.get("selected_resource_refs")),
+        "goal_candidate": _project_goal_candidate({} if goal is None else goal),
+        "source_reads": _project_source_reads(value.get("source_reads")),
+        "outputs": _project_outputs(value.get("outputs")),
+        "allowed_status_values": {
+            "count": len(allowed_values),
+            "items": allowed_items,
+        },
+        "has_confirmation_response": _present(value.get("confirmation_response")),
+    }
+
+
+def _project_source_status_candidate(value: Mapping[object, object]) -> dict[str, object]:
+    status_items: list[dict[str, object]] = []
+    statuses = _sequence(value.get("statuses"))
+    for raw_status in statuses[:_MAX_COLLECTION_ITEMS]:
+        status = _mapping(raw_status)
+        if status is None:
+            continue
+        projected: dict[str, object] = {
+            "status_values": _safe_values([status.get("value")])
+        }
+        resource_type = _safe_string(status.get("source_resource_type"))
+        if resource_type is not None:
+            projected["resource_type"] = resource_type
+        status_items.append(projected)
+    return {
+        "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
+        "statuses": {"count": len(statuses), "items": status_items},
     }
 
 

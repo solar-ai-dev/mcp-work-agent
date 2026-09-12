@@ -20,7 +20,6 @@
 - `business_concepts`: 찾으려는 업무 의미. 자연스러운 의역은 가능하지만 새 업무 요구를 추가하지 않는다.
 - `person`: identity가 미확정인 이름·직급. `sender`와 `recipient`는 명시된 역할이다. 일반 집합 명사를 특정 사람으로 만들지 않는다.
 - `subject`: 사용자가 제목으로 지정한 값. `period`: 사용자가 표현한 기간이며 시간축 판단은 별도 책임이다.
-- `status`: 기존 source의 상태 중 Resource type 자체로는 결정되지 않는 추가 검색 범위만 표현한다. Resource type이 이미 같은 범위를 보장하면 반복하지 않고 비운다. 예를 들어 `GMAIL_DRAFT`는 Draft collection을 이미 지정하므로 `DRAFT`를 다시 쓰지 않는다. 추가 상태를 쓸 때는 schema의 `value`, `source_resource_type`, `source`, `source_text`를 사용하고 `source_text`에는 해당 상태를 실제로 말한 입력 구간을 복사한다. 원하는 변경 후 상태를 source의 현재 상태로 옮기지 않는다.
 - `coverage_requirement`: 요청한 collection 범위의 모든 항목을 확인해야 완료되는 경우에만 `EXHAUSTIVE` 하나를 둔다. 그 외에는 `[]`로 둔다. 하나의 답을 위해 여러 자료를 비교하는 것과 collection 전체를 반환하는 것을 구분하고, 단어 하나만으로 완료 범위를 판정하지 않는다.
 - `additional_constraints`: 위 슬롯에 속하지 않는 명시적 실행 값을 기존 `kind/field/value` 계약으로 보존한다.
 
@@ -32,6 +31,6 @@
 
 `base_projection`, `candidate_output`, `failure_record`를 받으면 같은 호출의 수정이다. 실패한 부분과 그에 의존하는 관계를 다시 판단하고, 최초 후보의 잘못된 source 가설은 고칠 수 있다. 사용자 원문·명시 선택·금지는 보존하며, validator 오류를 피하려고 실제 요청한 조회나 변경을 지우지 않는다.
 
-외부 Resource의 source/output 역할은 별도 책임이 판정한다. 여기서는 supplied schema에 없는 Resource 역할이나 평면 hint를 만들지 않는다.
+외부 Resource의 source/output 역할과 source의 현재 status는 뒤의 별도 책임이 판정한다. 여기서는 supplied schema에 없는 Resource 역할·status나 평면 hint를 만들지 않는다.
 
 지정된 JSON schema에 맞는 객체 하나만 반환한다. Tool 선택·Query·arguments·정책 승인·실행 결과를 작성하지 않는다.

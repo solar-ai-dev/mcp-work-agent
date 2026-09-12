@@ -161,7 +161,6 @@ class _ComponentInferencePort:
                         "recipient": [],
                         "subject": [],
                         "period": [],
-                        "status": [],
                         "coverage_requirement": [],
                         "additional_constraints": [],
                     },
@@ -179,7 +178,6 @@ class _ComponentInferencePort:
                     "recipient": [],
                     "subject": [],
                     "period": [],
-                    "status": [],
                     "coverage_requirement": [],
                     "additional_constraints": [],
                 },
@@ -212,6 +210,8 @@ class _ComponentInferencePort:
                     "outputs": [],
                 }
             )
+        if prompt_id == "request_understanding.identify_source_status":
+            return {"statuses": []}
         if prompt_id == "request_understanding.detect_ambiguity":
             if self.searchable_target:
                 first_attempt = self.calls.count(prompt_id) == 1
@@ -797,6 +797,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     assert llm.calls == [
         "request_understanding.identify_goal",
         "request_understanding.identify_resource_responsibilities",
+        "request_understanding.identify_source_status",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 

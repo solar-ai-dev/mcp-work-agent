@@ -26,6 +26,9 @@ from google_work_agent.application.agents.request_understanding.identify_goal im
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal_with_budget as _identify_goal_with_budget,
 )
+from google_work_agent.application.agents.request_understanding.identify_source_status import (
+    build_identify_source_status_output_schema,
+)
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -47,7 +50,6 @@ _GMAIL_CONSTRAINT_KINDS = {
     "recipient": "PERSON",
     "subject": "RESOURCE",
     "period": "DATE",
-    "status": "SCOPE",
     "coverage_requirement": "SCOPE",
 }
 
@@ -60,6 +62,13 @@ def identify_goal(**kwargs: Any) -> Any:
             "identify_resource_responsibilities",
         ),
     )
+    kwargs.setdefault(
+        "source_status_prompt_ref",
+        _prompt_ref(
+            "request_understanding.identify_source_status",
+            "identify_source_status",
+        ),
+    )
     return _identify_goal(**kwargs)
 
 
@@ -69,6 +78,13 @@ def identify_goal_with_budget(**kwargs: Any) -> Any:
         _prompt_ref(
             "request_understanding.identify_resource_responsibilities",
             "identify_resource_responsibilities",
+        ),
+    )
+    kwargs.setdefault(
+        "source_status_prompt_ref",
+        _prompt_ref(
+            "request_understanding.identify_source_status",
+            "identify_source_status",
         ),
     )
     return _identify_goal_with_budget(**kwargs)
@@ -268,15 +284,13 @@ def test_source_status__explicit_sent_scope__retains_resource_and_source_provena
             {
                 "goal": "보낸 메일에서 Quartz 자료 조회",
                 "completion_conditions": ["일치하는 보낸 메일을 보여준다"],
-                "constraints": _goal_constraints(
-                    search_terms=["Quartz"],
-                    status=[_source_status("SENT", "GMAIL_MESSAGE", "보낸 편지함")],
-                ),
-                "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_MESSAGE", required_information=[]
-                ),
+                "constraints": _goal_constraints(search_terms=["Quartz"]),
                 "analysis_requirement": "NONE",
-            }
+            },
+            _resource_responsibilities(
+                source_type="GMAIL_MESSAGE", required_information=[]
+            ),
+            {"statuses": [_source_status("SENT", "GMAIL_MESSAGE", "보낸 편지함")]},
         ]
     )
 
@@ -298,36 +312,121 @@ def test_source_status__explicit_sent_scope__retains_resource_and_source_provena
     assert status["provenance"]["source_text"] == "보낸 편지함"
 
 
+@pytest.mark.parametrize(
+    ("request_text", "resource_type", "status_value", "source_text"),
+    [
+        ("완료된 할 일을 찾아줘", "TASK", "COMPLETED", "완료된"),
+        ("닫힌 GitHub 이슈를 찾아줘", "GITHUB_ISSUE", "CLOSED", "닫힌"),
+    ],
+)
+def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
+    request_text: str,
+    resource_type: str,
+    status_value: str,
+    source_text: str,
+) -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "상태가 명시된 기존 자료 조회",
+                "completion_conditions": ["일치하는 자료를 보여준다"],
+                "constraints": _goal_constraints(),
+                "analysis_requirement": "NONE",
+            },
+            _resource_responsibilities(source_type=resource_type, required_information=[]),
+            {
+                "statuses": [
+                    _source_status(status_value, resource_type, source_text),
+                ]
+            },
+        ],
+        validate_schema=True,
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request(request_text),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert next(item for item in candidate["constraints"] if item["field"] == "status") == {
+        "kind": "SCOPE",
+        "field": "status",
+        "value": status_value,
+        "source_resource_type": resource_type,
+        "provenance": {
+            "source": "USER_REQUEST",
+            "start_offset": request_text.index(source_text),
+            "end_offset": request_text.index(source_text) + len(source_text),
+            "source_text": source_text,
+        },
+    }
+
+
+def test_source_status__task_update_output__does_not_become_completed_source_scope() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "선택한 할 일 완료 처리",
+                "completion_conditions": ["할 일을 완료 상태로 변경한다"],
+                "constraints": _goal_constraints(),
+                "analysis_requirement": "NONE",
+            },
+            _resource_responsibilities(
+                source_type="TASK",
+                required_information=["기존 할 일 identity"],
+                output_type="TASK",
+                output_effect="UPDATE",
+            ),
+            {"statuses": []},
+        ],
+        validate_schema=True,
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request("이 Task를 완료해줘"),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert candidate["resource_responsibilities"] == {
+        "source_reads": [
+            {"resource_type": "TASK", "required_information": ["기존 할 일 identity"]}
+        ],
+        "outputs": [{"resource_type": "TASK", "effect": "UPDATE"}],
+    }
+    assert not any(item["field"] == "status" for item in candidate["constraints"])
+
+
 def test_source_status__without_current_run_source_binding__uses_bounded_revision() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "goal": "기존 메일 대화에 답장",
                 "completion_conditions": ["같은 대화에 답장을 보낸다"],
-                "constraints": _goal_constraints(
-                    search_terms=["Quartz"],
-                    status=[_source_status("SENT", "GMAIL_THREAD", "보낸 편지함")],
-                ),
-                "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD",
-                    required_information=["납품 일정", "답장 대상 대화 identity"],
-                    output_type="GMAIL_MESSAGE",
-                    output_effect="SEND",
-                ),
+                "constraints": _goal_constraints(search_terms=["Quartz"]),
                 "analysis_requirement": "NONE",
             },
+            _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["납품 일정", "답장 대상 대화 identity"],
+                output_type="GMAIL_MESSAGE",
+                output_effect="SEND",
+            ),
+            {"statuses": [_source_status("SENT", "GMAIL_THREAD", "보낸 편지함")]},
             {
                 "goal": "기존 메일 대화에 답장",
                 "completion_conditions": ["같은 대화에 답장을 보낸다"],
                 "constraints": _goal_constraints(search_terms=["Quartz"]),
-                "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD",
-                    required_information=["납품 일정", "답장 대상 대화 identity"],
-                    output_type="GMAIL_MESSAGE",
-                    output_effect="SEND",
-                ),
                 "analysis_requirement": "NONE",
             },
+            _resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["납품 일정", "답장 대상 대화 identity"],
+                output_type="GMAIL_MESSAGE",
+                output_effect="SEND",
+            ),
+            {"statuses": []},
         ]
     )
 
@@ -339,7 +438,7 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
     )
 
     assert not any(item["field"] == "status" for item in candidate["constraints"])
-    assert runtime.calls[2]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert runtime.calls[5]["prompt_input"]["failure_record"]["failure_reason_code"] == (
         "REQUEST_STATUS_PROVENANCE_MISMATCH"
     )
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
@@ -454,7 +553,7 @@ def test_same_resource_read_update__single_responsibility__preserves_both_roles(
 
     assert candidate["requested_effect_hints"] == ["READ", "UPDATE"]
     assert candidate["requested_resource_hints"] == ["TASK"]
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 3
 
 
 def test_split_source_information__normalizes_once__before_finalize() -> None:
@@ -504,7 +603,7 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
     )
 
     assert raw_candidate == original_candidate
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 3
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {
@@ -618,10 +717,12 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
         "request_understanding.identify_resource_responsibilities",
+        "request_understanding.identify_source_status",
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
-        "request-goal-candidate-v13",
+        "request-goal-candidate-v14",
         "request-resource-responsibilities-v1",
+        "request-source-status-v1",
     ]
     assert runtime.calls[1]["prompt_input"]["goal_candidate"] == {
         "goal": "기존 업무 자료를 바탕으로 메일 초안을 저장한다",
@@ -648,6 +749,50 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         "CALENDAR_EVENT",
         "GMAIL_DRAFT",
     ]
+    assert runtime.calls[2]["prompt_input"]["source_reads"] == [
+        {"resource_type": "TASK", "required_information": ["준비 상황"]},
+        {
+            "resource_type": "CALENDAR_EVENT",
+            "required_information": ["인쇄소 일정"],
+        },
+    ]
+    assert runtime.calls[2]["prompt_input"]["outputs"] == [
+        {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
+    ]
+    assert runtime.calls[2]["prompt_input"]["allowed_status_values"] == [
+        {
+            "resource_type": "TASK",
+            "values": ["ANY", "COMPLETED", "INCOMPLETE"],
+        },
+        {
+            "resource_type": "CALENDAR_EVENT",
+            "values": ["ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"],
+        },
+    ]
+    assert not any(item["field"] == "status" for item in candidate["constraints"])
+
+
+def test_source_status_schema__cannot_bind_output_only_draft_as_source_scope() -> None:
+    schema = build_identify_source_status_output_schema(
+        {
+            "source_reads": [
+                {"resource_type": "TASK", "required_information": ["준비 상황"]},
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["인쇄소 일정"],
+                },
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        }
+    )
+
+    invalid = {
+        "statuses": [_source_status("DRAFT", "GMAIL_DRAFT", "임시보관함")]
+    }
+    valid = {"statuses": [_source_status("COMPLETED", "TASK", "완료된")]}
+
+    assert validate_output_schema(invalid, schema.json_schema)
+    assert validate_output_schema(valid, schema.json_schema) == []
 
 
 def test_bounded_revision_candidate__uses_same_source_information_normalization() -> None:
@@ -686,7 +831,7 @@ def test_bounded_revision_candidate__uses_same_source_information_normalization(
         retry_budget=build_default_run_budget(),
     )
 
-    assert len(runtime.calls) == 4
+    assert len(runtime.calls) == 6
     assert candidate["resource_responsibilities"]["source_reads"] == [
         {
             "resource_type": "GMAIL_DRAFT",
@@ -1258,7 +1403,7 @@ def test_semantic_revision__invented_source_need__may_be_removed() -> None:
     assert candidate["requested_effect_hints"] == ["SEND"]
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
     assert candidate["resource_responsibilities"]["source_reads"] == []
-    assert len(runtime.calls) == 4
+    assert len(runtime.calls) == 6
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
@@ -1314,8 +1459,8 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
             "required_information": ["기존 메일의 납품 주소"],
         }
     ]
-    assert len(runtime.calls) == 4
-    revision_input = runtime.calls[2]["prompt_input"]
+    assert len(runtime.calls) == 6
+    revision_input = runtime.calls[3]["prompt_input"]
     assert revision_input["base_projection"] == {
         "user_request": request.request_text,
         "selected_resource_refs": [],

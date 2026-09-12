@@ -15,6 +15,21 @@ from google_work_agent.ports.system.settings_port import GitHubRepositoryDefault
 class RequestUnderstandingValidationError(ValueError):
     """Raised when a Request Understanding artifact violates its owner contract."""
 
+
+class RequestGoalSemanticValidationError(ValueError):
+    """Raised when one model-owned Request Goal meaning violates its contract."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        affected_field_paths: Sequence[str],
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.affected_field_paths = tuple(affected_field_paths)
+
 ConstraintKindValue = Literal[
     "PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"
 ]

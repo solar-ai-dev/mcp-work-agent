@@ -12,6 +12,7 @@ PROMPT_RUNTIME_INPUT_CONTRACT_SCHEMA_VERSION: Final = 1
 REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "request_understanding.identify_goal": "request.identify_goal",
     "request_understanding.identify_resource_responsibilities": "request.identify_goal",
+    "request_understanding.identify_source_status": "request.identify_goal",
     "request_understanding.identify_temporal_scope": "request.identify_temporal_scope",
     "request_understanding.detect_ambiguity": "request.detect_ambiguity",
     "tool_routing.determine_io_resources": "route.determine_resources",
@@ -61,7 +62,7 @@ class PromptRuntimeInputContractEntryV1:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
         output_version = {
             "retrieval.select_evidence": 3,
-            "request_understanding.identify_goal": 13,
+            "request_understanding.identify_goal": 14,
             "request_understanding.detect_ambiguity": 2,
             "work_analysis.detect_duplicate_conflict_candidates": 3,
             "work_analysis.assess_information_gaps": 2,
@@ -71,6 +72,8 @@ class PromptRuntimeInputContractEntryV1:
             input_versions = {3, 4}
         elif self.prompt_slot_id == "request_understanding.identify_resource_responsibilities":
             input_versions = {3}
+        elif self.prompt_slot_id == "request_understanding.identify_source_status":
+            input_versions = {1}
         else:
             input_versions = {1, 2}
         if (

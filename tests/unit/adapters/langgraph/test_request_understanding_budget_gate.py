@@ -58,6 +58,11 @@ RESPONSIBILITY_PROMPT_REF = replace(
     prompt_id="request_understanding.identify_resource_responsibilities",
     purpose="identify_resource_responsibilities",
 )
+SOURCE_STATUS_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_source_status",
+    purpose="identify_source_status",
+)
 
 
 class _NeverCalledAgent:
@@ -102,7 +107,6 @@ class _RepairingAgent:
                 "recipient": [],
                 "subject": [],
                 "period": [],
-                "status": [],
                 "coverage_requirement": [],
                 "additional_constraints": [],
             },
@@ -126,6 +130,8 @@ class _RepairingAgent:
         output = result.structured_output
         if prompt_ref.prompt_id == "request_understanding.identify_resource_responsibilities":
             output = cast(dict[str, object], output["resource_responsibilities"])
+        elif prompt_ref.prompt_id == "request_understanding.identify_source_status":
+            output = {"statuses": []}
         else:
             output = {
                 key: value
@@ -156,6 +162,7 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph._llm_runtime = agent if agent is not None else cast(Any, _NeverCalledAgent())
     subgraph._identify_goal_prompt_ref = PROMPT_REF
     subgraph._identify_resource_responsibilities_prompt_ref = RESPONSIBILITY_PROMPT_REF
+    subgraph._identify_source_status_prompt_ref = SOURCE_STATUS_PROMPT_REF
     subgraph._graph_profile = GraphProfile.SIX_ROLE_BASELINE
     return subgraph
 
@@ -216,5 +223,5 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
 
     result = subgraph._identify_goal_node(cast(Any, state))
 
-    assert agent.calls == 2
-    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 7
+    assert agent.calls == 3
+    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 9
