@@ -21,6 +21,7 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_goal_candidate_schema as goal_schema,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    SOURCE_STATUS_VALUES_BY_RESOURCE,
     AmbiguityV1,
     validated_repository_authority,
 )
@@ -38,6 +39,7 @@ from google_work_agent.application.agents.request_understanding.identify_goal im
 )
 from google_work_agent.application.agents.request_understanding.identify_source_status import (
     build_identify_source_status_output_schema,
+    identify_source_status,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
@@ -413,6 +415,54 @@ def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
             "source_text": source_text,
         },
     }
+
+
+def test_source_status__unconstrained_source__exposes_no_any_choice() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[{"statuses": []}], validate_schema=True)
+    responsibilities = _resource_responsibilities(
+        source_type="GMAIL_THREAD",
+        required_information=["final schedule and owner"],
+    )
+
+    result = identify_source_status(
+        llm_runtime=runtime,
+        requested_mode="LOCAL_GPU",
+        prompt_ref=_prompt_ref(
+            "request_understanding.identify_source_status",
+            "identify_source_status",
+        ),
+        prompt_input={"user_request": "find the final schedule", "selected_resource_refs": []},
+        goal_candidate={
+            "goal": "find the final schedule",
+            "completion_conditions": ["report the schedule"],
+            "constraints": _goal_constraints(search_terms=["Atlas"]),
+            "analysis_requirement": "NONE",
+        },
+        responsibilities=responsibilities,
+    )
+
+    assert result == {"statuses": []}
+    assert runtime.calls[0]["prompt_input"]["allowed_status_values"] == [
+        {"resource_type": "GMAIL_THREAD", "values": ["DRAFT", "SENT"]}
+    ]
+
+
+def test_source_status_schema__rejects_any_for_every_source_resource() -> None:
+    responsibilities = {
+        "source_reads": [
+            {"resource_type": resource_type, "required_information": []}
+            for resource_type in SOURCE_STATUS_VALUES_BY_RESOURCE
+        ],
+        "outputs": [],
+    }
+    schema = build_identify_source_status_output_schema(responsibilities)
+
+    assert schema.schema_version == "request-source-status-v2"
+    for resource_type in SOURCE_STATUS_VALUES_BY_RESOURCE:
+        assert validate_output_schema(
+            {"statuses": [_source_status("ANY", resource_type, "any")]},
+            schema.json_schema,
+        )
 
 
 def _source_dependency_decisions(
@@ -828,7 +878,7 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         "request-effect-prohibition-decision-v1",
         "request-source-dependency-decision-v1",
         "request-output-responsibility-decision-v1",
-        "request-source-status-v1",
+        "request-source-status-v2",
     ]
     assert runtime.calls[2]["prompt_input"]["goal_candidate"] == {
         "goal": "기존 업무 자료를 바탕으로 메일 초안을 저장한다",
@@ -874,11 +924,11 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
     assert runtime.calls[4]["prompt_input"]["allowed_status_values"] == [
         {
             "resource_type": "TASK",
-            "values": ["ANY", "COMPLETED", "INCOMPLETE"],
+            "values": ["COMPLETED", "INCOMPLETE"],
         },
         {
             "resource_type": "CALENDAR_EVENT",
-            "values": ["ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"],
+            "values": ["CANCELLED", "CONFIRMED", "TENTATIVE"],
         },
     ]
     assert not any(item["field"] == "status" for item in candidate["constraints"])

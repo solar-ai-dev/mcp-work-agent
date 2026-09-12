@@ -122,7 +122,10 @@ class FakeStructuredInferencePort:
                         for candidate in [cast(Mapping[str, object], raw_candidate)]
                     ]
                 }
-        elif output_schema_ref.schema_version == "request-source-status-v1":
+        elif output_schema_ref.schema_version in {
+            "request-source-status-v1",
+            "request-source-status-v2",
+        }:
             if self._pending_source_statuses is not None:
                 output = {"statuses": self._pending_source_statuses}
                 self._pending_source_statuses = None

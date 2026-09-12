@@ -20,6 +20,14 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 
 
+def _llm_facing_status_values(resource_type: str) -> list[str]:
+    return sorted(
+        value
+        for value in SOURCE_STATUS_VALUES_BY_RESOURCE.get(resource_type, frozenset())
+        if value != "ANY"
+    )
+
+
 def build_identify_source_status_output_schema(
     responsibilities: ResourceResponsibilitiesV1,
 ) -> OutputSchemaDefinition:
@@ -29,7 +37,7 @@ def build_identify_source_status_output_schema(
         dict.fromkeys(
             source["resource_type"]
             for source in responsibilities["source_reads"]
-            if source["resource_type"] in SOURCE_STATUS_VALUES_BY_RESOURCE
+            if _llm_facing_status_values(source["resource_type"])
         )
     )
     binding_schemas = [
@@ -39,7 +47,7 @@ def build_identify_source_status_output_schema(
             "additionalProperties": False,
             "properties": {
                 "value": {
-                    "enum": sorted(SOURCE_STATUS_VALUES_BY_RESOURCE[resource_type])
+                    "enum": _llm_facing_status_values(resource_type)
                 },
                 "source_resource_type": {"const": resource_type},
                 "source": {"enum": ["USER_REQUEST", "CONFIRMATION_RESPONSE"]},
@@ -56,7 +64,7 @@ def build_identify_source_status_output_schema(
     else:
         item_schema = {"oneOf": binding_schemas}
     return OutputSchemaDefinition(
-        schema_version="request-source-status-v1",
+        schema_version="request-source-status-v2",
         json_schema={
             "type": "object",
             "required": ["statuses"],
@@ -98,10 +106,10 @@ def identify_source_status(
         "allowed_status_values": [
             {
                 "resource_type": resource_type,
-                "values": sorted(SOURCE_STATUS_VALUES_BY_RESOURCE[resource_type]),
+                "values": _llm_facing_status_values(resource_type),
             }
             for resource_type in source_types
-            if resource_type in SOURCE_STATUS_VALUES_BY_RESOURCE
+            if _llm_facing_status_values(resource_type)
         ],
     }
     if "confirmation_response" in prompt_input:
