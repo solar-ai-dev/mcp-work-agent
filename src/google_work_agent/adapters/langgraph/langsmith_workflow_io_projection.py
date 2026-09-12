@@ -154,6 +154,7 @@ _BOOLEAN_FIELDS = frozenset(
         "has_next_page",
         "exhausted",
         "is_exhausted",
+        "scope_complete",
         "notes_truncated",
         "read_supported",
     }
@@ -167,6 +168,8 @@ _NUMBER_FIELDS = frozenset(
         "attempt_no",
         "candidate_count",
         "observed_resource_count",
+        "checked_read_count",
+        "known_scope_count",
         "retrieval_rounds",
         "source_action_version",
         "expected_run_version",

@@ -19,6 +19,10 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
 class RetrievalReadBudgetExceeded(ValueError):
     """No connector read may be dispatched after the Run budget is exhausted."""
 
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
 
 def consume_retrieval_read_budget(
     budget: RunBudgetV2,

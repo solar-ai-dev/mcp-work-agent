@@ -987,33 +987,46 @@ class RetrievalSubgraph:
             ),
             attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
         )
+        acquisition_result = _require_state_value(
+            state["acquisition_result"], "acquisition_result"
+        )
         sufficiency_result, retry_budget, should_plan_followup = authorize_retrieval_followup(
             sufficiency_result,
             request_intent=_require_state_value(state["request_intent"], "request_intent"),
             retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(state["evidence_drafts"]),
             detail_fetch_count=len(detail_followup["route_queries"]) if detail_followup else 0,
-            can_acquire_new_information=any(
-                item["slot"] == "person_identity_search" for item in sufficiency_result["issues"]
-            )
-            or has_retrieval_followup_path(
-                request_intent=_require_state_value(state["request_intent"], "request_intent"),
-                tool_route_plan=tool_route_plan,
-                route_policies=_runtime_route_constraint_policies(
-                    tool_route_plan["input_plan"]["input_routes"]
-                ),
-                unresolved_sufficiency_issues=cast(
-                    list[Mapping[str, object]], sufficiency_result["issues"]
-                ),
-                read_result_summaries=self._bounded_read_result_summaries(state),
-                query_attempts=cast(
-                    list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])
-                ),
-                detail_candidate_refs=project_detail_candidate_refs(
-                    evidence_drafts=state.get("evidence_drafts", []),
-                    acquisition_result=state.get("acquisition_result"),
-                ),
-                attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
+            can_acquire_new_information=(
+                not _has_bounded_read_stop(acquisition_result)
+                and (
+                    any(
+                        item["slot"] == "person_identity_search"
+                        for item in sufficiency_result["issues"]
+                    )
+                    or has_retrieval_followup_path(
+                        request_intent=_require_state_value(
+                            state["request_intent"], "request_intent"
+                        ),
+                        tool_route_plan=tool_route_plan,
+                        route_policies=_runtime_route_constraint_policies(
+                            tool_route_plan["input_plan"]["input_routes"]
+                        ),
+                        unresolved_sufficiency_issues=cast(
+                            list[Mapping[str, object]], sufficiency_result["issues"]
+                        ),
+                        read_result_summaries=self._bounded_read_result_summaries(state),
+                        query_attempts=cast(
+                            list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])
+                        ),
+                        detail_candidate_refs=project_detail_candidate_refs(
+                            evidence_drafts=state.get("evidence_drafts", []),
+                            acquisition_result=state.get("acquisition_result"),
+                        ),
+                        attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(
+                            state
+                        ),
+                    )
+                )
             ),
         )
         reassessment_segments = (
@@ -1334,10 +1347,11 @@ class RetrievalSubgraph:
         routes = {route["route_id"]: route for route in route_plan["input_plan"]["input_routes"]}
         bindings = dict(cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {})))
         new_handles: list[str] = []
-        failed_reads: list[tuple[SourceFetchPlanV1, str]] = []
+        failed_reads: list[tuple[SourceFetchPlanV1, str, bool]] = []
+        budget_stops: list[tuple[SourceFetchPlanV1, int, str]] = []
         page_calls = 0
         attempts = list(cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])))
-        for plan in plans:
+        for plan_index, plan in enumerate(plans):
             if self._should_stop_for_cancel(state["run_id"]):
                 break
             route = routes.get(plan["route_id"])
@@ -1428,7 +1442,19 @@ class RetrievalSubgraph:
             )
             execution = cast(Any, patch["read_execution"])
             if execution.status == "FAILED":
-                failed_reads.append((plan, execution.failure_code))
+                failed_reads.append((plan, execution.failure_code, execution.provider_called))
+            if execution.status == "BUDGET_STOPPED":
+                remaining_by_route: dict[str, tuple[SourceFetchPlanV1, int]] = {}
+                for pending in plans[plan_index:]:
+                    representative, count = remaining_by_route.get(
+                        pending["route_id"], (pending, 0)
+                    )
+                    remaining_by_route[pending["route_id"]] = (representative, count + 1)
+                budget_stops = [
+                    (representative, count, execution.stop_reason or "RUN_BUDGET_LIMIT")
+                    for representative, count in remaining_by_route.values()
+                ]
+                break
             if execution.provider_called and plan["operation_kind"] != "DETAIL_FETCH":
                 page_calls += 1
             effective_handle = execution.read_result_handle
@@ -1489,6 +1515,7 @@ class RetrievalSubgraph:
             list(zip(plan_by_binding, raw_results, strict=True)),
             remaining_budget=self._remaining_retrieval_budget(state, page_calls),
             failed_reads=failed_reads,
+            budget_stops=budget_stops,
             prior_result=state.get("acquisition_result"),
         )
         safe_acquisition = self._bounded_acquisition(acquisition)
@@ -2089,6 +2116,13 @@ def _retrieval_required_signal(signal: object) -> RetrievalRequiredV1 | None:
     if isinstance(signal, dict) and signal.get("kind") == "RETRIEVAL_REQUIRED":
         return cast(RetrievalRequiredV1, signal)
     return None
+
+
+def _has_bounded_read_stop(acquisition_result: AcquisitionResultV1) -> bool:
+    return any(
+        summary.get("termination_kind") == "BUDGET_STOPPED"
+        for summary in acquisition_result["source_summaries"]
+    )
 
 
 def _pending_retrieval_need(value: object) -> RetrievalNeedV1 | None:

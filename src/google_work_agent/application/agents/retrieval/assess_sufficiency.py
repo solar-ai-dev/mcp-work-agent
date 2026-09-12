@@ -214,6 +214,27 @@ def _deterministic_source_sufficiency(
     if (
         not evidence_drafts
         and set(request_intent["requested_effect_hints"]) == {"READ"}
+        and _all_required_source_scopes_complete(tool_route_plan, acquisition_result)
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if not evidence_drafts and _has_bounded_read_stop(acquisition_result):
+        guarded = _fail_closed_on_empty_required_acquisition(
+            {"schema_version": 2, "status": "PARTIAL", "issues": []},
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+        )
+        return {
+            **guarded,
+            "status": (
+                "PARTIAL"
+                if set(request_intent["requested_effect_hints"]) == {"READ"}
+                else "BLOCKED"
+            ),
+        }
+    if (
+        not evidence_drafts
+        and set(request_intent["requested_effect_hints"]) == {"READ"}
         and acquisition_result["source_summaries"]
         and all(
             summary.get("status") == "COMPLETE" and summary.get("resource_count") == 0
@@ -235,7 +256,7 @@ def _deterministic_source_sufficiency(
             )
     terminal_read_failure = any(
         summary.get("status") == "FAILED"
-        and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED", "BUDGET_EXHAUSTED"}
+        and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED"}
         for summary in acquisition_result["source_summaries"]
     )
     if terminal_read_failure:
@@ -628,7 +649,7 @@ def _fail_closed_on_empty_required_acquisition(
             has_evidence = any(
                 handle.startswith(resource_type.lower() + ":") for handle in evidence_handles
             )
-        if status == "COMPLETE" and has_evidence:
+        if status in {"COMPLETE", "PARTIAL"} and has_evidence:
             continue
         no_resources = bool(summaries) and all(
             summary.get("resource_count") == 0 for summary in summaries
@@ -644,7 +665,7 @@ def _fail_closed_on_empty_required_acquisition(
             "SOURCE_" + str(summary["error_code"])
             for summary in summaries
             if summary.get("status") == "FAILED"
-            and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED", "BUDGET_EXHAUSTED"}
+            and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED"}
         ]
         issues.append(
             {
@@ -666,6 +687,50 @@ def _fail_closed_on_empty_required_acquisition(
         "status": result["status"],
         "issues": issues,
     }
+
+
+def _all_required_source_scopes_complete(
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+) -> bool:
+    if tool_route_plan is None:
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    required_routes = [route for route in routes if route["required"]]
+    if not required_routes:
+        return False
+    for route in required_routes:
+        summaries = _route_summaries(route, routes, acquisition_result)
+        latest_summaries = _latest_scope_summaries(summaries)
+        if not latest_summaries or any(
+            summary.get("scope_complete") is not True for summary in latest_summaries
+        ):
+            return False
+        checked = sum(
+            cast(int, summary.get("checked_read_count", 0)) for summary in summaries
+        )
+        known = sum(cast(int, summary.get("known_scope_count", 0)) for summary in summaries)
+        if known < 1 or checked < known:
+            return False
+    return True
+
+
+def _latest_scope_summaries(
+    summaries: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    latest: dict[str, Mapping[str, object]] = {}
+    for index, summary in enumerate(summaries):
+        query_identity = summary.get("query_identity_hash")
+        key = query_identity if isinstance(query_identity, str) else f"summary:{index}"
+        latest[key] = summary
+    return list(latest.values())
+
+
+def _has_bounded_read_stop(acquisition_result: AcquisitionResultV1) -> bool:
+    return any(
+        summary.get("termination_kind") == "BUDGET_STOPPED"
+        for summary in acquisition_result["source_summaries"]
+    )
 
 
 def _bind_issue_routes(
@@ -917,7 +982,9 @@ _SOURCE_STATUS_MAP: dict[str, tuple[str, str | None]] = {
     "PARTIAL": ("PARTIAL", None),
     "AUTH_REQUIRED": ("FAILED", "AUTH_REQUIRED"),
     "RATE_LIMITED": ("FAILED", "RATE_LIMITED"),
-    "BUDGET_EXHAUSTED": ("FAILED", "BUDGET_EXHAUSTED"),
+    # Compatibility for checkpoints written before bounded stops were
+    # represented as PARTIAL source coverage.
+    "BUDGET_EXHAUSTED": ("PARTIAL", None),
     "FAILED": ("FAILED", "FAILED"),
 }
 _SOURCE_STATUS_PRIORITY = {"COMPLETE": 1, "PARTIAL": 2, "FAILED": 3}
@@ -986,12 +1053,36 @@ def source_statuses_prompt_projection(
             status, failure_kind = "NOT_ATTEMPTED", None
         else:
             status, failure_kind = _worst_source_status(summaries)
+        checked_read_count = sum(
+            cast(int, summary.get("checked_read_count", 0)) for summary in summaries
+        )
+        known_scope_count = sum(
+            cast(int, summary.get("known_scope_count", 0)) for summary in summaries
+        )
+        latest_summaries = _latest_scope_summaries(summaries)
+        scope_complete = bool(latest_summaries) and known_scope_count > 0 and all(
+            summary.get("scope_complete") is True for summary in latest_summaries
+        ) and checked_read_count >= known_scope_count
+        continuation_status = (
+            "HAS_MORE"
+            if any(
+                summary.get("continuation_status") == "HAS_MORE"
+                for summary in latest_summaries
+            )
+            else "EXHAUSTED"
+            if scope_complete
+            else "UNKNOWN"
+        )
         projections.append(
             {
                 "route_id": route["route_id"],
                 "resource_type": resource_type,
                 "status": status,
                 "failure_kind": failure_kind,
+                "checked_read_count": checked_read_count,
+                "known_scope_count": known_scope_count,
+                "scope_complete": scope_complete,
+                "continuation_status": continuation_status,
             }
         )
     return projections
@@ -1005,11 +1096,14 @@ def _worst_source_status(summaries: list[dict[str, object]]) -> tuple[str, str |
         raw_status = str(summary.get("status"))
         status, failure_kind = _SOURCE_STATUS_MAP.get(raw_status, ("FAILED", raw_status))
         if raw_status == "FAILED":
-            failure_kind = {
-                "NOT_FOUND": "NOT_FOUND",
-                "PERMISSION_DENIED": "SCOPE",
-                "BUDGET_EXHAUSTED": "BUDGET_EXHAUSTED",
-            }.get(str(summary.get("error_code")), failure_kind)
+            error_code = str(summary.get("error_code"))
+            if error_code == "BUDGET_EXHAUSTED":
+                status, failure_kind = "PARTIAL", None
+            else:
+                failure_kind = {
+                    "NOT_FOUND": "NOT_FOUND",
+                    "PERMISSION_DENIED": "SCOPE",
+                }.get(error_code, failure_kind)
         priority = _SOURCE_STATUS_PRIORITY.get(status, 3)
         if priority > worst_priority:
             worst_priority = priority
@@ -1113,7 +1207,6 @@ def enforce_sufficiency_guard(
         & {
             "SOURCE_NOT_FOUND",
             "SOURCE_PERMISSION_DENIED",
-            "SOURCE_BUDGET_EXHAUSTED",
         }
         for issue in sufficiency_result["issues"]
     ):

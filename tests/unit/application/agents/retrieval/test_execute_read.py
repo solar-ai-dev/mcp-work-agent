@@ -410,8 +410,9 @@ def test_detail_dispatch__detail_dimension__charges_only_detail_and_honors_limit
         execute_read(**arguments)
     else:
         outcome = execute_read(**arguments)
-        assert outcome.status == "FAILED"
-        assert outcome.failure_code == "BUDGET_EXHAUSTED"
+        assert outcome.status == "BUDGET_STOPPED"
+        assert outcome.failure_code is None
+        assert outcome.stop_reason == "DETAIL_FETCH_LIMIT"
         assert outcome.provider_called is False
         assert outcome.candidate_count is None
     assert len(reader.calls) == expected_calls

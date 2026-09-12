@@ -1,7 +1,7 @@
 from collections import deque
 from copy import deepcopy
 from dataclasses import replace
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from tests.support.context_retrieval import (
@@ -817,7 +817,7 @@ def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
     assert runtime.calls == []
 
 
-def test_budget_exhausted_source__fails_closed_with_existing_evidence() -> None:
+def test_bounded_read_stop__does_not_invalidate_existing_evidence() -> None:
     acquisition = _acquisition_result()
     acquisition["status"] = "PARTIAL"
     acquisition["source_summaries"].append(
@@ -826,21 +826,29 @@ def test_budget_exhausted_source__fails_closed_with_existing_evidence() -> None:
             "route_id": "route-gmail",
             "source": "GMAIL",
             "connector_id": "google_workspace",
-            "status": "FAILED",
+            "status": "PARTIAL",
             "required": True,
-            "error_code": "BUDGET_EXHAUSTED",
+            "error_code": None,
+            "termination_kind": "BUDGET_STOPPED",
+            "budget_reason_code": "CONNECTOR_LIMIT",
             "resource_count": 0,
             "resource_handles": [],
             "resources": [],
+            "checked_read_count": 0,
+            "known_scope_count": 1,
+            "scope_complete": False,
+            "continuation_status": "UNKNOWN",
         }
     )
-    runtime = FakeLLMRuntime(deque())
+    intent = _intent()
+    intent["constraints"] = []
+    runtime = FakeLLMRuntime(deque([_llm_result(_sufficiency_output("SUFFICIENT"))]))
 
     result = assess_sufficiency(
         llm_runtime=runtime,
         prompt_ref=SUFFICIENCY_PROMPT_REF,
         requested_mode="LOCAL_GPU",
-        request_intent=_intent(),
+        request_intent=intent,
         tool_route_plan=_tool_route_plan(),
         acquisition_result=acquisition,
         evidence_drafts=[
@@ -858,10 +866,86 @@ def test_budget_exhausted_source__fails_closed_with_existing_evidence() -> None:
         retry_budget=_run_budget(used=0),
     )
 
-    assert result["status"] == "PARTIAL"
-    assert any(
-        "SOURCE_BUDGET_EXHAUSTED" in issue["reason_codes"] for issue in result["issues"]
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    assert len(runtime.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("effects", "expected_status"),
+    [(["READ"], "PARTIAL"), (["READ", "CREATE"], "BLOCKED")],
+)
+def test_bounded_read_stop__without_evidence__closes_by_effect_safety(
+    effects: list[str], expected_status: str
+) -> None:
+    acquisition = _acquisition_result()
+    acquisition["status"] = "PARTIAL"
+    acquisition["resource_handles"] = []
+    acquisition["source_summaries"] = [
+        {
+            "schema_version": 1,
+            "route_id": "route-gmail",
+            "source": "GMAIL",
+            "connector_id": "google_workspace",
+            "status": "PARTIAL",
+            "required": True,
+            "error_code": None,
+            "termination_kind": "BUDGET_STOPPED",
+            "budget_reason_code": "CONNECTOR_LIMIT",
+            "resource_count": 0,
+            "resource_handles": [],
+            "resources": [],
+            "checked_read_count": 0,
+            "known_scope_count": 1,
+            "scope_complete": False,
+            "continuation_status": "UNKNOWN",
+        }
+    ]
+    intent = _intent()
+    intent["requested_effect_hints"] = cast(Any, effects)
+    runtime = FakeLLMRuntime(deque())
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        evidence_drafts=[],
+        retry_budget=_run_budget(used=0),
     )
+
+    assert result["status"] == expected_status
+    assert result["issues"][0]["reason_codes"] == ["REQUIRED_SOURCE_PARTIAL"]
+    assert runtime.calls == []
+
+
+def test_complete_empty_scope__is_a_bounded_no_match_without_model() -> None:
+    acquisition = _acquisition_result()
+    acquisition["resource_handles"] = []
+    acquisition["source_summaries"][0].update(
+        resource_count=0,
+        resource_handles=[],
+        resources=[],
+        checked_read_count=1,
+        known_scope_count=1,
+        scope_complete=True,
+        continuation_status="EXHAUSTED",
+    )
+    runtime = FakeLLMRuntime(deque())
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        evidence_drafts=[],
+        retry_budget=_run_budget(used=0),
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     assert runtime.calls == []
 
 
@@ -1290,6 +1374,10 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
             "resource_type": "ISSUE",
             "status": "COMPLETE",
             "failure_kind": None,
+            "checked_read_count": 0,
+            "known_scope_count": 0,
+            "scope_complete": False,
+            "continuation_status": "UNKNOWN",
         }
     ]
     assert "CONNECTOR" in resolution_enum

@@ -115,6 +115,7 @@ def finalize_retrieval(
             tool_route_plan,
             acquisition_result,
             evidence_drafts=evidence,
+            read_result_summaries=read_result_summaries,
         ),
         "collection_results": _collection_results(
             tool_route_plan,
@@ -181,6 +182,13 @@ def _collection_results(
     summaries_by_route: dict[str, list[Mapping[str, object]]] = {
         route["route_id"]: [] for route in routes
     }
+    acquisition_summaries_by_route: dict[str, list[Mapping[str, object]]] = {
+        route["route_id"]: [] for route in routes
+    }
+    for summary in acquisition_result["source_summaries"]:
+        route_id = summary.get("route_id", single_route_id)
+        if isinstance(route_id, str) and route_id in acquisition_summaries_by_route:
+            acquisition_summaries_by_route[route_id].append(summary)
     for read_summary in read_result_summaries:
         route_id = read_summary.get("route_id")
         if isinstance(route_id, str) and route_id in summaries_by_route:
@@ -194,7 +202,8 @@ def _collection_results(
                 resources_by_route[route["route_id"]],
             ),
             "continuation_status": _collection_continuation(
-                summaries_by_route[route["route_id"]]
+                summaries_by_route[route["route_id"]],
+                acquisition_summaries=acquisition_summaries_by_route[route["route_id"]],
             ),
             "items": resources_by_route[route["route_id"]],
         }
@@ -226,12 +235,29 @@ def _collection_resource_type(
 
 def _collection_continuation(
     read_result_summaries: Sequence[Mapping[str, object]],
+    *,
+    acquisition_summaries: Sequence[Mapping[str, object]] = (),
 ) -> Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]:
+    bounded_or_failed = any(
+        summary.get("termination_kind") == "BUDGET_STOPPED"
+        or summary.get("status") == "FAILED"
+        for summary in acquisition_summaries
+    )
     if any(summary.get("has_next_page") is True for summary in read_result_summaries):
         return "HAS_MORE"
+    if bounded_or_failed:
+        return "UNKNOWN"
     if read_result_summaries and all(
         summary.get("has_next_page") is False and summary.get("exhausted") is True
         for summary in read_result_summaries
+    ):
+        return "EXHAUSTED"
+    if any(
+        summary.get("continuation_status") == "HAS_MORE" for summary in acquisition_summaries
+    ):
+        return "HAS_MORE"
+    if acquisition_summaries and all(
+        summary.get("scope_complete") is True for summary in acquisition_summaries
     ):
         return "EXHAUSTED"
     return "UNKNOWN"
@@ -253,6 +279,7 @@ def _source_statuses(
     acquisition_result: AcquisitionResultV1,
     *,
     evidence_drafts: list[EvidenceDraftV1],
+    read_result_summaries: Sequence[Mapping[str, object]],
 ) -> list[RetrievalSourceStatusV1]:
     routes = tool_route_plan["input_plan"]["input_routes"]
     routes_by_id = {route["route_id"]: route for route in routes}
@@ -260,30 +287,62 @@ def _source_statuses(
         acquisition_result,
         single_route_id=routes[0]["route_id"] if len(routes) == 1 else None,
     )
-    return [
-        {
-            "route_id": str(item["route_id"]),
-            "resource_type": _exact_resource_type(
-                routes_by_id[str(item["route_id"])],
-                acquisition_result,
-            ),
-            "status": cast(
-                Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_ATTEMPTED"],
-                item["status"],
-            ),
-            "evidence_refs": [
-                draft["evidence_id"]
-                for draft in evidence_drafts
-                if draft["resource_handle"] in handles_by_route.get(str(item["route_id"]), set())
-            ],
-            "observed_resource_count": len(handles_by_route.get(str(item["route_id"]), set())),
-            "failure_kind": _failure_kind(item["failure_kind"]),
-        }
-        for item in source_statuses_prompt_projection(
-            tool_route_plan=tool_route_plan,
-            acquisition_result=acquisition_result,
+    statuses: list[RetrievalSourceStatusV1] = []
+    for item in source_statuses_prompt_projection(
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+    ):
+        route_id = str(item["route_id"])
+        route_summaries = [
+            summary
+            for summary in acquisition_result["source_summaries"]
+            if summary.get("route_id") == route_id
+            or len(routes) == 1
+            and summary.get("route_id") is None
+        ]
+        checked_read_count = sum(
+            cast(int, summary.get("checked_read_count", 0)) for summary in route_summaries
         )
-    ]
+        known_scope_count = sum(
+            cast(int, summary.get("known_scope_count", 0)) for summary in route_summaries
+        )
+        route_read_summaries = [
+            summary for summary in read_result_summaries if summary.get("route_id") == route_id
+        ]
+        continuation_status = _collection_continuation(
+            route_read_summaries, acquisition_summaries=route_summaries
+        )
+        scope_complete = (
+            bool(route_summaries)
+            and known_scope_count > 0
+            and checked_read_count >= known_scope_count
+            and continuation_status == "EXHAUSTED"
+        )
+        statuses.append(
+            {
+                "route_id": str(item["route_id"]),
+                "resource_type": _exact_resource_type(
+                    routes_by_id[str(item["route_id"])],
+                    acquisition_result,
+                ),
+                "status": cast(
+                    Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_ATTEMPTED"],
+                    item["status"],
+                ),
+                "evidence_refs": [
+                    draft["evidence_id"]
+                    for draft in evidence_drafts
+                    if draft["resource_handle"] in handles_by_route.get(route_id, set())
+                ],
+                "observed_resource_count": len(handles_by_route.get(route_id, set())),
+                "checked_read_count": checked_read_count,
+                "known_scope_count": known_scope_count,
+                "scope_complete": scope_complete,
+                "continuation_status": continuation_status,
+                "failure_kind": _failure_kind(item["failure_kind"]),
+            }
+        )
+    return statuses
 
 
 def _resource_handles_by_route(

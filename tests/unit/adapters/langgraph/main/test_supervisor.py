@@ -293,6 +293,50 @@ def test_retrieval_complete__with_explicit_analysis__routes_to_work_analysis() -
     assert decision["next_phase"] == WorkflowPhase.WORK_ANALYSIS.value
 
 
+def test_retrieval_partial_without_evidence__skips_analysis_for_answer_only() -> None:
+    intent = _request_intent(analysis_requirement="REQUIRED")
+    plan = _tool_route_plan()
+    plan["input_plan"]["input_routes"] = [_input_route()]
+    result = cast(
+        RetrievalResultV1,
+        {"schema_version": 1, "coverage": "PARTIAL", "evidence_refs": []},
+    )
+
+    decision = route_supervisor(
+        phase=WorkflowPhase.CONTEXT_RETRIEVAL,
+        state=_state(request_intent=intent, tool_route_plan=plan),
+        result={"disposition": "PARTIAL", "typed_result": result},
+    )
+
+    assert decision["target"] == SupervisorTarget.SOLUTION_PLANNING.value
+    assert decision["reason_code"] == "PARTIAL_ANSWER_ONLY"
+
+
+def test_retrieval_partial_without_evidence__blocks_action_planning() -> None:
+    plan = _tool_route_plan()
+    plan["input_plan"]["input_routes"] = [_input_route()]
+    plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": plan["output_plan"]["meta"],
+        "output_mode": "ACTION",
+        "output_routes": [],
+    }
+    result = cast(
+        RetrievalResultV1,
+        {"schema_version": 1, "coverage": "PARTIAL", "evidence_refs": []},
+    )
+
+    decision = route_supervisor(
+        phase=WorkflowPhase.CONTEXT_RETRIEVAL,
+        state=_state(request_intent=_request_intent(), tool_route_plan=plan),
+        result={"disposition": "PARTIAL", "typed_result": result},
+    )
+
+    assert decision["target"] == SupervisorTarget.FINALIZE.value
+    assert decision["state_update"]["finalize_intent"]["intent"] == "BLOCKED"
+    assert decision["state_update"]["retrieval_result"] == result
+
+
 @pytest.mark.parametrize(
     "policy_reason_code",
     ("POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"),

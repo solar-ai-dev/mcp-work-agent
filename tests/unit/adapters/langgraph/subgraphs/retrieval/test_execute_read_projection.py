@@ -111,7 +111,7 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
     result = execute_read_projection.project_acquisition_result(
         [(successful_plan, successful_read)],
         remaining_budget={"pages": 2},
-        failed_reads=[(failed_plan, "NOT_FOUND")],
+        failed_reads=[(failed_plan, "NOT_FOUND", True)],
     )
     assert result["status"] == "PARTIAL"
     hydrated = execute_read_projection.project_acquisition_result(
@@ -127,7 +127,7 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
     assert len(hydrated["source_summaries"]) == 2
 
 
-def test_budget_exhausted_read__preserves_successful_acquisition_as_partial() -> None:
+def test_bounded_read_stop__preserves_successful_acquisition_as_partial() -> None:
     successful_plan = cast(
         SourceFetchPlanV1,
         {
@@ -167,15 +167,46 @@ def test_budget_exhausted_read__preserves_successful_acquisition_as_partial() ->
     result = execute_read_projection.project_acquisition_result(
         [(successful_plan, successful_read)],
         remaining_budget={"details": 0},
-        failed_reads=[(failed_plan, "BUDGET_EXHAUSTED")],
+        budget_stops=[(failed_plan, 2, "CONNECTOR_LIMIT")],
     )
 
     assert result["status"] == "PARTIAL"
     assert result["resource_handles"] == ["calendar_event:event-1"]
     by_route = {item["route_id"]: item for item in result["source_summaries"]}
     assert by_route["calendar-route"]["status"] == "COMPLETE"
-    assert by_route["calendar-detail-route"]["status"] == "FAILED"
-    assert by_route["calendar-detail-route"]["error_code"] == "BUDGET_EXHAUSTED"
+    assert by_route["calendar-detail-route"]["status"] == "PARTIAL"
+    assert by_route["calendar-detail-route"]["error_code"] is None
+    assert by_route["calendar-detail-route"]["termination_kind"] == "BUDGET_STOPPED"
+    assert by_route["calendar-detail-route"]["checked_read_count"] == 0
+    assert by_route["calendar-detail-route"]["known_scope_count"] == 2
+    assert by_route["calendar-detail-route"]["scope_complete"] is False
+
+
+def test_bounded_read_stop__without_prior_success__is_partial_not_failed() -> None:
+    plan = cast(
+        SourceFetchPlanV1,
+        {
+            "route_id": "task-route",
+            "connector_id": "google_workspace",
+            "resource_type": "TASK",
+        },
+    )
+
+    result = execute_read_projection.project_acquisition_result(
+        [],
+        remaining_budget={"pages": 0},
+        budget_stops=[(plan, 3, "SOURCE_PAGE_LIMIT")],
+    )
+    hydrated = execute_read_projection.project_acquisition_result(
+        [],
+        remaining_budget={"pages": 0},
+        prior_result=execute_read_projection.sanitize_acquisition_result(result),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert hydrated == result
+    assert hydrated["source_summaries"][0]["status"] == "PARTIAL"
+    assert hydrated["source_summaries"][0]["error_code"] is None
 
 
 @pytest.mark.parametrize("failure_code", ["NOT_FOUND", "PERMISSION_DENIED"])
@@ -192,7 +223,7 @@ def test_terminal_read_failure_projection__retains_existing_codes(failure_code: 
     result = execute_read_projection.project_acquisition_result(
         [],
         remaining_budget={},
-        failed_reads=[(failed_plan, failure_code)],
+        failed_reads=[(failed_plan, failure_code, True)],
     )
 
     assert result["status"] == "FAILED"
@@ -213,7 +244,7 @@ def test_terminal_read_failure_projection__rejects_unknown_failure_code() -> Non
         execute_read_projection.project_acquisition_result(
             [],
             remaining_budget={},
-            failed_reads=[(failed_plan, "UNKNOWN_FAILURE")],
+            failed_reads=[(failed_plan, "UNKNOWN_FAILURE", True)],
         )
 
 

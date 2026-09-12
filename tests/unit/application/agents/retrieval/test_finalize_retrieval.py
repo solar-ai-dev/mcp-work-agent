@@ -251,6 +251,10 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
             "status": "COMPLETE",
             "evidence_refs": ["evidence-segment-7"],
             "observed_resource_count": 2,
+            "checked_read_count": 0,
+            "known_scope_count": 0,
+            "scope_complete": False,
+            "continuation_status": "UNKNOWN",
             "failure_kind": None,
         }
     ]
@@ -375,6 +379,66 @@ def test_finalize_retrieval__reports_unfinished_collection_page_without_forcing_
 
     assert result["coverage"] == "SUFFICIENT"
     assert result["collection_results"][0]["continuation_status"] == "HAS_MORE"
+
+
+def test_finalize_retrieval__preserves_bounded_scope_counts_and_incomplete_coverage() -> None:
+    acquisition = _acquisition_result()
+    acquisition["status"] = "PARTIAL"
+    acquisition["source_summaries"][0].update(
+        route_id="route-gmail",
+        checked_read_count=2,
+        known_scope_count=2,
+        scope_complete=True,
+        continuation_status="EXHAUSTED",
+    )
+    acquisition["source_summaries"].append(
+        {
+            "schema_version": 1,
+            "route_id": "route-gmail",
+            "source": "GMAIL",
+            "connector_id": "google_workspace",
+            "status": "PARTIAL",
+            "required": True,
+            "error_code": None,
+            "termination_kind": "BUDGET_STOPPED",
+            "budget_reason_code": "CONNECTOR_LIMIT",
+            "resource_count": 0,
+            "resource_handles": [],
+            "resources": [],
+            "checked_read_count": 0,
+            "known_scope_count": 3,
+            "scope_complete": False,
+            "continuation_status": "UNKNOWN",
+        }
+    )
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-partial-scope",
+        request_intent=_intent(),
+        tool_route_plan=_tool_route_plan(),
+        acquisition_result=acquisition,
+        selection_result={
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": [],
+        },
+        evidence_drafts=[],
+        sufficiency_result=_sufficiency_output("PARTIAL"),
+        current_round_no=0,
+        read_result_summaries=[
+            {"route_id": "route-gmail", "has_next_page": False, "exhausted": True}
+        ],
+    )
+
+    source = result["source_statuses"][0]
+    assert source["status"] == "PARTIAL"
+    assert source["checked_read_count"] == 2
+    assert source["known_scope_count"] == 5
+    assert source["observed_resource_count"] == 1
+    assert source["scope_complete"] is False
+    assert source["continuation_status"] == "UNKNOWN"
+    assert result["collection_results"][0]["continuation_status"] == "UNKNOWN"
 
 
 def test_finalize_retrieval__with_google_resources__retains_exact_resource_types() -> None:

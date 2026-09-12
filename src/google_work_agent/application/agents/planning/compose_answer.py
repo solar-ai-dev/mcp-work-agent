@@ -244,6 +244,26 @@ def _with_partial_scope(
     if retrieval_result is None:
         return draft
     notices: list[str] = []
+    raw_source_statuses = cast(list[object], retrieval_result.get("source_statuses", []))
+    source_statuses = [item for item in raw_source_statuses if isinstance(item, Mapping)]
+    checked_read_count = sum(
+        int(item.get("checked_read_count", 0)) for item in source_statuses
+    )
+    observed_resource_count = sum(
+        int(item.get("observed_resource_count", 0)) for item in source_statuses
+    )
+    scope_complete = bool(source_statuses) and all(
+        item.get("scope_complete") is True for item in source_statuses
+    )
+    has_scope_notice = False
+    if checked_read_count > 0 and observed_resource_count == 0:
+        notices.append(
+            "접근 가능한 전체 범위를 확인했지만 관련 항목을 찾지 못했습니다."
+            if scope_complete
+            else f"조회 범위 {checked_read_count}개를 확인했고, 확인한 범위에서는 관련 "
+            "항목을 찾지 못했습니다. 전체 검색은 완료되지 않았습니다."
+        )
+        has_scope_notice = True
     if retrieval_result.get("unresolved_event_dates"):
         notices.append("행사 연도가 확정되지 않아 요청 기간에 해당하는지 추가 확인이 필요합니다.")
     if any(
@@ -255,10 +275,12 @@ def _with_partial_scope(
         )
     if any(
         isinstance(item, Mapping) and item.get("failure_kind") is not None
-        for item in cast(list[object], retrieval_result.get("source_statuses", []))
+        for item in raw_source_statuses
     ):
         notices.append("일부 자료를 읽지 못했습니다. 검색 결과가 없다는 뜻은 아닙니다.")
-    if notices or retrieval_result.get("coverage") == "PARTIAL":
+    if (not has_scope_notice and notices) or (
+        not has_scope_notice and retrieval_result.get("coverage") == "PARTIAL"
+    ):
         notices.insert(0, "확인한 범위의 부분 결과입니다. 요청한 전체 범위를 확인한 것은 아닙니다.")
     answer = "\n\n".join([*notices, draft["answer"]])
     if len(answer) > MAX_USER_VISIBLE_ANSWER_CHARS:

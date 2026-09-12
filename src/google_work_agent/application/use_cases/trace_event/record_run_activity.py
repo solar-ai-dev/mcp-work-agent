@@ -628,12 +628,13 @@ def _step_details(
                 value = f"허용된 범위에서 후보 자료 {execution.candidate_count}건을 확인했습니다."
         elif execution.status == "EXHAUSTED":
             value = "추가로 확인할 페이지가 없었습니다."
+        elif execution.status == "BUDGET_STOPPED":
+            value = "허용된 조회 한도에서 현재까지 확인한 결과로 조회를 마쳤습니다."
         else:
             failure_code = execution.failure_code
             value = {
                 "NOT_FOUND": "조회 대상을 찾지 못했습니다.",
                 "PERMISSION_DENIED": "허용된 권한으로 조회하지 못했습니다.",
-                "BUDGET_EXHAUSTED": "허용된 조회 범위를 모두 사용했습니다.",
             }.get(
                 failure_code if failure_code is not None else "",
                 "자료 조회를 완료하지 못했습니다.",

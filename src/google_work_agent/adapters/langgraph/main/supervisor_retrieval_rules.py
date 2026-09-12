@@ -62,6 +62,24 @@ def route_retrieval(
         plan = state.get("tool_route_plan")
         if plan is None:
             raise ValueError("successful Retrieval return requires its frozen tool route plan")
+        if disposition == "PARTIAL" and not has_supported_evidence(retrieval_update):
+            if plan["output_plan"]["output_mode"] == "ACTION":
+                return finalize_supervisor_result(
+                    state=state,
+                    intent=FinalizeIntent.BLOCKED.value,
+                    reason_code="REQUIRED_EVIDENCE_UNAVAILABLE",
+                    result_kind="PARTIAL",
+                    current_update=retrieval_update,
+                )
+            return make_supervisor_decision(
+                target=SupervisorTarget.SOLUTION_PLANNING,
+                next_phase=WorkflowPhase.SOLUTION_PLANNING,
+                state_update=base_supervisor_state_update(
+                    WorkflowPhase.SOLUTION_PLANNING,
+                    current_update=retrieval_update,
+                ),
+                reason_code="PARTIAL_ANSWER_ONLY",
+            )
         if not is_work_analysis_required(state=state, plan=plan):
             return make_supervisor_decision(
                 target=SupervisorTarget.SOLUTION_PLANNING,

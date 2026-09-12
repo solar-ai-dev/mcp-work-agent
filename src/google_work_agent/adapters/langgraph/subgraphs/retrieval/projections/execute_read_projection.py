@@ -167,13 +167,15 @@ def project_acquisition_result(
     results: list[tuple[SourceFetchPlanV1, ConnectorReadResultV1]],
     *,
     remaining_budget: dict[str, int],
-    failed_reads: Sequence[tuple[SourceFetchPlanV1, str]] = (),
+    failed_reads: Sequence[tuple[SourceFetchPlanV1, str, bool]] = (),
+    budget_stops: Sequence[tuple[SourceFetchPlanV1, int, str]] = (),
     prior_result: AcquisitionResultV1 | None = None,
 ) -> AcquisitionResultV1:
     summaries: list[dict[str, object]] = [
         dict(summary)
         for summary in ([] if prior_result is None else prior_result["source_summaries"])
         if summary.get("status") == "FAILED"
+        or summary.get("termination_kind") == "BUDGET_STOPPED"
     ]
     handles: list[str] = []
     for plan, result in results:
@@ -184,6 +186,7 @@ def project_acquisition_result(
             {
                 "schema_version": 1,
                 "route_id": plan["route_id"],
+                "query_identity_hash": plan.get("query_identity_hash"),
                 "source": _source(plan["resource_type"]),
                 "connector_id": plan["connector_id"],
                 "status": "COMPLETE",
@@ -192,15 +195,22 @@ def project_acquisition_result(
                 "resource_count": len(resources),
                 "resource_handles": resource_handles,
                 "resources": resources,
+                "checked_read_count": 1,
+                "known_scope_count": 1,
+                "scope_complete": result.next_page_token is None,
+                "continuation_status": (
+                    "EXHAUSTED" if result.next_page_token is None else "HAS_MORE"
+                ),
             }
         )
-    for plan, failure_code in failed_reads:
-        if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED", "BUDGET_EXHAUSTED"}:
+    for plan, failure_code, provider_called in failed_reads:
+        if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED"}:
             raise ValueError("unsupported terminal READ failure projection")
         summaries.append(
             {
                 "schema_version": 1,
                 "route_id": plan["route_id"],
+                "query_identity_hash": plan.get("query_identity_hash"),
                 "source": _source(plan["resource_type"]),
                 "connector_id": plan["connector_id"],
                 "status": "FAILED",
@@ -209,18 +219,48 @@ def project_acquisition_result(
                 "resource_count": 0,
                 "resource_handles": [],
                 "resources": [],
+                "checked_read_count": int(provider_called),
+                "known_scope_count": 1,
+                "scope_complete": False,
+                "continuation_status": "UNKNOWN",
+            }
+        )
+    for plan, remaining_read_count, reason_code in budget_stops:
+        if remaining_read_count < 1 or not reason_code:
+            raise ValueError("invalid bounded READ stop projection")
+        summaries.append(
+            {
+                "schema_version": 1,
+                "route_id": plan["route_id"],
+                "query_identity_hash": plan.get("query_identity_hash"),
+                "source": _source(plan["resource_type"]),
+                "connector_id": plan["connector_id"],
+                "status": "PARTIAL",
+                "required": True,
+                "error_code": None,
+                "termination_kind": "BUDGET_STOPPED",
+                "budget_reason_code": reason_code,
+                "resource_count": 0,
+                "resource_handles": [],
+                "resources": [],
+                "checked_read_count": 0,
+                "known_scope_count": remaining_read_count,
+                "scope_complete": False,
+                "continuation_status": "UNKNOWN",
             }
         )
     failed = any(summary["status"] == "FAILED" for summary in summaries)
+    partial = any(summary["status"] == "PARTIAL" for summary in summaries)
+    complete = any(summary["status"] == "COMPLETE" for summary in summaries)
     status = cast(
         AcquisitionStatusValue,
         (
             "PARTIAL"
-            if failed and results
+            if partial or (failed and complete)
             else "FAILED"
             if failed
             else "COMPLETE"
-            if results
+            if complete
             else "NOT_ATTEMPTED"
         ),
     )

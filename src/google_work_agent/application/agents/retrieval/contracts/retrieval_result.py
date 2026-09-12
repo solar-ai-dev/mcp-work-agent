@@ -178,6 +178,12 @@ class RetrievalSourceStatusV1(TypedDict):
     # Current producers include the actual provider result cardinality. Older
     # persisted checkpoints may omit it and remain readable.
     observed_resource_count: NotRequired[int]
+    # Bounded coverage counters are optional for checkpoints written before
+    # read-scope accounting was projected into the parent result.
+    checked_read_count: NotRequired[int]
+    known_scope_count: NotRequired[int]
+    scope_complete: NotRequired[bool]
+    continuation_status: NotRequired[Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]]
     failure_kind: (
         Literal[
             "AUTH", "SCOPE", "RATE_LIMIT", "TIMEOUT", "PROVIDER", "NOT_FOUND", "BUDGET", "OTHER"

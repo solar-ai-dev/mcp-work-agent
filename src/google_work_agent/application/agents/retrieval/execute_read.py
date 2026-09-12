@@ -57,12 +57,13 @@ class RetrievalReadBindingError(ValueError):
 @dataclass(frozen=True, slots=True)
 class RetrievalReadExecutionV1:
     schema_version: Literal[1]
-    status: Literal["COMPLETE", "EXHAUSTED", "FAILED"]
+    status: Literal["COMPLETE", "EXHAUSTED", "FAILED", "BUDGET_STOPPED"]
     read_result_handle: str
     tool_id: str
     candidate_count: int | None
     provider_called: bool
     failure_code: str | None = None
+    stop_reason: str | None = None
 
 
 def execute_read(
@@ -170,15 +171,15 @@ def execute_read(
                     read_result_handle=read_result_handle,
                     provider_called=False,
                 )
-            except RetrievalReadBudgetExceeded:
+            except RetrievalReadBudgetExceeded as error:
                 return RetrievalReadExecutionV1(
-                    1,
-                    "FAILED",
-                    read_result_handle,
-                    binding.tool_id,
-                    None,
-                    False,
-                    "BUDGET_EXHAUSTED",
+                    schema_version=1,
+                    status="BUDGET_STOPPED",
+                    read_result_handle=read_result_handle,
+                    tool_id=binding.tool_id,
+                    candidate_count=None,
+                    provider_called=False,
+                    stop_reason=error.reason_code,
                 )
     try:
         consume_retrieval_read_budget(
@@ -188,15 +189,15 @@ def execute_read(
             now_ms=now_ms,
             durable_accountant=durable_budget_accountant,
         )
-    except RetrievalReadBudgetExceeded:
+    except RetrievalReadBudgetExceeded as error:
         return RetrievalReadExecutionV1(
-            1,
-            "FAILED",
-            read_result_handle,
-            binding.tool_id,
-            None,
-            False,
-            "BUDGET_EXHAUSTED",
+            schema_version=1,
+            status="BUDGET_STOPPED",
+            read_result_handle=read_result_handle,
+            tool_id=binding.tool_id,
+            candidate_count=None,
+            provider_called=False,
+            stop_reason=error.reason_code,
         )
     try:
         result = connector_reader.execute_read(binding, arguments)

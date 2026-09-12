@@ -1514,11 +1514,56 @@ def test_retrieval__compiled_budget_exhaustion__projects_terminal_partial() -> N
 
     assert connector.call_count == 0
     assert result["retrieval_result"]["coverage"] == "PARTIAL"
-    assert result["retrieval_result"]["source_statuses"][0]["status"] == "FAILED"
+    source_status = result["retrieval_result"]["source_statuses"][0]
+    assert source_status["status"] == "PARTIAL"
+    assert source_status["failure_kind"] is None
+    assert source_status["checked_read_count"] == 0
+    assert source_status["known_scope_count"] == 1
+    assert source_status["scope_complete"] is False
+    assert source_status["continuation_status"] == "UNKNOWN"
     assert any(
-        "SOURCE_BUDGET_EXHAUSTED" in item["reason_codes"]
+        "REQUIRED_SOURCE_PARTIAL" in item["reason_codes"]
         for item in result["retrieval_result"]["missing_information"]
     )
+    assert result["__context_query_attempts__"] == []
+
+
+def test_retrieval__compiled_budget_stop__halts_remaining_container_fanout() -> None:
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _container_read_route_plan("TASK"))
+    state["retry_budget"]["connector_calls_used"] = 49
+    state["retry_budget"]["source_page_calls_used"] = 49
+    connector = _ContainerConnectorReadPort("task")
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(container_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+        authorized_tasklist_ids_provider=lambda: ("task-list-a", "task-list-b"),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert [item["task_list_id"] for item in connector.arguments] == ["task-list-a"]
+    assert len(result["__context_query_attempts__"]) == 1
+    source_status = result["retrieval_result"]["source_statuses"][0]
+    assert source_status["checked_read_count"] == 1
+    assert source_status["known_scope_count"] == 2
+    assert source_status["scope_complete"] is False
+    assert source_status["observed_resource_count"] == 1
 
 
 def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selection() -> None:
@@ -3068,6 +3113,10 @@ def test_retrieval__github_repository_authority__reaches_connector_read(
             "status": "COMPLETE",
             "evidence_refs": result["retrieval_result"]["evidence_refs"],
             "observed_resource_count": 2,
+            "checked_read_count": 1,
+            "known_scope_count": 1,
+            "scope_complete": True,
+            "continuation_status": "EXHAUSTED",
             "failure_kind": None,
         }
     ]

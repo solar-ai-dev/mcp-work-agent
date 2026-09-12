@@ -581,6 +581,57 @@ def test_compose_gmail_read__empty_result__uses_observed_state_without_fixed_ret
     assert "관련 메일이 조회되지 않았습니다" in result["answer"]
 
 
+@pytest.mark.parametrize(
+    ("coverage", "scope_complete", "expected_notice"),
+    [
+        (
+            "PARTIAL",
+            False,
+            "조회 범위 2개를 확인했고, 확인한 범위에서는 관련 항목을 찾지 못했습니다. "
+            "전체 검색은 완료되지 않았습니다.",
+        ),
+        (
+            "SUFFICIENT",
+            True,
+            "접근 가능한 전체 범위를 확인했지만 관련 항목을 찾지 못했습니다.",
+        ),
+    ],
+)
+def test_compose_empty_result__distinguishes_complete_and_partial_scope(
+    coverage: str,
+    scope_complete: bool,
+    expected_notice: str,
+) -> None:
+    result = compose_answer(
+        user_request="관련 자료를 찾아줘.",
+        request_intent={"requested_effect_hints": ["READ"]},
+        answer_outline={"sections": ["검색 결과"], "evidence_refs": []},
+        work_analysis=None,
+        evidence=[],
+        retrieval_result={
+            "coverage": coverage,
+            "source_statuses": [
+                {
+                    "status": "COMPLETE" if scope_complete else "PARTIAL",
+                    "failure_kind": None,
+                    "checked_read_count": 2,
+                    "known_scope_count": 2 if scope_complete else 3,
+                    "observed_resource_count": 0,
+                    "scope_complete": scope_complete,
+                    "continuation_status": "EXHAUSTED" if scope_complete else "UNKNOWN",
+                }
+            ],
+        },
+        invoke=lambda _prompt_id, _prompt_input: {
+            "schema_version": 2,
+            "answer": "관련 항목이 확인되지 않았습니다.",
+            "evidence_refs": [],
+        },
+    )
+
+    assert expected_notice in result["answer"]
+
+
 def test_compose_rejects__evidence_not__approved_by_outline() -> None:
     with pytest.raises(ValueError, match="outside") as raised:
         compose_answer(
