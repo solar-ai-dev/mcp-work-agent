@@ -363,7 +363,7 @@ def test_github_resource_registration__extends_existing_fk__and_replays_idempote
         connection.close()
 
 
-def test_connector_resource_evidence_origin__upgrades_history_and_preserves_links(
+def test_connector_resource_evidence_origin__with_historical_rows__upgrades_and_preserves_links(
     tmp_path: Path,
 ) -> None:
     migration_dir = tmp_path / "migrations"

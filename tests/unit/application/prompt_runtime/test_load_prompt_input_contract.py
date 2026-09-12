@@ -99,7 +99,7 @@ def test_select_evidence_contract__matches_the__live_typed_projection() -> None:
         ),
     ],
 )
-def test_atomic_responsibility_contracts__require_goal_and_runtime_candidates(
+def test_atomic_responsibility_contracts__with_runtime_candidates__require_goal(
     slot_id: str,
     candidate_field: str,
     additional_fields: dict[str, object],
@@ -126,7 +126,7 @@ def test_atomic_responsibility_contracts__require_goal_and_runtime_candidates(
         )
 
 
-def test_effect_prohibition_contract__requires_goal_and_runtime_effect_candidates() -> None:
+def test_effect_prohibition_contract__with_runtime_candidates__requires_goal() -> None:
     contract = load_prompt_input_contract()
 
     contract.validate_projection(
@@ -149,7 +149,7 @@ def test_effect_prohibition_contract__requires_goal_and_runtime_effect_candidate
         )
 
 
-def test_source_status_contract__requires_fixed_source_and_output_roles() -> None:
+def test_source_status_contract__with_fixed_roles__requires_exact_fields() -> None:
     contract = load_prompt_input_contract()
 
     contract.validate_projection(

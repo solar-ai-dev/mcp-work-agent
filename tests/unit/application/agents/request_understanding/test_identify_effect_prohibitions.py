@@ -72,7 +72,7 @@ def _output_decisions(*, gmail_message_effect: str | None = None) -> dict[str, o
     return {"output_responsibilities": decisions}
 
 
-def test_effect_candidates__reuse_runtime_supported_effect_exact_set() -> None:
+def test_effect_candidates__from_runtime_registry__reuse_exact_set() -> None:
     assert [candidate["effect"] for candidate in _EFFECT_CANDIDATES] == [
         "CREATE",
         "UPDATE",
@@ -82,7 +82,7 @@ def test_effect_candidates__reuse_runtime_supported_effect_exact_set() -> None:
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate"])
-def test_effect_prohibition_schema__rejects_non_exact_candidate_set(mutation: str) -> None:
+def test_effect_prohibition_schema__with_non_exact_set__rejects_candidate(mutation: str) -> None:
     value = _prohibitions()
     decisions = cast(list[dict[str, object]], value["effect_prohibitions"])
     if mutation == "missing":
@@ -113,7 +113,7 @@ def test_effect_prohibition_schema__rejects_non_exact_candidate_set(mutation: st
         ("가정 상황을 설명한다.", _prohibitions(), frozenset()),
     ],
 )
-def test_effect_prohibition_operation__keeps_only_model_owned_explicit_prohibition(
+def test_effect_prohibition_operation__with_explicit_forbid__keeps_model_owned_result(
     request_text: str,
     candidate: dict[str, object],
     expected: frozenset[str],
@@ -133,7 +133,7 @@ def test_effect_prohibition_operation__keeps_only_model_owned_explicit_prohibiti
     assert runtime.calls[0]["prompt_input"]["effect_candidates"] == list(_EFFECT_CANDIDATES)
 
 
-def test_send_prohibition__removes_send_variant_and_defends_post_inference() -> None:
+def test_send_prohibition__with_explicit_forbid__removes_send_and_defends_inference() -> None:
     prohibitions = cast(
         effect_prohibition_decision.EffectProhibitionDecisionCandidateV1,
         effect_prohibitions.validate_effect_prohibition_candidate(
@@ -163,7 +163,7 @@ def test_send_prohibition__removes_send_variant_and_defends_post_inference() -> 
     assert excinfo.value.affected_field_paths == ("$.output_responsibilities[0].effect",)
 
 
-def test_send_not_forbidden__keeps_send_variant_available() -> None:
+def test_send_not_forbidden__without_explicit_forbid__keeps_send_available() -> None:
     candidate = _output_decisions(gmail_message_effect="SEND")
 
     result = output_responsibilities.validate_output_responsibility_candidate(

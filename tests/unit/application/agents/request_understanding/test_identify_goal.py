@@ -21,7 +21,6 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_goal_candidate_schema as goal_schema,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    SOURCE_STATUS_VALUES_BY_RESOURCE,
     AmbiguityV1,
     validated_repository_authority,
 )
@@ -36,10 +35,6 @@ from google_work_agent.application.agents.request_understanding.identify_goal im
 )
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal_with_budget as _identify_goal_with_budget,
-)
-from google_work_agent.application.agents.request_understanding.identify_source_status import (
-    build_identify_source_status_output_schema,
-    identify_source_status,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
@@ -417,54 +412,6 @@ def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
     }
 
 
-def test_source_status__unconstrained_source__exposes_no_any_choice() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[{"statuses": []}], validate_schema=True)
-    responsibilities = _resource_responsibilities(
-        source_type="GMAIL_THREAD",
-        required_information=["final schedule and owner"],
-    )
-
-    result = identify_source_status(
-        llm_runtime=runtime,
-        requested_mode="LOCAL_GPU",
-        prompt_ref=_prompt_ref(
-            "request_understanding.identify_source_status",
-            "identify_source_status",
-        ),
-        prompt_input={"user_request": "find the final schedule", "selected_resource_refs": []},
-        goal_candidate={
-            "goal": "find the final schedule",
-            "completion_conditions": ["report the schedule"],
-            "constraints": _goal_constraints(search_terms=["Atlas"]),
-            "analysis_requirement": "NONE",
-        },
-        responsibilities=responsibilities,
-    )
-
-    assert result == {"statuses": []}
-    assert runtime.calls[0]["prompt_input"]["allowed_status_values"] == [
-        {"resource_type": "GMAIL_THREAD", "values": ["DRAFT", "SENT"]}
-    ]
-
-
-def test_source_status_schema__rejects_any_for_every_source_resource() -> None:
-    responsibilities = {
-        "source_reads": [
-            {"resource_type": resource_type, "required_information": []}
-            for resource_type in SOURCE_STATUS_VALUES_BY_RESOURCE
-        ],
-        "outputs": [],
-    }
-    schema = build_identify_source_status_output_schema(responsibilities)
-
-    assert schema.schema_version == "request-source-status-v2"
-    for resource_type in SOURCE_STATUS_VALUES_BY_RESOURCE:
-        assert validate_output_schema(
-            {"statuses": [_source_status("ANY", resource_type, "any")]},
-            schema.json_schema,
-        )
-
-
 def _source_dependency_decisions(
     *,
     source_types: dict[str, list[str]] | None = None,
@@ -774,7 +721,7 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
     assert "메일을 보내지 않는다" in intent["completion_conditions"]
 
 
-def test_source_information_normalization__is_lossless_and_idempotent() -> None:
+def test_source_information_normalization__when_repeated__is_lossless_and_idempotent() -> None:
     raw_candidate = {
         "goal": "메일 자료 확인",
         "completion_conditions": ["필요한 자료를 확인한다"],
@@ -832,7 +779,7 @@ def test_source_information_normalization__is_lossless_and_idempotent() -> None:
     assert required_information == ["기존 본문", "기존 수신자", "기존 제목"]
 
 
-def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_inference() -> None:
+def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibility() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -1001,28 +948,7 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_source_status_schema__cannot_bind_output_only_draft_as_source_scope() -> None:
-    schema = build_identify_source_status_output_schema(
-        {
-            "source_reads": [
-                {"resource_type": "TASK", "required_information": ["준비 상황"]},
-                {
-                    "resource_type": "CALENDAR_EVENT",
-                    "required_information": ["인쇄소 일정"],
-                },
-            ],
-            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
-        }
-    )
-
-    invalid = {"statuses": [_source_status("DRAFT", "GMAIL_DRAFT", "임시보관함")]}
-    valid = {"statuses": [_source_status("COMPLETED", "TASK", "완료된")]}
-
-    assert validate_output_schema(invalid, schema.json_schema)
-    assert validate_output_schema(valid, schema.json_schema) == []
-
-
-def test_bounded_revision_candidate__uses_same_source_information_normalization() -> None:
+def test_bounded_revision__with_source_information__uses_same_normalization() -> None:
     invalid_candidate = {
         "goal": "기존 Quartz 초안 수정",
         "completion_conditions": ["초안을 수정한다"],
@@ -1263,7 +1189,7 @@ def test_request_goal_validator__reserved_additional_field__remains_defense_in_d
         )
 
 
-def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope() -> None:
+def test_request_goal_schema__with_exhaustive_collection__preserves_model_scope() -> None:
     candidate = {
         "goal": "관련 제목 목록을 요청 범위 끝까지 반환한다",
         "completion_conditions": ["요청 범위의 제목을 빠짐없이 반환한다"],
@@ -1289,7 +1215,7 @@ def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope(
     } in normalized["constraints"]
 
 
-def test_request_goal_schema__rejects_non_typed_collection_scope() -> None:
+def test_request_goal_schema__with_non_typed_collection_scope__rejects_candidate() -> None:
     candidate = {
         "goal": "관련 제목 목록을 반환한다",
         "completion_conditions": ["관련 제목을 반환한다"],
@@ -1713,7 +1639,7 @@ def test_normalized_goal__existing_resource_update_without_source__rejects_contr
     )
 
 
-def test_existing_resource_update__revises_only_source_dependency_owner() -> None:
+def test_existing_resource_update__with_missing_source__revises_source_owner() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {

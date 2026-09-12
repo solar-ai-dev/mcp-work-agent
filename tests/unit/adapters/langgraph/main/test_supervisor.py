@@ -293,7 +293,7 @@ def test_retrieval_complete__with_explicit_analysis__routes_to_work_analysis() -
     assert decision["next_phase"] == WorkflowPhase.WORK_ANALYSIS.value
 
 
-def test_retrieval_partial_without_evidence__skips_analysis_for_answer_only() -> None:
+def test_retrieval_partial_without_evidence__for_answer_only__skips_analysis() -> None:
     intent = _request_intent(analysis_requirement="REQUIRED")
     plan = _tool_route_plan()
     plan["input_plan"]["input_routes"] = [_input_route()]
@@ -312,7 +312,7 @@ def test_retrieval_partial_without_evidence__skips_analysis_for_answer_only() ->
     assert decision["reason_code"] == "PARTIAL_ANSWER_ONLY"
 
 
-def test_retrieval_partial_without_evidence__blocks_action_planning() -> None:
+def test_retrieval_partial_without_evidence__for_action_request__blocks_planning() -> None:
     plan = _tool_route_plan()
     plan["input_plan"]["input_routes"] = [_input_route()]
     plan["output_plan"] = {
@@ -821,7 +821,7 @@ def test_review_route__reconsideration_routes__to_tool_route() -> None:
     assert decision["state_update"]["plan_review"] == _review_result("ROUTE_RECONSIDERATION")
 
 
-def test_retrieval_route_reconsideration__preserves_inflight_acquisition() -> None:
+def test_retrieval_route_reconsideration__with_inflight_acquisition__preserves_state() -> None:
     state = _state(workflow_phase=WorkflowPhase.CONTEXT_RETRIEVAL)
     state["acquisition_result"] = cast(
         Any,

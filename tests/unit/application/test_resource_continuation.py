@@ -312,7 +312,7 @@ def test_provider_page_token__is_replaced_by__server_local_handle() -> None:
     assert second.next_page_token is None
 
 
-def test_gmail_pagination_chain__supports_page_1_to_2() -> None:
+def test_gmail_pagination_chain__with_two_pages__supports_continuation() -> None:
     raw = _GmailPaginationServiceStub()
     service = OpaqueConnectorResourceAccess(
         raw,
@@ -333,7 +333,7 @@ def test_gmail_pagination_chain__supports_page_1_to_2() -> None:
     assert raw.gmail_metadata_modes == [True, True]
 
 
-def test_gmail_pagination_chain__supports_page_1_to_3_with_page_2_uncached() -> None:
+def test_gmail_pagination_chain__with_uncached_middle_page__supports_three_pages() -> None:
     raw = _GmailPaginationServiceStub()
     service = OpaqueConnectorResourceAccess(
         raw,
@@ -364,7 +364,7 @@ def test_gmail_pagination_chain__supports_page_1_to_3_with_page_2_uncached() -> 
     assert raw.gmail_metadata_modes == [True, False, True]
 
 
-def test_gmail_pagination_chain__supports_page_1_to_3_with_page_2_cached() -> None:
+def test_gmail_pagination_chain__with_cached_middle_page__supports_three_pages() -> None:
     raw = _GmailPaginationServiceStub()
     service = OpaqueConnectorResourceAccess(
         raw,

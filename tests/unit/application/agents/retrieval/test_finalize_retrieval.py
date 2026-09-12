@@ -262,7 +262,7 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
     assert all(status["resource_type"] != "ISSUE" for status in result["source_statuses"])
 
 
-def test_finalize_retrieval__preserves_collection_metadata_beyond_evidence_budget() -> None:
+def test_finalize_retrieval__beyond_evidence_budget__preserves_collection_metadata() -> None:
     resources = [
         {
             "resource_handle": f"gmail_thread:thread-{index}",
@@ -341,7 +341,7 @@ def test_finalize_retrieval__preserves_collection_metadata_beyond_evidence_budge
     assert result["source_resource_refs"] == ["gmail_thread:thread-0"]
 
 
-def test_finalize_retrieval__reports_unfinished_collection_page_without_forcing_coverage() -> None:
+def test_finalize_retrieval__with_unfinished_page__does_not_force_coverage() -> None:
     acquisition = _acquisition_result()
     acquisition["remaining_budget"]["pages"] = 0
     acquisition["source_summaries"][0]["route_id"] = "route-gmail"
@@ -381,7 +381,7 @@ def test_finalize_retrieval__reports_unfinished_collection_page_without_forcing_
     assert result["collection_results"][0]["continuation_status"] == "HAS_MORE"
 
 
-def test_finalize_retrieval__preserves_bounded_scope_counts_and_incomplete_coverage() -> None:
+def test_finalize_retrieval__with_bounded_scope__preserves_incomplete_coverage() -> None:
     acquisition = _acquisition_result()
     acquisition["status"] = "PARTIAL"
     acquisition["source_summaries"][0].update(

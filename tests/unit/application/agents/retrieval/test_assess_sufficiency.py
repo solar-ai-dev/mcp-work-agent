@@ -280,7 +280,7 @@ def test_sufficiency_node__page_inventory__does_not_force_more_data(
     ("has_next_page", "expected_status"),
     [(True, "NEEDS_MORE_DATA"), (False, "SUFFICIENT")],
 )
-def test_exhaustive_collection__uses_page_observation_to_guard_llm_sufficiency(
+def test_exhaustive_collection__with_next_page__guards_llm_sufficiency(
     has_next_page: bool,
     expected_status: str,
 ) -> None:
@@ -817,7 +817,7 @@ def test_empty_acquisition__failure_or_zero_results__keeps_reason_without_model(
     assert runtime.calls == []
 
 
-def test_bounded_read_stop__does_not_invalidate_existing_evidence() -> None:
+def test_bounded_read_stop__with_existing_evidence__does_not_invalidate_result() -> None:
     acquisition = _acquisition_result()
     acquisition["status"] = "PARTIAL"
     acquisition["source_summaries"].append(
@@ -920,7 +920,7 @@ def test_bounded_read_stop__without_evidence__closes_by_effect_safety(
     assert runtime.calls == []
 
 
-def test_complete_empty_scope__is_a_bounded_no_match_without_model() -> None:
+def test_complete_empty_scope__when_exhausted__returns_bounded_no_match() -> None:
     acquisition = _acquisition_result()
     acquisition["resource_handles"] = []
     acquisition["source_summaries"][0].update(

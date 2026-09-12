@@ -32,7 +32,7 @@ def _decisions(*, outputs: dict[str, str] | None = None) -> dict[str, object]:
     }
 
 
-def test_registry_candidates__are_exact_write_capabilities() -> None:
+def test_registry_candidates__from_runtime_registry__match_write_capabilities() -> None:
     by_resource = {candidate["resource_type"]: candidate for candidate in _CANDIDATES}
     assert by_resource["GMAIL_DRAFT"]["allowed_output_effects"] == ["CREATE", "UPDATE"]
     assert by_resource["GMAIL_MESSAGE"]["allowed_output_effects"] == ["SEND"]
@@ -48,7 +48,7 @@ def test_registry_candidates__are_exact_write_capabilities() -> None:
         lambda items: items[0].update({"effect": "CREATE"}),
     ],
 )
-def test_output_schema__rejects_non_exact_and_unsupported_decisions(
+def test_output_schema__with_non_exact_or_unsupported_decisions__rejects_candidate(
     mutate: Callable[[list[dict[str, object]]], object],
 ) -> None:
     candidate = _decisions()
@@ -61,7 +61,7 @@ def test_output_schema__rejects_non_exact_and_unsupported_decisions(
     )
 
 
-def test_output_validation__keeps_requested_effect_without_source_authority() -> None:
+def test_output_validation__without_source_authority__keeps_requested_effect() -> None:
     candidate = _decisions(outputs={"TASK": "CREATE", "GMAIL_MESSAGE": "SEND"})
 
     assert (
@@ -73,7 +73,7 @@ def test_output_validation__keeps_requested_effect_without_source_authority() ->
     )
 
 
-def test_output_schema__removes_explicitly_prohibited_effect() -> None:
+def test_output_schema__with_prohibited_effect__removes_effect() -> None:
     candidate = _decisions(outputs={"GMAIL_DRAFT": "CREATE", "GMAIL_MESSAGE": "SEND"})
 
     assert validate_output_schema(

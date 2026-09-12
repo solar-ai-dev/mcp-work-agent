@@ -134,6 +134,10 @@ def test_unresolved_current_run_target__waits_before__retrieval_or_connector(
     ]
     assert invoked == [
         "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
     ]
     assert _mcp_events(runtime_root) == connector_events_before_run
@@ -262,6 +266,10 @@ def test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_ll
     assert not any(prompt_id.startswith("work_analysis.") for prompt_id in invoked)
     assert invoked == [
         "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
         "planning.outline_answer",
         "planning.compose_answer",

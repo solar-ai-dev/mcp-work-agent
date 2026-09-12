@@ -203,8 +203,8 @@ def test_backup_create_restore__and_reconciliation_are__operation_ref_safe(tmp_p
         maintenance_gate=_MaintenanceGate(),
         release_version="test",
         domain_contract_version="test",
-        schema_version="0022",
-        supported_restore_schema_versions=("0018", "0022"),
+        schema_version="0023",
+        supported_restore_schema_versions=("0018", "0023"),
     )
 
     backup = adapter.create_backup("backup-op-1")
@@ -243,8 +243,8 @@ def test_backup_restore__rolls_back_current_database__when_readiness_fails(
         maintenance_gate=_MaintenanceGate(),
         release_version="test",
         domain_contract_version="test",
-        schema_version="0022",
-        supported_restore_schema_versions=("0022",),
+        schema_version="0023",
+        supported_restore_schema_versions=("0023",),
         post_restore_readiness=lambda: False,
     )
     backup = adapter.create_backup("backup-before-change")
@@ -282,7 +282,7 @@ def test_backup_inventory__with_tampered_candidate__excludes_restore_candidate(
         maintenance_gate=_MaintenanceGate(),
         release_version="test",
         domain_contract_version="test",
-        schema_version="0022",
+        schema_version="0023",
     )
     backup = adapter.create_backup("tamper-candidate")
     with (backups_dir / f"{backup.backup_ref}.sqlite3").open("ab") as stream:

@@ -195,7 +195,7 @@ def test_github_issue_search__materializes_validated_repository__without_route_c
     assert reader.calls == [(binding, {"repository": "acme/repo", "state": "ALL"})]
 
 
-def test_github_issue_search__missing_or_forged_repository__fails_before_read() -> None:
+def test_github_issue_search__untrusted_repository__fails_closed_or_binds_authority() -> None:
     route = _github_search_route()
     reader = _RecordingReadPort()
     with pytest.raises(RetrievalV2ValidationError, match="validated container authority"):
@@ -205,16 +205,19 @@ def test_github_issue_search__missing_or_forged_repository__fails_before_read() 
             route_policies={"route-1": _github_policy()},
         )
         _execute_first(plans, route=route, reader=reader)
-    with pytest.raises(RetrievalV2ValidationError, match="validated for route"):
-        plans = build_query(
-            _github_search_plan([{"kind": "CONTAINER_REF", "container_refs": ["evil/repo"]}]),
-            frozen_routes=[route],
-            route_policies={"route-1": _github_policy()},
-            validated_container_refs={"route-1": ["acme/repo"]},
-        )
-        _execute_first(plans, route=route, reader=reader)
+    plans = build_query(
+        _github_search_plan([{"kind": "CONTAINER_REF", "container_refs": ["evil/repo"]}]),
+        frozen_routes=[route],
+        route_policies={"route-1": _github_policy()},
+        validated_container_refs={"route-1": ["acme/repo"]},
+    )
+    _execute_first(plans, route=route, reader=reader)
 
-    assert reader.calls == []
+    assert plans[0]["effective_constraints"] == [
+        {"kind": "CONTAINER_REF", "container_refs": ["acme/repo"]}
+    ]
+    assert len(reader.calls) == 1
+    assert reader.calls[0][1]["repository"] == "acme/repo"
 
 
 def _github_search_route() -> InputToolRouteV1:

@@ -39,7 +39,7 @@ def test_default_run__budget_is_valid__and_checkpoint_safe() -> None:
     assert budget["semantic_revisions_used_by_failure"] == {}
 
 
-def test_run_budget__source_page_hard_bound_is_fifty() -> None:
+def test_run_budget__with_default_policy__has_fifty_source_pages() -> None:
     assert build_default_run_budget(max_source_page_calls=51)["max_source_page_calls"] == 50
     with pytest.raises(ValueError, match="source_page_calls exceeds retrieval hard bound"):
         validate_run_budget_v2({**build_default_run_budget(), "max_source_page_calls": 51})

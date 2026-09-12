@@ -76,7 +76,7 @@ def test_github_issue_actions__link_same__repository_and_issue() -> None:
         ("github_reopen_issue", "github_update_issue"),
     ],
 )
-def test_github_issue_actions__preserve_order_across_supported_mutations(
+def test_github_issue_actions__with_supported_mutations__preserve_order(
     first_tool: str,
     second_tool: str,
 ) -> None:
@@ -91,7 +91,7 @@ def test_github_issue_actions__preserve_order_across_supported_mutations(
     )
 
 
-def test_github_issue_actions__do_not_link_different_stable_targets() -> None:
+def test_github_issue_actions__with_different_stable_targets__do_not_link() -> None:
     seeds = [
         _seed(
             "a1",
@@ -113,7 +113,7 @@ def test_github_issue_actions__do_not_link_different_stable_targets() -> None:
     assert build_dependencies(seeds) == ()  # type: ignore[arg-type]
 
 
-def test_github_create_issue__does_not_infer_existing_resource_identity() -> None:
+def test_github_create_issue__without_existing_target__does_not_infer_identity() -> None:
     seeds = [
         _seed(
             "a1",

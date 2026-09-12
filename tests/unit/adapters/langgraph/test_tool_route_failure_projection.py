@@ -59,7 +59,7 @@ def test_exhausted_route_validation__with_structured_failure__preserves_cause() 
         "schema_version": 1,
         "input_resource_types": ["EMAIL"],
         "output_resource_types": [],
-        "output_effects": [],
+        "output_effects": ["SEND", "CREATE"],
         "disposition": "ROUTE_READY",
     }
 

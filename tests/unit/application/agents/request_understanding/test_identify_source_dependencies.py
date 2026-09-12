@@ -38,7 +38,7 @@ def _decisions(*, sources: dict[str, list[str]] | None = None) -> dict[str, obje
     }
 
 
-def test_registry_candidates__are_exact_read_capabilities() -> None:
+def test_registry_candidates__from_runtime_registry__match_read_capabilities() -> None:
     assert [candidate["resource_type"] for candidate in _CANDIDATES] == [
         "GMAIL_THREAD",
         "GMAIL_MESSAGE",
@@ -84,7 +84,7 @@ def test_registry_candidates__are_exact_read_capabilities() -> None:
         lambda items: items[0].update({"dependency": "SOURCE_REQUIRED"}),
     ],
 )
-def test_source_schema__rejects_non_exact_and_invalid_decisions(
+def test_source_schema__with_non_exact_or_invalid_decisions__rejects_candidate(
     mutate: Callable[[list[dict[str, object]]], object],
 ) -> None:
     candidate = _decisions()
@@ -97,7 +97,7 @@ def test_source_schema__rejects_non_exact_and_invalid_decisions(
     )
 
 
-def test_source_validation__preserves_cross_resource_dependencies() -> None:
+def test_source_validation__with_cross_resource_request__preserves_dependencies() -> None:
     candidate = _decisions(sources={"TASK": ["준비 상황"], "CALENDAR_EVENT": ["인쇄소 일정"]})
 
     assert (

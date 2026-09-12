@@ -127,7 +127,7 @@ def test_failed_read__survives_cache_hydration__without_becoming_empty_success()
     assert len(hydrated["source_summaries"]) == 2
 
 
-def test_bounded_read_stop__preserves_successful_acquisition_as_partial() -> None:
+def test_bounded_read_stop__after_successful_read__preserves_partial_acquisition() -> None:
     successful_plan = cast(
         SourceFetchPlanV1,
         {
@@ -210,7 +210,7 @@ def test_bounded_read_stop__without_prior_success__is_partial_not_failed() -> No
 
 
 @pytest.mark.parametrize("failure_code", ["NOT_FOUND", "PERMISSION_DENIED"])
-def test_terminal_read_failure_projection__retains_existing_codes(failure_code: str) -> None:
+def test_terminal_read_failure__with_known_code__retains_code(failure_code: str) -> None:
     failed_plan = cast(
         SourceFetchPlanV1,
         {
@@ -230,7 +230,7 @@ def test_terminal_read_failure_projection__retains_existing_codes(failure_code: 
     assert result["source_summaries"][0]["error_code"] == failure_code
 
 
-def test_terminal_read_failure_projection__rejects_unknown_failure_code() -> None:
+def test_terminal_read_failure_projection__with_unknown_code__rejects_projection() -> None:
     failed_plan = cast(
         SourceFetchPlanV1,
         {
@@ -457,7 +457,7 @@ def test_gmail_draft_search__for_frozen_draft_route__uses_draft_operation() -> N
     assert arguments == {"query": '"Quartz 납품 회신 검토"', "page_size": 20}
 
 
-def test_calendar_event_search__lowers_keyword_and_concept_without_gmail_syntax() -> None:
+def test_calendar_event_search__with_semantic_terms__avoids_gmail_syntax() -> None:
     plan = cast(
         SourceFetchPlanV1,
         {
@@ -499,7 +499,7 @@ def test_calendar_event_search__lowers_keyword_and_concept_without_gmail_syntax(
     assert '"' not in arguments["query"]
 
 
-def test_calendar_event_search__preserves_keyword_query_and_temporal_bounds() -> None:
+def test_calendar_event_search__with_keyword_and_time_bounds__preserves_both() -> None:
     plan = cast(
         SourceFetchPlanV1,
         {
@@ -537,7 +537,7 @@ def test_calendar_event_search__preserves_keyword_query_and_temporal_bounds() ->
     assert arguments["time_max"] == "2026-09-30T23:59:59+09:00"
 
 
-def test_calendar_event_detail_fetch__does_not_project_search_query() -> None:
+def test_calendar_event_detail_fetch__with_selected_resource__omits_search_query() -> None:
     plan = cast(
         SourceFetchPlanV1,
         {

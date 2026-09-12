@@ -87,7 +87,7 @@ def _output(
         ),
     ],
 )
-def test_atomic_decisions__merge_to_existing_canonical_contract(
+def test_atomic_decisions__after_validation__merge_to_canonical_contract(
     sources: dict[str, list[str]],
     outputs: dict[str, str],
     expected_sources: list[str],

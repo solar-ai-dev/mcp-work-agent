@@ -626,7 +626,7 @@ def test_unselected_read__target_identity_named_as_connector_need__still_asks_us
     assert len(runtime.calls) == 1
 
 
-def test_unselected_calendar_event_identity__is_user_owned_target_identity() -> None:
+def test_unselected_calendar_event_identity__without_target_anchor__is_user_owned() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -651,7 +651,7 @@ def test_unselected_calendar_event_identity__is_user_owned_target_identity() -> 
     assert len(runtime.calls) == 1
 
 
-def test_searchable_calendar_event_identity__keeps_target_anchor_conflict() -> None:
+def test_searchable_calendar_event_identity__with_target_anchor__keeps_conflict() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -679,7 +679,7 @@ def test_searchable_calendar_event_identity__keeps_target_anchor_conflict() -> N
     )
 
 
-def test_selected_calendar_event_identity__keeps_target_resolved_conflict() -> None:
+def test_selected_event_identity__with_resource__keeps_resolved_conflict() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -713,7 +713,7 @@ def test_selected_calendar_event_identity__keeps_target_resolved_conflict() -> N
     )
 
 
-def test_connector_owned_event_attribute__keeps_resolution_owner_conflict() -> None:
+def test_connector_owned_event_attribute__with_resolved_target__keeps_owner_conflict() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -741,7 +741,7 @@ def test_connector_owned_event_attribute__keeps_resolution_owner_conflict() -> N
     )
 
 
-def test_event_container_identity__is_not_reclassified_as_event_target_identity() -> None:
+def test_event_container_identity__without_selected_event__stays_container_scope() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -773,7 +773,7 @@ def test_event_container_identity__is_not_reclassified_as_event_target_identity(
     )
 
 
-def test_unselected_task_identity__uses_same_user_owned_target_contract() -> None:
+def test_unselected_task_identity__without_target_anchor__uses_user_owner() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -815,7 +815,7 @@ def test_unselected_task_identity__uses_same_user_owned_target_contract() -> Non
     assert len(runtime.calls) == 1
 
 
-def test_selected_calendar_read__target_identity_cannot_be_asked_again() -> None:
+def test_selected_calendar_read__with_selected_resource__does_not_ask_identity() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {

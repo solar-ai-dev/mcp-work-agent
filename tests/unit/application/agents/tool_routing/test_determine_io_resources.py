@@ -741,7 +741,7 @@ def test_semantic_route_schema__with_requested_writes__permits_only_those_effect
     assert candidate.output_pairs == (("TASK", EffectType.CREATE),)
 
 
-def test_legacy_fallback__cannot_drop_a_validated_output_effect() -> None:
+def test_legacy_fallback__with_validated_output__cannot_drop_effect() -> None:
     intent = cast(
         RequestIntentV2,
         {

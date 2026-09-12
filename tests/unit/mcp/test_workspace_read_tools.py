@@ -625,7 +625,7 @@ def test_gmail_ui_detail__converts_nested_html__when_plain_is_missing(
     assert "bad" not in str(detail["body"])
 
 
-def test_gmail_ui_detail__removes_conditional_html_markers_from_plain_part(
+def test_gmail_ui_detail__with_plain_body__removes_conditional_html_markers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     body = (

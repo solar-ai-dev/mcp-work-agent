@@ -4,6 +4,7 @@ import hashlib
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from tests.support.canonical_prompt_runtime import (
@@ -52,9 +53,9 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 from google_work_agent.ports.system.hardware_probe_port import HardwareProfileV1
 from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
-ALTERNATE_MODEL_ID = "qwen3.5:4b"
+ALTERNATE_MODEL_ID: Literal["qwen3.5:4b"] = "qwen3.5:4b"
 ALTERNATE_MODEL_HASH = hashlib.sha256(b"fixture-4b-content").hexdigest()
-MODEL_ID = "qwen3.5:9b"
+MODEL_ID: Literal["qwen3.5:9b"] = "qwen3.5:9b"
 MODEL_HASH = hashlib.sha256(b"fixture-9b-content").hexdigest()
 RELEASE_VERSION = "1.2.3-test"
 
@@ -199,7 +200,7 @@ def _build_signed_container(
         github_oauth_scope="repo",
         api_contract_version="1",
         policy_version="2026-08-06.p0",
-        database_migration_version="0022",
+        database_migration_version="0023",
         configuration_source="SIGNED_RELEASE_MANIFEST",
         service_instance_id="fixture-service",
         keyring_store=_MemorySecretStore(),

@@ -410,7 +410,7 @@ def test_runtime_schema__different_constraint_kinds__remain_valid_provider_outpu
     assert validate_output_schema(candidate, schema.json_schema) == []
 
 
-def test_provider_constraint_slots__normalize_to_canonical_ordered_list() -> None:
+def test_provider_constraint_slots__with_typed_values__normalize_to_ordered_list() -> None:
     candidate = {
         "schema_version": 3,
         "route_queries": [
@@ -474,7 +474,7 @@ def test_provider_constraint_slots__normalize_to_canonical_ordered_list() -> Non
     }
 
 
-def test_provider_constraint_slots__allow_distinct_concepts_only_as_distinct_hypotheses() -> None:
+def test_provider_constraint_slots__with_distinct_concepts__keeps_separate_hypotheses() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["gmail"],
         route_operations={"gmail": ["SEARCH"]},

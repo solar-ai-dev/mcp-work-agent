@@ -188,7 +188,7 @@ def test_select_semantic__revision_reuses__base_slot() -> None:
     assert failure_record["affected_field_paths"] == ["$.route_id", "$.selected_tool_id"]
 
 
-def test_select_semantic__rejects_candidate_for_another_route() -> None:
+def test_select_semantic__with_mismatched_route__rejects_candidate() -> None:
     runtime = RecordingLLMRuntime(
         outputs=[
             {

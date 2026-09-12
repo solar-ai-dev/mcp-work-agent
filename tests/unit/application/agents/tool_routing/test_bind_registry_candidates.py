@@ -72,7 +72,7 @@ def test_general_gmail_thread__avoids_redundant__message_detail_route() -> None:
     assert [route["resource_type"] for route in binding.input_routes] == ["GMAIL_THREAD"]
 
 
-def test_calendar_event_read__adds_calendar_discovery_without_freebusy() -> None:
+def test_calendar_event_read__without_create_effect__adds_discovery_not_freebusy() -> None:
     ids = iter(f"route-{index}" for index in range(10))
     binding = bind_registry_candidates(
         candidate=SemanticRouteCandidate(
@@ -91,7 +91,7 @@ def test_calendar_event_read__adds_calendar_discovery_without_freebusy() -> None
     }
 
 
-def test_explicit_freebusy_read__retains_freebusy_route() -> None:
+def test_explicit_freebusy_read__when_requested__retains_route() -> None:
     ids = iter(f"route-{index}" for index in range(10))
     binding = bind_registry_candidates(
         candidate=SemanticRouteCandidate(
@@ -111,7 +111,7 @@ def test_explicit_freebusy_read__retains_freebusy_route() -> None:
     }
 
 
-def test_cross_source_draft__does_not_infer_freebusy_from_calendar_event_read() -> None:
+def test_cross_source_draft__with_calendar_read__does_not_infer_freebusy() -> None:
     ids = iter(f"route-{index}" for index in range(10))
     binding = bind_registry_candidates(
         candidate=SemanticRouteCandidate(

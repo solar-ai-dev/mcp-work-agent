@@ -43,7 +43,7 @@ def test_unqualified_issue__selects_route__only_when_unambiguous() -> None:
     assert select_followup_routes(prompt_input, two_google_routes) == []
 
 
-def test_required_issues__preserve_exact_google_and_connector_route_bindings() -> None:
+def test_required_issues__across_connectors__preserve_route_bindings() -> None:
     routes = [_route("mail", "google_workspace"), _route("issue", "github")]
 
     selected = select_followup_routes(

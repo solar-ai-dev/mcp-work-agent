@@ -194,7 +194,7 @@ def test_repair_envelope__reuses_base_source__and_binds_candidate(tmp_path: Path
     assert "OUTPUT_SCHEMA_INVALID" in assembled
 
 
-def test_compose_prose_revision__uses_base_projection_without_raw_answer(tmp_path: Path) -> None:
+def test_compose_prose_revision__without_raw_answer__uses_base_projection(tmp_path: Path) -> None:
     registry = _active_registry(tmp_path)
     prompt_ref = registry.lookup_by_id("planning.compose_answer")
     failure = build_failure_record_v1(

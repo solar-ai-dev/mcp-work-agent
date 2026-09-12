@@ -119,7 +119,7 @@ def test_development_config__ambient_google_client_id__requires_explicit_handoff
     assert handed_off.oauth_client_id == "ambient-google-client"
 
 
-def test_development_google_oauth_client_id__uses_env_file_without_process_value(
+def test_development_google_oauth_client_id__without_process_value__uses_env_file(
     tmp_path: Path,
 ) -> None:
     env_file = tmp_path / ".env.local"
@@ -134,7 +134,7 @@ def test_development_google_oauth_client_id__uses_env_file_without_process_value
     assert client_id != DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
 
 
-def test_development_google_oauth_client_id__explicit_process_value_wins(
+def test_development_google_oauth_client_id__with_process_value__prefers_process_environment(
     tmp_path: Path,
 ) -> None:
     env_file = tmp_path / ".env.local"
@@ -259,7 +259,7 @@ def test_development_config__sampling_policy__uses_evaluated_default(
     assert config.development_sampling_seed is None
 
 
-def test_development_sampling_environment__uses_evaluated_temperature_default() -> None:
+def test_sampling_environment__without_overrides__uses_evaluated_temperature() -> None:
     assert read_development_sampling_environment({}) == (0.0, None)
     assert read_development_sampling_environment(
         {

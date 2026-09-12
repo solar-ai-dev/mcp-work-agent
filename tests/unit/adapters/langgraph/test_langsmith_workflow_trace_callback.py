@@ -469,7 +469,7 @@ def test_callback__semantic_failure__exports_reason_and_safe_field_hash_only() -
     assert "unsafe@email" not in repr(update)
 
 
-def test_callback__preserves_specific_validation_stage() -> None:
+def test_callback__with_specific_validation_stage__preserves_stage() -> None:
     client = _Client()
     callback = LangSmithWorkflowTraceCallback(client=client, project_name="quality")
     run_id = uuid4()

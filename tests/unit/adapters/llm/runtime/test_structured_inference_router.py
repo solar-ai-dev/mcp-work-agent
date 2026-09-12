@@ -258,7 +258,7 @@ def test_local_request__uses_profile__model_for_prompt() -> None:
     assert local.calls == 1
 
 
-def test_source_dependency_prompt__uses_only_its_sampling_temperature_override() -> None:
+def test_source_dependency_prompt__with_override__uses_own_temperature() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     api = _Provider()
     router = _router(checkpoint=checkpoint, api=api)

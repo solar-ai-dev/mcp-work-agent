@@ -616,7 +616,7 @@ def test_compose_gmail_read__empty_result__uses_observed_state_without_fixed_ret
         ),
     ],
 )
-def test_compose_empty_result__distinguishes_complete_and_partial_scope(
+def test_compose_empty_result__with_complete_or_partial_scope__distinguishes_coverage(
     coverage: str,
     scope_complete: bool,
     expected_notice: str,

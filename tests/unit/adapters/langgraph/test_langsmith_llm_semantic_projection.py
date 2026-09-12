@@ -206,7 +206,7 @@ def test_atomic_responsibility_outputs__keep_decisions__without_business_literal
     assert "private event time" not in repr(source_projection)
 
 
-def test_effect_prohibition_projection__keeps_only_effect_enums() -> None:
+def test_effect_prohibition_projection__with_semantic_output__keeps_only_effect_enums() -> None:
     semantic_input = project_llm_semantic_input(
         "request_understanding.identify_effect_prohibitions",
         {
@@ -667,7 +667,7 @@ def test_evidence_sufficiency_and_answer_projection__keeps_counts__and_decisions
     assert "private-evidence" not in exported
 
 
-def test_sufficiency_input__projects_bounded_pagination_facts_without_payloads() -> None:
+def test_sufficiency_input__with_pagination__projects_bounded_facts() -> None:
     projection = project_llm_semantic_input(
         "retrieval.assess_sufficiency",
         {

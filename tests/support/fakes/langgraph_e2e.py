@@ -124,19 +124,18 @@ class LangGraphE2EGeminiTransport:
                         query["operation"] = "FREEBUSY"
                     if str(route["resource_type"]).startswith("CALENDAR"):
                         spec = cast(dict[str, object], query["search_spec"])
-                        cast(list[object], spec["constraints"]).append(
-                            {
-                                "kind": "TEMPORAL_RANGE",
-                                "axis": (
-                                    "AVAILABILITY_WINDOW"
-                                    if query["operation"] == "FREEBUSY"
-                                    else "EVENT_TIME"
-                                ),
-                                "start_local": str(self.calendar_payload["start"])[:19],
-                                "end_local": str(self.calendar_payload["end"])[:19],
-                                "timezone": "Asia/Seoul",
-                            }
-                        )
+                        constraints = cast(dict[str, object], spec["constraints"])
+                        constraints["temporal_range"] = {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": (
+                                "AVAILABILITY_WINDOW"
+                                if query["operation"] == "FREEBUSY"
+                                else "EVENT_TIME"
+                            ),
+                            "start_local": str(self.calendar_payload["start"])[:19],
+                            "end_local": str(self.calendar_payload["end"])[:19],
+                            "timezone": "Asia/Seoul",
+                        }
                     queries.append(query)
                 output["route_queries"] = queries
         if (
@@ -298,18 +297,16 @@ def _respond(
                 if "calendar_query_freebusy" in cast(list[str], route["allowed_read_tool_ids"]):
                     query["operation"] = "FREEBUSY"
                     spec = cast(dict[str, object], query["search_spec"])
-                    cast(list[object], spec["constraints"]).append(
-                        {
-                            "kind": "TEMPORAL_RANGE",
-                            "axis": "AVAILABILITY_WINDOW",
-                            "start_local": "2026-09-03T09:00:00",
-                            "end_local": "2026-09-03T10:00:00",
-                            "timezone": "Asia/Seoul",
-                        }
-                    )
-        route_ids = [str(route["route_id"]) for route in planned_routes]
+                    constraints = cast(dict[str, object], spec["constraints"])
+                    constraints["temporal_range"] = {
+                        "kind": "TEMPORAL_RANGE",
+                        "axis": "AVAILABILITY_WINDOW",
+                        "start_local": "2026-09-03T09:00:00",
+                        "end_local": "2026-09-03T10:00:00",
+                        "timezone": "Asia/Seoul",
+                    }
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "route_queries": route_queries,
         }
     if prompt_id == "retrieval.select_evidence":
@@ -715,6 +712,7 @@ def _route_query(route: Mapping[str, object], *, is_followup: bool = False) -> d
         if not container_refs:
             raise AssertionError(f"{resource_type} E2E route did not receive a validated container")
         constraint = {"kind": "CONTAINER_REF", "container_refs": [container_refs[0]]}
+    constraint_slots = {str(constraint["kind"]).lower(): constraint}
     return {
         "route_id": str(route["route_id"]),
         "operation": "SEARCH",
@@ -723,12 +721,12 @@ def _route_query(route: Mapping[str, object], *, is_followup: bool = False) -> d
             {
                 "mode": "CHANGED",
                 "constraint_delta": {
-                    "upsert_constraints": [constraint],
+                    "upsert_constraints": constraint_slots,
                     "remove_constraint_kinds": [],
                 },
             }
             if is_followup
-            else {"mode": "INITIAL", "constraints": [constraint]}
+            else {"mode": "INITIAL", "constraints": constraint_slots}
         ),
         "detail_candidate_ref": None,
     }

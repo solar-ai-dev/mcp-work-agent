@@ -507,7 +507,7 @@ def test_selected_calendar_event__materializes_detail_fetch__without_search_cont
     ]
 
 
-def test_calendar_search__still_requires_validated_container() -> None:
+def test_calendar_search__without_container_authority__rejects_plan() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(
         prompt_bundle_version="test",
@@ -1673,7 +1673,7 @@ def test_initial_query__invalid_next_page__repairs_before_materialization() -> N
     assert failure_record["affected_field_paths"] == ["$.route_queries[].operation"]
 
 
-def test_revised_query_validation_error__retains_exact_stage_and_field_path() -> None:
+def test_revised_query_validation_error__after_schema_revision__retains_diagnostics() -> None:
     invalid = {
         "schema_version": 2,
         "route_queries": [

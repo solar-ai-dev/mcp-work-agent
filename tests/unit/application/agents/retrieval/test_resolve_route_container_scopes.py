@@ -28,7 +28,7 @@ def _route(route_id: str, resource_type: str) -> InputToolRouteV1:
     )
 
 
-def test_container_scopes__retain_all_authorized_task_and_calendar_targets() -> None:
+def test_container_scopes__with_multiple_authorized_targets__retain_all() -> None:
     result = resolve_route_container_scopes(
         frozen_routes=[_route("tasks", "TASK"), _route("events", "CALENDAR_EVENT")],
         selected_resources=[],
@@ -51,7 +51,7 @@ def test_container_scopes__retain_all_authorized_task_and_calendar_targets() -> 
         ("CALENDAR_EVENT", "event-1", "calendar-b", "events", ["calendar-b"]),
     ],
 )
-def test_container_scopes__explicit_current_run_target_narrows_authorized_scope(
+def test_container_scopes__with_explicit_current_run_target__narrow_scope(
     resource_type: str,
     resource_id: str,
     parent_id: str | None,
@@ -77,7 +77,7 @@ def test_container_scopes__explicit_current_run_target_narrows_authorized_scope(
     assert result == {route_id: expected}
 
 
-def test_container_scopes__reject_explicit_target_outside_authorized_scope() -> None:
+def test_container_scopes__with_unauthorized_explicit_target__reject_scope() -> None:
     with pytest.raises(RetrievalV2ValidationError, match="outside the authorized"):
         resolve_route_container_scopes(
             frozen_routes=[_route("tasks", "TASK")],

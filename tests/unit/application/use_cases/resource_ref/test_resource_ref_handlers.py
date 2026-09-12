@@ -321,7 +321,6 @@ def test_list_resources_handler__owns_gmail_defaults__projection_and_page_valida
         "gmail",
         "",
         "500",
-        "metadata",
     )
     item = result.page.items[0]
     assert result.page.next_page_token == "local-next"
