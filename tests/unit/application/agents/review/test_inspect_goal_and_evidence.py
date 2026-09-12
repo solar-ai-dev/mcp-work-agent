@@ -58,7 +58,8 @@ def test_inspect_goal_and__evidence_uses_only__its_minimum_projection() -> None:
 def test_inspect_goal_and_evidence__passes_current_preview_edit__as_user_authority() -> None:
     calls: list[dict[str, object]] = []
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
         calls.append(dict(prompt_input))
         return {"schema_version": 1, "dimension": DIMENSION, "findings": []}
 

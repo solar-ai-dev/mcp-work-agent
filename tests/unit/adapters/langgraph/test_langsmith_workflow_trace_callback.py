@@ -734,7 +734,7 @@ def test_io_projection__keeps_route_and_retrieval_decisions__without_identities(
         }
     )
 
-    fields = projection["fields"]
+    fields = cast(dict[str, Any], projection["fields"])
     assert fields["ambiguity_candidate"] == {
         "missing_fields": {"count": 2, "values": ["target_resource"]},
         "missing_information_owner": "USER",

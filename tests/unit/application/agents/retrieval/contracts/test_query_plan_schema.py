@@ -1,7 +1,8 @@
 """Owner-local Retrieval query-plan schema scenarios."""
 
+from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -50,7 +51,7 @@ def _provider_candidate(value: dict[str, Any]) -> dict[str, Any]:
     return candidate
 
 
-def validate_output_schema(value: object, schema: dict[str, object]) -> list[str]:
+def validate_output_schema(value: object, schema: Mapping[str, object]) -> list[str]:
     version = schema.get("properties", {})
     version_schema = version.get("schema_version", {}) if isinstance(version, dict) else {}
     if (
@@ -58,8 +59,8 @@ def validate_output_schema(value: object, schema: dict[str, object]) -> list[str
         and isinstance(version_schema, dict)
         and version_schema.get("enum") == [3]
     ):
-        return _validate_output_schema(_provider_candidate(value), schema)
-    return _validate_output_schema(value, schema)
+        return _validate_output_schema(_provider_candidate(value), dict(schema))
+    return _validate_output_schema(value, dict(schema))
 
 
 @pytest.mark.parametrize(
@@ -114,7 +115,7 @@ def test_gmail_search_schema__empty_constraints__allows_only_gmail_route() -> No
         supported_constraint_kinds={"gmail": ["CONCEPT"]},
         gmail_route_ids=["gmail"],
     )
-    candidate = {
+    candidate: dict[str, Any] = {
         "schema_version": 2,
         "route_queries": [
             {
@@ -507,7 +508,8 @@ def test_provider_constraint_slots__with_distinct_concepts__keeps_separate_hypot
         }
         assert _validate_output_schema(candidate, schema.json_schema) == []
 
-    concept_slots = schema.json_schema["properties"]["route_queries"]["items"]["oneOf"][0][
+    schema_root = cast(dict[str, Any], schema.json_schema)
+    concept_slots = schema_root["properties"]["route_queries"]["items"]["oneOf"][0][
         "properties"
     ]["search_spec"]["properties"]["constraints"]["properties"]
     assert list(concept_slots) == ["concept"]

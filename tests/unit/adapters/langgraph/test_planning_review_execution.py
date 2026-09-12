@@ -197,7 +197,9 @@ def test_planning_runtime_projection__repeated_call__uses_frozen_output_route_co
     first = subgraph._project_runtime_inputs(cast(Any, state))  # noqa: SLF001
     second = subgraph._project_runtime_inputs(first)  # noqa: SLF001
 
-    assert [route["route_id"] for route in first["output_plan"]["output_routes"]] == [
+    first_output_plan = cast(dict[str, Any], first["output_plan"])
+    first_output_routes = cast(list[dict[str, object]], first_output_plan["output_routes"])
+    assert [route["route_id"] for route in first_output_routes] == [
         "required-route"
     ]
     assert second["output_plan"] == first["output_plan"]

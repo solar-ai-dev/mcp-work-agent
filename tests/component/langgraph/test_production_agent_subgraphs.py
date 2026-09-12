@@ -496,14 +496,14 @@ class _ComponentInferencePort:
             if self.duplicate_found:
                 facts = cast(list[Mapping[str, object]], projection.get("work_facts", []))
                 source_state = cast(Mapping[str, object], projection.get("source_state", {}))
-                candidates = cast(
+                task_candidates = cast(
                     list[Mapping[str, object]], source_state.get("task_review_candidates", [])
                 )
                 return {
                     "requested_work_status": "SATISFIED",
                     "requested_work_reason": "The observed Task already satisfies the request",
                     "matched_fact_ids": [str(facts[0]["fact_id"])],
-                    "matched_candidate_refs": [str(candidates[0]["candidate_ref"])],
+                    "matched_candidate_refs": [str(task_candidates[0]["candidate_ref"])],
                     "evidence_refs": list(cast(list[str], facts[0]["evidence_refs"])),
                 }
             return {
@@ -675,7 +675,7 @@ class _ContainerConnectorReadPort:
             str,
             tool_arguments.get("task_list_id") or tool_arguments.get("calendar_id"),
         )
-        payload = (
+        payload: dict[str, JsonValue] = (
             {"title": f"Task from {container_id}", "status": "needsAction", "due": None}
             if resource_type == "task"
             else {
@@ -1189,7 +1189,10 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
     }
     source_input = llm.inputs["request_understanding.identify_source_dependencies"][0]
-    source_candidates = {item["resource_type"]: item for item in source_input["source_candidates"]}
+    source_candidates_input = cast(
+        list[dict[str, Any]], source_input["source_candidates"]
+    )
+    source_candidates = {item["resource_type"]: item for item in source_candidates_input}
     assert source_candidates["TASK_LIST"]["owned_fact_kinds"] == [
         "task_list_identity",
         "task_list_title",
@@ -1198,11 +1201,13 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
     assert "start" in source_candidates["CALENDAR_EVENT"]["owned_fact_kinds"]
     assert "start" not in source_candidates["CALENDAR"]["owned_fact_kinds"]
     output_input = llm.inputs["request_understanding.identify_output_responsibilities"][0]
-    assert {item["effect"]: item["prohibition"] for item in output_input["effect_prohibitions"]}[
-        "SEND"
-    ] == "FORBIDDEN"
+    effect_prohibitions = cast(list[dict[str, Any]], output_input["effect_prohibitions"])
+    assert {item["effect"]: item["prohibition"] for item in effect_prohibitions}["SEND"] == (
+        "FORBIDDEN"
+    )
     source_status_input = llm.inputs["request_understanding.identify_source_status"][0]
-    assert [item["resource_type"] for item in source_status_input["source_reads"]] == [
+    source_reads = cast(list[dict[str, Any]], source_status_input["source_reads"])
+    assert [item["resource_type"] for item in source_reads] == [
         "TASK",
         "CALENDAR_EVENT",
     ]

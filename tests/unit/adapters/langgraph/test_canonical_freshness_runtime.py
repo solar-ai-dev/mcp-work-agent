@@ -25,6 +25,15 @@ from google_work_agent.adapters.langgraph.main.supervisor_progress import (
 from google_work_agent.adapters.langgraph.main.supervisor_state_projection import (
     project_supervisor_state,
 )
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+)
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    RetrievalResultV1,
+)
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    ToolRoutePlanV2,
+)
 from google_work_agent.application.use_cases.run.get_supervisor_observation import (
     SupervisorObservationV1,
 )
@@ -276,7 +285,7 @@ def _state() -> GraphState:
 def _state_with_reusable_input_observation() -> GraphState:
     state = _state()
     state["request_intent"] = cast(
-        object,
+        RequestIntentV2,
         {
             "schema_version": 2,
             "meta": _meta("intent-1", 1),
@@ -290,7 +299,7 @@ def _state_with_reusable_input_observation() -> GraphState:
         },
     )
     state["tool_route_plan"] = cast(
-        object,
+        ToolRoutePlanV2,
         {
             "schema_version": 2,
             "input_plan": {
@@ -315,7 +324,7 @@ def _state_with_reusable_input_observation() -> GraphState:
         },
     )
     state["retrieval_result"] = cast(
-        object,
+        RetrievalResultV1,
         {
             "meta": {
                 "artifact_id": "retrieval-1",

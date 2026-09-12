@@ -1,10 +1,13 @@
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 
 from google_work_agent.application.agents.work_analysis import (
     detect_duplicate_conflict_candidates,
+)
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     build_default_run_budget,
@@ -200,7 +203,11 @@ def test_task_assessment__revises_semantic_mismatch__once_within_budget() -> Non
         )
     )
 
-    assert result == {"relation_candidates": [], **revised}
+    expected = cast(
+        DuplicateConflictAssessmentV1,
+        {"relation_candidates": [], **revised},
+    )
+    assert result == expected
     assert len(runtime.calls) == 2
     assert "failure_record" in runtime.calls[1]["prompt_input"]
     assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1

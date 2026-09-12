@@ -333,7 +333,9 @@ def test_retrieval_partial_without_evidence__for_action_request__blocks_planning
     )
 
     assert decision["target"] == SupervisorTarget.FINALIZE.value
-    assert decision["state_update"]["finalize_intent"]["intent"] == "BLOCKED"
+    finalize_intent = decision["state_update"]["finalize_intent"]
+    assert finalize_intent is not None
+    assert finalize_intent["intent"] == "BLOCKED"
     assert decision["state_update"]["retrieval_result"] == result
 
 

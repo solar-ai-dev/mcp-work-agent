@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
@@ -2428,7 +2428,7 @@ def test_general_gmail_search__with_relation_constraint__preserves_count_semanti
 
 
 def test_general_gmail_search__last_week__uses_schema_bound_temporal_value() -> None:
-    output = {
+    output: dict[str, Any] = {
         "schema_version": 3,
         "route_queries": [
             {

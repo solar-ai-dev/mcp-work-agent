@@ -68,11 +68,13 @@ def test_local_model_catalog__when_inspection_fails__distinguishes_empty_from_co
         runtime_root=tmp_path, keyring_store=SessionMemorySecretStore()
     )
     try:
-        status = container.structured_inference_port.status_service.get_status("LOCAL_GPU")
+        structured_inference_port = container.structured_inference_port
+        assert structured_inference_port is not None
+        status = structured_inference_port.status_service.get_status("LOCAL_GPU")
 
         assert status.availability == "UNAVAILABLE"
         assert status.error_code == "LOCAL_MODEL_INSPECTION_FAILED"
-        assert container.structured_inference_port.status_service.list_local_models() == ()
+        assert structured_inference_port.status_service.list_local_models() == ()
         assert container.readiness_aggregator.evaluate().state is ReadinessState.READY
     finally:
         for close in reversed(container.shutdown_callbacks):

@@ -1,12 +1,13 @@
 """User-facing sentence projection for persisted Run Activity facts."""
 
 from google_work_agent.application.use_cases.run.project_run_activity_detail_texts import (
+    ActivityDetailTextSource,
     project_run_activity_detail_texts,
 )
 
 
 def test_activity_detail_texts__with_request_facts__hide_internal_field_list() -> None:
-    details = [
+    details: list[ActivityDetailTextSource] = [
         {"label": "요청 업무", "value": "선택한 일정을 지정한 장소로 수정합니다"},
         {"label": "완료 조건", "value": "같은 Event를 다시 조회"},
         {"label": "요청 작업", "value": "수정"},
@@ -27,7 +28,7 @@ def test_activity_detail_texts__with_request_facts__hide_internal_field_list() -
 
 
 def test_activity_detail_texts__with_route_and_plan__separate_preparation_from_effect() -> None:
-    route = [
+    route: list[ActivityDetailTextSource] = [
         {
             "label": "검증된 조회 범위",
             "value": "Google Workspace · Google Calendar 일정 · 조회",
@@ -37,7 +38,7 @@ def test_activity_detail_texts__with_route_and_plan__separate_preparation_from_e
             "value": "Google Workspace · Google Calendar 일정 · 수정",
         },
     ]
-    plan = [
+    plan: list[ActivityDetailTextSource] = [
         {"label": "실행안 1 · 계획", "value": "수정 예정 (아직 실행되지 않음)"},
         {"label": "실행안 1 · 제목", "value": "주간 프로젝트 회의"},
         {"label": "실행안 1 · 시작", "value": "2026-09-14T15:00:00+09:00"},
@@ -66,7 +67,7 @@ def test_activity_detail_texts__with_route_and_plan__separate_preparation_from_e
 
 
 def test_activity_detail_texts__with_combined_role__compose_owned_facts() -> None:
-    details = [
+    details: list[ActivityDetailTextSource] = [
         {"label": "요청 업무", "value": "분기 보고서 근거를 확인합니다"},
         {
             "label": "검증된 조회 범위",
@@ -87,22 +88,22 @@ def test_activity_detail_texts__with_combined_role__compose_owned_facts() -> Non
 
 
 def test_activity_detail_texts__with_analysis_review_and_reread__separate_verified_facts() -> None:
-    analysis = [
+    analysis: list[ActivityDetailTextSource] = [
         {"label": "일정", "value": "주간 프로젝트 회의 · 9월 14일 오후 3시"},
         {"label": "선행 관계", "value": "자료 확인 → 일정 수정"},
         {"label": "외부 실행 필요", "value": "필요함"},
     ]
-    review = [
+    review: list[ActivityDetailTextSource] = [
         {"label": "검토 결과", "value": "검토 통과"},
         {"label": "검토 요약", "value": "승인 전에 변경 내용을 확인해야 합니다"},
         {"label": "검토 영향 범위", "value": "opaque-action-id"},
     ]
-    verification = [
+    verification: list[ActivityDetailTextSource] = [
         {"label": "기대 제목", "value": "주간 프로젝트 회의"},
         {"label": "재조회 제목", "value": "주간 프로젝트 회의"},
         {"label": "재조회 대상 Event", "value": "opaque-event-id"},
     ]
-    approval = [
+    approval: list[ActivityDetailTextSource] = [
         {"label": "승인 제목", "value": "주간 프로젝트 회의"},
         {"label": "승인 대상 Event", "value": "opaque-event-id"},
     ]

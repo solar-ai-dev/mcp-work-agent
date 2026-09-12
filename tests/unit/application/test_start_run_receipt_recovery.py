@@ -40,6 +40,7 @@ from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 from google_work_agent.ports.system.contracts.workflow_binding import WorkflowBindingV1
 from google_work_agent.ports.system.contracts.workflow_handoff import (
+    RequestedModeV1,
     RunExecutionRefV1,
     WorkflowHandoffStageV1,
     WorkflowHandoffV1,
@@ -515,7 +516,7 @@ def _seed_complete_aggregate(
             langgraph_thread_id=workflow_key,
             graph_profile="SIX_ROLE_BASELINE",
             graph_version="resume-contract-v1",
-            requested_mode=command.requested_mode,
+            requested_mode=cast(RequestedModeV1, command.requested_mode),
             resume_target=None,
         ),
         checkpoint_id=None,
@@ -539,7 +540,7 @@ def _seed_complete_aggregate(
             langgraph_thread_id=workflow_key,
             graph_profile="SIX_ROLE_BASELINE",
             graph_version="resume-contract-v1",
-            requested_mode=command.requested_mode,
+            requested_mode=cast(RequestedModeV1, command.requested_mode),
             created_at_ms=10,
         )
     )
@@ -860,7 +861,7 @@ def test_received_receipt_with__run_and_handoff_but__no_message_fails_closed() -
             langgraph_thread_id="thread-1",
             graph_profile="SIX_ROLE_BASELINE",
             graph_version="resume-contract-v1",
-            requested_mode=command.requested_mode,
+            requested_mode=cast(RequestedModeV1, command.requested_mode),
             resume_target=None,
         ),
         checkpoint_id=None,

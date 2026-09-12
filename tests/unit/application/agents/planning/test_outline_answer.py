@@ -5,6 +5,9 @@ from typing import Any, cast
 
 import pytest
 
+from google_work_agent.application.agents.planning.contracts.planning_semantics import (
+    PlanningAnswerConfirmationV1,
+)
 from google_work_agent.application.agents.planning.outline_answer import (
     answer_outline_output_schema,
     outline_answer,
@@ -76,7 +79,8 @@ def test_outline_allows__confirmation__from_current_work_analysis_ambiguity() ->
         },
     )
 
-    assert result["disposition"] == "NEEDS_CONFIRMATION"
+    confirmation = cast(PlanningAnswerConfirmationV1, result)
+    assert confirmation["disposition"] == "NEEDS_CONFIRMATION"
 
 
 def test_outline_uses__distinct_prompt__and_minimum_projection() -> None:

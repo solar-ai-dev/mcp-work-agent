@@ -56,7 +56,7 @@ def test_discard_removes__run__evidence() -> None:
 
 def test_exact_source_snapshot__is_run_scoped__and_discarded_with_evidence() -> None:
     store = RunScopedEvidenceStore()
-    snapshot = {"body": "", "thread_id": None, "attachments": []}
+    snapshot: dict[str, object] = {"body": "", "thread_id": None, "attachments": []}
     store.put_resource_snapshot(
         run_id="run-1",
         resource_handle="gmail_draft:draft-1",

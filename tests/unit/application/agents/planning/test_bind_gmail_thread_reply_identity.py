@@ -5,6 +5,9 @@ import pytest
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     compose_arguments_per_output_route,
 )
+from google_work_agent.application.agents.planning.contracts.planning_semantics import (
+    ActionTargetSemanticsV1,
+)
 from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
     planning_tool_argument_schema,
 )
@@ -101,7 +104,7 @@ def _compose(
     intent: dict[str, object],
     evidence: list[dict[str, object]] | None = None,
     payload_extra: dict[str, object] | None = None,
-    target_semantics: str = "GMAIL_THREAD_REPLY",
+    target_semantics: ActionTargetSemanticsV1 = "GMAIL_THREAD_REPLY",
 ) -> tuple[dict[str, object], ...]:
     payload = {
         "to": ["recipient@example.com"],

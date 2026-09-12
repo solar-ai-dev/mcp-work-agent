@@ -224,11 +224,12 @@ def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolut
 
 
 def test_legacy_run__keeps_24_call_absolute_limit__through_merge_and_promotion() -> None:
-    legacy = {
-        **build_default_run_budget(),
-        "absolute_llm_call_limit": 24,
-    }
-    legacy = validate_run_budget_v2(legacy)
+    legacy = validate_run_budget_v2(
+        {
+            **build_default_run_budget(),
+            "absolute_llm_call_limit": 24,
+        }
+    )
     revised = approve_planning_revision(legacy)["run_budget"]
     combined = approve_additional_acquisition(revised)["run_budget"]
 

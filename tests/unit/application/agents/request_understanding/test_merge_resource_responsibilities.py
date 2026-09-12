@@ -48,7 +48,7 @@ def _source(
 
 
 def _output(
-    *, values: dict[str, str] | None = None
+    *, values: dict[str, output_responsibility_decision.OutputResponsibilityValue] | None = None
 ) -> output_responsibility_decision.OutputResponsibilityDecisionCandidateV1:
     values = values or {}
     return {
@@ -89,7 +89,7 @@ def _output(
 )
 def test_atomic_decisions__after_validation__merge_to_canonical_contract(
     sources: dict[str, list[str]],
-    outputs: dict[str, str],
+    outputs: dict[str, output_responsibility_decision.OutputResponsibilityValue],
     expected_sources: list[str],
     expected_outputs: list[tuple[str, str]],
 ) -> None:

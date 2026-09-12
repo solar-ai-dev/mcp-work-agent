@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import Any, cast
 
 import pytest
 
@@ -10,7 +11,9 @@ from google_work_agent.application.agents.planning.draft_action_objective_per_ou
 
 
 def test_action_objective_schema__binds_current_evidence__identities() -> None:
-    schema = action_objective_candidate_output_schema(
+    schema = cast(
+        dict[str, Any],
+        action_objective_candidate_output_schema(
         {
             "output_route": {
                 "resource_type": "TASK",
@@ -22,7 +25,8 @@ def test_action_objective_schema__binds_current_evidence__identities() -> None:
                 {"evidence_id": "evidence-1"},
             ],
         }
-    ).json_schema
+        ).json_schema,
+    )
 
     evidence_refs = schema["properties"]["evidence_refs"]
     assert evidence_refs["uniqueItems"] is True
@@ -30,7 +34,9 @@ def test_action_objective_schema__binds_current_evidence__identities() -> None:
 
 
 def test_action_objective_schema__requires_empty_refs__without_evidence() -> None:
-    schema = action_objective_candidate_output_schema(
+    schema = cast(
+        dict[str, Any],
+        action_objective_candidate_output_schema(
         {
             "output_route": {
                 "resource_type": "TASK",
@@ -39,7 +45,8 @@ def test_action_objective_schema__requires_empty_refs__without_evidence() -> Non
             },
             "evidence": [],
         }
-    ).json_schema
+        ).json_schema,
+    )
 
     assert schema["properties"]["evidence_refs"]["maxItems"] == 0
 

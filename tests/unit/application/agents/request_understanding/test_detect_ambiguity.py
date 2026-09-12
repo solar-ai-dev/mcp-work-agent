@@ -25,12 +25,16 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 )
 
 
-def detect_ambiguity(**kwargs: object) -> AmbiguityV1:
+def detect_ambiguity(**kwargs: Any) -> AmbiguityV1:
     ambiguity, _ = _detect_ambiguity_with_budget(
         **kwargs,
         retry_budget=build_default_run_budget(),
     )
     return ambiguity
+
+
+def _call_input(runtime: FakeStructuredInferencePort, index: int) -> dict[str, Any]:
+    return cast(dict[str, Any], runtime.calls[index]["prompt_input"])
 
 
 def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
@@ -85,7 +89,7 @@ def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
     )
 
     assert result["requires_confirmation"] is True
-    assert runtime.calls[0]["prompt_input"] == {
+    assert _call_input(runtime, 0) == {
         "user_request": "일정을 잡아줘",
         "goal_candidate": candidate,
         "resolution_responsibilities": {
@@ -130,7 +134,7 @@ def test_connector_owned_information__before_retrieval__proceeds_without_confirm
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert runtime.calls[0]["prompt_input"]["resolution_responsibilities"] == {
+    assert _call_input(runtime, 0)["resolution_responsibilities"] == {
         "connector_owned_information": [
             {
                 "constraint_path": "$.goal_candidate.constraints[0]",
@@ -191,7 +195,7 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
         "missing_fields": [],
     }
     assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
     )
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
@@ -253,10 +257,10 @@ def test_searchable_target_reclassified_as_user__contract_conflict__uses_bounded
         "missing_fields": [],
     }
     assert len(runtime.calls) == 2
-    resolution = runtime.calls[0]["prompt_input"]["resolution_responsibilities"]
+    resolution = _call_input(runtime, 0)["resolution_responsibilities"]
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
     )
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
@@ -674,7 +678,7 @@ def test_searchable_calendar_event_identity__with_target_anchor__keeps_conflict(
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
     assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
     )
 
@@ -708,7 +712,7 @@ def test_selected_event_identity__with_resource__keeps_resolved_conflict() -> No
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
     assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
     )
 
@@ -736,7 +740,7 @@ def test_connector_owned_event_attribute__with_resolved_target__keeps_owner_conf
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
     assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
     )
 
@@ -768,7 +772,7 @@ def test_event_container_identity__without_selected_event__stays_container_scope
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
     assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
     )
 
@@ -852,7 +856,7 @@ def test_selected_calendar_read__with_selected_resource__does_not_ask_identity()
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
     assert len(runtime.calls) == 2
-    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
     )
 
@@ -897,7 +901,7 @@ def test_selected_source__with_separate_target_gap__asks_without_revision() -> N
         "missing_fields": ["target_resource"],
     }
     assert len(runtime.calls) == 1
-    assert runtime.calls[0]["prompt_input"]["selected_resource_refs"] == [
+    assert _call_input(runtime, 0)["selected_resource_refs"] == [
         {
             "resource_ref_id": "ref-mail-42",
             "connector_id": "google_workspace",
@@ -941,7 +945,7 @@ def test_selected_calendar_read__event_time_gap__passes_without_revision() -> No
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
     assert len(runtime.calls) == 1
-    assert runtime.calls[0]["prompt_input"]["selected_resource_refs"] == [
+    assert _call_input(runtime, 0)["selected_resource_refs"] == [
         {
             "resource_ref_id": "ref-event-42",
             "connector_id": "google_workspace",

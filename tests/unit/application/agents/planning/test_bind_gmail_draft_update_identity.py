@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import cast
 
 import pytest
@@ -23,7 +24,7 @@ ROUTE = {
     "selected_tool_id": "gmail_update_draft",
     "reason_codes": [],
 }
-PAYLOAD = {
+PAYLOAD: dict[str, object] = {
     "to": ["recipient@example.com"],
     "cc": [],
     "bcc": [],
@@ -59,6 +60,17 @@ def test_gmail_draft_update__unchanged_patch__is_not_an_action_preview() -> None
 
 def test_gmail_draft_update__argument_prompt__receives_bounded_editable_source() -> None:
     prompt_inputs: list[dict[str, object]] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
+        prompt_inputs.append(dict(prompt_input))
+        return {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": {"payload": {"body": "기존 본문\n추가 문장"}},
+            "evidence_refs": ["draft-evidence"],
+        }
+
     bound = cast(
         BoundSelectedToolSchemaV1,
         {
@@ -90,15 +102,7 @@ def test_gmail_draft_update__argument_prompt__receives_bounded_editable_source()
             }
         ],
         source_snapshots={"draft-evidence": {**PAYLOAD, "body": "기존 본문"}},
-        invoke=lambda _, value: (
-            prompt_inputs.append(dict(value))
-            or {
-                "schema_version": 1,
-                "route_id": "r1",
-                "arguments": {"payload": {"body": "기존 본문\n추가 문장"}},
-                "evidence_refs": ["draft-evidence"],
-            }
-        ),
+        invoke=invoke,
     )
 
     assert prompt_inputs[0]["editable_source"] == {
@@ -166,7 +170,7 @@ def test_gmail_draft_update__with_spaced_literal__restores_exact_value() -> None
         },
     )[0]
 
-    assert result["arguments"]["payload"]["body"] == f"기존 본문 {exact_sentence}"
+    assert _result_payload(result)["body"] == f"기존 본문 {exact_sentence}"
 
 
 def test_gmail_draft_update__same_resource_versions__binds_selected_evidence_snapshot() -> None:
@@ -219,7 +223,7 @@ def test_gmail_draft_update__same_resource_versions__binds_selected_evidence_sna
         },
     )[0]
 
-    assert result["arguments"]["payload"]["body"] == "현재 본문\n추가 문장"
+    assert _result_payload(result)["body"] == "현재 본문\n추가 문장"
     assert result["evidence_refs"] == ["draft-v2"]
 
 
@@ -278,3 +282,9 @@ def _compose(
             },
         ),
     )
+
+
+def _result_payload(result: object) -> dict[str, object]:
+    result_dict = cast(dict[str, object], result)
+    arguments = cast(dict[str, object], result_dict["arguments"])
+    return cast(dict[str, object], arguments["payload"])

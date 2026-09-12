@@ -13,6 +13,14 @@ from google_work_agent.application.agents.planning.compose_answer import (
 )
 
 
+def _validation_reason(error: ValueError) -> str:
+    return cast(str, cast(Any, error).reason_code)
+
+
+def _validation_paths(error: ValueError) -> tuple[str, ...]:
+    return cast(tuple[str, ...], cast(Any, error).affected_field_paths)
+
+
 def test_answer_draft_schema__binds_citations__to_approved_outline() -> None:
     schema = answer_draft_output_schema(["e2", "e1", "e1"])
     properties = cast(dict[str, Any], schema.json_schema)["properties"]
@@ -665,8 +673,8 @@ def test_compose_rejects__evidence_not__approved_by_outline() -> None:
                 "evidence_refs": ["e1"],
             },
         )
-    assert raised.value.reason_code == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
-    assert raised.value.affected_field_paths == ("$.evidence_refs",)
+    assert _validation_reason(raised.value) == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
+    assert _validation_paths(raised.value) == ("$.evidence_refs",)
 
 
 def test_compose_rejects__serialized_internal_object__as_user_answer() -> None:
@@ -689,7 +697,8 @@ def test_compose_answer__prose_failure__renders_one_structured_repair_without_ra
     invalid_answer = '{"sections":[],"evidence_refs":["e1"]}'
     projections: list[Mapping[str, object]] = []
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        del prompt_id
         projections.append(prompt_input)
         if len(projections) == 1:
             return {
@@ -739,8 +748,9 @@ def test_compose_answer__prose_failure__renders_one_structured_repair_without_ra
 def test_compose_answer__prose_failure_twice__stops_after_one_revision() -> None:
     calls = 0
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal calls
+        del prompt_id, prompt_input
         calls += 1
         return {
             "schema_version": 2,
@@ -759,14 +769,15 @@ def test_compose_answer__prose_failure_twice__stops_after_one_revision() -> None
         )
 
     assert calls == 2
-    assert raised.value.reason_code == "COMPOSE_ANSWER_PROSE_INVALID"
+    assert _validation_reason(raised.value) == "COMPOSE_ANSWER_PROSE_INVALID"
 
 
 def test_compose_answer__structured_repair__rejects_serialized_item_value() -> None:
     calls = 0
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal calls
+        del prompt_id, prompt_input
         calls += 1
         if calls == 1:
             return {
@@ -796,14 +807,15 @@ def test_compose_answer__structured_repair__rejects_serialized_item_value() -> N
         )
 
     assert calls == 2
-    assert raised.value.reason_code == "COMPOSE_ANSWER_PROSE_INVALID"
+    assert _validation_reason(raised.value) == "COMPOSE_ANSWER_PROSE_INVALID"
 
 
 def test_compose_answer__structured_repair__renders_serialized_semantic_collection() -> None:
     calls = 0
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal calls
+        del prompt_id, prompt_input
         calls += 1
         if calls == 1:
             return {
@@ -847,8 +859,9 @@ def test_compose_answer__structured_repair__renders_serialized_semantic_collecti
 def test_compose_answer__structured_repair__omits_serialized_optional_decorations() -> None:
     calls = 0
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal calls
+        del prompt_id, prompt_input
         calls += 1
         if calls == 1:
             return {
@@ -892,8 +905,9 @@ def test_compose_answer__structured_repair__omits_serialized_optional_decoration
 def test_compose_answer__structured_repair__reuses_evidence_scope_validation() -> None:
     calls = 0
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal calls
+        del prompt_id, prompt_input
         calls += 1
         if calls == 1:
             return {
@@ -920,14 +934,15 @@ def test_compose_answer__structured_repair__reuses_evidence_scope_validation() -
         )
 
     assert calls == 2
-    assert raised.value.reason_code == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
+    assert _validation_reason(raised.value) == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
 
 
 def test_compose_answer__non_prose_validation_failure__does_not_run_revision() -> None:
     calls = 0
 
-    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal calls
+        del prompt_id, prompt_input
         calls += 1
         return {
             "schema_version": 2,
@@ -946,7 +961,7 @@ def test_compose_answer__non_prose_validation_failure__does_not_run_revision() -
         )
 
     assert calls == 1
-    assert raised.value.reason_code == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
+    assert _validation_reason(raised.value) == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
 
 
 def test_compose_answer__with_nested_section_string__projects_natural_markdown() -> None:

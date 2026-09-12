@@ -25,6 +25,9 @@ from google_work_agent.application.use_cases.execution_attempt.classify_dispatch
 from google_work_agent.application.use_cases.execution_attempt.connector_write_projection import (
     ConnectorWriteProjection,
 )
+from google_work_agent.application.use_cases.execution_attempt.mark_failed import (
+    MarkFailedCommand,
+)
 from google_work_agent.application.use_cases.execution_attempt.write_dispatch_models import (
     PreparedWriteDispatch,
 )
@@ -410,7 +413,7 @@ def test_tool_rejected__with_invalid_argument__persists_specific_safe_cause() ->
     ).execute(_request())
 
     assert result.disposition is WriteExecutionDisposition.FAILED
-    command = mark_failed.invocations[0][0][0]
+    command = cast(MarkFailedCommand, mark_failed.invocations[0][0][0])
     assert command.error_code == "INVALID_ARGUMENT"
     assert command.error_detail == "CLAIM_TOKEN_REUSED"
 
