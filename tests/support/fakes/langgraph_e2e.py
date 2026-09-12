@@ -221,8 +221,6 @@ def _respond(
             "constraints": [],
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
-    if prompt_id == "request_understanding.identify_coverage_requirement":
-        return {"coverage_requirement": []}
     if prompt_id == "request_understanding.identify_effect_prohibitions":
         return {
             "effect_prohibitions": [

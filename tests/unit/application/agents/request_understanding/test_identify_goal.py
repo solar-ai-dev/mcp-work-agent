@@ -9,9 +9,6 @@ import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
 from google_work_agent.application.agents.request_understanding import (
-    identify_coverage_requirement as coverage_requirement,
-)
-from google_work_agent.application.agents.request_understanding import (
     identify_effect_prohibitions as effect_prohibitions,
 )
 from google_work_agent.application.agents.request_understanding import (
@@ -66,6 +63,7 @@ _GMAIL_CONSTRAINT_KINDS = {
     "recipient": "PERSON",
     "subject": "RESOURCE",
     "period": "DATE",
+    "coverage_requirement": "SCOPE",
 }
 _SOURCE_DEPENDENCY_CANDIDATES = source_dependencies.build_source_dependency_candidates(
     load_signed_tool_registry()
@@ -81,13 +79,6 @@ _EFFECT_PROHIBITION_CANDIDATES = effect_prohibitions.build_effect_prohibition_ca
 def identify_goal(**kwargs: Any) -> Any:
     kwargs.setdefault("source_dependency_candidates", _SOURCE_DEPENDENCY_CANDIDATES)
     kwargs.setdefault("output_responsibility_candidates", _OUTPUT_RESPONSIBILITY_CANDIDATES)
-    kwargs.setdefault(
-        "coverage_requirement_prompt_ref",
-        _prompt_ref(
-            "request_understanding.identify_coverage_requirement",
-            "identify_coverage_requirement",
-        ),
-    )
     kwargs.setdefault(
         "effect_prohibition_prompt_ref",
         _prompt_ref(
@@ -122,13 +113,6 @@ def identify_goal(**kwargs: Any) -> Any:
 def identify_goal_with_budget(**kwargs: Any) -> Any:
     kwargs.setdefault("source_dependency_candidates", _SOURCE_DEPENDENCY_CANDIDATES)
     kwargs.setdefault("output_responsibility_candidates", _OUTPUT_RESPONSIBILITY_CANDIDATES)
-    kwargs.setdefault(
-        "coverage_requirement_prompt_ref",
-        _prompt_ref(
-            "request_understanding.identify_coverage_requirement",
-            "identify_coverage_requirement",
-        ),
-    )
     kwargs.setdefault(
         "effect_prohibition_prompt_ref",
         _prompt_ref(
@@ -558,7 +542,7 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
     )
 
     assert not any(item["field"] == "status" for item in candidate["constraints"])
-    revision_input = cast(dict[str, object], runtime.calls[6]["prompt_input"])
+    revision_input = cast(dict[str, object], runtime.calls[5]["prompt_input"])
     failure_record = cast(dict[str, object], revision_input["failure_record"])
     assert failure_record["failure_reason_code"] == ("REQUEST_STATUS_PROVENANCE_MISMATCH")
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
@@ -606,7 +590,7 @@ def test_cross_resource_read_write__without_typed_responsibility__rejects_before
         ]
     )
 
-    with pytest.raises(ValueError, match="output responsibility candidate"):
+    with pytest.raises(ValueError, match="source dependency candidate"):
         identify_goal(
             llm_runtime=runtime,
             request=_request("기존 자료에서 일정을 확인해 관련 메시지를 보내줘."),
@@ -673,7 +657,7 @@ def test_same_resource_read_update__single_responsibility__preserves_both_roles(
 
     assert candidate["requested_effect_hints"] == ["READ", "UPDATE"]
     assert candidate["requested_resource_hints"] == ["TASK"]
-    assert len(runtime.calls) == 6
+    assert len(runtime.calls) == 5
 
 
 def test_split_source_information__normalizes_once__before_finalize() -> None:
@@ -723,7 +707,7 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
     )
 
     assert raw_candidate == original_candidate
-    assert len(runtime.calls) == 6
+    assert len(runtime.calls) == 5
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {
@@ -772,12 +756,10 @@ def test_source_information_normalization__is_lossless_and_idempotent() -> None:
     normalized = goal_schema.validate_request_goal_candidate(
         goal_candidate,
         resource_responsibilities=raw_candidate["resource_responsibilities"],
-        coverage_requirement={"coverage_requirement": []},
     )
     normalized_again = goal_schema.validate_request_goal_candidate(
         goal_candidate,
         resource_responsibilities=deepcopy(normalized["resource_responsibilities"]),
-        coverage_requirement={"coverage_requirement": []},
     )
 
     assert raw_candidate == original_candidate
@@ -836,21 +818,19 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
 
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
-        "request_understanding.identify_coverage_requirement",
         "request_understanding.identify_effect_prohibitions",
-        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
-        "request-goal-candidate-v16",
-        "request-coverage-requirement-v1",
+        "request-goal-candidate-v15",
         "request-effect-prohibition-decision-v1",
-        "request-output-responsibility-decision-v1",
         "request-source-dependency-decision-v1",
+        "request-output-responsibility-decision-v1",
         "request-source-status-v1",
     ]
-    assert runtime.calls[4]["prompt_input"]["goal_candidate"] == {
+    assert runtime.calls[2]["prompt_input"]["goal_candidate"] == {
         "goal": "기존 업무 자료를 바탕으로 메일 초안을 저장한다",
         "completion_conditions": ["메일 초안 Preview를 준비한다", "메일을 보내지 않는다"],
         "constraints": _goal_constraints(
@@ -859,15 +839,12 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         ),
         "analysis_requirement": "NONE",
     }
-    assert runtime.calls[4]["prompt_input"]["source_candidates"] == list(
+    assert runtime.calls[2]["prompt_input"]["source_candidates"] == list(
         _SOURCE_DEPENDENCY_CANDIDATES
     )
     assert runtime.calls[3]["prompt_input"]["output_candidates"] == list(
         _OUTPUT_RESPONSIBILITY_CANDIDATES
     )
-    assert runtime.calls[4]["prompt_input"]["outputs"] == [
-        {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
-    ]
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {"resource_type": "TASK", "required_information": ["준비 상황"]},
@@ -884,17 +861,17 @@ def test_cross_source_draft__resource_responsibility_is_a_separate_atomic_infere
         "CALENDAR_EVENT",
         "GMAIL_DRAFT",
     ]
-    assert runtime.calls[5]["prompt_input"]["source_reads"] == [
+    assert runtime.calls[4]["prompt_input"]["source_reads"] == [
         {"resource_type": "TASK", "required_information": ["준비 상황"]},
         {
             "resource_type": "CALENDAR_EVENT",
             "required_information": ["인쇄소 일정"],
         },
     ]
-    assert runtime.calls[5]["prompt_input"]["outputs"] == [
+    assert runtime.calls[4]["prompt_input"]["outputs"] == [
         {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
     ]
-    assert runtime.calls[5]["prompt_input"]["allowed_status_values"] == [
+    assert runtime.calls[4]["prompt_input"]["allowed_status_values"] == [
         {
             "resource_type": "TASK",
             "values": ["ANY", "COMPLETED", "INCOMPLETE"],
@@ -933,9 +910,9 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
         outputs=[
             goal,
             _effect_prohibition_decisions("SEND"),
+            source_decisions,
             invalid_outputs,
             corrected_outputs,
-            source_decisions,
         ]
     )
 
@@ -951,11 +928,10 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
 
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
-        "request_understanding.identify_coverage_requirement",
         "request_understanding.identify_effect_prohibitions",
-        "request_understanding.identify_output_responsibilities",
-        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
     ]
     revision_input = runtime.calls[4]["prompt_input"]
@@ -1032,7 +1008,7 @@ def test_bounded_revision_candidate__uses_same_source_information_normalization(
         retry_budget=build_default_run_budget(),
     )
 
-    assert len(runtime.calls) == 12
+    assert len(runtime.calls) == 10
     assert candidate["resource_responsibilities"]["source_reads"] == [
         {
             "resource_type": "GMAIL_DRAFT",
@@ -1233,7 +1209,6 @@ def test_request_goal_validator__reserved_additional_field__remains_defense_in_d
         goal_schema.validate_request_goal_candidate(
             candidate,
             resource_responsibilities=_resource_responsibilities(),
-            coverage_requirement={"coverage_requirement": []},
             schema=permissive_schema,
         )
 
@@ -1242,7 +1217,10 @@ def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope(
     candidate = {
         "goal": "관련 제목 목록을 요청 범위 끝까지 반환한다",
         "completion_conditions": ["요청 범위의 제목을 빠짐없이 반환한다"],
-        "constraints": _goal_constraints(search_terms=["Project Anchor"]),
+        "constraints": _goal_constraints(
+            search_terms=["Project Anchor"],
+            coverage_requirement=["EXHAUSTIVE"],
+        ),
         "analysis_requirement": "NONE",
     }
 
@@ -1252,7 +1230,6 @@ def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope(
             source_type="GMAIL_THREAD",
             required_information=["관련 제목 목록"],
         ),
-        coverage_requirement={"coverage_requirement": ["EXHAUSTIVE"]},
     )
 
     assert {
@@ -1262,10 +1239,21 @@ def test_request_goal_schema__preserves_model_owned_exhaustive_collection_scope(
     } in normalized["constraints"]
 
 
-def test_coverage_requirement_schema__rejects_non_typed_collection_scope() -> None:
-    with pytest.raises(ValueError, match="coverage requirement candidate is invalid"):
-        coverage_requirement.validate_coverage_requirement_decision(
-            {"coverage_requirement": ["ALL_RESULTS"]}
+def test_request_goal_schema__rejects_non_typed_collection_scope() -> None:
+    candidate = {
+        "goal": "관련 제목 목록을 반환한다",
+        "completion_conditions": ["관련 제목을 반환한다"],
+        "constraints": _goal_constraints(coverage_requirement=["ALL_RESULTS"]),
+        "analysis_requirement": "NONE",
+    }
+
+    with pytest.raises(ValueError, match="request goal candidate is invalid"):
+        goal_schema.validate_request_goal_candidate(
+            candidate,
+            resource_responsibilities=_resource_responsibilities(
+                source_type="GMAIL_THREAD",
+                required_information=["관련 제목 목록"],
+            ),
         )
 
 
@@ -1329,7 +1317,6 @@ def test_request_goal_validator__with_empty_responsibility_text__rejects_candida
         goal_schema.validate_request_goal_candidate(
             {key: value for key, value in candidate.items() if key != "resource_responsibilities"},
             resource_responsibilities=candidate["resource_responsibilities"],
-            coverage_requirement={"coverage_requirement": []},
         )
 
 
@@ -1760,7 +1747,7 @@ def test_semantic_revision__invented_source_need__may_be_removed() -> None:
     assert candidate["requested_effect_hints"] == ["SEND"]
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
     assert candidate["resource_responsibilities"]["source_reads"] == []
-    assert len(runtime.calls) == 12
+    assert len(runtime.calls) == 10
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
@@ -1816,8 +1803,8 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
             "required_information": ["기존 메일의 납품 주소"],
         }
     ]
-    assert len(runtime.calls) == 12
-    revision_input = runtime.calls[6]["prompt_input"]
+    assert len(runtime.calls) == 10
+    revision_input = runtime.calls[5]["prompt_input"]
     assert revision_input["base_projection"] == {
         "user_request": request.request_text,
         "selected_resource_refs": [],

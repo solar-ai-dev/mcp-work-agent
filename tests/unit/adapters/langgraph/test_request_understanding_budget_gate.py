@@ -67,11 +67,6 @@ SOURCE_DEPENDENCY_PROMPT_REF = replace(
     prompt_id="request_understanding.identify_source_dependencies",
     purpose="identify_source_dependencies",
 )
-COVERAGE_REQUIREMENT_PROMPT_REF = replace(
-    PROMPT_REF,
-    prompt_id="request_understanding.identify_coverage_requirement",
-    purpose="identify_coverage_requirement",
-)
 OUTPUT_RESPONSIBILITY_PROMPT_REF = replace(
     PROMPT_REF,
     prompt_id="request_understanding.identify_output_responsibilities",
@@ -131,6 +126,7 @@ class _RepairingAgent:
                 "recipient": [],
                 "subject": [],
                 "period": [],
+                "coverage_requirement": [],
                 "additional_constraints": [],
             },
             "resource_responsibilities": {
@@ -151,9 +147,7 @@ class _RepairingAgent:
         del requested_mode, output_schema_ref
         result = self.invoke_structured()
         output = result.structured_output
-        if prompt_ref.prompt_id == "request_understanding.identify_coverage_requirement":
-            output = {"coverage_requirement": []}
-        elif prompt_ref.prompt_id == "request_understanding.identify_source_dependencies":
+        if prompt_ref.prompt_id == "request_understanding.identify_source_dependencies":
             responsibilities = cast(Mapping[str, object], output["resource_responsibilities"])
             task_source = cast(list[Mapping[str, object]], responsibilities["source_reads"])[0]
             base = cast(
@@ -232,7 +226,6 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph = object.__new__(RequestUnderstandingSubgraph)
     subgraph._llm_runtime = agent if agent is not None else cast(Any, _NeverCalledAgent())
     subgraph._identify_goal_prompt_ref = PROMPT_REF
-    subgraph._identify_coverage_requirement_prompt_ref = COVERAGE_REQUIREMENT_PROMPT_REF
     subgraph._identify_effect_prohibitions_prompt_ref = EFFECT_PROHIBITION_PROMPT_REF
     subgraph._identify_source_dependencies_prompt_ref = SOURCE_DEPENDENCY_PROMPT_REF
     subgraph._identify_output_responsibilities_prompt_ref = OUTPUT_RESPONSIBILITY_PROMPT_REF
@@ -299,9 +292,9 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
     that needed one repair attempt (attempts=2) must add 2, not 1."""
     agent = _RepairingAgent(structured_output_attempts=2)
     subgraph = _subgraph(agent)
-    state = _state(llm_calls_used=1)
+    state = _state(llm_calls_used=3)
 
     result = subgraph._identify_goal_node(cast(Any, state))
 
-    assert agent.calls == 6
+    assert agent.calls == 5
     assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 13

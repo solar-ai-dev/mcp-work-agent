@@ -118,11 +118,6 @@ class RequestUnderstandingSubgraph:
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
-        self._identify_coverage_requirement_prompt_ref = load_prompt_reference(
-            "request_understanding.identify_coverage_requirement",
-            manifest_path,
-            execution_scope=prompt_execution_scope,
-        )
         self._identify_source_dependencies_prompt_ref = load_prompt_reference(
             "request_understanding.identify_source_dependencies",
             manifest_path,
@@ -217,7 +212,6 @@ class RequestUnderstandingSubgraph:
             working_state,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_goal_prompt_ref,
-            coverage_requirement_prompt_ref=self._identify_coverage_requirement_prompt_ref,
             effect_prohibition_prompt_ref=self._identify_effect_prohibitions_prompt_ref,
             source_dependency_prompt_ref=self._identify_source_dependencies_prompt_ref,
             output_responsibility_prompt_ref=self._identify_output_responsibilities_prompt_ref,
@@ -239,7 +233,6 @@ class RequestUnderstandingSubgraph:
                 llm_call_id=f"{request.run_id}:request.identify_goal",
                 prompt_ref=self._identify_goal_prompt_ref,
                 additional_prompt_refs=(
-                    self._identify_coverage_requirement_prompt_ref,
                     self._identify_effect_prohibitions_prompt_ref,
                     self._identify_source_dependencies_prompt_ref,
                     self._identify_output_responsibilities_prompt_ref,

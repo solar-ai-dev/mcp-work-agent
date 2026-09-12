@@ -18,7 +18,6 @@ _SAFE_FIELD_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}")
 _SUPPORTED_PROMPTS = frozenset(
     {
         "request_understanding.identify_goal",
-        "request_understanding.identify_coverage_requirement",
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
         "request_understanding.identify_output_responsibilities",
@@ -149,8 +148,6 @@ def project_llm_semantic_input(prompt_id: str, value: object) -> dict[str, objec
         result = _project_source_status_input(mapping)
     elif prompt_id == "request_understanding.identify_effect_prohibitions":
         result = _project_effect_prohibition_input(mapping)
-    elif prompt_id == "request_understanding.identify_coverage_requirement":
-        result = _project_coverage_requirement_input(mapping)
     elif prompt_id == "request_understanding.identify_source_dependencies":
         result = _project_source_dependency_input(mapping)
     elif prompt_id == "request_understanding.identify_output_responsibilities":
@@ -182,8 +179,6 @@ def project_llm_semantic_output(prompt_id: str, value: object) -> dict[str, obje
         return _unavailable()
     if prompt_id == "request_understanding.identify_goal":
         result = _project_goal_candidate(mapping)
-    elif prompt_id == "request_understanding.identify_coverage_requirement":
-        result = _project_coverage_requirement_output(mapping)
     elif prompt_id == "request_understanding.identify_effect_prohibitions":
         result = _project_effect_prohibition_candidate(mapping)
     elif prompt_id == "request_understanding.identify_source_dependencies":
@@ -238,27 +233,8 @@ def _project_identify_input(value: Mapping[object, object]) -> dict[str, object]
     return result
 
 
-def _project_coverage_requirement_input(
-    value: Mapping[object, object],
-) -> dict[str, object]:
-    return {
-        "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
-        "completion_condition_count": _count(value.get("completion_conditions")),
-    }
-
-
-def _project_coverage_requirement_output(
-    value: Mapping[object, object],
-) -> dict[str, object]:
-    return {
-        "projection_version": LANGSMITH_LLM_SEMANTIC_PROJECTION_VERSION,
-        "coverage_requirement": _safe_values(value.get("coverage_requirement")),
-    }
-
-
 def _project_source_dependency_input(value: Mapping[object, object]) -> dict[str, object]:
     result = _project_identify_input(value)
-    result["outputs"] = _project_outputs(value.get("outputs"))
     candidates = _sequence(value.get("source_candidates"))
     items: list[dict[str, object]] = []
     for raw_candidate in candidates[:_MAX_COLLECTION_ITEMS]:

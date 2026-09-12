@@ -167,6 +167,7 @@ class _ComponentInferencePort:
                         "recipient": ["person@example.test"],
                         "subject": [],
                         "period": [],
+                        "coverage_requirement": [],
                         "additional_constraints": [],
                     },
                     "analysis_requirement": "NONE",
@@ -183,6 +184,7 @@ class _ComponentInferencePort:
                         "recipient": [],
                         "subject": [],
                         "period": [],
+                        "coverage_requirement": [],
                         "additional_constraints": [],
                     },
                     "analysis_requirement": "NONE",
@@ -199,12 +201,11 @@ class _ComponentInferencePort:
                     "recipient": [],
                     "subject": [],
                     "period": [],
+                    "coverage_requirement": [],
                     "additional_constraints": [],
                 },
                 "analysis_requirement": "NONE",
             }
-        if prompt_id == "request_understanding.identify_coverage_requirement":
-            return {"coverage_requirement": []}
         if prompt_id == "request_understanding.identify_effect_prohibitions":
             return {
                 "effect_prohibitions": [
@@ -1048,10 +1049,9 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     assert result["request_intent"]["goal"] == "summarize status"
     assert llm.calls == [
         "request_understanding.identify_goal",
-        "request_understanding.identify_coverage_requirement",
         "request_understanding.identify_effect_prohibitions",
-        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
@@ -1116,9 +1116,6 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
     }
     source_input = llm.inputs["request_understanding.identify_source_dependencies"][0]
-    assert source_input["outputs"] == [
-        {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
-    ]
     source_candidates = {
         item["resource_type"]: item for item in source_input["source_candidates"]
     }
