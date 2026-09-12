@@ -721,7 +721,7 @@ class RetrievalSubgraph:
                 ),
             },
         )
-        return self._materialize_evidence(selected_state)
+        return self._materialize_evidence(selected_state, segments=segments)
 
     def _normalize_segments_node(
         self, state: ContextRetrievalLocalState
@@ -744,15 +744,7 @@ class RetrievalSubgraph:
                     "operation_inputs": {
                         "normalize_segments": {
                             "acquisition_result": acquisition_result,
-                            "preferred_segment_ids": preferred_detail_evidence_ids(
-                                state.get("evidence_selection"),
-                                [
-                                    state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
-                                    for query in _require_state_value(
-                                        state["query_plan"], "query_plan"
-                                    )["route_queries"]
-                                ],
-                            ),
+                            "preferred_segment_ids": self._preferred_segment_ids(state),
                         }
                     }
                 },
@@ -785,7 +777,7 @@ class RetrievalSubgraph:
                     "operation_inputs": {
                         "normalize_segments": {
                             "acquisition_result": acquisition_result,
-                            "preferred_segment_ids": list(state.get("segments", [])),
+                            "preferred_segment_ids": self._preferred_segment_ids(state),
                         }
                     }
                 },
@@ -797,6 +789,14 @@ class RetrievalSubgraph:
         if expected_ids is not None and actual_ids != expected_ids:
             raise ValueError("stable segment identity changed within one retrieval round")
         return segments
+
+    def _preferred_segment_ids(self, state: ContextRetrievalLocalState) -> list[str]:
+        query_plan = _require_state_value(state["query_plan"], "query_plan")
+        canonical_plans = state[CONTEXT_CANONICAL_PLANS_KEY]
+        return preferred_detail_evidence_ids(
+            state.get("evidence_selection"),
+            [canonical_plans[query["route_id"]] for query in query_plan["route_queries"]],
+        )
 
     def _ephemeral_raw_state(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         handles = cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, []))
@@ -848,13 +848,16 @@ class RetrievalSubgraph:
         }
 
     def _materialize_evidence(
-        self, state: ContextRetrievalLocalState
+        self,
+        state: ContextRetrievalLocalState,
+        *,
+        segments: list[Any],
     ) -> ContextRetrievalLocalState:
         local_state = cast(AgentLocalStateV1, state[CONTEXT_AGENT_LOCAL_KEY])
         selection = state[CONTEXT_SELECTION_OUTPUT_KEY]
         evidence_drafts = materialize_evidence_drafts(
             selection,
-            segments=cast(list[Any], self._normalized_segments(state)),
+            segments=segments,
         )
         updated_local = dict(local_state)
         updated_local["node_state"] = "SELECTION_VALIDATED"
@@ -866,7 +869,7 @@ class RetrievalSubgraph:
             evidence_drafts,
             state.get("person_candidates", prior_candidates),
             state.get("exclusion_obligation_segment_ids", []),
-            source_segments=self._normalized_segments(state),
+            source_segments=segments,
         )
         return {
             **state,
@@ -1004,11 +1007,16 @@ class RetrievalSubgraph:
                 attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
             ),
         )
+        reassessment_segments = (
+            self._normalized_segments(state)
+            if sufficiency_result["status"] == "PARTIAL" and not should_plan_followup
+            else []
+        )
         reassessment_issues, retry_budget = authorize_evidence_reassessment(
             sufficiency=sufficiency_result,
             selection=state[CONTEXT_SELECTION_OUTPUT_KEY],
             candidates=state.get(CONTEXT_RAG_CANDIDATES_KEY, []),
-            segments=self._normalized_segments(state),
+            segments=reassessment_segments,
             retry_budget=retry_budget,
             can_acquire_new_information=should_plan_followup,
         )

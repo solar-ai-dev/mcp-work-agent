@@ -1413,6 +1413,185 @@ def test_retrieval__compiled_container_scope__allows_current_authorized_45_reads
     assert result["retry_budget"]["max_source_page_calls"] == 50
 
 
+def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selection() -> None:
+    task_counts = (2, 2, 1, 0, 2, 0, 2, 0, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 3)
+
+    class MultiSourceInference(_ComponentInferencePort):
+        def _response(
+            self, prompt_id: str, projection: Mapping[str, object]
+        ) -> dict[str, object]:
+            if prompt_id == "retrieval.plan_query":
+                routes = cast(list[Mapping[str, object]], projection["input_routes"])
+                return {
+                    "schema_version": 2,
+                    "route_queries": [
+                        {
+                            "route_id": route["route_id"],
+                            "operation": "SEARCH",
+                            "reason_codes": ["USER_REQUEST"],
+                            "search_spec": {
+                                "mode": "INITIAL",
+                                "constraints": (
+                                    [
+                                        {
+                                            "kind": "CONTAINER_REF",
+                                            "container_refs": [
+                                                cast(list[str], route["container_refs"])[0]
+                                            ],
+                                        }
+                                    ]
+                                    if route.get("container_refs")
+                                    else []
+                                ),
+                            },
+                            "detail_candidate_ref": None,
+                        }
+                        for route in routes
+                    ],
+                }
+            return super()._response(prompt_id, projection)
+
+    class MultiSourceConnector:
+        def __init__(self) -> None:
+            self.task_read_count = 0
+            self.calls: list[str] = []
+
+        def execute_read(
+            self, binding: Any, tool_arguments: dict[str, Any]
+        ) -> ConnectorReadResultV1:
+            del tool_arguments
+            self.calls.append(binding.tool_id)
+            if binding.tool_id == "tasks_list_tasks":
+                read_index = self.task_read_count
+                self.task_read_count += 1
+                items: list[JsonValue] = [
+                    {
+                        "resource_type": "task",
+                        "resource_id": f"task-{read_index}-{index}",
+                        "parent_id": f"task-list-{read_index}",
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": {
+                            "title": f"Task {read_index}-{index}",
+                            "status": "needsAction",
+                            "due": None,
+                            "notes": f"Task note {read_index}-{index}",
+                        },
+                    }
+                    for index in range(task_counts[read_index])
+                ]
+            elif binding.tool_id == "tasks_list_tasklists":
+                items = [
+                    {
+                        "resource_type": "task_list",
+                        "resource_id": f"task-list-0-{index}",
+                        "parent_id": None,
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": {"title": f"Task list {index}"},
+                    }
+                    for index in range(20)
+                ]
+            elif binding.tool_id == "calendar_list_calendars":
+                items = [
+                    {
+                        "resource_type": "calendar",
+                        "resource_id": f"calendar-0-{index}",
+                        "parent_id": None,
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": {"summary": f"Calendar {index}"},
+                    }
+                    for index in range(20)
+                ]
+            else:
+                raise AssertionError(f"unexpected tool: {binding.tool_id}")
+            return ConnectorReadResultV1(
+                1,
+                binding.tool_id,
+                f"multi-source-read-{len(self.calls)}",
+                {"items": items},
+                None,
+                len(items),
+            )
+
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    route_plan = _answer_route_plan()
+    cast(Any, route_plan)["input_plan"]["input_routes"] = [
+        {
+            "route_id": "task-route",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["tasks_list_tasks"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+        {
+            "route_id": "task-list-route",
+            "resource_type": "TASK_LIST",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["tasks_list_tasklists"],
+            "required": True,
+            "reason_codes": ["RESOURCE_DISCOVERY"],
+        },
+        {
+            "route_id": "calendar-route",
+            "resource_type": "CALENDAR",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["calendar_list_calendars"],
+            "required": True,
+            "reason_codes": ["RESOURCE_DISCOVERY"],
+        },
+    ]
+    state["tool_route_plan"] = cast(Any, route_plan)
+    connector = MultiSourceConnector()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=MultiSourceInference(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+        authorized_tasklist_ids_provider=lambda: tuple(
+            f"task-list-{index}" for index in range(22)
+        ),
+        authorized_calendar_ids_provider=lambda: tuple(
+            f"calendar-{index}" for index in range(20)
+        ),
+    ).build()
+
+    updates: list[dict[str, object]] = []
+    with provider_dispatch_execution_scope():
+        for update in graph.stream(state, stream_mode="updates"):
+            updates.append(cast(dict[str, object], update))
+            if "rag_retrieve" in update:
+                break
+
+    assert connector.calls == [
+        *["tasks_list_tasks"] * 22,
+        "tasks_list_tasklists",
+        "calendar_list_calendars",
+    ]
+    normalize_update = cast(
+        Mapping[str, object],
+        next(update["normalize_segments"] for update in updates if "normalize_segments" in update),
+    )
+    assert len(cast(list[object], normalize_update["__context_read_result_handles__"])) == 24
+    assert len(cast(list[object], normalize_update["__context_segment_handles__"])) == 65
+    assert len(cast(list[object], normalize_update["segments"])) == 24
+    assert any("rag_retrieve" in update for update in updates)
+
+
 @pytest.mark.parametrize(
     ("has_next_page", "expected_continuation"),
     [(False, "EXHAUSTED"), (True, "HAS_MORE")],
