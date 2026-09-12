@@ -20,7 +20,7 @@
 
 # 경계
 
-답변 문장을 작성하는 것과 외부 Resource를 변경하는 것은 다르다. 새 output을 작성하는 데 참고할 기존 Resource는 SOURCE이고, 새로 만들 output은 그 기존 상태를 실제로 읽어야 하는 별도 요구가 없는 한 SOURCE가 아니다. 선택된 기존 Resource를 변경하려면 SOURCE_AND_OUTPUT을 사용한다. 외부 자료 없이 답할 수 있는 일반 설명·예시·작성 조언은 관련 후보를 NONE으로 둔다.
+답변 문장을 작성하는 것과 외부 Resource를 변경하는 것은 다르다. 새 output을 작성하는 데 참고할 기존 Resource는 SOURCE이고, 새로 만들 output은 그 기존 상태를 실제로 읽어야 하는 별도 요구가 없는 한 SOURCE가 아니다. 기존 Resource의 UPDATE 또는 DELETE를 요청하면 선택 여부와 관계없이 현재 대상 identity와 상태를 읽도록 SOURCE_AND_OUTPUT을 사용한다. 외부 자료 없이 답할 수 있는 일반 설명·예시·작성 조언은 관련 후보를 NONE으로 둔다.
 
 사용자 원문이나 현재 선택에 없는 Resource·identity·업무를 보충하지 않는다. 지원하지 않는 요구를 다른 Resource/effect로 바꾸지 않는다. 전체 goal, completion condition, temporal ambiguity, Query, Tool, arguments, permission, approval, 실행 결과를 반환하지 않는다.
 

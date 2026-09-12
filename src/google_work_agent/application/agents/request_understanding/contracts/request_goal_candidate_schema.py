@@ -582,7 +582,33 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
     errors = validate_output_schema(value, schema)
     if errors:
         raise ValueError(f"normalized request goal candidate is invalid: {'; '.join(errors)}")
-    return cast(RequestGoalCandidateV1, value)
+    candidate = cast(RequestGoalCandidateV1, value)
+    _validate_existing_resource_mutation_sources(candidate["resource_responsibilities"])
+    return candidate
+
+
+def _validate_existing_resource_mutation_sources(
+    responsibilities: ResourceResponsibilitiesV1,
+) -> None:
+    source_resource_types = {
+        source["resource_type"] for source in responsibilities["source_reads"]
+    }
+    missing_source_paths = [
+        f"$.resource_responsibilities.outputs[{index}]"
+        for index, output in enumerate(responsibilities["outputs"])
+        if output["effect"] in {"UPDATE", "DELETE"}
+        and output["resource_type"] not in source_resource_types
+    ]
+    if not missing_source_paths:
+        return
+    raise RequestGoalSemanticValidationError(
+        "existing Resource UPDATE/DELETE requires a same-resource source read",
+        reason_code="REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED",
+        affected_field_paths=(
+            "$.resource_responsibilities.source_reads",
+            *missing_source_paths,
+        ),
+    )
 
 
 __all__ = [
