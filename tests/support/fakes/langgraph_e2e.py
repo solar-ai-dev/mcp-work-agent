@@ -219,9 +219,12 @@ def _respond(
             "goal": request_text,
             "completion_conditions": ["E2E terminal outcome"],
             "constraints": [],
-            "resource_responsibilities": _goal_resource_responsibilities(scenario),
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
+    if prompt_id == "request_understanding.identify_resource_responsibilities":
+        return _goal_resource_role_decisions(base, scenario)
+    if prompt_id == "request_understanding.identify_source_status":
+        return {"statuses": []}
     if prompt_id == "request_understanding.detect_ambiguity":
         needs_confirmation = scenario in {
             "RESTART_RESUME",
@@ -580,6 +583,50 @@ def _goal_resource_responsibilities(scenario: str) -> dict[str, object]:
             for resource_type, effect in zip(output_types, effects, strict=True)
         ],
     }
+
+
+def _goal_resource_role_decisions(
+    projection: Mapping[str, object], scenario: str
+) -> dict[str, object]:
+    responsibilities = _goal_resource_responsibilities(scenario)
+    source_reads = {
+        str(item["resource_type"]): list(cast(list[str], item["required_information"]))
+        for item in cast(list[Mapping[str, object]], responsibilities["source_reads"])
+    }
+    outputs = {
+        str(item["resource_type"]): str(item["effect"])
+        for item in cast(list[Mapping[str, object]], responsibilities["outputs"])
+    }
+    candidates = cast(list[Mapping[str, object]], projection["resource_candidates"])
+    decisions: list[dict[str, object]] = []
+    for candidate in candidates:
+        resource_type = str(candidate["resource_type"])
+        required_information = source_reads.get(resource_type)
+        effect = outputs.get(resource_type)
+        if required_information is not None and effect is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE_AND_OUTPUT",
+                    "required_information": required_information,
+                    "effect": effect,
+                }
+            )
+        elif required_information is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "role": "SOURCE",
+                    "required_information": required_information,
+                }
+            )
+        elif effect is not None:
+            decisions.append(
+                {"resource_type": resource_type, "role": "OUTPUT", "effect": effect}
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "role": "NONE"})
+    return {"resource_decisions": decisions}
 
 
 def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:
