@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from google_work_agent.adapters.langgraph.langsmith_llm_semantic_projection import (
+    project_llm_semantic_input,
+    project_llm_semantic_output,
+)
 from google_work_agent.adapters.llm.runtime.llm_credential_router import LlmCredentialRouter
 from google_work_agent.adapters.llm.runtime.llm_runtime_status_router import LlmRuntimeStatusRouter
 from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
@@ -561,6 +565,7 @@ class StructuredInferenceRuntimeRouter:
                 call_kind="LLM_INFERENCE",
                 provider=provider,
                 prompt_ref=prompt_ref,
+                prompt_input=prompt_input,
                 output_schema=output_schema,
                 selected_model_id=selected_model_id,
             )
@@ -580,12 +585,19 @@ class StructuredInferenceRuntimeRouter:
                     error=error,
                 )
                 raise
+            trace_duration_ms = max(0, int((time.perf_counter() - trace_started) * 1000))
+            safe_semantic_output = _trace_semantic_output(
+                prompt_id=prompt_ref.prompt_id,
+                payload=payload.content,
+            )
             self._finish_llm_trace(
                 trace_handle,
                 status="COMPLETED",
                 started=trace_started,
+                duration_ms=trace_duration_ms,
                 input_tokens=payload.input_tokens,
                 output_tokens=payload.output_tokens,
+                safe_semantic_output=safe_semantic_output,
             )
             structured_output, attempts = self._validate_or_repair(
                 provider=provider,
@@ -696,6 +708,7 @@ class StructuredInferenceRuntimeRouter:
             call_kind="LLM_SCHEMA_REPAIR",
             provider=provider,
             prompt_ref=prompt_ref,
+            prompt_input=prompt_input,
             output_schema=output_schema,
             selected_model_id=None,
         )
@@ -721,10 +734,16 @@ class StructuredInferenceRuntimeRouter:
                 error=error,
             )
             raise
+        trace_duration_ms = max(0, int((time.perf_counter() - trace_started) * 1000))
         self._finish_llm_trace(
             trace_handle,
             status="COMPLETED",
             started=trace_started,
+            duration_ms=trace_duration_ms,
+            safe_semantic_output=_trace_semantic_output(
+                prompt_id=prompt_ref.prompt_id,
+                payload=repaired,
+            ),
         )
         repair_errors = _collect_validation_errors(repaired, output_schema, semantic_validate)
         if repair_errors:
@@ -758,6 +777,7 @@ class StructuredInferenceRuntimeRouter:
         call_kind: ExternalCallKind,
         provider: StructuredLLMProvider,
         prompt_ref: PromptReference,
+        prompt_input: Mapping[str, object],
         output_schema: OutputSchemaDefinition,
         selected_model_id: str | None,
     ) -> ExternalCallTraceHandleV1 | None:
@@ -781,6 +801,10 @@ class StructuredInferenceRuntimeRouter:
                     prompt_version=prompt_ref.prompt_version,
                     prompt_content_hash=prompt_ref.content_hash,
                     output_schema_id=output_schema.schema_version,
+                    safe_semantic_input=_trace_semantic_input(
+                        prompt_id=prompt_ref.prompt_id,
+                        prompt_input=prompt_input,
+                    ),
                 )
             )
         except Exception:
@@ -792,9 +816,11 @@ class StructuredInferenceRuntimeRouter:
         *,
         status: Literal["COMPLETED", "FAILED"],
         started: float,
+        duration_ms: int | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         error: Exception | None = None,
+        safe_semantic_output: Mapping[str, object] | None = None,
     ) -> None:
         trace = self.external_call_trace
         if trace is None or handle is None:
@@ -806,12 +832,17 @@ class StructuredInferenceRuntimeRouter:
                 ExternalCallTraceFinishV1(
                     schema_version=1,
                     status=status,
-                    duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                    duration_ms=(
+                        max(0, int((time.perf_counter() - started) * 1000))
+                        if duration_ms is None
+                        else duration_ms
+                    ),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=_sum_tokens(input_tokens, output_tokens),
                     error_type=None if error is None else type(error).__name__,
                     safe_error_code=safe_error_code,
+                    safe_semantic_output=safe_semantic_output,
                 ),
             )
         except Exception:
@@ -947,6 +978,24 @@ def _parse_payload(payload: object) -> object:
 
         return json.loads(payload)
     return payload
+
+
+def _trace_semantic_input(
+    *, prompt_id: str, prompt_input: Mapping[str, object]
+) -> Mapping[str, object] | None:
+    try:
+        return project_llm_semantic_input(prompt_id, prompt_input)
+    except Exception:
+        return None
+
+
+def _trace_semantic_output(
+    *, prompt_id: str, payload: object
+) -> Mapping[str, object] | None:
+    try:
+        return project_llm_semantic_output(prompt_id, _parse_payload(payload))
+    except Exception:
+        return None
 
 
 def _collect_validation_errors(

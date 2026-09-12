@@ -28,6 +28,23 @@ _CONSTRAINT_KINDS = [
 _NON_EMPTY_STRING = {"type": "string", "minLength": 1}
 _LOCAL_ISO_PATTERN = r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 
+
+def _unique_constraint_kind_guards() -> list[dict[str, object]]:
+    """Express the canonical one-constraint-per-kind rule to the provider schema."""
+
+    return [
+        {
+            "contains": {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {"kind": {"enum": [kind]}},
+            },
+            "minContains": 0,
+            "maxContains": 1,
+        }
+        for kind in _CONSTRAINT_KINDS
+    ]
+
 _CONSTRAINT_SCHEMA = {
     "oneOf": [
         {
@@ -168,7 +185,16 @@ _INITIAL_SEARCH_SPEC = {
     "required": ["mode", "constraints"],
     "properties": {
         "mode": {"const": "INITIAL"},
-        "constraints": {"type": "array", "minItems": 1, "items": _CONSTRAINT_SCHEMA},
+        "constraints": {
+            "type": "array",
+            "description": (
+                "One effective constraint per kind. A search hypothesis therefore has at "
+                "most one CONCEPT object; its manifestations express that one primary concept."
+            ),
+            "minItems": 1,
+            "items": _CONSTRAINT_SCHEMA,
+            "allOf": _unique_constraint_kind_guards(),
+        },
     },
 }
 _CHANGED_SEARCH_SPEC = {
@@ -184,7 +210,15 @@ _CHANGED_SEARCH_SPEC = {
             "if": {"properties": {"upsert_constraints": {"maxItems": 0}}},
             "then": {"properties": {"remove_constraint_kinds": {"minItems": 1}}},
             "properties": {
-                "upsert_constraints": {"type": "array", "items": _CONSTRAINT_SCHEMA},
+                "upsert_constraints": {
+                    "type": "array",
+                    "description": (
+                        "One replacement per constraint kind. Use at most one CONCEPT object "
+                        "for the changed hypothesis."
+                    ),
+                    "items": _CONSTRAINT_SCHEMA,
+                    "allOf": _unique_constraint_kind_guards(),
+                },
                 "remove_constraint_kinds": {
                     "type": "array",
                     "uniqueItems": True,

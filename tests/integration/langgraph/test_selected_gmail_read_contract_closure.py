@@ -15,6 +15,12 @@ from google_work_agent.adapters.langgraph.profiles.profile_registry import Graph
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.projections import (
     execute_read_projection,
 )
+from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_responsibilities,
+)
+from google_work_agent.application.agents.request_understanding import (
+    identify_source_dependencies as source_dependencies,
+)
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_goal_candidate_schema as goal_schema,
 )
@@ -102,9 +108,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
             "additional_constraints": [],
         },
         "resource_responsibilities": {
-            "source_reads": [
-                {"resource_type": "GMAIL_THREAD", "required_information": []}
-            ],
+            "source_reads": [{"resource_type": "GMAIL_THREAD", "required_information": []}],
             "outputs": [],
         },
         "analysis_requirement": "NONE",
@@ -119,10 +123,23 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         ]
     )
 
+    catalog = load_signed_tool_registry()
     goal = identify_goal(
         llm_runtime=runtime,
         request=request,
         prompt_ref=_prompt("request_understanding.identify_goal"),
+        effect_prohibition_prompt_ref=_prompt("request_understanding.identify_effect_prohibitions"),
+        source_dependency_prompt_ref=_prompt("request_understanding.identify_source_dependencies"),
+        output_responsibility_prompt_ref=_prompt(
+            "request_understanding.identify_output_responsibilities"
+        ),
+        source_status_prompt_ref=_prompt("request_understanding.identify_source_status"),
+        source_dependency_candidates=source_dependencies.build_source_dependency_candidates(
+            catalog
+        ),
+        output_responsibility_candidates=(
+            output_responsibilities.build_output_responsibility_candidates(catalog)
+        ),
     )
     ambiguity, _ = _detect_ambiguity_with_budget(
         llm_runtime=runtime,
@@ -137,7 +154,6 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         artifact_id="intent-1",
         user_request=request.request_text,
     )
-    catalog = load_signed_tool_registry()
     candidate, retry_budget = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
@@ -199,6 +215,10 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
     assert arguments == {"thread_id": "thread-42"}
     assert [cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
     ]
 

@@ -1192,7 +1192,9 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 
 | 책임 | 처리 |
 | --- | --- |
-| `identify_goal` | 목표·완료조건·제약 후보를 만든다. 원문 period를 보존한다. |
+| `identify_goal` | 목표·완료조건·일반 제약·분석 필요 후보를 만든다. Resource 역할과 source status를 만들지 않으며 원문 period를 보존한다. |
+| `identify_resource_responsibilities` | 확정 전 goal 후보와 current-Run 입력을 소비해 기존 `source_reads`와 요청된 `outputs`를 분리한다. |
+| `identify_source_status` | 확정된 `source_reads.resource_type`만 대상으로 추가 source 상태 범위를 판단한다. output effect·Resource 역할·Tool·Query는 바꾸지 않는다. |
 | `identify_temporal_scope` | Gmail period가 있을 때 `MESSAGE_TIME \| EVENT_TIME`을 판단한다. 없으면 pass-through한다. 일반 코드의 키워드·정규식으로 이 의미를 교체하지 않는다. |
 | `detect_ambiguity` | 사용자 선택 누락과 Connector READ로 해소할 정보를 구분한다. 초기 연결 검사에는 §5.3의 같은 Application use case를 사용한다. |
 | `finalize_intent → validate_intent` | 실제 current-run source text와 identity-bearing 후보를 대조해 provenance를 부여하고 확정한다. |
@@ -1348,7 +1350,8 @@ FreeBusy interval의 교집합·차집합·가용 시간 계산도 결정적 Ret
 | `extract_work_facts` | Evidence에 명시되거나 근거로 추론 가능한 업무 사실 |
 | `resolve_entity_relations` | 사람·업무·Resource identity·ownership/reference 관계 후보. entity_relation_candidates만 갱신 |
 | `resolve_temporal_dependencies` | 날짜·기간·선후·dependency 후보. temporal_dependency_candidates만 갱신. Calendar 산술·DAG 검증은 소유하지 않음 |
-| `detect_duplicate_conflict_candidates` | duplicate_conflict_candidates 제안. DUPLICATES·CONFLICTS_WITH 최종 판정 아님 |
+| `detect_duplicate_conflict_candidates` | fact↔fact duplicate_conflict_candidates 제안. DUPLICATES·CONFLICTS_WITH 최종 판정 아님 |
+| `assess_requested_task_satisfaction` | 현재 Task 관측이 요청 업무를 이미 만족하는지 SATISFIED·NOT_SATISFIED·UNDETERMINED로 평가. fact↔fact 관계는 만들지 않음 |
 | `validate_relations` | 세 후보 collection을 정규화된 Source·Calendar availability·Task 현재 상태로 검증해 validated_relations·relation_validation_ambiguities 기록 |
 | `assess_action_necessity` | frozen Output Route별 현재 적용 여부를 한 번 판단. Task CREATE는 앞선 중복 검토 결과에서 결정적으로 파생 |
 | `assess_information_gaps` | 현재 목표의 부족 정보와 해결 가능한 Retrieval Need. ambiguity_candidates·retrieval_needs만 갱신 |
@@ -1746,7 +1749,7 @@ Runtime Node ID는 이 문서가 소유하고, repository owner·naming·placeme
 | `analysis.extract_facts` | work_analysis | LLM | Evidence-grounded work facts |
 | `analysis.resolve_entity_relations` | work_analysis | LLM/conditional | entity/resource relation candidates only |
 | `analysis.resolve_temporal_dependencies` | work_analysis | LLM/conditional | temporal/dependency candidates only |
-| `analysis.detect_duplicate_conflict_candidates` | work_analysis | LLM/conditional | duplicate/conflict candidates only |
+| `analysis.detect_duplicate_conflict_candidates` | work_analysis | LLM/conditional | fact↔fact duplicate/conflict candidate와 requested Task satisfaction을 서로 다른 atomic Prompt로 평가해 기존 typed assessment로 조립 |
 | `analysis.validate_relations` | work_analysis | deterministic | duplicate/conflict/current-state relation validation |
 | `analysis.assess_action_necessity` | work_analysis | LLM/conditional | frozen output route별 현재 적용 여부. Task CREATE는 중복 검토에서 결정적으로 파생 |
 | `analysis.assess_information_gaps` | work_analysis | LLM | missing information / retrieval needs only |
@@ -1779,7 +1782,7 @@ registered node/resume target set이 변경되면 compiled Resume Target Registr
 
 | node_id | subgraph | type | 주요 입력 | 주요 출력 |
 | --- | --- | --- | --- | --- |
-| `request.identify_goal` | request_understanding | LLM | request | goal candidate |
+| `request.identify_goal` | request_understanding | LLM | request | goal 후보 → resource 책임 → source status를 순서대로 조립한 goal candidate |
 | `request.identify_temporal_scope` | request_understanding | LLM/conditional | request + goal period/context | temporal axis를 더한 goal candidate |
 | `request.detect_ambiguity` | request_understanding | LLM/conditional | request + goal | ambiguity |
 | `request.finalize` | request_understanding | deterministic | local candidates | `finalize_intent → validate_intent → RequestIntentV2` |

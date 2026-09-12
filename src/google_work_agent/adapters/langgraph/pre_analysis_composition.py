@@ -85,6 +85,7 @@ def build_pre_analysis_subgraphs(
         request_understanding=RequestUnderstandingSubgraph(
             connector_prerequisites=connector_prerequisites,
             llm_runtime=llm_runtime,
+            tool_catalog=tool_catalog,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,
             id_factory=id_factory,

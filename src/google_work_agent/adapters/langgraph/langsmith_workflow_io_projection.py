@@ -1,4 +1,4 @@
-"""Build bounded, non-semantic LangSmith projections from LangGraph payloads."""
+"""Build bounded, privacy-safe LangSmith projections from LangGraph payloads."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ _MAX_PROJECTION_BYTES: Final = 16 * 1024
 _MAX_STATE_FIELDS: Final = 64
 _MAX_COLLECTION_ITEMS: Final = 12
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
+_SAFE_FIELD_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}")
 
 _TOP_LEVEL_FIELDS = frozenset(
     {
@@ -130,6 +131,11 @@ _STRING_FIELDS = frozenset(
         "tool_registry_version",
         "confidence_band",
         "stop_reason",
+        "field",
+        "missing_information_owner",
+        "continuation_status",
+        "validation_stage",
+        "validation_rule",
         "change_reason_code",
         "query_identity_hash",
         "previous_query_hash",
@@ -149,6 +155,7 @@ _BOOLEAN_FIELDS = frozenset(
         "exhausted",
         "is_exhausted",
         "notes_truncated",
+        "read_supported",
     }
 )
 
@@ -196,6 +203,14 @@ _SAFE_VALUE_LIST_FIELDS = frozenset(
         "requested_resource_hints",
         "required_resource_types",
         "affected_dimensions",
+        "input_resource_types",
+        "output_resource_types",
+        "output_effects",
+        "allowed_read_tool_ids",
+        "allowed_operations",
+        "supported_constraint_kinds",
+        "required_constraint_kinds",
+        "write_effects",
     }
 )
 
@@ -220,15 +235,15 @@ _STRUCTURED_SEQUENCE_FIELDS = frozenset(
         "route_issues",
         "evidence_gaps",
         "needs",
+        "effective_constraints",
+        "normalized_constraints",
     }
 )
 
 _COUNT_ONLY_SEQUENCE_FIELDS = frozenset(
     {
         "completion_conditions",
-        "missing_fields",
         "required_information",
-        "allowed_read_tool_ids",
         "resource_handles",
         "source_summaries",
         "missing_slots",
@@ -353,6 +368,8 @@ def _project_value(field_name: str, value: object, *, depth: int) -> object | No
         return _safe_number(value)
     if field_name in _SAFE_VALUE_LIST_FIELDS:
         return _project_safe_value_list(value)
+    if field_name == "missing_fields":
+        return _project_safe_field_identifier_list(value)
     if field_name in _COUNT_ONLY_SEQUENCE_FIELDS:
         return _collection_count(value)
     if field_name in _STRUCTURED_SEQUENCE_FIELDS:
@@ -411,6 +428,23 @@ def _project_safe_value_list(value: object) -> dict[str, object] | None:
         "values": safe_values[:_MAX_COLLECTION_ITEMS],
         **({"values_truncated": True} if len(safe_values) > _MAX_COLLECTION_ITEMS else {}),
     }
+
+
+def _project_safe_field_identifier_list(value: object) -> dict[str, object] | None:
+    if not _is_sequence(value):
+        return None
+    sequence = list(value)
+    safe_values = [
+        item
+        for item in sequence
+        if isinstance(item, str) and _SAFE_FIELD_IDENTIFIER.fullmatch(item)
+    ]
+    result: dict[str, object] = {"count": len(sequence)}
+    if safe_values:
+        result["values"] = safe_values[:_MAX_COLLECTION_ITEMS]
+    if len(safe_values) > _MAX_COLLECTION_ITEMS:
+        result["values_truncated"] = True
+    return result
 
 
 def _collection_count(value: object) -> dict[str, int] | None:

@@ -582,7 +582,7 @@ def test_compose_gmail_read__empty_result__uses_observed_state_without_fixed_ret
 
 
 def test_compose_rejects__evidence_not__approved_by_outline() -> None:
-    with pytest.raises(ValueError, match="outside"):
+    with pytest.raises(ValueError, match="outside") as raised:
         compose_answer(
             user_request="Summarize.",
             request_intent={"goal": "summary"},
@@ -595,6 +595,8 @@ def test_compose_rejects__evidence_not__approved_by_outline() -> None:
                 "evidence_refs": ["e1"],
             },
         )
+    assert raised.value.reason_code == "COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID"
+    assert raised.value.affected_field_paths == ("$.evidence_refs",)
 
 
 def test_compose_rejects__serialized_internal_object__as_user_answer() -> None:

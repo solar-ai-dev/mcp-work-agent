@@ -15,6 +15,9 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphInterrupt
 from langsmith import Client
 
+from google_work_agent.adapters.langgraph.langsmith_llm_semantic_projection import (
+    sanitize_llm_semantic_projection,
+)
 from google_work_agent.adapters.langgraph.langsmith_workflow_io_projection import (
     project_langsmith_workflow_payload,
 )
@@ -29,6 +32,15 @@ from google_work_agent.ports.system.external_call_trace_port import (
 _LOGGER = logging.getLogger(__name__)
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 _SAFE_FIELD_PATH = re.compile(r"[$A-Za-z0-9_.\[\]-]{1,160}")
+_SAFE_VALIDATION_STAGES = frozenset(
+    {
+        "OUTPUT_SCHEMA",
+        "QUERY_PLAN_VALIDATOR",
+        "ROUND_VALIDATOR",
+        "BUILD_QUERY",
+        "POST_INFERENCE_VALIDATION",
+    }
+)
 _TRACE_BINDING_KEYS = frozenset(
     {
         "code_sha",
@@ -316,7 +328,15 @@ class LangSmithWorkflowTraceCallback(BaseCallbackHandler, ExternalCallTracePort)
             if safe_error_code is not None:
                 metadata["safe_error_code"] = safe_error_code
             affected_field_paths = _safe_affected_field_paths(error)
+            validation_stage = _safe_validation_stage(error)
+            if validation_stage is None and affected_field_paths:
+                validation_stage = "POST_INFERENCE_VALIDATION"
+            if validation_stage is not None:
+                metadata["validation_stage"] = validation_stage
+                if safe_error_code is not None:
+                    metadata["validation_rule"] = safe_error_code
             if affected_field_paths:
+                metadata["affected_field_paths"] = list(affected_field_paths)
                 metadata["affected_field_path_hashes"] = [
                     sha256(path.encode("utf-8")).hexdigest()[:16] for path in affected_field_paths
                 ]
@@ -463,6 +483,11 @@ def _safe_affected_field_paths(error: BaseException) -> tuple[str, ...]:
     )
 
 
+def _safe_validation_stage(error: BaseException) -> str | None:
+    value = getattr(error, "validation_stage", None)
+    return value if isinstance(value, str) and value in _SAFE_VALIDATION_STAGES else None
+
+
 def _dotted_order(
     *,
     start_time: datetime,
@@ -529,6 +554,9 @@ def _external_call_input(command: ExternalCallTraceStartV1) -> dict[str, object]
         value = _safe_optional_value(getattr(command, name))
         if value is not None:
             result[name] = value
+    semantic_input = sanitize_llm_semantic_projection(command.safe_semantic_input)
+    if semantic_input is not None:
+        result["semantic_input"] = semantic_input
     return result
 
 
@@ -548,6 +576,9 @@ def _external_call_output(result: ExternalCallTraceFinishV1) -> dict[str, object
         output["error_type"] = error_type
     if (error_code := _safe_optional_value(result.safe_error_code)) is not None:
         output["safe_error_code"] = error_code
+    semantic_output = sanitize_llm_semantic_projection(result.safe_semantic_output)
+    if semantic_output is not None:
+        output["semantic_output"] = semantic_output
     return output
 
 

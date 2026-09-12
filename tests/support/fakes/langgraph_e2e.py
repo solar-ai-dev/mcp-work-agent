@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -219,9 +219,24 @@ def _respond(
             "goal": request_text,
             "completion_conditions": ["E2E terminal outcome"],
             "constraints": [],
-            "resource_responsibilities": _goal_resource_responsibilities(scenario),
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
+    if prompt_id == "request_understanding.identify_effect_prohibitions":
+        return {
+            "effect_prohibitions": [
+                {
+                    "effect": candidate["effect"],
+                    "prohibition": "NOT_FORBIDDEN",
+                }
+                for candidate in cast(Sequence[Mapping[str, object]], base["effect_candidates"])
+            ]
+        }
+    if prompt_id == "request_understanding.identify_source_dependencies":
+        return _goal_source_dependency_decisions(base, scenario)
+    if prompt_id == "request_understanding.identify_output_responsibilities":
+        return _goal_output_responsibility_decisions(base, scenario)
+    if prompt_id == "request_understanding.identify_source_status":
+        return {"statuses": []}
     if prompt_id == "request_understanding.detect_ambiguity":
         needs_confirmation = scenario in {
             "RESTART_RESUME",
@@ -235,9 +250,7 @@ def _respond(
                 "attendee"
                 if scenario == "CALENDAR_CONFIRMATION"
                 else (
-                    "target_resource"
-                    if scenario == "UNRESOLVED_TARGET_CONFIRMATION"
-                    else "target"
+                    "target_resource" if scenario == "UNRESOLVED_TARGET_CONFIRMATION" else "target"
                 )
             ]
             if needs_confirmation
@@ -337,7 +350,8 @@ def _respond(
     }:
         return {"relation_candidates": []}
     if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
-        required = base.get("task_duplicate_review_required") is True
+        return {"relation_candidates": []}
+    if prompt_id == "work_analysis.assess_requested_task_satisfaction":
         source_state = cast(Mapping[str, object], base["source_state"])
         task_candidates = cast(
             list[Mapping[str, object]], source_state.get("task_review_candidates", [])
@@ -347,7 +361,6 @@ def _respond(
             fact = facts[0]
             refs = cast(list[str], fact["evidence_refs"])
             return {
-                "relation_candidates": [],
                 "requested_work_status": "SATISFIED",
                 "requested_work_reason": "The current Task already fulfils the request",
                 "matched_fact_ids": [str(fact["fact_id"])],
@@ -355,11 +368,8 @@ def _respond(
                 "evidence_refs": refs,
             }
         return {
-            "relation_candidates": [],
-            "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
-            "requested_work_reason": (
-                "Observed tasks do not satisfy the request" if required else None
-            ),
+            "requested_work_status": "NOT_SATISFIED",
+            "requested_work_reason": "Observed tasks do not satisfy the request",
             "matched_fact_ids": [],
             "matched_candidate_refs": [],
             "evidence_refs": [],
@@ -582,6 +592,52 @@ def _goal_resource_responsibilities(scenario: str) -> dict[str, object]:
             {"resource_type": resource_type, "effect": effect}
             for resource_type, effect in zip(output_types, effects, strict=True)
         ],
+    }
+
+
+def _goal_source_dependency_decisions(
+    projection: Mapping[str, object], scenario: str
+) -> dict[str, object]:
+    responsibilities = _goal_resource_responsibilities(scenario)
+    source_reads = {
+        str(item["resource_type"]): list(cast(list[str], item["required_information"]))
+        for item in cast(list[Mapping[str, object]], responsibilities["source_reads"])
+    }
+    candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
+    decisions: list[dict[str, object]] = []
+    for candidate in candidates:
+        resource_type = str(candidate["resource_type"])
+        required_information = source_reads.get(resource_type)
+        if required_information is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "dependency": "SOURCE_REQUIRED",
+                    "required_information": required_information,
+                }
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "dependency": "SOURCE_NOT_REQUIRED"})
+    return {"source_dependencies": decisions}
+
+
+def _goal_output_responsibility_decisions(
+    projection: Mapping[str, object], scenario: str
+) -> dict[str, object]:
+    responsibilities = _goal_resource_responsibilities(scenario)
+    outputs = {
+        str(item["resource_type"]): str(item["effect"])
+        for item in cast(list[Mapping[str, object]], responsibilities["outputs"])
+    }
+    candidates = cast(list[Mapping[str, object]], projection["output_candidates"])
+    return {
+        "output_responsibilities": [
+            {
+                "resource_type": candidate["resource_type"],
+                "effect": outputs.get(str(candidate["resource_type"]), "NONE"),
+            }
+            for candidate in candidates
+        ]
     }
 
 

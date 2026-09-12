@@ -257,6 +257,8 @@ LangSmith Run의 input/output에는 전체 LangGraph State를 전달하지 않�
 
 실제 LLM provider dispatch와 Connector READ Tool dispatch는 해당 workflow root와 같은 Trace의 `llm`·`tool` child run으로 기록한다. Prompt·model·Tool의 불투명 식별자와 상태·지연·token/결과 수 같은 제한된 projection만 허용하며, 호출 인자·Provider 응답·업무 원문은 기록하지 않는다.
 
+개발용 LangSmith Trace는 allowlist에 등록된 Prompt에 한해 canonical enum, 안전한 field 식별자, resource·operation type, 값 존재 여부와 bounded count/shape 같은 typed semantic decision projection을 추가로 기록할 수 있다. 이 projection도 사용자 원문·업무 본문·검색 literal·Resource identity·Provider payload를 포함하지 않으며, callback 경계에서 깊이·항목 수·문자열·전체 크기를 다시 제한한다.
+
 이 projection은 Graph·Node 실행을 분석하기 위한 외부 관측값이며 Domain State, routing, checkpoint 또는 실행 성공의 authority가 아니다. 과거 Trace는 소급 변경하지 않는다.
 
 ## 6. Audit 필수 Event

@@ -42,7 +42,7 @@ def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> 
     entry = next(
         item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
     )
-    assert entry["output_schema_version"] == 10
+    assert entry["output_schema_version"] == 14
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
         load_prompt_input_contract(_write(tmp_path, payload))
@@ -64,6 +64,116 @@ def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
             },
         },
     )
+
+
+def test_select_evidence_contract__matches_the__live_typed_projection() -> None:
+    contract = load_prompt_input_contract()
+
+    projection: dict[str, object] = {
+        "request_intent": {},
+        "ranked_segments": [],
+        "temporal_constraints": [],
+        "sufficiency_feedback": [],
+    }
+    contract.validate_projection("retrieval.select_evidence", projection)
+
+    with pytest.raises(PromptRuntimeInputContractError, match="unknown Product Prompt fields"):
+        contract.validate_projection(
+            "retrieval.select_evidence",
+            {**projection, "confirmation_response": {}},
+        )
+
+
+@pytest.mark.parametrize(
+    ("slot_id", "candidate_field", "additional_fields"),
+    [
+        (
+            "request_understanding.identify_source_dependencies",
+            "source_candidates",
+            {},
+        ),
+        (
+            "request_understanding.identify_output_responsibilities",
+            "output_candidates",
+            {"effect_prohibitions": []},
+        ),
+    ],
+)
+def test_atomic_responsibility_contracts__require_goal_and_runtime_candidates(
+    slot_id: str,
+    candidate_field: str,
+    additional_fields: dict[str, object],
+) -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        slot_id,
+        {
+            "user_request": "request",
+            "selected_resource_refs": [],
+            "goal_candidate": {},
+            candidate_field: [],
+            **additional_fields,
+        },
+    )
+    with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
+        contract.validate_projection(
+            slot_id,
+            {
+                "user_request": "request",
+                "selected_resource_refs": [],
+            },
+        )
+
+
+def test_effect_prohibition_contract__requires_goal_and_runtime_effect_candidates() -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        "request_understanding.identify_effect_prohibitions",
+        {
+            "user_request": "request",
+            "selected_resource_refs": [],
+            "goal_candidate": {},
+            "effect_candidates": [],
+        },
+    )
+    with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
+        contract.validate_projection(
+            "request_understanding.identify_effect_prohibitions",
+            {
+                "user_request": "request",
+                "selected_resource_refs": [],
+                "goal_candidate": {},
+            },
+        )
+
+
+def test_source_status_contract__requires_fixed_source_and_output_roles() -> None:
+    contract = load_prompt_input_contract()
+
+    contract.validate_projection(
+        "request_understanding.identify_source_status",
+        {
+            "user_request": "request",
+            "selected_resource_refs": [],
+            "goal_candidate": {},
+            "source_reads": [],
+            "outputs": [],
+            "allowed_status_values": [],
+        },
+    )
+    with pytest.raises(PromptRuntimeInputContractError, match="missing required"):
+        contract.validate_projection(
+            "request_understanding.identify_source_status",
+            {
+                "user_request": "request",
+                "selected_resource_refs": [],
+                "goal_candidate": {},
+                "source_reads": [],
+                "outputs": [],
+            },
+        )
 
 
 def test_compose_arguments_contract__accepts_current__request_intent_projection() -> None:
@@ -92,12 +202,37 @@ def test_work_analysis_contracts__accept_current__observation_projections() -> N
     contract.validate_projection(
         "work_analysis.detect_duplicate_conflict_candidates",
         {
-            "request_intent": {},
             "work_facts": [],
             "entity_relations": [],
             "evidence": [],
+        },
+    )
+
+
+def test_action_objective_contract__matches_the__live_typed_projection() -> None:
+    contract = load_prompt_input_contract()
+
+    projection: dict[str, object] = {
+        "user_request": "request",
+        "request_intent": {},
+        "output_route": {},
+        "evidence": [],
+        "work_analysis": {},
+    }
+    contract.validate_projection("planning.draft_action_objective_per_output_route", projection)
+
+    with pytest.raises(PromptRuntimeInputContractError, match="unknown Product Prompt fields"):
+        contract.validate_projection(
+            "planning.draft_action_objective_per_output_route",
+            {**projection, "confirmation_response": {}},
+        )
+    contract.validate_projection(
+        "work_analysis.assess_requested_task_satisfaction",
+        {
+            "request_intent": {},
+            "work_facts": [],
+            "evidence": [],
             "source_state": {"source_statuses": []},
-            "task_duplicate_review_required": True,
         },
     )
     contract.validate_projection(

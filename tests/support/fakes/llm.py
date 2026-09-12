@@ -53,6 +53,16 @@ class FakeStructuredInferencePort:
     outputs: list[object]
     calls: list[StructuredInferenceCall] = field(default_factory=list)
     validate_schema: bool = False
+    _pending_resource_responsibilities: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _pending_source_statuses: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def infer(
         self,
@@ -69,7 +79,110 @@ class FakeStructuredInferencePort:
                 "output_schema": output_schema_ref,
             }
         )
-        output = self.outputs.pop(0)
+        output: object
+        if (
+            output_schema_ref.schema_version == "request-source-dependency-decision-v1"
+            and self._pending_resource_responsibilities is not None
+        ):
+            output = _source_dependency_decisions_from_responsibilities(
+                self._pending_resource_responsibilities,
+                input_projection=input_projection,
+            )
+        elif (
+            output_schema_ref.schema_version == "request-output-responsibility-decision-v1"
+            and self._pending_resource_responsibilities is not None
+        ):
+            output = _output_responsibility_decisions_from_responsibilities(
+                self._pending_resource_responsibilities,
+                input_projection=input_projection,
+            )
+            self._pending_resource_responsibilities = None
+        elif output_schema_ref.schema_version == "request-effect-prohibition-decision-v1":
+            if (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "effect_prohibitions" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                base_projection = input_projection.get("base_projection")
+                base = (
+                    cast(Mapping[str, object], base_projection)
+                    if isinstance(base_projection, Mapping)
+                    else input_projection
+                )
+                output = {
+                    "effect_prohibitions": [
+                        {
+                            "effect": candidate["effect"],
+                            "prohibition": "NOT_FORBIDDEN",
+                        }
+                        for raw_candidate in cast(Sequence[object], base["effect_candidates"])
+                        if isinstance(raw_candidate, Mapping)
+                        for candidate in [cast(Mapping[str, object], raw_candidate)]
+                    ]
+                }
+        elif output_schema_ref.schema_version == "request-source-status-v1":
+            if self._pending_source_statuses is not None:
+                output = {"statuses": self._pending_source_statuses}
+                self._pending_source_statuses = None
+            elif (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "statuses" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                output = {"statuses": []}
+        else:
+            output = self.outputs.pop(0)
+            if isinstance(output, Mapping) and "resource_responsibilities" in output:
+                responsibilities = output["resource_responsibilities"]
+                if output_schema_ref.schema_version in {
+                    "request-goal-candidate-v13",
+                    "request-goal-candidate-v14",
+                }:
+                    self._pending_resource_responsibilities = responsibilities
+                    output = {
+                        key: value
+                        for key, value in output.items()
+                        if key != "resource_responsibilities"
+                    }
+            elif (
+                output_schema_ref.schema_version == "request-source-dependency-decision-v1"
+                and isinstance(output, Mapping)
+                and "source_reads" in output
+                and "outputs" in output
+            ):
+                self._pending_resource_responsibilities = output
+                output = _source_dependency_decisions_from_responsibilities(
+                    output,
+                    input_projection=input_projection,
+                )
+            elif (
+                output_schema_ref.schema_version == "request-output-responsibility-decision-v1"
+                and isinstance(output, Mapping)
+                and "source_reads" in output
+                and "outputs" in output
+            ):
+                output = _output_responsibility_decisions_from_responsibilities(
+                    output,
+                    input_projection=input_projection,
+                )
+            if (
+                output_schema_ref.schema_version == "request-goal-candidate-v14"
+                and isinstance(output, Mapping)
+                and isinstance(output.get("constraints"), Mapping)
+                and "status" in cast(Mapping[str, object], output["constraints"])
+            ):
+                constraints = cast(Mapping[str, object], output["constraints"])
+                self._pending_source_statuses = constraints.get("status", [])
+                output = {
+                    **output,
+                    "constraints": {
+                        key: value for key, value in constraints.items() if key != "status"
+                    },
+                }
         if isinstance(output, Exception):
             raise output
         if self.validate_schema:
@@ -85,6 +198,97 @@ class FakeStructuredInferencePort:
             latency_ms=1,
             fallback_reason=None,
         )
+
+
+def _source_dependency_decisions_from_responsibilities(
+    value: object,
+    *,
+    input_projection: Mapping[str, object],
+) -> dict[str, object]:
+    responsibilities = cast(Mapping[str, object], value)
+    sources: dict[str, dict[str, object]] = {}
+    for item in cast(Sequence[object], responsibilities["source_reads"]):
+        if not isinstance(item, Mapping):
+            continue
+        source = cast(Mapping[str, object], item)
+        resource_type = cast(str, source["resource_type"])
+        current = sources.setdefault(
+            resource_type,
+            {"resource_type": resource_type, "required_information": []},
+        )
+        information = cast(list[str], current["required_information"])
+        for value in cast(Sequence[str], source["required_information"]):
+            if value not in information:
+                information.append(value)
+    base_projection = input_projection.get("base_projection")
+    base = (
+        cast(Mapping[str, object], base_projection)
+        if isinstance(base_projection, Mapping)
+        else input_projection
+    )
+    candidates = cast(Sequence[Mapping[str, object]], base["source_candidates"])
+    decisions: list[dict[str, object]] = []
+    for candidate in candidates:
+        resource_type = cast(str, candidate["resource_type"])
+        selected_source = sources.get(resource_type)
+        if selected_source is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "dependency": "SOURCE_REQUIRED",
+                    "required_information": list(
+                        cast(Sequence[str], selected_source["required_information"])
+                    ),
+                }
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "dependency": "SOURCE_NOT_REQUIRED"})
+    candidate_types = {cast(str, candidate["resource_type"]) for candidate in candidates}
+    decisions.extend(
+        {
+            "resource_type": resource_type,
+            "dependency": "SOURCE_REQUIRED",
+            "required_information": list(cast(Sequence[str], source["required_information"])),
+        }
+        for resource_type, source in sources.items()
+        if resource_type not in candidate_types
+    )
+    return {"source_dependencies": decisions}
+
+
+def _output_responsibility_decisions_from_responsibilities(
+    value: object,
+    *,
+    input_projection: Mapping[str, object],
+) -> dict[str, object]:
+    responsibilities = cast(Mapping[str, object], value)
+    outputs = {
+        cast(str, output["resource_type"]): output
+        for item in cast(Sequence[object], responsibilities["outputs"])
+        if isinstance(item, Mapping)
+        for output in [cast(Mapping[str, object], item)]
+    }
+    base_projection = input_projection.get("base_projection")
+    base = (
+        cast(Mapping[str, object], base_projection)
+        if isinstance(base_projection, Mapping)
+        else input_projection
+    )
+    candidates = cast(Sequence[Mapping[str, object]], base["output_candidates"])
+    decisions = [
+        {
+            "resource_type": candidate["resource_type"],
+            "effect": outputs.get(cast(str, candidate["resource_type"]), {}).get("effect", "NONE"),
+        }
+        for candidate in candidates
+    ]
+    candidate_types = {cast(str, candidate["resource_type"]) for candidate in candidates}
+    decisions.extend(
+        {"resource_type": resource_type, "effect": output["effect"]}
+        for resource_type, output in outputs.items()
+        if resource_type not in candidate_types
+    )
+    return {"output_responsibilities": decisions}
 
 
 @dataclass

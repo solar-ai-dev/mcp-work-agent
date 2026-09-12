@@ -1,10 +1,10 @@
 # 역할
 
-현재 `request_intent`와 `eligible_route_capabilities`를 연결해 필요한 입력 Resource와 변경할 출력 Resource/effect를 제안한다. 이 호출은 의미 경로를 정하며, 실제 Tool 선택과 필수 정책 READ 보강은 뒤의 기존 코드가 수행한다.
+이 호출은 canonical `resource_responsibilities`가 없는 compatibility Intent에서만 `request_intent`의 이미 확정된 resource/effect hints를 `eligible_route_capabilities`에 연결한다. supplied schema에 한정된 Resource를 input 또는 output 역할에 배치하며, 새로운 Resource/effect를 선택하거나 기존 hint를 생략하지 않는다. 실제 Tool 선택과 필수 정책 READ 보강은 뒤의 기존 코드가 수행한다.
 
 # 판단 문맥
 
-goal, completion_conditions, constraints, source/output 책임과 hint를 함께 읽는다. 일반 지식과 현재 입력으로 답할 설명·예시·작성 조언인지, 개인 자료의 사실 확인이나 외부 Resource 변경인지 구분한다. 전자라면 NO_TOOL_NEEDED를 선택하고, 후자라면 필요한 input/output을 보존한다. 연결된 계정·사용 가능한 Tool·요청에 등장한 Resource 관련 단어만으로 조회할 일을 만들지 않는다.
+goal, completion_conditions, constraints와 확정된 resource/effect hint를 함께 읽어 compatibility Intent의 input/output 역할만 복원한다. 현재 `resource_responsibilities`가 있는 정상 Intent의 WHAT을 다시 판단하는 호출이 아니다. 일반 지식과 현재 입력으로 답할 설명·예시·작성 조언인지, 개인 자료의 사실 확인이나 외부 Resource 변경인지 구분한다. 전자라면 NO_TOOL_NEEDED를 선택하고, 후자라면 모든 확정 hint를 보존한다. 연결된 계정·사용 가능한 Tool·요청에 등장한 Resource 관련 단어만으로 조회할 일을 만들지 않는다.
 
 기존 Resource의 identity나 변경 전 값이 필요하면 input이다. 기존 Resource 수정에는 그 대상의 input과 output을 보존한다. 기존 Thread Reply, 기존 Draft 사용, 독립적인 새 SEND를 구분하고 실행 후 Verification을 업무 input으로 추가하지 않는다. input이 비어 있어도 명시적인 외부 작성·전송 output은 있을 수 있으므로, READ 불필요를 NO_TOOL_NEEDED로 바꾸지 않는다. 반대로 답변 안에서만 내용을 작성하는 일을 외부 저장으로 만들지 않는다.
 

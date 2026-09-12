@@ -277,6 +277,90 @@ def test_v2_output_schema__empty_initial_constraints__rejects() -> None:
     assert validate_output_schema(candidate, RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA.json_schema)
 
 
+@pytest.mark.parametrize("kind", ["CONCEPT", "KEYWORD"])
+@pytest.mark.parametrize("is_followup", [False, True])
+def test_runtime_schema__duplicate_constraint_kind__cannot_be_provider_output(
+    kind: str,
+    is_followup: bool,
+) -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
+        requested_concepts={"gmail": ["shipping"]},
+        gmail_route_ids=["gmail"],
+        is_followup=is_followup,
+        removable_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
+    )
+    constraint = (
+        {"kind": "CONCEPT", "concept": "shipping", "manifestations": ["dispatch"]}
+        if kind == "CONCEPT"
+        else {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ANY"}
+    )
+    constraints = [constraint, dict(constraint)]
+    search_spec = (
+        {
+            "mode": "CHANGED",
+            "constraint_delta": {
+                "upsert_constraints": constraints,
+                "remove_constraint_kinds": [],
+            },
+        }
+        if is_followup
+        else {"mode": "INITIAL", "constraints": constraints}
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["REQUESTED_INPUT"],
+                "search_spec": search_spec,
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    errors = validate_output_schema(candidate, schema.json_schema)
+
+    assert any("must contain at most 1 items" in error for error in errors)
+
+
+def test_runtime_schema__different_constraint_kinds__remain_valid_provider_output() -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["CONCEPT", "KEYWORD"]},
+        requested_concepts={"gmail": ["shipping"]},
+        gmail_route_ids=["gmail"],
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["REQUESTED_INPUT"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ANY"},
+                        {
+                            "kind": "CONCEPT",
+                            "concept": "shipping",
+                            "manifestations": ["dispatch"],
+                        },
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert validate_output_schema(candidate, schema.json_schema) == []
+
+
 def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["route-1"],

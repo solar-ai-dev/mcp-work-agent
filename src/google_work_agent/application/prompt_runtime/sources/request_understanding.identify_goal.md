@@ -20,27 +20,17 @@
 - `business_concepts`: 찾으려는 업무 의미. 자연스러운 의역은 가능하지만 새 업무 요구를 추가하지 않는다.
 - `person`: identity가 미확정인 이름·직급. `sender`와 `recipient`는 명시된 역할이다. 일반 집합 명사를 특정 사람으로 만들지 않는다.
 - `subject`: 사용자가 제목으로 지정한 값. `period`: 사용자가 표현한 기간이며 시간축 판단은 별도 책임이다.
-- `status`: 기존 source의 상태 중 Resource type 자체로는 결정되지 않는 추가 검색 범위만 표현한다. Resource type이 이미 같은 범위를 보장하면 반복하지 않고 비운다. 예를 들어 `GMAIL_DRAFT`는 Draft collection을 이미 지정하므로 `DRAFT`를 다시 쓰지 않는다. 추가 상태를 쓸 때는 schema의 `value`, `source_resource_type`, `source`, `source_text`를 사용하고 `source_text`에는 해당 상태를 실제로 말한 입력 구간을 복사한다. 원하는 변경 후 상태를 source의 현재 상태로 옮기지 않는다.
-- `additional_constraints`: 위 슬롯에 속하지 않는 명시적 실행 값만 기존 `kind/field/value` 계약으로 보존한다.
+- `coverage_requirement`: 요청한 collection 범위의 모든 항목을 확인해야 완료되는 경우에만 `EXHAUSTIVE` 하나를 둔다. 그 외에는 `[]`로 둔다. 하나의 답을 위해 여러 자료를 비교하는 것과 collection 전체를 반환하는 것을 구분하고, 단어 하나만으로 완료 범위를 판정하지 않는다.
+- `additional_constraints`: 위 슬롯에 속하지 않는 명시적 실행 값을 기존 `kind/field/value` 계약으로 보존한다.
 
 같은 값을 의미 없이 여러 역할에 반복하지 않는다. 다만 관련 이름을 보존한다는 이유로 원문의 AND/OR 관계나 요청 범위를 바꾸지 않는다. 근거 없이 이메일·Resource ID·기간·상태를 보충하지 않는다.
-
-# source와 output의 구분
-
-외부 Resource 역할은 `resource_responsibilities` 한 곳에 작성한다.
-
-`source_reads`에는 필요한 기존 자료와 그 자료에서 확인할 사실·identity를 `resource_type`과 `required_information`으로 쓴다. 목록 자체를 읽는 것이 목적이면 추가 속성을 발명하지 않는다. `outputs`에는 요청한 외부 변경의 `resource_type`과 `CREATE | UPDATE | SEND | DELETE`를 쓴다. 같은 기존 Resource를 읽고 수정하면 양쪽에 같은 Resource 종류가 올 수 있다. Runtime이 파생하는 평면 hint를 출력에 중복 생성하지 않는다.
-
-외부 자료 조회나 변경 없이 답할 수 있는 설명·예시·작성 조언은 `source_reads`와 `outputs`를 모두 비운다. 답변에서 내용을 작성하는 것과 외부에 저장·수정·전송하는 것은 다르다. 실제 자료를 찾아 달라거나 선택한 자료를 설명·수정하라는 요청이면 필요한 source를 유지하고, 일반 답변 경로를 만들기 위해 조회·변경 요구를 지우지 않는다. 조회만 필요하면 `outputs`는 비어 있다. 독립적인 외부 작성·전송은 output만 필요할 수 있으며, 관련 없는 READ를 붙이지 않는다. 기존 Draft·Thread·Task·Event·Issue의 사실이나 identity가 필요하면 source를 보존한다. 실행 후 Verification은 별도 업무 source가 아니다.
-
-CREATE는 새 외부 Resource, UPDATE는 기존 Resource 변경, SEND는 전송, DELETE는 제거다. SEND 본문을 작성하는 내부 과정은 별도 Draft CREATE가 아니다. 기존 Thread의 자료를 참고한 새 메일과 그 Thread에 대한 Reply를 구분한다. Issue close/reopen의 effect는 UPDATE다. Resource/effect는 supplied schema의 조합을 따르고, 지원하지 않는 요구를 다른 작업으로 바꾸어 맞추지 않는다.
-
-Calendar 값은 현재 schema의 local date/time/timezone 의미를 보존한다. 참석자 주소를 Gmail 요청으로 중복 해석하지 않는다. GitHub repository는 명시되거나 검증된 현재 입력만 사용한다.
 
 # 분석과 재해석
 
 `analysis_requirement`은 실제로 필요한 파생 판단을 표현한다. 직접 조회·정리로 충분한 경우와 관계·비교·원인·후속 작업·중복·충돌 판단이 필요한 경우를 구분한다.
 
 `base_projection`, `candidate_output`, `failure_record`를 받으면 같은 호출의 수정이다. 실패한 부분과 그에 의존하는 관계를 다시 판단하고, 최초 후보의 잘못된 source 가설은 고칠 수 있다. 사용자 원문·명시 선택·금지는 보존하며, validator 오류를 피하려고 실제 요청한 조회나 변경을 지우지 않는다.
+
+외부 Resource의 source/output 역할과 source의 현재 status는 뒤의 별도 책임이 판정한다. 여기서는 supplied schema에 없는 Resource 역할·status나 평면 hint를 만들지 않는다.
 
 지정된 JSON schema에 맞는 객체 하나만 반환한다. Tool 선택·Query·arguments·정책 승인·실행 결과를 작성하지 않는다.

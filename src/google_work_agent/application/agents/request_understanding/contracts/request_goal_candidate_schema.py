@@ -7,14 +7,19 @@ from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    REQUEST_RESOURCE_TYPES,
     SOURCE_STATUS_VALUES_BY_RESOURCE,
     WRITE_EFFECT_RESOURCE_TYPES,
     ActionEffectValue,
     ConstraintProvenanceSource,
     ConstraintV1,
     RequestGoalCandidateV1,
+    RequestGoalSemanticValidationError,
     RequestUnderstandingValidationError,
     ResourceResponsibilitiesV1,
+)
+from google_work_agent.application.agents.request_understanding.identify_source_status import (
+    normalize_source_status_constraints,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     validate_resource_responsibilities,
@@ -32,24 +37,13 @@ REQUEST_GOAL_SLOT_KINDS = {
     "subject": "RESOURCE",
     "period": "DATE",
     "status": "SCOPE",
+    "coverage_requirement": "SCOPE",
 }
 _MODEL_CONSTRAINT_SLOT_KINDS = {
     field: kind
     for field, kind in REQUEST_GOAL_SLOT_KINDS.items()
-    if field != "required_information"
+    if field not in {"required_information", "status"}
 }
-_RESOURCE_TYPES = [
-    "GMAIL_THREAD",
-    "GMAIL_MESSAGE",
-    "GMAIL_DRAFT",
-    "GMAIL_ATTACHMENT",
-    "TASK_LIST",
-    "TASK",
-    "CALENDAR",
-    "CALENDAR_EVENT",
-    "CALENDAR_FREEBUSY",
-    "GITHUB_ISSUE",
-]
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
@@ -76,54 +70,24 @@ for _field, _description in {
     "recipient": "누가 받았는지 명시된 경우만 두고 본문에 등장하는 사람과 구분한다.",
     "subject": "사용자가 제목이라고 명시한 값만 둔다. 추정 제목을 만들지 않는다.",
     "period": "날짜가 제한하는 대상의 원문 기간을 보존하고 시간축이나 연도를 추측하지 않는다.",
-    "status": "원문에 명시된 source Resource의 상태만 둔다.",
+    "coverage_requirement": (
+        "요청한 collection 범위의 모든 항목을 확인해야 완료되는 경우에만 EXHAUSTIVE를 둔다."
+    ),
 }.items():
     cast(dict[str, object], _NAMED_SEARCH_CONSTRAINT_PROPERTIES[_field])["description"] = (
         _description
     )
-_NAMED_SEARCH_CONSTRAINT_PROPERTIES["status"] = {
+_NAMED_SEARCH_CONSTRAINT_PROPERTIES["coverage_requirement"] = {
     "type": "array",
-    "maxItems": 8,
+    "maxItems": 1,
     "uniqueItems": True,
+    "items": {"const": "EXHAUSTIVE"},
     "description": (
-        "원문에 명시된 source Resource 상태만 둔다. normalized value와 원문 표현을 "
-        "분리하고 output effect나 완료 후 상태를 source scope로 사용하지 않는다."
+        "모든 항목 확인이 완료 조건이면 EXHAUSTIVE 하나를, 아니면 빈 배열을 둔다."
     ),
-    "items": {
-        "type": "object",
-        "required": ["value", "source_resource_type", "source", "source_text"],
-        "additionalProperties": False,
-        "properties": {
-            "value": {
-                "enum": sorted(
-                    {
-                        status
-                        for statuses in SOURCE_STATUS_VALUES_BY_RESOURCE.values()
-                        for status in statuses
-                    }
-                )
-            },
-            "source_resource_type": {
-                "enum": sorted(SOURCE_STATUS_VALUES_BY_RESOURCE)
-            },
-            "source": {"enum": ["USER_REQUEST", "CONFIRMATION_RESPONSE"]},
-            "source_text": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
-        },
-    },
 }
 
 
-class RequestGoalSemanticValidationError(ValueError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        reason_code: str,
-        affected_field_paths: Sequence[str],
-    ) -> None:
-        super().__init__(message)
-        self.reason_code = reason_code
-        self.affected_field_paths = tuple(affected_field_paths)
 _CONSTRAINT_LIST_SCHEMA = {
     "type": "array",
     "items": {
@@ -167,6 +131,18 @@ _CONSTRAINT_LIST_SCHEMA = {
                         },
                         "provenance": {"required": ["source_text"]},
                     },
+                },
+            },
+            {
+                "if": {
+                    "properties": {"field": {"const": "coverage_requirement"}},
+                    "required": ["field"],
+                },
+                "then": {
+                    "properties": {
+                        "kind": {"const": "SCOPE"},
+                        "value": {"const": "EXHAUSTIVE"},
+                    }
                 },
             },
         ],
@@ -243,12 +219,17 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
         "source_reads": {
             "type": "array",
             "uniqueItems": True,
+            "description": (
+                "기존 외부 자료에서 읽어야 할 사실이나 identity만 둔다. 새로 CREATE할 "
+                "output은 그 output의 기존 상태를 실제로 읽어야 하는 별도 요구가 없는 한 "
+                "source_reads에 반복하지 않는다."
+            ),
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["resource_type", "required_information"],
                 "properties": {
-                    "resource_type": {"enum": _RESOURCE_TYPES},
+                    "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "required_information": {
                         "type": "array",
                         "uniqueItems": True,
@@ -260,6 +241,10 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
         "outputs": {
             "type": "array",
             "uniqueItems": True,
+            "description": (
+                "사용자가 새로 만들거나 변경·전송·삭제하라고 요청한 외부 결과만 둔다. "
+                "그 결과를 작성하는 데 참고할 기존 자료는 source_reads에 둔다."
+            ),
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -281,7 +266,7 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                     for effect, resource_types in WRITE_EFFECT_RESOURCE_TYPES.items()
                 ],
                 "properties": {
-                    "resource_type": {"enum": _RESOURCE_TYPES},
+                    "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "effect": {"enum": ["CREATE", "UPDATE", "SEND", "DELETE"]},
                 },
             },
@@ -295,19 +280,18 @@ _DERIVED_EFFECT_HINTS_SCHEMA = {
 }
 _DERIVED_RESOURCE_HINTS_SCHEMA = {
     "type": "array",
-    "items": {"enum": _RESOURCE_TYPES},
+    "items": {"enum": list(REQUEST_RESOURCE_TYPES)},
     "uniqueItems": True,
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v10",
+    schema_version="request-goal-candidate-v14",
     json_schema={
         "type": "object",
         "required": [
             "goal",
             "completion_conditions",
             "constraints",
-            "resource_responsibilities",
             "analysis_requirement",
         ],
         "additionalProperties": False,
@@ -338,10 +322,10 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     "기간 원문은 DATE.period이며 시간축 판정은 별도 operation이 수행한다. "
                     "한 문장에 사람·프로젝트·업무·답변 지시를 합쳐 검색어로 만들지 않는다. "
                     "요청에 없는 이름 있는 슬롯은 빈 배열로 둔다. Calendar/GitHub 등 "
-                    "그 밖의 명시적 실행 값은 additional_constraints에 둔다."
+                    "typed 완료 범위는 coverage_requirement에 두고 그 밖의 명시적 실행 값은 "
+                    "additional_constraints에 둔다."
                 ),
             },
-            "resource_responsibilities": _RESOURCE_RESPONSIBILITY_SCHEMA,
             "analysis_requirement": {
                 "enum": ["NONE", "REQUIRED"],
                 "description": (
@@ -358,10 +342,11 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
     },
 )
 
-
 def validate_request_goal_candidate(
     value: object,
     *,
+    resource_responsibilities: object,
+    source_statuses: object | None = None,
     schema: OutputSchemaDefinition = IDENTIFY_GOAL_OUTPUT_SCHEMA,
     provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
 ) -> RequestGoalCandidateV1:
@@ -370,9 +355,9 @@ def validate_request_goal_candidate(
         raise ValueError(f"request goal candidate is invalid: {'; '.join(errors)}")
     root = cast(dict[str, object], value)
     slots = cast(dict[str, object], root["constraints"])
-    _validate_semantic_constraint_text(slots, root=root)
-    normalized_responsibilities = _normalize_source_read_responsibilities(
-        cast(Mapping[str, object], root["resource_responsibilities"])
+    _validate_semantic_constraint_text(slots)
+    normalized_responsibilities = _validate_resource_responsibilities_shape(
+        resource_responsibilities
     )
     normalized_root = {
         **root,
@@ -391,24 +376,34 @@ def validate_request_goal_candidate(
         raise ValueError(
             "request goal candidate is invalid: additional constraint uses reserved field"
         )
-    normalized_constraints = [
-        {"kind": _MODEL_CONSTRAINT_SLOT_KINDS[field], "field": field, "value": values}
-        for field, values in slots.items()
-        if field in _MODEL_CONSTRAINT_SLOT_KINDS and field != "status" and values
-    ]
+    normalized_constraints = cast(
+        list[ConstraintV1],
+        [
+            {
+                "kind": _MODEL_CONSTRAINT_SLOT_KINDS[field],
+                "field": field,
+                "value": (
+                    cast(list[str], values)[0]
+                    if field == "coverage_requirement"
+                    else values
+                ),
+            }
+            for field, values in slots.items()
+            if field in _MODEL_CONSTRAINT_SLOT_KINDS and values
+        ],
+    )
     if source_information:
         normalized_constraints.append(
             {
-                "kind": REQUEST_GOAL_SLOT_KINDS["required_information"],
+                "kind": "USER_REQUIREMENT",
                 "field": "required_information",
                 "value": source_information,
             }
         )
     normalized_constraints.extend(
-        _normalize_status_constraints(
-            slots["status"],
-            effects=effects,
-            resources=resources,
+        normalize_source_status_constraints(
+            {"statuses": []} if source_statuses is None else source_statuses,
+            responsibilities=normalized_responsibilities,
             provenance_sources=provenance_sources,
         )
     )
@@ -423,7 +418,7 @@ def validate_request_goal_candidate(
             normalized_responsibilities,
             effects=effects,
             resource_hints=resources,
-            constraints=cast(list[ConstraintV1], normalized_constraints + additional),
+            constraints=cast(list[ConstraintV1], [*normalized_constraints, *additional]),
             required=True,
         )
     except RequestUnderstandingValidationError as error:
@@ -436,12 +431,28 @@ def validate_request_goal_candidate(
         ) from error
     value = {
         **normalized_root,
-        "constraints": normalized_constraints + additional,
+        "constraints": [*normalized_constraints, *additional],
         "requested_effect_hints": effects,
         "requested_resource_hints": resources,
         "resource_responsibilities": responsibilities,
     }
     return cast(RequestGoalCandidateV1, value)
+
+
+def _validate_resource_responsibilities_shape(
+    value: object,
+) -> ResourceResponsibilitiesV1:
+    errors = validate_output_schema(
+        value,
+        _RESOURCE_RESPONSIBILITY_SCHEMA,
+    )
+    if errors:
+        raise ValueError(f"resource responsibility candidate is invalid: {'; '.join(errors)}")
+    responsibilities = _normalize_source_read_responsibilities(
+        cast(Mapping[str, object], value)
+    )
+    _validate_resource_responsibility_text(responsibilities)
+    return responsibilities
 
 
 def _normalize_source_read_responsibilities(
@@ -506,22 +517,11 @@ def derive_requested_resource_fields(
 
 def _validate_semantic_constraint_text(
     slots: Mapping[str, object],
-    *,
-    root: Mapping[str, object],
 ) -> None:
     for field in _MODEL_CONSTRAINT_SLOT_KINDS:
-        if field == "status":
-            continue
         values = cast(list[str], slots[field])
         for index, text_value in enumerate(values):
             _require_semantic_text(text_value, f"$.constraints.{field}[{index}]")
-
-    status_values = cast(list[Mapping[str, object]], slots["status"])
-    for index, status_value in enumerate(status_values):
-        _require_semantic_text(
-            cast(str, status_value["source_text"]),
-            f"$.constraints.status[{index}].source_text",
-        )
 
     additional = cast(list[Mapping[str, object]], slots["additional_constraints"])
     for index, additional_value in enumerate(additional):
@@ -543,9 +543,9 @@ def _validate_semantic_constraint_text(
                 f"$.constraints.additional_constraints[{index}].provenance.source_text",
             )
 
-    responsibilities = root.get("resource_responsibilities")
-    if not isinstance(responsibilities, Mapping):
-        return
+def _validate_resource_responsibility_text(
+    responsibilities: ResourceResponsibilitiesV1,
+) -> None:
     source_reads = cast(Sequence[Mapping[str, object]], responsibilities["source_reads"])
     for source_index, source in enumerate(source_reads):
         information = cast(Sequence[str], source["required_information"])
@@ -562,80 +562,53 @@ def _require_semantic_text(value: str, path: str) -> None:
         raise ValueError(f"request goal candidate is invalid: {path} has no semantic text")
 
 
-def _normalize_status_constraints(
-    value: object,
-    *,
-    effects: Sequence[str],
-    resources: Sequence[str],
-    provenance_sources: Mapping[ConstraintProvenanceSource, str] | None,
-) -> list[dict[str, object]]:
-    bindings = cast(list[Mapping[str, object]], value)
-    if not bindings:
-        return []
-    if provenance_sources is None:
-        raise ValueError("source status requires current-Run provenance sources")
-    resource_set = set(resources)
-    if "READ" not in effects:
-        raise ValueError("source status requires a READ effect")
-    normalized: list[dict[str, object]] = []
-    identities: set[tuple[str, str, str, str]] = set()
-    for binding in bindings:
-        status = cast(str, binding["value"])
-        resource_type = cast(str, binding["source_resource_type"])
-        source = cast(ConstraintProvenanceSource, binding["source"])
-        source_text = cast(str, binding["source_text"])
-        if resource_type not in resource_set:
-            raise ValueError("source status resource is not present in requested resource hints")
-        if status not in SOURCE_STATUS_VALUES_BY_RESOURCE.get(resource_type, frozenset()):
-            raise ValueError("source status is not valid for its bound resource")
-        source_value = provenance_sources.get(source)
-        if source_value is None:
-            raise ValueError("source status provenance source is unavailable")
-        start_offset = source_value.find(source_text)
-        if start_offset < 0:
-            raise RequestGoalSemanticValidationError(
-                "source status text has no current-Run source binding",
-                reason_code="REQUEST_STATUS_PROVENANCE_MISMATCH",
-                affected_field_paths=(
-                    "$.constraints.status[].source",
-                    "$.constraints.status[].source_text",
-                ),
-            )
-        identity = (status, resource_type, source, source_text)
-        if identity in identities:
-            raise ValueError("source status binding is duplicated")
-        identities.add(identity)
-        normalized.append(
-            {
-                "kind": "SCOPE",
-                "field": "status",
-                "value": status,
-                "source_resource_type": resource_type,
-                "provenance": {
-                    "source": source,
-                    "start_offset": start_offset,
-                    "end_offset": start_offset + len(source_text),
-                    "source_text": source_text,
-                },
-            }
-        )
-    return normalized
-
-
 def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCandidateV1:
     """Validate the single downstream ConstraintV1 representation after normalization."""
 
     schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
     properties = cast(dict[str, object], schema["properties"])
     properties["constraints"] = _CONSTRAINT_LIST_SCHEMA
+    properties["resource_responsibilities"] = _RESOURCE_RESPONSIBILITY_SCHEMA
     properties["requested_effect_hints"] = _DERIVED_EFFECT_HINTS_SCHEMA
     properties["requested_resource_hints"] = _DERIVED_RESOURCE_HINTS_SCHEMA
     required = cast(list[str], schema["required"])
-    required.extend(["requested_effect_hints", "requested_resource_hints"])
+    required.extend(
+        [
+            "resource_responsibilities",
+            "requested_effect_hints",
+            "requested_resource_hints",
+        ]
+    )
     errors = validate_output_schema(value, schema)
     if errors:
         raise ValueError(f"normalized request goal candidate is invalid: {'; '.join(errors)}")
-    return cast(RequestGoalCandidateV1, value)
+    candidate = cast(RequestGoalCandidateV1, value)
+    _validate_existing_resource_mutation_sources(candidate["resource_responsibilities"])
+    return candidate
+
+
+def _validate_existing_resource_mutation_sources(
+    responsibilities: ResourceResponsibilitiesV1,
+) -> None:
+    source_resource_types = {
+        source["resource_type"] for source in responsibilities["source_reads"]
+    }
+    missing_source_paths = [
+        f"$.resource_responsibilities.outputs[{index}]"
+        for index, output in enumerate(responsibilities["outputs"])
+        if output["effect"] in {"UPDATE", "DELETE"}
+        and output["resource_type"] not in source_resource_types
+    ]
+    if not missing_source_paths:
+        return
+    raise RequestGoalSemanticValidationError(
+        "existing Resource UPDATE/DELETE requires a same-resource source read",
+        reason_code="REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED",
+        affected_field_paths=(
+            "$.resource_responsibilities.source_reads",
+            *missing_source_paths,
+        ),
+    )
 
 
 __all__ = [

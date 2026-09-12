@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from google_work_agent.adapters.langgraph.subgraph_state import (
@@ -81,6 +81,7 @@ def merge_trace_context(
     node_name: str,
     llm_call_id: str | None = None,
     prompt_ref: PromptReference | None = None,
+    additional_prompt_refs: Sequence[PromptReference] = (),
     agent_invocation_increment: int = 0,
     llm_call_increment: int = 0,
     repair_increment: int = 0,
@@ -102,6 +103,7 @@ def merge_trace_context(
     )
     if prompt_ref is not None:
         prompt_refs.append(prompt_ref_to_mapping(prompt_ref))
+    prompt_refs.extend(prompt_ref_to_mapping(item) for item in additional_prompt_refs)
     return {
         **current,
         "agent_invocation_count": _counter_value(current, "agent_invocation_count")

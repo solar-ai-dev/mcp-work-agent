@@ -91,6 +91,8 @@ def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
         "resolution_responsibilities": {
             "connector_owned_information": [],
             "resolved_resource_refs": [],
+            "searchable_target_anchor_count": 0,
+            "connector_owned_source_count": 0,
         },
         "selected_resource_refs": [],
     }
@@ -142,6 +144,8 @@ def test_connector_owned_information__before_retrieval__proceeds_without_confirm
             },
         ],
         "resolved_resource_refs": [],
+        "searchable_target_anchor_count": 0,
+        "connector_owned_source_count": 0,
     }
 
 
@@ -189,6 +193,71 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
     assert len(runtime.calls) == 2
     assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
+    )
+    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+
+
+def test_searchable_target_reclassified_as_user__contract_conflict__uses_bounded_revision() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource"],
+            },
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["final shipment criteria and owner"],
+            },
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "Confirm the final shipment criteria and owner from related mail",
+        "completion_conditions": ["Answer from the retrieved mail evidence"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": ["Project Anchor"],
+            },
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["final shipment criteria", "owner"],
+            },
+        ],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["GMAIL_THREAD"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "GMAIL_THREAD",
+                    "required_information": ["final shipment criteria", "owner"],
+                }
+            ],
+            "outputs": [],
+        },
+        "analysis_requirement": "NONE",
+    }
+
+    ambiguity, budget = _detect_ambiguity_with_budget(
+        llm_runtime=runtime,
+        request=_request("Project Anchor mail shipment criteria and owner"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert ambiguity == {
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
+    }
+    assert len(runtime.calls) == 2
+    resolution = runtime.calls[0]["prompt_input"]["resolution_responsibilities"]
+    assert resolution["searchable_target_anchor_count"] == 1
+    assert resolution["connector_owned_source_count"] == 1
+    assert runtime.calls[1]["prompt_input"]["failure_record"]["failure_reason_code"] == (
+        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
     )
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 

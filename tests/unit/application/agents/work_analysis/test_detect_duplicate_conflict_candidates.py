@@ -39,7 +39,12 @@ def test_duplicate_is__never_promoted__by_candidate_operation() -> None:
         "matched_candidate_refs": [],
         "evidence_refs": ["ev-1"],
     }
-    runtime = WorkAnalysisRuntimeFake(output)
+    runtime = _SequentialRuntime(
+        [
+            {"relation_candidates": output["relation_candidates"]},
+            {key: value for key, value in output.items() if key != "relation_candidates"},
+        ]
+    )
     result = detect_duplicate_conflict_candidates.detect_duplicate_conflict_candidates(
         work_facts=[fact("f1"), fact("f2")],
         entity_relations=[],
@@ -61,11 +66,30 @@ def test_duplicate_is__never_promoted__by_candidate_operation() -> None:
             "work_analysis.detect_duplicate_conflict_candidates",
             "detect_duplicate_conflict_candidates",
         ),
+        task_satisfaction_prompt_ref=prompt_ref(
+            "work_analysis.assess_requested_task_satisfaction",
+            "assess_requested_task_satisfaction",
+        ),
         allowed_evidence_refs={"ev-1"},
         requested_mode="AUTO",
     )
     assert result == output
-    assert len(runtime.calls) == 1
+    assert len(runtime.calls) == 2
+    assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
+        "work_analysis.detect_duplicate_conflict_candidates",
+        "work_analysis.assess_requested_task_satisfaction",
+    ]
+    assert set(runtime.calls[0]["prompt_input"]) == {
+        "work_facts",
+        "entity_relations",
+        "evidence",
+    }
+    assert set(runtime.calls[1]["prompt_input"]) == {
+        "request_intent",
+        "work_facts",
+        "evidence",
+        "source_state",
+    }
     assert "validated_relations" not in output
     candidate_schema = output_json_schema(runtime)["properties"]["relation_candidates"]["items"]
     properties = candidate_schema["properties"]
@@ -89,6 +113,10 @@ def test_duplicate_candidates__without_policy_or_two_facts__materialize_empty_wi
             "work_analysis.detect_duplicate_conflict_candidates",
             "detect_duplicate_conflict_candidates",
         ),
+        task_satisfaction_prompt_ref=prompt_ref(
+            "work_analysis.assess_requested_task_satisfaction",
+            "assess_requested_task_satisfaction",
+        ),
         allowed_evidence_refs=set(),
         requested_mode="AUTO",
     )
@@ -105,15 +133,14 @@ def test_duplicate_candidates__without_policy_or_two_facts__materialize_empty_wi
 
 
 def test_complete_empty_task_observation__supports_nonduplicate__without_item_evidence() -> None:
-    output = {
-        "relation_candidates": [],
+    task_output = {
         "requested_work_status": "NOT_SATISFIED",
         "requested_work_reason": "required Task scope was observed empty",
         "matched_fact_ids": [],
         "matched_candidate_refs": [],
         "evidence_refs": [],
     }
-    runtime = WorkAnalysisRuntimeFake(output)
+    runtime = WorkAnalysisRuntimeFake(task_output)
 
     result = detect_duplicate_conflict_candidates.detect_duplicate_conflict_candidates(
         work_facts=[],
@@ -136,11 +163,15 @@ def test_complete_empty_task_observation__supports_nonduplicate__without_item_ev
             "work_analysis.detect_duplicate_conflict_candidates",
             "detect_duplicate_conflict_candidates",
         ),
+        task_satisfaction_prompt_ref=prompt_ref(
+            "work_analysis.assess_requested_task_satisfaction",
+            "assess_requested_task_satisfaction",
+        ),
         allowed_evidence_refs=set(),
         requested_mode="AUTO",
     )
 
-    assert result == output
+    assert result == {"relation_candidates": [], **task_output}
     assert len(runtime.calls) == 1
 
 
@@ -170,7 +201,6 @@ def test_nonduplicate_review__requires_complete__represented_task_observation(
 ) -> None:
     runtime = WorkAnalysisRuntimeFake(
         {
-            "relation_candidates": [],
             "requested_work_status": "NOT_SATISFIED",
             "requested_work_reason": "no duplicate",
             "matched_fact_ids": [],
@@ -191,6 +221,10 @@ def test_nonduplicate_review__requires_complete__represented_task_observation(
             prompt_ref=prompt_ref(
                 "work_analysis.detect_duplicate_conflict_candidates",
                 "detect_duplicate_conflict_candidates",
+            ),
+            task_satisfaction_prompt_ref=prompt_ref(
+                "work_analysis.assess_requested_task_satisfaction",
+                "assess_requested_task_satisfaction",
             ),
             allowed_evidence_refs=set(),
             requested_mode="AUTO",
@@ -220,7 +254,6 @@ class _SequentialRuntime(WorkAnalysisRuntimeFake):
 
 def test_task_assessment__revises_semantic_mismatch__once_within_budget() -> None:
     initial = {
-        "relation_candidates": [],
         "requested_work_status": "NOT_SATISFIED",
         "requested_work_reason": "no duplicate",
         "matched_fact_ids": [],
@@ -256,13 +289,17 @@ def test_task_assessment__revises_semantic_mismatch__once_within_budget() -> Non
                 "work_analysis.detect_duplicate_conflict_candidates",
                 "detect_duplicate_conflict_candidates",
             ),
+            task_satisfaction_prompt_ref=prompt_ref(
+                "work_analysis.assess_requested_task_satisfaction",
+                "assess_requested_task_satisfaction",
+            ),
             allowed_evidence_refs=set(),
             requested_mode="LOCAL_GPU",
             retry_budget=build_default_run_budget(),
         )
     )
 
-    assert result == revised
+    assert result == {"relation_candidates": [], **revised}
     assert len(runtime.calls) == 2
     assert "failure_record" in runtime.calls[1]["prompt_input"]
     assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
@@ -271,7 +308,7 @@ def test_task_assessment__revises_semantic_mismatch__once_within_budget() -> Non
 def test_task_assessment__preserves_schema_failure__without_semantic_retry() -> None:
     runtime = _SequentialRuntime([{"requested_work_status": "NOT_SATISFIED"}])
 
-    with pytest.raises(ValueError, match="invalid duplicate/conflict candidate schema"):
+    with pytest.raises(ValueError, match="invalid requested Task satisfaction schema"):
         detect_duplicate_conflict_candidates.detect_duplicate_conflict_candidates_with_budget(
             work_facts=[],
             entity_relations=[],
@@ -293,6 +330,10 @@ def test_task_assessment__preserves_schema_failure__without_semantic_retry() -> 
             prompt_ref=prompt_ref(
                 "work_analysis.detect_duplicate_conflict_candidates",
                 "detect_duplicate_conflict_candidates",
+            ),
+            task_satisfaction_prompt_ref=prompt_ref(
+                "work_analysis.assess_requested_task_satisfaction",
+                "assess_requested_task_satisfaction",
             ),
             allowed_evidence_refs=set(),
             requested_mode="LOCAL_GPU",

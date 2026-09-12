@@ -221,7 +221,8 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | `work_analysis.extract_work_facts` | LLM | 업무 사실 추출 |
 | `work_analysis.resolve_entity_relations` | LLM | conditional. 사람·업무·Resource identity·ownership/reference 관계만 소유한다. |
 | `work_analysis.resolve_temporal_dependencies` | LLM | conditional. 날짜·기간·선후·dependency 후보만 소유한다. |
-| `work_analysis.detect_duplicate_conflict_candidates` | LLM | conditional. duplicate/conflict candidate만 제안한다. |
+| `work_analysis.detect_duplicate_conflict_candidates` | LLM | conditional. fact↔fact duplicate/conflict candidate만 제안한다. |
+| `work_analysis.assess_requested_task_satisfaction` | LLM | conditional. 현재 Task 관측이 요청 업무를 이미 만족하는지만 평가한다. |
 | `work_analysis.validate_relations` | deterministic | 실제 `DUPLICATES \| CONFLICTS_WITH` 확정은 relation validator가 소유한다. |
 | `work_analysis.assess_action_necessity` | LLM/deterministic | frozen Output Route별 적용 여부를 한 번 판단한다. Task CREATE는 앞선 중복 검토 결과에서 결정적으로 파생한다. |
 | `work_analysis.assess_information_gaps` | LLM | 부족 정보 평가 |
@@ -704,11 +705,13 @@ Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identi
 
 `SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
 
-Current required Product-LLM Prompt Slot set은 아래 22개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
+Current required Product-LLM Prompt Slot set은 아래 25개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
 
 | Runtime Node | `prompt_slot_id` (= `prompt_id`) |
 | --- | --- |
 | `request.identify_goal` | `request_understanding.identify_goal` |
+| `request.identify_goal` | `request_understanding.identify_resource_responsibilities` |
+| `request.identify_goal` | `request_understanding.identify_source_status` |
 | `request.identify_temporal_scope` | `request_understanding.identify_temporal_scope` |
 | `request.detect_ambiguity` | `request_understanding.detect_ambiguity` |
 | `route.determine_resources` | `tool_routing.determine_io_resources` |
@@ -720,6 +723,7 @@ Current required Product-LLM Prompt Slot set은 아래 22개다. 각 slot에서 
 | `analysis.resolve_entity_relations` | `work_analysis.resolve_entity_relations` |
 | `analysis.resolve_temporal_dependencies` | `work_analysis.resolve_temporal_dependencies` |
 | `analysis.detect_duplicate_conflict_candidates` | `work_analysis.detect_duplicate_conflict_candidates` |
+| `analysis.detect_duplicate_conflict_candidates` | `work_analysis.assess_requested_task_satisfaction` |
 | `analysis.assess_action_necessity` | `work_analysis.assess_action_necessity` |
 | `analysis.assess_information_gaps` | `work_analysis.assess_information_gaps` |
 | `analysis.assess_operational_risks` | `work_analysis.assess_operational_risks` |
@@ -748,7 +752,7 @@ review.recheck
 
 이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
 
-`prompt-runtime-input-contract-v1`은 위 22개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
+`prompt-runtime-input-contract-v1`은 위 25개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
 
 Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
@@ -766,7 +770,7 @@ prompt_runtime_input_contract:
       output_schema_version: integer
 ```
 
-`entries[].prompt_slot_id`는 위 22개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+`entries[].prompt_slot_id`는 위 25개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
 
 ### 9.3-B Tool Routing 선택 Prompt 입력
 
@@ -840,7 +844,7 @@ Offline candidate evaluation 전용이다. Product user runtime과 분리하고 
 | 검증 결과 | Node DEV/HOLDOUT/Safety 결과 artifact path/hash |
 | 승인 | Manifest Approval artifact path/hash |
 
-모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 22개 exact Slot의 source hash와 이 evidence chain을 검증한다.
+모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 25개 exact Slot의 source hash와 이 evidence chain을 검증한다.
 
 #### Gate Sampling
 

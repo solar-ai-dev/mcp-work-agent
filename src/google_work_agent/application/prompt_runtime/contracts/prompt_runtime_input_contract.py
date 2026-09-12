@@ -11,6 +11,10 @@ PROMPT_RUNTIME_INPUT_CONTRACT_SCHEMA_VERSION: Final = 1
 
 REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "request_understanding.identify_goal": "request.identify_goal",
+    "request_understanding.identify_effect_prohibitions": "request.identify_goal",
+    "request_understanding.identify_source_dependencies": "request.identify_goal",
+    "request_understanding.identify_output_responsibilities": "request.identify_goal",
+    "request_understanding.identify_source_status": "request.identify_goal",
     "request_understanding.identify_temporal_scope": "request.identify_temporal_scope",
     "request_understanding.detect_ambiguity": "request.detect_ambiguity",
     "tool_routing.determine_io_resources": "route.determine_resources",
@@ -22,6 +26,9 @@ REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "work_analysis.resolve_entity_relations": "analysis.resolve_entity_relations",
     "work_analysis.resolve_temporal_dependencies": "analysis.resolve_temporal_dependencies",
     "work_analysis.detect_duplicate_conflict_candidates": (
+        "analysis.detect_duplicate_conflict_candidates"
+    ),
+    "work_analysis.assess_requested_task_satisfaction": (
         "analysis.detect_duplicate_conflict_candidates"
     ),
     "work_analysis.assess_action_necessity": "analysis.assess_action_necessity",
@@ -60,13 +67,18 @@ class PromptRuntimeInputContractEntryV1:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
         output_version = {
             "retrieval.select_evidence": 3,
-            "request_understanding.identify_goal": 10,
+            "request_understanding.identify_goal": 14,
             "request_understanding.detect_ambiguity": 2,
-            "work_analysis.detect_duplicate_conflict_candidates": 3,
+            "work_analysis.detect_duplicate_conflict_candidates": 4,
             "work_analysis.assess_information_gaps": 2,
             "work_analysis.assess_operational_risks": 2,
         }.get(self.prompt_slot_id, 1)
-        input_versions = {3, 4} if self.prompt_slot_id == "retrieval.select_evidence" else {1, 2}
+        if self.prompt_slot_id == "retrieval.select_evidence":
+            input_versions = {3, 4, 5}
+        elif self.prompt_slot_id == "request_understanding.identify_source_status":
+            input_versions = {1}
+        else:
+            input_versions = {1, 2}
         if (
             self.input_schema_version not in input_versions
             or self.output_schema_version != output_version

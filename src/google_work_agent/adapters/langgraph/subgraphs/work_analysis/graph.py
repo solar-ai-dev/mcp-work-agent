@@ -121,7 +121,7 @@ ConfirmInline = Callable[
 
 
 class WorkAnalysisSubgraph:
-    """Run seven atomic Prompt operations and two deterministic runtime nodes."""
+    """Run eight atomic Prompt operations and two deterministic runtime nodes."""
 
     def __init__(
         self,
@@ -156,6 +156,11 @@ class WorkAnalysisSubgraph:
             ),
             "detect_duplicate_conflict_candidates": load_prompt_reference(
                 "work_analysis.detect_duplicate_conflict_candidates",
+                manifest,
+                execution_scope=prompt_execution_scope,
+            ),
+            "assess_requested_task_satisfaction": load_prompt_reference(
+                "work_analysis.assess_requested_task_satisfaction",
                 manifest,
                 execution_scope=prompt_execution_scope,
             ),
@@ -410,6 +415,7 @@ class WorkAnalysisSubgraph:
             cast(Any, state),
             llm_runtime=self._llm_runtime,
             prompt_ref=self._prompt_refs["detect_duplicate_conflict_candidates"],
+            task_satisfaction_prompt_ref=self._prompt_refs["assess_requested_task_satisfaction"],
             requested_mode=request_from_state(state).requested_mode,
             confirmation_response=self._confirmation_response(state),
         )
@@ -495,7 +501,17 @@ class WorkAnalysisSubgraph:
         plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         output_plan = plan["output_plan"]
         routes = [] if output_plan["output_mode"] == "ANSWER" else output_plan["output_routes"]
-        llm_required = action_necessity.action_necessity_llm_required(routes)
+        duplicate_assessment = cast(
+            DuplicateConflictAssessmentV1,
+            _require_state_value(
+                state.get("duplicate_conflict_assessment"),
+                "duplicate_conflict_assessment",
+            ),
+        )
+        llm_required = action_necessity.action_necessity_llm_required(
+            routes,
+            duplicate_conflict_assessment=duplicate_assessment,
+        )
         if llm_required:
             ensure_llm_call_budget(state)
         patch = assess_action_necessity_node(

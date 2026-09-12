@@ -176,6 +176,15 @@ def _output_schema_for_request_intent(
 
     schema = deepcopy(ROUTE_RESOURCE_CANDIDATE_OUTPUT_SCHEMA.json_schema)
     properties = cast(dict[str, object], schema["properties"])
+    requested_resource_categories = sorted(
+        {
+            coarse_resource_category(resource_type)
+            for resource_type in request_intent["requested_resource_hints"]
+        }
+    )
+    for field in ("input_resource_types", "output_resource_types"):
+        resource_array = cast(dict[str, object], properties[field])
+        resource_array["items"] = {"enum": requested_resource_categories}
     output_effects = cast(dict[str, object], properties["output_effects"])
     requested_write_effects = list(
         dict.fromkeys(
@@ -439,9 +448,9 @@ def _semantic_candidate(
     if not requested_write_effects:
         raw_output_resources = []
         output_effects = ()
-    elif not set(output_effects).issubset(requested_write_effects):
+    elif set(output_effects) != requested_write_effects:
         raise ToolRouteValidationError(
-            "tool route output effect exceeds the validated RequestIntent",
+            "tool route output effects do not preserve the validated RequestIntent",
             reason_code="TOOL_ROUTE_EFFECT_MISMATCH",
             affected_field_paths=("$.output_effects",),
         )
@@ -478,6 +487,26 @@ def _semantic_candidate(
                 reason_code="TOOL_ROUTE_EFFECT_MISMATCH",
                 affected_field_paths=("$.output_resource_types", "$.output_effects"),
             )
+    requested_resource_categories = {
+        coarse_resource_category(resource_type)
+        for resource_type in request_intent["requested_resource_hints"]
+    }
+    candidate_resource_categories = {
+        coarse_resource_category(resource_type) for resource_type in input_resources
+    } | {coarse_resource_category(resource_type) for resource_type, _effect in output_pairs}
+    if candidate_resource_categories != requested_resource_categories:
+        raise ToolRouteValidationError(
+            "tool route resources do not preserve the validated RequestIntent",
+            reason_code="TOOL_ROUTE_RESOURCE_MISMATCH",
+            affected_field_paths=("$.input_resource_types", "$.output_resource_types"),
+        )
+    read_requested = "READ" in request_intent["requested_effect_hints"]
+    if read_requested != bool(input_resources):
+        raise ToolRouteValidationError(
+            "tool route input resources do not preserve the validated READ responsibility",
+            reason_code="TOOL_ROUTE_RESOURCE_MISMATCH",
+            affected_field_paths=("$.input_resource_types",),
+        )
     analysis_requirement = request_intent.get("analysis_requirement", "REQUIRED")
     if analysis_requirement not in {"NONE", "REQUIRED"}:
         raise ToolRouteValidationError("analysis_requirement is invalid")

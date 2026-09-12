@@ -39,6 +39,10 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
+_SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset(
+    {"search_terms", "subject", "search_criteria_subject"}
+)
+
 
 class AmbiguityCandidateV2(TypedDict):
     missing_information_owner: Literal["NONE", "USER", "CONNECTOR"]
@@ -68,8 +72,10 @@ DETECT_AMBIGUITY_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "missing_information_owner": {
                 "enum": ["NONE", "USER", "CONNECTOR"],
                 "description": (
-                    "NONE when nothing is missing; USER only for a user-owned choice; "
-                    "CONNECTOR for facts retrievable from selected or routed resources."
+                    "NONE when nothing is missing; USER when the target identity itself "
+                    "still requires a user choice; CONNECTOR only for target attributes "
+                    "retrievable after the target is selected or explicitly identifiable "
+                    "from current-request constraints."
                 ),
             },
             "missing_fields": {
@@ -124,13 +130,14 @@ def detect_ambiguity(
         "request_understanding.detect_ambiguity",
         manifest_path or default_prompt_manifest_path(),
     )
+    resolution_responsibilities = _resolution_responsibilities(
+        goal_candidate=goal_candidate,
+        request=request,
+    )
     prompt_input: dict[str, object] = {
         "user_request": request.request_text,
         "goal_candidate": dict(goal_candidate),
-        "resolution_responsibilities": _resolution_responsibilities(
-            goal_candidate=goal_candidate,
-            request=request,
-        ),
+        "resolution_responsibilities": resolution_responsibilities,
         "selected_resource_refs": [
             {
                 "resource_ref_id": item.resource_ref_id,
@@ -246,6 +253,22 @@ def _validate_ambiguity_candidate(
                 "$.goal_candidate.constraints",
             ),
         )
+    if (
+        missing_information_owner == "USER"
+        and "target_resource" in missing_fields
+        and _searchable_target_anchor_count(goal_candidate) > 0
+        and _connector_owned_source_count(goal_candidate) > 0
+    ):
+        raise RequestAmbiguityValidationError(
+            "searchable connector target was reclassified as a user-owned identity choice",
+            reason_code="REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT",
+            affected_field_paths=(
+                "$.missing_information_owner",
+                "$.missing_fields",
+                "$.goal_candidate.constraints",
+                "$.goal_candidate.resource_responsibilities.source_reads",
+            ),
+        )
     return cast(
         AmbiguityCandidateV2,
         {
@@ -288,7 +311,23 @@ def _resolution_responsibilities(
     return {
         "connector_owned_information": connector_owned,
         "resolved_resource_refs": resolved,
+        "searchable_target_anchor_count": _searchable_target_anchor_count(goal_candidate),
+        "connector_owned_source_count": _connector_owned_source_count(goal_candidate),
     }
+
+
+def _searchable_target_anchor_count(goal_candidate: RequestGoalCandidateV1) -> int:
+    return sum(
+        1
+        for constraint in goal_candidate["constraints"]
+        if constraint["field"] in _SEARCHABLE_TARGET_ANCHOR_FIELDS
+        and bool(constraint["value"])
+    )
+
+
+def _connector_owned_source_count(goal_candidate: RequestGoalCandidateV1) -> int:
+    responsibilities = goal_candidate.get("resource_responsibilities")
+    return 0 if responsibilities is None else len(responsibilities["source_reads"])
 
 
 def _overlaps_connector_owned_information(

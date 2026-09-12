@@ -4,7 +4,7 @@
 
 # 입력과 작성
 
-`user_request`, `request_intent`, supplied `evidence`와 optional `work_analysis`를 함께 읽는다. `confirmation_response`가 있으면 해당 선택만 반영한다. 기존 Resource 수정은 현재 상태와 원하는 변경 후 상태를 구분한다.
+`user_request`, `request_intent`, supplied `evidence`와 optional `work_analysis`를 함께 읽는다. 기존 Resource 수정은 현재 상태와 원하는 변경 후 상태를 구분한다.
 
 objective와 scope_constraints에는 사용자가 실제로 요청한 변경, 적용 위치, 유지할 부분과 금지를 손실 없이 보존한다. 지정 문장을 추가하라는 요청을 일반적인 '내용 검토'로 축소하지 않는다. 다음 인자 작성 노드가 원문을 따로 받는다고 가정하지 말고 필요한 exact literal을 현재 계약 안에 전달한다. 사용자에게 없는 optional 변경·수신자·일정은 만들지 않는다.
 

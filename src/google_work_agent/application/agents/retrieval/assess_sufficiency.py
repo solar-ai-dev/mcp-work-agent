@@ -463,6 +463,12 @@ def assess_sufficiency(
         tool_route_plan=tool_route_plan,
         evidence_drafts=evidence_drafts,
     )
+    validated = _require_unread_exhaustive_collection_pages(
+        validated,
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        read_result_summaries=read_result_summaries,
+    )
     validated = _bind_issue_routes(validated, tool_route_plan=tool_route_plan)
     if (
         validated["status"] == "SUFFICIENT"
@@ -493,6 +499,61 @@ def assess_sufficiency(
         evidence_supported_partial_possible=bool(evidence_drafts),
     )
     return _guard_event_year(validated, request_intent, evidence_drafts, query_attempts)
+
+
+def _require_unread_exhaustive_collection_pages(
+    result: SufficiencyResultV2,
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    read_result_summaries: Sequence[Mapping[str, object]],
+) -> SufficiencyResultV2:
+    """Reject an LLM SUFFICIENT candidate while required collection pages remain."""
+
+    exhaustive = any(
+        constraint["kind"] == "SCOPE"
+        and constraint["field"] == "coverage_requirement"
+        and constraint["value"] == "EXHAUSTIVE"
+        for constraint in request_intent["constraints"]
+    )
+    if not exhaustive or result["status"] != "SUFFICIENT" or tool_route_plan is None:
+        return result
+
+    routes = {
+        route["route_id"]: route
+        for route in tool_route_plan["input_plan"]["input_routes"]
+        if route["required"]
+    }
+    issues = [
+        issue
+        for issue in result["issues"]
+        if issue["slot"] != "collection_coverage"
+    ]
+    for summary in read_result_summaries:
+        route_id = summary.get("route_id")
+        if not isinstance(route_id, str):
+            continue
+        route = routes.get(route_id)
+        if (
+            route is None
+            or summary.get("has_next_page") is not True
+            or summary.get("exhausted") is True
+        ):
+            continue
+        issues.append(
+            {
+                "slot": "collection_coverage",
+                "route_id": route_id,
+                "issue_type": "MISSING",
+                "required": True,
+                "resolution_source": (
+                    "GOOGLE" if route["connector_id"] == "google_workspace" else "CONNECTOR"
+                ),
+                "safety_critical": False,
+                "reason_codes": ["COLLECTION_PAGE_REMAINS"],
+            }
+        )
+    return {**result, "issues": issues}
 
 
 def _guard_event_year(

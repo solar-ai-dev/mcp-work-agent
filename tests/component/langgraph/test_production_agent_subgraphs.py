@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from itertools import count
 from typing import Any, cast
 
@@ -105,6 +105,8 @@ class _ComponentInferencePort:
         github_retrieval: bool = False,
         request_reconsideration: bool = False,
         duplicate_found: bool = False,
+        searchable_target: bool = False,
+        cross_source_draft: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -113,6 +115,8 @@ class _ComponentInferencePort:
         self.retrieval_followup_changes_query = retrieval_followup_changes_query
         self.request_reconsideration = request_reconsideration
         self.duplicate_found = duplicate_found
+        self.searchable_target = searchable_target
+        self.cross_source_draft = cross_source_draft
         self.calls: list[str] = []
         self.inputs: dict[str, list[dict[str, object]]] = {}
 
@@ -147,6 +151,40 @@ class _ComponentInferencePort:
     def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
         has_confirmation = isinstance(projection.get("confirmation_response"), Mapping)
         if prompt_id == "request_understanding.identify_goal":
+            if self.cross_source_draft:
+                return {
+                    "goal": "prepare a draft from existing work facts",
+                    "completion_conditions": ["prepare the draft", "do not send it"],
+                    "constraints": {
+                        "search_terms": ["Project Anchor"],
+                        "business_concepts": [],
+                        "person": [],
+                        "sender": [],
+                        "recipient": ["person@example.test"],
+                        "subject": [],
+                        "period": [],
+                        "coverage_requirement": [],
+                        "additional_constraints": [],
+                    },
+                    "analysis_requirement": "NONE",
+                }
+            if self.searchable_target:
+                return {
+                    "goal": "confirm shipment criteria and owner from related mail",
+                    "completion_conditions": ["return an evidence-backed answer"],
+                    "constraints": {
+                        "search_terms": ["Project Anchor"],
+                        "business_concepts": ["shipment"],
+                        "person": [],
+                        "sender": [],
+                        "recipient": [],
+                        "subject": [],
+                        "period": [],
+                        "coverage_requirement": [],
+                        "additional_constraints": [],
+                    },
+                    "analysis_requirement": "NONE",
+                }
             needs_action = self.request_confirmation or has_confirmation
             return {
                 "goal": "schedule team sync" if needs_action else "summarize status",
@@ -159,27 +197,71 @@ class _ComponentInferencePort:
                     "recipient": [],
                     "subject": [],
                     "period": [],
-                    "status": [],
+                    "coverage_requirement": [],
                     "additional_constraints": [],
                 },
-                "resource_responsibilities": (
-                    {
-                        "source_reads": [],
-                        "outputs": [{"resource_type": "CALENDAR_EVENT", "effect": "CREATE"}],
-                    }
-                    if needs_action
-                    else {
-                        "source_reads": (
-                            [{"resource_type": "GITHUB_ISSUE", "required_information": []}]
-                            if self.github_retrieval
-                            else []
-                        ),
-                        "outputs": [],
-                    }
-                ),
                 "analysis_requirement": "NONE",
             }
+        if prompt_id == "request_understanding.identify_effect_prohibitions":
+            return {
+                "effect_prohibitions": [
+                    {
+                        "effect": candidate["effect"],
+                        "prohibition": (
+                            "FORBIDDEN"
+                            if self.cross_source_draft and candidate["effect"] == "SEND"
+                            else "NOT_FORBIDDEN"
+                        ),
+                    }
+                    for candidate in cast(
+                        Sequence[Mapping[str, object]], projection["effect_candidates"]
+                    )
+                ]
+            }
+        if prompt_id == "request_understanding.identify_source_dependencies":
+            if self.cross_source_draft:
+                return _source_dependency_decisions(
+                    projection,
+                    source_types={
+                        "TASK": ["work status"],
+                        "CALENDAR_EVENT": ["schedule"],
+                    },
+                )
+            if self.searchable_target:
+                return _source_dependency_decisions(
+                    projection,
+                    source_types={"GMAIL_THREAD": ["shipment criteria", "owner"]},
+                )
+            needs_action = self.request_confirmation or has_confirmation
+            return (
+                _source_dependency_decisions(projection)
+                if needs_action
+                else _source_dependency_decisions(
+                    projection,
+                    source_types={"GITHUB_ISSUE": []} if self.github_retrieval else {},
+                )
+            )
+        if prompt_id == "request_understanding.identify_output_responsibilities":
+            needs_action = self.request_confirmation or has_confirmation
+            return _output_responsibility_decisions(
+                projection,
+                output_types=(
+                    {"GMAIL_DRAFT": "CREATE"}
+                    if self.cross_source_draft
+                    else ({"CALENDAR_EVENT": "CREATE"} if needs_action else {})
+                ),
+            )
+        if prompt_id == "request_understanding.identify_source_status":
+            return {"statuses": []}
         if prompt_id == "request_understanding.detect_ambiguity":
+            if self.searchable_target:
+                first_attempt = self.calls.count(prompt_id) == 1
+                return {
+                    "missing_information_owner": "USER" if first_attempt else "CONNECTOR",
+                    "missing_fields": (
+                        ["target_resource"] if first_attempt else ["shipment criteria and owner"]
+                    ),
+                }
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
                 "missing_information_owner": "USER" if needs_confirmation else "NONE",
@@ -192,6 +274,17 @@ class _ComponentInferencePort:
                 "output_resource_types": [],
                 "output_effects": [],
                 "disposition": "NO_TOOL_NEEDED",
+            }
+        if prompt_id == "tool_routing.select_tool_if_needed":
+            route = cast(Mapping[str, object], projection["route_candidate"])
+            candidates = cast(list[Mapping[str, str]], projection["registered_candidates"])
+            selected = next(
+                item["tool_id"] for item in candidates if item["tool_id"] == "github_close_issue"
+            )
+            return {
+                "schema_version": 1,
+                "route_id": route["route_id"],
+                "selected_tool_id": selected,
             }
         if prompt_id == "retrieval.plan_query":
             current_round_no = projection.get("current_round_no")
@@ -300,15 +393,15 @@ class _ComponentInferencePort:
         }:
             return {"relation_candidates": []}
         if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
-            required = projection.get("task_duplicate_review_required") is True
-            if required and self.duplicate_found:
+            return {"relation_candidates": []}
+        if prompt_id == "work_analysis.assess_requested_task_satisfaction":
+            if self.duplicate_found:
                 facts = cast(list[Mapping[str, object]], projection.get("work_facts", []))
                 source_state = cast(Mapping[str, object], projection.get("source_state", {}))
                 candidates = cast(
                     list[Mapping[str, object]], source_state.get("task_review_candidates", [])
                 )
                 return {
-                    "relation_candidates": [],
                     "requested_work_status": "SATISFIED",
                     "requested_work_reason": "The observed Task already satisfies the request",
                     "matched_fact_ids": [str(facts[0]["fact_id"])],
@@ -316,11 +409,8 @@ class _ComponentInferencePort:
                     "evidence_refs": list(cast(list[str], facts[0]["evidence_refs"])),
                 }
             return {
-                "relation_candidates": [],
-                "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
-                "requested_work_reason": (
-                    "Observed tasks do not satisfy the request" if required else None
-                ),
+                "requested_work_status": "NOT_SATISFIED",
+                "requested_work_reason": "Observed tasks do not satisfy the request",
                 "matched_fact_ids": [],
                 "matched_candidate_refs": [],
                 "evidence_refs": [],
@@ -437,6 +527,38 @@ class _CollectionConnectorReadPort:
         )
 
 
+class _PagedCollectionConnectorReadPort:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> ConnectorReadResultV1:
+        del tool_arguments
+        page = self.call_count
+        self.call_count += 1
+        return ConnectorReadResultV1(
+            schema_version=1,
+            tool_id=binding.tool_id,
+            request_id=f"component-paged-read-{page}",
+            output={
+                "items": [
+                    {
+                        "resource_type": "gmail_thread",
+                        "resource_id": f"thread-{page}",
+                        "parent_id": None,
+                        "version": "v1",
+                        "related_resource_ids": [],
+                        "payload": {
+                            "subject": f"Status title {page}",
+                            "body": "The current status is ready.",
+                        },
+                    }
+                ]
+            },
+            next_page_token="next-page" if page == 0 else None,
+            total_count=2,
+        )
+
+
 @pytest.mark.parametrize("multiple", [False, True])
 def test_retrieval_person__compiled_identity_search__preserves_same_run(multiple: bool) -> None:
     class Reader:
@@ -549,6 +671,7 @@ def _state(
     *,
     initial_target: str = "request_understanding",
     selected_resources: tuple[SelectedResourceRef, ...] = (),
+    request_text: str = "summarize status",
 ) -> GraphState:
     request = WorkflowStartRequest(
         run_id="component-run-1",
@@ -556,7 +679,7 @@ def _state(
         workflow_key="component-thread-1",
         entry_mode="AGENT_SEARCH",
         requested_mode="AUTO",
-        request_text="summarize status",
+        request_text=request_text,
         selected_resource_ids=(),
         run_budget=build_default_run_budget(),
         correlation=WorkflowCorrelationContext("component-request-1", None, "1"),
@@ -693,6 +816,48 @@ def _merge_decision(
     }
 
 
+def _source_dependency_decisions(
+    projection: Mapping[str, object],
+    *,
+    source_types: Mapping[str, list[str]] | None = None,
+) -> dict[str, object]:
+    sources = source_types or {}
+    decisions: list[dict[str, object]] = []
+    candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
+    for candidate in candidates:
+        resource_type = cast(str, candidate["resource_type"])
+        information = sources.get(resource_type)
+        if information is not None:
+            decisions.append(
+                {
+                    "resource_type": resource_type,
+                    "dependency": "SOURCE_REQUIRED",
+                    "required_information": information,
+                }
+            )
+        else:
+            decisions.append({"resource_type": resource_type, "dependency": "SOURCE_NOT_REQUIRED"})
+    return {"source_dependencies": decisions}
+
+
+def _output_responsibility_decisions(
+    projection: Mapping[str, object],
+    *,
+    output_types: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    outputs = output_types or {}
+    candidates = cast(list[Mapping[str, object]], projection["output_candidates"])
+    return {
+        "output_responsibilities": [
+            {
+                "resource_type": candidate["resource_type"],
+                "effect": outputs.get(cast(str, candidate["resource_type"]), "NONE"),
+            }
+            for candidate in candidates
+        ]
+    }
+
+
 def _confirm_early(_state: object) -> tuple[None, dict[str, object]]:
     return None, {"__target__": "end", "__workflow_control__": {"stage": "PAUSED"}}
 
@@ -705,6 +870,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     llm = _ComponentInferencePort()
     graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -718,13 +884,91 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         result = graph.invoke(_state())
 
     assert result["request_intent"]["goal"] == "summarize status"
-    assert llm.calls == ["request_understanding.identify_goal"]
+    assert llm.calls == [
+        "request_understanding.identify_goal",
+        "request_understanding.identify_effect_prohibitions",
+        "request_understanding.identify_source_dependencies",
+        "request_understanding.identify_output_responsibilities",
+        "request_understanding.identify_source_status",
+    ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
+
+
+def test_request_understanding__compiled_searchable_target__revises_false_confirmation() -> None:
+    llm = _ComponentInferencePort(searchable_target=True)
+    graph = RequestUnderstandingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=_confirm_early,
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(_state(request_text="Project Anchor shipment status"))
+
+    assert result["request_intent"]["ambiguity"] == {
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
+    }
+    assert llm.calls.count("request_understanding.detect_ambiguity") == 2
+    resolution = cast(
+        Mapping[str, object],
+        llm.inputs["request_understanding.detect_ambiguity"][0]["resolution_responsibilities"],
+    )
+    assert resolution["searchable_target_anchor_count"] == 1
+    assert resolution["connector_owned_source_count"] == 1
+
+
+def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_send_ban() -> None:
+    llm = _ComponentInferencePort(cross_source_draft=True)
+    graph = RequestUnderstandingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=_confirm_early,
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(_state(request_text="prepare a draft from work and schedule"))
+
+    assert result["request_intent"]["resource_responsibilities"] == {
+        "source_reads": [
+            {"resource_type": "TASK", "required_information": ["work status"]},
+            {
+                "resource_type": "CALENDAR_EVENT",
+                "required_information": ["schedule"],
+            },
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+    }
+    output_input = llm.inputs["request_understanding.identify_output_responsibilities"][0]
+    assert {item["effect"]: item["prohibition"] for item in output_input["effect_prohibitions"]}[
+        "SEND"
+    ] == "FORBIDDEN"
+    source_status_input = llm.inputs["request_understanding.identify_source_status"][0]
+    assert [item["resource_type"] for item in source_status_input["source_reads"]] == [
+        "TASK",
+        "CALENDAR_EVENT",
+    ]
+    assert source_status_input["outputs"] == [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]
 
 
 def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
     state = _state(initial_target="tool_route")
-    state["request_intent"] = cast(Any, _intent())
+    intent = _intent()
+    intent["requested_effect_hints"] = []
+    state["request_intent"] = cast(Any, intent)
     llm = _ComponentInferencePort()
     graph = ToolRoutingSubgraph(
         llm_runtime=llm,
@@ -741,8 +985,54 @@ def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
         result = graph.invoke(state)
 
     assert result["tool_route_plan"]["output_plan"]["output_mode"] == "ANSWER"
-    assert llm.calls == ["tool_routing.determine_io_resources"]
+    assert llm.calls == []
     assert ("finalize_route", "determine_io_resources") in _edge_set(graph)
+
+
+def test_tool_routing__compiled_multiple_registry_candidates__preserves_bound_route() -> None:
+    state = _state(
+        initial_target="tool_route",
+        request_text="Close the selected GitHub issue",
+    )
+    state["request_intent"] = cast(
+        Any,
+        {
+            **_intent(),
+            "goal": "close the selected GitHub issue",
+            "requested_effect_hints": ["UPDATE"],
+            "requested_resource_hints": ["GITHUB_ISSUE"],
+            "resource_responsibilities": {
+                "source_reads": [],
+                "outputs": [{"resource_type": "GITHUB_ISSUE", "effect": "UPDATE"}],
+            },
+        },
+    )
+    llm = _ComponentInferencePort()
+    graph = ToolRoutingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=cast(Any, _confirm_early),
+        id_factory=_IdFactory(),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    output_route = result["tool_route_plan"]["output_plan"]["output_routes"][0]
+    assert output_route["selected_tool_id"] == "github_close_issue"
+    assert llm.calls == ["tool_routing.select_tool_if_needed"]
+    prompt_input = llm.inputs["tool_routing.select_tool_if_needed"][0]
+    route_candidate = cast(Mapping[str, object], prompt_input["route_candidate"])
+    assert output_route["route_id"] == route_candidate["route_id"]
+    assert prompt_input["registered_candidates"] == [
+        {"tool_id": "github_close_issue"},
+        {"tool_id": "github_reopen_issue"},
+        {"tool_id": "github_update_issue"},
+    ]
 
 
 def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
@@ -863,6 +1153,46 @@ def test_retrieval__compiled_collection_metadata__is_not_limited_by_rag_evidence
         "Same title",
         "Same title",
     ]
+
+
+def test_retrieval__compiled_exhaustive_collection__reads_unread_page_before_finalize() -> None:
+    state = _state(initial_target="context_retriever")
+    intent = _intent()
+    intent["constraints"] = [
+        {
+            "kind": "SCOPE",
+            "field": "coverage_requirement",
+            "value": "EXHAUSTIVE",
+        }
+    ]
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    connector = _PagedCollectionConnectorReadPort()
+    llm = _ComponentInferencePort()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=llm,
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.call_count == 2
+    assert llm.calls.count("retrieval.assess_sufficiency") == 2
+    assert result["retrieval_result"]["collection_results"][0]["continuation_status"] == "EXHAUSTED"
 
 
 @pytest.mark.parametrize(
@@ -1592,13 +1922,14 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     assert llm.calls == [
         "work_analysis.extract_work_facts",
         "work_analysis.detect_duplicate_conflict_candidates",
+        "work_analysis.assess_requested_task_satisfaction",
         "work_analysis.assess_action_necessity",
         "work_analysis.assess_information_gaps",
         "work_analysis.assess_operational_risks",
     ]
 
 
-def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> None:
+def test_work_analysis__satisfied_duplicate__does_not_ask_second_llm_to_override() -> None:
     state = _state(initial_target="work_analysis")
     intent = _intent()
     intent["requested_effect_hints"] = ["CREATE"]
@@ -1650,15 +1981,9 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
         ],
     )
 
-    def confirm_inline(
-        working: Mapping[str, object],
-    ) -> tuple[ConfirmationResponseProjectionV1, None]:
-        user_interrupt = cast(Mapping[str, object], working["user_interrupt"])
-        resume = interrupt(dict(user_interrupt))
-        return cast(ConfirmationResponseProjectionV1, resume["confirmation_response"]), None
-
+    llm = _ComponentInferencePort(work_fact_count=1, duplicate_found=True)
     work_analysis = WorkAnalysisSubgraph(
-        llm_runtime=_ComponentInferencePort(work_fact_count=1, duplicate_found=True),
+        llm_runtime=llm,
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -1666,7 +1991,7 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
         transition_run=lambda _run_id, _transition: None,
         merge_decision=cast(Any, _merge_decision),
         evidence_store=evidence_store,
-        confirm_inline=confirm_inline,
+        confirm_inline=cast(Any, _confirm_early),
     ).build()
     wrapper = StateGraph(GraphState)
     wrapper.add_node("work_analysis", work_analysis)
@@ -1676,12 +2001,20 @@ def test_work_analysis__duplicate_override__checkpoints_owner_confirmation() -> 
     config: RunnableConfig = {"configurable": {"thread_id": "duplicate-override-thread"}}
 
     with provider_dispatch_execution_scope():
-        interrupted = graph.invoke(state, config)
+        result = graph.invoke(state, config)
 
-    payload = interrupted["__interrupt__"][0].value
-    assert payload["origin_target"] == "analysis.assess_operational_risks"
-    assert payload["policy_confirmation"]["confirmation_kind"] == "DUPLICATE_OVERRIDE"
-    assert graph.get_state(config).next == ("work_analysis",)
+    analysis = result["work_analysis_result"]
+    assert analysis["action_necessity"] == "NOT_REQUIRED"
+    assert analysis["route_action_necessities"] == [
+        {
+            "route_id": "output-task-route",
+            "status": "NOT_REQUIRED",
+            "reason": "REQUESTED_TASK_ALREADY_SATISFIED",
+            "evidence_refs": ["task-evidence"],
+            "candidate_refs": ["task:existing-1"],
+        }
+    ]
+    assert "work_analysis.assess_action_necessity" not in llm.calls
 
 
 def test_planning__compiled_normal_path__produces_answer() -> None:
@@ -1796,6 +2129,7 @@ def test_request_confirmation__interrupts_and_resumes__same_owner() -> None:
 
     request_graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
@@ -1857,6 +2191,7 @@ def test_reconsideration_confirmation__preserves_prior_intent__and_revises_artif
 
     request_graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
         prompt_manifest_path=None,
         prompt_execution_scope=DEVELOPMENT_SMOKE,
         id_factory=_IdFactory(),
