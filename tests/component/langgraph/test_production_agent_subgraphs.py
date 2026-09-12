@@ -1133,6 +1133,53 @@ def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
     assert ("finalize_route", "determine_io_resources") in _edge_set(graph)
 
 
+def test_tool_routing__compiled_cross_source_draft__does_not_add_freebusy() -> None:
+    state = _state(
+        initial_target="tool_route",
+        request_text="Create a draft from existing work and schedule facts",
+    )
+    state["request_intent"] = cast(
+        Any,
+        {
+            **_intent(),
+            "requested_effect_hints": ["CREATE"],
+            "requested_resource_hints": ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"],
+            "resource_responsibilities": {
+                "source_reads": [
+                    {"resource_type": "TASK", "required_information": ["work status"]},
+                    {
+                        "resource_type": "CALENDAR_EVENT",
+                        "required_information": ["schedule"],
+                    },
+                ],
+                "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+            },
+        },
+    )
+    graph = ToolRoutingSubgraph(
+        llm_runtime=_ComponentInferencePort(),
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=cast(Any, _confirm_early),
+        id_factory=_IdFactory(),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    input_resource_types = {
+        route["resource_type"]
+        for route in result["tool_route_plan"]["input_plan"]["input_routes"]
+    }
+    assert input_resource_types == {"TASK", "TASK_LIST", "CALENDAR", "CALENDAR_EVENT"}
+    assert result["tool_route_plan"]["output_plan"]["output_routes"][0][
+        "selected_tool_id"
+    ] == "gmail_create_draft"
+
+
 def test_tool_routing__compiled_multiple_registry_candidates__preserves_bound_route() -> None:
     state = _state(
         initial_target="tool_route",

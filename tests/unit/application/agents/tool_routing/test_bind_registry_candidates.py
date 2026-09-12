@@ -72,6 +72,68 @@ def test_general_gmail_thread__avoids_redundant__message_detail_route() -> None:
     assert [route["resource_type"] for route in binding.input_routes] == ["GMAIL_THREAD"]
 
 
+def test_calendar_event_read__adds_calendar_discovery_without_freebusy() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("CALENDAR_EVENT",),
+            output_pairs=(),
+            output_mode="ANSWER",
+            analysis_requirement="REQUIRED",
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    assert {route["resource_type"] for route in binding.input_routes} == {
+        "CALENDAR",
+        "CALENDAR_EVENT",
+    }
+
+
+def test_explicit_freebusy_read__retains_freebusy_route() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("CALENDAR_FREEBUSY",),
+            output_pairs=(),
+            output_mode="ANSWER",
+            analysis_requirement="REQUIRED",
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    assert {route["resource_type"] for route in binding.input_routes} == {
+        "CALENDAR",
+        "CALENDAR_EVENT",
+        "CALENDAR_FREEBUSY",
+    }
+
+
+def test_cross_source_draft__does_not_infer_freebusy_from_calendar_event_read() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("TASK", "CALENDAR_EVENT"),
+            output_pairs=(("GMAIL_DRAFT", EffectType.CREATE),),
+            output_mode="ACTION",
+            analysis_requirement="REQUIRED",
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    assert {route["resource_type"] for route in binding.input_routes} == {
+        "TASK",
+        "TASK_LIST",
+        "CALENDAR",
+        "CALENDAR_EVENT",
+    }
+    assert binding.output_candidates[0].resource_type == "GMAIL_DRAFT"
+    assert binding.output_candidates[0].effect == "CREATE"
+
+
 def test_github_issue__binds_to_github__without_task_collision() -> None:
     ids = iter(f"route-{index}" for index in range(10))
     binding = bind_registry_candidates(
