@@ -227,6 +227,17 @@ class _ComponentInferencePort:
                 "output_effects": [],
                 "disposition": "NO_TOOL_NEEDED",
             }
+        if prompt_id == "tool_routing.select_tool_if_needed":
+            route = cast(Mapping[str, object], projection["route_candidate"])
+            candidates = cast(list[Mapping[str, str]], projection["registered_candidates"])
+            selected = next(
+                item["tool_id"] for item in candidates if item["tool_id"] == "github_close_issue"
+            )
+            return {
+                "schema_version": 1,
+                "route_id": route["route_id"],
+                "selected_tool_id": selected,
+            }
         if prompt_id == "retrieval.plan_query":
             current_round_no = projection.get("current_round_no")
             search_spec: dict[str, object] = (
@@ -888,6 +899,52 @@ def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
     assert result["tool_route_plan"]["output_plan"]["output_mode"] == "ANSWER"
     assert llm.calls == ["tool_routing.determine_io_resources"]
     assert ("finalize_route", "determine_io_resources") in _edge_set(graph)
+
+
+def test_tool_routing__compiled_multiple_registry_candidates__preserves_bound_route() -> None:
+    state = _state(
+        initial_target="tool_route",
+        request_text="Close the selected GitHub issue",
+    )
+    state["request_intent"] = cast(
+        Any,
+        {
+            **_intent(),
+            "goal": "close the selected GitHub issue",
+            "requested_effect_hints": ["UPDATE"],
+            "requested_resource_hints": ["GITHUB_ISSUE"],
+            "resource_responsibilities": {
+                "source_reads": [],
+                "outputs": [{"resource_type": "GITHUB_ISSUE", "effect": "UPDATE"}],
+            },
+        },
+    )
+    llm = _ComponentInferencePort()
+    graph = ToolRoutingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=cast(Any, _confirm_early),
+        id_factory=_IdFactory(),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    output_route = result["tool_route_plan"]["output_plan"]["output_routes"][0]
+    assert output_route["selected_tool_id"] == "github_close_issue"
+    assert llm.calls == ["tool_routing.select_tool_if_needed"]
+    prompt_input = llm.inputs["tool_routing.select_tool_if_needed"][0]
+    route_candidate = cast(Mapping[str, object], prompt_input["route_candidate"])
+    assert output_route["route_id"] == route_candidate["route_id"]
+    assert prompt_input["registered_candidates"] == [
+        {"tool_id": "github_close_issue"},
+        {"tool_id": "github_reopen_issue"},
+        {"tool_id": "github_update_issue"},
+    ]
 
 
 def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
