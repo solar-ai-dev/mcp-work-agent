@@ -285,7 +285,7 @@ def _projection_from_snapshot(
         ),
         CompletedEvidence(
             id=f"evidence-{run_id}-{snapshot.resource_type.value}-{snapshot.resource_id}",
-            origin_type=EvidenceOriginType.GOOGLE_RESOURCE,
+            origin_type=EvidenceOriginType.CONNECTOR_RESOURCE,
             kind=snapshot.resource_type.value.upper(),
             excerpt=excerpt,
             locator_json=None,

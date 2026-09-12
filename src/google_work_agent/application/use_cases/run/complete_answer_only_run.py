@@ -421,7 +421,7 @@ def _evidence_origin(
     resource: ResourceRefRecord | None,
 ) -> tuple[EvidenceOriginType, str | None]:
     if resource is not None:
-        return EvidenceOriginType.GOOGLE_RESOURCE, resource.id
+        return EvidenceOriginType.CONNECTOR_RESOURCE, resource.id
 
     resource_type_value, separator, _resource_identity = resource_handle.partition(":")
     try:

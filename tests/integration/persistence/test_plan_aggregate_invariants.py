@@ -107,7 +107,7 @@ def test_cross_run__resource_links__are_rejected(aggregate_database: Path) -> No
                 INSERT INTO evidence (
                     id, run_id, origin_type, resource_ref_id, message_id, kind,
                     excerpt, locator_json, created_at_ms
-                ) VALUES ('evidence-bad-resource', 'run-1', 'GOOGLE_RESOURCE',
+                ) VALUES ('evidence-bad-resource', 'run-1', 'CONNECTOR_RESOURCE',
                           'resource-2', NULL, 'TASK', 'bad', '{}', 1);
                 """
             )
@@ -178,7 +178,7 @@ def test_cross_plan_dependency__and_cross_run__action_evidence_are_rejected(
             INSERT INTO evidence (
                 id, run_id, origin_type, resource_ref_id, message_id, kind,
                 excerpt, locator_json, created_at_ms
-            ) VALUES ('evidence-2', 'run-2', 'GOOGLE_RESOURCE', 'resource-2', NULL,
+            ) VALUES ('evidence-2', 'run-2', 'CONNECTOR_RESOURCE', 'resource-2', NULL,
                       'TASK', 'task evidence', '{}', 1);
             """
         )

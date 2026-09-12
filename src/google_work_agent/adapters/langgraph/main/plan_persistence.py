@@ -440,7 +440,7 @@ class PlanPersistenceMixin:
         return WriteEvidenceDraft(
             evidence_id=persisted_evidence_id,
             origin_type=(
-                EvidenceOriginType.GOOGLE_RESOURCE
+                EvidenceOriginType.CONNECTOR_RESOURCE
                 if resource_ref_id is not None
                 else EvidenceOriginType.DERIVED
             ),

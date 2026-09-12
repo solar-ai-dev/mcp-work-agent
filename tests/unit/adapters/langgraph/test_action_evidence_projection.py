@@ -59,7 +59,7 @@ def test_persisted_plan_evidence__with_logical_ids__restores_resource_identity()
     connector_evidence = Evidence(
         id="persisted-evidence-1",
         run_id="run-1",
-        origin_type=EvidenceOriginType.GOOGLE_RESOURCE,
+        origin_type=EvidenceOriginType.CONNECTOR_RESOURCE,
         resource_ref_id=resource_ref.id,
         message_id=None,
         kind="excerpt",

@@ -87,7 +87,7 @@ def _evidence(resource_ref_id: str, excerpt: str) -> Evidence:
     return Evidence(
         id="evidence-1",
         run_id="run-1",
-        origin_type=EvidenceOriginType.GOOGLE_RESOURCE,
+        origin_type=EvidenceOriginType.CONNECTOR_RESOURCE,
         resource_ref_id=resource_ref_id,
         message_id=None,
         kind="excerpt",

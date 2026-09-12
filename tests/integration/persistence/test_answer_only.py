@@ -219,9 +219,23 @@ def test_answer_only__persists_selected_context__with_terminal_result(
         connection.close()
 
 
-def test_answer_only__persists_acquired_resource__with_search_evidence(
+@pytest.mark.parametrize(
+    ("connector_id", "resource_type", "resource_id", "parent_resource_id"),
+    [
+        ("google_workspace", "gmail_thread", "thread-search-42", None),
+        ("google_workspace", "task", "task-42", "task-list-1"),
+        ("google_workspace", "calendar_event", "event-42", "calendar-1"),
+        ("github", "github_issue", "owner/repo#42", "owner/repo"),
+    ],
+)
+def test_answer_only__persists_connector_resource__with_connector_neutral_evidence(
     answer_only_database: Path,
+    connector_id: str,
+    resource_type: str,
+    resource_id: str,
+    parent_resource_id: str | None,
 ) -> None:
+    resource_handle = f"{resource_type}:{resource_id}"
     service = CompleteAnswerOnlyRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(answer_only_database),
         now_ms=lambda: 1000,
@@ -243,7 +257,7 @@ def test_answer_only__persists_acquired_resource__with_search_evidence(
                 {
                     "schema_version": 1,
                     "evidence_id": "logical-evidence-1",
-                    "resource_handle": "gmail_thread:thread-search-42",
+                    "resource_handle": resource_handle,
                     "segment_id": "segment-search-42",
                     "kind": "excerpt",
                     "excerpt": "From: sender@example.com\nSubject: request",
@@ -255,10 +269,10 @@ def test_answer_only__persists_acquired_resource__with_search_evidence(
                 ResourceRef(
                     id="resource-search-1",
                     run_id="run-1",
-                    connector_id="google_workspace",
-                    resource_type="gmail_thread",
-                    resource_id="thread-search-42",
-                    parent_resource_id=None,
+                    connector_id=connector_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    parent_resource_id=parent_resource_id,
                     canonical_url=None,
                     title="request",
                     event_time_ms=None,
@@ -277,14 +291,15 @@ def test_answer_only__persists_acquired_resource__with_search_evidence(
             "SELECT id, connector_id, resource_type, resource_id FROM resource_refs;"
         ).fetchone()
         evidence = connection.execute(
-            "SELECT resource_ref_id FROM evidence WHERE run_id = 'run-1';"
+            "SELECT origin_type, resource_ref_id FROM evidence WHERE run_id = 'run-1';"
         ).fetchone()
         assert tuple(resource) == (
             "resource-search-1",
-            "google_workspace",
-            "gmail_thread",
-            "thread-search-42",
+            connector_id,
+            resource_type,
+            resource_id,
         )
+        assert evidence["origin_type"] == "CONNECTOR_RESOURCE"
         assert evidence["resource_ref_id"] == "resource-search-1"
     finally:
         connection.close()

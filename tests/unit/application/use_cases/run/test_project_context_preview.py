@@ -131,7 +131,7 @@ def test_context_preview__contains_only_current__selected_retrieval_evidence(
                 """INSERT INTO evidence (
                     id, run_id, origin_type, resource_ref_id, kind, excerpt,
                     locator_json, created_at_ms
-                ) VALUES (?, 'run-1', 'GOOGLE_RESOURCE', ?, 'excerpt', ?, ?, 3)""",
+                ) VALUES (?, 'run-1', 'CONNECTOR_RESOURCE', ?, 'excerpt', ?, ?, 3)""",
                 (
                     evidence_id,
                     ref_id,

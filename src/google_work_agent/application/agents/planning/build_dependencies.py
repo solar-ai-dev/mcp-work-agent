@@ -16,6 +16,9 @@ _TARGET_IDENTITY_FIELDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "tasks_delete_task": ("TASK", ("task_list_id", "task_id")),
     "calendar_update_event": ("CALENDAR_EVENT", ("calendar_id", "event_id")),
     "calendar_delete_event": ("CALENDAR_EVENT", ("calendar_id", "event_id")),
+    "github_update_issue": ("GITHUB_ISSUE", ("repository", "issue_number")),
+    "github_close_issue": ("GITHUB_ISSUE", ("repository", "issue_number")),
+    "github_reopen_issue": ("GITHUB_ISSUE", ("repository", "issue_number")),
 }
 
 
@@ -55,8 +58,16 @@ def _stable_target_identity(seed: Mapping[str, object]) -> tuple[str, ...] | Non
         raise ValueError("arguments must be an object")
     values: list[str] = [kind]
     for field in fields:
-        value = arguments.get(field)
-        if not isinstance(value, str) or not value:
+        value = _canonical_target_identity_value(arguments.get(field))
+        if value is None:
             return None
         values.append(value)
     return tuple(values)
+
+
+def _canonical_target_identity_value(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return f"string:{value}"
+    if type(value) is int and value > 0:
+        return f"integer:{value}"
+    return None

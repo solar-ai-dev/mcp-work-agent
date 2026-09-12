@@ -69,7 +69,7 @@ def test_modify_review_restart__with_persisted_plan__restores_evidence() -> None
     evidence = Evidence(
         id="persisted-evidence-1",
         run_id=plan.run_id,
-        origin_type=EvidenceOriginType.GOOGLE_RESOURCE,
+        origin_type=EvidenceOriginType.CONNECTOR_RESOURCE,
         resource_ref_id=resource_ref.id,
         message_id=None,
         kind="excerpt",
