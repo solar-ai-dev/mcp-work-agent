@@ -83,6 +83,10 @@ from google_work_agent.ports.llm.structured_inference_port import StructuredInfe
 from google_work_agent.ports.system.contracts.workflow_handoff import RequestedModeV1
 
 
+class _RequiredFollowupRouteOmissionError(RetrievalV2ValidationError):
+    """A follow-up candidate omitted an executable unresolved route."""
+
+
 def exact_resource_detail_plan(
     *,
     frozen_routes: Sequence[InputToolRouteV1],
@@ -563,6 +567,12 @@ def plan_query(
         )
         for route_id, operations in route_operations.items()
     }
+    required_followup_route_ids = _required_followup_route_ids(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        route_operations=route_operations,
+        is_followup=is_followup,
+    )
     if not any(route_operations.values()):
         raise RetrievalV2ValidationError(
             "no executable retrieval operation is available for the frozen routes",
@@ -638,6 +648,11 @@ def plan_query(
                 validated_container_refs=validated_container_refs,
                 detail_candidate_refs=detail_candidate_refs,
             )
+            validation_stage = "ROUND_VALIDATOR"
+            validated_deterministic = _validate_required_followup_route_coverage(
+                validated_deterministic,
+                required_route_ids=required_followup_route_ids,
+            )
             validation_stage = "BUILD_QUERY"
             build_query(
                 validated_deterministic,
@@ -652,6 +667,37 @@ def plan_query(
                 selected_person_identities=selected_person_identities,
                 read_result_summaries=read_result_summaries,
             )
+        except _RequiredFollowupRouteOmissionError as error:
+            if error.validation_stage is None:
+                error.validation_stage = validation_stage
+            revised_plan, revised_budget = _revise_plan_once(
+                llm_runtime=llm_runtime,
+                revision_prompt_ref=revision_prompt_ref,
+                output_schema=bounded_output_schema,
+                prompt_input=planner_input,
+                requested_mode=requested_mode,
+                frozen_routes=frozen_routes,
+                route_policies=route_policies,
+                supported_kinds=supported_kinds,
+                validated_resource_refs=validated_resource_refs,
+                validated_container_refs=validated_container_refs,
+                detail_candidate_refs=detail_candidate_refs,
+                previous_output=deterministic_plan,
+                failure_reason_code=error.reason_code,
+                affected_field_paths=error.affected_field_paths,
+                failure_detail=str(error),
+                retry_budget=retry_budget,
+                is_followup=is_followup,
+                required_followup_route_ids=required_followup_route_ids,
+                now_ms=now_ms,
+                timezone=timezone,
+                prior_plans=prior_plans,
+                prior_read_result_handles=prior_read_result_handles,
+                read_result_summaries=read_result_summaries,
+                person_candidates=person_candidates,
+                selected_person_identities=selected_person_identities,
+            )
+            return revised_plan, revised_budget, True
         except RetrievalV2ValidationError as error:
             if error.validation_stage is None:
                 error.validation_stage = validation_stage
@@ -694,6 +740,10 @@ def plan_query(
         )
         validation_stage = "ROUND_VALIDATOR"
         validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        validated_round = _validate_required_followup_route_coverage(
+            validated_round,
+            required_route_ids=required_followup_route_ids,
+        )
         validation_stage = "BUILD_QUERY"
         build_query(
             validated_round,
@@ -734,6 +784,7 @@ def plan_query(
             failure_detail=str(error),
             retry_budget=retry_budget,
             is_followup=is_followup,
+            required_followup_route_ids=required_followup_route_ids,
             now_ms=now_ms,
             timezone=timezone,
             prior_plans=prior_plans,
@@ -783,6 +834,58 @@ def _validate_query_plan_round(
             raise RetrievalV2ValidationError(
                 "one search hypothesis allows at most 3 manifestations"
             )
+    return plan
+
+
+def _required_followup_route_ids(
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    route_operations: Mapping[str, Collection[RetrievalOperationV2]],
+    is_followup: bool,
+) -> frozenset[str]:
+    """Resolve current required issues to frozen routes that can still be read."""
+
+    if not is_followup:
+        return frozenset()
+    issues = prompt_input.get("unresolved_sufficiency_issues")
+    if not isinstance(issues, list):
+        return frozenset()
+    qualified_issues = [
+        dict(issue)
+        for issue in issues
+        if isinstance(issue, Mapping)
+        and issue.get("required") is True
+        and issue.get("resolution_source") in {"GOOGLE", "CONNECTOR"}
+        and isinstance(issue.get("route_id"), str)
+        and bool(issue.get("route_id"))
+    ]
+    return frozenset(
+        route["route_id"]
+        for route in select_followup_routes(
+            {"unresolved_sufficiency_issues": qualified_issues},
+            frozen_routes,
+        )
+        if route_operations.get(route["route_id"])
+    )
+
+
+def _validate_required_followup_route_coverage(
+    plan: RetrievalQueryPlanV2,
+    *,
+    required_route_ids: Collection[str],
+) -> RetrievalQueryPlanV2:
+    """Reject an LLM follow-up that omits an executable unresolved route."""
+
+    missing_route_ids = set(required_route_ids) - {
+        query["route_id"] for query in plan["route_queries"]
+    }
+    if missing_route_ids:
+        raise _RequiredFollowupRouteOmissionError(
+            "follow-up query plan omits unresolved required routes: "
+            + ", ".join(sorted(missing_route_ids)),
+            affected_field_paths=("$.route_queries",),
+        )
     return plan
 
 
@@ -924,6 +1027,7 @@ def _revise_plan_once(
     failure_detail: str,
     retry_budget: RunBudgetV2,
     is_followup: bool,
+    required_followup_route_ids: Collection[str],
     now_ms: int | None,
     timezone: str | None,
     prior_plans: Mapping[str, SourceFetchPlanV1] | None,
@@ -979,6 +1083,10 @@ def _revise_plan_once(
         )
         validation_stage = "ROUND_VALIDATOR"
         validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        validated_round = _validate_required_followup_route_coverage(
+            validated_round,
+            required_route_ids=required_followup_route_ids,
+        )
         validation_stage = "BUILD_QUERY"
         build_query(
             validated_round,

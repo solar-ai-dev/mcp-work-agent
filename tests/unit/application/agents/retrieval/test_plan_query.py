@@ -17,6 +17,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_attempt impo
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalV2ValidationError,
+    SourceFetchPlanV1,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
@@ -64,6 +65,115 @@ def _tool_route_plan(*, allowed_read_tool_ids: list[str]) -> ToolRoutePlanV2:
             },
             "tool_registry_version": "test",
         },
+    )
+
+
+def _task_calendar_followup_context() -> tuple[
+    list[InputToolRouteV1],
+    dict[str, RouteConstraintPolicy],
+    dict[str, list[str]],
+    dict[str, SourceFetchPlanV1],
+]:
+    routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "tasks",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasks"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+            {
+                "route_id": "calendar-events",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["USER_REQUEST"],
+            },
+        ],
+    )
+    policies = {
+        "tasks": RouteConstraintPolicy(
+            frozenset({"CONTAINER_REF", "STATUS_SCOPE"}),
+            frozenset({"CONTAINER_REF"}),
+        ),
+        "calendar-events": RouteConstraintPolicy(
+            frozenset({"CONTAINER_REF", "KEYWORD"}),
+            frozenset({"CONTAINER_REF"}),
+        ),
+    }
+    container_refs = {
+        "tasks": ["task-list:authorized"],
+        "calendar-events": ["calendar:authorized"],
+    }
+    prior_plans = {
+        plan["route_id"]: plan
+        for plan in build_query(
+            {
+                "schema_version": 2,
+                "route_queries": [
+                    {
+                        "route_id": "tasks",
+                        "operation": "SEARCH",
+                        "reason_codes": ["USER_REQUEST"],
+                        "search_spec": {
+                            "mode": "INITIAL",
+                            "constraints": [
+                                {
+                                    "kind": "CONTAINER_REF",
+                                    "container_refs": container_refs["tasks"],
+                                },
+                                {"kind": "STATUS_SCOPE", "values": ["ANY"]},
+                            ],
+                        },
+                        "detail_candidate_ref": None,
+                    },
+                    {
+                        "route_id": "calendar-events",
+                        "operation": "SEARCH",
+                        "reason_codes": ["USER_REQUEST"],
+                        "search_spec": {
+                            "mode": "INITIAL",
+                            "constraints": [
+                                {
+                                    "kind": "CONTAINER_REF",
+                                    "container_refs": container_refs["calendar-events"],
+                                },
+                                {
+                                    "kind": "KEYWORD",
+                                    "terms": ["schedule"],
+                                    "match_mode": "ANY",
+                                },
+                            ],
+                        },
+                        "detail_candidate_ref": None,
+                    },
+                ],
+            },
+            frozen_routes=routes,
+            route_policies=policies,
+            validated_container_refs=container_refs,
+        )
+    }
+    return routes, policies, container_refs, prior_plans
+
+
+def _retrieval_prompt_ref() -> PromptReference:
+    return PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
     )
 
 
@@ -750,6 +860,283 @@ def test_retrieval_followup__no_required_google_issue__keeps_query_planning_llm(
 
     assert llm_invoked is True
     assert len(runtime.calls) == 1
+
+
+def test_plan_query__required_followup_routes__revises_omitting_candidate() -> None:
+    routes, policies, container_refs, prior_plans = _task_calendar_followup_context()
+    task_summary = {
+        "route_id": "tasks",
+        "query_identity_hash": prior_plans["tasks"]["query_identity_hash"],
+        "read_result_handle": "tasks-page-1",
+        "result_count": 20,
+        "has_next_page": True,
+        "exhausted": False,
+    }
+    revised = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "tasks",
+                "operation": "NEXT_PAGE",
+                "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
+                "search_spec": None,
+                "detail_candidate_ref": None,
+            },
+            {
+                "route_id": "calendar-events",
+                "operation": "SEARCH",
+                "reason_codes": ["INSUFFICIENT_EVIDENCE"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {
+                                "kind": "KEYWORD",
+                                "terms": ["delivery schedule"],
+                                "match_mode": "ANY",
+                            }
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            },
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[revised])
+
+    result, budget, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": []},
+            "input_routes": routes,
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "tasks",
+                },
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "calendar-events",
+                },
+            ],
+            "read_result_summaries": [task_summary],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        validated_container_refs=container_refs,
+        prior_plans=prior_plans,
+        read_result_summaries=[task_summary],
+    )
+
+    assert [query["route_id"] for query in result["route_queries"]] == [
+        "tasks",
+        "calendar-events",
+    ]
+    assert llm_invoked is True
+    assert len(runtime.calls) == 1
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+    revision_input = cast(dict[str, object], runtime.calls[0]["prompt_input"])
+    failure_record = cast(dict[str, object], revision_input["failure_record"])
+    assert failure_record["failure_reason_code"] == "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID"
+    assert failure_record["affected_field_paths"] == ["$.route_queries"]
+    omitted_candidate = cast(dict[str, object], revision_input["candidate_output"])
+    omitted_queries = cast(list[dict[str, object]], omitted_candidate["route_queries"])
+    assert [query["route_id"] for query in omitted_queries] == ["tasks"]
+
+
+def test_plan_query__llm_candidate_omitting_required_route__uses_semantic_revision() -> None:
+    routes, policies, container_refs, prior_plans = _task_calendar_followup_context()
+    task_query = {
+        "route_id": "tasks",
+        "operation": "SEARCH",
+        "reason_codes": ["INSUFFICIENT_EVIDENCE"],
+        "search_spec": {
+            "mode": "CHANGED",
+            "constraint_delta": {
+                "upsert_constraints": [
+                    {"kind": "STATUS_SCOPE", "values": ["COMPLETED"]}
+                ],
+                "remove_constraint_kinds": [],
+            },
+        },
+        "detail_candidate_ref": None,
+    }
+    initial = {"schema_version": 2, "route_queries": [task_query]}
+    revised = {
+        "schema_version": 2,
+        "route_queries": [
+            task_query,
+            {
+                "route_id": "calendar-events",
+                "operation": "SEARCH",
+                "reason_codes": ["INSUFFICIENT_EVIDENCE"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {
+                                "kind": "KEYWORD",
+                                "terms": ["delivery schedule"],
+                                "match_mode": "ANY",
+                            }
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            },
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[initial, revised])
+
+    result, budget, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": []},
+            "input_routes": routes,
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": route_id,
+                }
+                for route_id in ("tasks", "calendar-events")
+            ],
+            "read_result_summaries": [],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        validated_container_refs=container_refs,
+        prior_plans=prior_plans,
+        read_result_summaries=[],
+    )
+
+    assert [query["route_id"] for query in result["route_queries"]] == [
+        "tasks",
+        "calendar-events",
+    ]
+    assert llm_invoked is True
+    assert len(runtime.calls) == 2
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+    revision_input = cast(dict[str, object], runtime.calls[1]["prompt_input"])
+    assert revision_input["candidate_output"] == initial
+    failure_record = cast(dict[str, object], revision_input["failure_record"])
+    assert failure_record["affected_field_paths"] == ["$.route_queries"]
+
+
+@pytest.mark.parametrize("required_route_id", ["tasks", "calendar-events"])
+def test_plan_query__single_unresolved_route__does_not_force_resolved_route(
+    required_route_id: str,
+) -> None:
+    routes, policies, container_refs, prior_plans = _task_calendar_followup_context()
+    summary = {
+        "route_id": required_route_id,
+        "query_identity_hash": prior_plans[required_route_id]["query_identity_hash"],
+        "read_result_handle": f"{required_route_id}-page-1",
+        "result_count": 20,
+        "has_next_page": True,
+        "exhausted": False,
+    }
+    runtime = FakeStructuredInferencePort(outputs=[])
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": []},
+            "input_routes": routes,
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": required_route_id,
+                }
+            ],
+            "read_result_summaries": [summary],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        validated_container_refs=container_refs,
+        prior_plans=prior_plans,
+        read_result_summaries=[summary],
+    )
+
+    assert [query["route_id"] for query in result["route_queries"]] == [required_route_id]
+    assert llm_invoked is False
+    assert runtime.calls == []
+
+
+def test_plan_query__optional_followup_issue__does_not_force_route() -> None:
+    routes, policies, container_refs, prior_plans = _task_calendar_followup_context()
+    task_summary = {
+        "route_id": "tasks",
+        "query_identity_hash": prior_plans["tasks"]["query_identity_hash"],
+        "read_result_handle": "tasks-page-1",
+        "result_count": 20,
+        "has_next_page": True,
+        "exhausted": False,
+    }
+    runtime = FakeStructuredInferencePort(outputs=[])
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": []},
+            "input_routes": routes,
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "tasks",
+                },
+                {
+                    "required": False,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "calendar-events",
+                },
+            ],
+            "read_result_summaries": [task_summary],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        validated_container_refs=container_refs,
+        prior_plans=prior_plans,
+        read_result_summaries=[task_summary],
+    )
+
+    assert [query["route_id"] for query in result["route_queries"]] == ["tasks"]
+    assert llm_invoked is False
+    assert runtime.calls == []
 
 
 def test_gmail_followup__can_add_concept__without_replacing_protected_keyword() -> None:
