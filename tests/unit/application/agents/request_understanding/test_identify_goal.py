@@ -545,7 +545,7 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_source_status_revision__preserves_unaffected_semantic_owner_outputs() -> None:
+def test_source_status_revision__with_unaffected_owner_outputs__preserves_them() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -1717,7 +1717,7 @@ def test_existing_resource_update__with_missing_source__revises_source_owner() -
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_source_status_revision__does_not_reinterpret_independent_source_need() -> None:
+def test_source_status_revision__with_independent_source_need__preserves_it() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
