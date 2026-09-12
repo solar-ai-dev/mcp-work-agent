@@ -35,6 +35,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     bind_retrieval_query_plan_output_schema,
+    normalize_retrieval_query_plan_candidate,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     PersonCandidateV1,
@@ -396,11 +397,7 @@ def _exact_task_duplicate_check_plan(
         route_id = route["route_id"]
         policy = route_policies.get(route_id)
         container_refs = tuple((validated_container_refs or {}).get(route_id, ()))
-        if (
-            policy is None
-            or "CONTAINER_REF" not in policy.supported_kinds
-            or not container_refs
-        ):
+        if policy is None or "CONTAINER_REF" not in policy.supported_kinds or not container_refs:
             return None
         route_queries.append(
             {
@@ -665,9 +662,8 @@ def plan_query(
             False,
         )
     for route_id, policy in route_policies.items():
-        if (
-            "CONTAINER_REF" in policy.required_kinds
-            and not set((validated_container_refs or {}).get(route_id, ()))
+        if "CONTAINER_REF" in policy.required_kinds and not set(
+            (validated_container_refs or {}).get(route_id, ())
         ):
             raise RetrievalV2ValidationError(
                 f"route {route_id} requires validated container scope",
@@ -684,7 +680,7 @@ def plan_query(
     validation_stage = "QUERY_PLAN_VALIDATOR"
     try:
         candidate = bind_required_container_constraints(
-            result.structured_output,
+            normalize_retrieval_query_plan_candidate(result.structured_output),
             route_policies=route_policies,
             validated_container_refs=validated_container_refs,
         )
@@ -969,7 +965,7 @@ def _revise_plan_once(
     validation_stage: RetrievalValidationStageV1 = "QUERY_PLAN_VALIDATOR"
     try:
         candidate = bind_required_container_constraints(
-            revision.structured_output,
+            normalize_retrieval_query_plan_candidate(revision.structured_output),
             route_policies=route_policies,
             validated_container_refs=validated_container_refs,
         )

@@ -25,12 +25,13 @@ _CONSTRAINT_KINDS = [
     "CONTAINER_REF",
     "STATUS_SCOPE",
 ]
+_CONSTRAINT_SLOT_BY_KIND = {kind: kind.lower() for kind in _CONSTRAINT_KINDS}
 _NON_EMPTY_STRING = {"type": "string", "minLength": 1}
 _LOCAL_ISO_PATTERN = r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 
 
 def _unique_constraint_kind_guards() -> list[dict[str, object]]:
-    """Express the canonical one-constraint-per-kind rule to the provider schema."""
+    """Keep the canonical list contract fail-closed for direct V2 consumers."""
 
     return [
         {
@@ -44,6 +45,7 @@ def _unique_constraint_kind_guards() -> list[dict[str, object]]:
         }
         for kind in _CONSTRAINT_KINDS
     ]
+
 
 _CONSTRAINT_SCHEMA = {
     "oneOf": [
@@ -177,6 +179,61 @@ _CONSTRAINT_SCHEMA = {
             },
         },
     ]
+}
+
+
+def _constraint_slots_schema(*, require_one: bool) -> dict[str, object]:
+    options = cast(list[dict[str, object]], _CONSTRAINT_SCHEMA["oneOf"])
+    schemas_by_kind: dict[str, dict[str, object]] = {}
+    for option in options:
+        option_properties = cast(dict[str, object], option["properties"])
+        kind_schema = cast(dict[str, object], option_properties["kind"])
+        schemas_by_kind[cast(str, kind_schema["const"])] = option
+    return {
+        "type": "object",
+        "description": (
+            "At most one value per semantic constraint kind. Each key is one typed slot; "
+            "omit kinds that are not part of this hypothesis."
+        ),
+        "additionalProperties": False,
+        "minProperties": 1 if require_one else 0,
+        "properties": {
+            slot: deepcopy(schemas_by_kind[kind]) for kind, slot in _CONSTRAINT_SLOT_BY_KIND.items()
+        },
+    }
+
+
+_PROVIDER_INITIAL_SEARCH_SPEC = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["mode", "constraints"],
+    "properties": {
+        "mode": {"const": "INITIAL"},
+        "constraints": _constraint_slots_schema(require_one=True),
+    },
+}
+_PROVIDER_CHANGED_SEARCH_SPEC = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["mode", "constraint_delta"],
+    "properties": {
+        "mode": {"const": "CHANGED"},
+        "constraint_delta": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["upsert_constraints", "remove_constraint_kinds"],
+            "if": {"properties": {"upsert_constraints": {"minProperties": 1}}},
+            "else": {"properties": {"remove_constraint_kinds": {"minItems": 1}}},
+            "properties": {
+                "upsert_constraints": _constraint_slots_schema(require_one=False),
+                "remove_constraint_kinds": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"enum": _CONSTRAINT_KINDS},
+                },
+            },
+        },
+    },
 }
 
 _INITIAL_SEARCH_SPEC = {
@@ -321,6 +378,7 @@ def bind_retrieval_query_plan_output_schema(
 
     json_schema = deepcopy(base_schema.json_schema)
     properties = cast(dict[str, object], json_schema["properties"])
+    properties["schema_version"] = {"type": "integer", "enum": [3]}
     route_queries = cast(dict[str, object], properties["route_queries"])
     allowed_route_ids = sorted(set(route_ids))
 
@@ -370,9 +428,44 @@ def bind_retrieval_query_plan_output_schema(
             bound_operations.append(operation_schema)
     route_queries["items"] = {"oneOf": bound_operations}
     return OutputSchemaDefinition(
-        schema_version=base_schema.schema_version,
+        schema_version="retrieval-query-plan-candidate-v3",
         json_schema=json_schema,
     )
+
+
+def normalize_retrieval_query_plan_candidate(value: object) -> object:
+    """Project the provider-only v3 constraint slots to canonical RetrievalQueryPlanV2."""
+
+    if not isinstance(value, Mapping) or value.get("schema_version") != 3:
+        return value
+    normalized = deepcopy(dict(value))
+    normalized["schema_version"] = 2
+    route_queries = normalized.get("route_queries")
+    if not isinstance(route_queries, list):
+        return normalized
+    for route_query in route_queries:
+        if not isinstance(route_query, dict):
+            continue
+        search_spec = route_query.get("search_spec")
+        if not isinstance(search_spec, dict):
+            continue
+        if search_spec.get("mode") == "INITIAL":
+            search_spec["constraints"] = _normalize_constraint_slots(search_spec.get("constraints"))
+            continue
+        delta = search_spec.get("constraint_delta")
+        if isinstance(delta, dict):
+            delta["upsert_constraints"] = _normalize_constraint_slots(
+                delta.get("upsert_constraints")
+            )
+    return normalized
+
+
+def _normalize_constraint_slots(value: object) -> object:
+    if not isinstance(value, Mapping):
+        return value
+    return [
+        deepcopy(value[slot]) for kind, slot in _CONSTRAINT_SLOT_BY_KIND.items() if slot in value
+    ]
 
 
 def _bind_concept_hypothesis(
@@ -429,12 +522,12 @@ def _bind_route_operation(
     operation = cast(dict[str, object], operation_properties["operation"])["const"]
     if operation in {"SEARCH", "FREEBUSY"}:
         operation_properties["search_spec"] = deepcopy(
-            _CHANGED_SEARCH_SPEC if is_followup else _INITIAL_SEARCH_SPEC
+            _PROVIDER_CHANGED_SEARCH_SPEC if is_followup else _PROVIDER_INITIAL_SEARCH_SPEC
         )
         if operation == "SEARCH" and gmail_keyword_literals and not is_followup:
             search_spec = cast(dict[str, object], operation_properties["search_spec"])
             search_fields = cast(dict[str, object], search_spec["properties"])
-            cast(dict[str, object], search_fields["constraints"])["minItems"] = 0
+            cast(dict[str, object], search_fields["constraints"])["minProperties"] = 0
         if is_followup:
             search_spec = cast(dict[str, object], operation_properties["search_spec"])
             search_fields = cast(dict[str, object], search_spec["properties"])
@@ -463,15 +556,6 @@ def _bind_route_operation(
         allowed_participant_identities=allowed_participant_identities,
         gmail_keyword_literals=gmail_keyword_literals,
     )
-    if operation in {"SEARCH", "FREEBUSY"} and allowed_constraint_kinds == {"CONCEPT"}:
-        spec = cast(dict[str, object], operation_properties["search_spec"])
-        fields = cast(dict[str, object], spec["properties"])
-        if is_followup:
-            delta = cast(dict[str, object], fields["constraint_delta"])
-            fields = cast(dict[str, object], delta["properties"])
-            cast(dict[str, object], fields["upsert_constraints"])["maxItems"] = 1
-        else:
-            cast(dict[str, object], fields["constraints"])["maxItems"] = 1
 
 
 def _bind_constraint_ref_values(
@@ -512,12 +596,17 @@ def _bind_constraint_ref_values(
                 value.update(only_option)
     properties = value.get("properties")
     if isinstance(properties, dict):
+        declared_slots = set(properties).intersection(_CONSTRAINT_SLOT_BY_KIND.values())
+        if declared_slots and declared_slots == set(properties):
+            for constraint_kind, slot in _CONSTRAINT_SLOT_BY_KIND.items():
+                if constraint_kind not in allowed_constraint_kinds:
+                    properties.pop(slot, None)
         kind_schema = properties.get("kind")
-        kind = kind_schema.get("const") if isinstance(kind_schema, dict) else None
-        if kind == "TEMPORAL_RANGE" and temporal_constraint is not None:
+        declared_kind = kind_schema.get("const") if isinstance(kind_schema, dict) else None
+        if declared_kind == "TEMPORAL_RANGE" and temporal_constraint is not None:
             for field, resolved_value in temporal_constraint.items():
                 properties[field] = {"const": resolved_value}
-        if kind == "PARTICIPANT":
+        if declared_kind == "PARTICIPANT":
             participants = cast(dict[str, object], properties["participants"])
             item = cast(dict[str, object], participants["items"])
             fields = cast(dict[str, object], item["properties"])
@@ -534,18 +623,18 @@ def _bind_constraint_ref_values(
                 cast(dict[str, object], fields["identity"])["enum"] = sorted(
                     set(allowed_participant_identities)
                 )
-        if kind == "KEYWORD" and gmail_keyword_literals:
+        if declared_kind == "KEYWORD" and gmail_keyword_literals:
             terms = cast(dict[str, object], properties["terms"])
             terms["items"] = {
                 "type": "string",
                 "minLength": 1,
                 "pattern": GMAIL_KEYWORD_LITERAL_PATTERN,
             }
-        if kind == "RESOURCE_REF" and allowed_resource_refs:
+        if declared_kind == "RESOURCE_REF" and allowed_resource_refs:
             refs = properties.get("resource_refs")
             if isinstance(refs, dict):
                 refs["items"] = {"type": "string", "enum": allowed_resource_refs}
-        if kind == "CONTAINER_REF" and allowed_container_refs:
+        if declared_kind == "CONTAINER_REF" and allowed_container_refs:
             refs = properties.get("container_refs")
             if isinstance(refs, dict):
                 refs["items"] = {"type": "string", "enum": allowed_container_refs}

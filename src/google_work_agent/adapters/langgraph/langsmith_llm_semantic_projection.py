@@ -847,7 +847,8 @@ def _project_goal_constraints(value: object) -> dict[str, object]:
 
 
 def _project_query_constraints(value: object) -> dict[str, object]:
-    sequence = _sequence(value)
+    mapping = _mapping(value)
+    sequence = list(mapping.values()) if mapping is not None else _sequence(value)
     items: list[dict[str, object]] = []
     for raw_item in sequence[:_MAX_COLLECTION_ITEMS]:
         item = _mapping(raw_item)

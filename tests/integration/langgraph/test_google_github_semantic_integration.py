@@ -103,11 +103,35 @@ def _query(status: str) -> RetrievalQueryPlanV2:
     )
 
 
+def _provider_query(status: str) -> dict[str, object]:
+    return {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                "route_id": "github",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": {
+                        "container_ref": {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["acme/repo"],
+                        },
+                        "status_scope": {"kind": "STATUS_SCOPE", "values": [status]},
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize("status", ["OPEN", "CLOSED"])
 def test_github_status__real_schema_and_planner__reaches_connector(
     status: str,
 ) -> None:
-    runtime = FakeStructuredInferencePort(outputs=[_query(status)], validate_schema=True)
+    runtime = FakeStructuredInferencePort(outputs=[_provider_query(status)], validate_schema=True)
     plan, _, invoked = plan_query(
         llm_runtime=runtime,
         prompt_ref=replace(SUFFICIENCY_PROMPT_REF, prompt_id="retrieval.plan_query"),
@@ -142,26 +166,27 @@ def test_gmail_search__then_detail__reaches_only_supported_connector_ports() -> 
         "required": True,
         "reason_codes": ["USER_REQUEST"],
     }
-    output = cast(
-        RetrievalQueryPlanV2,
-        {
-            "schema_version": 2,
-            "route_queries": [
-                {
-                    "route_id": "gmail",
-                    "operation": "SEARCH",
-                    "reason_codes": ["USER_REQUEST"],
-                    "search_spec": {
-                        "mode": "INITIAL",
-                        "constraints": [
-                            {"kind": "KEYWORD", "terms": ["Quartz"], "match_mode": "ANY"}
-                        ],
+    output = {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": {
+                        "keyword": {
+                            "kind": "KEYWORD",
+                            "terms": ["Quartz"],
+                            "match_mode": "ANY",
+                        }
                     },
-                    "detail_candidate_ref": None,
-                }
-            ],
-        },
-    )
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
     runtime = FakeStructuredInferencePort(outputs=[output], validate_schema=True)
     policy = RouteConstraintPolicy(frozenset({"KEYWORD"}))
     plan, _, _ = plan_query(
@@ -505,7 +530,7 @@ def test_followup_query__real_nodes_and_projection__dispatches_changed_second_re
     )
 
     changed_output = {
-        "schema_version": 2,
+        "schema_version": 3,
         "route_queries": [
             {
                 "route_id": "gmail",
@@ -514,13 +539,13 @@ def test_followup_query__real_nodes_and_projection__dispatches_changed_second_re
                 "search_spec": {
                     "mode": "CHANGED",
                     "constraint_delta": {
-                        "upsert_constraints": [
-                            {
+                        "upsert_constraints": {
+                            "concept": {
                                 "kind": "CONCEPT",
                                 "concept": "출시 날짜",
                                 "manifestations": ["출시일"],
                             }
-                        ],
+                        },
                         "remove_constraint_kinds": [],
                     },
                 },

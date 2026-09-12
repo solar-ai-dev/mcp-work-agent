@@ -79,8 +79,8 @@ def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revisio
             "reason_codes": ["USER_REQUEST"],
         },
     )
-    unfiltered = {
-        "schema_version": 2,
+    provider_candidate = {
+        "schema_version": 3,
         "route_queries": [
             {
                 "route_id": "route-1",
@@ -88,13 +88,13 @@ def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revisio
                 "reason_codes": ["USER_REQUEST"],
                 "search_spec": {
                     "mode": "INITIAL",
-                    "constraints": [],
+                    "constraints": {},
                 },
                 "detail_candidate_ref": None,
             }
         ],
     }
-    runtime = FakeStructuredInferencePort(outputs=[unfiltered])
+    runtime = FakeStructuredInferencePort(outputs=[provider_candidate])
     prompt_ref = PromptReference(
         prompt_bundle_version="test",
         prompt_id="retrieval.plan_query",
@@ -124,9 +124,21 @@ def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revisio
         retry_budget=build_default_run_budget(),
     )
 
-    assert result == unfiltered
+    assert result == {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {"mode": "INITIAL", "constraints": []},
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
     assert llm_invoked is True
     assert len(runtime.calls) == 1
+    assert runtime.calls[0]["output_schema"].schema_version == ("retrieval-query-plan-candidate-v3")
     assert budget["semantic_revisions_used_by_failure"] == {}
 
 
@@ -2030,7 +2042,7 @@ def test_general_gmail_search__with_relation_constraint__preserves_count_semanti
 
 def test_general_gmail_search__last_week__uses_schema_bound_temporal_value() -> None:
     output = {
-        "schema_version": 2,
+        "schema_version": 3,
         "route_queries": [
             {
                 "route_id": "route-1",
@@ -2038,20 +2050,20 @@ def test_general_gmail_search__last_week__uses_schema_bound_temporal_value() -> 
                 "reason_codes": ["USER_REQUEST"],
                 "search_spec": {
                     "mode": "INITIAL",
-                    "constraints": [
-                        {
+                    "constraints": {
+                        "keyword": {
                             "kind": "KEYWORD",
                             "terms": ["프로젝트", "일정"],
                             "match_mode": "ANY",
                         },
-                        {
+                        "temporal_range": {
                             "kind": "TEMPORAL_RANGE",
                             "axis": "MESSAGE_TIME",
                             "start_local": "2026-08-24T00:00:00",
                             "end_local": "2026-08-31T00:00:00",
                             "timezone": "Asia/Seoul",
                         },
-                    ],
+                    },
                 },
                 "detail_candidate_ref": None,
             }
@@ -2113,7 +2125,6 @@ def test_general_gmail_search__last_week__uses_schema_bound_temporal_value() -> 
     assert search_spec is not None
     assert search_spec["mode"] == "INITIAL"
     assert search_spec["constraints"] == [
-        {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ANY"},
         {
             "kind": "TEMPORAL_RANGE",
             "axis": "MESSAGE_TIME",
@@ -2121,13 +2132,14 @@ def test_general_gmail_search__last_week__uses_schema_bound_temporal_value() -> 
             "end_local": "2026-08-31T00:00:00",
             "timezone": "Asia/Seoul",
         },
+        {"kind": "KEYWORD", "terms": ["프로젝트", "일정"], "match_mode": "ANY"},
     ]
     dispatched_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
-    assert validate_output_schema(result, dispatched_schema.json_schema) == []
-    temporal = search_spec["constraints"][-1]
-    assert temporal["kind"] == "TEMPORAL_RANGE"
-    temporal["start_local"] = "2025-08-24T00:00:00"
-    assert validate_output_schema(result, dispatched_schema.json_schema)
+    assert validate_output_schema(output, dispatched_schema.json_schema) == []
+    output["route_queries"][0]["search_spec"]["constraints"]["temporal_range"]["start_local"] = (
+        "2025-08-24T00:00:00"
+    )
+    assert validate_output_schema(output, dispatched_schema.json_schema)
 
 
 def test_selected_exact_resource__invalid_route_binding__fails_without_llm_fallback() -> None:

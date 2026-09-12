@@ -436,32 +436,32 @@ def test_plan_query__keeps_candidate_shape__without_query_literals_or_refs() -> 
                     "detail_candidate_ref": None,
                     "search_spec": {
                         "mode": "INITIAL",
-                        "constraints": [
-                            {
+                        "constraints": {
+                            "keyword": {
                                 "kind": "KEYWORD",
                                 "terms": ["private keyword"],
                                 "match_mode": "PHRASE",
                             },
-                            {
+                            "temporal_range": {
                                 "kind": "TEMPORAL_RANGE",
                                 "axis": "EVENT_TIME",
                                 "start_local": "2026-09-11",
                                 "end_local": None,
                                 "timezone": "Asia/Seoul",
                             },
-                            {
+                            "participant": {
                                 "kind": "PARTICIPANT",
                                 "participants": [
                                     {"role": "SENDER", "identity": "secret@example.com"}
                                 ],
                                 "match_mode": "ANY",
                             },
-                            {
+                            "concept": {
                                 "kind": "CONCEPT",
                                 "concept": "private concept",
                                 "manifestations": ["private one", "private two"],
                             },
-                        ],
+                        },
                     },
                 }
             ]

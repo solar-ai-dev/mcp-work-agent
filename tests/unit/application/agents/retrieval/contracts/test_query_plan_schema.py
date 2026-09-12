@@ -1,5 +1,6 @@
 """Owner-local Retrieval query-plan schema scenarios."""
 
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -10,8 +11,55 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
     bind_retrieval_query_plan_output_schema,
+    normalize_retrieval_query_plan_candidate,
 )
-from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
+from google_work_agent.ports.llm.output_schema_validation import (
+    validate_output_schema as _validate_output_schema,
+)
+
+
+def _provider_candidate(value: dict[str, Any]) -> dict[str, Any]:
+    candidate = deepcopy(value)
+    candidate["schema_version"] = 3
+    for route_query in candidate.get("route_queries", []):
+        search_spec = route_query.get("search_spec")
+        if not isinstance(search_spec, dict):
+            continue
+        if search_spec.get("mode") == "INITIAL":
+            constraints = search_spec.get("constraints")
+            if isinstance(constraints, list):
+                search_spec["constraints"] = {
+                    (
+                        item["kind"].lower()
+                        if isinstance(item, dict) and isinstance(item.get("kind"), str)
+                        else f"invalid_{index}"
+                    ): item
+                    for index, item in enumerate(constraints)
+                }
+            continue
+        delta = search_spec.get("constraint_delta")
+        if isinstance(delta, dict) and isinstance(delta.get("upsert_constraints"), list):
+            delta["upsert_constraints"] = {
+                (
+                    item["kind"].lower()
+                    if isinstance(item, dict) and isinstance(item.get("kind"), str)
+                    else f"invalid_{index}"
+                ): item
+                for index, item in enumerate(delta["upsert_constraints"])
+            }
+    return candidate
+
+
+def validate_output_schema(value: object, schema: dict[str, object]) -> list[str]:
+    version = schema.get("properties", {})
+    version_schema = version.get("schema_version", {}) if isinstance(version, dict) else {}
+    if (
+        isinstance(value, dict)
+        and isinstance(version_schema, dict)
+        and version_schema.get("enum") == [3]
+    ):
+        return _validate_output_schema(_provider_candidate(value), schema)
+    return _validate_output_schema(value, schema)
 
 
 @pytest.mark.parametrize(
@@ -322,9 +370,10 @@ def test_runtime_schema__duplicate_constraint_kind__cannot_be_provider_output(
         ],
     }
 
-    errors = validate_output_schema(candidate, schema.json_schema)
+    candidate["schema_version"] = 3
+    errors = _validate_output_schema(candidate, schema.json_schema)
 
-    assert any("must contain at most 1 items" in error for error in errors)
+    assert any("constraints must be an object" in error for error in errors)
 
 
 def test_runtime_schema__different_constraint_kinds__remain_valid_provider_output() -> None:
@@ -359,6 +408,109 @@ def test_runtime_schema__different_constraint_kinds__remain_valid_provider_outpu
     }
 
     assert validate_output_schema(candidate, schema.json_schema) == []
+
+
+def test_provider_constraint_slots__normalize_to_canonical_ordered_list() -> None:
+    candidate = {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["REQUESTED_INPUT"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": {
+                        "concept": {
+                            "kind": "CONCEPT",
+                            "concept": "shipping",
+                            "manifestations": ["dispatch"],
+                        },
+                        "keyword": {
+                            "kind": "KEYWORD",
+                            "terms": ["Atlas"],
+                            "match_mode": "ANY",
+                        },
+                        "participant": {
+                            "kind": "PARTICIPANT",
+                            "participants": [{"role": "SENDER", "identity": "owner@example.test"}],
+                            "match_mode": "ANY",
+                        },
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    normalized = normalize_retrieval_query_plan_candidate(candidate)
+
+    assert normalized == {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["REQUESTED_INPUT"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "PARTICIPANT",
+                            "participants": [{"role": "SENDER", "identity": "owner@example.test"}],
+                            "match_mode": "ANY",
+                        },
+                        {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ANY"},
+                        {
+                            "kind": "CONCEPT",
+                            "concept": "shipping",
+                            "manifestations": ["dispatch"],
+                        },
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+
+def test_provider_constraint_slots__allow_distinct_concepts_only_as_distinct_hypotheses() -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["CONCEPT"]},
+        requested_concepts={"gmail": ["shipment", "owner"]},
+        gmail_route_ids=["gmail"],
+    )
+
+    for concept in ("shipment", "owner"):
+        candidate = {
+            "schema_version": 3,
+            "route_queries": [
+                {
+                    "route_id": "gmail",
+                    "operation": "SEARCH",
+                    "reason_codes": ["BOUNDED_HYPOTHESIS"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": {
+                            "concept": {
+                                "kind": "CONCEPT",
+                                "concept": concept,
+                                "manifestations": [concept],
+                            }
+                        },
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        }
+        assert _validate_output_schema(candidate, schema.json_schema) == []
+
+    concept_slots = schema.json_schema["properties"]["route_queries"]["items"]["oneOf"][0][
+        "properties"
+    ]["search_spec"]["properties"]["constraints"]["properties"]
+    assert list(concept_slots) == ["concept"]
 
 
 def test_followup_runtime_schema__changed_search__requires_non_empty_delta() -> None:

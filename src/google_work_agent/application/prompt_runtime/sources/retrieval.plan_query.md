@@ -38,6 +38,6 @@ MESSAGE_TIME은 메시지 시각이며 EVENT_TIME은 내용 속 사건 시각이
 - DETAIL_FETCH: search_spec은 null이고 현재 route의 검증된 candidate ref를 사용한다.
 - NEXT_PAGE: 두 필드는 null이며 현재 관측에 유효한 다음 페이지가 있어야 한다.
 
-초기 SEARCH는 INITIAL constraints, 후속 SEARCH는 CHANGED constraint_delta를 사용한다. CHANGED는 이전 실효 조건에 적용할 실제 변경이며 upsert_constraints와 remove_constraint_kinds를 함께 일관되게 작성한다. 허용 operation이 없는 route는 실행 대상으로 만들지 않는다.
+초기 SEARCH는 INITIAL constraints, 후속 SEARCH는 CHANGED constraint_delta를 사용한다. constraints와 upsert_constraints는 배열이 아니라 supplied schema의 kind별 단일 slot 객체다. 필요한 kind의 slot만 한 번 채우고 나머지는 생략한다. CHANGED는 이전 실효 조건에 적용할 실제 변경이며 upsert_constraints와 remove_constraint_kinds를 함께 일관되게 작성한다. 허용 operation이 없는 route는 실행 대상으로 만들지 않는다.
 
 `base_projection`, `candidate_output`, `failure_record`가 주어지면 같은 요청의 실패한 후보를 수정한다. 지적된 구조·binding·실효 Query 문제를 고치되, 에러를 피하려고 사용자 조건을 삭제하거나 관측을 발명하지 않는다. raw query, MCP arguments, Tool ID, page token은 출력하지 않는다. JSON 객체 하나만 반환한다.

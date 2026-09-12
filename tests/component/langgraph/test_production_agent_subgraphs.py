@@ -294,7 +294,7 @@ class _ComponentInferencePort:
             if self.calendar_event_query:
                 route = cast(list[Mapping[str, object]], projection["input_routes"])[0]
                 return {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "route_queries": [
                         {
                             "route_id": route["route_id"],
@@ -302,18 +302,18 @@ class _ComponentInferencePort:
                             "reason_codes": ["USER_REQUEST"],
                             "search_spec": {
                                 "mode": "INITIAL",
-                                "constraints": [
-                                    {
+                                "constraints": {
+                                    "keyword": {
                                         "kind": "KEYWORD",
                                         "terms": ["Atlas"],
                                         "match_mode": "ALL",
                                     },
-                                    {
+                                    "concept": {
                                         "kind": "CONCEPT",
                                         "concept": "schedule",
                                         "manifestations": ["인쇄소", "납기"],
                                     },
-                                ],
+                                },
                             },
                             "detail_candidate_ref": None,
                         }
@@ -322,7 +322,7 @@ class _ComponentInferencePort:
             if self.container_retrieval:
                 routes = cast(list[Mapping[str, object]], projection["input_routes"])
                 return {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "route_queries": [
                         {
                             "route_id": route["route_id"],
@@ -330,14 +330,14 @@ class _ComponentInferencePort:
                             "reason_codes": ["USER_REQUEST"],
                             "search_spec": {
                                 "mode": "INITIAL",
-                                "constraints": [
-                                    {
+                                "constraints": {
+                                    "container_ref": {
                                         "kind": "CONTAINER_REF",
                                         "container_refs": [
                                             cast(list[str], route["container_refs"])[0]
                                         ],
                                     }
-                                ],
+                                },
                             },
                             "detail_candidate_ref": None,
                         }
@@ -349,8 +349,8 @@ class _ComponentInferencePort:
                 {
                     "mode": "CHANGED",
                     "constraint_delta": {
-                        "upsert_constraints": [
-                            (
+                        "upsert_constraints": {
+                            ("concept" if self.retrieval_followup_changes_query else "keyword"): (
                                 {
                                     "kind": "CONCEPT",
                                     "concept": "new status evidence",
@@ -362,21 +362,21 @@ class _ComponentInferencePort:
                                     "terms": ["status"],
                                     "match_mode": "ANY",
                                 }
-                            )
-                        ],
+                            ),
+                        },
                         "remove_constraint_kinds": [],
                     },
                 }
                 if current_round_no is not None
                 else {
                     "mode": "INITIAL",
-                    "constraints": [
-                        {
+                    "constraints": {
+                        "keyword": {
                             "kind": "KEYWORD",
                             "terms": ["status"],
                             "match_mode": "ANY",
                         }
-                    ],
+                    },
                 }
             )
             if self.github_retrieval:
@@ -384,10 +384,15 @@ class _ComponentInferencePort:
                 assert input_routes[0].get("container_refs") == ["acme/repo"]
                 search_spec = {
                     "mode": "INITIAL",
-                    "constraints": [{"kind": "CONTAINER_REF", "container_refs": ["acme/repo"]}],
+                    "constraints": {
+                        "container_ref": {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["acme/repo"],
+                        }
+                    },
                 }
             return {
-                "schema_version": 2,
+                "schema_version": 3,
                 "route_queries": [
                     {
                         "route_id": "route-1",
@@ -903,9 +908,7 @@ def _container_read_route_plan(resource_type: str) -> dict[str, object]:
                 "resource_type": resource_type,
                 "connector_id": "google_workspace",
                 "allowed_read_tool_ids": [
-                    "tasks_list_tasks"
-                    if resource_type == "TASK"
-                    else "calendar_list_events"
+                    "tasks_list_tasks" if resource_type == "TASK" else "calendar_list_events"
                 ],
                 "required": True,
                 "reason_codes": ["USER_REQUEST"],
@@ -1116,9 +1119,7 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
     }
     source_input = llm.inputs["request_understanding.identify_source_dependencies"][0]
-    source_candidates = {
-        item["resource_type"]: item for item in source_input["source_candidates"]
-    }
+    source_candidates = {item["resource_type"]: item for item in source_input["source_candidates"]}
     assert source_candidates["TASK_LIST"]["owned_fact_kinds"] == [
         "task_list_identity",
         "task_list_title",
@@ -1201,13 +1202,13 @@ def test_tool_routing__compiled_cross_source_draft__does_not_add_freebusy() -> N
         result = graph.invoke(state)
 
     input_resource_types = {
-        route["resource_type"]
-        for route in result["tool_route_plan"]["input_plan"]["input_routes"]
+        route["resource_type"] for route in result["tool_route_plan"]["input_plan"]["input_routes"]
     }
     assert input_resource_types == {"TASK", "TASK_LIST", "CALENDAR", "CALENDAR_EVENT"}
-    assert result["tool_route_plan"]["output_plan"]["output_routes"][0][
-        "selected_tool_id"
-    ] == "gmail_create_draft"
+    assert (
+        result["tool_route_plan"]["output_plan"]["output_routes"][0]["selected_tool_id"]
+        == "gmail_create_draft"
+    )
 
 
 def test_tool_routing__compiled_multiple_registry_candidates__preserves_bound_route() -> None:
@@ -1384,9 +1385,7 @@ def test_retrieval__compiled_container_scope__fans_out_or_honors_explicit_select
             (lambda: ("container-a", "container-b")) if resource_type == "TASK" else None
         ),
         authorized_calendar_ids_provider=(
-            (lambda: ("container-a", "container-b"))
-            if resource_type == "CALENDAR_EVENT"
-            else None
+            (lambda: ("container-a", "container-b")) if resource_type == "CALENDAR_EVENT" else None
         ),
     ).build()
 
@@ -1432,13 +1431,9 @@ def test_retrieval__compiled_container_scope__allows_current_authorized_45_reads
 
     assert len(connector.arguments) == 45
     assert all("task_list_id" in arguments for arguments in connector.arguments[:22])
-    assert {
-        arguments["task_list_id"] for arguments in connector.arguments[:22]
-    } == set(task_lists)
+    assert {arguments["task_list_id"] for arguments in connector.arguments[:22]} == set(task_lists)
     assert all("calendar_id" in arguments for arguments in connector.arguments[22:])
-    assert {
-        arguments["calendar_id"] for arguments in connector.arguments[22:]
-    } == set(calendars)
+    assert {arguments["calendar_id"] for arguments in connector.arguments[22:]} == set(calendars)
     assert result["retry_budget"]["source_page_calls_used"] == 45
     assert result["retry_budget"]["max_source_page_calls"] == 50
 
@@ -1493,12 +1488,8 @@ def test_retrieval__compiled_budget_exhaustion__projects_terminal_partial() -> N
     intent["requested_resource_hints"] = ["GMAIL_THREAD"]
     state["request_intent"] = cast(Any, intent)
     state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
-    state["retry_budget"]["connector_calls_used"] = state["retry_budget"][
-        "max_connector_calls"
-    ]
-    state["retry_budget"]["source_page_calls_used"] = state["retry_budget"][
-        "max_source_page_calls"
-    ]
+    state["retry_budget"]["connector_calls_used"] = state["retry_budget"]["max_connector_calls"]
+    state["retry_budget"]["source_page_calls_used"] = state["retry_budget"]["max_source_page_calls"]
     connector = _ComponentConnectorReadPort()
     graph = RetrievalSubgraph(
         now_ms=lambda: 1_000,
@@ -1534,9 +1525,7 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
     task_counts = (2, 2, 1, 0, 2, 0, 2, 0, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 3)
 
     class MultiSourceInference(_ComponentInferencePort):
-        def _response(
-            self, prompt_id: str, projection: Mapping[str, object]
-        ) -> dict[str, object]:
+        def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
             if prompt_id == "retrieval.plan_query":
                 routes = cast(list[Mapping[str, object]], projection["input_routes"])
                 return {
@@ -1679,12 +1668,8 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
         tool_catalog=load_development_tool_registry(),
         read_result_cache=InMemoryRunRetrievalCache(),
         confirm_inline=cast(Any, _confirm_early),
-        authorized_tasklist_ids_provider=lambda: tuple(
-            f"task-list-{index}" for index in range(22)
-        ),
-        authorized_calendar_ids_provider=lambda: tuple(
-            f"calendar-{index}" for index in range(20)
-        ),
+        authorized_tasklist_ids_provider=lambda: tuple(f"task-list-{index}" for index in range(22)),
+        authorized_calendar_ids_provider=lambda: tuple(f"calendar-{index}" for index in range(20)),
     ).build()
 
     updates: list[dict[str, object]] = []
@@ -1936,22 +1921,19 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
         def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
             if prompt_id == "retrieval.plan_query":
                 result = super()._response(prompt_id, projection)
-                cast(Any, result)["route_queries"][0]["search_spec"]["constraints"].append(
-                    {
-                        "kind": "CONCEPT",
-                        "concept": "일정",
-                        "manifestations": ["회의", "시간변경"],
-                    }
-                )
-                cast(Any, result)["route_queries"][0]["search_spec"]["constraints"].append(
-                    {
-                        "kind": "TEMPORAL_RANGE",
-                        "axis": "EVENT_TIME",
-                        "timezone": "Asia/Seoul",
-                        "start_local": "2026-08-31T00:00:00",
-                        "end_local": "2026-09-07T00:00:00",
-                    }
-                )
+                constraints = cast(Any, result)["route_queries"][0]["search_spec"]["constraints"]
+                constraints["concept"] = {
+                    "kind": "CONCEPT",
+                    "concept": "일정",
+                    "manifestations": ["회의", "시간변경"],
+                }
+                constraints["temporal_range"] = {
+                    "kind": "TEMPORAL_RANGE",
+                    "axis": "EVENT_TIME",
+                    "timezone": "Asia/Seoul",
+                    "start_local": "2026-08-31T00:00:00",
+                    "end_local": "2026-09-07T00:00:00",
+                }
                 return result
             if prompt_id == "retrieval.select_evidence":
                 self.assessed_resources.append(
