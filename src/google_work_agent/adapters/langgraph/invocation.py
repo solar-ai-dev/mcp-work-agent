@@ -87,6 +87,9 @@ class WorkflowInvocationCoordinator:
             request.workflow_key,
             product_run_id=request.run_id,
         )
+        # This invocation only materializes the checkpoint up to START. The
+        # semantic execution begins in start(), which owns the observable root.
+        config["callbacks"] = []
         snapshot = self._graph.get_state(config)
         if snapshot.values or snapshot.next:
             if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(

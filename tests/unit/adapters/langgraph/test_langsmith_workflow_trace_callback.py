@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, TypedDict, cast
 from uuid import UUID, uuid4
 
@@ -19,6 +20,10 @@ from google_work_agent.adapters.langgraph.profiles.profile_registry import Graph
 from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMErrorCode,
     LLMInvocationError,
+)
+from google_work_agent.ports.system.contracts.workflow_execution import (
+    WorkflowCorrelationContext,
+    WorkflowStartRequest,
 )
 from google_work_agent.ports.system.external_call_trace_port import (
     ExternalCallTraceFinishV1,
@@ -563,6 +568,63 @@ def test_invocation_config__product_run_correlation__excludes_thread_key() -> No
         "graph_version": "graph-v1",
     }
     assert "private-workflow-key" not in repr(config["metadata"])
+
+
+def test_prepare_start__checkpoint_materialization__does_not_emit_execution_callbacks() -> None:
+    callback = object()
+
+    class PreparationGraph:
+        def __init__(self) -> None:
+            self.invocation_config: dict[str, object] | None = None
+
+        def get_state(self, config: dict[str, object]) -> object:
+            assert config["callbacks"] == []
+            return SimpleNamespace(values={}, next=())
+
+        def invoke(
+            self,
+            state: object,
+            *,
+            config: dict[str, object],
+            interrupt_before: list[str],
+        ) -> None:
+            del state
+            assert interrupt_before == ["initialize"]
+            self.invocation_config = config
+
+    graph = PreparationGraph()
+    coordinator = WorkflowInvocationCoordinator(
+        graph=graph,
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        graph_version="graph-v1",
+        start_node="initialize",
+        initial_state=lambda request: cast(Any, {"run_id": request.run_id}),
+        current_run_status=lambda run_id: "RUNNING",
+        latest_unknown_action=lambda run_id: None,
+        recovery_node=lambda state: state,
+        has_executed_action=lambda run_id: False,
+        recover_executed_actions=lambda state, run_id: state,
+        mark_stalled_claims_as_unknown=lambda run_id: False,
+        cancel_signal_lock=object(),
+        cancel_signals=set(),
+        callbacks=[callback],
+    )
+    request = WorkflowStartRequest(
+        run_id="run-123",
+        conversation_id="conversation-123",
+        workflow_key="private-workflow-key",
+        entry_mode="AGENT_SEARCH",
+        requested_mode="AUTO",
+        request_text="safe test request",
+        selected_resource_ids=(),
+        correlation=WorkflowCorrelationContext("request-123", None, "1"),
+    )
+
+    coordinator.prepare_start(request)
+
+    assert graph.invocation_config is not None
+    assert graph.invocation_config["callbacks"] == []
+    assert coordinator.config_for_thread("private-workflow-key")["callbacks"] == [callback]
 
 
 def test_callback__partial_or_unsafe_trace_binding__is_rejected() -> None:
