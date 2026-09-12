@@ -337,7 +337,8 @@ def _respond(
     }:
         return {"relation_candidates": []}
     if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
-        required = base.get("task_duplicate_review_required") is True
+        return {"relation_candidates": []}
+    if prompt_id == "work_analysis.assess_requested_task_satisfaction":
         source_state = cast(Mapping[str, object], base["source_state"])
         task_candidates = cast(
             list[Mapping[str, object]], source_state.get("task_review_candidates", [])
@@ -347,7 +348,6 @@ def _respond(
             fact = facts[0]
             refs = cast(list[str], fact["evidence_refs"])
             return {
-                "relation_candidates": [],
                 "requested_work_status": "SATISFIED",
                 "requested_work_reason": "The current Task already fulfils the request",
                 "matched_fact_ids": [str(fact["fact_id"])],
@@ -355,11 +355,8 @@ def _respond(
                 "evidence_refs": refs,
             }
         return {
-            "relation_candidates": [],
-            "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
-            "requested_work_reason": (
-                "Observed tasks do not satisfy the request" if required else None
-            ),
+            "requested_work_status": "NOT_SATISFIED",
+            "requested_work_reason": "Observed tasks do not satisfy the request",
             "matched_fact_ids": [],
             "matched_candidate_refs": [],
             "evidence_refs": [],

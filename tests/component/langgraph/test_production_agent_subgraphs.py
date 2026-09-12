@@ -345,15 +345,15 @@ class _ComponentInferencePort:
         }:
             return {"relation_candidates": []}
         if prompt_id == "work_analysis.detect_duplicate_conflict_candidates":
-            required = projection.get("task_duplicate_review_required") is True
-            if required and self.duplicate_found:
+            return {"relation_candidates": []}
+        if prompt_id == "work_analysis.assess_requested_task_satisfaction":
+            if self.duplicate_found:
                 facts = cast(list[Mapping[str, object]], projection.get("work_facts", []))
                 source_state = cast(Mapping[str, object], projection.get("source_state", {}))
                 candidates = cast(
                     list[Mapping[str, object]], source_state.get("task_review_candidates", [])
                 )
                 return {
-                    "relation_candidates": [],
                     "requested_work_status": "SATISFIED",
                     "requested_work_reason": "The observed Task already satisfies the request",
                     "matched_fact_ids": [str(facts[0]["fact_id"])],
@@ -361,11 +361,8 @@ class _ComponentInferencePort:
                     "evidence_refs": list(cast(list[str], facts[0]["evidence_refs"])),
                 }
             return {
-                "relation_candidates": [],
-                "requested_work_status": "NOT_SATISFIED" if required else "NOT_APPLICABLE",
-                "requested_work_reason": (
-                    "Observed tasks do not satisfy the request" if required else None
-                ),
+                "requested_work_status": "NOT_SATISFIED",
+                "requested_work_reason": "Observed tasks do not satisfy the request",
                 "matched_fact_ids": [],
                 "matched_candidate_refs": [],
                 "evidence_refs": [],
@@ -1838,6 +1835,7 @@ def test_work_analysis__policy_only__skips_unrelated_relation_llms() -> None:
     assert llm.calls == [
         "work_analysis.extract_work_facts",
         "work_analysis.detect_duplicate_conflict_candidates",
+        "work_analysis.assess_requested_task_satisfaction",
         "work_analysis.assess_action_necessity",
         "work_analysis.assess_information_gaps",
         "work_analysis.assess_operational_risks",

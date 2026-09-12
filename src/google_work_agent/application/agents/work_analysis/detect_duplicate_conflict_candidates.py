@@ -1,4 +1,4 @@
-"""Canonical Work Analysis candidate operation: duplicate/conflict detection."""
+"""Canonical Work Analysis candidate operation: duplicate/conflict relations."""
 
 from __future__ import annotations
 
@@ -6,6 +6,11 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import cast
 
+from google_work_agent.application.agents.work_analysis.assess_requested_task_satisfaction import (
+    assess_requested_task_satisfaction,
+    assess_requested_task_satisfaction_with_budget,
+    not_applicable_task_satisfaction,
+)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     DuplicateConflictAssessmentV1,
 )
@@ -36,17 +41,10 @@ from google_work_agent.ports.system.contracts.workflow_handoff import RequestedM
 
 _GUARDED_KINDS = ("DUPLICATES", "CONFLICTS_WITH")
 DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="duplicate-conflict-candidates-v1",
+    schema_version="duplicate-conflict-candidates-v2",
     json_schema={
         "type": "object",
-        "required": [
-            "relation_candidates",
-            "requested_work_status",
-            "requested_work_reason",
-            "matched_fact_ids",
-            "matched_candidate_refs",
-            "evidence_refs",
-        ],
+        "required": ["relation_candidates"],
         "additionalProperties": False,
         "properties": {
             "relation_candidates": {
@@ -72,44 +70,15 @@ DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA = OutputSchemaDefinition(
                         },
                     },
                 },
-            },
-            "requested_work_status": {
-                "enum": [
-                    "NOT_APPLICABLE",
-                    "SATISFIED",
-                    "NOT_SATISFIED",
-                    "UNDETERMINED",
-                ]
-            },
-            "requested_work_reason": {"type": ["string", "null"]},
-            "matched_fact_ids": {
-                "type": "array",
-                "uniqueItems": True,
-                "items": {"type": "string", "minLength": 1},
-            },
-            "matched_candidate_refs": {
-                "type": "array",
-                "uniqueItems": True,
-                "items": {"type": "string", "minLength": 1},
-            },
-            "evidence_refs": {
-                "type": "array",
-                "uniqueItems": True,
-                "items": {"type": "string", "minLength": 1},
-            },
+            }
         },
     },
 )
 
 
 class DuplicateConflictSemanticValidationError(ValueError):
-    reason_code = "DUPLICATE_ASSESSMENT_SEMANTIC_INVALID"
-    affected_field_paths = (
-        "$.requested_work_status",
-        "$.matched_fact_ids",
-        "$.matched_candidate_refs",
-        "$.evidence_refs",
-    )
+    reason_code = "DUPLICATE_RELATION_SEMANTIC_INVALID"
+    affected_field_paths = ("$.relation_candidates",)
 
 
 def detect_duplicate_conflict_candidates(
@@ -122,51 +91,41 @@ def detect_duplicate_conflict_candidates(
     task_duplicate_review_required: bool,
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference,
+    task_satisfaction_prompt_ref: PromptReference,
     allowed_evidence_refs: set[str],
     requested_mode: RequestedModeV1,
     confirmation_response: dict[str, object] | None = None,
 ) -> DuplicateConflictAssessmentV1:
-    """Own duplicate semantics for the request and current Provider observations."""
-    if not duplicate_conflict_candidate_llm_required(
-        work_facts,
-        task_duplicate_review_required=task_duplicate_review_required,
-    ):
-        return {
-            "relation_candidates": [],
-            "requested_work_status": "NOT_APPLICABLE",
-            "requested_work_reason": None,
-            "matched_fact_ids": [],
-            "matched_candidate_refs": [],
-            "evidence_refs": [],
-        }
-    prompt_input = _prompt_input(
-        work_facts=work_facts,
-        entity_relations=entity_relations,
-        evidence=evidence,
-        source_state=source_state,
-        request_intent=request_intent,
-        task_duplicate_review_required=task_duplicate_review_required,
-        confirmation_response=confirmation_response,
+    relations = (
+        _detect_relations(
+            work_facts=work_facts,
+            entity_relations=entity_relations,
+            evidence=evidence,
+            llm_runtime=llm_runtime,
+            prompt_ref=prompt_ref,
+            allowed_evidence_refs=allowed_evidence_refs,
+            requested_mode=requested_mode,
+            confirmation_response=confirmation_response,
+        )
+        if relation_candidate_llm_required(work_facts)
+        else []
     )
-    fact_ids = {fact["fact_id"] for fact in work_facts}
-    candidate_refs = _task_candidate_refs(source_state)
-    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs, candidate_refs)
-    result = llm_runtime.infer(
-        requested_mode,
-        prompt_ref,
-        prompt_input,
-        output_schema,
+    task_assessment = (
+        assess_requested_task_satisfaction(
+            work_facts=work_facts,
+            evidence=evidence,
+            source_state=source_state,
+            request_intent=request_intent,
+            llm_runtime=llm_runtime,
+            prompt_ref=task_satisfaction_prompt_ref,
+            allowed_evidence_refs=allowed_evidence_refs,
+            requested_mode=requested_mode,
+            confirmation_response=confirmation_response,
+        )
+        if task_duplicate_review_required
+        else not_applicable_task_satisfaction()
     )
-    return _validate_and_materialize(
-        result.structured_output,
-        output_schema=output_schema,
-        fact_ids=fact_ids,
-        allowed_evidence_refs=allowed_evidence_refs,
-        candidate_refs=candidate_refs,
-        source_state=source_state,
-        work_facts=work_facts,
-        task_duplicate_review_required=task_duplicate_review_required,
-    )
+    return {**task_assessment, "relation_candidates": relations}
 
 
 def detect_duplicate_conflict_candidates_with_budget(
@@ -179,57 +138,112 @@ def detect_duplicate_conflict_candidates_with_budget(
     task_duplicate_review_required: bool,
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference,
+    task_satisfaction_prompt_ref: PromptReference,
     allowed_evidence_refs: set[str],
     requested_mode: RequestedModeV1,
     retry_budget: RunBudgetV2,
     confirmation_response: dict[str, object] | None = None,
 ) -> tuple[DuplicateConflictAssessmentV1, RunBudgetV2]:
-    """Evaluate Task duplication with one bounded semantic correction."""
-
-    if not duplicate_conflict_candidate_llm_required(
-        work_facts,
-        task_duplicate_review_required=task_duplicate_review_required,
-    ):
-        return (
-            detect_duplicate_conflict_candidates(
-                work_facts=work_facts,
-                entity_relations=entity_relations,
-                evidence=evidence,
-                source_state=source_state,
-                request_intent=request_intent,
-                task_duplicate_review_required=task_duplicate_review_required,
-                llm_runtime=llm_runtime,
-                prompt_ref=prompt_ref,
-                allowed_evidence_refs=allowed_evidence_refs,
-                requested_mode=requested_mode,
-                confirmation_response=confirmation_response,
-            ),
-            retry_budget,
+    if relation_candidate_llm_required(work_facts):
+        relations, retry_budget = _detect_relations_with_budget(
+            work_facts=work_facts,
+            entity_relations=entity_relations,
+            evidence=evidence,
+            llm_runtime=llm_runtime,
+            prompt_ref=prompt_ref,
+            allowed_evidence_refs=allowed_evidence_refs,
+            requested_mode=requested_mode,
+            retry_budget=retry_budget,
+            confirmation_response=confirmation_response,
         )
-    prompt_input = _prompt_input(
+    else:
+        relations = []
+    if task_duplicate_review_required:
+        task_assessment, retry_budget = assess_requested_task_satisfaction_with_budget(
+            work_facts=work_facts,
+            evidence=evidence,
+            source_state=source_state,
+            request_intent=request_intent,
+            llm_runtime=llm_runtime,
+            prompt_ref=task_satisfaction_prompt_ref,
+            allowed_evidence_refs=allowed_evidence_refs,
+            requested_mode=requested_mode,
+            retry_budget=retry_budget,
+            confirmation_response=confirmation_response,
+        )
+    else:
+        task_assessment = not_applicable_task_satisfaction()
+    return ({**task_assessment, "relation_candidates": relations}, retry_budget)
+
+
+def duplicate_conflict_candidate_llm_required(
+    work_facts: Sequence[WorkFactV1],
+    *,
+    task_duplicate_review_required: bool = False,
+) -> bool:
+    return task_duplicate_review_required or relation_candidate_llm_required(work_facts)
+
+
+def relation_candidate_llm_required(work_facts: Sequence[WorkFactV1]) -> bool:
+    return len({fact["fact_id"] for fact in work_facts}) >= 2
+
+
+def _detect_relations(
+    *,
+    work_facts: Sequence[WorkFactV1],
+    entity_relations: Sequence[WorkRelationV1],
+    evidence: list[dict[str, object]],
+    llm_runtime: StructuredInferencePort,
+    prompt_ref: PromptReference,
+    allowed_evidence_refs: set[str],
+    requested_mode: RequestedModeV1,
+    confirmation_response: dict[str, object] | None,
+) -> list[WorkRelationV1]:
+    prompt_input = _relation_prompt_input(
         work_facts=work_facts,
         entity_relations=entity_relations,
         evidence=evidence,
-        source_state=source_state,
-        request_intent=request_intent,
-        task_duplicate_review_required=task_duplicate_review_required,
         confirmation_response=confirmation_response,
     )
     fact_ids = {fact["fact_id"] for fact in work_facts}
-    candidate_refs = _task_candidate_refs(source_state)
-    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs, candidate_refs)
+    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs)
+    result = llm_runtime.infer(requested_mode, prompt_ref, prompt_input, output_schema)
+    return _validate_relations(
+        result.structured_output,
+        output_schema=output_schema,
+        fact_ids=fact_ids,
+        allowed_evidence_refs=allowed_evidence_refs,
+    )
+
+
+def _detect_relations_with_budget(
+    *,
+    work_facts: Sequence[WorkFactV1],
+    entity_relations: Sequence[WorkRelationV1],
+    evidence: list[dict[str, object]],
+    llm_runtime: StructuredInferencePort,
+    prompt_ref: PromptReference,
+    allowed_evidence_refs: set[str],
+    requested_mode: RequestedModeV1,
+    retry_budget: RunBudgetV2,
+    confirmation_response: dict[str, object] | None,
+) -> tuple[list[WorkRelationV1], RunBudgetV2]:
+    prompt_input = _relation_prompt_input(
+        work_facts=work_facts,
+        entity_relations=entity_relations,
+        evidence=evidence,
+        confirmation_response=confirmation_response,
+    )
+    fact_ids = {fact["fact_id"] for fact in work_facts}
+    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs)
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(requested_mode, prompt_ref, prompt_input, output_schema)
         try:
-            assessment = _validate_and_materialize(
+            relations = _validate_relations(
                 result.structured_output,
                 output_schema=output_schema,
                 fact_ids=fact_ids,
                 allowed_evidence_refs=allowed_evidence_refs,
-                candidate_refs=candidate_refs,
-                source_state=source_state,
-                work_facts=work_facts,
-                task_duplicate_review_required=task_duplicate_review_required,
             )
         except DuplicateConflictSemanticValidationError as error:
             signature = build_semantic_failure_signature_v1(
@@ -257,68 +271,46 @@ def detect_duplicate_conflict_candidates_with_budget(
                 },
                 output_schema,
             )
-            assessment = _validate_and_materialize(
+            relations = _validate_relations(
                 revised.structured_output,
                 output_schema=output_schema,
                 fact_ids=fact_ids,
                 allowed_evidence_refs=allowed_evidence_refs,
-                candidate_refs=candidate_refs,
-                source_state=source_state,
-                work_facts=work_facts,
-                task_duplicate_review_required=task_duplicate_review_required,
             )
             retry_budget = decision["run_budget"]
-        return assessment, merge_provider_dispatch_usage(retry_budget)
+        return relations, merge_provider_dispatch_usage(retry_budget)
 
 
-def duplicate_conflict_candidate_llm_required(
-    work_facts: Sequence[WorkFactV1],
-    *,
-    task_duplicate_review_required: bool = False,
-) -> bool:
-    """Run for a policy review even when a complete read observed zero Task items."""
-    return task_duplicate_review_required or len({fact["fact_id"] for fact in work_facts}) >= 2
-
-
-def _prompt_input(
+def _relation_prompt_input(
     *,
     work_facts: Sequence[WorkFactV1],
     entity_relations: Sequence[WorkRelationV1],
     evidence: list[dict[str, object]],
-    source_state: Mapping[str, object],
-    request_intent: Mapping[str, object],
-    task_duplicate_review_required: bool,
     confirmation_response: dict[str, object] | None,
 ) -> dict[str, object]:
     prompt_input: dict[str, object] = {
-        "request_intent": dict(request_intent),
         "work_facts": [dict(fact) for fact in work_facts],
         "entity_relations": [dict(item) for item in entity_relations],
         "evidence": list(evidence),
-        "source_state": dict(source_state),
-        "task_duplicate_review_required": task_duplicate_review_required,
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
     return prompt_input
 
 
-def _validate_and_materialize(
+def _validate_relations(
     value: object,
     *,
     output_schema: OutputSchemaDefinition,
     fact_ids: set[str],
     allowed_evidence_refs: set[str],
-    candidate_refs: set[str],
-    source_state: Mapping[str, object],
-    work_facts: Sequence[WorkFactV1],
-    task_duplicate_review_required: bool,
-) -> DuplicateConflictAssessmentV1:
+) -> list[WorkRelationV1]:
     errors = validate_output_schema(value, output_schema.json_schema)
     if errors:
-        raise ValueError(f"invalid duplicate/conflict candidate schema: {'; '.join(errors)}")
+        raise ValueError(f"invalid duplicate/conflict relation schema: {'; '.join(errors)}")
     seen: set[str] = set()
     root = cast(Mapping[str, object], value)
+    result: list[WorkRelationV1] = []
     for item in cast(list[Mapping[str, object]], root["relation_candidates"]):
         relation_id = cast(str, item["relation_id"])
         source = cast(str, item["source_fact_id"])
@@ -338,166 +330,30 @@ def _validate_and_materialize(
                 "guarded relation evidence is outside current RetrievalResultV1"
             )
         seen.add(relation_id)
-    matched_fact_ids = cast(list[str], root["matched_fact_ids"])
-    matched_candidate_refs = cast(list[str], root["matched_candidate_refs"])
-    refs = cast(list[str], root["evidence_refs"])
-    if not set(matched_fact_ids).issubset(fact_ids):
-        raise DuplicateConflictSemanticValidationError(
-            "requested-work assessment references an unknown fact"
-        )
-    if not set(refs).issubset(allowed_evidence_refs):
-        raise DuplicateConflictSemanticValidationError(
-            "requested-work assessment evidence is outside RetrievalResultV1"
-        )
-    if not set(matched_candidate_refs).issubset(candidate_refs):
-        raise DuplicateConflictSemanticValidationError(
-            "requested-work assessment references an unknown Task candidate"
-        )
-    status = root["requested_work_status"]
-    reason = root["requested_work_reason"]
-    if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-        raise DuplicateConflictSemanticValidationError(
-            "requested-work assessment reason must be non-empty or null"
-        )
-    if status == "SATISFIED" and not (matched_fact_ids or matched_candidate_refs):
-        raise DuplicateConflictSemanticValidationError(
-            "satisfied requested work requires a current matched observation"
-        )
-    if status in {"NOT_APPLICABLE", "NOT_SATISFIED"} and (
-        matched_fact_ids or matched_candidate_refs
-    ):
-        raise DuplicateConflictSemanticValidationError(
-            "non-matching requested work cannot bind matched observations"
-        )
-    if task_duplicate_review_required and status == "NOT_APPLICABLE":
-        raise DuplicateConflictSemanticValidationError(
-            "required Task duplicate review cannot be not applicable"
-        )
-    if not task_duplicate_review_required and status != "NOT_APPLICABLE":
-        raise DuplicateConflictSemanticValidationError(
-            "unrequested Task duplicate review must be not applicable"
-        )
-    if task_duplicate_review_required and status in {"SATISFIED", "NOT_SATISFIED"}:
-        _validate_determinate_task_assessment(
-            status=cast(str, status),
-            source_state=source_state,
-            work_facts=work_facts,
-            matched_fact_ids=matched_fact_ids,
-            task_candidate_refs=candidate_refs,
-        )
-    materialized = cast(dict[str, object], root)
-    return cast(
-        DuplicateConflictAssessmentV1,
-        {
-            **materialized,
-            "relation_candidates": [
-                dict(item)
-                for item in cast(list[dict[str, object]], materialized["relation_candidates"])
-            ],
-            "matched_fact_ids": list(cast(list[str], materialized["matched_fact_ids"])),
-            "matched_candidate_refs": list(cast(list[str], materialized["matched_candidate_refs"])),
-            "evidence_refs": list(cast(list[str], materialized["evidence_refs"])),
-        },
-    )
-
-
-def _validate_determinate_task_assessment(
-    *,
-    status: str,
-    source_state: Mapping[str, object],
-    work_facts: Sequence[WorkFactV1],
-    matched_fact_ids: Sequence[str],
-    task_candidate_refs: set[str],
-) -> None:
-    raw_statuses = source_state.get("source_statuses", [])
-    if not isinstance(raw_statuses, list) or not all(
-        isinstance(item, Mapping) for item in raw_statuses
-    ):
-        raise ValueError("Task duplicate review source statuses are invalid")
-    task_statuses = [
-        item
-        for item in cast(list[Mapping[str, object]], raw_statuses)
-        if str(item.get("resource_type", "")).upper() == "TASK"
-    ]
-    related_statuses = [
-        item
-        for item in cast(list[Mapping[str, object]], raw_statuses)
-        if str(item.get("resource_type", "")).upper() in {"TASK", "TASK_LIST"}
-    ]
-    if not task_statuses or any(item.get("status") != "COMPLETE" for item in related_statuses):
-        raise DuplicateConflictSemanticValidationError(
-            "determinate Task duplicate review requires complete Task observation"
-        )
-
-    facts_by_id = {fact["fact_id"]: fact for fact in work_facts}
-    if status == "SATISFIED" and any(
-        facts_by_id[fact_id]["kind"] != "TASK" for fact_id in matched_fact_ids
-    ):
-        raise DuplicateConflictSemanticValidationError(
-            "satisfied Task duplicate review must bind Task facts"
-        )
-    if status != "NOT_SATISFIED":
-        return
-
-    observed_counts = [item.get("observed_resource_count") for item in task_statuses]
-    if any(not isinstance(count, int) for count in observed_counts):
-        raise ValueError("Task duplicate review requires observed resource counts")
-    if sum(cast(list[int], observed_counts)) != len(task_candidate_refs):
-        raise ValueError(
-            "Task observation candidates do not cover the complete Provider observation"
-        )
+        result.append(cast(WorkRelationV1, dict(item)))
+    return result
 
 
 def _bound_output_schema(
-    fact_ids: set[str], allowed_evidence_refs: set[str], candidate_refs: set[str]
+    fact_ids: set[str], allowed_evidence_refs: set[str]
 ) -> OutputSchemaDefinition:
-    """Bind guarded candidates to the current fact and Retrieval identities."""
-
-    json_schema = deepcopy(DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA.json_schema)
-    properties = cast(dict[str, object], json_schema["properties"])
+    schema = deepcopy(DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], schema["properties"])
     candidates = cast(dict[str, object], properties["relation_candidates"])
     item = cast(dict[str, object], candidates["items"])
     item_properties = cast(dict[str, object], item["properties"])
     fact_id_schema = {"type": "string", "enum": sorted(fact_ids)}
     item_properties["source_fact_id"] = fact_id_schema
     item_properties["target_fact_id"] = dict(fact_id_schema)
-    item_properties["evidence_refs"] = _bounded_reference_array(allowed_evidence_refs)
-    properties["matched_fact_ids"] = _bounded_reference_array(fact_ids)
-    properties["evidence_refs"] = _bounded_reference_array(allowed_evidence_refs)
-    properties["matched_candidate_refs"] = _bounded_reference_array(candidate_refs)
-    return OutputSchemaDefinition(
-        schema_version=DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA.schema_version,
-        json_schema=json_schema,
-    )
-
-
-def _bounded_reference_array(values: set[str]) -> dict[str, object]:
-    schema: dict[str, object] = {
+    item_properties["evidence_refs"] = {
         "type": "array",
         "uniqueItems": True,
-        "items": {"type": "string", "minLength": 1},
+        "items": {"type": "string", "enum": sorted(allowed_evidence_refs)},
     }
-    if values:
-        schema["items"] = {"type": "string", "enum": sorted(values)}
-    else:
-        schema["maxItems"] = 0
-    return schema
-
-
-def _task_candidate_refs(source_state: Mapping[str, object]) -> set[str]:
-    raw_candidates = source_state.get("task_review_candidates", [])
-    if not isinstance(raw_candidates, list) or not all(
-        isinstance(item, Mapping) for item in raw_candidates
-    ):
-        raise ValueError("Task review candidates are invalid")
-    refs = {
-        str(item["candidate_ref"])
-        for item in cast(list[Mapping[str, object]], raw_candidates)
-        if isinstance(item.get("candidate_ref"), str) and item["candidate_ref"]
-    }
-    if len(refs) != len(raw_candidates):
-        raise ValueError("Task review candidate identities must be unique and non-empty")
-    return refs
+    return OutputSchemaDefinition(
+        schema_version=DUPLICATE_CONFLICT_CANDIDATES_OUTPUT_SCHEMA.schema_version,
+        json_schema=schema,
+    )
 
 
 __all__ = [
@@ -506,4 +362,5 @@ __all__ = [
     "detect_duplicate_conflict_candidates",
     "detect_duplicate_conflict_candidates_with_budget",
     "duplicate_conflict_candidate_llm_required",
+    "relation_candidate_llm_required",
 ]

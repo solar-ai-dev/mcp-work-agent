@@ -26,6 +26,9 @@ REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "work_analysis.detect_duplicate_conflict_candidates": (
         "analysis.detect_duplicate_conflict_candidates"
     ),
+    "work_analysis.assess_requested_task_satisfaction": (
+        "analysis.detect_duplicate_conflict_candidates"
+    ),
     "work_analysis.assess_action_necessity": "analysis.assess_action_necessity",
     "work_analysis.assess_information_gaps": "analysis.assess_information_gaps",
     "work_analysis.assess_operational_risks": "analysis.assess_operational_risks",
@@ -65,7 +68,7 @@ class PromptRuntimeInputContractEntryV1:
             "request_understanding.identify_goal": 14,
             "request_understanding.identify_resource_responsibilities": 2,
             "request_understanding.detect_ambiguity": 2,
-            "work_analysis.detect_duplicate_conflict_candidates": 3,
+            "work_analysis.detect_duplicate_conflict_candidates": 4,
             "work_analysis.assess_information_gaps": 2,
             "work_analysis.assess_operational_risks": 2,
         }.get(self.prompt_slot_id, 1)

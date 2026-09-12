@@ -141,12 +141,18 @@ def test_work_analysis_contracts__accept_current__observation_projections() -> N
     contract.validate_projection(
         "work_analysis.detect_duplicate_conflict_candidates",
         {
-            "request_intent": {},
             "work_facts": [],
             "entity_relations": [],
             "evidence": [],
+        },
+    )
+    contract.validate_projection(
+        "work_analysis.assess_requested_task_satisfaction",
+        {
+            "request_intent": {},
+            "work_facts": [],
+            "evidence": [],
             "source_state": {"source_statuses": []},
-            "task_duplicate_review_required": True,
         },
     )
     contract.validate_projection(

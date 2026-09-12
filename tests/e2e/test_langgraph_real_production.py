@@ -321,7 +321,7 @@ def test_approved_write_executes__claims_and_verifies__through_real_mcp(
     assert "tool_routing.select_tool_if_needed" not in invoked
     assert "retrieval.plan_query" in invoked
     assert "work_analysis.extract_work_facts" in invoked
-    assert "work_analysis.detect_duplicate_conflict_candidates" in invoked
+    assert "work_analysis.assess_requested_task_satisfaction" in invoked
     assert "review.inspect_action_scope_and_route" in invoked
     assert "review.inspect_constraints_and_policy_summary" not in invoked
 
@@ -369,10 +369,9 @@ def test_task_duplicate_observation__controls_no_action_or_preview__through_real
     invocation = next(
         item
         for item in transport.invocations
-        if item.get("prompt_id") == "work_analysis.detect_duplicate_conflict_candidates"
+        if item.get("prompt_id") == "work_analysis.assess_requested_task_satisfaction"
     )
     prompt_input = cast(dict[str, object], invocation["prompt_input"])
-    assert prompt_input["task_duplicate_review_required"] is True
     assert cast(list[object], prompt_input["work_facts"])
     source_state = cast(dict[str, object], prompt_input["source_state"])
     assert cast(list[dict[str, object]], source_state["source_statuses"])[0]["status"] == (
@@ -426,7 +425,7 @@ def test_unrepresented_task_observation__is_revised__before_duplicate_analysis(
     duplicate_calls = [
         item
         for item in transport.invocations
-        if item.get("prompt_id") == "work_analysis.detect_duplicate_conflict_candidates"
+        if item.get("prompt_id") == "work_analysis.assess_requested_task_satisfaction"
     ]
     assert len(extraction_calls) == 2
     assert len(duplicate_calls) == 1
@@ -688,6 +687,7 @@ def test_verification_mismatch__requires_explicit__partial_resolution(
         str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     }
     assert "work_analysis.detect_duplicate_conflict_candidates" not in invoked
+    assert "work_analysis.assess_requested_task_satisfaction" not in invoked
 
 
 @pytest.mark.parametrize("profile", tuple(GraphProfile))

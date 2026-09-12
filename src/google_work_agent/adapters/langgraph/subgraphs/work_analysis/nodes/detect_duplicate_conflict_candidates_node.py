@@ -37,6 +37,7 @@ def detect_duplicate_conflict_candidates_node(
     *,
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference,
+    task_satisfaction_prompt_ref: PromptReference,
     requested_mode: RequestedModeV1,
     confirmation_response: dict[str, object] | None = None,
 ) -> _DetectDuplicateConflictCandidatesUpdate:
@@ -44,6 +45,7 @@ def detect_duplicate_conflict_candidates_node(
         **project_detect_duplicate_conflict_candidates_input(state),
         llm_runtime=llm_runtime,
         prompt_ref=prompt_ref,
+        task_satisfaction_prompt_ref=task_satisfaction_prompt_ref,
         requested_mode=requested_mode,
         retry_budget=state["retry_budget"],
         confirmation_response=confirmation_response,

@@ -141,10 +141,18 @@
     {
       "prompt_slot_id": "work_analysis.detect_duplicate_conflict_candidates",
       "runtime_node_id": "analysis.detect_duplicate_conflict_candidates",
-      "input_schema_version": 1,
-      "required_root_fields": ["request_intent", "work_facts", "entity_relations", "evidence", "source_state", "task_duplicate_review_required"],
+      "input_schema_version": 2,
+      "required_root_fields": ["work_facts", "entity_relations", "evidence"],
       "optional_root_fields": ["confirmation_response"],
-      "output_schema_version": 3
+      "output_schema_version": 4
+    },
+    {
+      "prompt_slot_id": "work_analysis.assess_requested_task_satisfaction",
+      "runtime_node_id": "analysis.detect_duplicate_conflict_candidates",
+      "input_schema_version": 1,
+      "required_root_fields": ["request_intent", "work_facts", "evidence", "source_state"],
+      "optional_root_fields": ["confirmation_response"],
+      "output_schema_version": 1
     },
     {
       "prompt_slot_id": "work_analysis.assess_action_necessity",

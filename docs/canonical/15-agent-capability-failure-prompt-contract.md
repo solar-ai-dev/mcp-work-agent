@@ -221,7 +221,8 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | `work_analysis.extract_work_facts` | LLM | 업무 사실 추출 |
 | `work_analysis.resolve_entity_relations` | LLM | conditional. 사람·업무·Resource identity·ownership/reference 관계만 소유한다. |
 | `work_analysis.resolve_temporal_dependencies` | LLM | conditional. 날짜·기간·선후·dependency 후보만 소유한다. |
-| `work_analysis.detect_duplicate_conflict_candidates` | LLM | conditional. duplicate/conflict candidate만 제안한다. |
+| `work_analysis.detect_duplicate_conflict_candidates` | LLM | conditional. fact↔fact duplicate/conflict candidate만 제안한다. |
+| `work_analysis.assess_requested_task_satisfaction` | LLM | conditional. 현재 Task 관측이 요청 업무를 이미 만족하는지만 평가한다. |
 | `work_analysis.validate_relations` | deterministic | 실제 `DUPLICATES \| CONFLICTS_WITH` 확정은 relation validator가 소유한다. |
 | `work_analysis.assess_action_necessity` | LLM/deterministic | frozen Output Route별 적용 여부를 한 번 판단한다. Task CREATE는 앞선 중복 검토 결과에서 결정적으로 파생한다. |
 | `work_analysis.assess_information_gaps` | LLM | 부족 정보 평가 |
@@ -722,6 +723,7 @@ Current required Product-LLM Prompt Slot set은 아래 25개다. 각 slot에서 
 | `analysis.resolve_entity_relations` | `work_analysis.resolve_entity_relations` |
 | `analysis.resolve_temporal_dependencies` | `work_analysis.resolve_temporal_dependencies` |
 | `analysis.detect_duplicate_conflict_candidates` | `work_analysis.detect_duplicate_conflict_candidates` |
+| `analysis.detect_duplicate_conflict_candidates` | `work_analysis.assess_requested_task_satisfaction` |
 | `analysis.assess_action_necessity` | `work_analysis.assess_action_necessity` |
 | `analysis.assess_information_gaps` | `work_analysis.assess_information_gaps` |
 | `analysis.assess_operational_risks` | `work_analysis.assess_operational_risks` |
