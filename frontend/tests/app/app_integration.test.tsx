@@ -192,6 +192,26 @@ test("captures the bootstrap fragment before asynchronous startup checks", async
   expect(document.body.textContent).not.toContain("secret-1");
 });
 
+test("stops without retrying when the local session security boundary cannot be restored", async () => {
+  installFetch((path) => {
+    if (path === "/health/live") return jsonResponse(liveResponse());
+    if (path === "/health/ready") return jsonResponse({
+      error_code: "LOCAL_SESSION_INVALID",
+      user_message: "Request rejected by local API security policy.",
+      retryable: false,
+      request_id: "request-1",
+      api_contract_version: "1",
+    }, 401);
+    throw new Error(`Unhandled path ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("안전한 실행 조건을 확인하지 못해 작업을 중단했습니다.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "다시 확인" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Request rejected by local API security policy.")).not.toBeInTheDocument();
+});
+
 test("keeps the fragment until one StrictMode bootstrap request succeeds", async () => {
   window.history.replaceState(null, "", "/#bootstrap_secret=secret-1&service_instance_id=svc-1");
   const paths: string[] = [];
@@ -2676,6 +2696,30 @@ test("Calendar Month View materializes provider pages, keeps date selection clie
   await user.click(screen.getByRole("button", { name: "이전 달" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "다음 달" })).toBeInTheDocument());
   expect(requests.filter((request) => request.path.startsWith("/api/v1/resources/calendar?")).length).toBe(callsBeforeSelection + 1);
+});
+
+test("Calendar Event selection adds its opaque handle to the Agent request context", async () => {
+  const user = userEvent.setup();
+  const requests = installUiContractFetch({
+    run: false,
+    calendarEvents: [calendarEventItem({ selection_handle: "handle-calendar-event" })],
+  });
+  render(<App />);
+
+  await user.click(await screen.findByRole("tab", { name: /캘린더/ }));
+  await selectCalendarDate(user, "2026-08-10");
+  await user.click(await screen.findByRole("checkbox", { name: "프로젝트 검토 선택" }));
+  expect(screen.getByText("요청에 사용할 자료 1개")).toBeInTheDocument();
+  expect(screen.getByText("프로젝트 검토", { selector: ".composer-context span" })).toBeInTheDocument();
+
+  await user.type(screen.getByRole("textbox", { name: "선택한 일정에 대해 질문하거나 업무를 요청하세요..." }), "이 일정 준비해줘");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+
+  const start = requests.find((request) => request.path === "/api/v1/runs");
+  expect(JSON.parse(String(start?.init?.body))).toMatchObject({
+    entry_mode: "RESOURCE_SELECTED",
+    selected_resource_handles: ["handle-calendar-event"],
+  });
 });
 
 test("Calendar Month View keeps only the latest month response and reuses adjacent prefetch", async () => {

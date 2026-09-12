@@ -6,6 +6,7 @@ export type StartupCheckState = {
   message: string;
   checks: StartupCheck[];
   error?: string;
+  retryable: boolean;
 };
 
 type Props = {
@@ -29,7 +30,7 @@ export function StartupCheckScreen({ state, onRetry }: Props): JSX.Element {
             </li>
           ))}
         </ul>
-        {state.status === "error" ? (
+        {state.status === "error" && state.retryable ? (
           <div className="button-row">
             <button className="button-primary" type="button" onClick={onRetry}>
               다시 확인

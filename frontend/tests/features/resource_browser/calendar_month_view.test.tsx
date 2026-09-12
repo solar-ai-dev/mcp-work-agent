@@ -24,6 +24,7 @@ function event(overrides: Partial<ResourceItem> = {}): ResourceItem {
 test("builds a Sunday-start month grid and renders markers plus the selected date list", async () => {
   const user = userEvent.setup();
   const onSelectDate = vi.fn();
+  const onToggleEvent = vi.fn();
   render(
     <CalendarMonthView
       monthAnchor="2026-08"
@@ -39,6 +40,8 @@ test("builds a Sunday-start month grid and renders markers plus the selected dat
       onNextMonth={vi.fn()}
       onSelectDate={onSelectDate}
       onSelectEvent={vi.fn()}
+      onToggleEvent={onToggleEvent}
+      selectedSelectionHandles={[]}
       focusedResourceId="event-1"
       renderExpandedResource={(item) => <div>{item.title} 상세 원문</div>}
     />,
@@ -50,6 +53,8 @@ test("builds a Sunday-start month grid and renders markers plus the selected dat
   expect(screen.getByText("09:00")).toBeInTheDocument();
   expect(screen.getByText("종일")).toBeInTheDocument();
   expect(screen.getByText("회의 상세 원문")).toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: "회의 선택" }));
+  expect(onToggleEvent).toHaveBeenCalledWith(expect.objectContaining({ selection_handle: "handle-event-1" }));
 
   await user.click(screen.getByRole("button", { name: "2026-08-11 일정 1개" }));
   expect(onSelectDate).toHaveBeenCalledWith("2026-08-11");
@@ -68,6 +73,8 @@ test("does not render an event marker outside an all-day event's exclusive end d
       onNextMonth={vi.fn()}
       onSelectDate={vi.fn()}
       onSelectEvent={vi.fn()}
+      onToggleEvent={vi.fn()}
+      selectedSelectionHandles={[]}
       focusedResourceId={null}
       renderExpandedResource={() => null}
     />,

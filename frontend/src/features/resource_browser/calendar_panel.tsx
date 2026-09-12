@@ -19,6 +19,8 @@ type Props = {
   filter: string;
   onFilterChange: (filter: string) => void;
   onFocusEvent: (item: ResourceItem) => void;
+  onToggleEvent: (item: ResourceItem) => void;
+  selectedSelectionHandles: string[];
   focusedResourceId: string | null;
   renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
@@ -29,6 +31,8 @@ export function CalendarPanel({
   filter,
   onFilterChange,
   onFocusEvent,
+  onToggleEvent,
+  selectedSelectionHandles,
   focusedResourceId,
   renderExpandedResource,
 }: Props): JSX.Element {
@@ -55,6 +59,8 @@ export function CalendarPanel({
           onNextMonth={calendar.goNextMonth}
           onSelectDate={calendar.selectDate}
           onSelectEvent={onFocusEvent}
+          onToggleEvent={onToggleEvent}
+          selectedSelectionHandles={selectedSelectionHandles}
           focusedResourceId={focusedResourceId}
           renderExpandedResource={renderExpandedResource}
         />

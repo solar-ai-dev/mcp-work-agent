@@ -37,6 +37,7 @@ const INITIAL_STATE: StartupCheckState = {
   status: "idle",
   message: "시작 검사를 준비하고 있습니다.",
   checks: [],
+  retryable: false,
 };
 
 export function StartupFlow({ children }: Props): JSX.Element {
@@ -55,6 +56,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
       status: "loading",
       message: "로컬 서비스 상태를 확인하고 있습니다.",
       checks: [],
+      retryable: false,
     });
     try {
       const live = await getLive();
@@ -67,6 +69,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
           message: "Frontend와 Local API 버전이 호환되지 않습니다.",
           checks: [],
           error: "앱을 업데이트한 뒤 다시 시작해 주세요.",
+          retryable: false,
         });
         return;
       }
@@ -91,6 +94,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
             message: "Local API 호환성 확인에 실패했습니다.",
             checks: [],
             error: "호환되는 앱 버전으로 다시 시작해 주세요.",
+            retryable: false,
           });
           return;
         }
@@ -106,6 +110,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
           message: "Frontend와 Local API 준비 계약이 호환되지 않습니다.",
           checks: ready.checks,
           error: "앱을 업데이트한 뒤 다시 시작해 주세요.",
+          retryable: false,
         });
         return;
       }
@@ -119,6 +124,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
             : "Local Service가 아직 준비되지 않았습니다.",
           checks: ready.checks,
           error: "검사 상세를 확인하고 다시 시도해 주세요.",
+          retryable: true,
         });
         return;
       }
@@ -170,15 +176,20 @@ export function StartupFlow({ children }: Props): JSX.Element {
         status: "ready",
         message: "UI를 준비했습니다.",
         checks: ready.checks,
+        retryable: false,
       });
     } catch (error) {
+      const retryable = !(error instanceof ApiClientError) || error.envelope?.retryable === true;
       setCompatibility((current) => current === "INCOMPATIBLE" ? current : "UNAVAILABLE");
       setState({
         phase: "failed",
         status: "error",
         message: "시작 검사를 완료하지 못했습니다.",
         checks: [],
-        error: error instanceof ApiClientError ? error.message : "앱을 다시 열어 주세요.",
+        error: retryable
+          ? error instanceof ApiClientError ? error.message : "앱을 다시 열어 주세요."
+          : "안전한 실행 조건을 확인하지 못해 작업을 중단했습니다.",
+        retryable,
       });
     }
   }, []);
