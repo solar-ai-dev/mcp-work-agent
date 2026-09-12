@@ -660,7 +660,7 @@ def test_mixed_sources__full_preferred_google_budget__still_retains_new_github()
     assert mixed[0].segment_id == prior[0].segment_id
 
 
-def test_rehydrate_normalized_segments__preserves_exact_materialized_selection() -> None:
+def test_rehydrate_normalized_segments__materialized_selection__preserves_exact_order() -> None:
     task_resources = [
         {
             "resource_handle": f"task:task-{index}",
