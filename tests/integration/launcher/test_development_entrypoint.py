@@ -245,8 +245,22 @@ def test_development_config__sampling_policy__requires_explicit_handoff(
     assert handed_off.development_sampling_seed == 1729
 
 
-def test_development_sampling_environment__parses_explicit_values__without_defaults() -> None:
-    assert read_development_sampling_environment({}) == (None, None)
+def test_development_config__sampling_policy__uses_evaluated_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.run_development import development_runtime_config
+
+    monkeypatch.delenv("GWA_DEVELOPMENT_LLM_TEMPERATURE", raising=False)
+    monkeypatch.delenv("GWA_DEVELOPMENT_LLM_SEED", raising=False)
+
+    config = development_runtime_config(runtime_root=tmp_path / "runner")
+
+    assert config.development_sampling_temperature == 0.0
+    assert config.development_sampling_seed is None
+
+
+def test_development_sampling_environment__uses_evaluated_temperature_default() -> None:
+    assert read_development_sampling_environment({}) == (0.0, None)
     assert read_development_sampling_environment(
         {
             "GWA_DEVELOPMENT_LLM_TEMPERATURE": " 0.2 ",

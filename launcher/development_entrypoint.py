@@ -32,6 +32,7 @@ from launcher.readiness import ServiceReadiness, wait_for_service_ready
 DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID = "development-client-id"
 DEVELOPMENT_GITHUB_APP_CLIENT_ID = "Iv23liYV2mScbAiVwc5Y"
 DEVELOPMENT_LANGSMITH_PROJECT = "google-work-agent-development"
+DEVELOPMENT_DEFAULT_LLM_TEMPERATURE = 0.0
 DEVELOPMENT_LANGSMITH_TRACE_ENVIRONMENT = {
     "code_sha": "GWA_LANGSMITH_CODE_SHA",
     "experiment_id": "GWA_LANGSMITH_EXPERIMENT_ID",
@@ -86,13 +87,17 @@ def read_development_langsmith_environment(
 def read_development_sampling_environment(
     environment: Mapping[str, str] | None = None,
 ) -> tuple[float | None, int | None]:
-    """Read optional finite-measurement sampling controls for development only."""
+    """Read development sampling controls with the evaluated temperature default."""
 
     values = os.environ if environment is None else environment
     temperature_value = values.get("GWA_DEVELOPMENT_LLM_TEMPERATURE", "").strip()
     seed_value = values.get("GWA_DEVELOPMENT_LLM_SEED", "").strip()
     try:
-        temperature = None if not temperature_value else float(temperature_value)
+        temperature = (
+            DEVELOPMENT_DEFAULT_LLM_TEMPERATURE
+            if not temperature_value
+            else float(temperature_value)
+        )
     except ValueError as error:
         raise ValueError("development sampling temperature must be numeric") from error
     try:
