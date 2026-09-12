@@ -72,7 +72,7 @@
       "input_schema_version": 1,
       "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "source_reads", "outputs", "allowed_status_values"],
       "optional_root_fields": ["confirmation_response"],
-      "output_schema_version": 1
+      "output_schema_version": 2
     },
     {
       "prompt_slot_id": "request_understanding.identify_temporal_scope",

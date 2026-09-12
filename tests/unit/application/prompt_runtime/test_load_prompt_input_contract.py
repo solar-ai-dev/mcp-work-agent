@@ -9,6 +9,12 @@ import pytest
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_goal_candidate_schema,
 )
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    ResourceResponsibilitiesV1,
+)
+from google_work_agent.application.agents.request_understanding.identify_source_status import (
+    build_identify_source_status_output_schema,
+)
 from google_work_agent.application.prompt_runtime.contracts.prompt_runtime_input_contract import (
     REQUIRED_PROMPT_SLOT_IDS,
     PromptRuntimeInputContractError,
@@ -58,6 +64,23 @@ def test_goal_contract__active_output_schema__matches_runtime_binding() -> None:
     assert request_goal_candidate_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.schema_version.endswith(
         f"-v{entry.output_schema_version}"
     )
+
+
+def test_source_status_contract__active_output_schema__matches_runtime_binding() -> None:
+    contract = load_prompt_input_contract()
+    entry = contract.entry("request_understanding.identify_source_status")
+    responsibilities = cast(
+        ResourceResponsibilitiesV1,
+        {
+            "source_reads": [
+                {"resource_type": "TASK", "required_information": ["current status"]}
+            ],
+            "outputs": [],
+        },
+    )
+    schema = build_identify_source_status_output_schema(responsibilities)
+
+    assert schema.schema_version.endswith(f"-v{entry.output_schema_version}")
 
 
 def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
