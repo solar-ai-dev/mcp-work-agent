@@ -381,6 +381,44 @@ def test_finalize_retrieval__with_unfinished_page__does_not_force_coverage() -> 
     assert result["collection_results"][0]["continuation_status"] == "HAS_MORE"
 
 
+def test_finalize_retrieval__after_last_page_for_query__drops_stale_has_more() -> None:
+    acquisition = acquisition_result()
+    acquisition["source_summaries"][0]["route_id"] = "route-gmail"
+
+    result = finalize_retrieval(
+        artifact_id="retrieval-exhausted-query",
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition,
+        selection_result={
+            "schema_version": 2,
+            "evidence_drafts": [],
+            "selected_segment_ids": [],
+            "excluded_segment_ids": [],
+        },
+        evidence_drafts=[],
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
+        current_round_no=0,
+        read_result_summaries=[
+            {
+                "route_id": "route-gmail",
+                "query_identity_hash": "query-1",
+                "has_next_page": True,
+                "exhausted": False,
+            },
+            {
+                "route_id": "route-gmail",
+                "query_identity_hash": "query-1",
+                "has_next_page": False,
+                "exhausted": True,
+            },
+        ],
+    )
+
+    assert result["collection_results"][0]["continuation_status"] == "EXHAUSTED"
+    assert result["source_statuses"][0]["continuation_status"] == "EXHAUSTED"
+
+
 def test_finalize_retrieval__with_bounded_scope__preserves_incomplete_coverage() -> None:
     acquisition = acquisition_result()
     acquisition["status"] = "PARTIAL"

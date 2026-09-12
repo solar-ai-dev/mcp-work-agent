@@ -238,18 +238,19 @@ def _collection_continuation(
     *,
     acquisition_summaries: Sequence[Mapping[str, object]] = (),
 ) -> Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]:
+    current_read_summaries = _latest_read_result_summaries(read_result_summaries)
     bounded_or_failed = any(
         summary.get("termination_kind") == "BUDGET_STOPPED"
         or summary.get("status") == "FAILED"
         for summary in acquisition_summaries
     )
-    if any(summary.get("has_next_page") is True for summary in read_result_summaries):
+    if any(summary.get("has_next_page") is True for summary in current_read_summaries):
         return "HAS_MORE"
     if bounded_or_failed:
         return "UNKNOWN"
-    if read_result_summaries and all(
+    if current_read_summaries and all(
         summary.get("has_next_page") is False and summary.get("exhausted") is True
-        for summary in read_result_summaries
+        for summary in current_read_summaries
     ):
         return "EXHAUSTED"
     if any(
@@ -261,6 +262,19 @@ def _collection_continuation(
     ):
         return "EXHAUSTED"
     return "UNKNOWN"
+
+
+def _latest_read_result_summaries(
+    summaries: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    """Keep only the current page fact for each effective query identity."""
+
+    latest: dict[str, Mapping[str, object]] = {}
+    for index, summary in enumerate(summaries):
+        query_identity = summary.get("query_identity_hash")
+        key = query_identity if isinstance(query_identity, str) else f"summary:{index}"
+        latest[key] = summary
+    return list(latest.values())
 
 
 def _coverage(
