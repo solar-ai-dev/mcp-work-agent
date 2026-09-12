@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 
@@ -59,6 +59,11 @@ from google_work_agent.ports.system.external_call_trace_port import (
 )
 from google_work_agent.ports.system.hardware_probe_port import HardwareProbePort
 from google_work_agent.ports.system.settings_port import SettingsViewV1
+
+_IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = (
+    "request_understanding.identify_source_dependencies"
+)
+_IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE = 0.10
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,6 +524,7 @@ class StructuredInferenceRuntimeRouter:
     ) -> StructuredLLMResult:
         if provider.runtime is ActualRuntime.API_LLM:
             self._require_external_call(external_transfer_scope)
+        runtime_policy = _runtime_policy_for_prompt(self.runtime_policy, prompt_ref)
         started = time.perf_counter()
         local_profile = self.runtime_selection.local_model_profile
         profile_attributes = (
@@ -574,7 +580,7 @@ class StructuredInferenceRuntimeRouter:
                     prompt_ref=prompt_ref,
                     prompt_input=prompt_input,
                     output_schema=output_schema,
-                    runtime_policy=self.runtime_policy,
+                    runtime_policy=runtime_policy,
                     api_key=api_key,
                 )
             except Exception as error:
@@ -609,6 +615,7 @@ class StructuredInferenceRuntimeRouter:
                 trace_context=trace_context,
                 semantic_validate=semantic_validate,
                 external_transfer_scope=external_transfer_scope,
+                runtime_policy=runtime_policy,
             )
         except LLMInvocationError as error:
             error.provider_dispatch_occurred = provider_dispatch_occurred
@@ -684,6 +691,7 @@ class StructuredInferenceRuntimeRouter:
         trace_context: ObservabilityContext,
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
+        runtime_policy: RuntimePolicy,
     ) -> tuple[object, int]:
         try:
             candidate = _parse_payload(payload)
@@ -694,7 +702,7 @@ class StructuredInferenceRuntimeRouter:
             errors = _collect_validation_errors(candidate, output_schema, semantic_validate)
         if not errors:
             return candidate, 1
-        if self.schema_repairer is None or self.runtime_policy.structured_output_repair_budget < 1:
+        if self.schema_repairer is None or runtime_policy.structured_output_repair_budget < 1:
             raise LLMInvocationError(
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
                 "structured output did not satisfy schema",
@@ -719,10 +727,10 @@ class StructuredInferenceRuntimeRouter:
                 prompt_input=prompt_input,
                 failed_output=candidate,
                 output_schema=output_schema,
-                runtime_policy=self.runtime_policy,
+                runtime_policy=runtime_policy,
                 api_key=api_key,
                 attempt_no=1,
-                max_attempts=self.runtime_policy.structured_output_repair_budget,
+                max_attempts=runtime_policy.structured_output_repair_budget,
                 failure_reason_code=LLMErrorCode.OUTPUT_SCHEMA_INVALID.value,
                 validator_errors=tuple(errors),
             )
@@ -929,6 +937,18 @@ class StructuredInferenceRuntimeRouter:
 
 def _decision(runtime: ActualRuntime, fallback_allowed: bool, reason: str | None) -> RouteDecision:
     return RouteDecision(runtime, fallback_allowed, None, reason)
+
+
+def _runtime_policy_for_prompt(
+    runtime_policy: RuntimePolicy,
+    prompt_ref: PromptReference,
+) -> RuntimePolicy:
+    if prompt_ref.prompt_id != _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID:
+        return runtime_policy
+    return replace(
+        runtime_policy,
+        sampling_temperature=_IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE,
+    )
 
 
 def _local_runtime_reason(request: RouteDecisionInput) -> str | None:

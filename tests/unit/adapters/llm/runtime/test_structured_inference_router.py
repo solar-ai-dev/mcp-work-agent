@@ -66,13 +66,16 @@ class _Provider:
     checkpoint_to_stale: ExternalScopeCheckpoint | None = None
     failure: LLMInvocationError | None = None
     content: object = field(default_factory=lambda: {"answer": "ok"})
+    runtime_policies: list[RuntimePolicy] = field(default_factory=list)
 
     @property
     def provider_name(self) -> str:
         return "api" if self.runtime is ActualRuntime.API_LLM else "ollama"
 
     def invoke_structured(self, **kwargs: object) -> ProviderResponsePayload:
-        del kwargs
+        runtime_policy = kwargs["runtime_policy"]
+        assert isinstance(runtime_policy, RuntimePolicy)
+        self.runtime_policies.append(runtime_policy)
         self.calls += 1
         if self.failure is not None:
             raise self.failure
@@ -241,6 +244,27 @@ def test_local_request__uses_profile__model_for_prompt() -> None:
 
     assert selected == ["qwen3.5:4b"]
     assert local.calls == 1
+
+
+def test_source_dependency_prompt__uses_only_its_sampling_temperature_override() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    api = _Provider()
+    router = _router(checkpoint=checkpoint, api=api)
+    router.runtime_policy = RuntimePolicy(sampling_temperature=0.2, sampling_seed=1729)
+
+    router.infer(
+        "API_LLM",
+        replace(
+            PROMPT,
+            prompt_id="request_understanding.identify_source_dependencies",
+        ),
+        {"user_request": "hello"},
+        SCHEMA,
+    )
+    router.infer("API_LLM", PROMPT, {"user_request": "hello"}, SCHEMA)
+
+    assert [policy.sampling_temperature for policy in api.runtime_policies] == [0.10, 0.2]
+    assert [policy.sampling_seed for policy in api.runtime_policies] == [1729, 1729]
 
 
 def test_local_request__with_explicit_mode__does_not_probe_api_status_or_credentials() -> None:
