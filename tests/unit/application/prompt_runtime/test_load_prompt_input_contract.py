@@ -164,6 +164,27 @@ def test_work_analysis_contracts__accept_current__observation_projections() -> N
             "evidence": [],
         },
     )
+
+
+def test_action_objective_contract__matches_the__live_typed_projection() -> None:
+    contract = load_prompt_input_contract()
+
+    projection: dict[str, object] = {
+        "user_request": "request",
+        "request_intent": {},
+        "output_route": {},
+        "evidence": [],
+        "work_analysis": {},
+    }
+    contract.validate_projection(
+        "planning.draft_action_objective_per_output_route", projection
+    )
+
+    with pytest.raises(PromptRuntimeInputContractError, match="unknown Product Prompt fields"):
+        contract.validate_projection(
+            "planning.draft_action_objective_per_output_route",
+            {**projection, "confirmation_response": {}},
+        )
     contract.validate_projection(
         "work_analysis.assess_requested_task_satisfaction",
         {
