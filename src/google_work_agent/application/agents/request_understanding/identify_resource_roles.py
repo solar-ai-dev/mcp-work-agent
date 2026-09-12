@@ -137,15 +137,27 @@ def build_resource_role_decision_output_schema(
             candidate["resource_type"]: list(candidate["allowed_output_effects"])
             for candidate in writable_candidates
         }
-        writable_resource_types = list(effects_by_resource)
-        role_variants.append(
-            _decision_variant(
-                role="OUTPUT",
-                resource_types=writable_resource_types,
-                required_information=False,
-                output_effects_by_resource=effects_by_resource,
+        output_only_effects_by_resource = {
+            resource_type: [
+                effect for effect in effects if effect not in {"UPDATE", "DELETE"}
+            ]
+            for resource_type, effects in effects_by_resource.items()
+        }
+        output_only_effects_by_resource = {
+            resource_type: effects
+            for resource_type, effects in output_only_effects_by_resource.items()
+            if effects
+        }
+        if output_only_effects_by_resource:
+            role_variants.append(
+                _decision_variant(
+                    role="OUTPUT",
+                    resource_types=list(output_only_effects_by_resource),
+                    required_information=False,
+                    output_effects_by_resource=output_only_effects_by_resource,
+                )
             )
-        )
+        writable_resource_types = list(effects_by_resource)
         read_and_write_resource_types = [
             resource_type
             for resource_type in writable_resource_types

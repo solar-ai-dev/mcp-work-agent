@@ -108,6 +108,28 @@ def test_cross_source_draft__normalizes_role_decisions_to_existing_contract() ->
     }
 
 
+def test_role_decision_schema__rejects_output_only_existing_resource_update() -> None:
+    candidate = _decisions(outputs={"GITHUB_ISSUE": "UPDATE"})
+
+    errors = validate_output_schema(
+        candidate,
+        build_resource_role_decision_output_schema(_CANDIDATES).json_schema,
+    )
+
+    assert errors
+
+
+def test_role_decision_schema__allows_output_only_resource_create() -> None:
+    candidate = _decisions(outputs={"GITHUB_ISSUE": "CREATE"})
+
+    errors = validate_output_schema(
+        candidate,
+        build_resource_role_decision_output_schema(_CANDIDATES).json_schema,
+    )
+
+    assert errors == []
+
+
 @pytest.mark.parametrize(
     ("sources", "outputs", "expected_source", "expected_output"),
     [

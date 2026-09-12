@@ -1033,18 +1033,19 @@ def test_request_goal_schema__rejects_non_typed_collection_scope() -> None:
 
 
 @pytest.mark.parametrize(
-    "effect,resource_type",
+    "effect,resource_type,requires_source",
     [
-        ("CREATE", "TASK"),
-        ("UPDATE", "GMAIL_DRAFT"),
-        ("SEND", "GMAIL_MESSAGE"),
-        ("DELETE", "CALENDAR_EVENT"),
+        ("CREATE", "TASK", False),
+        ("UPDATE", "GMAIL_DRAFT", True),
+        ("SEND", "GMAIL_MESSAGE", False),
+        ("DELETE", "CALENDAR_EVENT", True),
     ],
 )
 def test_request_goal_schema__accepts_supported_output_pairs__before_application(
-    effect: str, resource_type: str
+    effect: str, resource_type: str, requires_source: bool
 ) -> None:
     candidate = _resource_role_decisions(
+        source_types={resource_type: ["기존 identity"]} if requires_source else None,
         output_types={resource_type: effect},
     )
 
@@ -1413,67 +1414,31 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
     ]
 
 
-def test_semantic_revision__existing_resource_update__requires_same_resource_read() -> None:
-    request = _request("solar-ai-dev/google-work-agent 저장소의 219번 이슈를 닫아줘.")
-    runtime = FakeStructuredInferencePort(
-        outputs=[
-            {
-                "goal": "기존 GitHub 이슈 닫기",
-                "completion_conditions": ["지정한 이슈를 닫는다"],
-                "constraints": _goal_constraints(),
-                "resource_responsibilities": _resource_responsibilities(
-                    output_type="GITHUB_ISSUE",
-                    output_effect="UPDATE",
-                ),
-                "analysis_requirement": "NONE",
-            },
-            {
-                "goal": "기존 GitHub 이슈 닫기",
-                "completion_conditions": ["지정한 이슈를 닫는다"],
-                "constraints": _goal_constraints(),
-                "resource_responsibilities": _resource_responsibilities(
-                    source_type="GITHUB_ISSUE",
-                    required_information=["대상 이슈 identity와 현재 상태"],
-                    output_type="GITHUB_ISSUE",
-                    output_effect="UPDATE",
-                ),
-                "analysis_requirement": "NONE",
-            },
-        ]
-    )
-
-    candidate, budget = identify_goal_with_budget(
-        llm_runtime=runtime,
-        request=request,
-        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-        retry_budget=build_default_run_budget(),
-    )
-
-    assert candidate["resource_responsibilities"] == {
-        "source_reads": [
-            {
-                "resource_type": "GITHUB_ISSUE",
-                "required_information": ["대상 이슈 identity와 현재 상태"],
-            }
-        ],
-        "outputs": [{"resource_type": "GITHUB_ISSUE", "effect": "UPDATE"}],
+def test_normalized_goal__existing_resource_update_without_source__rejects_contract() -> None:
+    candidate = {
+        "goal": "기존 GitHub 이슈 닫기",
+        "completion_conditions": ["지정한 이슈를 닫는다"],
+        "constraints": [],
+        "requested_effect_hints": ["UPDATE"],
+        "requested_resource_hints": ["GITHUB_ISSUE"],
+        "resource_responsibilities": _resource_responsibilities(
+            output_type="GITHUB_ISSUE",
+            output_effect="UPDATE",
+        ),
+        "analysis_requirement": "NONE",
     }
-    assert candidate["requested_effect_hints"] == ["READ", "UPDATE"]
-    assert len(runtime.calls) == 6
-    responsibility_revision = runtime.calls[4]["prompt_input"]
-    failure_record = cast(dict[str, object], responsibility_revision["failure_record"])
-    assert failure_record["failure_reason_code"] == (
-        "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED"
-    )
-    assert failure_record["failure_origin"] == "LLM_OUTPUT"
-    assert failure_record["detected_by"] == "RUNTIME_DOMAIN_VALIDATOR"
-    assert failure_record["runtime_disposition"] == "RETRYABLE"
-    assert failure_record["experiment_disposition"] == "RUN_REVISION"
-    assert failure_record["affected_field_paths"] == [
+
+    with pytest.raises(
+        goal_schema.RequestGoalSemanticValidationError,
+        match="existing Resource UPDATE/DELETE requires a same-resource source read",
+    ) as raised:
+        goal_schema.validate_normalized_request_goal_candidate(candidate)
+
+    assert raised.value.reason_code == "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED"
+    assert raised.value.affected_field_paths == (
         "$.resource_responsibilities.source_reads",
         "$.resource_responsibilities.outputs[0]",
-    ]
-    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+    )
 
 
 def test_semantic_revision__invented_source_need__may_be_removed() -> None:
