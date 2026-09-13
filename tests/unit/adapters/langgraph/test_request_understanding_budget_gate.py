@@ -32,7 +32,6 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
-    NORMAL_MAX_LLM_CALLS,
     build_default_run_budget,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -280,7 +279,7 @@ def _state(*, llm_calls_used: int) -> dict[str, object]:
 
 def test_exhausted_budget_blocks__the_call_before_the__agent_is_ever_invoked() -> None:
     subgraph = _subgraph()
-    state = _state(llm_calls_used=NORMAL_MAX_LLM_CALLS)
+    state = _state(llm_calls_used=build_default_run_budget()["absolute_llm_call_limit"])
 
     with pytest.raises(LLMInvocationError) as excinfo:
         subgraph._identify_goal_node(cast(Any, state))

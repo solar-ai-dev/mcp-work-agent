@@ -620,18 +620,18 @@ Additional Retrieval: 최초 Retrieval 이후 최대 2회
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=24
+ABSOLUTE_MAX_LLM_CALLS=100
 ```
 
-| Profile·상한 | 적용 조건 |
+| Profile·관측값 | 적용 조건 |
 | --- | --- |
 | `NORMAL` | 기본 Profile |
 | `RETRIEVAL_HEAVY` | `NEEDS_MORE_DATA` 또는 Additional Retrieval이 실제 발생한 경우에만 선택 |
 | `REVISION_HEAVY` | Review가 허용한 Revision, same-Run confirmation resume, 또는 frozen multi-output contract가 실제로 필요한 경우에만 선택 |
 | Profile 승격 | Supervisor의 결정적 규칙으로 수행 |
-| `ABSOLUTE_MAX_LLM_CALLS` | 상한을 넘으면 Prompt를 더 호출하지 않음 |
+| `ABSOLUTE_MAX_LLM_CALLS` | 유일한 Run-level hard limit이며 상한을 넘으면 Prompt를 더 호출하지 않음 |
 
-absolute 상한은 24다. same-Run confirmation 또는 검증된 multi-output은 기존 counter를 유지한 채 `REVISION_HEAVY`까지 승격할 수 있지만, retry를 살리기 위한 자동 승격이나 counter reset은 금지한다. 과거 저장값 36은 현재 계약을 읽을 때 24로 정규화한다.
+absolute 상한은 100이다. `NORMAL=14`, `RETRIEVAL_HEAVY=20`, `REVISION_HEAVY=18`은 profile 관측값이며 dispatch를 차단하지 않는다. same-Run confirmation 또는 검증된 multi-output은 기존 counter를 유지한 채 `REVISION_HEAVY`까지 승격할 수 있지만, retry를 살리기 위한 자동 승격이나 counter reset은 금지한다. 과거 저장값 24/36은 현재 계약을 읽을 때 100으로 정규화한다.
 
 ### 8.3 Budget 소진 처리
 

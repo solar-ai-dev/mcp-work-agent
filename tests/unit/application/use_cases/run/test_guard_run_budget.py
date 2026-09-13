@@ -26,7 +26,7 @@ def _budget(**overrides: object) -> RunBudgetV2:
         "max_context_tokens": 1_000,
         "retry_attempts_used": 0,
         "max_retry_attempts": 2,
-        "absolute_llm_call_limit": 24,
+        "absolute_llm_call_limit": 100,
         "schema_repairs_used_by_node": {},
         "semantic_revisions_used_by_failure": {},
         "planning_revisions_used": 0,
@@ -55,7 +55,7 @@ def test_guard_run__budget_allows_without__mutating_current_budget() -> None:
 @pytest.mark.parametrize(
     ("delta", "overrides", "reason"),
     [
-        (RunBudgetDeltaV1(1, "LLM_CALL", 1), {"llm_calls_used": 14}, "LLM_LIMIT"),
+        (RunBudgetDeltaV1(1, "LLM_CALL", 1), {"llm_calls_used": 100}, "LLM_LIMIT"),
         (
             RunBudgetDeltaV1(1, "DETAIL_FETCH", 2),
             {"detail_fetches_used": 11},

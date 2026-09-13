@@ -14,6 +14,8 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
+    ABSOLUTE_MAX_LLM_CALLS,
+    RETRIEVAL_HEAVY_MAX_LLM_CALLS,
     BudgetProfile,
     approve_planning_revision,
     build_default_run_budget,
@@ -35,7 +37,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 
 def test_paused_accounting__counts_failure_and_retry__then_blocks_exhausted_dispatch() -> None:
     budget = build_default_run_budget()
-    budget["llm_calls_used"] = budget["llm_call_limit"] - 2
+    budget["llm_calls_used"] = ABSOLUTE_MAX_LLM_CALLS - 2
     calls = []
     provider = _FakeProvider(fail_structured=True)
     guarded = PromptInputGuardedProvider(provider, _RecordingValidator())
@@ -118,7 +120,8 @@ def test_durable_accounting__recalculates_limit__after_merging_revision_progress
     assert provider.structured_dispatches == 1
     assert durable_budget["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
     assert durable_budget["planning_revisions_used"] == 1
-    assert durable_budget["llm_call_limit"] == durable_budget["absolute_llm_call_limit"]
+    assert durable_budget["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
+    assert durable_budget["absolute_llm_call_limit"] == ABSOLUTE_MAX_LLM_CALLS
     assert durable_budget["llm_calls_used"] == 15
     assert graph_budget == durable_budget
 

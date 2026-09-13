@@ -138,10 +138,7 @@ def deterministic_sufficiency(
             }
     if confirmation_response is not None:
         return None
-    remaining = (
-        min(retry_budget["llm_call_limit"], retry_budget["absolute_llm_call_limit"])
-        - retry_budget["llm_calls_used"]
-    )
+    remaining = retry_budget["absolute_llm_call_limit"] - retry_budget["llm_calls_used"]
     if remaining > _answer_call_reserve(request_intent) or set(
         request_intent["requested_effect_hints"]
     ) != {"READ"}:
@@ -1358,8 +1355,7 @@ def authorize_retrieval_followup(
         return sufficiency_result, retry_budget, False
     if (
         set(request_intent["requested_effect_hints"]) == {"READ"}
-        and min(retry_budget["llm_call_limit"], retry_budget["absolute_llm_call_limit"])
-        - retry_budget["llm_calls_used"]
+        and retry_budget["absolute_llm_call_limit"] - retry_budget["llm_calls_used"]
         <= _answer_call_reserve(request_intent) + 2
     ):
         # Another query/evidence pass must leave the answer's existing allowance intact.

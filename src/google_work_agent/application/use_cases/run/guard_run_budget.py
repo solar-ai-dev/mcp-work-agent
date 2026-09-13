@@ -39,9 +39,14 @@ NORMAL_MAX_LLM_CALLS = 14
 REVISION_HEAVY_MAX_LLM_CALLS = 18
 RETRIEVAL_HEAVY_MAX_LLM_CALLS = 20
 LEGACY_ABSOLUTE_MAX_LLM_CALLS = 36
-ABSOLUTE_MAX_LLM_CALLS = 24
+PREVIOUS_ABSOLUTE_MAX_LLM_CALLS = 24
+ABSOLUTE_MAX_LLM_CALLS = 100
 _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS = frozenset(
-    {ABSOLUTE_MAX_LLM_CALLS, LEGACY_ABSOLUTE_MAX_LLM_CALLS}
+    {
+        ABSOLUTE_MAX_LLM_CALLS,
+        PREVIOUS_ABSOLUTE_MAX_LLM_CALLS,
+        LEGACY_ABSOLUTE_MAX_LLM_CALLS,
+    }
 )
 
 _PROFILE_LIMITS = {
@@ -79,7 +84,7 @@ class RunBudgetV2(TypedDict):
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[100]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -149,7 +154,7 @@ class GuardRunBudgetResultV1:
 
 
 _DIMENSIONS: dict[RunBudgetOperationKindV1, tuple[str, str, str]] = {
-    "LLM_CALL": ("llm_calls_used", "llm_call_limit", "LLM_LIMIT"),
+    "LLM_CALL": ("llm_calls_used", "absolute_llm_call_limit", "LLM_LIMIT"),
     "CONNECTOR_CALL": ("connector_calls_used", "max_connector_calls", "CONNECTOR_LIMIT"),
     "SOURCE_PAGE": ("source_page_calls_used", "max_source_page_calls", "SOURCE_PAGE_LIMIT"),
     "DETAIL_FETCH": ("detail_fetches_used", "max_detail_fetches", "DETAIL_FETCH_LIMIT"),
@@ -177,8 +182,6 @@ class GuardRunBudgetHandler:
         budget_values = cast(dict[str, object], budget)
         used = int(cast(int, budget_values[used_name]))
         limit = int(cast(int, budget_values[limit_name]))
-        if query.requested_delta.operation_kind == "LLM_CALL":
-            limit = min(limit, budget["absolute_llm_call_limit"])
         remaining = max(0, limit - used)
         if query.requested_delta.units > remaining:
             return GuardRunBudgetResultV1(
@@ -282,7 +285,7 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         _require_int(value[field], field, minimum=0)
     supplied_absolute_limit = value["absolute_llm_call_limit"]
     if supplied_absolute_limit not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
-        raise ValueError("run budget absolute_llm_call_limit must be 24 or 36")
+        raise ValueError("run budget absolute_llm_call_limit must be 24, 36, or 100")
     if int(value["max_source_page_calls"]) > MAX_SOURCE_PAGE_CALLS_PER_RUN:
         raise ValueError("run budget max_source_page_calls exceeds retrieval hard bound")
     if int(value["max_detail_fetches"]) > 12:
@@ -296,8 +299,9 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
     expected_limit = _effective_profile_limit(profile, value)
     supplied_profile_limit = int(value["llm_call_limit"])
     legacy_combined_limit = (
-        supplied_absolute_limit == LEGACY_ABSOLUTE_MAX_LLM_CALLS
-        and supplied_profile_limit == LEGACY_ABSOLUTE_MAX_LLM_CALLS
+        supplied_absolute_limit
+        in {PREVIOUS_ABSOLUTE_MAX_LLM_CALLS, LEGACY_ABSOLUTE_MAX_LLM_CALLS}
+        and supplied_profile_limit == supplied_absolute_limit
         and _combined_profile_limit_applies(profile, value)
     )
     if supplied_profile_limit != expected_limit and not legacy_combined_limit:
@@ -367,8 +371,6 @@ def check_llm_call_budget(
     prospective = budget["llm_calls_used"] + requested
     if prospective > budget["absolute_llm_call_limit"]:
         return _deny(budget, BudgetReasonCode.ABSOLUTE_LLM_LIMIT_EXHAUSTED)
-    if prospective > budget["llm_call_limit"]:
-        return _deny(budget, BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED)
     return _allow(budget)
 
 
@@ -481,8 +483,7 @@ def _promote(budget: RunBudgetV2, requested: BudgetProfile) -> RunBudgetV2:
 
 
 def _effective_profile_limit(profile: BudgetProfile, budget: object) -> int:
-    if _combined_profile_limit_applies(profile, budget):
-        return ABSOLUTE_MAX_LLM_CALLS
+    del budget
     return _PROFILE_LIMITS[profile]
 
 

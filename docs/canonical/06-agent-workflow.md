@@ -377,7 +377,7 @@ class RunBudgetV2:
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[100]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -1631,7 +1631,7 @@ REVIEW_RECHECK_PER_PLANNING_REVISION=1
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=24
+ABSOLUTE_MAX_LLM_CALLS=100
 ```
 
 - 책임 분리를 위해 Subgraph 내부 Node 수가 증가해도 모든 Node가 LLM Call일 필요는 없다.
@@ -1643,7 +1643,8 @@ ABSOLUTE_MAX_LLM_CALLS=24
 | 항목 | 규칙 |
 | --- | --- |
 | 기준 | Run 시작 시 `10 Settings`의 validated budget snapshot을 고정한다. |
-| compatibility | absolute 상한은 24다. 과거 저장값 36은 현재 계약을 읽을 때 24로 정규화하며 사용량 counter는 reset하지 않는다. |
+| compatibility | absolute 상한은 100이다. 과거 저장값 24/36은 현재 계약을 읽을 때 100으로 정규화하며 사용량 counter는 reset하지 않는다. |
+| Profile 관측값 | `NORMAL=14`, `REVISION_HEAVY=18`, `RETRIEVAL_HEAVY=20`은 실행 특성 관측용이며 LLM dispatch를 차단하지 않는다. |
 | counter | 음수가 아니며 단조 증가한다. Profile 승격으로 사용량을 초기화하지 않는다. |
 | 집행 범위 | LLM·Repair·Revision·Retrieval 외에도 per-Run Connector call, Context token, Retry, 최대 실행 시간을 검사한다. elapsed time은 ClockPort로 확인한다. |
 | Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=50`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |

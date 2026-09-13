@@ -141,7 +141,7 @@ def test_profile_promotion_is__monotonic_and_has__no_absolute_profile() -> None:
     )
 
 
-def test_llm_budget_gate__and_accounting_follow__profile_and_absolute_limits() -> None:
+def test_llm_budget_gate__observes_profile_and_enforces__absolute_limit_only() -> None:
     budget = {
         **build_default_run_budget(),
         "llm_calls_used": NORMAL_MAX_LLM_CALLS - 1,
@@ -152,9 +152,9 @@ def test_llm_budget_gate__and_accounting_follow__profile_and_absolute_limits() -
     assert allow["decision"] == BudgetDecision.ALLOW.value
     assert consumed["llm_calls_used"] == NORMAL_MAX_LLM_CALLS
 
-    deny_profile = check_llm_call_budget(consumed)
-    assert deny_profile["decision"] == BudgetDecision.DENY.value
-    assert deny_profile["budget_reason_code"] == BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED.value
+    allow_beyond_profile = check_llm_call_budget(consumed)
+    assert allow_beyond_profile["decision"] == BudgetDecision.ALLOW.value
+    assert consumed["llm_call_limit"] == NORMAL_MAX_LLM_CALLS
 
     absolute_budget = {
         **build_default_run_budget(),
@@ -169,46 +169,32 @@ def test_llm_budget_gate__and_accounting_follow__profile_and_absolute_limits() -
     )
 
 
-def test_neither_revision_nor__retrieval_triggered_keeps__the_plain_normal_cap() -> None:
-    """G3 Final Closure F: with neither planning_revisions_used nor
-    additional_retrieval_rounds_used ever incremented, the effective cap stays
-    exactly NORMAL_MAX_LLM_CALLS -- no combined-cap headroom leaks in just
-    because the Run happens to be NORMAL."""
+def test_neither_revision_nor__retrieval_triggered_keeps__normal_observation_value() -> None:
     budget = {**build_default_run_budget(), "llm_calls_used": NORMAL_MAX_LLM_CALLS - 1}
 
     allow = check_llm_call_budget(budget)
     consumed = consume_llm_provider_calls(allow["run_budget"])
-    deny = check_llm_call_budget(consumed)
+    next_call = check_llm_call_budget(consumed)
 
     assert allow["decision"] == BudgetDecision.ALLOW.value
     assert consumed["llm_calls_used"] == NORMAL_MAX_LLM_CALLS
-    assert deny["decision"] == BudgetDecision.DENY.value
-    assert deny["budget_reason_code"] == BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED.value
+    assert consumed["llm_call_limit"] == NORMAL_MAX_LLM_CALLS
+    assert next_call["decision"] == BudgetDecision.ALLOW.value
 
 
-def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolute() -> None:
-    """G3 Final Closure E (docs/06 SS11, docs/15 SS8.2): once a Run has
-    actually triggered both a planning revision (Review REVISE or mandatory
-    Modify Review -- both consume planning_revisions_used via
-    approve_planning_revision) and an additional acquisition
-    (additional_retrieval_rounds_used via approve_additional_acquisition), the
-    profile's own ceiling (here RETRIEVAL_HEAVY=20, the higher of the two
-    since promote_budget_profile is monotonic) no longer applies alone --
-    the Run may use up to ABSOLUTE_MAX_LLM_CALLS. Reusing only the two
-    existing counters, no new Profile value."""
+def test_revision_and_retrieval__retain_profile_observation_and__absolute_hard_limit() -> None:
     revised = approve_planning_revision(build_default_run_budget())
     combined = approve_additional_acquisition(revised["run_budget"])
     assert combined["run_budget"]["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
     assert combined["run_budget"]["planning_revisions_used"] == 1
     assert combined["run_budget"]["additional_retrieval_rounds_used"] == 1
+    assert combined["run_budget"]["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
 
     budget_at_profile_cap = {
         **combined["run_budget"],
         "llm_calls_used": RETRIEVAL_HEAVY_MAX_LLM_CALLS,
     }
 
-    # Beyond the RETRIEVAL_HEAVY(20) profile cap alone, this would deny --
-    # the combined condition must allow it up to ABSOLUTE(24) instead.
     allow_beyond_profile_cap = check_llm_call_budget(budget_at_profile_cap)
     assert allow_beyond_profile_cap["decision"] == BudgetDecision.ALLOW.value
 
@@ -224,7 +210,7 @@ def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolut
     )
 
 
-def test_current_run__keeps_24_call_absolute_limit__through_merge_and_promotion() -> None:
+def test_previous_24_call_budget__canonicalizes_to__100_through_merge_and_promotion() -> None:
     current = validate_run_budget_v2(
         {
             **build_default_run_budget(),
@@ -234,11 +220,12 @@ def test_current_run__keeps_24_call_absolute_limit__through_merge_and_promotion(
     promoted = promote_run_budget_profile(current, BudgetProfile.RETRIEVAL_HEAVY)
     merged = merge_run_budget_progress(current, promoted)
 
-    assert promoted["absolute_llm_call_limit"] == 24
-    assert merged["absolute_llm_call_limit"] == 24
+    assert promoted["absolute_llm_call_limit"] == 100
+    assert merged["absolute_llm_call_limit"] == 100
+    assert promoted["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
 
 
-def test_legacy_36_call_budget__is_canonicalized_to__the_current_24_call_ceiling() -> None:
+def test_legacy_36_call_budget__is_canonicalized_to__the_current_100_call_ceiling() -> None:
     legacy = {
         **build_default_run_budget(),
         "absolute_llm_call_limit": 36,
@@ -246,27 +233,25 @@ def test_legacy_36_call_budget__is_canonicalized_to__the_current_24_call_ceiling
 
     canonical = validate_run_budget_v2(legacy)
 
-    assert canonical["absolute_llm_call_limit"] == 24
+    assert canonical["absolute_llm_call_limit"] == 100
     assert canonical["llm_call_limit"] == NORMAL_MAX_LLM_CALLS
     revised = approve_planning_revision(legacy)["run_budget"]
     combined = approve_additional_acquisition(revised)["run_budget"]
 
-    assert combined["absolute_llm_call_limit"] == 24
-    assert combined["llm_call_limit"] == 24
+    assert combined["absolute_llm_call_limit"] == 100
+    assert combined["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
 
-    observed = {**combined, "llm_calls_used": 23}
+    observed = {**combined, "llm_calls_used": 99}
     merged = merge_run_budget_progress(combined, observed)
-    assert merged["absolute_llm_call_limit"] == 24
-    assert merged["llm_call_limit"] == 24
+    assert merged["absolute_llm_call_limit"] == 100
+    assert merged["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
     assert check_llm_call_budget(merged)["decision"] == BudgetDecision.ALLOW.value
-    assert check_llm_call_budget({**merged, "llm_calls_used": 24})["decision"] == (
+    assert check_llm_call_budget({**merged, "llm_calls_used": 100})["decision"] == (
         BudgetDecision.DENY.value
     )
 
 
-def test_only_one_of_revision__or_retrieval_triggered_keeps__its_own_single_profile_cap() -> None:
-    """Combined effective cap requires BOTH conditions actually triggered --
-    only one triggered still uses that profile's own ceiling, not 16."""
+def test_single_profile_promotion__does_not_create__a_dispatch_limit() -> None:
     revision_only = approve_planning_revision(build_default_run_budget())
     assert revision_only["run_budget"]["profile"] == BudgetProfile.REVISION_HEAVY.value
 
@@ -274,9 +259,8 @@ def test_only_one_of_revision__or_retrieval_triggered_keeps__its_own_single_prof
         **revision_only["run_budget"],
         "llm_calls_used": REVISION_HEAVY_MAX_LLM_CALLS,
     }
-    deny = check_llm_call_budget(budget_at_revision_cap)
-    assert deny["decision"] == BudgetDecision.DENY.value
-    assert deny["budget_reason_code"] == BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED.value
+    allow = check_llm_call_budget(budget_at_revision_cap)
+    assert allow["decision"] == BudgetDecision.ALLOW.value
 
     retrieval_only = approve_additional_acquisition(build_default_run_budget())
     assert retrieval_only["run_budget"]["profile"] == BudgetProfile.RETRIEVAL_HEAVY.value
@@ -285,11 +269,8 @@ def test_only_one_of_revision__or_retrieval_triggered_keeps__its_own_single_prof
         **retrieval_only["run_budget"],
         "llm_calls_used": RETRIEVAL_HEAVY_MAX_LLM_CALLS,
     }
-    deny_retrieval = check_llm_call_budget(budget_at_retrieval_cap)
-    assert deny_retrieval["decision"] == BudgetDecision.DENY.value
-    assert (
-        deny_retrieval["budget_reason_code"] == BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED.value
-    )
+    allow_retrieval = check_llm_call_budget(budget_at_retrieval_cap)
+    assert allow_retrieval["decision"] == BudgetDecision.ALLOW.value
 
 
 def test_mandatory_modify_review_reuses__planning_revision_to_allow__call_past_normal_cap() -> None:
@@ -409,4 +390,4 @@ def test_budget_profile__constants_match__frozen_contract() -> None:
     assert NORMAL_MAX_LLM_CALLS == 14
     assert REVISION_HEAVY_MAX_LLM_CALLS == 18
     assert RETRIEVAL_HEAVY_MAX_LLM_CALLS == 20
-    assert ABSOLUTE_MAX_LLM_CALLS == 24
+    assert ABSOLUTE_MAX_LLM_CALLS == 100

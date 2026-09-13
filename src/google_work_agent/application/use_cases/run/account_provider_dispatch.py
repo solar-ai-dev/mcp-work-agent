@@ -26,6 +26,7 @@ from contextvars import ContextVar
 from typing import cast
 
 from google_work_agent.application.use_cases.run.guard_run_budget import (
+    BudgetReasonCode,
     GuardRunBudgetHandler,
     GuardRunBudgetQueryV1,
     RunBudgetDeltaV1,
@@ -174,9 +175,14 @@ def consume_dispatch_budget(*, run_id: str, run_budget: RunBudgetV2, now_ms: int
         )
     )
     if not decision.allowed:
+        reason_code = (
+            BudgetReasonCode.ABSOLUTE_LLM_LIMIT_EXHAUSTED.value
+            if decision.reason_code == "LLM_LIMIT"
+            else decision.reason_code
+        )
         raise LLMInvocationError(
             LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED,
-            f"run LLM call budget exhausted: {decision.reason_code}",
+            f"run LLM call budget exhausted: {reason_code}",
             retryable=False,
         )
     # This is the sole increment for a real provider dispatch. Do not route it

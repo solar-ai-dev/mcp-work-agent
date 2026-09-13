@@ -132,7 +132,8 @@ def test_current_evidence__reenters_request_owner__before_meaning_is_revised() -
     revised_budget = cast(RunBudgetV2, decision["state_update"]["retry_budget"])
     assert revised_budget["planning_revisions_used"] == 1
     assert revised_budget["additional_retrieval_rounds_used"] == 0
-    assert revised_budget["llm_call_limit"] == revised_budget["absolute_llm_call_limit"] == 24
+    assert revised_budget["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
+    assert revised_budget["absolute_llm_call_limit"] == 100
     assert "tool_route_plan" not in decision["state_update"]
     assert "retrieval_result" not in decision["state_update"]
     assert "work_analysis_result" not in decision["state_update"]

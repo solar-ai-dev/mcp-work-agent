@@ -264,7 +264,7 @@ def test_resolved_identity__changes_query_without_losing_anchor__and_deduplicate
 
 def test_llm_budget_exhausted__keeps_read_partial__without_relaxing_write_requirements() -> None:
     budget = build_default_run_budget()
-    budget["llm_calls_used"] = budget["llm_call_limit"]
+    budget["llm_calls_used"] = budget["absolute_llm_call_limit"]
     values = dict(
         tool_route_plan=None,
         acquisition_result=_empty_acquisition_result(),
@@ -279,4 +279,4 @@ def test_llm_budget_exhausted__keeps_read_partial__without_relaxing_write_requir
         )
         is None
     )
-    assert budget["llm_calls_used"] == budget["llm_call_limit"]
+    assert budget["llm_calls_used"] == budget["absolute_llm_call_limit"]

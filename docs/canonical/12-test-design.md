@@ -310,7 +310,7 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 - Main State control/projection schema를 contract-test한다.
   - `ExecutionSummaryV1`, `VerificationSummaryV1`, `RunBudgetV2`, `PromptContextV1`, `TraceContextV1`이 06의 declared fields를 정확히 가져야 하며 opaque `object`/임의 dict로 대체하면 실패한다.
-  - `RunBudgetV2.absolute_llm_call_limit=24`, active profile limits `14/20/18`, Planning Revision 2, Additional Retrieval 2를 검증하고 resume·merge·Profile 변경 시 counter reset을 금지한다.
+  - `RunBudgetV2.absolute_llm_call_limit=100`, observational profile limits `14/20/18`, Planning Revision 2, Additional Retrieval 2를 검증하고 resume·merge·Profile 변경 시 counter reset을 금지한다.
   - `PromptContextV1`에 Conversation History/previous-run artifact/raw user request가 들어가면 실패한다.
 
 - current Node Registry closure를 검증한다.
@@ -651,7 +651,7 @@ RequestConfirmation
 
 ### 8.13 Budget
 
-- Route/Runtime별 LLM Budget Profile과 Product LLM Call hard cap을 검증한다. `NORMAL=14 / RETRIEVAL_HEAVY=20 / REVISION_HEAVY=18 / ABSOLUTE=24`를 유지하며, same-Run confirmation 또는 검증된 multi-output에서만 기존 counter를 보존한 채 `REVISION_HEAVY` 승격을 허용하고 retry를 살리기 위한 자동 승격·counter reset은 금지한다.
+- Route/Runtime별 LLM Budget Profile 관측값과 Product LLM Call hard cap을 검증한다. `NORMAL=14 / RETRIEVAL_HEAVY=20 / REVISION_HEAVY=18 / ABSOLUTE=100`을 유지하며, profile 값은 dispatch를 차단하지 않는다. same-Run confirmation 또는 검증된 multi-output에서만 기존 counter를 보존한 채 `REVISION_HEAVY` 승격을 허용하고 retry를 살리기 위한 자동 승격·counter reset은 금지한다.
 
 - Revision 2, Repair 1, Additional Retrieval 2
 
