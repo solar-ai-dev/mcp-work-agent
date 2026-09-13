@@ -964,6 +964,7 @@ Workflow handoff persistence contract tests are mandatory:
 ### Dataset·Projection
 
 - Current Evaluation placement closure: checked-in Dataset/Gold는 `evaluation/datasets/{retrieval,agent,e2e}/**`, scoring contract는 `evaluation/scoring-contract-v1.1.json`, candidate metadata는 `evaluation/configs/**`, transient result는 gitignored `evaluation/results/**`에만 둔다.
+  - 실험·Smoke·진단의 README, summary/comparison JSON, safe trace projection, 전달용 ZIP도 `evaluation/results/<topic>-<YYYYMMDD>/`와 그 바로 옆 ZIP만 사용한다. `.runtime/**`와 `runtime/**`는 DB·checkpoint·replay·log 같은 실행 상태 전용이며 `reports`/`results` shadow root를 만들지 않는다.
   - Top-level `experiments/`, live `evaluation/compat/`, internal Product target registry 생성/소비는 실패다.
 - Current Micro Dataset은 13의 six dataset IDs를 retrieval/agent semantic category 아래 유지한다. Unknown extra dataset ID를 current release-evaluation input으로 자동 승격하면 실패다.
 - Canonical Case → Node·Trajectory·E2E Projection 참조 무결성

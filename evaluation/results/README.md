@@ -36,3 +36,13 @@ Atlas 비교 묶음은 다음 순서로 읽는다.
 - 전달용 ZIP은 같은 이름으로 `evaluation/results/` 바로 아래에 둔다.
 - 비밀키, OAuth 토큰, 불필요한 Provider 원문은 넣지 않는다.
 - `.runtime`과 `runtime`에는 실행 중 상태만 두고 최종 보고서 사본을 남기지 않는다.
+- `.runtime/reports`, `.runtime/results`, `runtime/reports`, `runtime/results`, `evaluation/reports`는 만들지 않으며 구조 Gate가 이를 검사한다.
+
+## 결과가 아닌 것
+
+| 종류 | 위치 | 이유 |
+| --- | --- | --- |
+| 제품 DB·LangGraph checkpoint·command replay·서비스 로그 | `runtime/<profile>/` 또는 기존 `.runtime/<profile>/` | 제품 실행 및 장애 복구 상태이므로 보고서와 분리 |
+| 평가 입력 자료와 확인 기준 | `evaluation/datasets/`, `evaluation/checks/` | Run 결과가 아니라 재현 입력 |
+| Prompt 후보 | `evaluation/prompt_candidates/` | 활성 제품 Prompt나 실험 결과가 아닌 변경 후보 |
+| 장기 실행 요약 | `evaluation/실행기록.md` | 날짜/커밋/변경/결과를 잇는 canonical 기록 |

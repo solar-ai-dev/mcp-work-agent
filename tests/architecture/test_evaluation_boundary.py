@@ -7,6 +7,13 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 EVALUATION = ROOT / "evaluation"
 PRODUCT_ROOTS = (ROOT / "src" / "google_work_agent", ROOT / "launcher")
+SHADOW_EVALUATION_RESULT_ROOTS = (
+    ROOT / ".runtime" / "reports",
+    ROOT / ".runtime" / "results",
+    ROOT / "runtime" / "reports",
+    ROOT / "runtime" / "results",
+    ROOT / "evaluation" / "reports",
+)
 
 EXPECTED_EVALUATION_CODE = {
     "evaluation/__init__.py",
@@ -98,6 +105,10 @@ def test_evaluation_assets_are__repository_only_and_results__are_local_by_defaul
     }
     assert required <= tracked
     assert RETIRED_EVALUATION_AUTHORITIES.isdisjoint(tracked)
+
+
+def test_evaluation_results__have_no_shadow_output_root() -> None:
+    assert not any(path.exists() for path in SHADOW_EVALUATION_RESULT_ROOTS)
 
 
 def test_evaluation_assets__do_not_reference__retired_json_authorities() -> None:
