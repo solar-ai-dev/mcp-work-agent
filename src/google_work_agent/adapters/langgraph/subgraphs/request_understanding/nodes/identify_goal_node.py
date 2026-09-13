@@ -36,7 +36,10 @@ def identify_goal_node(
     ],
 ) -> RequestUnderstandingStateV2:
     projection = project_identify_goal_input(state)
-    ensure_llm_call_budget(state, provider_calls_requested=5)
+    ensure_llm_call_budget(
+        state,
+        provider_calls_requested=1 if "prior_goal_candidate" in projection else 5,
+    )
     candidate, retry_budget = identify_goal_with_budget(
         llm_runtime=llm_runtime,
         request=projection["request"],
@@ -50,6 +53,7 @@ def identify_goal_node(
         source_status_prompt_ref=source_status_prompt_ref,
         confirmation_response=projection.get("confirmation_response"),
         request_reconsideration=projection.get("request_reconsideration"),
+        prior_goal_candidate=projection.get("prior_goal_candidate"),
     )
     return {
         "goal_candidate": candidate,

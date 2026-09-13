@@ -80,6 +80,61 @@ def test_quartz_baseline_snapshot__builds_exact_update_preview() -> None:
     }
 
 
+def test_gmail_draft_update__no_op_body__materializes_typed_exact_append() -> None:
+    exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
+
+    result = _compose(
+        model_draft_id=None,
+        payload={"body": "기존 본문"},
+        request_intent={
+            "completion_conditions": [f"초안 본문에 '{exact_sentence}' 문장이 추가됨"],
+            "constraints": [
+                {
+                    "kind": "RESOURCE",
+                    "field": "notes",
+                    "value": f"초안 본문에 '{exact_sentence}' 추가",
+                },
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "original_search_request",
+                    "value": [
+                        "임시보관함의 ‘현재 초안’ 끝에 "
+                        f"‘{exact_sentence}’만 추가해줘."
+                    ],
+                },
+            ],
+        },
+    )[0]
+
+    assert result["arguments"] == {
+        "draft_id": "draft-actual",
+        "payload": {**PAYLOAD, "body": f"기존 본문\n{exact_sentence}"},
+    }
+
+
+def test_gmail_draft_update__without_typed_body_semantics__keeps_no_op_guard() -> None:
+    with pytest.raises(GmailDraftUpdateAlreadySatisfiedError):
+        _compose(
+            model_draft_id=None,
+            payload={"body": "기존 본문"},
+            request_intent={
+                "completion_conditions": ["제목이 '새 제목'으로 변경됨"],
+                "constraints": [
+                    {
+                        "kind": "RESOURCE",
+                        "field": "subject",
+                        "value": "새 제목",
+                    },
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "original_search_request",
+                        "value": ["제목을 ‘새 제목’으로 바꿔줘."],
+                    },
+                ],
+            },
+        )
+
+
 def test_gmail_draft_update__unchanged_patch__is_not_an_action_preview() -> None:
     with pytest.raises(GmailDraftUpdateAlreadySatisfiedError) as captured:
         _compose(model_draft_id=None, payload={"body": "기존 본문"})

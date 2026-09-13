@@ -594,6 +594,83 @@ def test_source_status_revision__with_unaffected_owner_outputs__preserves_them()
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
+def test_confirmation_resume__preserves_prior_semantics_and_resolves_bound_constraint() -> None:
+    request_text = "확정된 일정의 시작과 끝을 알려줘"
+    prior_candidate = {
+        "goal": "대상 일정의 시작과 끝 확인",
+        "completion_conditions": ["대상 일정의 시작과 끝을 답한다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "business_concepts",
+                "value": ["일정 시간 확인"],
+            },
+            {
+                "kind": "SCOPE",
+                "field": "status",
+                "value": "CONFIRMED",
+                "source_resource_type": "CALENDAR_EVENT",
+                "provenance": {
+                    "source": "USER_REQUEST",
+                    "start_offset": 0,
+                    "end_offset": 2,
+                    "source_text": "확정",
+                },
+            },
+        ],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["event_identity", "start", "end"],
+                }
+            ],
+            "outputs": [],
+        },
+        "analysis_requirement": "NONE",
+    }
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "확인 답변을 반영해 일정 조회",
+                "completion_conditions": ["다시 생성된 완료 조건"],
+                "constraints": _goal_constraints(
+                    {"field": "title", "value": "프로젝트 검토 회의"},
+                    business_concepts=["다시 생성된 의미"],
+                ),
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate, _ = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=_request(request_text),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+        confirmation_response={
+            "schema_version": 1,
+            "response_kind": "FREE_TEXT",
+            "selected_option": None,
+            "free_text": "프로젝트 검토 회의",
+        },
+        prior_goal_candidate=cast(Any, prior_candidate),
+    )
+
+    assert candidate["goal"] == prior_candidate["goal"]
+    assert candidate["completion_conditions"] == prior_candidate["completion_conditions"]
+    assert candidate["resource_responsibilities"] == prior_candidate["resource_responsibilities"]
+    assert candidate["constraints"] == [
+        *prior_candidate["constraints"],
+        {"kind": "RESOURCE", "field": "title", "value": "프로젝트 검토 회의"},
+    ]
+    assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
+        "request_understanding.identify_goal"
+    ]
+
+
 def test_thread_reply__without_explicit_source_status__does_not_create_status() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[

@@ -7,6 +7,9 @@ from collections.abc import Mapping, Sequence
 from google_work_agent.application.agents.planning.resolve_default_container import (
     PlanningArgumentBindingError,
 )
+from google_work_agent.application.agents.preserve_exact_user_literals import (
+    quoted_user_literals,
+)
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 
@@ -28,6 +31,7 @@ def bind_gmail_draft_update_identity(
     source_snapshots: Mapping[str, Mapping[str, object]],
     selected_evidence_refs: Sequence[str],
     selected_resources: Sequence[SelectedResourceRef] = (),
+    request_intent: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     if not _is_gmail_draft_update_route(route):
         return dict(arguments), []
@@ -75,6 +79,11 @@ def bind_gmail_draft_update_identity(
     patch = arguments.get("payload")
     if not isinstance(patch, Mapping) or not patch:
         raise PlanningArgumentBindingError("Gmail Draft UPDATE requires a non-empty payload patch")
+    patch = _materialize_exact_body_append(
+        patch,
+        snapshot=snapshot,
+        request_intent=request_intent,
+    )
     unknown = set(patch) - set(snapshot)
     if unknown:
         raise PlanningArgumentBindingError("Gmail Draft UPDATE patch contains unknown fields")
@@ -88,6 +97,67 @@ def bind_gmail_draft_update_identity(
         "draft_id": draft_id,
         "payload": {**snapshot, **dict(patch)},
     }, list(dict.fromkeys(evidence_refs))
+
+
+def _materialize_exact_body_append(
+    patch: Mapping[str, object],
+    *,
+    snapshot: Mapping[str, object],
+    request_intent: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Recover one explicit body edit only when the inferred patch is a no-op."""
+
+    copied = dict(patch)
+    current_body = snapshot.get("body")
+    if (
+        "body" not in copied
+        or not isinstance(current_body, str)
+        or copied["body"] != current_body
+        or any(snapshot.get(name) != value for name, value in copied.items())
+    ):
+        return copied
+    literal = _required_exact_body_literal(request_intent)
+    if literal is None or literal in current_body:
+        return copied
+    separator = "" if not current_body or current_body.endswith(("\n", "\r")) else "\n"
+    copied["body"] = f"{current_body}{separator}{literal}"
+    return copied
+
+
+def _required_exact_body_literal(
+    request_intent: Mapping[str, object] | None,
+) -> str | None:
+    if not isinstance(request_intent, Mapping):
+        return None
+    constraints = request_intent.get("constraints")
+    completion_conditions = request_intent.get("completion_conditions")
+    if not isinstance(constraints, list) or not isinstance(completion_conditions, list):
+        return None
+    source_texts: list[str] = []
+    body_semantics: list[str] = []
+    for constraint in constraints:
+        if not isinstance(constraint, Mapping):
+            continue
+        raw_value = constraint.get("value")
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        strings = [value for value in values if isinstance(value, str)]
+        if constraint.get("field") == "original_search_request":
+            source_texts.extend(strings)
+        if constraint.get("kind") == "RESOURCE" and constraint.get("field") == "notes":
+            body_semantics.extend(strings)
+    candidates = list(
+        dict.fromkeys(
+            literal
+            for source_text in source_texts
+            for literal in quoted_user_literals(source_text)
+            if any(literal in semantic for semantic in body_semantics)
+            and any(
+                isinstance(condition, str) and literal in condition
+                for condition in completion_conditions
+            )
+        )
+    )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def project_gmail_draft_editable_source(

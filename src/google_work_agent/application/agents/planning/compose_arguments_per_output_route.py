@@ -258,6 +258,7 @@ def compose_arguments_per_output_route(
             source_snapshots=source_snapshots or {},
             selected_evidence_refs=refs,
             selected_resources=selected_resources,
+            request_intent=request_intent,
         )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])
