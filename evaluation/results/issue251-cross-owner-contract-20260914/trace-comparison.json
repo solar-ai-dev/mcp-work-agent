@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "projection": "LangSmith safe semantic projection only",
+  "initial_source_dependency": {
+    "input_equal": true,
+    "safe_input_sha256": "af30f5bd640161a385c2e8f9c9259f6ebea2d9bbc03d060f9874718e932290cb",
+    "model_id": "qwen3.5:9b",
+    "prompt_id": "request_understanding.identify_source_dependencies",
+    "prompt_version": "1.0.2",
+    "prompt_content_hash": "92c90bd0370f91a9ce79ac59ce32a1a502795a89206a4a79c72d41aa4b8c1b24",
+    "output_schema_id": "request-source-dependency-decision-v2",
+    "prior": {
+      "trace_id": "01a09cb0-1347-7c73-ad7b-dd6ca9ab9a31",
+      "calendar_event_dependency": "SOURCE_REQUIRED",
+      "required_information_count": 2
+    },
+    "current": {
+      "trace_id": "01a09cc7-8394-7591-a1af-75f34026afdf",
+      "calendar_event_dependency": "SOURCE_NOT_REQUIRED",
+      "required_information_count": 0
+    }
+  },
+  "resume_retrieval": {
+    "prior": {
+      "trace_id": "01a09cb0-7fe8-7ff2-9b04-bf819d5b7928",
+      "query_constraint_kinds": ["CONCEPT", "CONTAINER_REF"],
+      "read_handles": 23,
+      "segments": 2,
+      "rag_candidates": 2,
+      "evidence_drafts": 2,
+      "terminal_path": "planning"
+    },
+    "current": {
+      "trace_id": "01a09cc7-f2d3-7e92-84db-882a1d52f48f",
+      "query_constraint_kinds": ["CONTAINER_REF"],
+      "read_handles": 23,
+      "segments": 60,
+      "rag_candidates": 24,
+      "evidence_drafts": 0,
+      "terminal_path": "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID"
+    }
+  },
+  "contains_provider_content": false,
+  "contains_secrets": false
+}
