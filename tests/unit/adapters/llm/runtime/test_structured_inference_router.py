@@ -258,6 +258,24 @@ def test_local_request__uses_profile__model_for_prompt() -> None:
     assert local.calls == 1
 
 
+def test_identify_goal_prompt__with_override__uses_own_temperature() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    api = _Provider()
+    router = _router(checkpoint=checkpoint, api=api)
+    router.runtime_policy = RuntimePolicy(sampling_temperature=0.2, sampling_seed=1729)
+
+    router.infer(
+        "API_LLM",
+        replace(PROMPT, prompt_id="request_understanding.identify_goal"),
+        {"user_request": "hello"},
+        SCHEMA,
+    )
+    router.infer("API_LLM", PROMPT, {"user_request": "hello"}, SCHEMA)
+
+    assert [policy.sampling_temperature for policy in api.runtime_policies] == [0.1, 0.2]
+    assert [policy.sampling_seed for policy in api.runtime_policies] == [1729, 1729]
+
+
 def test_source_dependency_prompt__with_override__uses_own_temperature() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     api = _Provider()

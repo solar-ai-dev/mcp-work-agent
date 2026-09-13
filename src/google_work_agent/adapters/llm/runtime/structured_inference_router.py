@@ -63,6 +63,8 @@ from google_work_agent.ports.system.external_call_trace_port import (
 from google_work_agent.ports.system.hardware_probe_port import HardwareProbePort
 from google_work_agent.ports.system.settings_port import SettingsViewV1
 
+_IDENTIFY_GOAL_PROMPT_ID = "request_understanding.identify_goal"
+_IDENTIFY_GOAL_TEMPERATURE = 0.1
 _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = (
     "request_understanding.identify_source_dependencies"
 )
@@ -963,6 +965,7 @@ def _runtime_policy_for_prompt(
     prompt_ref: PromptReference,
 ) -> RuntimePolicy:
     temperature = {
+        _IDENTIFY_GOAL_PROMPT_ID: _IDENTIFY_GOAL_TEMPERATURE,
         _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID: _IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE,
         _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID: (
             _IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE
