@@ -457,6 +457,7 @@ def _resolve_confirmed_goal(
                 prompt_input=prompt_input,
                 goal_candidate=_confirmed_source_goal(candidate),
                 source_candidates=source_dependency_candidates,
+                require_at_least_one_source=True,
             )
             responsibilities = merge_resource_responsibilities(
                 source_decisions=source_decisions,

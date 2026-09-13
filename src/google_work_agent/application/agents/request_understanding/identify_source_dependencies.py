@@ -122,6 +122,8 @@ def build_source_dependency_candidates(
 
 def build_source_dependency_output_schema(
     candidates: Sequence[SourceDependencyCandidateV1],
+    *,
+    require_at_least_one_source: bool = False,
 ) -> OutputSchemaDefinition:
     """Build the exact-set discriminated schema for source dependency decisions."""
 
@@ -159,24 +161,36 @@ def build_source_dependency_output_schema(
             },
         },
     ]
+    exact_resource_constraints: list[dict[str, object]] = [
+        {
+            "contains": {
+                "type": "object",
+                "properties": {"resource_type": {"const": resource_type}},
+                "required": ["resource_type"],
+            },
+            "minContains": 1,
+            "maxContains": 1,
+        }
+        for resource_type in resource_types
+    ]
+    if require_at_least_one_source:
+        exact_resource_constraints.append(
+            {
+                "contains": {
+                    "type": "object",
+                    "properties": {"dependency": {"const": "SOURCE_REQUIRED"}},
+                    "required": ["dependency"],
+                },
+                "minContains": 1,
+            }
+        )
     decisions_schema: dict[str, object] = {
         "type": "array",
         "minItems": len(resource_types),
         "maxItems": len(resource_types),
         "uniqueItems": True,
         "items": {"oneOf": variants},
-        "allOf": [
-            {
-                "contains": {
-                    "type": "object",
-                    "properties": {"resource_type": {"const": resource_type}},
-                    "required": ["resource_type"],
-                },
-                "minContains": 1,
-                "maxContains": 1,
-            }
-            for resource_type in resource_types
-        ],
+        "allOf": exact_resource_constraints,
     }
     return OutputSchemaDefinition(
         schema_version="request-source-dependency-decision-v2",
@@ -197,6 +211,7 @@ def identify_source_dependencies(
     prompt_input: Mapping[str, object],
     goal_candidate: Mapping[str, object],
     source_candidates: Sequence[SourceDependencyCandidateV1],
+    require_at_least_one_source: bool = False,
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
 ) -> SourceDependencyDecisionCandidateV1:
@@ -220,11 +235,15 @@ def identify_source_dependencies(
         requested_mode,
         prompt_ref,
         inference_input,
-        build_source_dependency_output_schema(source_candidates),
+        build_source_dependency_output_schema(
+            source_candidates,
+            require_at_least_one_source=require_at_least_one_source,
+        ),
     )
     return validate_source_dependency_candidate(
         result.structured_output,
         source_candidates=source_candidates,
+        require_at_least_one_source=require_at_least_one_source,
     )
 
 
@@ -232,8 +251,12 @@ def validate_source_dependency_candidate(
     value: object,
     *,
     source_candidates: Sequence[SourceDependencyCandidateV1],
+    require_at_least_one_source: bool = False,
 ) -> SourceDependencyDecisionCandidateV1:
-    schema = build_source_dependency_output_schema(source_candidates)
+    schema = build_source_dependency_output_schema(
+        source_candidates,
+        require_at_least_one_source=require_at_least_one_source,
+    )
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
         raise ValueError(f"source dependency candidate is invalid: {'; '.join(errors)}")

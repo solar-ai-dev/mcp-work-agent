@@ -774,6 +774,14 @@ def test_target_confirmation_resume__reassesses_only_empty_source_responsibility
         and item["provenance"]["source"] == "CONFIRMATION_RESPONSE"
         for item in source_goal["constraints"]
     )
+    source_schema = runtime.calls[0]["output_schema"].json_schema
+    assert validate_output_schema(_source_dependency_decisions(), source_schema)
+    assert not validate_output_schema(
+        _source_dependency_decisions(
+            source_types={"TASK": ["task_identity"]}
+        ),
+        source_schema,
+    )
     ambiguity = detect_ambiguity(
         llm_runtime=runtime,
         request=_request(request_text),
