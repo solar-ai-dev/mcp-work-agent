@@ -8,6 +8,7 @@
 | 날짜 | 목적 | 결과 묶음 | 핵심 판정 | ZIP |
 | --- | --- | --- | --- | --- |
 | 2026-09-14 | Atlas Draft·q19 성공/실패 Run 최초 차이 비교 | [atlas-comparison-20260914](atlas-comparison-20260914/README.md) | Draft는 source-page 8 제한에 따른 route starvation, q19는 실제 NEXT_PAGE와 budget 승인 operation의 불일치. 추가 Run 0, WRITE/SEND 0 | [다운로드](atlas-comparison-20260914.zip) |
+| 2026-09-14 | Issue 251 Atlas 최소 수정 후 확인 | [issue251-atlas-postfix-20260914](issue251-atlas-postfix-20260914/README.md) | 저장 상한 8→50, 일반 사실 조회 detail 우선·EXHAUSTIVE pagination 유지. Atlas Draft WAITING_APPROVAL, q19 SUCCESS, WRITE/SEND 0 | `result.json` |
 
 Atlas 비교 묶음은 다음 순서로 읽는다.
 
