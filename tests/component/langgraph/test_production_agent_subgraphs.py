@@ -1053,9 +1053,10 @@ def _output_responsibility_decisions(
         "output_responsibilities": [
             {
                 "resource_type": candidate["resource_type"],
-                "effect": outputs.get(cast(str, candidate["resource_type"]), "NONE"),
+                "effect": outputs[cast(str, candidate["resource_type"])],
             }
             for candidate in candidates
+            if candidate["resource_type"] in outputs
         ]
     }
 

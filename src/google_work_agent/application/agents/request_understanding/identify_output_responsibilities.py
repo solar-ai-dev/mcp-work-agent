@@ -17,7 +17,7 @@ from google_work_agent.ports.llm.structured_inference_port import StructuredInfe
 from .contracts.effect_prohibition_decision import EffectProhibitionDecisionCandidateV1
 from .contracts.output_responsibility_decision import (
     OutputResponsibilityCandidateV1,
-    OutputResponsibilityDecisionCandidateV1,
+    OutputResponsibilityDecisionCandidateV2,
 )
 from .contracts.request_intent import (
     REQUEST_RESOURCE_TYPES,
@@ -91,7 +91,7 @@ def build_output_responsibility_output_schema(
     *,
     prohibited_effects: Collection[WriteEffectValue] = (),
 ) -> OutputSchemaDefinition:
-    """Build the exact-set schema with per-Resource bounded effect choices."""
+    """Build the sparse requested-output schema with bounded Resource/effect choices."""
 
     resource_types = [candidate["resource_type"] for candidate in candidates]
     if not resource_types or len(resource_types) != len(set(resource_types)):
@@ -105,7 +105,7 @@ def build_output_responsibility_output_schema(
     }
     decisions_schema: dict[str, object] = {
         "type": "array",
-        "minItems": len(resource_types),
+        "minItems": 0,
         "maxItems": len(resource_types),
         "uniqueItems": True,
         "items": {
@@ -116,7 +116,6 @@ def build_output_responsibility_output_schema(
                 "resource_type": {"enum": resource_types},
                 "effect": {
                     "enum": [
-                        "NONE",
                         *[
                             effect
                             for effect in _WRITE_EFFECT_ORDER
@@ -133,7 +132,7 @@ def build_output_responsibility_output_schema(
                     },
                     "then": {
                         "properties": {
-                            "effect": {"enum": ["NONE", *allowed_by_resource[resource_type]]}
+                            "effect": {"enum": allowed_by_resource[resource_type]}
                         }
                     },
                 }
@@ -147,14 +146,14 @@ def build_output_responsibility_output_schema(
                     "properties": {"resource_type": {"const": resource_type}},
                     "required": ["resource_type"],
                 },
-                "minContains": 1,
+                "minContains": 0,
                 "maxContains": 1,
             }
             for resource_type in resource_types
         ],
     }
     return OutputSchemaDefinition(
-        schema_version="request-output-responsibility-decision-v1",
+        schema_version="request-output-responsibility-decision-v2",
         json_schema={
             "type": "object",
             "additionalProperties": False,
@@ -175,7 +174,7 @@ def identify_output_responsibilities(
     effect_prohibitions: EffectProhibitionDecisionCandidateV1,
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
-) -> OutputResponsibilityDecisionCandidateV1:
+) -> OutputResponsibilityDecisionCandidateV2:
     """Infer requested outputs without taking source dependency authority."""
 
     base_projection = {
@@ -215,7 +214,7 @@ def validate_output_responsibility_candidate(
     *,
     output_candidates: Sequence[OutputResponsibilityCandidateV1],
     prohibited_effects: Collection[WriteEffectValue] = (),
-) -> OutputResponsibilityDecisionCandidateV1:
+) -> OutputResponsibilityDecisionCandidateV2:
     conflict_paths = _prohibited_effect_paths(value, prohibited_effects=prohibited_effects)
     if conflict_paths:
         raise ProhibitedOutputResponsibilityDecisionError(
@@ -231,11 +230,11 @@ def validate_output_responsibility_candidate(
         raise ValueError(f"output responsibility candidate is invalid: {'; '.join(errors)}")
     root = cast(Mapping[str, object], value)
     decisions = cast(Sequence[Mapping[str, object]], root["output_responsibilities"])
-    expected = [candidate["resource_type"] for candidate in output_candidates]
+    expected = {candidate["resource_type"] for candidate in output_candidates}
     actual = [cast(str, decision["resource_type"]) for decision in decisions]
-    if set(actual) != set(expected):
-        raise ValueError("output responsibility decisions must match the candidate exact set")
-    return cast(OutputResponsibilityDecisionCandidateV1, deepcopy(value))
+    if len(actual) != len(set(actual)) or not set(actual).issubset(expected):
+        raise ValueError("output responsibility decisions must be a unique candidate subset")
+    return cast(OutputResponsibilityDecisionCandidateV2, deepcopy(value))
 
 
 def _prohibited_effect_paths(

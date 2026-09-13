@@ -179,10 +179,7 @@ class _RepairingAgent:
                 input_projection.get("base_projection", input_projection),
             )
             output = {
-                "output_responsibilities": [
-                    {"resource_type": candidate["resource_type"], "effect": "NONE"}
-                    for candidate in cast(list[Mapping[str, object]], base["output_candidates"])
-                ]
+                "output_responsibilities": []
             }
         elif prompt_ref.prompt_id == "request_understanding.identify_effect_prohibitions":
             base = cast(

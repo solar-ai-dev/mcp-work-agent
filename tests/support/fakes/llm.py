@@ -89,7 +89,7 @@ class FakeStructuredInferencePort:
                 input_projection=input_projection,
             )
         elif (
-            output_schema_ref.schema_version == "request-output-responsibility-decision-v1"
+            output_schema_ref.schema_version == "request-output-responsibility-decision-v2"
             and self._pending_resource_responsibilities is not None
         ):
             output = _output_responsibility_decisions_from_responsibilities(
@@ -164,7 +164,7 @@ class FakeStructuredInferencePort:
                     input_projection=input_projection,
                 )
             elif (
-                output_schema_ref.schema_version == "request-output-responsibility-decision-v1"
+                output_schema_ref.schema_version == "request-output-responsibility-decision-v2"
                 and isinstance(output, Mapping)
                 and "source_reads" in output
                 and "outputs" in output
@@ -288,9 +288,10 @@ def _output_responsibility_decisions_from_responsibilities(
     decisions = [
         {
             "resource_type": candidate["resource_type"],
-            "effect": outputs.get(cast(str, candidate["resource_type"]), {}).get("effect", "NONE"),
+            "effect": outputs[cast(str, candidate["resource_type"])]["effect"],
         }
         for candidate in candidates
+        if cast(str, candidate["resource_type"]) in outputs
     ]
     candidate_types = {cast(str, candidate["resource_type"]) for candidate in candidates}
     decisions.extend(

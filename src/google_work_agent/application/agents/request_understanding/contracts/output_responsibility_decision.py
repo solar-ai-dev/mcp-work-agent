@@ -2,30 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 from .request_intent import WriteEffectValue
-
-OutputResponsibilityValue = Literal["NONE", "CREATE", "UPDATE", "SEND", "DELETE"]
-
 
 class OutputResponsibilityCandidateV1(TypedDict):
     resource_type: str
     allowed_output_effects: list[WriteEffectValue]
 
 
-class OutputResponsibilityDecisionV1(TypedDict):
+class OutputResponsibilityDecisionV2(TypedDict):
     resource_type: str
-    effect: OutputResponsibilityValue
+    effect: WriteEffectValue
 
 
-class OutputResponsibilityDecisionCandidateV1(TypedDict):
-    output_responsibilities: list[OutputResponsibilityDecisionV1]
+class OutputResponsibilityDecisionCandidateV2(TypedDict):
+    output_responsibilities: list[OutputResponsibilityDecisionV2]
 
 
 __all__ = [
     "OutputResponsibilityCandidateV1",
-    "OutputResponsibilityDecisionCandidateV1",
-    "OutputResponsibilityDecisionV1",
-    "OutputResponsibilityValue",
+    "OutputResponsibilityDecisionCandidateV2",
+    "OutputResponsibilityDecisionV2",
 ]

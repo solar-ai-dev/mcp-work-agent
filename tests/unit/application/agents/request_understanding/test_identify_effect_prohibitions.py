@@ -58,17 +58,11 @@ def _prohibitions(*forbidden: str) -> dict[str, object]:
 
 
 def _output_decisions(*, gmail_message_effect: str | None = None) -> dict[str, object]:
-    decisions: list[dict[str, object]] = []
-    for candidate in _RESOURCE_CANDIDATES:
-        if candidate["resource_type"] == "GMAIL_MESSAGE" and gmail_message_effect is not None:
-            decisions.append(
-                {
-                    "resource_type": "GMAIL_MESSAGE",
-                    "effect": gmail_message_effect,
-                }
-            )
-        else:
-            decisions.append({"resource_type": candidate["resource_type"], "effect": "NONE"})
+    decisions = (
+        []
+        if gmail_message_effect is None
+        else [{"resource_type": "GMAIL_MESSAGE", "effect": gmail_message_effect}]
+    )
     return {"output_responsibilities": decisions}
 
 

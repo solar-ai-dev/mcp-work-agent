@@ -6,7 +6,7 @@ from typing import cast
 
 from .contracts.output_responsibility_decision import (
     OutputResponsibilityCandidateV1,
-    OutputResponsibilityDecisionCandidateV1,
+    OutputResponsibilityDecisionCandidateV2,
 )
 from .contracts.request_intent import (
     OutputResourceResponsibilityV1,
@@ -23,7 +23,7 @@ from .contracts.source_dependency_decision import (
 def merge_resource_responsibilities(
     *,
     source_decisions: SourceDependencyDecisionCandidateV1,
-    output_decisions: OutputResponsibilityDecisionCandidateV1,
+    output_decisions: OutputResponsibilityDecisionCandidateV2,
     source_candidates: tuple[SourceDependencyCandidateV1, ...],
     output_candidates: tuple[OutputResponsibilityCandidateV1, ...],
 ) -> ResourceResponsibilitiesV1:
@@ -55,7 +55,7 @@ def merge_resource_responsibilities(
             ),
         )
         for candidate in output_candidates
-        if output_by_resource[candidate["resource_type"]]["effect"] != "NONE"
+        if candidate["resource_type"] in output_by_resource
     ]
     return ResourceResponsibilitiesV1(source_reads=source_reads, outputs=outputs)
 

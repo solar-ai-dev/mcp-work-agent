@@ -443,9 +443,10 @@ def _output_responsibility_decisions(
         "output_responsibilities": [
             {
                 "resource_type": candidate["resource_type"],
-                "effect": output_types.get(candidate["resource_type"], "NONE"),
+                "effect": output_types[candidate["resource_type"]],
             }
             for candidate in _OUTPUT_RESPONSIBILITY_CANDIDATES
+            if candidate["resource_type"] in output_types
         ]
     }
 
@@ -872,7 +873,7 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
         "request-goal-candidate-v15",
         "request-effect-prohibition-decision-v1",
         "request-source-dependency-decision-v2",
-        "request-output-responsibility-decision-v1",
+        "request-output-responsibility-decision-v2",
         "request-source-status-v2",
     ]
     assert runtime.calls[2]["prompt_input"]["goal_candidate"] == {

@@ -1201,7 +1201,7 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 | --- | --- |
 | `identify_goal` | 목표·완료조건·일반 제약·분석 필요 후보를 만든다. Resource 역할과 source status를 만들지 않으며 원문 period를 보존한다. |
 | `identify_source_dependencies` | Runtime이 제공한 READ 가능 Resource 후보별로 기존 사실·현재 상태·identity가 필요한지 판정한다. Output effect는 판정하지 않는다. |
-| `identify_output_responsibilities` | Runtime이 제공한 output 가능 Resource 후보별로 사용자가 요청한 Write effect를 판정한다. Source dependency는 판정하지 않는다. |
+| `identify_output_responsibilities` | Runtime이 제공한 output 가능 Resource 후보 중 사용자가 요청한 Write effect만 sparse 목록으로 반환한다. 빈 목록은 외부 output 없음이며 `NONE` 항목을 만들지 않는다. Source dependency는 판정하지 않는다. |
 | `merge_resource_responsibilities` | 검증된 두 atomic 결정을 기존 `ResourceResponsibilitiesV1.source_reads/outputs`로 결정적으로 조립한다. |
 | `identify_source_status` | 확정된 `source_reads.resource_type`만 대상으로 추가 source 상태 범위를 판단한다. output effect·Resource 역할·Tool·Query는 바꾸지 않는다. |
 | `identify_temporal_scope` | Gmail period가 있을 때 `MESSAGE_TIME \| EVENT_TIME`을 판단한다. 없으면 pass-through한다. 일반 코드의 키워드·정규식으로 이 의미를 교체하지 않는다. |

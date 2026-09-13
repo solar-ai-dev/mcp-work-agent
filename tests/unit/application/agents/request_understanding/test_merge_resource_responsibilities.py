@@ -15,6 +15,9 @@ from google_work_agent.application.agents.request_understanding.contracts import
     output_responsibility_decision,
     source_dependency_decision,
 )
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    WriteEffectValue,
+)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
@@ -48,16 +51,17 @@ def _source(
 
 
 def _output(
-    *, values: dict[str, output_responsibility_decision.OutputResponsibilityValue] | None = None
-) -> output_responsibility_decision.OutputResponsibilityDecisionCandidateV1:
+    *, values: dict[str, WriteEffectValue] | None = None
+) -> output_responsibility_decision.OutputResponsibilityDecisionCandidateV2:
     values = values or {}
     return {
         "output_responsibilities": [
             {
                 "resource_type": candidate["resource_type"],
-                "effect": values.get(candidate["resource_type"], "NONE"),
+                "effect": values[candidate["resource_type"]],
             }
             for candidate in _OUTPUT_CANDIDATES
+            if candidate["resource_type"] in values
         ]
     }
 
@@ -89,7 +93,7 @@ def _output(
 )
 def test_atomic_decisions__after_validation__merge_to_canonical_contract(
     sources: dict[str, list[str]],
-    outputs: dict[str, output_responsibility_decision.OutputResponsibilityValue],
+    outputs: dict[str, WriteEffectValue],
     expected_sources: list[str],
     expected_outputs: list[tuple[str, str]],
 ) -> None:

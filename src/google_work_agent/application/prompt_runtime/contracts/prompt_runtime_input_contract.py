@@ -69,6 +69,7 @@ class PromptRuntimeInputContractEntryV1:
             "retrieval.select_evidence": 3,
             "request_understanding.identify_goal": 15,
             "request_understanding.identify_source_dependencies": 2,
+            "request_understanding.identify_output_responsibilities": 2,
             "request_understanding.identify_source_status": 2,
             "request_understanding.detect_ambiguity": 2,
             "work_analysis.detect_duplicate_conflict_candidates": 4,
