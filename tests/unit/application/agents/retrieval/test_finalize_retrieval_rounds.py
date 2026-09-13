@@ -10,6 +10,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
     RetrievalRoundLimitExceeded,
     advance_current_round_no,
+    followup_fits_retrieval_round_budget,
     initialize_current_round_no,
     retrieval_round_count,
 )
@@ -32,6 +33,18 @@ def test_followup_attempt__next_round__advances_before_recording() -> None:
 def test_fourth_attempt__round_limit_reached__blocks_before_connector_read() -> None:
     with pytest.raises(RetrievalRoundLimitExceeded):
         advance_current_round_no(current_round_no=2, is_followup=True)
+
+
+def test_fourth_semantic_followup__does_not_fit_round_budget() -> None:
+    assert not followup_fits_retrieval_round_budget(
+        current_round_no=2, operation_kinds={"NEXT_PAGE"}
+    )
+
+
+def test_detail_hydration__still_fits_after_third_semantic_round() -> None:
+    assert followup_fits_retrieval_round_budget(
+        current_round_no=2, operation_kinds={"DETAIL_FETCH"}
+    )
 
 
 @pytest.mark.parametrize(

@@ -36,7 +36,6 @@ export function RunProgress({ snapshot, busy, interactive = true, onResume }: {
           </details>;
         })}
         {snapshot.run.status === "FAILED" ? <p className="status-warn">작업을 완료하지 못했습니다.</p> : null}
-        {snapshot.terminal_result_kind === "PARTIAL" ? <p className="status-warn">확인하거나 완료한 범위만 반영했습니다. 미완료 이유는 기록과 최종 답변을 확인해 주세요.</p> : null}
         {snapshot.run.status === "REAUTH_REQUIRED" ? <p>사용한 연결의 재인증이 필요합니다.</p> : null}
         {snapshot.recovery_summary.unknown_result_action_count > 0 ? <p className="status-warn">외부 변경 여부가 불확실한 작업이 있습니다. 검증 전 성공으로 판단하지 않습니다.</p> : null}
       </div>

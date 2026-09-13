@@ -32,3 +32,19 @@ test("RecoveryCard hides a stale resume-only error while a run is active", () =>
   );
   expect(container).toBeEmptyDOMElement();
 });
+
+test("RecoveryCard does not label an error-only state as recovery", () => {
+  const snapshot = {
+    run: { status: "FAILED" },
+    recovery: null,
+    error: {
+      message: "예상하지 못한 오류가 발생했습니다.",
+      actions: [{ kind: "OPEN_DIAGNOSTICS" }],
+    },
+  } as RunSnapshot;
+
+  render(<RecoveryCard snapshot={snapshot} busy={null} onResolve={vi.fn()} />);
+
+  expect(screen.getByText("작업을 완료하지 못했습니다")).toBeVisible();
+  expect(screen.queryByText("복구가 필요합니다")).not.toBeInTheDocument();
+});

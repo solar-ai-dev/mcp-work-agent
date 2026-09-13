@@ -128,6 +128,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.retrieval.execute_read import RetrievalReadBindingError
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
     advance_current_round_no,
+    followup_fits_retrieval_round_budget,
     initialize_current_round_no,
 )
 from google_work_agent.application.agents.retrieval.match_person_mention import (
@@ -136,9 +137,6 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     rehydrate_normalized_segments,
-)
-from google_work_agent.application.agents.retrieval.plan_candidate_detail import (
-    plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
     DEFAULT_RETRIEVAL_BUDGET,
@@ -1011,57 +1009,77 @@ class RetrievalSubgraph:
         sufficiency_result, llm_provider_result, retry_budget = self._run_sufficiency_attempt(
             state, confirmation_response=None
         )
+        request_intent = _require_state_value(state["request_intent"], "request_intent")
         tool_route_plan = _require_state_value(state["tool_route_plan"], "tool_route_plan")
-        detail_followup = plan_candidate_detail(
-            prompt_input={
-                "current_round_no": state[CONTEXT_CURRENT_ROUND_NO_KEY],
-                "unresolved_sufficiency_issues": sufficiency_result["issues"],
-            },
-            frozen_routes=tool_route_plan["input_plan"]["input_routes"],
-            detail_candidate_refs=project_detail_candidate_refs(
-                evidence_drafts=state.get("evidence_drafts", []),
-                acquisition_result=state.get("acquisition_result"),
+        frozen_routes = tool_route_plan["input_plan"]["input_routes"]
+        current_round_no = _require_state_value(
+            state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+        )
+        query_attempts = cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []))
+        read_result_summaries = self._bounded_read_result_summaries(state)
+        detail_candidate_refs = project_detail_candidate_refs(
+            evidence_drafts=state.get("evidence_drafts", []),
+            acquisition_result=state.get("acquisition_result"),
+        )
+        attempted_detail_candidate_refs = self._attempted_detail_candidate_refs(state)
+        followup_projection = followup_planner_projection(
+            current_round_no=current_round_no,
+            prior_query_attempts=query_attempts,
+            unresolved_sufficiency_issues=cast(
+                list[dict[str, object]], list(sufficiency_result["issues"])
             ),
-            attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
+            read_result_summaries=read_result_summaries,
         )
-        acquisition_result = _require_state_value(
-            state["acquisition_result"], "acquisition_result"
+        deterministic_followup = deterministic_query_plan(
+            prompt_input={"request_intent": request_intent, **followup_projection},
+            frozen_routes=frozen_routes,
+            route_policies=_runtime_route_constraint_policies(frozen_routes),
+            validated_resource_refs=None,
+            validated_container_refs=None,
+            detail_candidate_refs=detail_candidate_refs,
+            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+            person_candidates=state.get("person_candidates", []),
+            selected_person_identities=state.get("selected_person_identities"),
         )
+        planned_operation_kinds = (
+            {query["operation"] for query in deterministic_followup["route_queries"]}
+            if deterministic_followup is not None
+            else {"SEARCH"}
+        )
+        planned_detail_fetch_count = (
+            len(deterministic_followup["route_queries"])
+            if planned_operation_kinds <= {"DETAIL_FETCH"} and deterministic_followup is not None
+            else 0
+        )
+        acquisition_result = _require_state_value(state["acquisition_result"], "acquisition_result")
         sufficiency_result, retry_budget, should_plan_followup = authorize_retrieval_followup(
             sufficiency_result,
-            request_intent=_require_state_value(state["request_intent"], "request_intent"),
+            request_intent=request_intent,
             retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(state["evidence_drafts"]),
-            detail_fetch_count=len(detail_followup["route_queries"]) if detail_followup else 0,
+            detail_fetch_count=planned_detail_fetch_count,
             can_acquire_new_information=(
                 not _has_bounded_read_stop(acquisition_result)
+                and followup_fits_retrieval_round_budget(
+                    current_round_no=current_round_no,
+                    operation_kinds=planned_operation_kinds,
+                )
                 and (
                     any(
                         item["slot"] == "person_identity_search"
                         for item in sufficiency_result["issues"]
                     )
                     or has_retrieval_followup_path(
-                        request_intent=_require_state_value(
-                            state["request_intent"], "request_intent"
-                        ),
+                        request_intent=request_intent,
                         tool_route_plan=tool_route_plan,
-                        route_policies=_runtime_route_constraint_policies(
-                            tool_route_plan["input_plan"]["input_routes"]
-                        ),
+                        route_policies=_runtime_route_constraint_policies(frozen_routes),
                         unresolved_sufficiency_issues=cast(
                             list[Mapping[str, object]], sufficiency_result["issues"]
                         ),
-                        read_result_summaries=self._bounded_read_result_summaries(state),
-                        query_attempts=cast(
-                            list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])
-                        ),
-                        detail_candidate_refs=project_detail_candidate_refs(
-                            evidence_drafts=state.get("evidence_drafts", []),
-                            acquisition_result=state.get("acquisition_result"),
-                        ),
-                        attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(
-                            state
-                        ),
+                        read_result_summaries=read_result_summaries,
+                        query_attempts=query_attempts,
+                        detail_candidate_refs=detail_candidate_refs,
+                        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
                     )
                 )
             ),
@@ -1114,16 +1132,7 @@ class RetrievalSubgraph:
             ),
         }
         if should_plan_followup:
-            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
-                current_round_no=_require_state_value(
-                    state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
-                ),
-                prior_query_attempts=list(state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])),
-                unresolved_sufficiency_issues=cast(
-                    list[dict[str, object]], list(sufficiency_result["issues"])
-                ),
-                read_result_summaries=self._bounded_read_result_summaries(state),
-            )
+            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_projection
         elif sufficiency_result["status"] == "NEEDS_CONFIRMATION":
             # Materialized here -- not in finalize -- because this node never
             # replays on resume (it completes and commits before any pause),
