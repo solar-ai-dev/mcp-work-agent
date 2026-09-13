@@ -15,6 +15,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import PromptRef
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 
 from ..projections.identify_goal_projection import (
+    IdentifyGoalInput,
     project_identify_goal_input,
 )
 
@@ -36,10 +37,12 @@ def identify_goal_node(
     ],
 ) -> RequestUnderstandingStateV2:
     projection = project_identify_goal_input(state)
-    ensure_llm_call_budget(
-        state,
-        provider_calls_requested=1 if "prior_goal_candidate" in projection else 5,
-    )
+    provider_calls_requested = _provider_calls_requested(projection)
+    if provider_calls_requested:
+        ensure_llm_call_budget(
+            state,
+            provider_calls_requested=provider_calls_requested,
+        )
     candidate, retry_budget = identify_goal_with_budget(
         llm_runtime=llm_runtime,
         request=projection["request"],
@@ -60,3 +63,22 @@ def identify_goal_node(
         "goal_candidate": candidate,
         "retry_budget": retry_budget,
     }
+
+
+def _provider_calls_requested(projection: IdentifyGoalInput) -> int:
+    prior = projection.get("prior_goal_candidate")
+    if prior is None:
+        return 5
+    confirmation = projection.get("confirmation_response")
+    ambiguity = projection.get("prior_ambiguity_candidate")
+    target_confirmation = (
+        confirmation is not None
+        and (confirmation["selected_option"] or confirmation["free_text"]) is not None
+        and ambiguity is not None
+        and "target_resource" in ambiguity["missing_fields"]
+    )
+    if not target_confirmation:
+        return 1
+    if projection["request"].selected_resources:
+        return 0
+    return int(not prior["resource_responsibilities"]["source_reads"])
