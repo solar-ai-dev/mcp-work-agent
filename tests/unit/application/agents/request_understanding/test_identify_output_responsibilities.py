@@ -59,7 +59,7 @@ def test_output_schema__with_non_candidate_or_unsupported_decisions__rejects_can
 
 
 @pytest.mark.parametrize("candidate", [_decisions(), _decisions(outputs={"TASK": "CREATE"})])
-def test_output_schema__accepts_empty_or_requested_subset(
+def test_output_schema__with_empty_or_requested_subset__accepts_candidate(
     candidate: dict[str, object],
 ) -> None:
     assert validate_output_schema(

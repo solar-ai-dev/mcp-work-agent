@@ -6,6 +6,7 @@ from typing import TypedDict
 
 from .request_intent import WriteEffectValue
 
+
 class OutputResponsibilityCandidateV1(TypedDict):
     resource_type: str
     allowed_output_effects: list[WriteEffectValue]

@@ -546,7 +546,7 @@ def test_json_validation__malformed_response__uses_bounded_schema_repair() -> No
     assert repairer.failed_outputs == [malformed]
 
 
-def test_schema_repair_usage__is_included_in_logical_inference_totals() -> None:
+def test_schema_repair_usage__with_additional_provider_call__includes_logical_totals() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     recorder = Mock()
     trace = _ExternalCallTrace()
