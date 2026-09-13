@@ -239,7 +239,10 @@ def test_validated_multi_output__promotes_to_revision_heavy__without_resetting_c
             },
         ],
     }
-    budget = {**build_default_run_budget(), "llm_calls_used": 7}
+    budget = cast(
+        RunBudgetV2,
+        {**build_default_run_budget(), "llm_calls_used": 7},
+    )
 
     decision = route_supervisor(
         phase=WorkflowPhase.TOOL_ROUTING,

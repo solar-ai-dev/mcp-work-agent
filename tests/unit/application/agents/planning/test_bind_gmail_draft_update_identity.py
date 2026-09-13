@@ -156,7 +156,7 @@ def test_gmail_draft_update__without_exact_evidence__requires_one_identity() -> 
 
 
 def test_gmail_draft_update__model_evidence_choice__cannot_select_between_identities() -> None:
-    evidence = [
+    evidence: list[dict[str, object]] = [
         {"evidence_id": "draft-a", "resource_handle": "gmail_draft:draft-a"},
         {"evidence_id": "draft-b", "resource_handle": "gmail_draft:draft-b"},
     ]
@@ -175,7 +175,7 @@ def test_gmail_draft_update__model_evidence_choice__cannot_select_between_identi
 
 
 def test_gmail_draft_update__selected_identity__authorizes_one_retrieved_target() -> None:
-    evidence = [
+    evidence: list[dict[str, object]] = [
         {"evidence_id": "draft-a", "resource_handle": "gmail_draft:draft-a"},
         {"evidence_id": "draft-b", "resource_handle": "gmail_draft:draft-b"},
     ]
@@ -200,7 +200,8 @@ def test_gmail_draft_update__selected_identity__authorizes_one_retrieved_target(
         payload={"body": "B\n추가 문장"},
     )[0]
 
-    assert result["arguments"]["draft_id"] == "draft-b"
+    arguments = cast(dict[str, object], result["arguments"])
+    assert arguments["draft_id"] == "draft-b"
     assert result["evidence_refs"] == ["draft-b"]
 
 

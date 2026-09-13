@@ -1,3 +1,5 @@
+from typing import cast
+
 from google_work_agent.adapters.system.workflow_outcome_projector import (
     WorkflowOutcomeProjector,
 )
@@ -6,9 +8,11 @@ from google_work_agent.application.use_cases.recovery.project_recovery_options i
 )
 from google_work_agent.application.use_cases.recovery.require_recovery import (
     RequireRecoveryCommand,
+    RequireRecoveryHandler,
 )
 from google_work_agent.application.use_cases.sse_event.project_run_event import (
     ProjectRunEventCommand,
+    ProjectRunEventHandler,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowOutcome
@@ -17,6 +21,14 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 class _AppliedRecovery:
     applied = True
     conflict_detail = None
+
+
+def _record_recovery(
+    commands: list[RequireRecoveryCommand],
+    command: RequireRecoveryCommand,
+) -> _AppliedRecovery:
+    commands.append(command)
+    return _AppliedRecovery()
 
 
 def test_waiting_approval_without_action_projection__publishes_run_status__for_snapshot_refresh(
@@ -104,10 +116,11 @@ def test_contract_violation_outcome__requires_recovery__and_publishes_recovery_s
     published: list[ProjectRunEventCommand] = []
     recovery_commands: list[RequireRecoveryCommand] = []
     projector = WorkflowOutcomeProjector(
-        require_recovery=lambda command: (
-            recovery_commands.append(command) or _AppliedRecovery()
-        ),  # type: ignore[arg-type]
-        project_run_event=published.append,  # type: ignore[arg-type]
+        require_recovery=cast(
+            RequireRecoveryHandler,
+            lambda command: _record_recovery(recovery_commands, command),
+        ),
+        project_run_event=cast(ProjectRunEventHandler, published.append),
         now_ms=lambda: 10,
         id_factory=lambda: "command-1",
         recovery_target=lambda _run_id: None,
@@ -145,10 +158,11 @@ def test_unclassified_failed_outcome__is_a_contract_defect__not_a_failure_reason
     published: list[ProjectRunEventCommand] = []
     recovery_commands: list[RequireRecoveryCommand] = []
     projector = WorkflowOutcomeProjector(
-        require_recovery=lambda command: (
-            recovery_commands.append(command) or _AppliedRecovery()
-        ),  # type: ignore[arg-type]
-        project_run_event=published.append,  # type: ignore[arg-type]
+        require_recovery=cast(
+            RequireRecoveryHandler,
+            lambda command: _record_recovery(recovery_commands, command),
+        ),
+        project_run_event=cast(ProjectRunEventHandler, published.append),
         now_ms=lambda: 10,
         id_factory=lambda: "command-1",
         recovery_target=lambda _run_id: None,
