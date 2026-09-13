@@ -67,6 +67,10 @@ _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = (
     "request_understanding.identify_source_dependencies"
 )
 _IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE = 0.05
+_IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID = (
+    "request_understanding.identify_output_responsibilities"
+)
+_IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -958,12 +962,15 @@ def _runtime_policy_for_prompt(
     runtime_policy: RuntimePolicy,
     prompt_ref: PromptReference,
 ) -> RuntimePolicy:
-    if prompt_ref.prompt_id != _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID:
+    temperature = {
+        _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID: _IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE,
+        _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID: (
+            _IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE
+        ),
+    }.get(prompt_ref.prompt_id)
+    if temperature is None:
         return runtime_policy
-    return replace(
-        runtime_policy,
-        sampling_temperature=_IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE,
-    )
+    return replace(runtime_policy, sampling_temperature=temperature)
 
 
 def _local_runtime_reason(request: RouteDecisionInput) -> str | None:
