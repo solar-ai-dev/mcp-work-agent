@@ -44,6 +44,10 @@ from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import R
 from google_work_agent.application.agents.retrieval.retain_unchanged_evidence import (
     retain_unchanged_evidence,
 )
+from google_work_agent.application.agents.task_calendar_draft_source import (
+    is_task_calendar_draft_source_target,
+    project_task_calendar_source_terms,
+)
 from google_work_agent.application.prompt_runtime.contracts.failure_record import (
     build_failure_record_v1,
 )
@@ -165,6 +169,14 @@ def _select_ranked_evidence(
             "selected_segment_ids": [],
             "excluded_segment_ids": obligations,
         }, retry_budget
+    task_calendar_selection = _exact_task_calendar_draft_source_selection(
+        request_intent=request_intent,
+        candidates=eligible_candidates,
+        segments=segments,
+        exclusion_obligations=obligations,
+    )
+    if task_calendar_selection is not None:
+        return task_calendar_selection, retry_budget
     receipt_selection = _receipt_listing_selection(
         request_intent,
         eligible_candidates,
@@ -402,6 +414,60 @@ def _exact_selected_resource_selection(
         ],
         "selected_segment_ids": selected_segment_ids,
         "excluded_segment_ids": _stable_unique(exclusion_obligations),
+    }
+
+
+def _exact_task_calendar_draft_source_selection(
+    *,
+    request_intent: RequestIntentV2,
+    candidates: list[RagCandidateV1],
+    segments: Sequence[SourceSegment],
+    exclusion_obligations: Collection[str],
+) -> EvidenceSelectionResultV2 | None:
+    """Select only source records that retain every explicit per-source anchor."""
+
+    if not is_task_calendar_draft_source_target(request_intent):
+        return None
+    terms = project_task_calendar_source_terms(request_intent.get("constraints"))
+    if terms is None:
+        return None
+    by_id = {segment.segment_id: segment for segment in segments}
+    selected: list[str] = []
+    selected_resources: set[str] = set()
+    for candidate in candidates:
+        segment = by_id.get(candidate["segment_id"])
+        if segment is None:
+            continue
+        required_terms = (
+            terms["task_terms"]
+            if segment.resource_type == "task"
+            else terms["calendar_evidence_terms"]
+            if segment.resource_type == "calendar_event"
+            else []
+        )
+        text = segment.text.casefold()
+        if required_terms and all(term.casefold() in text for term in required_terms):
+            selected.append(candidate["segment_id"])
+            selected_resources.add(segment.resource_type)
+    if selected_resources != {"task", "calendar_event"}:
+        return None
+    return {
+        "schema_version": 2,
+        "evidence_drafts": [
+            {
+                "segment_id": segment_id,
+                "role": "SUPPORTS",
+                "relevance_reason": "EXPLICIT_SOURCE_ANCHOR_MATCH",
+            }
+            for segment_id in selected
+        ],
+        "selected_segment_ids": selected,
+        "excluded_segment_ids": _stable_unique(
+            [
+                *exclusion_obligations,
+                *(item["segment_id"] for item in candidates if item["segment_id"] not in selected),
+            ]
+        ),
     }
 
 

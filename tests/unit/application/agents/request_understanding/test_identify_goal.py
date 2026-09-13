@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 from dataclasses import replace
 from typing import Any, cast
@@ -149,9 +148,10 @@ def detect_ambiguity(**kwargs: Any) -> AmbiguityV1:
     return ambiguity
 
 
-def _goal_constraints(*additional: dict[str, object], **values: list[object]) -> dict[str, object]:
+def _goal_constraints(*additional: dict[str, object], **values: object) -> dict[str, object]:
     return {
         **dict.fromkeys(_GMAIL_CONSTRAINT_KINDS, []),
+        "coverage_requirement": "NOT_COLLECTION",
         **values,
         "additional_constraints": list(additional),
     }
@@ -870,15 +870,17 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
         "request_understanding.identify_source_status",
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
-        "request-goal-candidate-v15",
+        "request-goal-candidate-v16",
         "request-effect-prohibition-decision-v1",
         "request-source-dependency-decision-v2",
         "request-output-responsibility-decision-v2",
         "request-source-status-v2",
     ]
     assert runtime.calls[2]["prompt_input"]["goal_candidate"] == {
-        "goal": "기존 업무 자료를 바탕으로 메일 초안을 저장한다",
-        "completion_conditions": ["메일 초안 Preview를 준비한다", "메일을 보내지 않는다"],
+        "goal": (
+            "Atlas 할 일과 인쇄소 일정 보고 person@example.test에 준비 상황 메일 초안을 저장해줘."
+        ),
+        "completion_conditions": [],
         "constraints": _goal_constraints(
             search_terms=["Atlas"],
             recipient=["person@example.test"],
@@ -1112,34 +1114,37 @@ def test_gmail_goal__empty_array_text__cannot_become_a_person(value: str, valid:
             identify_goal(llm_runtime=runtime, request=request, prompt_ref=prompt_ref)
 
 
-def test_request_goal_schema__additional_field_pattern__matches_validator_invariant() -> None:
-    def collect_patterns(value: object) -> list[str]:
-        if isinstance(value, dict):
-            return [
-                *([cast(str, value["pattern"])] if "pattern" in value else []),
-                *(pattern for item in value.values() for pattern in collect_patterns(item)),
-            ]
-        if isinstance(value, list):
-            return [pattern for item in value for pattern in collect_patterns(item)]
-        return []
+def test_request_goal_schema__additional_field__is_closed_and_has_no_kind_choice() -> None:
+    constraints = cast(
+        dict[str, Any],
+        cast(dict[str, Any], goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema["properties"])[
+            "constraints"
+        ],
+    )
+    additional = cast(dict[str, Any], constraints["properties"])["additional_constraints"]
+    item = cast(dict[str, Any], additional)["items"]
+    properties = cast(dict[str, Any], item)["properties"]
 
-    patterns = collect_patterns(goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema)
-
-    assert len(patterns) == 1
-    pattern = patterns[0]
-    assert all(re.search(pattern, field) is None for field in goal_schema.REQUEST_GOAL_SLOT_KINDS)
-    assert re.search(pattern, "action") is not None
+    assert set(properties) == {"field", "value"}
+    assert cast(dict[str, Any], properties["field"])["enum"] == [
+        "date",
+        "description",
+        "due",
+        "notes",
+        "repository",
+        "scheduled_date",
+        "title",
+    ]
 
 
 @pytest.mark.parametrize("field", sorted(goal_schema.REQUEST_GOAL_SLOT_KINDS))
 def test_request_goal_schema__reserved_additional_field__rejects_output(field: str) -> None:
-    kind = goal_schema.REQUEST_GOAL_SLOT_KINDS[field]
-    value = "EXHAUSTIVE" if field == "coverage_requirement" else "explicit value"
+    value = "ALL_ITEMS" if field == "coverage_requirement" else "explicit value"
     candidate = {
         "goal": "요청한 결과를 준비한다",
         "completion_conditions": ["요청한 결과가 준비된다"],
         "constraints": _goal_constraints(
-            {"kind": kind, "field": field, "value": value}
+            {"field": field, "value": value}
         ),
         "analysis_requirement": "NONE",
     }
@@ -1148,7 +1153,7 @@ def test_request_goal_schema__reserved_additional_field__rejects_output(field: s
         candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema
     )
 
-    assert any("must match pattern" in error for error in errors)
+    assert any("must be one of" in error for error in errors)
 
 
 def test_request_goal_schema__atlas_reserved_status__rejects_at_output_schema() -> None:
@@ -1156,8 +1161,8 @@ def test_request_goal_schema__atlas_reserved_status__rejects_at_output_schema() 
         "goal": "기존 자료를 바탕으로 초안을 준비한다",
         "completion_conditions": ["초안을 준비하고 보내지 않는다"],
         "constraints": _goal_constraints(
-            {"kind": "EMAIL", "field": "action", "value": "draft"},
-            {"kind": "EMAIL", "field": "status", "value": "not sent"},
+            {"field": "title", "value": "draft"},
+            {"field": "status", "value": "not sent"},
         ),
         "analysis_requirement": "NONE",
     }
@@ -1167,7 +1172,7 @@ def test_request_goal_schema__atlas_reserved_status__rejects_at_output_schema() 
     )
 
     assert any(
-        "$.constraints.additional_constraints[1].field must match pattern" in error
+        "$.constraints.additional_constraints[1].field must be one of" in error
         for error in errors
     )
     assert not any(
@@ -1180,7 +1185,7 @@ def test_request_goal_schema__non_reserved_additional_field__remains_valid() -> 
         "goal": "요청한 결과를 준비한다",
         "completion_conditions": ["요청한 결과가 준비된다"],
         "constraints": _goal_constraints(
-            {"kind": "EMAIL", "field": "action", "value": "draft"},
+            {"field": "title", "value": "draft"},
             search_terms=["Atlas"],
             recipient=["person@example.test"],
         ),
@@ -1191,13 +1196,23 @@ def test_request_goal_schema__non_reserved_additional_field__remains_valid() -> 
         candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema
     )
 
+    normalized = goal_schema.validate_request_goal_candidate(
+        candidate,
+        resource_responsibilities=_resource_responsibilities(
+            output_type="TASK", output_effect="CREATE"
+        ),
+    )
+    assert {"kind": "RESOURCE", "field": "title", "value": "draft"} in normalized[
+        "constraints"
+    ]
 
-def test_request_goal_validator__reserved_additional_field__remains_defense_in_depth() -> None:
+
+def test_request_goal_validator__unknown_additional_field__remains_defense_in_depth() -> None:
     candidate = {
         "goal": "요청한 결과를 준비한다",
         "completion_conditions": ["요청한 결과가 준비된다"],
         "constraints": _goal_constraints(
-            {"kind": "EMAIL", "field": "status", "value": "not sent"}
+            {"field": "status", "value": "not sent"}
         ),
         "analysis_requirement": "NONE",
     }
@@ -1213,13 +1228,13 @@ def test_request_goal_validator__reserved_additional_field__remains_defense_in_d
     field_schema = cast(
         dict[str, Any], cast(dict[str, Any], item_schema["properties"])["field"]
     )
-    field_schema.pop("pattern")
+    field_schema.pop("enum")
     permissive_schema = OutputSchemaDefinition(
         schema_version="request-goal-candidate-permissive-test",
         json_schema=permissive_json_schema,
     )
 
-    with pytest.raises(ValueError, match="additional constraint uses reserved field"):
+    with pytest.raises(ValueError, match="unsupported additional constraint field"):
         goal_schema.validate_request_goal_candidate(
             candidate,
             resource_responsibilities=_resource_responsibilities(),
@@ -1233,7 +1248,7 @@ def test_request_goal_schema__with_exhaustive_collection__preserves_model_scope(
         "completion_conditions": ["요청 범위의 제목을 빠짐없이 반환한다"],
         "constraints": _goal_constraints(
             search_terms=["Project Anchor"],
-            coverage_requirement=["EXHAUSTIVE"],
+            coverage_requirement="ALL_ITEMS",
         ),
         "analysis_requirement": "NONE",
     }
@@ -1257,7 +1272,7 @@ def test_request_goal_schema__with_non_typed_collection_scope__rejects_candidate
     candidate = {
         "goal": "관련 제목 목록을 반환한다",
         "completion_conditions": ["관련 제목을 반환한다"],
-        "constraints": _goal_constraints(coverage_requirement=["ALL_RESULTS"]),
+        "constraints": _goal_constraints(coverage_requirement="ALL_RESULTS"),
         "analysis_requirement": "NONE",
     }
 
@@ -1269,6 +1284,31 @@ def test_request_goal_schema__with_non_typed_collection_scope__rejects_candidate
                 required_information=["관련 제목 목록"],
             ),
         )
+
+
+def test_request_goal_schema__limited_collection__does_not_enable_exhaustive() -> None:
+    candidate = {
+        "goal": "관련 제목 일부를 반환한다",
+        "completion_conditions": ["제한된 제목을 반환한다"],
+        "constraints": _goal_constraints(
+            search_terms=["Project Anchor"],
+            coverage_requirement="LIMITED_ITEMS",
+        ),
+        "analysis_requirement": "NONE",
+    }
+
+    normalized = goal_schema.validate_request_goal_candidate(
+        candidate,
+        resource_responsibilities=_resource_responsibilities(
+            source_type="GMAIL_THREAD",
+            required_information=["제한된 관련 제목 목록"],
+        ),
+    )
+
+    assert all(
+        constraint["field"] != "coverage_requirement"
+        for constraint in normalized["constraints"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -1463,7 +1503,7 @@ def test_identify_goal__payload_literals_do_not__add_unrequested_resources(
                 "goal": "일정 생성",
                 "completion_conditions": ["일정을 생성한다"],
                 "constraints": _goal_constraints(
-                    {"kind": "RESOURCE", "field": "title", "value": "검증"}
+                    {"field": "title", "value": "검증"}
                 ),
                 "resource_responsibilities": {
                     "source_reads": [
@@ -1496,7 +1536,6 @@ def test_identify_goal__preserves_exact_quoted__description_spacing() -> None:
                 "completion_conditions": ["일정을 생성한다"],
                 "constraints": _goal_constraints(
                     {
-                        "kind": "RESOURCE",
                         "field": "description",
                         "value": "Task 와 Calendar 검증 결과를 확인합니다.",
                     }
@@ -1867,7 +1906,7 @@ def test_selected_github_issue__uses_typed_repository__without_unbound_duplicate
                 "goal": "선택한 GitHub Issue 조회",
                 "completion_conditions": ["현재 제목, 상태, 본문을 보여준다"],
                 "constraints": _goal_constraints(
-                    {"kind": "RESOURCE", "field": "repository", "value": repository}
+                    {"field": "repository", "value": repository}
                 ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GITHUB_ISSUE", required_information=[]
@@ -2282,15 +2321,14 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
     expected_dates: list[str],
 ) -> None:
     additional_constraints: list[dict[str, object]] = [
-        {"kind": "DATE", "field": "date", "value": "2026-02-08"},
+        {"field": "date", "value": "2026-02-08"},
         {
-            "kind": "RESOURCE",
             "field": "title",
             "value": "2/8 Supervisor 승인 테스트",
         },
     ]
     if expected_dates:
-        additional_constraints.append({"kind": "DATE", "field": "due", "value": "2026-09-05"})
+        additional_constraints.append({"field": "due", "value": "2026-09-05"})
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -2318,6 +2356,40 @@ def test_identify_goal__quoted_task_title__does_not_become_an_unstated_date(
     ] == expected_dates
 
 
+def test_identify_goal__structured_task_date__preserves_explicit_field_role() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "새 할 일 생성",
+                "completion_conditions": ["할 일을 생성한다"],
+                "constraints": _goal_constraints(
+                    {"field": "title", "value": "구조화 입력"},
+                    {"field": "scheduled_date", "value": "2026-09-11"},
+                ),
+                "resource_responsibilities": _resource_responsibilities(
+                    output_type="TASK", output_effect="CREATE"
+                ),
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate = identify_goal(
+        llm_runtime=runtime,
+        request=_request(
+            'Google Tasks에 {"title": "구조화 입력", '
+            '"scheduled_date": "2026-09-11"}로 만들어줘.'
+        ),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    )
+
+    assert [
+        constraint["value"]
+        for constraint in candidate["constraints"]
+        if constraint["field"] == "scheduled_date"
+    ] == ["2026-09-11"]
+
+
 def test_identify_goal__with_unlisted_relative_date__preserves_date_outside_title() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
@@ -2325,7 +2397,7 @@ def test_identify_goal__with_unlisted_relative_date__preserves_date_outside_titl
                 "goal": "분기 정리 할 일 생성",
                 "completion_conditions": ["사흘 뒤 수행할 할 일을 생성한다"],
                 "constraints": _goal_constraints(
-                    {"kind": "RESOURCE", "field": "title", "value": "분기 정리"},
+                    {"field": "title", "value": "분기 정리"},
                     period=["사흘 뒤"],
                 ),
                 "resource_responsibilities": _resource_responsibilities(
@@ -2572,7 +2644,6 @@ def test_identify_goal__named_recipient_in_additional_constraints__rejects_outpu
                 "completion_conditions": ["답장을 보낸다"],
                 "constraints": _goal_constraints(
                     {
-                        "kind": "USER_REQUIREMENT",
                         "field": "recipient",
                         "value": ["qhdrbdhkdwks2@gmail.com"],
                     },
@@ -2601,7 +2672,7 @@ def test_identify_goal__repository_constraint_without_github_target__rejects_out
                 "goal": "선택한 할 일을 수정한다",
                 "completion_conditions": ["할 일 제목과 메모를 수정한다"],
                 "constraints": _goal_constraints(
-                    {"kind": "RESOURCE", "field": "repository", "value": "GWA E2E"}
+                    {"field": "repository", "value": "GWA E2E"}
                 ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="TASK",
@@ -2630,7 +2701,6 @@ def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> 
                 "completion_conditions": ["Issues are listed"],
                 "constraints": _goal_constraints(
                     {
-                        "kind": "RESOURCE",
                         "field": "repository",
                         "value": "openai/codex",
                         "provenance": {

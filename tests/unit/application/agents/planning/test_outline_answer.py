@@ -137,13 +137,19 @@ def test_outline_collection__allows_relevant_subset_and_order__without_rewriting
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         captured.update({"prompt_id": prompt_id, "prompt_input": dict(prompt_input)})
-        return {"sections": ["관련: C", "관련: A"], "evidence_refs": []}
+        return {"sections": ["관련: C", "관련: A"], "evidence_refs": ["e-c"]}
 
     result = outline_answer(
         user_request="관련된 제목만 중요도순으로 알려줘.",
         request_intent={"requested_effect_hints": ["READ"]},
         work_analysis=None,
-        evidence=[],
+        evidence=[
+            {
+                "evidence_id": "e-c",
+                "resource_handle": "gmail_thread:c",
+                "excerpt": "관련 제목 C",
+            }
+        ],
         retrieval_result={
             "collection_results": [
                 {
@@ -168,7 +174,7 @@ def test_outline_collection__allows_relevant_subset_and_order__without_rewriting
         "B",
         "C",
     ]
-    assert result == {"sections": ["관련: C", "관련: A"], "evidence_refs": []}
+    assert result == {"sections": ["관련: C", "관련: A"], "evidence_refs": ["e-c"]}
 
 
 def test_outline__does_not_replace__invalid_evidence_identity() -> None:

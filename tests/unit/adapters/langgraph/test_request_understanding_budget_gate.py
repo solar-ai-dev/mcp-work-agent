@@ -125,7 +125,7 @@ class _RepairingAgent:
                 "recipient": [],
                 "subject": [],
                 "period": [],
-                "coverage_requirement": [],
+                "coverage_requirement": "NOT_COLLECTION",
                 "additional_constraints": [],
             },
             "resource_responsibilities": {

@@ -205,7 +205,8 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_searchable_target_reclassified_as_user__contract_conflict__uses_bounded_revision() -> None:
+def test_detect_ambiguity__with_searchable_target_reclassified_as_user__uses_connector_owner(
+) -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -260,7 +261,7 @@ def test_searchable_target_reclassified_as_user__contract_conflict__uses_bounded
         "reason_codes": [],
         "missing_fields": [],
     }
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 1
     resolution = _call_input(runtime, 0)["resolution_responsibilities"]
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
@@ -271,10 +272,7 @@ def test_searchable_target_reclassified_as_user__contract_conflict__uses_bounded
     assert "requested_effect_hints" not in projected_candidate
     assert "requested_resource_hints" not in projected_candidate
     assert "analysis_requirement" not in projected_candidate
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
-    )
-    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+    assert budget["semantic_revisions_used_by_failure"] == {}
 
 
 def test_detect_ambiguity__rejects_fields__without_owner() -> None:
@@ -666,16 +664,12 @@ def test_unselected_calendar_event_identity__without_target_anchor__is_user_owne
     assert len(runtime.calls) == 1
 
 
-def test_searchable_calendar_event_identity__with_target_anchor__keeps_conflict() -> None:
+def test_searchable_calendar_event_identity__with_target_anchor__uses_connector_owner() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "missing_information_owner": "USER",
                 "missing_fields": ["event_identity"],
-            },
-            {
-                "missing_information_owner": "CONNECTOR",
-                "missing_fields": ["start"],
             },
         ]
     )
@@ -688,10 +682,7 @@ def test_searchable_calendar_event_identity__with_target_anchor__keeps_conflict(
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert len(runtime.calls) == 2
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
-    )
+    assert len(runtime.calls) == 1
 
 
 def test_selected_event_identity__with_resource__keeps_resolved_conflict() -> None:

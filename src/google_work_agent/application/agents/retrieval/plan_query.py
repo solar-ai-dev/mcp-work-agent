@@ -12,6 +12,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval import (
+    gmail_metadata_collection_is_answer_target as gmail_metadata_collection,
+)
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
     bind_required_container_constraints,
@@ -58,6 +61,10 @@ from google_work_agent.application.agents.retrieval.resolve_requested_gmail_conc
 )
 from google_work_agent.application.agents.retrieval.select_followup_routes import (
     select_followup_routes,
+)
+from google_work_agent.application.agents.task_calendar_draft_source import (
+    is_task_calendar_draft_source_target,
+    project_task_calendar_source_terms,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -168,6 +175,23 @@ def deterministic_initial_query_plan(
     )
     if calendar_plan is not None:
         return calendar_plan
+    gmail_collection_plan = _exact_gmail_metadata_collection_plan(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        route_policies=route_policies,
+        is_followup="current_round_no" in prompt_input,
+    )
+    if gmail_collection_plan is not None:
+        return gmail_collection_plan
+    cross_resource_plan = _exact_task_calendar_source_plan(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        route_policies=route_policies,
+        validated_container_refs=validated_container_refs,
+        is_followup="current_round_no" in prompt_input,
+    )
+    if cross_resource_plan is not None:
+        return cross_resource_plan
     return _exact_task_duplicate_check_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
@@ -175,6 +199,79 @@ def deterministic_initial_query_plan(
         validated_container_refs=validated_container_refs,
         is_followup="current_round_no" in prompt_input,
     )
+
+
+def _exact_gmail_metadata_collection_plan(
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    is_followup: bool,
+) -> RetrievalQueryPlanV2 | None:
+    """Use a bounded request-bound prefix for an exhaustive metadata collection."""
+
+    if is_followup or len(frozen_routes) != 1:
+        return None
+    route = frozen_routes[0]
+    request_intent = prompt_input.get("request_intent")
+    if (
+        route["resource_type"] != "GMAIL_THREAD"
+        or not route["required"]
+        or not isinstance(request_intent, Mapping)
+        or not gmail_metadata_collection.gmail_metadata_collection_is_answer_target(
+            cast(RequestIntentV2, request_intent)
+        )
+    ):
+        return None
+    policy = route_policies.get(route["route_id"])
+    if (
+        policy is None
+        or "KEYWORD" not in policy.supported_kinds
+        or route_operation_tool_id(route, "SEARCH") is None
+    ):
+        return None
+    terms = _user_bound_search_prefix(request_intent.get("constraints"))
+    if not terms:
+        return None
+    return {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": route["route_id"],
+                "operation": "SEARCH",
+                "reason_codes": ["EXHAUSTIVE_METADATA_COLLECTION_SEARCH"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {"kind": "KEYWORD", "terms": terms, "match_mode": "ALL"}
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+
+def _user_bound_search_prefix(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    tokens: list[str] = []
+    for constraint in value:
+        if (
+            not isinstance(constraint, Mapping)
+            or constraint.get("kind") != "USER_REQUIREMENT"
+            or constraint.get("field") != "search_terms"
+        ):
+            continue
+        provenance = constraint.get("provenance")
+        if not isinstance(provenance, Mapping) or provenance.get("source") != "USER_REQUEST":
+            continue
+        raw = constraint.get("value")
+        values = raw if isinstance(raw, list) else [raw]
+        for item in values:
+            if isinstance(item, str):
+                tokens.extend(part for part in item.split() if part)
+    return list(dict.fromkeys(tokens))[:2]
 
 
 def _exact_gmail_draft_source_plan(
@@ -248,6 +345,73 @@ def _one_user_bound_search_literal(value: object) -> str | None:
     return unique[0] if len(unique) == 1 else None
 
 
+def _exact_task_calendar_source_plan(
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    validated_container_refs: Mapping[str, Collection[str]] | None,
+    is_followup: bool,
+) -> RetrievalQueryPlanV2 | None:
+    """Read an explicitly named Task and Calendar source with its own lexical anchor."""
+
+    if is_followup or not frozen_routes:
+        return None
+    request_intent = prompt_input.get("request_intent")
+    if not isinstance(request_intent, Mapping):
+        return None
+    if not is_task_calendar_draft_source_target(request_intent):
+        return None
+    source_terms = project_task_calendar_source_terms(request_intent.get("constraints"))
+    if source_terms is None:
+        return None
+
+    route_queries: list[dict[str, object]] = []
+    for route in frozen_routes:
+        if route["resource_type"] not in {
+            "TASK",
+            "TASK_LIST",
+            "CALENDAR",
+            "CALENDAR_EVENT",
+        }:
+            return None
+        route_id = route["route_id"]
+        policy = route_policies.get(route_id)
+        container_refs = tuple((validated_container_refs or {}).get(route_id, ()))
+        if (
+            policy is None
+            or "CONTAINER_REF" not in policy.supported_kinds
+            or not container_refs
+            or route_operation_tool_id(route, "SEARCH") is None
+        ):
+            return None
+        constraints: list[dict[str, object]] = [
+            {"kind": "CONTAINER_REF", "container_refs": list(container_refs)}
+        ]
+        if route["resource_type"] == "CALENDAR_EVENT":
+            if "KEYWORD" not in policy.supported_kinds:
+                return None
+            constraints.insert(
+                0,
+                {
+                    "kind": "KEYWORD",
+                    "terms": source_terms["calendar_provider_terms"],
+                    "match_mode": "PHRASE",
+                },
+            )
+        route_queries.append(
+            {
+                "route_id": route_id,
+                "operation": "SEARCH",
+                "reason_codes": ["EXPLICIT_CROSS_RESOURCE_SEARCH"],
+                "search_spec": {"mode": "INITIAL", "constraints": constraints},
+                "detail_candidate_ref": None,
+            }
+        )
+    return cast(
+        RetrievalQueryPlanV2,
+        {"schema_version": 2, "route_queries": route_queries},
+    )
 def deterministic_query_plan(
     *,
     prompt_input: Mapping[str, object],
@@ -261,16 +425,8 @@ def deterministic_query_plan(
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
 ) -> RetrievalQueryPlanV2 | None:
-    """Project deterministic initial and candidate-detail continuations."""
+    """Project deterministic initial and evidence-expanding continuations."""
 
-    candidate_detail = plan_candidate_detail(
-        prompt_input=prompt_input,
-        frozen_routes=frozen_routes,
-        detail_candidate_refs=detail_candidate_refs,
-        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
-    )
-    if candidate_detail is not None:
-        return candidate_detail
     followup = plan_query_expansion(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
@@ -279,6 +435,14 @@ def deterministic_query_plan(
     )
     if followup is not None:
         return followup
+    candidate_detail = plan_candidate_detail(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        detail_candidate_refs=detail_candidate_refs,
+        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+    )
+    if candidate_detail is not None:
+        return candidate_detail
     return deterministic_initial_query_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,

@@ -16,6 +16,7 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 )
 from google_work_agent.application.agents.planning.project_retrieval_collections import (
     project_retrieval_collections,
+    retrieval_collections_are_answer_target,
 )
 from google_work_agent.application.agents.planning.project_task_read_answer import (
     project_task_read_answer,
@@ -139,7 +140,11 @@ def outline_answer(
         for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
             if key in retrieval_result:
                 prompt_input[key] = deepcopy(retrieval_result[key])
-        if "collection_results" in retrieval_result:
+        if "collection_results" in retrieval_result and retrieval_collections_are_answer_target(
+            request_intent=request_intent,
+            evidence=evidence,
+            retrieval_result=retrieval_result,
+        ):
             prompt_input["collection_results"] = project_retrieval_collections(retrieval_result)
     task_projection = project_task_read_answer(
         user_request=user_request,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import cast
@@ -12,6 +11,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     SOURCE_STATUS_VALUES_BY_RESOURCE,
     WRITE_EFFECT_RESOURCE_TYPES,
     ActionEffectValue,
+    ConstraintKindValue,
     ConstraintProvenanceSource,
     ConstraintV1,
     RequestGoalCandidateV1,
@@ -45,6 +45,15 @@ _MODEL_CONSTRAINT_SLOT_KINDS = {
     for field, kind in REQUEST_GOAL_SLOT_KINDS.items()
     if field not in {"required_information", "status"}
 }
+_ADDITIONAL_CONSTRAINT_FIELD_KINDS = {
+    "date": "DATE",
+    "description": "RESOURCE",
+    "due": "DATE",
+    "notes": "RESOURCE",
+    "repository": "RESOURCE",
+    "scheduled_date": "DATE",
+    "title": "RESOURCE",
+}
 _NONEMPTY_CONSTRAINT_VALUE_SCHEMA = {
     "type": "string",
     "minLength": 1,
@@ -71,20 +80,15 @@ for _field, _description in {
     "recipient": "누가 받았는지 명시된 경우만 두고 본문에 등장하는 사람과 구분한다.",
     "subject": "사용자가 제목이라고 명시한 값만 둔다. 추정 제목을 만들지 않는다.",
     "period": "날짜가 제한하는 대상의 원문 기간을 보존하고 시간축이나 연도를 추측하지 않는다.",
-    "coverage_requirement": (
-        "요청한 collection 범위의 모든 항목을 확인해야 완료되는 경우에만 EXHAUSTIVE를 둔다."
-    ),
 }.items():
     cast(dict[str, object], _NAMED_SEARCH_CONSTRAINT_PROPERTIES[_field])["description"] = (
         _description
     )
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES["coverage_requirement"] = {
-    "type": "array",
-    "maxItems": 1,
-    "uniqueItems": True,
-    "items": {"const": "EXHAUSTIVE"},
+    "enum": ["ALL_ITEMS", "LIMITED_ITEMS", "NOT_COLLECTION"],
     "description": (
-        "모든 항목 확인이 완료 조건이면 EXHAUSTIVE 하나를, 아니면 빈 배열을 둔다."
+        "collection 전체가 답변 대상이면 ALL_ITEMS, 제한된 일부 항목이 대상이면 "
+        "LIMITED_ITEMS, collection 요청이 아니면 NOT_COLLECTION을 둔다."
     ),
 }
 
@@ -185,20 +189,31 @@ _CONSTRAINT_LIST_SCHEMA = {
         },
     },
 }
-_ADDITIONAL_CONSTRAINT_LIST_SCHEMA = deepcopy(_CONSTRAINT_LIST_SCHEMA)
-_additional_items = cast(dict[str, object], _ADDITIONAL_CONSTRAINT_LIST_SCHEMA["items"])
-_additional_properties = cast(dict[str, object], _additional_items["properties"])
-_additional_properties.pop("source_resource_type")
-_additional_properties.pop("provenance")
-_additional_field = cast(dict[str, object], _additional_properties["field"])
-_additional_field["pattern"] = (
-    r"^(?!(?:"
-    + "|".join(re.escape(field) for field in sorted(REQUEST_GOAL_SLOT_KINDS))
-    + r")$).+$"
-)
-_additional_field["description"] = (
-    "명명된 검색 슬롯 밖의 명시적 실행 필드. 예약 슬롯 이름은 허용하지 않는다."
-)
+_ADDITIONAL_CONSTRAINT_LIST_SCHEMA = {
+    "type": "array",
+    "maxItems": 8,
+    "items": {
+        "type": "object",
+        "required": ["field", "value"],
+        "additionalProperties": False,
+        "properties": {
+            "field": {
+                "enum": sorted(_ADDITIONAL_CONSTRAINT_FIELD_KINDS),
+                "description": "제품이 지원하는 명시적 실행 필드 하나를 선택한다.",
+            },
+            "value": {
+                "oneOf": [
+                    dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+                    {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+                    },
+                ]
+            },
+        },
+    },
+}
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = (
     _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
 )
@@ -291,7 +306,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v15",
+    schema_version="request-goal-candidate-v16",
     json_schema={
         "type": "object",
         "required": [
@@ -372,16 +387,28 @@ def validate_request_goal_candidate(
     effects, resources, source_information = derive_requested_resource_fields(
         normalized_responsibilities
     )
-    additional = cast(list[object], slots["additional_constraints"])
-    reserved_additional_fields = [
-        str(cast(dict[str, object], constraint)["field"])
-        for constraint in additional
-        if str(cast(dict[str, object], constraint)["field"]) in REQUEST_GOAL_SLOT_KINDS
-    ]
-    if reserved_additional_fields:
-        raise ValueError(
-            "request goal candidate is invalid: additional constraint uses reserved field"
+    raw_additional = cast(list[Mapping[str, object]], slots["additional_constraints"])
+    try:
+        additional = cast(
+            list[ConstraintV1],
+            [
+                {
+                    "kind": cast(
+                        ConstraintKindValue,
+                        _ADDITIONAL_CONSTRAINT_FIELD_KINDS[
+                            cast(str, constraint["field"])
+                        ],
+                    ),
+                    "field": cast(str, constraint["field"]),
+                    "value": cast(str | list[str], constraint["value"]),
+                }
+                for constraint in raw_additional
+            ],
         )
+    except KeyError as error:
+        raise ValueError(
+            "request goal candidate is invalid: unsupported additional constraint field"
+        ) from error
     normalized_constraints = cast(
         list[ConstraintV1],
         [
@@ -395,9 +422,19 @@ def validate_request_goal_candidate(
                 ),
             }
             for field, values in slots.items()
-            if field in _MODEL_CONSTRAINT_SLOT_KINDS and values
+            if field in _MODEL_CONSTRAINT_SLOT_KINDS
+            and field != "coverage_requirement"
+            and values
         ],
     )
+    if slots["coverage_requirement"] == "ALL_ITEMS":
+        normalized_constraints.append(
+            {
+                "kind": "SCOPE",
+                "field": "coverage_requirement",
+                "value": "EXHAUSTIVE",
+            }
+        )
     if source_information:
         normalized_constraints.append(
             {
@@ -525,6 +562,8 @@ def _validate_semantic_constraint_text(
     slots: Mapping[str, object],
 ) -> None:
     for field in _MODEL_CONSTRAINT_SLOT_KINDS:
+        if field == "coverage_requirement":
+            continue
         values = cast(list[str], slots[field])
         for index, text_value in enumerate(values):
             _require_semantic_text(text_value, f"$.constraints.{field}[{index}]")

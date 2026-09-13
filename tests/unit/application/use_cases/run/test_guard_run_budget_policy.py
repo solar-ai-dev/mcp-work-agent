@@ -210,7 +210,7 @@ def test_revision_and_retrieval__retain_profile_observation_and__absolute_hard_l
     )
 
 
-def test_previous_24_call_budget__canonicalizes_to__100_through_merge_and_promotion() -> None:
+def test_guard_run_budget_policy__with_previous_24_call_budget__canonicalizes_to_100() -> None:
     current = validate_run_budget_v2(
         {
             **build_default_run_budget(),

@@ -5,6 +5,7 @@ import pytest
 
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     compose_arguments_per_output_route,
+    requires_argument_inference,
     tool_argument_candidate_output_schema,
 )
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
@@ -455,7 +456,7 @@ def test_source_derived_task_create__with_evidence__uses_semantic_argument_compo
         bound_tool_schemas=[bound],
         request_intent=request_intent,
         evidence=[{"evidence_ref": "mail-1", "origin_type": "CONNECTOR_READ"}],
-        invoke=invoke,
+        invoke=cast(PlanningSemanticInvoker, invoke),
     )
 
     assert calls == ["planning.compose_arguments_per_output_route"]
@@ -617,6 +618,110 @@ def test_bound_repository__frozen_resource_identity__cannot_change() -> None:
             evidence=[{"evidence_ref": "e1"}],
             invoke=lambda *_: {},
         )
+
+
+def test_compose_arguments_per_output_route__with_task_calendar_evidence__materializes_preview(
+) -> None:
+    route = {
+        "route_id": "draft-route",
+        "resource_type": "GMAIL_DRAFT",
+        "connector_id": "google_workspace",
+        "effect": "CREATE",
+        "selected_tool_id": "gmail_create_draft",
+        "reason_codes": [],
+    }
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {
+            **route,
+            "schema_version": 1,
+            "argument_schema": planning_tool_argument_schema("gmail_create_draft"),
+            "immutable_arguments": {},
+        },
+    )
+    intent = {
+        "ambiguity": {"requires_confirmation": False},
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": "Orion",
+                "provenance": {"source": "USER_REQUEST", "start_offset": 0},
+            },
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": "제작소 일정",
+                "provenance": {"source": "USER_REQUEST", "start_offset": 7},
+            },
+            {"kind": "PERSON", "field": "recipient", "value": "owner@example.com"},
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "original_search_request",
+                "value": ["Orion 준비 상황을 메일 초안으로 저장해줘."],
+            },
+        ],
+        "resource_responsibilities": {
+            "source_reads": [
+                {"resource_type": "TASK", "required_information": ["title", "status"]},
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["title", "start", "end"],
+                },
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        },
+    }
+    evidence = [
+        {
+            "evidence_id": "e-task",
+            "resource_handle": "task:t1",
+            "excerpt": (
+                "title: Orion QR 문구 확정\nstatus: needsAction\n"
+                "due: 2026-09-16T00:00:00Z\nnotes:\n담당 수진"
+            ),
+        },
+        {
+            "evidence_id": "e-event",
+            "resource_handle": "calendar_event:e1",
+            "excerpt": (
+                "title: Orion 제작소 일정\nstart: 2026-09-13T14:00:00+09:00\n"
+                "end: 2026-09-13T15:00:00+09:00\nstatus: confirmed"
+            ),
+        },
+        {"evidence_id": "user-message", "origin_type": "USER_MESSAGE"},
+    ]
+    objective = {
+        "schema_version": 1,
+        "route_id": "draft-route",
+        "objective": "Create grounded draft",
+        "target_semantics": "GMAIL_DRAFT",
+        "scope_constraints": ["DO_NOT_SEND"],
+        "evidence_refs": ["e-task", "e-event", "user-message"],
+    }
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, _input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        return {}
+
+    result = compose_arguments_per_output_route(
+        [route],
+        objectives=[cast(ActionObjectiveCandidateV1, objective)],
+        bound_tool_schemas=[bound],
+        request_intent=intent,
+        evidence=evidence,
+        invoke=cast(PlanningSemanticInvoker, invoke),
+    )[0]
+
+    payload = cast(dict[str, object], result["arguments"]["payload"])
+    assert calls == []
+    assert payload["to"] == ["owner@example.com"]
+    assert "상태: 진행 중 (needsAction)" in str(payload["body"])
+    assert "상태: 확정 (confirmed)" in str(payload["body"])
+    assert "2026-09-13T14:00+09:00" in str(payload["body"])
+    assert result["evidence_refs"] == ["e-task", "e-event", "user-message"]
+    assert not requires_argument_inference(route, request_intent=intent, evidence=evidence)
 
 
 def _github_route(tool_id: str, effect: str) -> dict[str, object]:

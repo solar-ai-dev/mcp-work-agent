@@ -65,7 +65,10 @@ from .identify_output_responsibilities import (
 from .identify_source_dependencies import identify_source_dependencies
 from .identify_source_status import identify_source_status
 from .merge_resource_responsibilities import merge_resource_responsibilities
-from .preserve_explicit_search_anchors import preserve_explicit_search_anchors
+from .preserve_explicit_search_anchors import (
+    preserve_explicit_search_anchors,
+    project_extractive_source_goal,
+)
 
 
 def identify_goal(
@@ -131,7 +134,10 @@ def identify_goal(
         requested_mode=request.requested_mode,
         prompt_ref=resolved_source_dependency_prompt_ref,
         prompt_input=prompt_input,
-        goal_candidate=result.structured_output,
+        goal_candidate=project_extractive_source_goal(
+            result.structured_output,
+            request_text=request.request_text,
+        ),
         source_candidates=source_dependency_candidates,
     )
     output_decisions = identify_output_responsibilities(
@@ -148,6 +154,7 @@ def identify_goal(
         output_decisions=output_decisions,
         source_candidates=source_dependency_candidates,
         output_candidates=output_responsibility_candidates,
+        request_text=request.request_text,
     )
     source_status_output = identify_source_status(
         llm_runtime=llm_runtime,
@@ -234,7 +241,10 @@ def identify_goal_with_budget(
             requested_mode=request.requested_mode,
             prompt_ref=resolved_source_dependency_prompt_ref,
             prompt_input=prompt_input,
-            goal_candidate=goal_output,
+            goal_candidate=project_extractive_source_goal(
+                goal_output,
+                request_text=request.request_text,
+            ),
             source_candidates=source_dependency_candidates,
         )
         try:
@@ -281,6 +291,7 @@ def identify_goal_with_budget(
             output_decisions=output_output,
             source_candidates=source_dependency_candidates,
             output_candidates=output_responsibility_candidates,
+            request_text=request.request_text,
         )
         source_status_output = identify_source_status(
             llm_runtime=llm_runtime,
@@ -321,7 +332,10 @@ def identify_goal_with_budget(
                     requested_mode=request.requested_mode,
                     prompt_ref=resolved_source_dependency_prompt_ref,
                     prompt_input=prompt_input,
-                    goal_candidate=goal_output,
+                    goal_candidate=project_extractive_source_goal(
+                        goal_output,
+                        request_text=request.request_text,
+                    ),
                     source_candidates=source_dependency_candidates,
                     candidate_output=source_output,
                     failure_record=failure_record,
@@ -331,6 +345,7 @@ def identify_goal_with_budget(
                     output_decisions=output_output,
                     source_candidates=source_dependency_candidates,
                     output_candidates=output_responsibility_candidates,
+                    request_text=request.request_text,
                 )
                 source_status_output = identify_source_status(
                     llm_runtime=llm_runtime,
@@ -473,6 +488,9 @@ def _apply_quoted_literal_authority(
         or (
             not _date_value_appears_in_text(constraint["value"], quoted_text)
             or _date_value_appears_in_text(constraint["value"], outside_literals)
+            or _has_explicit_date_field_role(
+                field=constraint["field"], request_text=request_text
+            )
         )
     ]
     responsibilities = candidate["resource_responsibilities"]
@@ -514,6 +532,15 @@ def _date_value_appears_in_text(value: object, text: str) -> bool:
         if token.search(text):
             return True
     return False
+
+
+def _has_explicit_date_field_role(*, field: str, request_text: str) -> bool:
+    patterns = {
+        "scheduled_date": r"(?<![A-Za-z0-9_])scheduled_date(?![A-Za-z0-9_])|예정일",
+        "due": r"(?<![A-Za-z0-9_])due(?![A-Za-z0-9_])|마감일|기한",
+    }
+    pattern = patterns.get(field)
+    return pattern is not None and re.search(pattern, request_text, re.IGNORECASE) is not None
 
 
 def _apply_selected_resource_authority(

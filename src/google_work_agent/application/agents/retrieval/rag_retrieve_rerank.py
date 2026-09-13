@@ -17,6 +17,10 @@ from google_work_agent.application.agents.retrieval.match_temporal_evidence impo
     match_temporal_evidence,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
+from google_work_agent.application.agents.task_calendar_draft_source import (
+    is_task_calendar_draft_source_target,
+    project_task_calendar_source_terms,
+)
 
 
 class RagCandidateV1(TypedDict):
@@ -51,6 +55,11 @@ def rag_retrieve_rerank(
     """Deterministically score, deduplicate, rank, and bound normalized segments."""
     selected = _selected_resource_ids(request_intent)
     terms = _query_terms(request_intent)
+    task_calendar_terms = (
+        project_task_calendar_source_terms(request_intent.get("constraints"))
+        if is_task_calendar_draft_source_target(request_intent)
+        else None
+    )
     scored: list[tuple[SourceSegment, float, list[str]]] = []
     seen: set[str] = set()
     for segment in segments:
@@ -69,6 +78,19 @@ def rag_retrieve_rerank(
         if matched:
             score += min(config.keyword_max_score, matched * config.keyword_score_per_term)
             reasons.append("KEYWORD_MATCH")
+        if task_calendar_terms is not None:
+            source_terms = (
+                task_calendar_terms["task_terms"]
+                if segment.resource_type == "task"
+                else task_calendar_terms["calendar_evidence_terms"]
+                if segment.resource_type == "calendar_event"
+                else []
+            )
+            if source_terms and all(
+                term.casefold() in segment.text.casefold() for term in source_terms
+            ):
+                score += config.keyword_max_score
+                reasons.append("EXPLICIT_SOURCE_ANCHOR_MATCH")
         semantic_reasons = _semantic_match_reasons(segment, source_plans, request_intent)
         score += len(semantic_reasons) * config.keyword_score_per_term
         reasons.extend(semantic_reasons)

@@ -476,6 +476,7 @@ class PlanningSubgraph:
                     if isinstance(request_intent, Mapping)
                     else None
                 ),
+                evidence=cast(list[Mapping[str, object]], working.get("evidence", [])),
             )
             for route in typed_routes
         )

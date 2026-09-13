@@ -331,7 +331,7 @@ def test_approved_write_executes__claims_and_verifies__through_real_mcp(
     assert "work_analysis.extract_work_facts" in invoked
     assert "work_analysis.assess_requested_task_satisfaction" in invoked
     assert "review.inspect_action_scope_and_route" in invoked
-    assert "review.inspect_constraints_and_policy_summary" in invoked
+    assert "review.inspect_constraints_and_policy_summary" not in invoked
 
 
 @pytest.mark.parametrize(

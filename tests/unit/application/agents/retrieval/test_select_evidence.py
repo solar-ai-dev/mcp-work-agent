@@ -55,6 +55,96 @@ def test_evidence_selection__no_candidates__does_not_invoke_model() -> None:
     assert runtime.calls == []
 
 
+def test_select_evidence__with_task_calendar_draft_sources__selects_exact_anchors() -> None:
+    runtime = FakeLLMRuntime(deque())
+    intent = request_intent()
+    intent["requested_effect_hints"] = ["READ", "CREATE"]
+    intent["requested_resource_hints"] = ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"]
+    intent["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": "Orion",
+            "provenance": {"source": "USER_REQUEST", "start_offset": 0, "end_offset": 5},
+        },
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": "제작사 일정 일정",
+            "provenance": {"source": "USER_REQUEST", "start_offset": 11, "end_offset": 20},
+        },
+    ]
+    intent["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": "TASK", "required_information": ["title", "due"]},
+            {"resource_type": "CALENDAR_EVENT", "required_information": ["title", "start"]},
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+    }
+    segments = [
+        SourceSegment("task-1", "task:1", "TASKS", "task", "1", None, None, {}, "Orion 문구 확정"),
+        SourceSegment("task-2", "task:2", "TASKS", "task", "2", None, None, {}, "Orion 포장 확인"),
+        SourceSegment(
+            "task-other",
+            "task:3",
+            "TASKS",
+            "task",
+            "3",
+            None,
+            None,
+            {},
+            "Solstice 포장 확인",
+        ),
+        SourceSegment(
+            "event-1",
+            "calendar_event:1",
+            "CALENDAR",
+            "calendar_event",
+            "1",
+            None,
+            None,
+            {},
+            "Orion 제작사 슬롯",
+        ),
+        SourceSegment(
+            "event-other",
+            "calendar_event:2",
+            "CALENDAR",
+            "calendar_event",
+            "2",
+            None,
+            None,
+            {},
+            "Solstice 제작사 슬롯",
+        ),
+    ]
+    candidates = [
+        {
+            "segment_id": segment.segment_id,
+            "resource_ref": segment.resource_handle,
+            "retrieval_score": 15.0,
+            "reason_codes": ["KEYWORD_MATCH"],
+        }
+        for segment in segments
+    ]
+
+    result, _ = select_evidence(
+        llm_runtime=runtime,
+        prompt_ref=SELECT_PROMPT_REF,
+        revision_prompt_ref=SELECT_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        rag_candidates=cast(list[RagCandidateV1], candidates),
+        segments=segments,
+        retry_budget=run_budget(used=0),
+    )
+
+    assert result["selected_segment_ids"] == ["task-1", "task-2", "event-1"]
+    assert result["excluded_segment_ids"] == ["task-other", "event-other"]
+    assert {item["role"] for item in result["evidence_drafts"]} == {"SUPPORTS"}
+    assert runtime.calls == []
+
+
 def test_search_candidate__metadata_only__is_context_not_a_business_fact() -> None:
     intent = request_intent()
     intent["analysis_requirement"] = "NONE"

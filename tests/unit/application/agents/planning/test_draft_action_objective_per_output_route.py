@@ -320,6 +320,40 @@ def test_source_derived_task_create__with_evidence__uses_semantic_objective_infe
     assert result[0]["evidence_refs"] == ["mail-1"]
 
 
+def test_draft_action_objective_per_output_route__with_task_calendar_sources__returns_objective(
+) -> None:
+    route = {
+        "route_id": "draft-route",
+        "resource_type": "GMAIL_DRAFT",
+        "effect": "CREATE",
+        "selected_tool_id": "gmail_create_draft",
+    }
+    intent = {
+        "ambiguity": {"requires_confirmation": False},
+        "resource_responsibilities": {
+            "source_reads": [
+                {"resource_type": "TASK", "required_information": ["title"]},
+                {"resource_type": "CALENDAR_EVENT", "required_information": ["start"]},
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        },
+    }
+
+    result = draft_action_objective_per_output_route(
+        [route],
+        user_request="Create a grounded draft",
+        request_intent=intent,
+        work_analysis=None,
+        evidence=[{"evidence_id": "task"}, {"evidence_id": "event"}],
+        invoke=lambda *_: (_ for _ in ()).throw(AssertionError("LLM must be skipped")),
+    )
+
+    assert result[0]["target_semantics"] == "GMAIL_DRAFT"
+    assert result[0]["scope_constraints"] == ["CREATE_DRAFT_ONLY", "DO_NOT_SEND"]
+    assert result[0]["evidence_refs"] == ["task", "event"]
+    assert not requires_objective_inference(route, request_intent=intent)
+
+
 def test_calendar_create_objective__avoids_repeating__semantic_field_alias_work() -> None:
     result = draft_action_objective_per_output_route(
         [

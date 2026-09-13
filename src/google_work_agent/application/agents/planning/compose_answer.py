@@ -16,8 +16,12 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.planning.normalize_generated_answer_prose import (
     normalize_generated_answer_prose,
 )
+from google_work_agent.application.agents.planning.project_calendar_event_read_answer import (
+    project_calendar_event_read_answer,
+)
 from google_work_agent.application.agents.planning.project_retrieval_collections import (
     project_retrieval_collections,
+    retrieval_collections_are_answer_target,
 )
 from google_work_agent.application.agents.planning.project_task_read_answer import (
     project_task_read_answer,
@@ -237,12 +241,29 @@ def compose_answer(
         for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
             if key in retrieval_result:
                 prompt_input[key] = deepcopy(retrieval_result[key])
-        if "collection_results" in retrieval_result:
+        if "collection_results" in retrieval_result and retrieval_collections_are_answer_target(
+            request_intent=request_intent,
+            evidence=approved_evidence,
+            retrieval_result=retrieval_result,
+        ):
             prompt_input["collection_results"] = project_retrieval_collections(retrieval_result)
     if work_analysis is not None:
         prompt_input["work_analysis"] = dict(work_analysis)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    calendar_projection = project_calendar_event_read_answer(
+        user_request=user_request,
+        request_intent=request_intent,
+        evidence=evidence,
+    )
+    if calendar_projection is not None:
+        if not set(calendar_projection.draft["evidence_refs"]).issubset(approved_refs):
+            raise _ComposeAnswerValidationError(
+                "calendar event read answer references evidence outside its approved outline",
+                reason_code="COMPOSE_ANSWER_EVIDENCE_SCOPE_INVALID",
+                field_path="$.evidence_refs",
+            )
+        return _with_partial_scope(calendar_projection.draft, retrieval_result)
     task_projection = project_task_read_answer(
         user_request=user_request,
         request_intent=request_intent,

@@ -5,6 +5,42 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 
+def retrieval_collections_are_answer_target(
+    *,
+    request_intent: Mapping[str, object],
+    evidence: Sequence[Mapping[str, object]],
+    retrieval_result: Mapping[str, object],
+) -> bool:
+    """Keep collection metadata only when typed intent or selected evidence targets it."""
+    constraints = request_intent.get("constraints", [])
+    if isinstance(constraints, list) and any(
+        isinstance(item, Mapping)
+        and item.get("kind") == "SCOPE"
+        and item.get("field") == "coverage_requirement"
+        and item.get("value") == "EXHAUSTIVE"
+        for item in constraints
+    ):
+        return True
+
+    selected_handles = {
+        handle
+        for item in evidence
+        if isinstance((handle := item.get("resource_handle")), str) and handle
+    }
+    if not selected_handles:
+        return False
+    collection_handles = {
+        handle
+        for result in _mappings(retrieval_result.get("collection_results"))
+        for item in _mappings(result.get("items"))
+        if isinstance(
+            (handle := item.get("resource_handle") or item.get("resource_ref")), str
+        )
+        and handle
+    }
+    return bool(selected_handles & collection_handles)
+
+
 def project_retrieval_collections(
     retrieval_result: Mapping[str, object],
 ) -> list[dict[str, object]]:
@@ -44,4 +80,10 @@ def project_retrieval_collections(
     return projected
 
 
-__all__ = ["project_retrieval_collections"]
+def _mappings(value: object) -> list[Mapping[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
+
+
+__all__ = ["project_retrieval_collections", "retrieval_collections_are_answer_target"]

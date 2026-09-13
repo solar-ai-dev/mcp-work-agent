@@ -128,7 +128,7 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
                 "recipient": [],
                 "subject": [],
                 "period": [],
-                "coverage_requirement": ["EXHAUSTIVE"],
+                "coverage_requirement": "ALL_ITEMS",
                 "additional_constraints": [],
             },
         },
@@ -143,7 +143,7 @@ def test_identify_goal_output__keeps_contract_shape__without_business_literals()
             {
                 "kind": "SCOPE",
                 "field": "coverage_requirement",
-                "coverage_requirement": ["EXHAUSTIVE"],
+                "coverage_requirement": ["ALL_ITEMS"],
             },
         ],
     }
@@ -336,7 +336,7 @@ def test_atomic_responsibility_inputs__show_bounded_candidates__without_literals
                 "subject": [],
                 "period": [],
                 "status": [],
-                "coverage_requirement": [],
+                "coverage_requirement": "NOT_COLLECTION",
                 "additional_constraints": [],
             },
         },

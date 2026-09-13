@@ -207,7 +207,7 @@ def test_update_blocks_when_evidence__is_not_tied_to__exact_current_run_target()
     assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
 
 
-def test_update_blocks_when_llm_selects_one_of_multiple_discovered_targets() -> None:
+def test_validate_plan_for_publication__with_one_of_multiple_llm_targets__blocks_update() -> None:
     result = _call(
         _task_update_plan(),
         evidence=[
@@ -240,7 +240,7 @@ def test_update_blocks_when_llm_selects_one_of_multiple_discovered_targets() -> 
     assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
 
 
-def test_update_accepts_selected_stable_target_among_multiple_discovered_resources() -> None:
+def test_validate_plan_for_publication__with_selected_stable_target__accepts_update() -> None:
     result = _call(
         _task_update_plan(),
         evidence=[

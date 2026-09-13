@@ -108,3 +108,54 @@ def test_atomic_decisions__after_validation__merge_to_canonical_contract(
     assert [
         (item["resource_type"], item["effect"]) for item in merged["outputs"]
     ] == expected_outputs
+
+
+def test_merge_resource_responsibilities__with_explicit_item_sources__restores_child_sources(
+) -> None:
+    merged = responsibility_merge.merge_resource_responsibilities(
+        source_decisions=_source(
+            values={
+                "GMAIL_DRAFT": ["body"],
+                "TASK_LIST": ["task_list_title"],
+                "CALENDAR": ["calendar_identity"],
+                "CALENDAR_EVENT": ["start", "end"],
+            }
+        ),
+        output_decisions=_output(values={"GMAIL_DRAFT": "CREATE"}),
+        source_candidates=_SOURCE_CANDIDATES,
+        output_candidates=_OUTPUT_CANDIDATES,
+        request_text=(
+            "Orion 할 일과 인쇄소 일정 보고 담당자에게 준비 상황을 알릴 메일을 "
+            "Gmail 임시보관함에 저장해줘."
+        ),
+    )
+
+    assert [item["resource_type"] for item in merged["source_reads"]] == [
+        "TASK",
+        "CALENDAR_EVENT",
+    ]
+    assert merged["outputs"] == [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]
+
+
+def test_merge_resource_responsibilities__with_explicit_mail_fact_source__preserves_source(
+) -> None:
+    merged = responsibility_merge.merge_resource_responsibilities(
+        source_decisions=_source(),
+        output_decisions=_output(),
+        source_candidates=_SOURCE_CANDIDATES,
+        output_candidates=_OUTPUT_CANDIDATES,
+        request_text="메일에 나온 Orion 출고 기준과 담당을 확인해줘.",
+    )
+
+    assert merged["source_reads"] == [
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": [
+                "thread_identity",
+                "subject",
+                "participants",
+                "message_history",
+                "timestamps",
+            ],
+        }
+    ]

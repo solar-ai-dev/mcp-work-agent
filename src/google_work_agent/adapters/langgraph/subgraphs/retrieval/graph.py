@@ -966,6 +966,7 @@ class RetrievalSubgraph:
             person_candidates=state.get("person_candidates", []),
             selected_person_identities=state.get("selected_person_identities"),
             query_attempts=state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+            read_result_summaries=self._bounded_read_result_summaries(state),
         )
         if deterministic is not None:
             return (

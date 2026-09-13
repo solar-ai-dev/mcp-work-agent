@@ -315,15 +315,12 @@ def _validate_ambiguity_candidate(
         and _searchable_target_anchor_count(goal_candidate) > 0
         and _connector_owned_source_count(goal_candidate) > 0
     ):
-        raise RequestAmbiguityValidationError(
-            "searchable connector target was reclassified as a user-owned identity choice",
-            reason_code="REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT",
-            affected_field_paths=(
-                "$.missing_information_owner",
-                "$.missing_fields",
-                "$.goal_candidate.constraints",
-                "$.goal_candidate.resource_responsibilities.source_reads",
-            ),
+        return cast(
+            AmbiguityCandidateV2,
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": list(missing_fields),
+            },
         )
     return cast(
         AmbiguityCandidateV2,

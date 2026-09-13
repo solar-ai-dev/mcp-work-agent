@@ -20,6 +20,9 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     PlanningSemanticInvoker,
     ToolArgumentCandidateV1,
 )
+from google_work_agent.application.agents.planning.materialize_task_calendar_draft_payload import (
+    materialize_task_calendar_draft_payload,
+)
 from google_work_agent.application.agents.planning.materialize_task_create_payload import (
     materialize_task_create_payload,
 )
@@ -187,6 +190,7 @@ def compose_arguments_per_output_route(
                 request_intent=request_intent,
                 allowed_refs=allowed_refs,
                 objective=objective,
+                evidence=evidence,
             )
         )
         if candidate is None:
@@ -331,9 +335,19 @@ def _restore_exact_argument_literals(value: object, *, source_texts: Sequence[st
 
 
 def requires_argument_inference(
-    route: Mapping[str, object], *, request_intent: Mapping[str, object] | None
+    route: Mapping[str, object],
+    *,
+    request_intent: Mapping[str, object] | None,
+    evidence: Sequence[Mapping[str, object]] = (),
 ) -> bool:
-    return _deterministic_create_payload(route=route, request_intent=request_intent) is None
+    return (
+        materialize_task_calendar_draft_payload(
+            route=route,
+            request_intent=request_intent,
+            evidence=evidence,
+        )
+        or _deterministic_create_payload(route=route, request_intent=request_intent)
+    ) is None
 
 
 def _selected_github_target_evidence_refs(
@@ -390,8 +404,13 @@ def _deterministic_argument_candidate(
     request_intent: Mapping[str, object] | None,
     allowed_refs: set[str],
     objective: ActionObjectiveCandidateV1,
+    evidence: Sequence[Mapping[str, object]],
 ) -> ToolArgumentCandidateV1 | None:
-    payload = _deterministic_create_payload(route=route, request_intent=request_intent)
+    payload = materialize_task_calendar_draft_payload(
+        route=route,
+        request_intent=request_intent,
+        evidence=evidence,
+    ) or _deterministic_create_payload(route=route, request_intent=request_intent)
     route_id = route.get("route_id")
     if payload is None or not isinstance(route_id, str):
         return None

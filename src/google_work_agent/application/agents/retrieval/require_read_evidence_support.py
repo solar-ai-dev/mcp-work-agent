@@ -31,7 +31,6 @@ def require_read_evidence_support(
         result["status"] != "SUFFICIENT"
         or set(request_intent["requested_effect_hints"]) != {"READ"}
         or tool_route_plan is None
-        or not evidence_drafts
         or any(
             {"SUPPORTS", "CONTRADICTS"}.intersection(draft["reason_codes"])
             for draft in evidence_drafts

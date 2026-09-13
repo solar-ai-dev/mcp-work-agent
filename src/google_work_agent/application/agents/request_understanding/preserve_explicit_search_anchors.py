@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from copy import deepcopy
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     ConstraintV1,
@@ -47,7 +49,7 @@ _EXPLICIT_GMAIL_DRAFT_ID_PATTERN = re.compile(
     r"(?P<draft_id>[A-Za-z0-9_-]{3,256})"
 )
 _SOURCE_OWNED_FIELDS = frozenset(
-    {"search_terms", "person", "sender", "recipient", "subject"}
+    {"search_terms", "business_concepts", "person", "sender", "recipient", "subject"}
 )
 _GMAIL_SOURCE_RESOURCE_HINTS = frozenset(
     {"GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
@@ -68,6 +70,54 @@ _GMAIL_SOURCE_SEARCH_FIELDS = frozenset(
         "status",
     }
 )
+_EXPLICIT_GMAIL_STATUS_PATTERNS = {
+    "DRAFT": re.compile(r"임시\s*보관함|초안|(?i:\bdrafts?\b)"),
+    "SENT": re.compile(
+        r"보낸\s*(?:편지함|메일|이메일)|보내(?:진|어진)\s*(?:메일|이메일)|발신함"
+        r"|(?i:\bsent(?:\s+(?:mail|messages?|emails?))?\b)"
+    ),
+}
+_GMAIL_STATUS_ALIASES = {
+    "초안": "DRAFT",
+    "임시보관함": "DRAFT",
+    "임시 보관함": "DRAFT",
+    "보낸편지함": "SENT",
+    "보낸 편지함": "SENT",
+    "보낸 메일": "SENT",
+    "보낸 이메일": "SENT",
+    "발신함": "SENT",
+}
+
+
+def project_extractive_source_goal(
+    value: object,
+    *,
+    request_text: str,
+) -> dict[str, object]:
+    """Project only request-bound meaning into atomic source selection."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("source goal projection requires an object")
+    projected = deepcopy(dict(value))
+    projected["goal"] = request_text
+    projected["completion_conditions"] = []
+    raw_constraints = projected.get("constraints")
+    if not isinstance(raw_constraints, Mapping):
+        return projected
+    constraints = dict(raw_constraints)
+    for field in _SOURCE_OWNED_FIELDS:
+        raw_values = constraints.get(field)
+        if not isinstance(raw_values, list):
+            continue
+        constraints[field] = [
+            exact
+            for item in raw_values
+            if isinstance(item, str)
+            and (exact := _matching_source_span(item, request_text)) is not None
+        ]
+    constraints["additional_constraints"] = []
+    projected["constraints"] = constraints
+    return projected
 
 
 def preserve_explicit_search_anchors(
@@ -101,6 +151,19 @@ def preserve_explicit_search_anchors(
     explicit_subjects = _explicit_subjects(request_text)
     has_explicit_subject_role = _EXPLICIT_SUBJECT_ROLE_PATTERN.search(request_text) is not None
     constraints = _without_unstated_placeholders(candidate["constraints"], request_text)
+    constraints = _retain_explicit_gmail_statuses(constraints, request_text)
+    has_unbound_business_concept = any(
+        constraint["field"] == "business_concepts"
+        and any(
+            _matching_source_span(value, request_text) is None
+            for value in (
+                constraint["value"]
+                if isinstance(constraint["value"], list)
+                else [constraint["value"]]
+            )
+        )
+        for constraint in constraints
+    )
     constraints = _retain_source_owned_values(constraints, request_text)
     constraints = _restore_source_spelling(constraints, request_text)
     quoted_search_terms = _quoted_search_terms_from_candidate(constraints, request_text)
@@ -148,7 +211,11 @@ def preserve_explicit_search_anchors(
         item["field"] in {"subject", "search_criteria_subject"} for item in constraints
     ):
         constraints = [item for item in constraints if item["field"] != "search_terms"]
-    return {**candidate, "constraints": constraints}
+    return {
+        **candidate,
+        "goal": request_text if has_unbound_business_concept else candidate["goal"],
+        "constraints": constraints,
+    }
 
 
 def _requires_gmail_source_search(
@@ -376,6 +443,31 @@ def _retain_source_owned_values(
     return retained_constraints
 
 
+def _retain_explicit_gmail_statuses(
+    constraints: list[ConstraintV1], request_text: str
+) -> list[ConstraintV1]:
+    """Reject mailbox scopes inferred from verbs that describe the business object."""
+
+    retained: list[ConstraintV1] = []
+    for constraint in constraints:
+        if constraint["field"] != "status":
+            retained.append(constraint)
+            continue
+        raw_value = constraint["value"]
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        normalized_values = [
+            _GMAIL_STATUS_ALIASES.get(value.casefold().strip(), value.upper().strip())
+            for value in values
+        ]
+        if all(
+            (pattern := _EXPLICIT_GMAIL_STATUS_PATTERNS.get(value)) is not None
+            and pattern.search(request_text) is not None
+            for value in normalized_values
+        ):
+            retained.append(constraint)
+    return retained
+
+
 def _matching_source_span(value: str, request_text: str) -> str | None:
     normalized_value = value.strip()
     if len(normalized_value) >= 2 and (
@@ -390,4 +482,4 @@ def _matching_source_span(value: str, request_text: str) -> str | None:
     return match.group(0) if match is not None else None
 
 
-__all__ = ["preserve_explicit_search_anchors"]
+__all__ = ["preserve_explicit_search_anchors", "project_extractive_source_goal"]

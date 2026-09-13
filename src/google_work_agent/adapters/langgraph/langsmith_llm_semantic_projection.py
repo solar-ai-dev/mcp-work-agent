@@ -802,7 +802,14 @@ def _project_goal_constraints(value: object) -> dict[str, object]:
             "coverage_requirement": "SCOPE",
         }
         for field, kind in kind_by_field.items():
-            values = _sequence(mapping.get(field))
+            raw_values = mapping.get(field)
+            if field == "coverage_requirement" and raw_values == "NOT_COLLECTION":
+                continue
+            values = (
+                [raw_values]
+                if field == "coverage_requirement" and isinstance(raw_values, str)
+                else _sequence(raw_values)
+            )
             if not values:
                 continue
             projected: dict[str, object] = {"kind": kind, "field": field}

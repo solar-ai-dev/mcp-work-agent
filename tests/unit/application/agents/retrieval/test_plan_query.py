@@ -704,6 +704,95 @@ def test_draft_update__searches_only_user_bound_source_title__without_llm() -> N
     ]
 
 
+def test_plan_query__with_exhaustive_gmail_subject_collection__uses_request_prefix() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    prompt_ref = PromptReference(
+        prompt_bundle_version="test",
+        prompt_id="retrieval.plan_query",
+        prompt_version="1",
+        content_hash="hash",
+        agent_role="retrieval",
+        subgraph_name="retrieval",
+        node_name="plan_query",
+        node_state="INITIAL",
+        purpose="plan_query",
+        input_schema_version="v2",
+        output_schema_version="v2",
+    )
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-gmail",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    intent = cast(
+        RequestIntentV2,
+        {
+            "goal": "Orion rollout planning email titles",
+            "completion_conditions": ["return every title"],
+            "constraints": [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "search_terms",
+                    "value": "Orion rollout planning",
+                    "provenance": {
+                        "source": "USER_REQUEST",
+                        "start_offset": 0,
+                        "end_offset": 22,
+                    },
+                },
+                {"kind": "SCOPE", "field": "coverage_requirement", "value": "EXHAUSTIVE"},
+            ],
+            "requested_effect_hints": ["READ"],
+            "requested_resource_hints": ["GMAIL_THREAD"],
+            "analysis_requirement": "NONE",
+            "resource_responsibilities": {
+                "source_reads": [
+                    {
+                        "resource_type": "GMAIL_THREAD",
+                        "required_information": ["thread_identity", "subject"],
+                    }
+                ],
+                "outputs": [],
+            },
+        },
+    )
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=prompt_ref,
+        revision_prompt_ref=prompt_ref,
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": intent, "input_routes": [route]},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={"route-gmail": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert result["route_queries"] == [
+        {
+            "route_id": "route-gmail",
+            "operation": "SEARCH",
+            "reason_codes": ["EXHAUSTIVE_METADATA_COLLECTION_SEARCH"],
+            "search_spec": {
+                "mode": "INITIAL",
+                "constraints": [
+                    {"kind": "KEYWORD", "terms": ["Orion", "rollout"], "match_mode": "ALL"}
+                ],
+            },
+            "detail_candidate_ref": None,
+        }
+    ]
+
+
 def test_followup_with_ranked_candidate__materializes_detail_fetch__without_llm() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(
@@ -765,6 +854,91 @@ def test_followup_with_ranked_candidate__materializes_detail_fetch__without_llm(
             "reason_codes": ["CANDIDATE_DETAIL_REQUIRED"],
             "search_spec": None,
             "detail_candidate_ref": "gmail_thread:next-candidate",
+        }
+    ]
+
+
+def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_first() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads", "gmail_get_thread"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policy = {"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))}
+    prior = build_query(
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": "route-1",
+                    "operation": "SEARCH",
+                    "reason_codes": ["USER_REQUEST"],
+                    "search_spec": {
+                        "mode": "INITIAL",
+                        "constraints": [
+                            {"kind": "KEYWORD", "terms": ["Juniper"], "match_mode": "ALL"}
+                        ],
+                    },
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+        frozen_routes=[route],
+        route_policies=policy,
+    )[0]
+    read_summaries = [
+        {
+            "route_id": "route-1",
+            "query_identity_hash": prior["query_identity_hash"],
+            "read_result_handle": "page-1",
+            "result_count": 20,
+            "has_next_page": True,
+            "exhausted": False,
+        }
+    ]
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "current_round_no": 1,
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "route-1",
+                    "reason_codes": ["COLLECTION_PAGE_REMAINS"],
+                }
+            ],
+            "read_result_summaries": read_summaries,
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies=policy,
+        retry_budget=build_default_run_budget(),
+        detail_candidate_refs=["gmail_thread:candidate"],
+        prior_plans={"route-1": prior},
+        read_result_summaries=read_summaries,
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert result["route_queries"] == [
+        {
+            "route_id": "route-1",
+            "operation": "NEXT_PAGE",
+            "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
+            "search_spec": None,
+            "detail_candidate_ref": None,
         }
     ]
 
@@ -1925,6 +2099,135 @@ def test_exact_calendar_create_precondition__materializes_all_policy_reads__with
         assert temporal["start_local"] == "2026-09-05T15:00:00"
         assert temporal["end_local"] == "2026-09-05T15:30:00"
         assert temporal["timezone"] == "Asia/Seoul"
+
+
+def test_task_calendar_draft_sources__use_calendar_specific_anchor__without_llm() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "events",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "tasks",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasks"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "calendars",
+                "resource_type": "CALENDAR",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_calendars"],
+                "required": True,
+                "reason_codes": ["RETRIEVAL_CALENDAR_DISCOVERY"],
+            },
+            {
+                "route_id": "task-lists",
+                "resource_type": "TASK_LIST",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasklists"],
+                "required": True,
+                "reason_codes": ["RETRIEVAL_TASK_LIST_DISCOVERY"],
+            },
+        ],
+    )
+    policies = {
+        route["route_id"]: RouteConstraintPolicy(
+            frozenset(
+                {"CONTAINER_REF", "KEYWORD"}
+                if route["resource_type"] == "CALENDAR_EVENT"
+                else {"CONTAINER_REF"}
+            ),
+            frozenset({"CONTAINER_REF"})
+            if route["resource_type"] in {"TASK", "CALENDAR_EVENT"}
+            else frozenset(),
+        )
+        for route in routes
+    }
+    containers = {
+        "events": ["calendar:primary"],
+        "tasks": ["task-list:primary"],
+        "calendars": ["calendar:primary"],
+        "task-lists": ["task-list:primary"],
+    }
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {
+                "requested_effect_hints": ["READ", "CREATE"],
+                "requested_resource_hints": ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"],
+                "constraints": [
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "Orion",
+                        "provenance": {"source": "USER_REQUEST", "start_offset": 0},
+                    },
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "제작사 일정 일정",
+                        "provenance": {"source": "USER_REQUEST", "start_offset": 11},
+                    },
+                ],
+                "resource_responsibilities": {
+                    "source_reads": [
+                        {"resource_type": "TASK", "required_information": ["title"]},
+                        {
+                            "resource_type": "CALENDAR_EVENT",
+                            "required_information": ["title", "start"],
+                        },
+                    ],
+                    "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+                },
+            },
+            "input_routes": routes,
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        validated_container_refs=containers,
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert [query["route_id"] for query in result["route_queries"]] == [
+        "events",
+        "tasks",
+        "calendars",
+        "task-lists",
+    ]
+    event_spec = result["route_queries"][0]["search_spec"]
+    assert event_spec is not None
+    event_spec_mapping = cast(Mapping[str, object], event_spec)
+    assert event_spec_mapping["constraints"] == [
+        {"kind": "KEYWORD", "terms": ["제작사"], "match_mode": "PHRASE"},
+        {"kind": "CONTAINER_REF", "container_refs": ["calendar:primary"]},
+    ]
+    for query in result["route_queries"][1:]:
+        assert query["search_spec"] == {
+            "mode": "INITIAL",
+            "constraints": [
+                {
+                    "kind": "CONTAINER_REF",
+                    "container_refs": containers[query["route_id"]],
+                }
+            ],
+        }
 
 
 @pytest.mark.parametrize(

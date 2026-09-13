@@ -106,6 +106,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
                 [],
             ),
             "additional_constraints": [],
+            "coverage_requirement": "NOT_COLLECTION",
         },
         "resource_responsibilities": {
             "source_reads": [{"resource_type": "GMAIL_THREAD", "required_information": []}],

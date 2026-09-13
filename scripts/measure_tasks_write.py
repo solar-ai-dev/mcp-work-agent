@@ -683,7 +683,7 @@ def measure(
             "modify_review_continuation": not scenario.startswith("modify")
             or nodes.count("review") == (1 if scenario == "modify_ambiguous" else 2),
             "modify_replay_no_extra_inference": not scenario.startswith("modify")
-            or report["prompt_path"].count("planning.compose_arguments_per_output_route") == 2,
+            or report["prompt_path"].count("planning.compose_arguments_per_output_route") == 1,
             "old_revision_cannot_approve": not scenario.startswith("modify")
             or scenario == "modify_ambiguous"
             or report["stale_approval_status"] == 409,

@@ -96,7 +96,7 @@ def test_inferred_anchor__with_source_spacing__restores_exact_text() -> None:
     assert fields["person"] == ["김대리"]
 
 
-def test_business_concept__paraphrase__is_not_removed_by_substring_guard() -> None:
+def test_business_concept__unbound_paraphrase__falls_back_to_exact_request_meaning() -> None:
     candidate = _candidate()
     candidate["constraints"].extend(
         [
@@ -120,8 +120,62 @@ def test_business_concept__paraphrase__is_not_removed_by_substring_guard() -> No
     )
 
     fields = {item["field"]: item["value"] for item in result["constraints"]}
-    assert fields["business_concepts"] == ["현장 교육"]
+    assert "business_concepts" not in fields
     assert "search_terms" not in fields
+    assert result["goal"] == "오로라 참여자의 연수 일정을 확인해줘."
+    assert fields["original_search_request"] == ["오로라 참여자의 연수 일정을 확인해줘."]
+
+
+def test_business_concept__exact_source_span__remains_search_hypothesis() -> None:
+    candidate = _candidate()
+    candidate["constraints"].append(
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": ["연수 일정"],
+        }
+    )
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text="오로라 참여자의 연수 일정을 확인해줘.",
+        entry_mode="AGENT_SEARCH",
+    )
+
+    fields = {item["field"]: item["value"] for item in result["constraints"]}
+    assert fields["business_concepts"] == ["연수 일정"]
+    assert result["goal"] == candidate["goal"]
+
+
+def test_project_extractive_source_goal__with_unbound_model_meaning__removes_execution_values(
+) -> None:
+    candidate = {
+        "goal": "Atlas 출시 일정과 담당자를 확인한다",
+        "completion_conditions": ["출시 날짜를 답한다"],
+        "constraints": {
+            "search_terms": ["Atlas"],
+            "business_concepts": ["출시"],
+            "person": [],
+            "sender": [],
+            "recipient": [],
+            "subject": [],
+            "period": [],
+            "coverage_requirement": "LIMITED_ITEMS",
+            "additional_constraints": [{"field": "date", "value": "now"}],
+        },
+        "analysis_requirement": "NONE",
+    }
+    request = "Atlas 물건 최종적으로 언제 나가고 담당은 누구야?"
+
+    result = operation.project_extractive_source_goal(candidate, request_text=request)
+
+    assert result["goal"] == request
+    assert result["completion_conditions"] == []
+    constraints = result["constraints"]
+    assert isinstance(constraints, dict)
+    assert constraints["search_terms"] == ["Atlas"]
+    assert constraints["business_concepts"] == []
+    assert constraints["additional_constraints"] == []
 
 
 def test_explicit_search_anchor__when_repeated__remains_source_bound() -> None:
@@ -259,6 +313,61 @@ def test_gmail_draft_source__with_status_word_as_subject__preserves_lexical_valu
     assert fields["subject"] == ["임시보관함"]
     assert fields["status"] == ["초안"]
     assert "search_terms" not in fields
+
+
+def test_gmail_source__with_inferred_sent_scope_from_business_verb__removes_scope() -> None:
+    request = "메일에 나온 Atlas 물건이 언제 나가는지 최종 기준과 담당 확인해줘."
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": ["Atlas"],
+        },
+        {
+            "kind": "SCOPE",
+            "field": "status",
+            "value": "SENT",
+            "source_resource_type": "GMAIL_MESSAGE",
+        },
+    ]
+    candidate["requested_resource_hints"] = ["GMAIL_THREAD", "GMAIL_MESSAGE"]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text=request,
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert not any(item["field"] == "status" for item in result["constraints"])
+
+
+def test_gmail_source__with_explicit_sent_mailbox__preserves_scope() -> None:
+    request = "보낸 편지함에서 Atlas 메일을 찾아줘."
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": ["Atlas"],
+        },
+        {
+            "kind": "SCOPE",
+            "field": "status",
+            "value": "SENT",
+            "source_resource_type": "GMAIL_THREAD",
+        },
+    ]
+
+    result = operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text=request,
+        entry_mode="AGENT_SEARCH",
+    )
+
+    assert next(
+        item["value"] for item in result["constraints"] if item["field"] == "status"
+    ) == "SENT"
 
 
 def test_gmail_draft_candidate__with_explicit_id__restores_exact_anchor() -> None:

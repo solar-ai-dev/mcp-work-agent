@@ -176,7 +176,7 @@ class _ComponentInferencePort:
                         "recipient": ["person@example.test"],
                         "subject": [],
                         "period": [],
-                        "coverage_requirement": [],
+                        "coverage_requirement": "NOT_COLLECTION",
                         "additional_constraints": [],
                     },
                     "analysis_requirement": "NONE",
@@ -193,7 +193,7 @@ class _ComponentInferencePort:
                         "recipient": [],
                         "subject": [],
                         "period": [],
-                        "coverage_requirement": [],
+                        "coverage_requirement": "NOT_COLLECTION",
                         "additional_constraints": [],
                     },
                     "analysis_requirement": "NONE",
@@ -210,7 +210,7 @@ class _ComponentInferencePort:
                         "recipient": [],
                         "subject": [],
                         "period": [],
-                        "coverage_requirement": [],
+                        "coverage_requirement": "NOT_COLLECTION",
                         "additional_constraints": [],
                     },
                     "analysis_requirement": "NONE",
@@ -227,7 +227,7 @@ class _ComponentInferencePort:
                     "recipient": [],
                     "subject": [],
                     "period": [],
-                    "coverage_requirement": [],
+                    "coverage_requirement": "NOT_COLLECTION",
                     "additional_constraints": [],
                 },
                 "analysis_requirement": "NONE",
@@ -1097,7 +1097,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 
-def test_request_understanding__compiled_searchable_target__revises_false_confirmation() -> None:
+def test_request_understanding__compiled_searchable_target__normalizes_false_confirmation() -> None:
     llm = _ComponentInferencePort(searchable_target=True)
     graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
@@ -1119,7 +1119,7 @@ def test_request_understanding__compiled_searchable_target__revises_false_confir
         "reason_codes": [],
         "missing_fields": [],
     }
-    assert llm.calls.count("request_understanding.detect_ambiguity") == 2
+    assert llm.calls.count("request_understanding.detect_ambiguity") == 1
     resolution = cast(
         Mapping[str, object],
         llm.inputs["request_understanding.detect_ambiguity"][0]["resolution_responsibilities"],
@@ -1898,7 +1898,7 @@ def test_retrieval__compiled_exhaustive_collection__reads_unread_page_before_fin
         result = graph.invoke(state)
 
     assert connector.call_count == 2
-    assert llm.calls.count("retrieval.assess_sufficiency") == 2
+    assert llm.calls.count("retrieval.assess_sufficiency") == 1
     assert result["retrieval_result"]["collection_results"][0]["continuation_status"] == "EXHAUSTED"
 
 
@@ -2853,13 +2853,22 @@ def test_planning__compiled_normal_path__produces_answer() -> None:
             return {"sections": ["summary"], "evidence_refs": []}
         return {"schema_version": 2, "answer": "done", "evidence_refs": []}
 
+    intent = _intent()
+    constraints = cast(list[dict[str, object]], intent["constraints"])
+    constraints.append(
+        {
+            "kind": "SCOPE",
+            "field": "coverage_requirement",
+            "value": "EXHAUSTIVE",
+        }
+    )
     graph = PlanningSubgraph(
         dependencies=PlanningRuntimeDependencies(invoke=cast(PlanningSemanticInvoker, invoke))
     ).build()
     result = graph.invoke(
         {
             "user_request": "summarize status",
-            "request_intent": _intent(),
+            "request_intent": intent,
             "tool_route_plan": _answer_route_plan(),
             "work_analysis": {},
             "evidence": [],

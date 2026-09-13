@@ -17,6 +17,9 @@ from google_work_agent.application.agents.planning.materialize_task_create_paylo
 from google_work_agent.application.agents.preserve_exact_user_literals import (
     restore_exact_user_literals,
 )
+from google_work_agent.application.agents.task_calendar_draft_source import (
+    is_task_calendar_draft_source_target,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
 PROMPT_ID = "planning.draft_action_objective_per_output_route"
@@ -211,7 +214,11 @@ def _deterministic_create_objective(
     *, route: Mapping[str, object], request_intent: Mapping[str, object]
 ) -> ActionObjectiveCandidateV1 | None:
     return (
-        _deterministic_github_create_objective(
+        _deterministic_task_calendar_draft_objective(
+            route=route,
+            request_intent=request_intent,
+        )
+        or _deterministic_github_create_objective(
             route=route,
             request_intent=request_intent,
         )
@@ -224,6 +231,31 @@ def _deterministic_create_objective(
             request_intent=request_intent,
         )
     )
+
+
+def _deterministic_task_calendar_draft_objective(
+    *, route: Mapping[str, object], request_intent: Mapping[str, object]
+) -> ActionObjectiveCandidateV1 | None:
+    route_id = route.get("route_id")
+    ambiguity = request_intent.get("ambiguity")
+    if (
+        route.get("resource_type") != "GMAIL_DRAFT"
+        or route.get("effect") != "CREATE"
+        or route.get("selected_tool_id") != "gmail_create_draft"
+        or not isinstance(route_id, str)
+        or not isinstance(ambiguity, Mapping)
+        or ambiguity.get("requires_confirmation") is not False
+        or not is_task_calendar_draft_source_target(request_intent)
+    ):
+        return None
+    return {
+        "schema_version": 1,
+        "route_id": route_id,
+        "objective": "Create a grounded Gmail Draft from the retrieved Task and Calendar facts.",
+        "target_semantics": "GMAIL_DRAFT",
+        "scope_constraints": ["CREATE_DRAFT_ONLY", "DO_NOT_SEND"],
+        "evidence_refs": [],
+    }
 
 
 def _deterministic_github_create_objective(

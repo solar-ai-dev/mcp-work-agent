@@ -13,6 +13,9 @@ import google_work_agent.application.agents.retrieval.contracts.schema_validatio
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval import (
+    gmail_metadata_collection_is_answer_target as gmail_metadata_collection,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
@@ -47,6 +50,9 @@ from google_work_agent.application.agents.retrieval.project_query_temporal_const
 )
 from google_work_agent.application.agents.retrieval.require_read_evidence_support import (
     require_read_evidence_support,
+)
+from google_work_agent.application.agents.task_calendar_draft_source import (
+    is_task_calendar_draft_source_target,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -92,6 +98,7 @@ def deterministic_sufficiency(
     person_candidates: Sequence[PersonCandidateV1] = (),
     selected_person_identities: Mapping[str, str] | None = None,
     query_attempts: Sequence[QueryAttemptV1] = (),
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> SufficiencyResultV2 | None:
     """Close bounded READ acquisition without starving its grounded answer."""
     for mention in dict.fromkeys(item["mention"] for item in person_candidates):
@@ -138,6 +145,19 @@ def deterministic_sufficiency(
             }
     if confirmation_response is not None:
         return None
+    collection_followup = _require_unread_exhaustive_collection_pages(
+        {"schema_version": 2, "status": "SUFFICIENT", "issues": []},
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        read_result_summaries=read_result_summaries,
+    )
+    if collection_followup["issues"]:
+        return enforce_sufficiency_guard(
+            {**collection_followup, "status": "NEEDS_MORE_DATA"},
+            request_intent=request_intent,
+            retry_budget=retry_budget,
+            evidence_supported_partial_possible=bool(evidence_drafts),
+        )
     remaining = retry_budget["absolute_llm_call_limit"] - retry_budget["llm_calls_used"]
     if remaining > _answer_call_reserve(request_intent) or set(
         request_intent["requested_effect_hints"]
@@ -212,6 +232,7 @@ def _deterministic_source_sufficiency(
         not evidence_drafts
         and set(request_intent["requested_effect_hints"]) == {"READ"}
         and _all_required_source_scopes_complete(tool_route_plan, acquisition_result)
+        and _all_required_sources_returned_no_resources(tool_route_plan, acquisition_result)
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     if not evidence_drafts and _has_bounded_read_stop(acquisition_result):
@@ -269,6 +290,13 @@ def _deterministic_source_sufficiency(
             retry_budget=retry_budget,
             evidence_supported_partial_possible=bool(evidence_drafts),
         )
+    if _is_complete_gmail_metadata_collection(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     if _is_complete_gmail_thread_reply(
         request_intent=request_intent,
         tool_route_plan=tool_route_plan,
@@ -299,7 +327,112 @@ def _deterministic_source_sufficiency(
         evidence_drafts,
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if _is_complete_task_calendar_draft_source(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     return None
+
+
+def _is_complete_task_calendar_draft_source(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: Sequence[EvidenceDraftV1],
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    """Close a fully scoped cross-resource Draft source read without semantic guesses."""
+
+    ambiguity = request_intent.get("ambiguity")
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or not is_task_calendar_draft_source_target(request_intent)
+        or not isinstance(ambiguity, Mapping)
+        or ambiguity.get("requires_confirmation") is not False
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+    ):
+        return False
+    output_plan = tool_route_plan["output_plan"]
+    if output_plan["output_mode"] != "ACTION":
+        return False
+    output_routes = output_plan["output_routes"]
+    if len(output_routes) != 1:
+        return False
+    output_route = output_routes[0]
+    if not (
+        output_route["resource_type"] == "GMAIL_DRAFT"
+        and output_route["connector_id"] == "google_workspace"
+        and output_route["effect"] == "CREATE"
+        and output_route["selected_tool_id"] == "gmail_create_draft"
+    ):
+        return False
+    evidence_resources = {
+        "TASK"
+        if item["resource_handle"].startswith("task:")
+        else "CALENDAR_EVENT"
+        if item["resource_handle"].startswith("calendar_event:")
+        else "OTHER"
+        for item in evidence_drafts
+    }
+    if evidence_resources != {"TASK", "CALENDAR_EVENT"}:
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    source_routes = [
+        route for route in routes if route["resource_type"] in {"TASK", "CALENDAR_EVENT"}
+    ]
+    if {route["resource_type"] for route in source_routes} != {"TASK", "CALENDAR_EVENT"}:
+        return False
+    return all(
+        route["required"]
+        and (
+            summaries := _latest_scope_summaries(
+                _route_summaries(route, routes, acquisition_result)
+            )
+        )
+        and all(
+            summary.get("status") == "COMPLETE"
+            and summary.get("scope_complete") is True
+            and summary.get("continuation_status") == "EXHAUSTED"
+            for summary in summaries
+        )
+        for route in source_routes
+    )
+
+
+def _is_complete_gmail_metadata_collection(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or tool_route_plan["output_plan"]["output_mode"] != "ANSWER"
+        or request_intent["ambiguity"]["requires_confirmation"]
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+        or not acquisition_result["resource_handles"]
+        or not gmail_metadata_collection.gmail_metadata_collection_is_answer_target(
+            request_intent
+        )
+        or not _all_required_source_scopes_complete(tool_route_plan, acquisition_result)
+    ):
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    return (
+        len(routes) == 1
+        and routes[0]["required"]
+        and routes[0]["resource_type"] == "GMAIL_THREAD"
+    )
 
 
 def _is_complete_gmail_thread_reply(
@@ -438,6 +571,7 @@ def assess_sufficiency(
         retry_budget=retry_budget,
         confirmation_response=confirmation_response,
         query_attempts=query_attempts,
+        read_result_summaries=read_result_summaries,
     )
     if deterministic is not None:
         return deterministic
@@ -467,25 +601,26 @@ def assess_sufficiency(
         acquisition_result=acquisition_result,
         evidence_drafts=evidence_drafts,
     )
-    validated = _require_gmail_candidate_details(
-        validated,
-        request_intent=request_intent,
-        tool_route_plan=tool_route_plan,
-        evidence_drafts=evidence_drafts,
-        detail_candidate_refs=acquisition_result["resource_handles"],
-        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
-    )
-    validated = require_read_evidence_support(
-        validated,
-        request_intent=request_intent,
-        tool_route_plan=tool_route_plan,
-        evidence_drafts=evidence_drafts,
-    )
     validated = _require_unread_exhaustive_collection_pages(
         validated,
         request_intent=request_intent,
         tool_route_plan=tool_route_plan,
         read_result_summaries=read_result_summaries,
+    )
+    if not any(issue["slot"] == "collection_coverage" for issue in validated["issues"]):
+        validated = _require_gmail_candidate_details(
+            validated,
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            evidence_drafts=evidence_drafts,
+            detail_candidate_refs=acquisition_result["resource_handles"],
+            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+        )
+    validated = require_read_evidence_support(
+        validated,
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        evidence_drafts=evidence_drafts,
     )
     validated = _bind_issue_routes(validated, tool_route_plan=tool_route_plan)
     if (
@@ -626,7 +761,11 @@ def _fail_closed_on_empty_required_acquisition(
             code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
             for code in route["reason_codes"]
         )
-        if is_policy and status == "COMPLETE":
+        is_scope_discovery = bool(route["reason_codes"]) and all(
+            code in {"RETRIEVAL_CALENDAR_DISCOVERY", "RETRIEVAL_TASK_LIST_DISCOVERY"}
+            for code in route["reason_codes"]
+        )
+        if (is_policy or is_scope_discovery) and status == "COMPLETE":
             continue
         route_handles = {
             handle
@@ -710,6 +849,25 @@ def _all_required_source_scopes_complete(
         if known < 1 or checked < known:
             return False
     return True
+
+
+def _all_required_sources_returned_no_resources(
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+) -> bool:
+    if tool_route_plan is None:
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    required_routes = [route for route in routes if route["required"]]
+    return bool(required_routes) and all(
+        (summaries := _route_summaries(route, routes, acquisition_result))
+        and all(
+            summary.get("status") == "COMPLETE"
+            and summary.get("resource_count") == 0
+            for summary in summaries
+        )
+        for route in required_routes
+    )
 
 
 def _latest_scope_summaries(
@@ -1267,7 +1425,10 @@ def _require_gmail_candidate_details(
         route["resource_type"] == "GMAIL_MESSAGE" and route["effect"] == "SEND"
         for route in output_routes
     )
-    read_requires_detail = requested_effects == {"READ"} and (
+    metadata_collection_answer = (
+        gmail_metadata_collection.gmail_metadata_collection_is_answer_target(request_intent)
+    )
+    read_requires_detail = requested_effects == {"READ"} and not metadata_collection_answer and (
         request_intent["analysis_requirement"] == "REQUIRED"
         or any(
             (draft["locator"] or {}).get("is_metadata_only") is True for draft in evidence_drafts

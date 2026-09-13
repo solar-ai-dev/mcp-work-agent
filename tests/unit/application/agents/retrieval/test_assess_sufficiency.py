@@ -72,6 +72,112 @@ def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() 
     assert runtime.calls == []
 
 
+def test_assess_sufficiency__with_exhaustive_gmail_subject_collection__accepts_metadata() -> None:
+    intent = request_intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = [
+        {"kind": "SCOPE", "field": "coverage_requirement", "value": "EXHAUSTIVE"}
+    ]
+    intent["resource_responsibilities"] = {
+        "source_reads": [
+            {
+                "resource_type": "GMAIL_THREAD",
+                "required_information": ["thread_identity", "subject"],
+            }
+        ],
+        "outputs": [],
+    }
+    runtime = FakeLLMRuntime(deque())
+    route_plan = tool_route_plan()
+    route = route_plan["input_plan"]["input_routes"][0]
+    route["allowed_read_tool_ids"] = ["gmail_search_threads", "gmail_get_thread"]
+    acquisition = acquisition_result()
+    acquisition["source_summaries"][0].update(
+        {
+            "route_id": route["route_id"],
+            "scope_complete": True,
+            "checked_read_count": 1,
+            "known_scope_count": 1,
+            "continuation_status": "EXHAUSTED",
+        }
+    )
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition,
+        retry_budget=run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "subject metadata",
+                "locator": {"is_metadata_only": True},
+                "reason_codes": ["CONTEXT"],
+            }
+        ],
+        read_result_summaries=[
+            {"route_id": "route-gmail", "has_next_page": False, "exhausted": True}
+        ],
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    assert runtime.calls == []
+
+
+def test_assess_sufficiency__with_exhaustive_gmail_unread_page__requests_next_page() -> None:
+    intent = request_intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["constraints"] = [
+        {"kind": "SCOPE", "field": "coverage_requirement", "value": "EXHAUSTIVE"}
+    ]
+    intent["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": "GMAIL_THREAD", "required_information": ["관련 메일 제목 전체"]}
+        ],
+        "outputs": [],
+    }
+    runtime = FakeLLMRuntime(deque())
+    route_plan = tool_route_plan()
+    route = route_plan["input_plan"]["input_routes"][0]
+    route["allowed_read_tool_ids"] = ["gmail_search_threads", "gmail_get_thread"]
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "subject metadata",
+                "locator": {"is_metadata_only": True},
+                "reason_codes": ["CONTEXT"],
+            }
+        ],
+        read_result_summaries=[
+            {"route_id": "route-gmail", "has_next_page": True, "exhausted": False}
+        ],
+    )
+
+    assert result["status"] == "NEEDS_MORE_DATA"
+    assert result["issues"][0]["reason_codes"] == ["COLLECTION_PAGE_REMAINS"]
+    assert runtime.calls == []
+
+
 def test_existing_gmail_thread_reply__search_candidate__requires_detail_without_llm() -> None:
     intent = request_intent()
     intent["analysis_requirement"] = "NONE"
@@ -783,7 +889,90 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
     )
 
     assert result["status"] == "NEEDS_MORE_DATA"
-    assert result["issues"][-1]["reason_codes"] == ["REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"]
+    reasons = {code for issue in result["issues"] for code in issue["reason_codes"]}
+    assert "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE" in reasons
+    assert "NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT" in reasons
+
+
+def test_assess_sufficiency__with_complete_scope_discovery__accepts_empty_business_evidence(
+) -> None:
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
+    intent["constraints"] = []
+    intent["requested_resource_hints"] = ["CALENDAR_EVENT"]
+    intent["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": "CALENDAR_EVENT", "required_information": ["title", "start"]}
+        ],
+        "outputs": [],
+    }
+    route_plan = tool_route_plan(
+        [
+            {
+                "route_id": "event-route",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "calendar-discovery",
+                "resource_type": "CALENDAR",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_calendars"],
+                "required": True,
+                "reason_codes": ["RETRIEVAL_CALENDAR_DISCOVERY"],
+            },
+        ]
+    )
+    acquisition = acquisition_result()
+    acquisition["resource_handles"] = ["calendar_event:event-1", "calendar:primary"]
+    acquisition["source_summaries"] = [
+        {
+            "route_id": "event-route",
+            "source": "CALENDAR",
+            "status": "COMPLETE",
+            "required": True,
+            "resource_count": 1,
+            "resource_handles": ["calendar_event:event-1"],
+            "resources": [],
+        },
+        {
+            "route_id": "calendar-discovery",
+            "source": "CALENDAR",
+            "status": "COMPLETE",
+            "required": True,
+            "resource_count": 1,
+            "resource_handles": ["calendar:primary"],
+            "resources": [],
+        },
+    ]
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition,
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "event-evidence",
+                "resource_handle": "calendar_event:event-1",
+                "segment_id": "event-segment",
+                "kind": "excerpt",
+                "excerpt": "Orion 제작사 일정 8월 13일",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        retry_budget=run_budget(used=0),
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    assert len(runtime.calls) == 1
 
 
 @pytest.mark.parametrize("failed", [False, True])
@@ -948,6 +1137,36 @@ def test_complete_empty_scope__when_exhausted__returns_bounded_no_match() -> Non
 
     assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     assert runtime.calls == []
+
+
+def test_complete_nonempty_scope__without_selected_evidence__does_not_close_sufficient() -> None:
+    acquisition = acquisition_result()
+    acquisition["resource_handles"] = ["gmail_thread:irrelevant"]
+    acquisition["source_summaries"][0].update(
+        resource_count=1,
+        resource_handles=["gmail_thread:irrelevant"],
+        checked_read_count=1,
+        known_scope_count=1,
+        scope_complete=True,
+        continuation_status="EXHAUSTED",
+    )
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=request_intent(),
+        tool_route_plan=tool_route_plan(),
+        acquisition_result=acquisition,
+        evidence_drafts=[],
+        retry_budget=run_budget(used=0),
+    )
+
+    reasons = {code for issue in result["issues"] for code in issue["reason_codes"]}
+    assert result["status"] != "SUFFICIENT"
+    assert "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE" in reasons
+    assert "NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT" in reasons
 
 
 @pytest.mark.parametrize("mail_count", [0, 1])
@@ -1607,6 +1826,105 @@ def test_selected_google_resource_action__complete_detail_read__is_sufficient(
                 "reason_codes": ["SUPPORTS"],
             },
         )
+    ]
+
+    result = deterministic_sufficiency(
+        request_intent=intent,
+        tool_route_plan=plan,
+        acquisition_result=acquisition,
+        evidence_drafts=evidence,
+        retry_budget=run_budget(used=0),
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+
+
+def test_cross_resource_draft__complete_task_and_event_reads__are_sufficient() -> None:
+    intent = request_intent()
+    intent["analysis_requirement"] = "NONE"
+    intent["requested_effect_hints"] = ["READ", "CREATE"]
+    intent["requested_resource_hints"] = ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"]
+    intent["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": "TASK", "required_information": ["title"]},
+            {"resource_type": "CALENDAR_EVENT", "required_information": ["start"]},
+        ],
+        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+    }
+    routes = [
+        {
+            "route_id": "route-task",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["tasks_list_tasks"],
+            "required": True,
+            "reason_codes": ["REQUESTED_INPUT"],
+        },
+        {
+            "route_id": "route-event",
+            "resource_type": "CALENDAR_EVENT",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["calendar_list_events"],
+            "required": True,
+            "reason_codes": ["REQUESTED_INPUT"],
+        },
+    ]
+    plan = tool_route_plan(routes)
+    plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": plan["input_plan"]["meta"],
+        "output_mode": "ACTION",
+        "output_routes": [
+            {
+                "route_id": "out-draft",
+                "resource_type": "GMAIL_DRAFT",
+                "connector_id": "google_workspace",
+                "effect": "CREATE",
+                "selected_tool_id": "gmail_create_draft",
+                "reason_codes": [],
+            }
+        ],
+    }
+    acquisition = acquisition_result()
+    acquisition["source_summaries"] = [
+        {
+            "route_id": route["route_id"],
+            "connector_id": "google_workspace",
+            "source": "TASKS" if route["resource_type"] == "TASK" else "CALENDAR",
+            "status": "COMPLETE",
+            "resource_count": 1,
+            "scope_complete": True,
+            "continuation_status": "EXHAUSTED",
+        }
+        for route in routes
+    ]
+    evidence = [
+        cast(
+            EvidenceDraftV1,
+            {
+                "schema_version": 1,
+                "evidence_id": "e-task",
+                "resource_handle": "task:t1",
+                "segment_id": "s-task",
+                "kind": "excerpt",
+                "excerpt": "title: Orion 준비",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            },
+        ),
+        cast(
+            EvidenceDraftV1,
+            {
+                "schema_version": 1,
+                "evidence_id": "e-event",
+                "resource_handle": "calendar_event:e1",
+                "segment_id": "s-event",
+                "kind": "excerpt",
+                "excerpt": "title: Orion 제작소 일정",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            },
+        ),
     ]
 
     result = deterministic_sufficiency(

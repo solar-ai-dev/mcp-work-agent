@@ -79,6 +79,24 @@ def test_direct_read_support__when_sufficient__preserves_result() -> None:
     ) is result
 
 
+def test_empty_selected_evidence__when_sufficient__requires_support() -> None:
+    result = cast(
+        SufficiencyResultV2,
+        {"schema_version": 2, "status": "SUFFICIENT", "issues": []},
+    )
+
+    guarded = require_read_evidence_support(
+        result,
+        request_intent=_intent(),
+        tool_route_plan=_plan(),
+        evidence_drafts=[],
+    )
+
+    assert guarded["issues"][0]["reason_codes"] == [
+        "NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT"
+    ]
+
+
 def test_write_sufficiency__through_read_evidence_guard__is_unchanged() -> None:
     result = cast(
         SufficiencyResultV2,
