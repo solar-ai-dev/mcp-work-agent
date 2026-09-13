@@ -858,7 +858,15 @@ def test_followup_with_ranked_candidate__materializes_detail_fetch__without_llm(
     ]
 
 
-def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_first() -> None:
+@pytest.mark.parametrize(
+    ("coverage_requirement", "expected_operation"),
+    [(None, "DETAIL_FETCH"), ("EXHAUSTIVE", "NEXT_PAGE")],
+    ids=["normal-fact-detail-first", "exhaustive-page-first"],
+)
+def test_plan_query__page_and_detail_candidate__uses_coverage_aware_priority(
+    coverage_requirement: str | None,
+    expected_operation: Literal["DETAIL_FETCH", "NEXT_PAGE"],
+) -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     route = cast(
         InputToolRouteV1,
@@ -910,8 +918,30 @@ def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_firs
         revision_prompt_ref=_retrieval_prompt_ref(),
         output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
         prompt_input={
+            "request_intent": cast(
+                RequestIntentV2,
+                {
+                    "constraints": (
+                        []
+                        if coverage_requirement is None
+                        else [
+                            {
+                                "kind": "SCOPE",
+                                "field": "coverage_requirement",
+                                "value": coverage_requirement,
+                            }
+                        ]
+                    ),
+                },
+            ),
             "current_round_no": 1,
             "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "route-1",
+                    "reason_codes": ["CANDIDATE_DETAIL_REQUIRED"],
+                },
                 {
                     "required": True,
                     "resolution_source": "GOOGLE",
@@ -935,10 +965,16 @@ def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_firs
     assert result["route_queries"] == [
         {
             "route_id": "route-1",
-            "operation": "NEXT_PAGE",
-            "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
+            "operation": expected_operation,
+            "reason_codes": [
+                "CANDIDATE_DETAIL_REQUIRED"
+                if expected_operation == "DETAIL_FETCH"
+                else "UNREAD_PAGE_AVAILABLE"
+            ],
             "search_spec": None,
-            "detail_candidate_ref": None,
+            "detail_candidate_ref": (
+                "gmail_thread:candidate" if expected_operation == "DETAIL_FETCH" else None
+            ),
         }
     ]
 

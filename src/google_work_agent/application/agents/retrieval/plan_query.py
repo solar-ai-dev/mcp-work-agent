@@ -427,6 +427,14 @@ def deterministic_query_plan(
 ) -> RetrievalQueryPlanV2 | None:
     """Project deterministic initial and evidence-expanding continuations."""
 
+    candidate_detail = plan_candidate_detail(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        detail_candidate_refs=detail_candidate_refs,
+        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+    )
+    if candidate_detail is not None and _candidate_detail_precedes_expansion(prompt_input):
+        return candidate_detail
     followup = plan_query_expansion(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
@@ -435,12 +443,6 @@ def deterministic_query_plan(
     )
     if followup is not None:
         return followup
-    candidate_detail = plan_candidate_detail(
-        prompt_input=prompt_input,
-        frozen_routes=frozen_routes,
-        detail_candidate_refs=detail_candidate_refs,
-        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
-    )
     if candidate_detail is not None:
         return candidate_detail
     return deterministic_initial_query_plan(
@@ -450,6 +452,28 @@ def deterministic_query_plan(
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         timezone=timezone,
+    )
+
+
+def _candidate_detail_precedes_expansion(prompt_input: Mapping[str, object]) -> bool:
+    request_intent = prompt_input.get("request_intent")
+    if not isinstance(request_intent, Mapping):
+        return False
+    constraints = request_intent.get("constraints")
+    if isinstance(constraints, list) and any(
+        isinstance(constraint, Mapping)
+        and constraint.get("kind") == "SCOPE"
+        and constraint.get("field") == "coverage_requirement"
+        and constraint.get("value") == "EXHAUSTIVE"
+        for constraint in constraints
+    ):
+        return False
+    issues = prompt_input.get("unresolved_sufficiency_issues")
+    return isinstance(issues, list) and any(
+        isinstance(issue, Mapping)
+        and issue.get("required") is True
+        and "CANDIDATE_DETAIL_REQUIRED" in _string_collection(issue.get("reason_codes"))
+        for issue in issues
     )
 
 
