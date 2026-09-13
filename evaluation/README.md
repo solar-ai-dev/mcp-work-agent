@@ -2,11 +2,11 @@
 
 **기본 기능 baseline: `deed5275` · `qwen3.5:9b` · Production Smoke 6/6 PASS. 전체 Dataset 항목의 검증 완료를 뜻하지는 않는다.**
 
-한 업무 문서에서 자료·질문·확인 기준을 읽고, 실제 제품을 실행한 결과를 간단히 기록한다. JSON 데이터셋이나 별도 관계·승격·변경 계보를 관리하지 않는다. 업무 문서 33개에 질문·조작 확인 117개(사용자 질문 115개, 입력 없는 UI 확인 2개)가 있고, 말투 변형 40개(한국어 20·영어 20)는 원본의 20개 질문 계열 아래에 있다. 내부 Prompt 수정 후보 21개는 원본 `prompt_candidates/mcp-tool-use-2026-v1/sources/`에 둔다. 이전 후보·입력 계약·manifest도 원래 경로에 보존한다.
+한 업무 문서에서 자료·질문·확인 기준을 읽고, 실제 제품을 실행한 결과를 간단히 기록한다. 현재 검수용 Gold는 업무 문서가 소유하고, 과거 실험의 정확한 재현·비교에 필요한 machine-readable Dataset과 fixture는 버전·manifest와 함께 보존한다. 두 기준을 같은 점수로 섞지 않는다. 업무 문서 33개에 질문·조작 확인 117개(사용자 질문 115개, 입력 없는 UI 확인 2개)가 있고, 말투 변형 40개(한국어 20·영어 20)는 원본의 20개 질문 계열 아래에 있다. 내부 Prompt 수정 후보 21개는 원본 `prompt_candidates/mcp-tool-use-2026-v1/sources/`에 둔다. 이전 후보·입력 계약·manifest도 원래 경로에 보존한다.
 
 ## 구조
 
-- [datasets](datasets/) — 시험 자료와 질문별 Gold
+- [datasets](datasets/) — 현재 시험 자료·질문별 Gold와 버전 고정 machine-readable Dataset/fixture
 - [checks](checks/) — 안전·검증 기준
 - [experiments](experiments/) — baseline 및 이후 실제 실험 요약
 - [tests](tests/) — evaluation tooling 검증
@@ -144,7 +144,7 @@ CORE 60·옛 HOLDOUT 12·검색 질문 12개의 표식과 Stress 20·사용자 �
 
 ## 현재 Gold와 원본의 관계
 
-현재 평가자가 사용할 기준은 각 질문 바로 아래의 **평가자 확인**이다. 업무 정답, 허용할 효과, 대상, 필요한 사용자 개입, 금지 변경을 함께 읽는다. 별도 Gold JSON이나 정답 관계표를 다시 관리하지 않는다. 이 기준은 제품 Prompt나 서비스 자료로 전달하지 않는다.
+현재 Markdown 실험에서 평가자가 사용할 기준은 각 질문 바로 아래의 **평가자 확인**이다. 업무 정답, 허용할 효과, 대상, 필요한 사용자 개입, 금지 변경을 함께 읽는다. 보존된 machine-readable Gold는 해당 manifest로 고정한 과거 Dataset 실험에서만 사용하고 Markdown Gold와 묵시적으로 합치지 않는다. 어느 기준도 제품 Prompt나 서비스 자료로 전달하지 않는다.
 
 원본의 질문 표식은 유지했지만 잘못된 기대까지 유지하지는 않았다. READ Action 생성 요구, 제목 차이만으로 중복을 부정하는 기준, 미관측 유사도 점수로 Confirmation을 강제하는 기준, 예정일을 시각 있는 업무 마감으로 취급하는 기준은 현재 요청·자료에 맞게 정리했다. 원본 업무 자료가 비어 있던 경우와 새 자료는 해당 문서에 표시했다.
 
@@ -154,9 +154,9 @@ CORE 60·옛 HOLDOUT 12·검색 질문 12개의 표식과 Stress 20·사용자 �
 
 말투 변형은 원본의 20개 질문 계열별로 한국어·영어 하나씩 둔다. 개정된 본 질문과 조회 범위·날짜·효과가 같도록 맞췄으며, 내부 Prompt가 출력 언어를 영어로 강제하지 않는다. 표현만 다를 때 같은 업무 결과와 안전 경계를 기대한다.
 
-원본 92개 Case에는 대기 checkpoint와 terminal 판정이 충돌하는 값이 있었다. 현재 기준은 위의 **관측 시점**을 분리하므로, 승인 대기 결과에 과거 BLOCKED 기대를 적용하지 않는다. 옛 자동 grader를 현재 Markdown의 채점기로 다시 연결하지 않는다. 현재 Domain 문자열의 적합성은 해당 실제 실행 계약으로 검증하며 이 문서가 새 상태를 만들지 않는다.
+원본 92개 Case에는 대기 checkpoint와 terminal 판정이 충돌하는 값이 있었다. 현재 기준은 위의 **관측 시점**을 분리하므로, 승인 대기 결과에 과거 BLOCKED 기대를 적용하지 않는다. 원본 Dataset과 fixture는 재현 근거로 보존하되 옛 자동 grader를 현재 Markdown의 채점기로 다시 연결하지 않는다. 현재 Domain 문자열의 적합성은 해당 실제 실행 계약으로 검증하며 이 문서가 새 상태를 만들지 않는다.
 
-원본 micro 변형/CTXREADY/과거 rubric 전부를 이 Markdown과 동일한 시험으로 간주하지 않는다. 필요한 내부 진단의 목적과 한계는 [내부 출력과 비신뢰 입력](checks/내부출력과비신뢰입력.md)에 있다. 과거 exact 입력·Gold는 처음 제공된 ZIP과 별도 원본 보존본이 비교 자료이며, 여기의 현재 업무 기준과 섞어 점수를 계산하지 않는다. 표식/주제 보존을 모든 원본 assertion의 무손실 변환이라고 주장하지 않는다.
+원본 micro 변형/CTXREADY/과거 rubric 전부를 이 Markdown과 동일한 시험으로 간주하지 않는다. 필요한 내부 진단의 목적과 한계는 [내부 출력과 비신뢰 입력](checks/내부출력과비신뢰입력.md)에 있다. 과거 exact 입력·Gold·fixture는 `datasets/agent`, `datasets/e2e`, `datasets/retrieval`에 원본 바이트로 보존하며, 여기의 현재 업무 기준과 섞어 점수를 계산하지 않는다. 표식/주제 보존을 모든 원본 assertion의 무손실 변환이라고 주장하지 않는다.
 
 ## Prompt 경로와 후보 적용
 
@@ -168,7 +168,7 @@ CORE 60·옛 HOLDOUT 12·검색 질문 12개의 표식과 Stress 20·사용자 �
 
 ## 저장소 적용과 로컬 도구
 
-읽기용 데이터셋 부분은 옛 JSON/loader/runner의 대체안이며 자동 채점 호환성은 미확정이다. 이번 세 계정 주소 보정은 Prompt 경로·본문·slot·manifest·materializer를 바꾸지 않았다. Prompt 후보 경로는 원본대로 유지하며 materializer만 안전한 후보 복사를 위해 보정했다. 실제 Product 호환·활성화는 별도다. 기존 작업을 보존하고 참조를 확인한 뒤 교체한다. 바깥의 `scripts/`, tests, 문서가 제거된 파일을 읽는지는 실제 저장소에서 확인해야 한다. 제품 API/schema, runtime manifest/Prompt 등록, checkpoint, DB migration은 이 ZIP에서 수정하지 않았다.
+Markdown 자료와 machine-readable Dataset은 목적이 다르다. Dataset·manifest·fixture는 exact 입력과 과거 계약 보존을 위해 유지하지만, 폐기된 loader/runner/grader를 production authority로 되살리지는 않는다. 새 실행기는 현재 public API, signed selection handle, terminal/approval 계약을 사용하고 Dataset/Gold 변환이 있으면 별도 버전으로 기록해야 한다. 이번 세 계정 주소 보정은 Prompt 경로·본문·slot·manifest·materializer를 바꾸지 않았다. 제품 API/schema, runtime manifest/Prompt 등록, checkpoint, DB migration도 수정하지 않았다.
 
 내부 Prompt 21개는 첨부본의 후보 수이지 현재 제품의 고정 Slot 수가 아니다. 로컬에 추가된 시간축 Node의 Prompt 원문·최신 schema/caller는 이 ZIP에 없어 직접 대조하지 못했다. 없는 입력을 Prompt에 맞춰 발명하거나 새 Node를 삭제하지 않는다. 현재 계약과 맞는 후보만 실제 실행으로 비교한다.
 

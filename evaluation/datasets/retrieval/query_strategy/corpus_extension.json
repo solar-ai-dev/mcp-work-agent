@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "threads": [
+    {
+      "thread_id": "SQ-101",
+      "subject": "오로라 현장 준비",
+      "participants": [
+        "coordinator@example.test",
+        "user@example.test",
+        "haneul.kim@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-101",
+          "sender": "coordinator@example.test",
+          "sender_name": "",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-08-20T02:00:00Z",
+          "body": "담당자를 공유합니다. 오로라 현장지원 김대리는 김하늘(haneul.kim@example.test)입니다. 정산팀 김대리는 김바다(bada.kim@example.test)입니다."
+        },
+        {
+          "message_id": "SQM-102",
+          "sender": "haneul.kim@example.test",
+          "sender_name": "김하늘 대리",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-08-21T03:00:00Z",
+          "body": "오로라 검수 장비를 반입하고 고객과 함께 시운전합니다. 2026년 9월 2일 10시로 제안합니다. 회신은 8월 24일까지 주세요."
+        },
+        {
+          "message_id": "SQM-103",
+          "sender": "haneul.kim@example.test",
+          "sender_name": "",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-08-28T02:00:00Z",
+          "body": "앞서 제안한 날짜는 취소합니다. 고객 참석이 확정된 시운전은 2026년 9월 4일 14시, 제2 시험동입니다."
+        }
+      ]
+    },
+    {
+      "thread_id": "SQ-102",
+      "subject": "오로라 비용 처리",
+      "participants": [
+        "bada.kim@example.test",
+        "user@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-104",
+          "sender": "bada.kim@example.test",
+          "sender_name": "김바다 대리",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-09-02T02:00:00Z",
+          "body": "김바다 대리입니다. 오로라 비용 증빙을 맞춰 보니 차액이 있습니다. 정산 자료를 2026년 9월 10일까지 확인해 주세요."
+        }
+      ]
+    },
+    {
+      "thread_id": "SQ-103",
+      "subject": "팀 소식 36호",
+      "participants": [
+        "news@example.test",
+        "user@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-105",
+          "sender": "news@example.test",
+          "sender_name": "",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-09-03T02:00:00Z",
+          "body": "집계 기간은 2026년 9월 1일~7일입니다. 오로라 시운전 기사는 과거 회고이며 새 행사는 없습니다."
+        }
+      ]
+    },
+    {
+      "thread_id": "SQ-104",
+      "subject": "오로라 참고 전달",
+      "participants": [
+        "assistant@example.test",
+        "haneul.kim@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-106",
+          "sender": "assistant@example.test",
+          "sender_name": "",
+          "to": [
+            "haneul.kim@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-09-04T02:00:00Z",
+          "body": "김하늘 대리에게 자료를 전달했습니다. 이 메일의 발신자는 김하늘이 아닙니다."
+        }
+      ]
+    },
+    {
+      "thread_id": "SQ-105",
+      "subject": "외부 연수 참석 안내",
+      "participants": [
+        "academy@example.test",
+        "user@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-107",
+          "sender": "academy@example.test",
+          "sender_name": "",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-08-29T02:00:00Z",
+          "body": "오로라 참여자의 연수는 9월 5일입니다. 안내 원문에는 연도가 없고 행사 확정 공지도 아직 없습니다."
+        }
+      ]
+    },
+    {
+      "thread_id": "SQ-106",
+      "subject": "오로라 이후 점검",
+      "participants": [
+        "haneul.kim@example.test",
+        "user@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-108",
+          "sender": "haneul.kim@example.test",
+          "sender_name": "",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-09-05T02:00:00Z",
+          "body": "다음 시운전은 2026년 9월 15일 10시입니다."
+        }
+      ]
+    },
+    {
+      "thread_id": "SQ-107",
+      "subject": "현장 서류 확인",
+      "participants": [
+        "office@example.test",
+        "user@example.test"
+      ],
+      "messages": [
+        {
+          "message_id": "SQM-109",
+          "sender": "office@example.test",
+          "sender_name": "",
+          "to": [
+            "user@example.test"
+          ],
+          "cc": [],
+          "sent_at": "2026-09-05T03:00:00Z",
+          "body": "김하늘은 발신자가 아니라 본문에 언급된 담당자입니다. 오로라가 아닌 루멘 현장의 정산 자료입니다."
+        }
+      ]
+    }
+  ]
+}

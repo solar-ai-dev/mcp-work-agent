@@ -33,9 +33,6 @@ RETIRED_EVALUATION_AUTHORITIES = {
     "evaluation/experiment_plan.py",
     "evaluation/run_experiment.py",
     "evaluation/compare_experiment_results.py",
-    "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
-    "evaluation/datasets/e2e/product_episodes_v1.jsonl",
-    "evaluation/datasets/agent/node_evaluation_items_v1.jsonl",
     "evaluation/scoring-contract-v1.1.json",
     "evaluation/configs/experiments/prompt-baseline-smoke.template.json",
     "evaluation/configs/experiments/prompt-mcp-research-smoke.template.json",
@@ -97,11 +94,12 @@ def test_evaluation_assets_are__repository_only_and_results__are_local_by_defaul
         "evaluation/export_materials.py",
         "evaluation/datasets/atlas-출고준비.md",
         "evaluation/datasets/github-결제재시도.md",
+        "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
+        "evaluation/datasets/e2e/dataset-build-manifest-v1.17.json",
         "evaluation/checks/실행안전.md",
         "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.json",
         "evaluation/prompt_candidates/planning-review-sllm-decomposition-v0.9.2/"
         "prompt-manifest-v0.9.2-candidate.json",
-        "evaluation/실행기록.md",
     }
     assert required <= tracked
     assert RETIRED_EVALUATION_AUTHORITIES.isdisjoint(tracked)

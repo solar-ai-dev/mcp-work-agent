@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "reference_time": "2026-09-06T12:00:00+09:00",
+  "timezone": "Asia/Seoul",
+  "page_size": 3,
+  "splits": {
+    "DEV": [
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-D-001/gmail.json",
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-D-003/gmail.json",
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-D-006/gmail.json",
+      "evaluation/datasets/retrieval/query_strategy/corpus_extension.json"
+    ],
+    "HOLDOUT": [
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-CH-201/gmail.json",
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-CH-202/gmail.json",
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-CH-203/gmail.json",
+      "evaluation/datasets/e2e/fixtures/google_workspace/FW-CH-204/gmail.json"
+    ]
+  }
+}
