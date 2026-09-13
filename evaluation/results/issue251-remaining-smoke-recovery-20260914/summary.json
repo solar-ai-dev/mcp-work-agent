@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "repository": "solar-ai-dev/google-work-agent",
+  "branch": "codex/issue-251-connected-contract",
+  "start_head": "668bccfc0506d11491e11cbb78e81f3cf06cfcc9",
+  "execution_product_sha": "6481327465ec05af3cad2a5c843abf1dbc32f3cc",
+  "code_changed_during_execution": false,
+  "execution_binding": {
+    "experiment_id": "issue251-remaining-three-64813274",
+    "question_id": "issue251-remaining-three",
+    "model_id": "qwen3.5:9b",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "temperature": 0.0,
+    "seed": null,
+    "prompt_id": "request_understanding.identify_goal",
+    "prompt_version": "1.0.62",
+    "prompt_content_hash": "98fc61337e02e8cc7099f52925bccbbc03e1f5a8b3f821f996c30ea5d592d7aa",
+    "safe_product_tracing": true,
+    "automatic_langsmith_tracing": false,
+    "max_source_page_calls_per_run": 50
+  },
+  "direct_verification": {
+    "pytest_passed": 174,
+    "ruff": "PASS",
+    "mypy_changed_source": "PASS_WITH_EXISTING_MISC_TYPEDDICT_DIAGNOSTIC_EXCLUDED"
+  },
+  "totals": {
+    "planned_failed_cases": 3,
+    "initial_domain_runs": 3,
+    "business_pass": 2,
+    "business_fail": 1,
+    "same_run_confirmation_resumes": 1,
+    "rerun_to_pass": 0,
+    "approval_clicks": 0,
+    "approval_records": 0,
+    "execution_attempts": 0,
+    "provider_write_or_send_audit_events": 0,
+    "final_six_executed": false,
+    "langsmith_root_count": 4
+  },
+  "cases": [
+    {
+      "case_id": "case-01-no-target-calendar",
+      "result": "FAIL",
+      "run_id": "a1b40bf0-2081-4f55-8000-ab2424a24fc9",
+      "status_sequence": [
+        "WAITING_CONFIRMATION",
+        "WAITING_CONFIRMATION"
+      ],
+      "same_run_confirmation_resume": 1,
+      "rerun_to_pass": 0,
+      "connector_reads": 0,
+      "removed_failure_reason_code": "REQUEST_STATUS_PROVENANCE_MISMATCH",
+      "new_first_failure": {
+        "producer": "request.identify_goal confirmation merge",
+        "produced_constraint": "RESOURCE/title",
+        "consumer": "request.detect_ambiguity resolution responsibilities",
+        "searchable_target_anchor_count": 0,
+        "missing_fields": [
+          "target_resource"
+        ],
+        "outcome": "SECOND_CONFIRMATION"
+      },
+      "trace_ids": [
+        "01a09c8b-0099-7080-8905-4396fe38bfb9",
+        "01a09c8b-7d00-7800-9ea3-66f203a6c3d1"
+      ]
+    },
+    {
+      "case_id": "case-03-atlas-draft",
+      "result": "PASS",
+      "run_id": "62382bb4-4ad3-44e6-b23b-2fcd5c292ae2",
+      "status": "WAITING_APPROVAL",
+      "tool_name": "gmail_create_draft",
+      "effect_type": "CREATE",
+      "source_page_calls_used": 47,
+      "max_source_page_calls": 50,
+      "evidence_facts": {
+        "task_count": 2,
+        "calendar_event_count": 1,
+        "recipient_preserved": true,
+        "preview_correct": true
+      },
+      "trace_ids": [
+        "01a09c8c-ce68-7741-ace7-9ddbf6a37898"
+      ]
+    },
+    {
+      "case_id": "case-06-quartz-draft",
+      "result": "PASS",
+      "run_id": "440b05f8-5be4-48dd-a568-c23fa483a7a6",
+      "status": "WAITING_APPROVAL",
+      "tool_name": "gmail_update_draft",
+      "effect_type": "UPDATE",
+      "source_page_calls_used": 1,
+      "max_source_page_calls": 50,
+      "exact_requested_edit_count": 1,
+      "authoritative_snapshot_fields_preserved": true,
+      "trace_ids": [
+        "01a09c8d-be40-7473-8114-6dc03470c50f"
+      ]
+    }
+  ],
+  "safety": {
+    "approval_clicks": 0,
+    "approval_records": 0,
+    "execution_attempts": 0,
+    "provider_write_or_send_audit_events": 0,
+    "secrets_or_provider_raw_payload_saved": false
+  },
+  "pending_product_decision": {
+    "owner": "request.detect_ambiguity searchable target contract",
+    "question": "Map a confirmed target_resource value to which canonical searchable field without globally changing title semantics."
+  }
+}
