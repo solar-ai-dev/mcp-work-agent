@@ -41,6 +41,7 @@ from google_work_agent.application.use_cases.run.policy_confirmation_receipt imp
     PolicyConfirmationReceiptV1,
 )
 from google_work_agent.domain.action.model import EffectType
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 _WRITE_EFFECTS = frozenset({"CREATE", "UPDATE", "SEND", "DELETE"})
 _TARGET_BINDINGS: dict[str, tuple[str, str, str | None]] = {
@@ -95,6 +96,7 @@ class ValidatePlanForPublicationQueryV1:
     evidence_drafts: Sequence[Mapping[str, object]]
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1]
     resource_identity_reader: RunScopedResourceIdentityReader
+    selected_resources: Sequence[SelectedResourceRef] = ()
 
 
 class ValidatePlanForPublicationHandler:
@@ -118,6 +120,7 @@ class ValidatePlanForPublicationHandler:
             evidence_drafts=query.evidence_drafts,
             policy_confirmation_receipts=query.policy_confirmation_receipts,
             resource_identity_reader=query.resource_identity_reader,
+            selected_resources=query.selected_resources,
             tool_registry=self._tool_registry,
             validate_action_arguments=self._validate_action_arguments,
         )
@@ -134,6 +137,7 @@ def build_domain_validation_output_from_v2(
     resource_identity_reader: RunScopedResourceIdentityReader,
     tool_registry: SignedToolRegistry,
     validate_action_arguments: ValidateActionArgumentsHandler,
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> DomainValidationOutputV1:
     try:
         if not isinstance(run_id, str) or not run_id:
@@ -143,6 +147,7 @@ def build_domain_validation_output_from_v2(
             run_id=run_id,
             evidence_drafts=evidence_drafts,
             resource_identity_reader=resource_identity_reader,
+            selected_resources=selected_resources,
             tool_registry=tool_registry,
             validate_action_arguments=validate_action_arguments,
         )
@@ -191,6 +196,7 @@ def validate_action_plan_draft_v2_for_domain(
     resource_identity_reader: RunScopedResourceIdentityReader,
     tool_registry: SignedToolRegistry,
     validate_action_arguments: ValidateActionArgumentsHandler,
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> ActionPlanDraftV2:
     root = _mapping(value, "$")
     if set(root) != {"schema_version", "meta", "actions"}:
@@ -210,6 +216,7 @@ def validate_action_plan_draft_v2_for_domain(
             run_id=run_id,
             evidence_by_id=evidence_by_id,
             resource_identity_reader=resource_identity_reader,
+            selected_resources=selected_resources,
             tool_registry=tool_registry,
             validate_action_arguments=validate_action_arguments,
         )
@@ -329,6 +336,7 @@ def _validate_action(
     run_id: str,
     evidence_by_id: Mapping[str, Mapping[str, object]],
     resource_identity_reader: RunScopedResourceIdentityReader,
+    selected_resources: Sequence[SelectedResourceRef],
     tool_registry: SignedToolRegistry,
     validate_action_arguments: ValidateActionArgumentsHandler,
 ) -> PlannedActionV2:
@@ -404,6 +412,7 @@ def _validate_action(
             evidence_by_id=evidence_by_id,
             run_id=run_id,
             resource_identity_reader=resource_identity_reader,
+            selected_resources=selected_resources,
             path=path,
         )
 
@@ -426,6 +435,7 @@ def resolve_exact_target_evidence_handle(
     evidence_by_id: Mapping[str, Mapping[str, object]],
     run_id: str,
     resource_identity_reader: RunScopedResourceIdentityReader,
+    selected_resources: Sequence[SelectedResourceRef] = (),
     path: str,
 ) -> str:
     resource_type, target_id, parent_id = required_target_identity(
@@ -435,9 +445,9 @@ def resolve_exact_target_evidence_handle(
     )
     parent_field = _TARGET_BINDINGS.get(tool_id, ("", "", None))[2]
 
-    target_handles: set[str] = set()
-    for evidence_ref in evidence_refs:
-        handle = evidence_by_id[evidence_ref].get("resource_handle")
+    eligible_identities: dict[str, CurrentRunResourceIdentityV1] = {}
+    for evidence in evidence_by_id.values():
+        handle = evidence.get("resource_handle")
         if not isinstance(handle, str) or not handle:
             continue
         identity = resource_identity_reader.resolve_resource_identity(
@@ -450,18 +460,51 @@ def resolve_exact_target_evidence_handle(
             raise CanonicalDomainValidationError(
                 f"{path} resource identity resolver returned a mismatched handle"
             )
-        if (
-            identity["resource_type"] == resource_type
-            and identity["resource_id"] == target_id
-            and (parent_field is None or identity["parent_id"] == parent_id)
+        if identity["resource_type"] == resource_type and (
+            parent_field is None or identity["parent_id"] == parent_id
         ):
-            target_handles.add(handle)
+            eligible_identities[handle] = identity
 
-    if len(target_handles) != 1:
+    matching_target_handles = {
+        handle
+        for handle, identity in eligible_identities.items()
+        if identity["resource_id"] == target_id
+    }
+    selected_target_matches = any(
+        item.resource_type == resource_type
+        and item.resource_id == target_id
+        and (parent_field is None or item.parent_resource_id == parent_id)
+        for item in selected_resources
+    )
+    selected_scope_exists = any(
+        item.resource_type == resource_type
+        and (parent_field is None or item.parent_resource_id == parent_id)
+        for item in selected_resources
+    )
+    if selected_scope_exists:
+        authoritative_handles = matching_target_handles if selected_target_matches else set()
+    else:
+        authoritative_handles = set(eligible_identities)
+    if len(authoritative_handles) != 1:
         raise CanonicalDomainValidationError(
-            f"{path} target must resolve through evidence to exactly one current-run resource"
+            f"{path} target must be user-selected or the only eligible current-run resource"
         )
-    return next(iter(target_handles))
+    target_handle = next(iter(authoritative_handles))
+    if target_handle not in matching_target_handles:
+        raise CanonicalDomainValidationError(
+            f"{path} target arguments do not match the authoritative resource identity"
+        )
+    cited_handles = {
+        handle
+        for evidence_ref in evidence_refs
+        for handle in (evidence_by_id[evidence_ref].get("resource_handle"),)
+        if isinstance(handle, str) and handle
+    }
+    if target_handle not in cited_handles:
+        raise CanonicalDomainValidationError(
+            f"{path} target identity is not linked to the Action evidence"
+        )
+    return target_handle
 
 
 def required_target_identity(

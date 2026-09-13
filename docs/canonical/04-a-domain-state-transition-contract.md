@@ -574,6 +574,8 @@ Reconciliation obligation은 call stack이 아니라 durable state로 이어진�
 
 알 수 없는 Enum·Schema Version·Disposition은 bounded repair 뒤 추측 Edge로 보내지 않는다. `RequireRecovery(CONTRACT_VIOLATION) → RECOVERY_REQUIRED`로 suspend하고, 복구 불가가 확정된 경우에만 `ResolveRecovery(FAIL) → FAILED`로 닫는다.
 
+`WorkflowOutcome.FAILED`를 일괄적으로 `CONTRACT_VIOLATION` 의미로 해석하지 않는다. 현재 producer는 실제 schema·enum·disposition·version 또는 impossible typed-return 위반을 명시적인 `CONTRACT_VIOLATION`으로 반환해야 한다. legacy `FAILED`처럼 typed failure classification 자체가 없으면 그 분류 누락이 contract defect이며, underlying 업무 실패를 contract failure로 추정하는 근거는 아니다.
+
 ## 금지
 
 - `EXPIRED → APPROVED` 직접 전이

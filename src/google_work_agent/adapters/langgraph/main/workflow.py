@@ -1501,6 +1501,7 @@ class _WorkflowRuntimeComposition:
                         "policy_confirmation_receipts", []
                     ),
                     resource_identity_reader=resource_identity_reader,
+                    selected_resources=request_from_state(typed_state).selected_resources,
                 )
             )
         else:

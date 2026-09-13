@@ -38,8 +38,11 @@ MAX_ADDITIONAL_ACQUISITIONS = 2
 NORMAL_MAX_LLM_CALLS = 14
 REVISION_HEAVY_MAX_LLM_CALLS = 18
 RETRIEVAL_HEAVY_MAX_LLM_CALLS = 20
-ABSOLUTE_MAX_LLM_CALLS = 36
-_SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS = frozenset({24, ABSOLUTE_MAX_LLM_CALLS})
+LEGACY_ABSOLUTE_MAX_LLM_CALLS = 36
+ABSOLUTE_MAX_LLM_CALLS = 24
+_SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS = frozenset(
+    {ABSOLUTE_MAX_LLM_CALLS, LEGACY_ABSOLUTE_MAX_LLM_CALLS}
+)
 
 _PROFILE_LIMITS = {
     BudgetProfile.NORMAL: NORMAL_MAX_LLM_CALLS,
@@ -76,7 +79,7 @@ class RunBudgetV2(TypedDict):
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24, 36]
+    absolute_llm_call_limit: Literal[24]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -277,7 +280,8 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         _require_int(value[field], field, minimum=1)
     for field in non_negative:
         _require_int(value[field], field, minimum=0)
-    if value["absolute_llm_call_limit"] not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
+    supplied_absolute_limit = value["absolute_llm_call_limit"]
+    if supplied_absolute_limit not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
         raise ValueError("run budget absolute_llm_call_limit must be 24 or 36")
     if int(value["max_source_page_calls"]) > MAX_SOURCE_PAGE_CALLS_PER_RUN:
         raise ValueError("run budget max_source_page_calls exceeds retrieval hard bound")
@@ -290,7 +294,13 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
     if int(value["additional_retrieval_rounds_used"]) > MAX_ADDITIONAL_ACQUISITIONS:
         raise ValueError("run budget additional_retrieval_rounds_used exceeds the frozen limit")
     expected_limit = _effective_profile_limit(profile, value)
-    if int(value["llm_call_limit"]) != expected_limit:
+    supplied_profile_limit = int(value["llm_call_limit"])
+    legacy_combined_limit = (
+        supplied_absolute_limit == LEGACY_ABSOLUTE_MAX_LLM_CALLS
+        and supplied_profile_limit == LEGACY_ABSOLUTE_MAX_LLM_CALLS
+        and _combined_profile_limit_applies(profile, value)
+    )
+    if supplied_profile_limit != expected_limit and not legacy_combined_limit:
         raise ValueError("run budget llm_call_limit does not match the active profile")
     repairs = _validated_counter_map(value["schema_repairs_used_by_node"], "schema repairs")
     revisions = _validated_counter_map(
@@ -301,6 +311,8 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         {
             **value,
             "profile": profile.value,
+            "llm_call_limit": expected_limit,
+            "absolute_llm_call_limit": ABSOLUTE_MAX_LLM_CALLS,
             "schema_repairs_used_by_node": repairs,
             "semantic_revisions_used_by_failure": revisions,
         },
@@ -469,21 +481,20 @@ def _promote(budget: RunBudgetV2, requested: BudgetProfile) -> RunBudgetV2:
 
 
 def _effective_profile_limit(profile: BudgetProfile, budget: object) -> int:
-    if (
+    if _combined_profile_limit_applies(profile, budget):
+        return ABSOLUTE_MAX_LLM_CALLS
+    return _PROFILE_LIMITS[profile]
+
+
+def _combined_profile_limit_applies(profile: BudgetProfile, budget: object) -> bool:
+    return bool(
         isinstance(budget, dict)
         and int(budget.get("planning_revisions_used", 0)) > 0
         and (
             int(budget.get("additional_retrieval_rounds_used", 0)) > 0
             or profile is BudgetProfile.RETRIEVAL_HEAVY
         )
-    ):
-        if not isinstance(budget, dict):
-            raise ValueError("run budget is required for the combined profile limit")
-        absolute_limit = budget.get("absolute_llm_call_limit")
-        if absolute_limit not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
-            raise ValueError("run budget absolute LLM limit is invalid")
-        return cast(int, absolute_limit)
-    return _PROFILE_LIMITS[profile]
+    )
 
 
 def _allow(run_budget: RunBudgetV2) -> BudgetDecisionV1:

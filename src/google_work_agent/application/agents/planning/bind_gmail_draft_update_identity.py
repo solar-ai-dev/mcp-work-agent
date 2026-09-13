@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from google_work_agent.application.agents.planning.resolve_default_container import (
     PlanningArgumentBindingError,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 
 def bind_gmail_draft_update_identity(
@@ -17,12 +18,18 @@ def bind_gmail_draft_update_identity(
     evidence: Sequence[Mapping[str, object]],
     source_snapshots: Mapping[str, Mapping[str, object]],
     selected_evidence_refs: Sequence[str],
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> tuple[dict[str, object], list[str]]:
     if not _is_gmail_draft_update_route(route):
         return dict(arguments), []
     if action_objective.get("target_semantics") != "GMAIL_DRAFT":
         raise PlanningArgumentBindingError("Gmail Draft UPDATE target semantics are invalid")
 
+    authoritative_handle = _authoritative_draft_handle(
+        evidence=evidence,
+        source_snapshots=source_snapshots,
+        selected_resources=selected_resources,
+    )
     selected = set(selected_evidence_refs)
     identities: dict[str, tuple[dict[str, object], list[str]]] = {}
     for item in evidence:
@@ -30,7 +37,7 @@ def bind_gmail_draft_update_identity(
         evidence_ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
         if (
             not isinstance(handle, str)
-            or not handle.startswith("gmail_draft:")
+            or handle != authoritative_handle
             or not isinstance(evidence_ref, str)
             or not evidence_ref
             or (selected and evidence_ref not in selected)
@@ -77,10 +84,19 @@ def project_gmail_draft_editable_source(
     evidence: Sequence[Mapping[str, object]],
     source_snapshots: Mapping[str, Mapping[str, object]],
     preferred_evidence_refs: Sequence[str],
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> dict[str, object] | None:
     """Project one current Draft's editable values without exposing provider identity fields."""
 
     if not _is_gmail_draft_update_route(route):
+        return None
+    try:
+        authoritative_handle = _authoritative_draft_handle(
+            evidence=evidence,
+            source_snapshots=source_snapshots,
+            selected_resources=selected_resources,
+        )
+    except PlanningArgumentBindingError:
         return None
     preferred = set(preferred_evidence_refs)
     candidates: dict[str, dict[str, object]] = {}
@@ -89,7 +105,7 @@ def project_gmail_draft_editable_source(
         evidence_ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
         if (
             not isinstance(handle, str)
-            or not handle.startswith("gmail_draft:")
+            or handle != authoritative_handle
             or not isinstance(evidence_ref, str)
             or not evidence_ref
             or (preferred and evidence_ref not in preferred)
@@ -110,6 +126,54 @@ def project_gmail_draft_editable_source(
         name: snapshot[name]
         for name in ("to", "cc", "bcc", "subject", "body", "attachments")
     }
+
+
+def _authoritative_draft_handle(
+    *,
+    evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]],
+    selected_resources: Sequence[SelectedResourceRef],
+) -> str:
+    eligible_handles = {
+        handle
+        for item in evidence
+        for handle, evidence_ref in (_draft_handle_and_evidence_ref(item),)
+        if handle is not None
+        and evidence_ref is not None
+        and evidence_ref in source_snapshots
+    }
+    selected_handles = {
+        f"gmail_draft:{item.resource_id}"
+        for item in selected_resources
+        if item.resource_type == "gmail_draft"
+    }
+    if selected_handles:
+        if len(selected_handles) != 1:
+            raise PlanningArgumentBindingError(
+                "Gmail Draft UPDATE requires exactly one selected Draft identity"
+            )
+        selected_handle = next(iter(selected_handles))
+        if selected_handle not in eligible_handles:
+            raise PlanningArgumentBindingError(
+                "selected Gmail Draft identity has no current-run source snapshot"
+            )
+        return selected_handle
+    if len(eligible_handles) != 1:
+        raise PlanningArgumentBindingError(
+            "Gmail Draft UPDATE requires exactly one retrieved Draft identity"
+        )
+    return next(iter(eligible_handles))
+
+
+def _draft_handle_and_evidence_ref(
+    item: Mapping[str, object],
+) -> tuple[str | None, str | None]:
+    handle = item.get("resource_handle")
+    evidence_ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
+    return (
+        handle if isinstance(handle, str) and handle.startswith("gmail_draft:") else None,
+        evidence_ref if isinstance(evidence_ref, str) and evidence_ref else None,
+    )
 
 
 def _validated_snapshot(value: Mapping[str, object]) -> dict[str, object]:

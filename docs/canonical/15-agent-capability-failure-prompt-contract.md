@@ -158,6 +158,7 @@ Graph Profile 간 semantic responsibility parity를 유지한다. `SINGLE_BASELI
 | Planning Argument Writer | `OutputToolRouteV1` 하나와 해당 Tool Schema 하나를 소비한다. 여러 Output Route의 Arguments를 하나의 LLM Schema로 동시에 생성하지 않는다. |
 | Action Dependency | 생성·정규화·cycle 검증은 deterministic Planning Application Node가 소유한다. `planning.compose_dependencies` PromptRef를 추가하지 않으며 Active PromptRef 수 유지를 위해 atomic responsibility를 합치지 않는다. P0에서는 Business Arguments에 안정적 외부 Resource identity가 이미 있고 그 identity가 같은 Action만 frozen route 순서대로 연결한다. CREATE나 서로 다른 Resource의 dependency를 추정하지 않는다. |
 | 문법·의미 검증 | Structured/Constrained Output은 문법 유효성을 높이는 수단이지 의미 정답의 보장이 아니다. Schema Validator와 Semantic Validator의 책임을 분리한다. |
+| Deterministic semantic guard | 이미 확정된 Typed State·closed enum·explicit prohibition·selected identity·duplicate kind·canonical fact와의 구조적 모순만 거절한다. Source 누락이나 READ/WRITE 의미를 새로 판단하거나 정답 Candidate를 생성·보정하지 않는다. |
 | Runtime 조합 | Tool Calling과 별도 JSON Schema constrained decoding을 함께 쓰는 조합은 독립 Candidate로 검증한 뒤 채택한다. 한쪽 Contract Gate 성공을 다른 조합의 성공으로 간주하지 않는다. |
 
 #### Complexity Metadata와 Gate
@@ -190,7 +191,7 @@ llm_budget_policy: ROUTE_PROFILE
 normal_max_llm_calls: 14
 retrieval_heavy_max_llm_calls: 20
 revision_heavy_max_llm_calls: 18
-absolute_max_llm_calls: 36
+absolute_max_llm_calls: 24
 node_holdout: SEPARATE
 failure_reason_min_items:
   dev: 3
@@ -619,18 +620,18 @@ Additional Retrieval: 최초 Retrieval 이후 최대 2회
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=36
+ABSOLUTE_MAX_LLM_CALLS=24
 ```
 
 | Profile·상한 | 적용 조건 |
 | --- | --- |
 | `NORMAL` | 기본 Profile |
 | `RETRIEVAL_HEAVY` | `NEEDS_MORE_DATA` 또는 Additional Retrieval이 실제 발생한 경우에만 선택 |
-| `REVISION_HEAVY` | Review가 `REVISE`를 반환하고 Domain과 deterministic Policy가 Revision을 허용한 경우에만 선택 |
+| `REVISION_HEAVY` | Review가 허용한 Revision, same-Run confirmation resume, 또는 frozen multi-output contract가 실제로 필요한 경우에만 선택 |
 | Profile 승격 | Supervisor의 결정적 규칙으로 수행 |
 | `ABSOLUTE_MAX_LLM_CALLS` | 상한을 넘으면 Prompt를 더 호출하지 않음 |
 
-새 Run은 absolute 상한 36을 snapshot한다. 기존 checkpoint에 24가 저장된 Run은 resume·profile 승격에서도 24를 유지하며 현재 기본값으로 다시 쓰지 않는다.
+absolute 상한은 24다. same-Run confirmation 또는 검증된 multi-output은 기존 counter를 유지한 채 `REVISION_HEAVY`까지 승격할 수 있지만, retry를 살리기 위한 자동 승격이나 counter reset은 금지한다. 과거 저장값 36은 현재 계약을 읽을 때 24로 정규화한다.
 
 ### 8.3 Budget 소진 처리
 

@@ -35,6 +35,7 @@ from google_work_agent.application.use_cases.action.validate_action_arguments im
     ValidateActionArgumentsQueryV1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 PROMPT_ID = "planning.compose_arguments_per_output_route"
 
@@ -139,6 +140,7 @@ def compose_arguments_per_output_route(
     work_analysis: Mapping[str, object] | None = None,
     evidence: Sequence[Mapping[str, object]] = (),
     source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
+    selected_resources: Sequence[SelectedResourceRef] = (),
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
     run_reference_time: Mapping[str, object] | None = None,
@@ -209,6 +211,7 @@ def compose_arguments_per_output_route(
                 evidence=evidence,
                 source_snapshots=source_snapshots or {},
                 preferred_evidence_refs=objective.get("evidence_refs", []),
+                selected_resources=selected_resources,
             )
             if editable_source is not None:
                 prompt_input["editable_source"] = editable_source
@@ -250,6 +253,7 @@ def compose_arguments_per_output_route(
             evidence=evidence,
             source_snapshots=source_snapshots or {},
             selected_evidence_refs=refs,
+            selected_resources=selected_resources,
         )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])

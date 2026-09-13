@@ -93,3 +93,22 @@ def test_explicit_and_selected_draft__with_different_ids__fails_closed() -> None
                 ),
             ),
         )
+
+
+def test_natural_language_subject_anchor__does_not_become__a_resource_identity() -> None:
+    intent = _intent("r976635311795334843")
+    intent["constraints"] = [
+        {
+            "kind": "SCOPE",
+            "field": "subject",
+            "value": "Quartz 납품 회신 검토",
+        }
+    ]
+
+    result = bind_exact_resource_refs(
+        request_intent=intent,
+        frozen_routes=[_route()],
+        selected_resources=(),
+    )
+
+    assert result == {"refs_by_route": {}, "identities_by_ref": {}}

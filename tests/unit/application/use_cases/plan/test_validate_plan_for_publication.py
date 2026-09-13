@@ -18,6 +18,7 @@ from google_work_agent.application.use_cases.plan.validate_plan_for_publication 
     ValidatePlanForPublicationQueryV1,
     build_domain_validation_output_from_v2,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 
 class _ResourceReader:
@@ -172,6 +173,7 @@ def _call(
     reader: Any = None,
     analysis: Any = None,
     receipts: Any = (),
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> Any:
     return ValidatePlanForPublicationHandler(
         tool_registry=load_signed_tool_registry(),
@@ -185,6 +187,7 @@ def _call(
             evidence_drafts=cast(Any, evidence or _evidence()),
             policy_confirmation_receipts=receipts,
             resource_identity_reader=cast(Any, reader or _reader()),
+            selected_resources=selected_resources,
         )
     )
 
@@ -202,6 +205,80 @@ def test_update_blocks_when_evidence__is_not_tied_to__exact_current_run_target()
     )
     assert result["result"] == "BLOCK"
     assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_update_blocks_when_llm_selects_one_of_multiple_discovered_targets() -> None:
+    result = _call(
+        _task_update_plan(),
+        evidence=[
+            *_evidence("task:t1"),
+            {
+                **_evidence("task:t2")[0],
+                "evidence_id": "ev-2",
+                "segment_id": "seg-2",
+            },
+        ],
+        reader=_ResourceReader(
+            {
+                "task:t1": {
+                    "resource_handle": "task:t1",
+                    "resource_type": "task",
+                    "resource_id": "t1",
+                    "parent_id": "list-1",
+                },
+                "task:t2": {
+                    "resource_handle": "task:t2",
+                    "resource_type": "task",
+                    "resource_id": "t2",
+                    "parent_id": "list-1",
+                },
+            }
+        ),
+    )
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_update_accepts_selected_stable_target_among_multiple_discovered_resources() -> None:
+    result = _call(
+        _task_update_plan(),
+        evidence=[
+            *_evidence("task:t1"),
+            {
+                **_evidence("task:t2")[0],
+                "evidence_id": "ev-2",
+                "segment_id": "seg-2",
+            },
+        ],
+        reader=_ResourceReader(
+            {
+                "task:t1": {
+                    "resource_handle": "task:t1",
+                    "resource_type": "task",
+                    "resource_id": "t1",
+                    "parent_id": "list-1",
+                },
+                "task:t2": {
+                    "resource_handle": "task:t2",
+                    "resource_type": "task",
+                    "resource_id": "t2",
+                    "parent_id": "list-1",
+                },
+            }
+        ),
+        selected_resources=(
+            SelectedResourceRef(
+                resource_ref_id="ref-t1",
+                connector_id="google_workspace",
+                resource_type="task",
+                resource_id="t1",
+                parent_resource_id="list-1",
+            ),
+        ),
+    )
+
+    assert result["result"] == "REQUIRE_APPROVAL"
 
 
 def test_create_requires__evidence_but__not_existing_target() -> None:

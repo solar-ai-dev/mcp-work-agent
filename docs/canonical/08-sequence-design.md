@@ -161,7 +161,7 @@ sequenceDiagram
 
 Local State는 invocation 범위에서만 유지한다. 같은 owner 안의 호출은 이 State로 이어지며 Agent→Agent handoff가 아니다. 중간 Candidate는 Main State의 새 authority가 되지 않는다. Parent에는 공식 Versioned Typed Result·disposition과 필요한 Typed Workflow Signal만 반환한다.
 
-Local SLLM의 atomic Node 목록과 분해 방식은 여기서 반복하지 않는다. 강한 Runtime의 node fusion은 `06/15`가 요구하는 parity gate를 통과한 Profile에서만 허용하며, Product LLM 호출은 새 Run의 hard cap 36을 넘지 않는다. 기존 persisted Run은 저장된 24 상한을 유지한다.
+Local SLLM의 atomic Node 목록과 분해 방식은 여기서 반복하지 않는다. 강한 Runtime의 node fusion은 `06/15`가 요구하는 parity gate를 통과한 Profile에서만 허용하며, Product LLM 호출은 hard cap 24를 넘지 않는다. Profile 승격과 resume은 기존 사용량 counter를 reset하지 않는다.
 
 #### 3.2.1 LLM 호출 전 PromptRef 선택
 

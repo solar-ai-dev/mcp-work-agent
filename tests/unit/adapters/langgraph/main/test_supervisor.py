@@ -52,6 +52,7 @@ from google_work_agent.application.use_cases.run.get_supervisor_observation impo
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     RETRIEVAL_HEAVY_MAX_LLM_CALLS,
+    REVISION_HEAVY_MAX_LLM_CALLS,
     BudgetProfile,
     BudgetReasonCode,
     RunBudgetV2,
@@ -131,7 +132,7 @@ def test_current_evidence__reenters_request_owner__before_meaning_is_revised() -
     revised_budget = cast(RunBudgetV2, decision["state_update"]["retry_budget"])
     assert revised_budget["planning_revisions_used"] == 1
     assert revised_budget["additional_retrieval_rounds_used"] == 0
-    assert revised_budget["llm_call_limit"] == revised_budget["absolute_llm_call_limit"] == 36
+    assert revised_budget["llm_call_limit"] == revised_budget["absolute_llm_call_limit"] == 24
     assert "tool_route_plan" not in decision["state_update"]
     assert "retrieval_result" not in decision["state_update"]
     assert "work_analysis_result" not in decision["state_update"]
@@ -209,6 +210,53 @@ def test_no_input_route__and_no_analysis__routes_directly_to_planning() -> None:
     assert decision["next_phase"] == WorkflowPhase.SOLUTION_PLANNING.value
     assert "retrieval_result" not in decision["state_update"]
     assert "work_analysis_result" not in decision["state_update"]
+
+
+def test_validated_multi_output__promotes_to_revision_heavy__without_resetting_counters() -> None:
+    intent = _request_intent(analysis_requirement="NONE")
+    plan = _tool_route_plan()
+    output_meta = plan["output_plan"]["meta"]
+    plan["output_plan"] = {
+        "schema_version": 1,
+        "meta": output_meta,
+        "output_mode": "ACTION",
+        "output_routes": [
+            {
+                "route_id": "route-task",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "effect": "CREATE",
+                "selected_tool_id": "tasks_create_task",
+                "reason_codes": ["USER_REQUEST"],
+            },
+            {
+                "route_id": "route-event",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "effect": "CREATE",
+                "selected_tool_id": "calendar_create_event",
+                "reason_codes": ["USER_REQUEST"],
+            },
+        ],
+    }
+    budget = {**build_default_run_budget(), "llm_calls_used": 7}
+
+    decision = route_supervisor(
+        phase=WorkflowPhase.TOOL_ROUTING,
+        state=_state(request_intent=intent, retry_budget=budget),
+        result={
+            "schema_version": 1,
+            "disposition": "ROUTE_READY",
+            "tool_route_plan": plan,
+            "workflow_signal": None,
+            "reason_codes": [],
+        },
+    )
+
+    promoted = decision["state_update"]["retry_budget"]
+    assert promoted["profile"] == BudgetProfile.REVISION_HEAVY.value
+    assert promoted["llm_call_limit"] == REVISION_HEAVY_MAX_LLM_CALLS
+    assert promoted["llm_calls_used"] == 7
 
 
 def test_selected_resource_input_route__with_no_analysis__still_enters_retrieval() -> None:

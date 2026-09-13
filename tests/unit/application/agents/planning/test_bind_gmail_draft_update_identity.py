@@ -15,6 +15,7 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
     PlanningArgumentBindingError,
 )
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 ROUTE = {
     "route_id": "r1",
@@ -149,6 +150,55 @@ def test_gmail_draft_update__without_exact_evidence__requires_one_identity() -> 
         _compose(model_draft_id=None, evidence=[])
 
 
+def test_gmail_draft_update__model_evidence_choice__cannot_select_between_identities() -> None:
+    evidence = [
+        {"evidence_id": "draft-a", "resource_handle": "gmail_draft:draft-a"},
+        {"evidence_id": "draft-b", "resource_handle": "gmail_draft:draft-b"},
+    ]
+    snapshots = {
+        "draft-a": {**PAYLOAD, "body": "A"},
+        "draft-b": {**PAYLOAD, "body": "B"},
+    }
+
+    with pytest.raises(PlanningArgumentBindingError, match="exactly one retrieved"):
+        _compose(
+            model_draft_id=None,
+            evidence=evidence,
+            source_snapshots=snapshots,
+            model_evidence_refs=["draft-a"],
+        )
+
+
+def test_gmail_draft_update__selected_identity__authorizes_one_retrieved_target() -> None:
+    evidence = [
+        {"evidence_id": "draft-a", "resource_handle": "gmail_draft:draft-a"},
+        {"evidence_id": "draft-b", "resource_handle": "gmail_draft:draft-b"},
+    ]
+    snapshots = {
+        "draft-a": {**PAYLOAD, "body": "A"},
+        "draft-b": {**PAYLOAD, "body": "B"},
+    }
+
+    result = _compose(
+        model_draft_id=None,
+        evidence=evidence,
+        source_snapshots=snapshots,
+        selected_resources=(
+            SelectedResourceRef(
+                resource_ref_id="ref-b",
+                connector_id="google_workspace",
+                resource_type="gmail_draft",
+                resource_id="draft-b",
+            ),
+        ),
+        model_evidence_refs=["draft-b"],
+        payload={"body": "B\n추가 문장"},
+    )[0]
+
+    assert result["arguments"]["draft_id"] == "draft-b"
+    assert result["evidence_refs"] == ["draft-b"]
+
+
 def test_gmail_draft_update__with_spaced_literal__restores_exact_value() -> None:
     exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
     payload = {
@@ -233,6 +283,9 @@ def _compose(
     evidence: list[dict[str, object]] | None = None,
     payload: dict[str, object] = PAYLOAD,
     request_intent: dict[str, object] | None = None,
+    source_snapshots: dict[str, dict[str, object]] | None = None,
+    selected_resources: tuple[SelectedResourceRef, ...] = (),
+    model_evidence_refs: list[str] | None = None,
 ) -> tuple[dict[str, object], ...]:
     bound = cast(
         BoundSelectedToolSchemaV1,
@@ -273,12 +326,17 @@ def _compose(
                 if evidence is None
                 else evidence
             ),
-            source_snapshots={"draft-evidence": {**PAYLOAD, "body": "기존 본문"}},
+            source_snapshots=(
+                {"draft-evidence": {**PAYLOAD, "body": "기존 본문"}}
+                if source_snapshots is None
+                else source_snapshots
+            ),
+            selected_resources=selected_resources,
             invoke=lambda *_: {
                 "schema_version": 1,
                 "route_id": "r1",
                 "arguments": arguments,
-                "evidence_refs": [],
+                "evidence_refs": model_evidence_refs or [],
             },
         ),
     )

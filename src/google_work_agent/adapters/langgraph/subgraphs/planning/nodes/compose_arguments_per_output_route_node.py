@@ -73,6 +73,7 @@ def compose_arguments_per_output_route_node(
                 work_analysis=projected.get("work_analysis"),
                 evidence=projected["evidence"],
                 source_snapshots=projected.get("source_snapshots", {}),
+                selected_resources=projected["selected_resources"],
                 invoke=invoke,
                 confirmation_response=projected.get("confirmation_response"),
                 run_reference_time=projected.get("run_reference_time"),

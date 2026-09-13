@@ -23,7 +23,11 @@ class WorkflowOutcome(StrEnum):
     COMPLETED = "COMPLETED"
     CHECKPOINT_MISSING = "CHECKPOINT_MISSING"
     DOMAIN_CHECKPOINT_CONFLICT = "DOMAIN_CHECKPOINT_CONFLICT"
+    CONTRACT_VIOLATION = "CONTRACT_VIOLATION"
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+    # Legacy/unclassified failures are retained only so the projection boundary can
+    # diagnose the missing classification as a contract defect. New producers must
+    # return a specific typed outcome instead.
     FAILED = "FAILED"
 
 

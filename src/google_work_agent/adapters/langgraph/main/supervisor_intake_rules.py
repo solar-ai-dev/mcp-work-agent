@@ -299,6 +299,7 @@ def route_frozen_tool_plan(
     plan: ToolRoutePlanV2,
     disposition: ToolRouteDisposition,
 ) -> SupervisorDecisionV1:
+    route_budget = _validated_output_route_budget(state=state, plan=plan)
     if plan["input_plan"]["input_routes"]:
         return make_supervisor_decision(
             target=SupervisorTarget.CONTEXT_RETRIEVAL,
@@ -307,7 +308,9 @@ def route_frozen_tool_plan(
                 WorkflowPhase.CONTEXT_RETRIEVAL,
                 tool_route_plan=plan,
                 workflow_signal=None,
-                retry_budget=_retrieval_route_budget(state),
+                retry_budget=promote_run_budget_profile(
+                    route_budget, BudgetProfile.RETRIEVAL_HEAVY
+                ),
             ),
             reason_code=disposition.value,
         )
@@ -319,6 +322,7 @@ def route_frozen_tool_plan(
                 WorkflowPhase.WORK_ANALYSIS,
                 tool_route_plan=plan,
                 workflow_signal=None,
+                retry_budget=route_budget,
             ),
             reason_code="RETRIEVAL_NOT_REQUIRED",
         )
@@ -329,13 +333,19 @@ def route_frozen_tool_plan(
             WorkflowPhase.SOLUTION_PLANNING,
             tool_route_plan=plan,
             workflow_signal=None,
+            retry_budget=route_budget,
         ),
         reason_code="RETRIEVAL_AND_WORK_ANALYSIS_NOT_REQUIRED",
     )
 
 
-def _retrieval_route_budget(state: GraphState) -> RunBudgetV2:
-    return promote_run_budget_profile(state["retry_budget"], BudgetProfile.RETRIEVAL_HEAVY)
+def _validated_output_route_budget(*, state: GraphState, plan: ToolRoutePlanV2) -> RunBudgetV2:
+    """Promote only a frozen multi-output contract; never reset its counters."""
+
+    output_plan = plan["output_plan"]
+    if output_plan["output_mode"] != "ACTION" or len(output_plan["output_routes"]) <= 1:
+        return state["retry_budget"]
+    return promote_run_budget_profile(state["retry_budget"], BudgetProfile.REVISION_HEAVY)
 
 
 __all__ = [

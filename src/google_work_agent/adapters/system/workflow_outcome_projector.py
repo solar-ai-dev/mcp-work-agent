@@ -80,21 +80,30 @@ class WorkflowOutcomeProjector:
                 run_id=run_id,
                 expected_version=expected_version,
                 reason="CHECKPOINT_MISMATCH",
+                failure_classification=outcome.value,
             )
             self._publish(run_id, "recovery_required", self._recovery_payload(run_id))
             return
-        if outcome is WorkflowOutcome.FAILED:
+        if outcome in {
+            WorkflowOutcome.CONTRACT_VIOLATION,
+            WorkflowOutcome.FAILED,
+        }:
+            # FAILED has no typed failure classification. Per the closed workflow
+            # contract, that missing classification is itself a contract defect;
+            # it is not evidence that the underlying failure was a contract error.
             self._require_recovery_result(
                 run_id=run_id,
                 expected_version=expected_version,
                 reason="CONTRACT_VIOLATION",
+                failure_classification=_contract_failure_classification(outcome, payload),
             )
+            self._publish(run_id, "recovery_required", self._recovery_payload(run_id))
+            return
         event_type = {
             WorkflowOutcome.ACCEPTED: accepted_event_type(payload),
             WorkflowOutcome.ALREADY_RUNNING: "phase_changed",
             WorkflowOutcome.COMPLETED: "completed",
             WorkflowOutcome.RECOVERY_REQUIRED: "recovery_required",
-            WorkflowOutcome.FAILED: "error",
         }[outcome]
         event_payload = (
             self._recovery_payload(run_id)
@@ -131,12 +140,18 @@ class WorkflowOutcomeProjector:
         run_id: str,
         expected_version: int,
         reason: RecoveryReasonV1,
+        failure_classification: str | None = None,
     ) -> None:
         target = self._recovery_target(run_id) if reason == "CHECKPOINT_MISMATCH" else None
         payload = {
             "run_id": run_id,
             "expected_version": expected_version,
             "reason": reason,
+            **(
+                {"failure_classification": failure_classification}
+                if failure_classification is not None
+                else {}
+            ),
         }
         result = self._require_recovery(
             RequireRecoveryCommand(
@@ -164,6 +179,18 @@ class WorkflowOutcomeProjector:
                 "allowed_resolution_kinds": list(projection.allowed_resolution_kinds),
             }
         }
+
+
+def _contract_failure_classification(
+    outcome: WorkflowOutcome,
+    payload: Mapping[str, object],
+) -> str:
+    if outcome is WorkflowOutcome.FAILED:
+        return "MISSING_FAILURE_CLASSIFICATION"
+    safe_error_code = payload.get("safe_error_code")
+    if not isinstance(safe_error_code, str) or not safe_error_code:
+        return "MISSING_FAILURE_CLASSIFICATION"
+    return safe_error_code
 
 
 def accepted_event_type(payload: dict[str, object]) -> RunSseEventTypeV1:

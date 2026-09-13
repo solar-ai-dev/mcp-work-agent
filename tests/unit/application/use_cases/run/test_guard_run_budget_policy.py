@@ -22,6 +22,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     consume_llm_provider_calls,
     merge_run_budget_progress,
     promote_budget_profile,
+    promote_run_budget_profile,
     validate_run_budget_v2,
 )
 
@@ -191,7 +192,7 @@ def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolut
     Modify Review -- both consume planning_revisions_used via
     approve_planning_revision) and an additional acquisition
     (additional_retrieval_rounds_used via approve_additional_acquisition), the
-    profile's own ceiling (here RETRIEVAL_HEAVY=14, the higher of the two
+    profile's own ceiling (here RETRIEVAL_HEAVY=20, the higher of the two
     since promote_budget_profile is monotonic) no longer applies alone --
     the Run may use up to ABSOLUTE_MAX_LLM_CALLS. Reusing only the two
     existing counters, no new Profile value."""
@@ -206,8 +207,8 @@ def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolut
         "llm_calls_used": RETRIEVAL_HEAVY_MAX_LLM_CALLS,
     }
 
-    # Beyond the RETRIEVAL_HEAVY(14) profile cap alone, this would deny --
-    # the combined condition must allow it up to ABSOLUTE(16) instead.
+    # Beyond the RETRIEVAL_HEAVY(20) profile cap alone, this would deny --
+    # the combined condition must allow it up to ABSOLUTE(24) instead.
     allow_beyond_profile_cap = check_llm_call_budget(budget_at_profile_cap)
     assert allow_beyond_profile_cap["decision"] == BudgetDecision.ALLOW.value
 
@@ -223,13 +224,30 @@ def test_revision_and_retrieval__both_triggered_raises__effective_cap_to_absolut
     )
 
 
-def test_legacy_run__keeps_24_call_absolute_limit__through_merge_and_promotion() -> None:
-    legacy = validate_run_budget_v2(
+def test_current_run__keeps_24_call_absolute_limit__through_merge_and_promotion() -> None:
+    current = validate_run_budget_v2(
         {
             **build_default_run_budget(),
             "absolute_llm_call_limit": 24,
         }
     )
+    promoted = promote_run_budget_profile(current, BudgetProfile.RETRIEVAL_HEAVY)
+    merged = merge_run_budget_progress(current, promoted)
+
+    assert promoted["absolute_llm_call_limit"] == 24
+    assert merged["absolute_llm_call_limit"] == 24
+
+
+def test_legacy_36_call_budget__is_canonicalized_to__the_current_24_call_ceiling() -> None:
+    legacy = {
+        **build_default_run_budget(),
+        "absolute_llm_call_limit": 36,
+    }
+
+    canonical = validate_run_budget_v2(legacy)
+
+    assert canonical["absolute_llm_call_limit"] == 24
+    assert canonical["llm_call_limit"] == NORMAL_MAX_LLM_CALLS
     revised = approve_planning_revision(legacy)["run_budget"]
     combined = approve_additional_acquisition(revised)["run_budget"]
 
@@ -391,4 +409,4 @@ def test_budget_profile__constants_match__frozen_contract() -> None:
     assert NORMAL_MAX_LLM_CALLS == 14
     assert REVISION_HEAVY_MAX_LLM_CALLS == 18
     assert RETRIEVAL_HEAVY_MAX_LLM_CALLS == 20
-    assert ABSOLUTE_MAX_LLM_CALLS == 36
+    assert ABSOLUTE_MAX_LLM_CALLS == 24

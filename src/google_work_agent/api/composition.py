@@ -2260,7 +2260,7 @@ class _PromptInactiveWorkflowRuntime:
         return WorkflowInvocationResult(
             run_id=run_id,
             workflow_key=workflow_key,
-            outcome=WorkflowOutcome.FAILED,
+            outcome=WorkflowOutcome.CONTRACT_VIOLATION,
             payload={"safe_error_code": "PROMPT_NOT_ACTIVE"},
         )
 

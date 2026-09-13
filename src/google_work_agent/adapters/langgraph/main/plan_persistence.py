@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from json import dumps
 from typing import TYPE_CHECKING, Any, cast
 
@@ -63,6 +63,7 @@ from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 if TYPE_CHECKING:
     from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
@@ -164,6 +165,7 @@ def target_handle_for_action(
     action: PlannedActionV2,
     evidence_by_id: Mapping[str, Mapping[str, object]],
     resource_identity_reader: RunScopedResourceIdentityReader,
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> str | None:
     if action["effect"] == "CREATE" or (
         action["tool_id"] == "gmail_send" and "draft_id" not in action["arguments"]
@@ -176,6 +178,7 @@ def target_handle_for_action(
         evidence_by_id=evidence_by_id,
         run_id=run_id,
         resource_identity_reader=resource_identity_reader,
+        selected_resources=selected_resources,
         path=f"ActionPlanDraftV2.actions[{action['action_id']!r}]",
     )
 
@@ -310,6 +313,7 @@ class PlanPersistenceMixin:
                 action=action,
                 evidence_by_id=evidence_drafts,
                 resource_identity_reader=resource_identity_reader,
+                selected_resources=request_from_state(state).selected_resources,
             )
             target_ref_id = self._resolve_target_resource_ref_for_connector(
                 run_id=run_id,

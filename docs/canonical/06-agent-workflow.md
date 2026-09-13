@@ -377,7 +377,7 @@ class RunBudgetV2:
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24, 36]
+    absolute_llm_call_limit: Literal[24]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -798,6 +798,13 @@ class RequestIntentV2:
 - `outputs`의 각 항목은 `resource_type`과 `CREATE | UPDATE | SEND | DELETE` 중 하나인 `effect`를 가진다. 같은 Write 결과의 Verification reread는 별도 source read 책임으로 만들지 않는다.
 - source/output 책임을 투영한 Resource와 Effect 집합은 `requested_resource_hints`와 `requested_effect_hints`에 정확히 일치해야 한다. 불일치·중복 항목·지원하지 않는 Resource/effect 조합과 같은 Resource UPDATE/DELETE의 source 누락은 Provider 호출 전 Request Understanding validator가 거절한다.
 - Tool Route는 검증된 책임을 IN Resource와 OUT Resource/Effect로 결정적으로 투영한다. Tool 이름과 Registry binding은 계속 Tool Route owner가 소유한다.
+
+#### Natural-language target anchor와 identity
+
+- 자연어 target anchor는 검색·discovery constraint이며 그 자체가 target identity authority가 아니다.
+- 사용자가 선택한 `SelectedResourceRef`가 있으면 그 stable identity가 우선 authority다.
+- 선택 Resource가 없으면 현재 Run Retrieval에서 해당 target scope의 eligible stable `ResourceRef`가 정확히 하나로 결속되고 Action evidence가 그 identity를 참조할 때만 existing-resource target으로 승격한다.
+- substring·title similarity·LLM 유사 판단으로 identity를 확정하지 않는다. eligible 후보가 복수면 discovery 또는 confirmation을 유지하며 Planning이 임의의 한 후보를 선택해 Write target으로 만들 수 없다.
 
 **GitHub repository와 선택 Issue**
 
@@ -1624,7 +1631,7 @@ REVIEW_RECHECK_PER_PLANNING_REVISION=1
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=36
+ABSOLUTE_MAX_LLM_CALLS=24
 ```
 
 - 책임 분리를 위해 Subgraph 내부 Node 수가 증가해도 모든 Node가 LLM Call일 필요는 없다.
@@ -1636,7 +1643,7 @@ ABSOLUTE_MAX_LLM_CALLS=36
 | 항목 | 규칙 |
 | --- | --- |
 | 기준 | Run 시작 시 `10 Settings`의 validated budget snapshot을 고정한다. |
-| compatibility | 새 Run의 absolute 상한은 36이다. 이미 저장된 상한 24의 Run은 resume·profile 승격·merge에서도 24를 유지하며 재작성하지 않는다. |
+| compatibility | absolute 상한은 24다. 과거 저장값 36은 현재 계약을 읽을 때 24로 정규화하며 사용량 counter는 reset하지 않는다. |
 | counter | 음수가 아니며 단조 증가한다. Profile 승격으로 사용량을 초기화하지 않는다. |
 | 집행 범위 | LLM·Repair·Revision·Retrieval 외에도 per-Run Connector call, Context token, Retry, 최대 실행 시간을 검사한다. elapsed time은 ClockPort로 확인한다. |
 | Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=50`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |
