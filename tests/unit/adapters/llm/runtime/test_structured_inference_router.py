@@ -78,6 +78,9 @@ class _Provider:
     checkpoint_to_stale: ExternalScopeCheckpoint | None = None
     failure: LLMInvocationError | None = None
     content: object = field(default_factory=lambda: {"answer": "ok"})
+    input_tokens: int | None = 1
+    output_tokens: int | None = 1
+    estimated_cost_usd: float | None = None
     runtime_policies: list[RuntimePolicy] = field(default_factory=list)
 
     @property
@@ -94,7 +97,15 @@ class _Provider:
         if self.checkpoint_to_stale is not None:
             self.checkpoint_to_stale.scope = _scope(scope_hash="stale-after-first-call")
             return ProviderResponsePayload({}, "model", None, 1, 1, 1)
-        return ProviderResponsePayload(self.content, "model", None, 1, 1, 1)
+        return ProviderResponsePayload(
+            self.content,
+            "model",
+            None,
+            self.input_tokens,
+            self.output_tokens,
+            1,
+            self.estimated_cost_usd,
+        )
 
 
 class _Status:
@@ -146,11 +157,22 @@ class _Repairer:
     calls: int = 0
     failed_outputs: list[object] = field(default_factory=list)
     repaired: object = field(default_factory=lambda: {"answer": "repaired"})
+    input_tokens: int | None = 2
+    output_tokens: int | None = 3
+    estimated_cost_usd: float | None = 0.02
 
-    def repair(self, **kwargs: object) -> object:
+    def repair(self, **kwargs: object) -> ProviderResponsePayload:
         self.calls += 1
         self.failed_outputs.append(kwargs["failed_output"])
-        return self.repaired
+        return ProviderResponsePayload(
+            content=self.repaired,
+            model="repair-model",
+            provider_request_id="repair-request",
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            latency_ms=2,
+            estimated_cost_usd=self.estimated_cost_usd,
+        )
 
 
 @dataclass
@@ -504,6 +526,47 @@ def test_json_validation__malformed_response__uses_bounded_schema_repair() -> No
     assert provider.calls == 1
     assert repairer.calls == 1
     assert repairer.failed_outputs == [malformed]
+
+
+def test_schema_repair_usage__is_included_in_logical_inference_totals() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    recorder = Mock()
+    trace = _ExternalCallTrace()
+    router = _router(
+        checkpoint=checkpoint,
+        api=_Provider(),
+        local=_Provider(
+            runtime=ActualRuntime.LOCAL_GPU,
+            content='{"answer":"unterminated',
+            input_tokens=5,
+            output_tokens=7,
+            estimated_cost_usd=0.03,
+        ),
+        repairer=_Repairer(
+            input_tokens=11,
+            output_tokens=13,
+            estimated_cost_usd=0.04,
+        ),
+        external_call_trace=trace,
+    )
+    router.event_recorder = recorder
+
+    result = router.infer("LOCAL_GPU", PROMPT, {"user_request": "hello"}, SCHEMA)
+
+    assert result.input_tokens == 16
+    assert result.output_tokens == 20
+    completed = next(
+        call.kwargs["attributes"]
+        for call in recorder.record.call_args_list
+        if call.kwargs["event_name"] == "LLM_CALL_COMPLETED"
+    )
+    assert completed["input_tokens"] == 16
+    assert completed["output_tokens"] == 20
+    assert completed["total_tokens"] == 36
+    assert completed["estimated_cost_usd"] == pytest.approx(0.07)
+    assert trace.finishes[1][1].input_tokens == 11
+    assert trace.finishes[1][1].output_tokens == 13
+    assert trace.finishes[1][1].total_tokens == 24
 
 
 def test_schema_repair__reported_field_only__is_accepted() -> None:

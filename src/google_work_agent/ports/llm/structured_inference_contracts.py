@@ -317,8 +317,8 @@ class SchemaRepairer(Protocol):
         max_attempts: int,
         failure_reason_code: str,
         validator_errors: tuple[str, ...],
-    ) -> object:
-        """Return one repaired candidate output."""
+    ) -> ProviderResponsePayload:
+        """Return the repaired candidate with its provider usage metadata."""
 
 
 class OllamaRuntimeProbe(Protocol):

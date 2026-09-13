@@ -114,7 +114,7 @@ def test_repair_dispatches_the__same_base_prompt__with_full_input_shape(
         validator_errors=("$.answer must be string",),
     )
 
-    assert result == {"answer": "fixed"}
+    assert result.content == {"answer": "fixed"}
     assert len(transport.invocations) == 1
     call = transport.invocations[0]
     assert call["prompt_id"] == "planning.compose_answer"

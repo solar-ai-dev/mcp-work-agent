@@ -35,6 +35,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     ProbeResult,
     PromptReference,
+    ProviderResponsePayload,
     RequestedRuntimeMode,
     RouteDecision,
     RouteDecisionInput,
@@ -614,7 +615,7 @@ class StructuredInferenceRuntimeRouter:
                 output_tokens=payload.output_tokens,
                 safe_semantic_output=safe_semantic_output,
             )
-            structured_output, attempts = self._validate_or_repair(
+            structured_output, attempts, repair_payload = self._validate_or_repair(
                 provider=provider,
                 prompt_ref=prompt_ref,
                 prompt_input=prompt_input,
@@ -643,17 +644,28 @@ class StructuredInferenceRuntimeRouter:
                 provider_dispatch_occurred=provider_dispatch_occurred,
             ) from error
         duration_ms = int((time.perf_counter() - started) * 1000)
+        input_tokens = _sum_optional_ints(
+            payload.input_tokens,
+            None if repair_payload is None else repair_payload.input_tokens,
+        )
+        output_tokens = _sum_optional_ints(
+            payload.output_tokens,
+            None if repair_payload is None else repair_payload.output_tokens,
+        )
         result = StructuredLLMResult(
             structured_output=structured_output,
             provider=provider.provider_name,
             model=payload.model,
             requested_mode=requested_mode,
             actual_runtime=provider.runtime,
-            input_tokens=payload.input_tokens,
-            output_tokens=payload.output_tokens,
-            total_tokens=_sum_tokens(payload.input_tokens, payload.output_tokens),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=_sum_tokens(input_tokens, output_tokens),
             latency_ms=max(duration_ms, payload.latency_ms),
-            estimated_cost_usd=payload.estimated_cost_usd,
+            estimated_cost_usd=_sum_optional_floats(
+                payload.estimated_cost_usd,
+                None if repair_payload is None else repair_payload.estimated_cost_usd,
+            ),
             fallback_reason=fallback_reason,
             structured_output_attempts=attempts,
             provider_request_id=payload.provider_request_id,
@@ -701,7 +713,7 @@ class StructuredInferenceRuntimeRouter:
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
         runtime_policy: RuntimePolicy,
-    ) -> tuple[object, int]:
+    ) -> tuple[object, int, ProviderResponsePayload | None]:
         try:
             candidate = _parse_payload(payload)
         except ValueError:
@@ -710,7 +722,7 @@ class StructuredInferenceRuntimeRouter:
         else:
             errors = _collect_validation_errors(candidate, output_schema, semantic_validate)
         if not errors:
-            return candidate, 1
+            return candidate, 1, None
         if self.schema_repairer is None or runtime_policy.structured_output_repair_budget < 1:
             raise LLMInvocationError(
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
@@ -730,7 +742,7 @@ class StructuredInferenceRuntimeRouter:
             selected_model_id=None,
         )
         try:
-            repaired = self.schema_repairer.repair(
+            repair_payload = self.schema_repairer.repair(
                 provider=provider,
                 prompt_ref=prompt_ref,
                 prompt_input=prompt_input,
@@ -751,12 +763,15 @@ class StructuredInferenceRuntimeRouter:
                 error=error,
             )
             raise
+        repaired = repair_payload.content
         trace_duration_ms = max(0, int((time.perf_counter() - trace_started) * 1000))
         self._finish_llm_trace(
             trace_handle,
             status="COMPLETED",
             started=trace_started,
             duration_ms=trace_duration_ms,
+            input_tokens=repair_payload.input_tokens,
+            output_tokens=repair_payload.output_tokens,
             safe_semantic_output=_trace_semantic_output(
                 prompt_id=prompt_ref.prompt_id,
                 payload=repaired,
@@ -781,7 +796,7 @@ class StructuredInferenceRuntimeRouter:
                 "schema repair changed fields outside the reported failure scope",
                 affected_field_paths=out_of_scope_changes,
             )
-        return repaired, 2
+        return repaired, 2, repair_payload
 
     def _require_external_call(self, scope: ExternalLlmTransferScopeV1 | None) -> None:
         if not self.settings_service().external_llm_consent:
@@ -1096,6 +1111,18 @@ def _sum_tokens(input_tokens: int | None, output_tokens: int | None) -> int | No
     if input_tokens is None and output_tokens is None:
         return None
     return (input_tokens or 0) + (output_tokens or 0)
+
+
+def _sum_optional_ints(first: int | None, second: int | None) -> int | None:
+    if first is None and second is None:
+        return None
+    return (first or 0) + (second or 0)
+
+
+def _sum_optional_floats(first: float | None, second: float | None) -> float | None:
+    if first is None and second is None:
+        return None
+    return (first or 0.0) + (second or 0.0)
 
 
 def _canonical_result(result: StructuredLLMResult) -> StructuredInferenceResultV1:

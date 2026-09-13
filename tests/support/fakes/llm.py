@@ -474,7 +474,7 @@ class FakeSchemaRepairer:
         max_attempts: int = 1,
         failure_reason_code: str,
         validator_errors: tuple[str, ...] = (),
-    ) -> object:
+    ) -> ProviderResponsePayload:
         self.calls.append(
             {
                 "prompt_id": prompt_ref.prompt_id,
@@ -487,7 +487,15 @@ class FakeSchemaRepairer:
                 "schema_version": output_schema.schema_version,
             }
         )
-        return self.repaired_output
+        return ProviderResponsePayload(
+            content=self.repaired_output,
+            model="fake-repair-model",
+            provider_request_id=None,
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0,
+            estimated_cost_usd=None,
+        )
 
 
 def approved_model(model_id: str = "approved-model") -> ApprovedModelInfo:

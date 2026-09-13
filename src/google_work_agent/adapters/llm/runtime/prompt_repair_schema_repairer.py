@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from google_work_agent.application.prompt_runtime.contracts.failure_record import (
@@ -20,6 +20,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMInvocationError,
     OutputSchemaDefinition,
     PromptReference,
+    ProviderResponsePayload,
     RuntimePolicy,
     StructuredLLMProvider,
 )
@@ -49,7 +50,7 @@ class PromptRepairSchemaRepairer:
         max_attempts: int,
         failure_reason_code: str,
         validator_errors: tuple[str, ...],
-    ) -> object:
+    ) -> ProviderResponsePayload:
         from google_work_agent.application.prompt_runtime.prompt_registry import (
             InactivePromptArtifactError,
             default_prompt_manifest_path,
@@ -91,14 +92,15 @@ class PromptRepairSchemaRepairer:
             api_key=api_key,
         )
         if not isinstance(payload.content, str):
-            return payload.content
+            return payload
         try:
-            return json.loads(payload.content)
+            repaired_output = json.loads(payload.content)
         except json.JSONDecodeError as error:
             raise LLMInvocationError(
                 LLMErrorCode.OUTPUT_SCHEMA_INVALID,
                 "schema repair returned invalid JSON",
             ) from error
+        return replace(payload, content=repaired_output)
 
 
 def _build_repair_input(

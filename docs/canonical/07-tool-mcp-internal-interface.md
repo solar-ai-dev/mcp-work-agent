@@ -2178,6 +2178,11 @@ latency_ms
 fallback_reason?
 ```
 
+초기 호출 뒤 bounded Schema Repair가 실행되면 logical inference의
+`input_tokens`·`output_tokens`와 관측 `estimated_cost_usd`는 실제 두 Provider
+응답의 합계다. Provider dispatch/budget count는 각 실제 호출을 기존 authority에서
+별도로 소비한다.
+
 - `API_ONLY`: API Provider만 활성화한다.
 - `LOCAL_CAPABLE`: API Provider와 Ollama Adapter를 포함한다.
 - 명시적 `LOCAL_GPU` 실패 시 자동 API 전환을 금지한다.
