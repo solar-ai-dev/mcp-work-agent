@@ -374,13 +374,18 @@ class OllamaHTTPClient(OllamaTransport):
             for call in raw_calls
             if isinstance(call, dict) and isinstance(function := call.get("function"), dict)
         )
+        total_duration_ns = _optional_int(response.get("total_duration"))
         return ToolCallProviderResponse(
             calls=calls,
             model=str(response.get("model", model_id)),
             provider_request_id=None,
             input_tokens=_optional_int(response.get("prompt_eval_count")),
             output_tokens=_optional_int(response.get("eval_count")),
-            latency_ms=_optional_int(response.get("total_duration")) or 0,
+            latency_ms=(
+                0
+                if total_duration_ns is None
+                else max(0, total_duration_ns // 1_000_000)
+            ),
             estimated_cost_usd=None,
         )
 

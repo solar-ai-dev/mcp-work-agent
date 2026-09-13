@@ -267,6 +267,35 @@ def test_tool_call__korean_literal__preserves_model_input(
     assert json.loads(content)["input"] == inputs
 
 
+def test_tool_call__normalizes_total_duration__from_ns_to_ms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "google_work_agent.adapters.llm.ollama.transport.urlopen",
+        lambda request, *, timeout: _HTTPResponse(
+            json.dumps(
+                {
+                    "message": {"tool_calls": []},
+                    "model": "qwen3.5:9b",
+                    "total_duration": 3_565_355_900,
+                }
+            ).encode("utf-8")
+        ),
+    )
+
+    result = OllamaHTTPClient().invoke_tool_call(
+        endpoint="http://127.0.0.1:11434",
+        model_id="qwen3.5:9b",
+        prompt_ref=_prompt_ref_for_sampling_tests(),
+        prompt_input={},
+        tools=[],
+        timeout_seconds=5,
+        instruction_text="test",
+    )
+
+    assert result.latency_ms == 3_565
+
+
 def test_invoke_structured__sets_product_context_when__sampling_is_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
