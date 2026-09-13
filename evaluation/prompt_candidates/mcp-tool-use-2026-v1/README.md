@@ -56,7 +56,7 @@ python scripts/measure_local_runtime.py --prompt-manifest <materialized-director
 
 특히 이 후보의 ambiguity/necessity/empty-result 지침이 참조하는 필드는 원본 계약을 유지한 것이다. 현재 계약이 다르면 Prompt와 해당 caller를 함께 대조한다. Prompt 안에서 "구버전이면 이 필드를 새로 만들라"는 방식으로 해결하지 않는다. 없는 입력을 발명하거나 기존 구조·안전 검증을 약화하지 않는다.
 
-같은 업무 자료와 질문에서 현재 Prompt와 후보를 비교한다. 실제 사용 모델·커밋·변경·결과는 [실행 기록](../../실행기록.md)에만 간단히 남긴다. source review/구조 검사/임시 사본 생성은 제품·모델 품질 PASS가 아니다.
+같은 업무 자료와 질문에서 현재 Prompt와 후보를 비교한다. 실제 사용 모델·커밋·변경·결과는 [실험 기록](../../experiments/README.md)에만 간단히 남긴다. source review/구조 검사/임시 사본 생성은 제품·모델 품질 PASS가 아니다.
 
 ## 책임별 원문
 

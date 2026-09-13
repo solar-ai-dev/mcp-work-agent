@@ -1,8 +1,15 @@
 # 실제 업무 자료로 확인하는 LangGraph 실험
 
-**상태: 첨부 자료의 오프라인 재검수·수정본. 실제 서비스 등록, 제품 실행, 9B/4B 품질 검증은 아직 하지 않았다.**
+**기본 기능 baseline: `deed5275` · `qwen3.5:9b` · Production Smoke 6/6 PASS. 전체 Dataset 항목의 검증 완료를 뜻하지는 않는다.**
 
 한 업무 문서에서 자료·질문·확인 기준을 읽고, 실제 제품을 실행한 결과를 간단히 기록한다. JSON 데이터셋이나 별도 관계·승격·변경 계보를 관리하지 않는다. 업무 문서 33개에 질문·조작 확인 117개(사용자 질문 115개, 입력 없는 UI 확인 2개)가 있고, 말투 변형 40개(한국어 20·영어 20)는 원본의 20개 질문 계열 아래에 있다. 내부 Prompt 수정 후보 21개는 원본 `prompt_candidates/mcp-tool-use-2026-v1/sources/`에 둔다. 이전 후보·입력 계약·manifest도 원래 경로에 보존한다.
+
+## 구조
+
+- [datasets](datasets/) — 시험 자료와 질문별 Gold
+- [checks](checks/) — 안전·검증 기준
+- [experiments](experiments/) — baseline 및 이후 실제 실험 요약
+- [tests](tests/) — evaluation tooling 검증
 
 ## 세 종류를 분리해서 사용한다
 
@@ -125,7 +132,7 @@ UI·선택·확인은 실제 화면으로 검증한다. 반복 실행은 정상 
 
 실패는 **요청 의미 / 후보 수집 / 상세·정규화 / Evidence / Sufficiency / 최종 답변**으로 나눠 본다. 필요한 사실·적절한 범위·실제 근거가 기준이다. 컨텍스트 개수, 고정 Query, 모든 Node 방문, 필수 재검색 횟수는 정답이 아니다. Review도 제품의 일부이므로 그 PASS를 독립 평가 대신 사용하지 않는다.
 
-기록은 [실행기록.md](실행기록.md)의 **날짜 / 커밋 / 바꾼 것 / 결과** 네 칸만 사용한다. 모델·질문·실제 실패·준비 조건 변경은 같은 칸 안에서 짧게 적는다. 코드/Prompt 상세 diff는 Git에 남기며 별도 실험 ID·매핑·승격 문서를 만들지 않는다.
+실험 기록은 [experiments](experiments/)에 순번이 있는 파일 하나로 남긴다. 임시 trace·JSON·ZIP은 repository에 누적하지 않고 원시 관측은 LangSmith와 Git history에서 확인한다. 코드/Prompt 상세 diff는 Git에 남긴다.
 
 ## 자료의 출처와 한계
 
