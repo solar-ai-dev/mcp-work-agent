@@ -91,7 +91,11 @@ def test_detect_ambiguity__canonical_call__owns_independent_ambiguity() -> None:
     assert result["requires_confirmation"] is True
     assert _call_input(runtime, 0) == {
         "user_request": "일정을 잡아줘",
-        "goal_candidate": candidate,
+        "goal_candidate": {
+            "goal": "일정 만들기",
+            "completion_conditions": ["일정을 만든다"],
+            "constraints": [],
+        },
         "resolution_responsibilities": {
             "connector_owned_information": [],
             "resolved_resource_refs": [],
@@ -260,6 +264,13 @@ def test_searchable_target_reclassified_as_user__contract_conflict__uses_bounded
     resolution = _call_input(runtime, 0)["resolution_responsibilities"]
     assert resolution["searchable_target_anchor_count"] == 1
     assert resolution["connector_owned_source_count"] == 1
+    projected_candidate = _call_input(runtime, 0)["goal_candidate"]
+    assert projected_candidate["resource_responsibilities"] == candidate[
+        "resource_responsibilities"
+    ]
+    assert "requested_effect_hints" not in projected_candidate
+    assert "requested_resource_hints" not in projected_candidate
+    assert "analysis_requirement" not in projected_candidate
     assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
         "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
     )

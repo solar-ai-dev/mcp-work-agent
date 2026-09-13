@@ -139,7 +139,7 @@ def detect_ambiguity(
     )
     prompt_input: dict[str, object] = {
         "user_request": request.request_text,
-        "goal_candidate": dict(goal_candidate),
+        "goal_candidate": _ambiguity_goal_candidate_projection(goal_candidate),
         "resolution_responsibilities": resolution_responsibilities,
         "selected_resource_refs": [
             {
@@ -205,6 +205,29 @@ def detect_ambiguity(
             retry_budget = decision["run_budget"]
         retry_budget = merge_provider_dispatch_usage(retry_budget)
     return _finalize_ambiguity_candidate(candidate), retry_budget
+
+
+def _ambiguity_goal_candidate_projection(
+    goal_candidate: RequestGoalCandidateV1,
+) -> dict[str, object]:
+    projection: dict[str, object] = {
+        "goal": goal_candidate["goal"],
+        "completion_conditions": list(goal_candidate["completion_conditions"]),
+        "constraints": [dict(item) for item in goal_candidate["constraints"]],
+    }
+    resource_responsibilities = goal_candidate.get("resource_responsibilities")
+    if resource_responsibilities is not None:
+        projection["resource_responsibilities"] = {
+            "source_reads": [
+                {
+                    "resource_type": item["resource_type"],
+                    "required_information": list(item["required_information"]),
+                }
+                for item in resource_responsibilities["source_reads"]
+            ],
+            "outputs": [dict(item) for item in resource_responsibilities["outputs"]],
+        }
+    return projection
 
 
 def _confirmation_response_text(

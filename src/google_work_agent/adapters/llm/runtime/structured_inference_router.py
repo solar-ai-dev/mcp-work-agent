@@ -74,6 +74,8 @@ _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID = (
     "request_understanding.identify_output_responsibilities"
 )
 _IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE = 0.0
+_DETECT_AMBIGUITY_PROMPT_ID = "request_understanding.detect_ambiguity"
+_DETECT_AMBIGUITY_TEMPERATURE = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -985,6 +987,7 @@ def _runtime_policy_for_prompt(
         _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID: (
             _IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE
         ),
+        _DETECT_AMBIGUITY_PROMPT_ID: _DETECT_AMBIGUITY_TEMPERATURE,
     }.get(prompt_ref.prompt_id)
     if temperature is None:
         return runtime_policy

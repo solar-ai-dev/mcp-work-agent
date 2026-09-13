@@ -1205,7 +1205,7 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 | `merge_resource_responsibilities` | 검증된 두 atomic 결정을 기존 `ResourceResponsibilitiesV1.source_reads/outputs`로 결정적으로 조립한다. |
 | `identify_source_status` | 확정된 `source_reads.resource_type`만 대상으로 추가 source 상태 범위를 판단한다. output effect·Resource 역할·Tool·Query는 바꾸지 않는다. |
 | `identify_temporal_scope` | Gmail period가 있을 때 `MESSAGE_TIME \| EVENT_TIME`을 판단한다. 없으면 pass-through한다. 일반 코드의 키워드·정규식으로 이 의미를 교체하지 않는다. |
-| `detect_ambiguity` | 사용자 선택 누락과 Connector READ로 해소할 정보를 구분한다. 초기 연결 검사에는 §5.3의 같은 Application use case를 사용한다. |
+| `detect_ambiguity` | 사용자 선택 누락과 Connector READ로 해소할 정보를 구분한다. 입력은 목표·완료조건·제약과 분리 확정된 `resource_responsibilities`만 사용하고, 이를 합친 legacy resource/effect hint는 다시 판단 근거로 쓰지 않는다. 초기 연결 검사에는 §5.3의 같은 Application use case를 사용한다. |
 | `finalize_intent → validate_intent` | 실제 current-run source text와 identity-bearing 후보를 대조해 provenance를 부여하고 확정한다. |
 
 각 LLM 호출은 자기 책임만 수행한다. 시간축 operation은 새로운 identity resolver나 Main Agent owner가 아니다. 표는 책임 구분이며 미래 Node 개수나 물리 배치를 고정하지 않는다.
