@@ -3,6 +3,9 @@ from typing import cast
 
 import pytest
 
+from google_work_agent.application.agents.planning.bind_gmail_draft_update_identity import (
+    GmailDraftUpdateAlreadySatisfiedError,
+)
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     compose_arguments_per_output_route,
     tool_argument_candidate_output_schema,
@@ -55,8 +58,10 @@ def test_gmail_draft_update__patch_preserves__unrequested_observed_values() -> N
 
 
 def test_gmail_draft_update__unchanged_patch__is_not_an_action_preview() -> None:
-    with pytest.raises(PlanningArgumentBindingError, match="does not change"):
+    with pytest.raises(GmailDraftUpdateAlreadySatisfiedError) as captured:
         _compose(model_draft_id=None, payload={"body": "기존 본문"})
+
+    assert captured.value.evidence_refs == ("draft-evidence",)
 
 
 def test_gmail_draft_update__argument_prompt__receives_bounded_editable_source() -> None:

@@ -79,6 +79,9 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
     resolve_evidence_projection,
 )
 from google_work_agent.application.agents.planning.assemble_plan import materialize_action_seeds
+from google_work_agent.application.agents.planning.bind_gmail_draft_update_identity import (
+    GmailDraftUpdateAlreadySatisfiedError,
+)
 from google_work_agent.application.agents.planning.choose_answer_or_action_from_route import (
     choose_answer_or_action_from_route,
 )
@@ -398,7 +401,10 @@ class PlanningSubgraph:
             if isinstance(state.get("final_result"), Mapping):
                 return state
         working = self._project_runtime_inputs(state)
-        routes = cast(Mapping[str, object], working["output_plan"])["output_routes"]
+        routes = cast(
+            list[object],
+            cast(Mapping[str, object], working["output_plan"])["output_routes"],
+        )
         request_intent = cast(Mapping[str, object], working["request_intent"])
         inference_count = sum(
             requires_objective_inference(
@@ -460,6 +466,7 @@ class PlanningSubgraph:
     def _compose_arguments_node(self, state: PlanningLocalState) -> PlanningLocalState:
         working = self._project_runtime_inputs(state)
         routes = cast(Mapping[str, object], working["output_plan"])["output_routes"]
+        typed_routes = cast(list[object], routes)
         request_intent = working.get("request_intent")
         inference_count = sum(
             requires_argument_inference(
@@ -470,7 +477,7 @@ class PlanningSubgraph:
                     else None
                 ),
             )
-            for route in cast(list[object], routes)
+            for route in typed_routes
         )
         if self._llm_runtime is not None and inference_count:
             ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
@@ -480,6 +487,69 @@ class PlanningSubgraph:
                 invoke=self._semantic_invoker(state),
                 default_tasklist_id_provider=self._default_tasklist_id_provider,
                 default_calendar_id_provider=self._default_calendar_id_provider,
+            )
+        except GmailDraftUpdateAlreadySatisfiedError as exc:
+            if len(typed_routes) != 1 or cast(Mapping[str, object], typed_routes[0]).get(
+                "route_id"
+            ) != exc.route_id:
+                raise
+            user_request = working.get("user_request")
+            korean = isinstance(user_request, str) and any(
+                "\uac00" <= character <= "\ud7a3" for character in user_request
+            )
+            candidate = {
+                "schema_version": 2,
+                "answer": (
+                    "요청한 Gmail 임시보관함 초안 변경이 이미 반영되어 있어 "
+                    "추가 변경이 필요하지 않습니다."
+                    if korean
+                    else (
+                        "The requested Gmail Draft update is already present; "
+                        "no change is needed."
+                    )
+                ),
+                "evidence_refs": list(exc.evidence_refs),
+            }
+            if not self._is_production_integration:
+                return cast(
+                    PlanningLocalState,
+                    {
+                        "final_result": candidate,
+                        "planning_disposition": "ANSWER",
+                    },
+                )
+            answer = self._materialize_answer(state, candidate)
+            assert self._merge_decision is not None
+            decision = route_supervisor(
+                phase=WorkflowPhase.SOLUTION_PLANNING,
+                state=cast(GraphState, state),
+                result=cast(
+                    PlanningRouteResultV1,
+                    {
+                        "disposition": "ANSWER_ONLY",
+                        "typed_result": answer,
+                        "reason_codes": ["REQUESTED_UPDATE_ALREADY_SATISFIED"],
+                    },
+                ),
+            )
+            update = cast(GraphStateUpdateV1, {"planning_result": answer})
+            if self._llm_runtime is not None and inference_count:
+                update["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+                update["trace_context"] = self._trace(
+                    state,
+                    "compose_arguments_per_output_route",
+                    self._prompt_refs["planning.compose_arguments_per_output_route"],
+                    llm_call_increment=inference_count,
+                )
+            merged = self._merge_decision(state, update, decision)
+            merged.pop(PLANNING_AGENT_LOCAL_KEY, None)
+            return cast(
+                PlanningLocalState,
+                {
+                    **merged,
+                    "final_result": answer,
+                    "planning_disposition": "ANSWER",
+                },
             )
         except RequiredContainerUnresolvedError as exc:
             confirmation = {

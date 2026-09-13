@@ -10,6 +10,15 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 
+class GmailDraftUpdateAlreadySatisfiedError(PlanningArgumentBindingError):
+    """The requested patch is already present in the authoritative Draft snapshot."""
+
+    def __init__(self, *, route_id: str, evidence_refs: Sequence[str]) -> None:
+        super().__init__("Gmail Draft UPDATE patch does not change the source")
+        self.route_id = route_id
+        self.evidence_refs = tuple(dict.fromkeys(evidence_refs))
+
+
 def bind_gmail_draft_update_identity(
     *,
     route: Mapping[str, object],
@@ -70,7 +79,10 @@ def bind_gmail_draft_update_identity(
     if unknown:
         raise PlanningArgumentBindingError("Gmail Draft UPDATE patch contains unknown fields")
     if all(snapshot[name] == value for name, value in patch.items()):
-        raise PlanningArgumentBindingError("Gmail Draft UPDATE patch does not change the source")
+        raise GmailDraftUpdateAlreadySatisfiedError(
+            route_id=str(route["route_id"]),
+            evidence_refs=evidence_refs,
+        )
     return {
         **arguments,
         "draft_id": draft_id,
@@ -213,4 +225,8 @@ def _is_gmail_draft_update_route(route: Mapping[str, object]) -> bool:
     )
 
 
-__all__ = ["bind_gmail_draft_update_identity", "project_gmail_draft_editable_source"]
+__all__ = [
+    "GmailDraftUpdateAlreadySatisfiedError",
+    "bind_gmail_draft_update_identity",
+    "project_gmail_draft_editable_source",
+]
