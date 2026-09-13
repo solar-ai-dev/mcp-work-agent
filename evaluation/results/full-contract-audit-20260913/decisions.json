@@ -1,78 +1,71 @@
 {
   "schema_version": 1,
-  "status": "PENDING_USER_DECISION",
+  "status": "RESOLVED_WITH_REMAINING_VALIDATION",
+  "resolution_product_sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
   "items": [
     {
       "decision_id": "DEC-001",
       "title": "정상 multi-output 및 same-Run confirmation의 LLM-call 한도",
-      "facts": [
-        "partial approval과 restart confirmation E2E가 세 Graph profile 모두 PROFILE_LLM_LIMIT_EXHAUSTED로 BLOCKED됐다.",
-        "partial approval은 20/20 호출 뒤 세 번째 Review inspector 전에 멈췄다.",
-        "현재 호출 수와 각 owner는 durable trace로 확인됐고 assertion 완화로 숨기지 않았다."
-      ],
-      "undecided_semantics": "정상 지원 요청을 위해 profile budget을 늘릴지, 기존 LLM owner 일부를 결정적으로 생략/통합할지 선택이 필요하다.",
-      "why_not_decidable": "budget 확대와 LLM owner 제거는 비용·지원 범위·안전 Review 의미를 바꾸므로 감사 권한을 넘는다.",
-      "options": [
-        {"id": "A", "change": "현재 owner 유지 + profile LLM-call limit 조정", "risk": "비용과 지연 증가"},
-        {"id": "B", "change": "정확한 deterministic fast-path 근거를 정하고 일부 LLM inspector 생략", "risk": "Review 보호 공백 가능"},
-        {"id": "C", "change": "지원 가능한 multi-output/confirmation 범위를 축소", "risk": "사용자 기능 축소"}
-      ],
-      "recommendation": "A와 B의 실제 호출/보호 invariant 비교를 별도 설계 검토한 뒤 선택",
-      "approval_needed": "정상 multi-output과 same-Run confirmation에 허용할 최대 LLM call 또는 제거 가능한 Review owner를 승인",
-      "implementation_status": "NOT_IMPLEMENTED"
+      "resolution": {
+        "normal": 14,
+        "retrieval_heavy": 20,
+        "revision_heavy": 18,
+        "absolute": 24,
+        "promotion": "same-Run confirmation 또는 frozen multi-output contract에 한해 기존 counter를 유지하고 REVISION_HEAVY까지 허용",
+        "prohibited": ["retry 구제를 위한 자동 승격", "counter reset"]
+      },
+      "implementation": "새 Run과 legacy budget을 absolute 24로 canonicalize하고, 기존 confirmation 승격을 보존하며 frozen multi-output route에 bounded REVISION_HEAVY 승격을 연결했다.",
+      "validation": "budget/supervisor 직접 계약은 PASS. production-composition의 partial approval 및 restart confirmation 2개 시나리오 x 3 profile은 선택된 18/20 한도 안에서 여전히 BLOCKED되어 추가 budget 확대 없이 보류했다.",
+      "implementation_status": "IMPLEMENTED_CONTRACT_TESTED_E2E_REMAINS_BLOCKED"
     },
     {
       "decision_id": "DEC-002",
-      "title": "Request Understanding semantic false positive/negative의 deterministic guard 범위",
-      "facts": [
-        "Selected Event Run에서 output owner가 read-only 요청에 GMAIL_MESSAGE/SEND를 생성했다.",
-        "Atlas Draft Run에서 source owner가 완전한 후보와 owned_fact_kinds를 받았지만 TASK/CALENDAR_EVENT를 누락했다.",
-        "두 정상 candidate는 현재 schema로 표현 가능하고 validator/normalizer/consumer가 보존한다."
-      ],
-      "undecided_semantics": "typed request anchor와 owner 결정을 교차 검증하는 새 deterministic semantic guard를 도입할지, 모델/Prompt 품질 문제로 분리할지 선택이 필요하다.",
-      "why_not_decidable": "새 guard는 source/output 지원 의미와 false-positive/false-negative 경계를 새로 정의한다.",
-      "options": [
-        {"id": "A", "change": "현 구조 유지, NODE_SEMANTIC_FAIL로 별도 품질 실험", "risk": "현재 오판 재발"},
-        {"id": "B", "change": "기존 typed anchor에 결속된 owner-local semantic validator 추가", "risk": "정상 암시 요청 차단"},
-        {"id": "C", "change": "모델/profile 변경", "risk": "비용·운영 정책 변경"}
-      ],
-      "recommendation": "A로 품질 분포를 먼저 측정한 뒤 B의 허용/거절 counter-suite를 제품 요구로 승인",
-      "approval_needed": "새 deterministic guard가 차단해야 할 요청 의미와 허용할 암시 표현 범위를 승인",
-      "implementation_status": "NOT_IMPLEMENTED"
+      "title": "Deterministic semantic guard 범위",
+      "resolution": {
+        "allowed": [
+          "explicit prohibition contradiction",
+          "selected stable identity conflict",
+          "closed enum/schema contradiction",
+          "duplicate semantic kind",
+          "canonical typed fact contradiction"
+        ],
+        "prohibited": [
+          "사용자 의미 재해석",
+          "정답 Source/Effect 생성 또는 보정",
+          "source 누락을 deterministic rewrite로 교정"
+        ]
+      },
+      "implementation": "기존 structural guard를 유지하고 새 의미 보정 guard를 추가하지 않았다. source/READ/WRITE 품질 문제는 candidate/schema/projection/owner 경계의 후속 품질 작업으로 남겼다.",
+      "validation": "Request Understanding, Planning, Retrieval 인접 contract 및 compiled component PASS.",
+      "implementation_status": "POLICY_ALIGNED_NO_NEW_SEMANTIC_AUTHORITY"
     },
     {
       "decision_id": "DEC-003",
-      "title": "WorkflowOutcome.FAILED의 CONTRACT_VIOLATION recovery mapping",
-      "facts": [
-        "현재 FAILED outcome projection은 여러 producer error를 CONTRACT_VIOLATION recovery로 수렴시킬 수 있다.",
-        "승인/실행 불변식은 보존되지만 사용자·운영 진단 의미가 넓다."
-      ],
-      "undecided_semantics": "contract 오류, 내부 오류, lifecycle/admission 오류를 public recovery reason에서 분리할지 결정이 필요하다.",
-      "why_not_decidable": "Domain recovery taxonomy와 resume 정책의 public 의미가 바뀐다.",
-      "options": [
-        {"id": "A", "change": "현재 mapping 유지", "risk": "원인 가시성 제한"},
-        {"id": "B", "change": "기존 safe error code별 recovery taxonomy 확장", "risk": "Domain/API/persistence 호환 변경"}
-      ],
-      "recommendation": "현재 안전한 fail-closed mapping을 유지하고 taxonomy 변경을 별도 Domain 결정으로 진행",
-      "approval_needed": "새 recovery reason/state/API compatibility 도입 여부 승인",
-      "implementation_status": "NOT_IMPLEMENTED"
+      "title": "WorkflowOutcome failure classification",
+      "resolution": {
+        "contract_violation": "실제 schema/enum/disposition/version/impossible typed contract에만 명시",
+        "transition": "RequireRecovery(CONTRACT_VIOLATION) -> RECOVERY_REQUIRED; 복구 불가 확정 뒤 ResolveRecovery(FAIL) -> FAILED",
+        "legacy_failed": "typed failure classification이 없는 legacy FAILED는 underlying 오류가 아니라 분류 누락 자체를 contract defect로 기록"
+      },
+      "implementation": "CONTRACT_VIOLATION outcome을 분리하고 prompt inactive 같은 명시적 contract producer만 사용하도록 했다. legacy FAILED는 MISSING_FAILURE_CLASSIFICATION fingerprint로 fail closed한다.",
+      "validation": "workflow outcome projector, composition, handoff/reconciliation/recovery 직접·인접 회귀 PASS.",
+      "implementation_status": "IMPLEMENTED_VERIFIED"
     },
     {
       "decision_id": "DEC-004",
-      "title": "ambiguity target anchor의 자연어 동일성 정책",
-      "facts": [
-        "typed selected identity와 connector-owned fact 경계는 현재 분리돼 있다.",
-        "자유 자연어 anchor의 정확 일치·정규화 일치·의미 유사성 중 어느 수준을 target resolved 근거로 삼을지는 Canonical에서 하나로 확정되지 않았다."
-      ],
-      "undecided_semantics": "target identity 해결에 허용할 자연어 equivalence 수준",
-      "why_not_decidable": "넓히면 잘못된 대상 자동 선택, 좁히면 불필요 confirmation 위험이 있다.",
-      "options": [
-        {"id": "A", "change": "typed identity와 exact normalized anchor만 허용", "risk": "재질문 증가"},
-        {"id": "B", "change": "LLM 의미 유사성 허용", "risk": "오대상 선택"}
-      ],
-      "recommendation": "안전 우선 A를 제품 요구로 확정한 뒤 counter-suite 추가",
-      "approval_needed": "target resolved로 인정할 equivalence 수준 승인",
-      "implementation_status": "NOT_IMPLEMENTED"
+      "title": "Natural-language target anchor identity 정책",
+      "resolution": {
+        "anchor": "search/discovery 전용",
+        "authority": [
+          "사용자가 선택한 stable SelectedResourceRef",
+          "현재 Run Retrieval에서 exactly one eligible stable ResourceRef"
+        ],
+        "prohibited": ["substring identity", "title similarity identity", "LLM similarity identity"],
+        "multiple_candidates": "discovery 또는 confirmation 유지"
+      },
+      "implementation": "Request Understanding의 anchor/resolved 분리를 유지하고, Planning argument binding과 publication validation에서 선택 identity 또는 유일한 current-Run identity만 existing-resource target으로 허용했다.",
+      "validation": "자연어 subject가 identity로 승격되지 않는 회귀, 다중 Draft/Task 후보 차단, selected stable identity 허용, compiled selected-resource 경로 PASS.",
+      "implementation_status": "IMPLEMENTED_VERIFIED"
     }
   ]
 }

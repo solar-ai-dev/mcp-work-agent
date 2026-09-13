@@ -14,11 +14,16 @@ production-composition E2E의 두 시나리오가 세 Graph profile 모두에서
 한도에 도달했으며, 실제 Dataset 115개 Live와 Provider WRITE 검증은 실행 전제·승인 범위가
 확정되지 않아 실행하지 않았기 때문이다.
 
+이후 사용자 결정 4건은 제품 SHA `b6c42a75c0f2cbe611e719dfb2f90789cf236cab`에 반영했다. 직접 계약은 통과했지만 동일
+production-composition 두 시나리오는 확정된 18/20 한도 안에서 계속 `BLOCKED`이므로 전체
+성공 판정은 바꾸지 않았다.
+
 ## 실행 기준
 
 - 분석 시작 HEAD: `23e08df05c2679d472dc746d00304185108d15b6`
 - Product Smoke SHA: `05d226423b0a6b7295dea0b60ad50b519159d155`
 - 결과 작성 전 HEAD: `f8f5ed5d31251afb439404b5aa9c54575cbea9bb`
+- 사용자 결정 반영 Product SHA: `b6c42a75c0f2cbe611e719dfb2f90789cf236cab`
 - branch: `codex/issue-251-connected-contract`
 - Local model: `qwen3.5:9b`
 - digest: `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`
@@ -68,15 +73,22 @@ owner 단위 정적 검사와 전체 회귀로 대조했다. 상세 판정과 �
 - 중복 authority/instruction 축소: 1
 - 명백한 책임 초과 정리: 2
 - owner-local 내부 책임 분리: 1
-- 사용자 결정 보류: 4
+- 사용자 결정 반영: 4
+- 추가 제품 의미 결정 필요: 1 (`DEC-001`의 남은 E2E 지원 방식)
 - 근거 부족 또는 별도 품질 문제: 5
 - 외부/준비 blocker: 1
 
-주요 Product 수정은 Prompt/Schema binding 정합화, source-status revision의 owner-local화,
+기존 주요 Product 수정은 Prompt/Schema binding 정합화, source-status revision의 owner-local화,
 source 후보 fact metadata, 명시 날짜 보존, Retrieval current-page continuation, source-status
 schema binding, duplicate/conflict 책임을 침범한 relation instruction 제거, cached segment의
 동일 materialization 재수화, 한 Product Run당 LangSmith root 하나 보장이다. Main public State,
 새 Store, 새 Agent/Node, Connector WRITE 정책, budget 숫자는 변경하지 않았다.
+
+사용자 결정 반영에서는 LLM budget을 `14/20/18/24`로 고정하고 frozen multi-output의 bounded
+승격을 연결했으며, 명시적 `CONTRACT_VIOLATION` outcome과 legacy failure-classification 결함을
+분리했다. 자연어 target anchor는 identity로 사용하지 않고 selected stable identity 또는 현재
+Run의 유일한 eligible stable identity만 Planning/Publication target authority로 허용했다. 새
+semantic correction guard, Prompt 변경, 새 State/Store/Agent/Node는 추가하지 않았다.
 
 ## Product 9B Smoke
 
@@ -107,6 +119,12 @@ Resource identity·credential을 새로 노출하지 않았다. 상세 URL과 �
 - compileall: 오류 0.
 - Frontend: `266 passed`; typecheck, lint, production build PASS.
 - Evaluation workspace: 구조 검사 PASS; unittest `78 passed / 1 skipped`.
+- 사용자 결정 직접·인접 회귀: 최종 집중 batch `124 passed`, Prompt manifest/input-contract
+  `56 passed`, 추가 broad focused batch `382 + 278 + 74 + 24 passed`.
+- 변경 source Ruff, mypy 12개 source, `git diff --check`: PASS.
+- 결정 반영 production-composition 직접 batch: `6 passed / 6 failed`. selected-resource 및
+  unresolved-target 6개는 PASS, partial approval/restart confirmation 6개는 선택된 18/20 한도
+  안에서 `BLOCKED`. assertion 완화·한도 확대·rerun-to-pass는 하지 않았고 외부 WRITE는 0이다.
 
 전체 pytest를 마지막 두 비제품 commit 뒤 다시 한 번 돌려 성공값으로 덮어쓰지 않았다.
 실패 batch와 수정한 assertion의 3-profile 직접 재검증을 모두 보존했다.
@@ -116,14 +134,15 @@ Resource identity·credential을 새로 노출하지 않았다. 상세 URL과 �
 - 현재 Dataset은 문서 자체가 115개 사용자 질문을 자동 Product Live runner로 연결하지
   않았고 실계정 provisioning도 미확정이라고 명시한다. 전체 115개 실제 Live는 NOT_RUN이다.
 - Provider WRITE가 필요한 Case는 현재 요청에서 승인된 실제 effect 범위가 없으므로 BLOCKED다.
-- E2E LLM-call profile 조정, RU semantic guard 추가, recovery mapping 변경, ambiguity의 자연어
-  anchor 동일성 정책은 제품 의미 선택이 필요해 구현하지 않았다. `decisions.json` 참고.
+- 네 사용자 결정은 반영됐다. 다만 `DEC-001`의 두 deterministic E2E를 현 한도 안에서
+  지원하려면 LLM owner 축소 또는 지원 범위 결정이 추가로 필요하다. 새 의미 보정 guard와
+  retry 구제 승격은 결정에 따라 구현하지 않았다. `decisions.json` 참고.
 
 ## 파일
 
 - `inventory.json`: 전수 대상과 hash/ID
 - `findings.json`: owner별 정상·결함·수정·검증·잔여 판정
-- `decisions.json`: `PENDING_USER_DECISION`
+- `decisions.json`: `RESOLVED_WITH_REMAINING_VALIDATION`
 - `test-runs.json`: 실제 실행 명령과 결과
 - `progress.md`: 완료·잔여·재개 지점
 - `smoke-summary.json`: 안전한 Run/Trace/count 요약

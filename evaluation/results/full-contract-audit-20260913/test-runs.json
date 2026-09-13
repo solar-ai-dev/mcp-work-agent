@@ -106,6 +106,42 @@
       "result": "78 passed, 1 skipped (platform symlink unavailable)",
       "exit_code": 0,
       "duration_seconds": 3.561
+    },
+    {
+      "id": "TR-013",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/e2e/test_langgraph_real_production.py::test_partial_approval__executes_only__the_approved_action tests/e2e/test_langgraph_real_production.py::test_restart_recreates__production_composition_and__resumes_durable_interrupt tests/e2e/test_langgraph_real_production.py::test_unresolved_current_run_target__waits_before__retrieval_or_connector tests/e2e/test_langgraph_real_production.py::test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_llm -q",
+      "scope": "confirmed budget and stable-target decisions through compiled production composition, three Graph profiles",
+      "result": "6 passed, 6 failed; selected-resource and unresolved-target cases passed; partial approval and restart confirmation remained BLOCKED within the confirmed 18/20 profile limits; external writes 0",
+      "exit_code": 1,
+      "duration_seconds": 162.64,
+      "failure_classification": "REMAINING_PRODUCT_DECISION; no retry-to-pass or budget escalation"
+    },
+    {
+      "id": "TR-014",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/unit/adapters/system/test_workflow_outcome_projector.py tests/unit/api/test_composition.py tests/unit/application/use_cases/run/test_guard_run_budget.py tests/unit/application/use_cases/run/test_guard_run_budget_policy.py tests/unit/adapters/langgraph/main/test_supervisor.py tests/unit/application/agents/planning/test_bind_gmail_draft_update_identity.py tests/unit/application/use_cases/plan/test_validate_plan_for_publication.py tests/unit/application/agents/retrieval/test_bind_exact_resource_refs.py -q",
+      "scope": "four confirmed decisions, direct producer-consumer and boundary regressions",
+      "result": "124 passed, 1 deprecation warning",
+      "exit_code": 0,
+      "duration_seconds": 2.13
+    },
+    {
+      "id": "TR-015",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/prompt/test_prompt_manifest_source_caller_equality.py tests/unit/application/prompt_runtime/test_prompt_registry.py tests/unit/application/prompt_runtime/test_load_prompt_input_contract.py tests/unit/application/prompt_runtime/test_assemble_prompt.py tests/unit/application/prompt_runtime/contracts/test_prompt_runtime_input_contract.py -q",
+      "scope": "Prompt manifest, registry and input-contract exact-set; Prompt source unchanged",
+      "result": "56 passed",
+      "exit_code": 0,
+      "duration_seconds": 5.46
+    },
+    {
+      "id": "TR-016",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": "ruff changed files; mypy 12 changed source files; git diff --check",
+      "scope": "decision implementation static gates",
+      "result": "PASS / PASS / PASS",
+      "exit_code": 0
     }
   ],
   "non_result_invocations": [

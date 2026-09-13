@@ -13,9 +13,23 @@
     "duplicate_reductions": 1,
     "responsibility_overreach_corrections": 2,
     "internal_responsibility_splits": 1,
-    "pending_user_decisions": 4,
+    "pending_user_decisions": 0,
+    "resolved_user_decisions": 4,
+    "remaining_product_decisions": 1,
     "node_semantic_failures": 5,
     "external_blockers": 1
+  },
+  "decision_resolution": {
+    "product_sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+    "implemented": ["DEC-001", "DEC-003", "DEC-004"],
+    "policy_aligned_without_new_semantic_authority": ["DEC-002"],
+    "remaining": [
+      {
+        "decision_id": "DEC-001",
+        "status": "IMPLEMENTED_CONTRACT_TESTED_E2E_REMAINS_BLOCKED",
+        "reason": "partial approval and same-Run restart confirmation remain BLOCKED within the confirmed 18/20 profile limits; no unapproved budget increase or retry promotion was applied"
+      }
+    ]
   },
   "review_matrix": [
     {"kind": "PRODUCTION_FILE", "count": 793, "review": "PASS_WITH_FINDINGS", "basis": "ownership/import/static gates + full pytest"},
