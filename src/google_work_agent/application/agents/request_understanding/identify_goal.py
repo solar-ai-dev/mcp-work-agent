@@ -13,6 +13,7 @@ from google_work_agent.application.agents.project_run_reference_time import (
     project_run_reference_time,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    AmbiguityV1,
     ConstraintProvenanceSource,
     RequestGoalCandidateV1,
     ResourceResponsibilitiesV1,
@@ -189,6 +190,7 @@ def identify_goal_with_budget(
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
     prior_goal_candidate: RequestGoalCandidateV1 | None = None,
+    prior_ambiguity_candidate: AmbiguityV1 | None = None,
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Identify the goal with one bounded semantic contract revision."""
 
@@ -233,6 +235,7 @@ def identify_goal_with_budget(
             prompt_input=prompt_input,
             confirmation_response=confirmation_response,
             prior_goal_candidate=prior_goal_candidate,
+            prior_ambiguity_candidate=prior_ambiguity_candidate,
         )
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(
@@ -413,6 +416,7 @@ def _resolve_confirmed_goal(
     prompt_input: Mapping[str, object],
     confirmation_response: ConfirmationResponseProjectionV1,
     prior_goal_candidate: RequestGoalCandidateV1,
+    prior_ambiguity_candidate: AmbiguityV1 | None,
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Resolve only source-bound facts supplied by one confirmation response."""
 
@@ -437,6 +441,11 @@ def _resolve_confirmed_goal(
             prior_goal_candidate,
             resolved,
             confirmation_text=_confirmation_response_text(confirmation_response),
+            target_resource_confirmation_requested=(
+                prior_ambiguity_candidate is not None
+                and "target_resource" in prior_ambiguity_candidate["missing_fields"]
+            ),
+            has_selected_resource_authority=bool(request.selected_resources),
         )
         retry_budget = merge_provider_dispatch_usage(retry_budget)
     return validate_normalized_request_goal_candidate(candidate), retry_budget
@@ -477,10 +486,27 @@ def _merge_confirmation_constraints(
     resolved: RequestGoalCandidateV1,
     *,
     confirmation_text: str | None,
+    target_resource_confirmation_requested: bool,
+    has_selected_resource_authority: bool,
 ) -> RequestGoalCandidateV1:
     if not confirmation_text:
         return prior
     constraints = list(prior["constraints"])
+    if target_resource_confirmation_requested and not has_selected_resource_authority:
+        constraints.append(
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": confirmation_text,
+                "provenance": {
+                    "source": "CONFIRMATION_RESPONSE",
+                    "start_offset": 0,
+                    "end_offset": len(confirmation_text),
+                    "source_text": confirmation_text,
+                },
+            }
+        )
+        return {**prior, "constraints": constraints}
     identities = {
         (item["kind"], item["field"], repr(item["value"])) for item in constraints
     }

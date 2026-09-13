@@ -7,6 +7,7 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
     RequestUnderstandingStateV2,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    AmbiguityV1,
     RequestGoalCandidateV1,
 )
 from google_work_agent.ports.system.contracts.confirmation import (
@@ -23,6 +24,7 @@ class IdentifyGoalInput(TypedDict):
     request: WorkflowStartRequest
     confirmation_response: NotRequired[ConfirmationResponseProjectionV1]
     prior_goal_candidate: NotRequired[RequestGoalCandidateV1]
+    prior_ambiguity_candidate: NotRequired[AmbiguityV1]
     request_reconsideration: NotRequired[RequestReconsiderationRequiredV1]
 
 
@@ -39,6 +41,9 @@ def project_identify_goal_input(state: RequestUnderstandingStateV2) -> IdentifyG
         prior_goal_candidate = state.get("goal_candidate")
         if prior_goal_candidate is not None:
             projected["prior_goal_candidate"] = prior_goal_candidate
+        prior_ambiguity_candidate = state.get("ambiguity_candidate")
+        if prior_ambiguity_candidate is not None:
+            projected["prior_ambiguity_candidate"] = prior_ambiguity_candidate
     reconsideration = state.get("request_reconsideration")
     if reconsideration is not None:
         current_intent = state.get("request_intent")

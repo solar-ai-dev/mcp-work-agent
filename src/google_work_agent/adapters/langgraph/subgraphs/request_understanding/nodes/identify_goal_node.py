@@ -54,6 +54,7 @@ def identify_goal_node(
         confirmation_response=projection.get("confirmation_response"),
         request_reconsideration=projection.get("request_reconsideration"),
         prior_goal_candidate=projection.get("prior_goal_candidate"),
+        prior_ambiguity_candidate=projection.get("prior_ambiguity_candidate"),
     )
     return {
         "goal_candidate": candidate,

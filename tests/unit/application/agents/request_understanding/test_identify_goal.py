@@ -657,6 +657,11 @@ def test_confirmation_resume__preserves_prior_semantics_and_resolves_bound_const
             "free_text": "프로젝트 검토 회의",
         },
         prior_goal_candidate=cast(Any, prior_candidate),
+        prior_ambiguity_candidate={
+            "requires_confirmation": True,
+            "reason_codes": ["MISSING_TARGET_RESOURCE"],
+            "missing_fields": ["target_resource"],
+        },
     )
 
     assert candidate["goal"] == prior_candidate["goal"]
@@ -664,11 +669,93 @@ def test_confirmation_resume__preserves_prior_semantics_and_resolves_bound_const
     assert candidate["resource_responsibilities"] == prior_candidate["resource_responsibilities"]
     assert candidate["constraints"] == [
         *prior_candidate["constraints"],
-        {"kind": "RESOURCE", "field": "title", "value": "프로젝트 검토 회의"},
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "search_terms",
+            "value": "프로젝트 검토 회의",
+            "provenance": {
+                "source": "CONFIRMATION_RESPONSE",
+                "start_offset": 0,
+                "end_offset": 10,
+                "source_text": "프로젝트 검토 회의",
+            },
+        },
     ]
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
         "request_understanding.identify_goal"
     ]
+
+
+def test_confirmation_resume__keeps_selected_resource_identity_authority() -> None:
+    selected = SelectedResourceRef(
+        "ref-event-42",
+        "google_workspace",
+        "calendar_event",
+        "event-42",
+    )
+    request = replace(
+        _request("선택한 일정의 시작과 끝을 알려줘"),
+        entry_mode="RESOURCE_SELECTED",
+        selected_resource_ids=(selected.resource_id,),
+        selected_resources=(selected,),
+    )
+    prior_candidate = {
+        "goal": "선택한 일정의 시작과 끝 확인",
+        "completion_conditions": ["선택한 일정의 시작과 끝을 답한다"],
+        "constraints": [
+            {
+                "kind": "RESOURCE",
+                "field": "selected_resource_id",
+                "value": [selected.resource_id],
+            }
+        ],
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["event_identity", "start", "end"],
+                }
+            ],
+            "outputs": [],
+        },
+        "analysis_requirement": "NONE",
+    }
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "goal": "확인 답변을 반영해 일정 조회",
+                "completion_conditions": ["일정 시간을 답한다"],
+                "constraints": _goal_constraints(
+                    {"field": "title", "value": "프로젝트 검토 회의"}
+                ),
+                "analysis_requirement": "NONE",
+            }
+        ]
+    )
+
+    candidate, _ = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=request,
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+        confirmation_response={
+            "schema_version": 1,
+            "response_kind": "FREE_TEXT",
+            "selected_option": None,
+            "free_text": "프로젝트 검토 회의",
+        },
+        prior_goal_candidate=cast(Any, prior_candidate),
+        prior_ambiguity_candidate={
+            "requires_confirmation": True,
+            "reason_codes": ["MISSING_TARGET_RESOURCE"],
+            "missing_fields": ["target_resource"],
+        },
+    )
+
+    assert candidate["constraints"][0] == prior_candidate["constraints"][0]
+    assert all(item["field"] != "search_terms" for item in candidate["constraints"])
 
 
 def test_thread_reply__without_explicit_source_status__does_not_create_status() -> None:
