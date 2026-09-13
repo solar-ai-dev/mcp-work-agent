@@ -1,43 +1,45 @@
 {
   "schema_version": 1,
   "branch": "codex/issue-251-connected-contract",
-  "product_sha": "f825546e7e43fd335b39acc8c53b10a3b417450b",
-  "change": {
-    "owner": "request_understanding.confirmation_resume",
-    "canonical_constraint": {
-      "kind": "USER_REQUIREMENT",
-      "field": "search_terms",
-      "provenance_source": "CONFIRMATION_RESPONSE",
-      "value_binding": "exact_confirmation_response_span"
-    },
-    "selected_resource_identity_preserved": true,
+  "product_sha": "493e2f047c6cec210d98d524c96b58493350b32e",
+  "implementation": {
+    "target_confirmation_constraint": "USER_REQUIREMENT/search_terms",
+    "target_confirmation_provenance": "exact CONFIRMATION_RESPONSE span",
+    "empty_source_owner": "identify_source_dependencies",
+    "existing_resume_llm_replaced": true,
+    "nonempty_source_reassessed": false,
+    "stable_selected_identity_preserved": true,
+    "output_status_preserved": true,
     "prompt_changed": false,
     "schema_changed": false,
     "state_changed": false,
     "node_or_edge_added": false,
     "llm_call_added": false
   },
-  "calendar_gate": {
-    "run_id": "70eeb6ca-1008-4c9b-afa3-61bb6170547f",
-    "initial_status": "WAITING_CONFIRMATION",
-    "resume_status": "COMPLETED",
-    "product_result": "FAIL",
-    "confirmation_responses": 1,
-    "connector_calls": 0,
-    "source_page_calls": 0,
-    "evidence_count": 0,
-    "input_route_count": 0,
-    "first_remaining_failure": {
-      "boundary": "preserved request intent to tool route",
-      "prior_source_read_count": 0,
-      "prior_requested_resource_hint_count": 0,
-      "effect": "retrieval skipped and ungrounded not-found answer"
-    }
+  "direct_tests": {
+    "pytest_passed": 100,
+    "ruff": "PASS",
+    "mypy": "PASS"
   },
-  "langsmith": {
-    "initial_trace_id": "01a09ca4-5a89-7d81-8772-b9394c8daab5",
-    "resume_trace_id": "01a09ca4-cc37-75a2-a903-1c8f41349b78",
-    "binding_verified": true
+  "calendar_gate": {
+    "run_id": "79aecaeb-86e8-4bad-a2e6-c581597ba4a5",
+    "initial_status": "WAITING_CONFIRMATION",
+    "confirmation_responses": 1,
+    "reconfirmation": false,
+    "connector_reads": 23,
+    "evidence_count": 2,
+    "terminal_status": "COMPLETED",
+    "terminal_result_kind": "PARTIAL",
+    "product_result": "FAIL",
+    "answer_grounded": true,
+    "first_remaining_failure": {
+      "boundary": "retrieval sufficiency source-status accounting",
+      "calendar_event_status": "COMPLETE",
+      "calendar_event_scope_complete": true,
+      "calendar_discovery_status": "NOT_ATTEMPTED",
+      "calendar_discovery_continuation": "UNKNOWN",
+      "effect": "access-only discovery route produces PARTIAL coverage"
+    }
   },
   "rerun_to_pass": 0,
   "provider_write_send": 0,

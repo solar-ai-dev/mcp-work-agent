@@ -1,53 +1,70 @@
-# Issue 251 Calendar confirmation 단발 검증
+# Issue 251 Calendar confirmation 복구 검증
 
-- 제품 SHA: `f825546e7e43fd335b39acc8c53b10a3b417450b`
 - 브랜치: `codex/issue-251-connected-contract`
+- source 재평가 제품 SHA: `493e2f047c6cec210d98d524c96b58493350b32e`
 - 모델: `qwen3.5:9b` / digest `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`
 - temperature / seed: `0.0` / `null`
 - Prompt: `request_understanding.identify_goal` `1.0.62` / `98fc61337e02e8cc7099f52925bccbbc03e1f5a8b3f821f996c30ea5d592d7aa`
 - 자동 LangSmith tracing: 비활성
 
-## 결과
+## 구현
 
-| 단계 | 결과 |
+`target_resource` confirmation의 `USER_REQUIREMENT/search_terms` + exact `CONFIRMATION_RESPONSE` provenance 결속을 유지했다.
+
+- prior `source_reads`가 비었을 때: 기존 resume의 `identify_goal` LLM 1회를 기존 `identify_source_dependencies` 호출 1회로 교체
+- prior `source_reads`가 있거나 stable selection이 있을 때: source를 다시 판단하지 않고 LLM 호출 0회
+- 기존 goal, completion conditions, output responsibilities, status/provenance 보존
+- 새 source decision과 보존한 output decision을 기존 `merge_resource_responsibilities`로 결합
+- effect/resource hint는 `derive_requested_resource_fields`에서만 재파생
+
+Prompt/Schema/State와 Graph Node/Edge 구조는 변경하지 않았다. lexical rule, Calendar hardcode, validator 완화도 없다.
+
+## 직접 테스트
+
+| 경계 | 결과 |
 | --- | --- |
+| target confirmation + prior source 0 | source dependency만 1회 재평가 |
+| prior source non-empty | 보존, LLM 0회 |
+| stable SelectedResourceRef | identity 보존, search term 하향 없음, LLM 0회 |
+| prior status/output | 재평가 뒤 동일하게 보존 |
+
+- 관련 pytest: `100 passed`
+- Ruff: 통과
+- mypy: 변경 source 3개 통과
+
+## Calendar 단발 결과
+
+| 항목 | 결과 |
+| --- | --- |
+| Run | `79aecaeb-86e8-4bad-a2e6-c581597ba4a5` |
 | 최초 요청 | `WAITING_CONFIRMATION` |
-| 같은 Run confirmation resume | `COMPLETED` |
-| provenance mismatch | 없음 |
-| canonical constraint | `USER_REQUIREMENT/search_terms` |
-| Connector READ / Evidence | `0 / 0` |
+| 같은 Run confirmation | `프로젝트 검토 회의`, 1회 |
+| 재확인 | 없음 |
+| Connector READ | 23 |
+| Evidence | 2 |
+| 답변 | 2026-08-18 10:00–23:00 |
+| terminal | `COMPLETED / PARTIAL` |
 | 제품 판정 | **FAIL** |
 
-Run `70eeb6ca-1008-4c9b-afa3-61bb6170547f`은 confirmation을 한 번만 받았고 두 번째 confirmation 없이 종료됐다. 다만 답변은 Connector 조회 없이 생성된 `프로젝트 검토 회의` 미발견 문구이므로 근거 기반 성공으로 판정하지 않았다.
+확인값 결속, Calendar Event source, Retrieval과 근거 기반 답변은 모두 정상이다. 하지만 exact single-target 요청인데도 “전체 범위를 확인하지 못했다”는 PARTIAL 안내가 붙어 정상 답변으로 판정하지 않았다.
 
-## 최초 남은 실패
+이번 실제 initial Run은 LLM이 이미 `CALENDAR_EVENT` source responsibility를 만들었으므로 resume에서 source 재평가 LLM은 필요하지 않았고 실행되지 않았다. prior source 0 경로는 직접 테스트로 검증했다.
 
-confirmation resume의 owner-local materialization은 기존 ambiguity의 `target_resource`를 확인하고 exact response span을 `USER_REQUIREMENT/search_terms`와 `CONFIRMATION_RESPONSE` provenance로 보존했다. `detect_ambiguity`도 해소됐다.
+## 새 최초 실패
 
-그러나 확인 전 보존 대상인 Request Understanding 결과에 이미 다음 값이 들어 있었다.
+- `CALENDAR_EVENT`: READ 23, observed 1, Evidence 2, `scope_complete=true`, `COMPLETE / EXHAUSTED`
+- access-only parent `CALENDAR`: tool route가 discovery route로 추가했지만 source status는 `NOT_ATTEMPTED / UNKNOWN`
+- Retrieval coverage: `PARTIAL`, missing information 1
 
-- `resource_responsibilities.source_reads = []`
-- `requested_resource_hints = []`
+즉 실제 Event source는 완결됐지만 access-only discovery route가 미시도 필수 source처럼 sufficiency에 포함돼 PARTIAL을 만들었다. 이는 confirmation owner가 아니라 Retrieval sufficiency/accounting 경계의 별도 결함이다.
 
-따라서 이후 `determine_io_resources`의 input route가 0개였고 Retrieval을 건너뛰었다. Connector 호출과 Evidence 없이 LLM이 미발견 답변을 만들었다. 확인 문구의 내용에서 Resource type을 추론하지 않고 기존 responsibility를 보존하라는 현재 제약 안에서는 이 Run을 더 고칠 typed authority가 없다.
+단발 및 rerun-to-pass 금지 조건에 따라 이 결함을 이어서 수정하거나 Calendar를 재실행하지 않았다. Calendar Gate가 PASS가 아니므로 최종 6 Smoke도 실행하지 않았다.
 
-Resource type을 어느 기존 typed owner가 보장할지에 대한 계약 결정 없이는 안전한 추가 수정이 불가능하다. 문자열 규칙, Prompt 변경, 전역 searchable field 추가, 새 State/Schema/Node/LLM 호출은 하지 않았다.
+## 안전성 / Trace
 
-## 검증
-
-- 직접 pytest: `96 passed` + 노드 경계 `3 passed`
-- Ruff: 통과
-- Calendar Production Smoke: 1회
 - rerun-to-pass: 0
-- confirmation response: 같은 Run에 1회
 - Provider WRITE/SEND: 0
-- 최종 6 Smoke: 미실행(Calendar 선행 Gate 실패)
-
-## LangSmith
-
-| Trace | root / node / LLM / tool |
-| --- | --- |
-| initial | `01a09ca4-5a89-7d81-8772-b9394c8daab5` — 1 / 6 / 6 / 0 |
-| resume | `01a09ca4-cc37-75a2-a903-1c8f41349b78` — 1 / 19 / 4 / 0 |
-
-두 Trace 모두 실제 제품 SHA/model/prompt/question binding과 일치했다.
+- approval / execution attempt: 0 / 0
+- initial Trace: `01a09cb0-1347-7c73-ad7b-dd6ca9ab9a31` — root/node/LLM/tool `1/6/6/0`
+- resume Trace: `01a09cb0-7fe8-7ff2-9b04-bf819d5b7928` — root/node/LLM/tool `1/29/6/23`
+- LangSmith code/model/prompt/question binding: 일치
