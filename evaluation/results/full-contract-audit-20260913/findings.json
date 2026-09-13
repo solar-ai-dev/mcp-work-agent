@@ -7,8 +7,8 @@
     "inventory_total": 2306,
     "reviewed": 2306,
     "unreviewed": 0,
-    "confirmed_defects": 14,
-    "verified_fixes": 14,
+    "confirmed_defects": 16,
+    "verified_fixes": 16,
     "immediate_fix_unresolved": 0,
     "duplicate_reductions": 1,
     "responsibility_overreach_corrections": 2,
@@ -16,8 +16,8 @@
     "pending_user_decisions": 0,
     "resolved_user_decisions": 4,
     "remaining_product_decisions": 1,
-    "node_semantic_failures": 5,
-    "external_blockers": 1
+    "node_semantic_failures": 4,
+    "external_blockers": 2
   },
   "decision_resolution": {
     "product_sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
@@ -279,12 +279,69 @@
     {"boundary": "selected Resource exact detail binding", "result": "PASS", "evidence": "selected Resource integration and one Live Connector detail call"},
     {"boundary": "ContextPreview including GitHub", "result": "PASS", "evidence": "frontend/resource projection tests"}
   ],
+  "post_decision_reassessment": {
+    "analysis_started_at_head": "26f14c43e4d33649bf99b9af6343c55456e89c65",
+    "official_product_sha": "24aeab3f2a671771c4bb41985d95ed603235ffa1",
+    "latest_product_sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+    "confirmed_fixes": [
+      {
+        "finding_id": "FIX-015",
+        "owner": "request_understanding.identify_output_responsibilities",
+        "defect": "the current production sampling policy made the read-only selected Event input deterministically generate GMAIL_MESSAGE/SEND",
+        "change": "use the existing prompt-local RuntimePolicy authority with temperature 0.0; no candidate, schema, Prompt, State, or Graph change",
+        "commit": "9236b059ecd82fee05f5363b09698107e359eed9",
+        "validation": "selected input 5/5 correct at 0.0, three positive controls 5/5, production selected Event detail READ and factual answer",
+        "status": "FIXED_VERIFIED"
+      },
+      {
+        "finding_id": "FIX-016",
+        "owner": "planning.compose_arguments_per_output_route",
+        "defect": "an authoritative Gmail Draft snapshot already satisfying the requested patch was treated as an invalid Action candidate and forced recovery",
+        "change": "project the exact no-op as an Evidence-grounded Answer-only Planning result with no Action",
+        "commit": "24aeab3f2a671771c4bb41985d95ed603235ffa1",
+        "validation": "249 planning/component tests and one Production Draft detail READ ending COMPLETED with Action/WRITE 0",
+        "status": "FIXED_VERIFIED"
+      }
+    ],
+    "semantic_results": [
+      {
+        "case": "atlas-cross-source-draft",
+        "owner": "request_understanding.detect_ambiguity",
+        "classification": "STILL_PRESENT_SEMANTIC_FAILURE",
+        "evidence": "correct typed connector-owned source responsibilities and one search anchor were present; the model emitted USER/target_resource twice; the existing structural guard rejected it"
+      },
+      {
+        "case": "juniper-all-titles",
+        "owner": "request_understanding.identify_output_responsibilities",
+        "classification": "STILL_PRESENT_SEMANTIC_FAILURE",
+        "evidence": "all tested temperatures emitted an output for a read-only request; no upstream closed Typed State safely removes the candidate"
+      },
+      {
+        "case": "atlas-q19",
+        "owner": "request_understanding.identify_goal",
+        "classification": "NODE_CONFIGURATION_FIXED_LIVE_PENDING",
+        "evidence": "0.1 preserved shipping meaning 5/5 and was the lowest stable correct value; full Production Live is blocked by Google reauthorization"
+      },
+      {
+        "case": "selected-calendar-event-source-status",
+        "owner": "request_understanding.identify_source_status",
+        "classification": "SECONDARY_SEMANTIC_OBSERVATION",
+        "evidence": "CONFIRMED was selected without explicit source status but exact selected-resource binding kept the Business result correct"
+      }
+    ]
+  },
   "external_blockers": [
     {
       "id": "EXT-001",
       "scope": "Dataset 115-question Product Live and actual Provider WRITE",
       "reason": "current dataset is a readable development corpus without a canonical automatic Product runner; full provider provisioning and write approval scope are not established",
       "status": "BLOCKED_NOT_RUN"
+    },
+    {
+      "id": "EXT-002",
+      "scope": "latest Product SHA final six-case Production Live",
+      "reason": "the persisted Google refresh credential returns reauthorization-required during token refresh, so a restarted backend cannot bind an active Google account identity",
+      "status": "BLOCKED_PRECONDITION_GRAPH_RUNS_0"
     }
   ]
 }

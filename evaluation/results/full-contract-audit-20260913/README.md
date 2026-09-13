@@ -5,7 +5,7 @@
 | 구분 | 결과 |
 | --- | --- |
 | 전수 조사 | 완료 — inventory 2,306/2,306, 미검수 0 |
-| 승인 없이 가능한 계약 재정비 | 완료 — 확정 결함 14건 수정·검증, 즉시 수정 범위 미해결 0 |
+| 승인 없이 가능한 계약 재정비 | 완료 — 확정 결함 16건 수정·검증, 즉시 수정 범위 미해결 0 |
 | 실제 의미·Graph·E2E 검증 | 실행 완료, 성공 아님 |
 | 전체 재정비 성공 | **NO** |
 
@@ -18,6 +18,37 @@ production-composition E2E의 두 시나리오가 세 Graph profile 모두에서
 production-composition 두 시나리오는 확정된 18/20 한도 안에서 계속 `BLOCKED`이므로 전체
 성공 판정은 바꾸지 않았다.
 
+## 사용자 결정 이후 재판정
+
+선행 결정 구현 뒤 Product SHA `24aeab3f2a671771c4bb41985d95ed603235ffa1`에서 같은
+6개 Case를 직렬 1회씩 다시 실행했다. Business PASS는 3/6, Contract PASS는 6/6이며,
+LangSmith root/node/LLM은 6/6, 실제 Connector가 호출된 Run의 Connector span은 4/4다.
+Provider WRITE와 SEND는 0이다. 상세 Run/Trace/count는
+`post-decision-smoke-summary.json`에 보존했다.
+
+- 대상 없는 일정: 정상 `WAITING_CONFIRMATION`, 불필요한 READ 0.
+- Selected Event: deterministic Calendar detail READ 뒤 10:00-11:00 factual fidelity 유지.
+- Atlas Draft: source/output/prohibition은 정상화됐으나 `detect_ambiguity` LLM이
+  `USER/target_resource`를 두 번 생성했고 기존 structural guard가 차단했다.
+- Quartz Draft: authoritative Draft에 요청 변경이 이미 반영된 no-op을 Evidence-grounded
+  Answer-only로 종료했다.
+- Juniper: 최초 실패가 query coverage가 아니라 read-only 요청에
+  `GMAIL_DRAFT/CREATE`를 만든 output responsibility producer로 이동했다.
+- Atlas q19: 최초 실패는 `identify_goal`에서 출고 의미를 출시 의미로 바꾼 것이다.
+  후단 query는 잘못된 typed intent를 충실히 소비했다.
+
+확정 구현 결함 두 건은 owner별로 수정했다. Selected Event의 output owner는 실제 입력
+반복 실험에서 0.0이 최저 안정값이었고, Quartz는 정확한 snapshot과 patch가 동일할 때
+근거 없는 Action을 만들지 않는 Planning 계약 공백을 닫았다. q19는 candidate를 안전하게
+축소할 선행 Typed State가 없어 temperature만 분리 실험했고 0.1이 5/5로 의미를 보존한
+최저값이었다. 다른 다섯 실제 입력도 각각 5/5 schema-valid로 유지되어 기존 prompt-local
+override authority에만 반영했다. 상세 결과는 `semantic-experiments.json`에 있다.
+
+최신 제품 SHA `074a3cc50da59b0cb64ef41a484ebdc4e6f11283`의 최종 Production Live는
+Google refresh credential이 재인증 필요 상태여서 account identity를 결속하지 못해 공식
+Graph Run 생성 전 차단됐다. 따라서 이 SHA의 6개 Live를 실행했다고 기록하지 않으며,
+node-level 9B replay와 자동 계약 검증만 완료로 판정한다.
+
 ## 실행 기준
 
 - 분석 시작 HEAD: `23e08df05c2679d472dc746d00304185108d15b6`
@@ -29,6 +60,8 @@ production-composition 두 시나리오는 확정된 18/20 한도 안에서 계�
 - digest: `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`
 - global temperature / seed: `0.2 / 1729`
 - `identify_source_dependencies` owner-local temperature: `0.05`
+- 후속 `identify_output_responsibilities` owner-local temperature: `0.0`
+- 후속 `identify_goal` owner-local temperature: `0.1`
 - LangSmith project / experiment: `google-work-agent-development` /
   `full-contract-audit-post-fixes-20260913`
 - Provider WRITE / SEND: `0 / 0`
@@ -69,14 +102,14 @@ owner 단위 정적 검사와 전체 회귀로 대조했다. 상세 판정과 �
 
 ## 수정 요약
 
-- 확정 결함 수정: 14
+- 확정 결함 수정: 16
 - 중복 authority/instruction 축소: 1
 - 명백한 책임 초과 정리: 2
 - owner-local 내부 책임 분리: 1
 - 사용자 결정 반영: 4
 - 추가 제품 의미 결정 필요: 1 (`DEC-001`의 남은 E2E 지원 방식)
-- 근거 부족 또는 별도 품질 문제: 5
-- 외부/준비 blocker: 1
+- 근거 부족 또는 별도 품질 문제: 4
+- 외부/준비 blocker: 2
 
 기존 주요 Product 수정은 Prompt/Schema binding 정합화, source-status revision의 owner-local화,
 source 후보 fact metadata, 명시 날짜 보존, Retrieval current-page continuation, source-status
@@ -122,6 +155,8 @@ Resource identity·credential을 새로 노출하지 않았다. 상세 URL과 �
 - 사용자 결정 직접·인접 회귀: 최종 집중 batch `124 passed`, Prompt manifest/input-contract
   `56 passed`, 추가 broad focused batch `382 + 278 + 74 + 24 passed`.
 - 변경 source Ruff, mypy 12개 source, `git diff --check`: PASS.
+- 결정 후 실제 영향 회귀: `1,100 passed`; 최근 test fixture 직접 검증 `72 passed`.
+- 최종 전체 mypy: `1,723 source files`, 오류 0; 최종 Ruff·`git diff --check` PASS.
 - 결정 반영 production-composition 직접 batch: `6 passed / 6 failed`. selected-resource 및
   unresolved-target 6개는 PASS, partial approval/restart confirmation 6개는 선택된 18/20 한도
   안에서 `BLOCKED`. assertion 완화·한도 확대·rerun-to-pass는 하지 않았고 외부 WRITE는 0이다.
@@ -146,3 +181,5 @@ Resource identity·credential을 새로 노출하지 않았다. 상세 URL과 �
 - `test-runs.json`: 실제 실행 명령과 결과
 - `progress.md`: 완료·잔여·재개 지점
 - `smoke-summary.json`: 안전한 Run/Trace/count 요약
+- `post-decision-smoke-summary.json`: 사용자 결정 이후 6개 공식 Run과 최신 Live blocker
+- `semantic-experiments.json`: 실제 Node 입력 candidate/temperature 실험

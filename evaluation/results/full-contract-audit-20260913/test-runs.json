@@ -142,6 +142,67 @@
       "scope": "decision implementation static gates",
       "result": "PASS / PASS / PASS",
       "exit_code": 0
+    },
+    {
+      "id": "TR-017",
+      "sha": "24aeab3f2a671771c4bb41985d95ed603235ffa1",
+      "command": "production compiled LangGraph post-decision smoke runner, six cases serially",
+      "scope": "qwen3.5:9b + actual Google Workspace READ + LangSmith; prompt-local source/output temperatures 0.05/0.0",
+      "result": "6 executed; Contract PASS 6, Business PASS 3, FAIL 3; root/node/LLM traces 6/6; Connector traces 4/4 when called; WRITE 0",
+      "exit_code": 0,
+      "artifact": "post-decision-smoke-summary.json"
+    },
+    {
+      "id": "TR-018",
+      "sha": "24aeab3f2a671771c4bb41985d95ed603235ffa1",
+      "command": "owner-focused planning and output-responsibility test batches",
+      "scope": "selected Event output policy and Quartz no-op Draft planning contract",
+      "result": "27 router tests, 335 Request Understanding/Prompt/component tests, and 249 planning/component tests passed; Ruff, focused mypy and diff checks passed",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-019",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": "actual Production Run node-input replay with qwen3.5:9b, seed 1729, candidate variants then temperatures 0.0/0.1/0.2/0.4",
+      "scope": "identify_goal, identify_output_responsibilities, identify_source_dependencies, detect_ambiguity and plan_query semantic owners",
+      "result": "q19 identify_goal selected 0.1 as the lowest 5/5 correct value; selected Event output selected 0.0; Atlas ambiguity and Juniper output remain semantic failures without a safe deterministic correction",
+      "exit_code": 0,
+      "artifact": "semantic-experiments.json"
+    },
+    {
+      "id": "TR-020",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest affected Request Understanding, Planning, Retrieval, compiled component/integration and Prompt architecture suites -q",
+      "scope": "final directly affected and adjacent automatic regression",
+      "result": "1100 passed",
+      "exit_code": 0,
+      "duration_seconds": 7.27
+    },
+    {
+      "id": "TR-021",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": ".\\.venv\\Scripts\\mypy.exe --explicit-package-bases src tests launcher release scripts",
+      "scope": "full repository type gate",
+      "result": "10 test-fixture typing errors in three recently changed test files; Product source errors 0",
+      "exit_code": 1,
+      "failure_classification": "CONFIRMED_TEST_TYPE_CONTRACT_DEFECT"
+    },
+    {
+      "id": "TR-022",
+      "sha": "854b9200f0cd9d9a07a9bbe6ff3bfeb40cb1e888",
+      "command": "72 direct fixture tests; Ruff; full mypy; git diff --check",
+      "scope": "test-only typing alignment without assertion or Product behavior change",
+      "result": "72 passed; Ruff PASS; mypy 1723 source files PASS; diff check PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-023",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": "latest-SHA Production smoke precondition and LangSmith gate",
+      "scope": "restarted production backend, persisted Google Workspace credential and selected Calendar precondition",
+      "result": "BLOCKED before Graph Run creation: Google refresh credential requires reauthorization; official runs 0; Provider WRITE 0",
+      "exit_code": 1,
+      "failure_classification": "EXTERNAL_PRECONDITION_REAUTH_REQUIRED"
     }
   ],
   "non_result_invocations": [
