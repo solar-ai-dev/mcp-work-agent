@@ -27,8 +27,11 @@ def _plan(*, connector_id: str = "google_workspace") -> ToolRoutePlanV2:
                 "input_routes": [
                     {
                         "route_id": "route-source",
+                        "resource_type": "TASK",
                         "connector_id": connector_id,
+                        "allowed_read_tool_ids": ["tasks_list_tasks"],
                         "required": True,
+                        "reason_codes": ["REQUESTED_INPUT"],
                     }
                 ]
             }

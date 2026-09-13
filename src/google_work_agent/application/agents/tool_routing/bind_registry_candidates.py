@@ -20,6 +20,43 @@ from google_work_agent.application.agents.tool_routing.validate_route import (
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.domain.action.model import EffectType
 
+_READ_DEPENDENCIES_BY_RESOURCE: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "GMAIL_MESSAGE": (("GMAIL_THREAD", "RETRIEVAL_GMAIL_DISCOVERY"),),
+    "TASK": (("TASK_LIST", "RETRIEVAL_TASK_LIST_DISCOVERY"),),
+    "TASK_LIST": (("TASK", "RETRIEVAL_TASK_DETAIL"),),
+    "CALENDAR": (("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DETAIL"),),
+    "CALENDAR_EVENT": (("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),),
+    "CALENDAR_FREEBUSY": (
+        ("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),
+        ("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DISCOVERY"),
+    ),
+}
+_RETRIEVAL_DEPENDENCY_REASON_CODES = frozenset(
+    reason_code
+    for dependencies in _READ_DEPENDENCIES_BY_RESOURCE.values()
+    for _, reason_code in dependencies
+)
+
+
+def is_retrieval_dependency_route(route: InputToolRouteV1) -> bool:
+    """Return whether a route exists only to execute a read prerequisite."""
+    reason_codes = route["reason_codes"]
+    return bool(reason_codes) and all(
+        reason_code in _RETRIEVAL_DEPENDENCY_REASON_CODES
+        for reason_code in reason_codes
+    )
+
+
+def business_required_source_routes(
+    routes: Iterable[InputToolRouteV1],
+) -> tuple[InputToolRouteV1, ...]:
+    """Project business evidence requirements without removing execution prerequisites."""
+    return tuple(
+        route
+        for route in routes
+        if route["required"] and not is_retrieval_dependency_route(route)
+    )
+
 
 def normalize_resource_type(value: str) -> str:
     normalized = value.strip().upper()
@@ -168,20 +205,10 @@ def _read_dependencies(
     direct_resource_types: Iterable[str] = (),
 ) -> tuple[tuple[str, str], ...]:
     direct_resources = set(direct_resource_types)
-    dependencies = {
-        "GMAIL_MESSAGE": (("GMAIL_THREAD", "RETRIEVAL_GMAIL_DISCOVERY"),),
-        "TASK": (("TASK_LIST", "RETRIEVAL_TASK_LIST_DISCOVERY"),),
-        "TASK_LIST": (("TASK", "RETRIEVAL_TASK_DETAIL"),),
-        "CALENDAR": (("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DETAIL"),),
-        "CALENDAR_EVENT": (("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),),
-        "CALENDAR_FREEBUSY": (
-            ("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),
-            ("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DISCOVERY"),
-        ),
-    }
     return tuple(
         dependency
         for resource_type in sorted(set(resource_types))
-        if resource_type in dependencies and resource_type not in direct_resources
-        for dependency in dependencies[resource_type]
+        if resource_type in _READ_DEPENDENCIES_BY_RESOURCE
+        and resource_type not in direct_resources
+        for dependency in _READ_DEPENDENCIES_BY_RESOURCE[resource_type]
     )

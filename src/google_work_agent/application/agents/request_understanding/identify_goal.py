@@ -625,9 +625,25 @@ def _with_derived_resource_responsibilities(
     *,
     responsibilities: ResourceResponsibilitiesV1,
 ) -> RequestGoalCandidateV1:
-    effects, resource_hints, _ = derive_requested_resource_fields(responsibilities)
+    effects, resource_hints, source_information = derive_requested_resource_fields(
+        responsibilities
+    )
+    constraints = [
+        constraint
+        for constraint in candidate["constraints"]
+        if constraint["field"] != "required_information"
+    ]
+    if source_information:
+        constraints.append(
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": source_information,
+            }
+        )
     return {
         **candidate,
+        "constraints": constraints,
         "requested_effect_hints": effects,
         "requested_resource_hints": resource_hints,
         "resource_responsibilities": responsibilities,

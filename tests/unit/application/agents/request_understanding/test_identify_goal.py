@@ -35,6 +35,12 @@ from google_work_agent.application.agents.request_understanding.identify_goal im
 from google_work_agent.application.agents.request_understanding.identify_goal import (
     identify_goal_with_budget as _identify_goal_with_budget,
 )
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    bind_registry_candidates,
+)
+from google_work_agent.application.agents.tool_routing.determine_io_resources import (
+    determine_io_resources,
+)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
@@ -711,7 +717,11 @@ def test_target_confirmation_resume__reassesses_only_empty_source_responsibility
                 source_types={
                     "CALENDAR_EVENT": ["event_identity", "start", "end"],
                 }
-            )
+            ),
+            {
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["event_identity", "start", "end"],
+            },
         ]
     )
 
@@ -748,6 +758,11 @@ def test_target_confirmation_resume__reassesses_only_empty_source_responsibility
     assert candidate["requested_effect_hints"] == ["READ", "CREATE"]
     assert candidate["requested_resource_hints"] == ["CALENDAR_EVENT", "GMAIL_DRAFT"]
     assert status in candidate["constraints"]
+    assert {
+        "kind": "USER_REQUIREMENT",
+        "field": "required_information",
+        "value": ["event_identity", "start", "end"],
+    } in candidate["constraints"]
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
         "request_understanding.identify_source_dependencies"
     ]
@@ -759,6 +774,51 @@ def test_target_confirmation_resume__reassesses_only_empty_source_responsibility
         and item["provenance"]["source"] == "CONFIRMATION_RESPONSE"
         for item in source_goal["constraints"]
     )
+    ambiguity = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request(request_text),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(
+            "request_understanding.detect_ambiguity",
+            "detect_ambiguity",
+        ),
+        confirmation_response={
+            "schema_version": 1,
+            "response_kind": "FREE_TEXT",
+            "selected_option": None,
+            "free_text": "프로젝트 검토 회의",
+        },
+    )
+    assert ambiguity == {
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
+    }
+    intent = finalize_intent(
+        candidate,
+        ambiguity,
+        artifact_id="intent-confirmed-source",
+        user_request=request_text,
+        confirmation_response_text="프로젝트 검토 회의",
+    )
+    semantic_route, _ = determine_io_resources(
+        llm_runtime=runtime,
+        tool_catalog=load_signed_tool_registry(),
+        request_intent=intent,
+        request=_request(request_text),
+        retry_budget=build_default_run_budget(),
+    )
+    route_ids = iter(("draft-output-route", "event-route", "calendar-dependency-route"))
+    binding = bind_registry_candidates(
+        candidate=semantic_route,
+        tool_catalog=load_signed_tool_registry(),
+        id_factory=lambda: next(route_ids),
+    )
+    routes = {route["resource_type"]: route for route in binding.input_routes}
+    assert semantic_route.input_resource_types == ("CALENDAR_EVENT",)
+    assert routes["CALENDAR_EVENT"]["reason_codes"] == ["REQUESTED_INPUT"]
+    assert routes["CALENDAR"]["reason_codes"] == ["RETRIEVAL_CALENDAR_DISCOVERY"]
+    assert len(runtime.calls) == 2
 
 
 def test_confirmation_resume__keeps_selected_resource_identity_authority() -> None:

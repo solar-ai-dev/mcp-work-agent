@@ -55,6 +55,7 @@ from google_work_agent.application.agents.task_calendar_draft_source import (
     is_task_calendar_draft_source_target,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    business_required_source_routes,
     coarse_resource_category,
     normalize_resource_type,
 )
@@ -674,8 +675,9 @@ def _require_unread_exhaustive_collection_pages(
 
     routes = {
         route["route_id"]: route
-        for route in tool_route_plan["input_plan"]["input_routes"]
-        if route["required"]
+        for route in business_required_source_routes(
+            tool_route_plan["input_plan"]["input_routes"]
+        )
     }
     issues = [
         issue
@@ -752,20 +754,14 @@ def _fail_closed_on_empty_required_acquisition(
     routes = tool_route_plan["input_plan"]["input_routes"]
     issues = list(result["issues"])
     evidence_handles = {draft["resource_handle"] for draft in evidence_drafts}
-    for route in routes:
-        if not route["required"]:
-            continue
+    for route in business_required_source_routes(routes):
         summaries = _route_summaries(route, routes, acquisition_result)
         status = _worst_source_status(summaries)[0] if summaries else "NOT_ATTEMPTED"
         is_policy = bool(route["reason_codes"]) and all(
             code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
             for code in route["reason_codes"]
         )
-        is_scope_discovery = bool(route["reason_codes"]) and all(
-            code in {"RETRIEVAL_CALENDAR_DISCOVERY", "RETRIEVAL_TASK_LIST_DISCOVERY"}
-            for code in route["reason_codes"]
-        )
-        if (is_policy or is_scope_discovery) and status == "COMPLETE":
+        if is_policy and status == "COMPLETE":
             continue
         route_handles = {
             handle
@@ -832,7 +828,7 @@ def _all_required_source_scopes_complete(
     if tool_route_plan is None:
         return False
     routes = tool_route_plan["input_plan"]["input_routes"]
-    required_routes = [route for route in routes if route["required"]]
+    required_routes = business_required_source_routes(routes)
     if not required_routes:
         return False
     for route in required_routes:
@@ -858,7 +854,7 @@ def _all_required_sources_returned_no_resources(
     if tool_route_plan is None:
         return False
     routes = tool_route_plan["input_plan"]["input_routes"]
-    required_routes = [route for route in routes if route["required"]]
+    required_routes = business_required_source_routes(routes)
     return bool(required_routes) and all(
         (summaries := _route_summaries(route, routes, acquisition_result))
         and all(
@@ -1199,7 +1195,13 @@ def source_statuses_prompt_projection(
     AcquisitionResultV1.source_summaries -- never the raw Provider/MCP
     response. tool_route_plan may be absent the same way
     The canonical plan_query prompt projection treats it defensively."""
-    routes = () if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    routes = (
+        ()
+        if tool_route_plan is None
+        else business_required_source_routes(
+            tool_route_plan["input_plan"]["input_routes"]
+        )
+    )
     projections: list[dict[str, object]] = []
     for route in routes:
         resource_type = coarse_resource_category(route["resource_type"])
