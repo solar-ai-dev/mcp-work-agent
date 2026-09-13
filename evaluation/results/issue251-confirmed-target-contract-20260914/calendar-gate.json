@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "product_sha": "deed527515dff0e53ef54f2d6bb0baaf9134a85d",
+  "run_id": "46df4905-d1ba-4a3c-aacd-8b427d11da26",
+  "request": "그 일정 언제야?",
+  "initial_status": "WAITING_CONFIRMATION",
+  "confirmation": {
+    "same_run": true,
+    "response_count": 1,
+    "response": "프로젝트 검토 회의",
+    "reconfirmation_count": 0
+  },
+  "final_status": "COMPLETED",
+  "terminal_result_kind": "SUCCESS",
+  "connector_reads": 23,
+  "evidence_count": 2,
+  "answer": "프로젝트 검토 회의 일정은 2026 년 8 월 18 일 오전 10 시부터 오후 11 시까지입니다.",
+  "rerun_to_pass": 0,
+  "provider_write_or_send": 0,
+  "result": "PASS"
+}

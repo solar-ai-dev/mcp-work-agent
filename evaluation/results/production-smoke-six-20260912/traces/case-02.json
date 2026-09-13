@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "case_id": "case-02-selected-event",
+  "domain_run_id": "ebc933b4-b36c-48bd-bc97-2834d7bf2d24",
+  "langgraph_thread_id": "29b4f6a5-37bb-4bb6-ba4c-e5dd3b1aa08d",
+  "root_trace_ids": [
+    "01a095cc-c79c-79e2-9ca6-3d12361d1821",
+    "01a095cc-c7c3-7553-9ec3-274733cae188"
+  ],
+  "root_trace_urls": [
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095cc-c79c-79e2-9ca6-3d12361d1821/run/01a095cc-c79c-79e2-9ca6-3d12361d1821",
+    "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095cc-c7c3-7553-9ec3-274733cae188/run/01a095cc-c7c3-7553-9ec3-274733cae188"
+  ],
+  "root_trace_connected": true,
+  "node_sequence": [
+    "production_langgraph",
+    "request_understanding",
+    "tool_routing",
+    "retrieval.plan_query(DETAIL_FETCH)",
+    "retrieval.build_query",
+    "calendar_get_event",
+    "retrieval.select_evidence",
+    "retrieval.assess_sufficiency",
+    "compose_answer",
+    "completed"
+  ],
+  "status_transition": "RUNNING → COMPLETED",
+  "typed_semantic_output_summary": {
+    "ambiguity": "NONE; selected=1, resolved=1",
+    "plan_query": "RESOURCE_SELECTED / DETAIL_FETCH; LLM query planning 없음",
+    "connector": "calendar_get_event 1회",
+    "answer": "선택 Event의 2026-08-13 14:00~15:00 일정 응답"
+  },
+  "validator_result": {
+    "stage": "PASS",
+    "reason": null,
+    "affected_path": null
+  },
+  "connector_observation": "Calendar DETAIL_FETCH 1회; ResourceRef 1, Evidence 1",
+  "llm_calls": 9,
+  "connector_reads": 1,
+  "provider_writes": 0,
+  "provider_sends": 0,
+  "first_failure_node": null,
+  "secondary_failure": null,
+  "redaction": {
+    "raw_provider_payload": "excluded",
+    "raw_prompt_completion": "excluded",
+    "credentials_and_tokens": "excluded",
+    "resource_identity_values": "excluded"
+  }
+}

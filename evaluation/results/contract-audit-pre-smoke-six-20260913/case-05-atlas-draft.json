@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "case": "Atlas cross-source Draft",
+  "run_id": "7118fe0b-d0ea-4948-b10b-76146c74ea6c",
+  "langgraph_thread_id": "b90aa983-557f-4bfe-ad54-3fd31fe380d6",
+  "business": "FAIL",
+  "contract": "FAIL",
+  "terminal": "BLOCKED",
+  "truthfulness": "PASS",
+  "safety": "PASS",
+  "validation": {
+    "stage": "POST_INFERENCE_VALIDATION",
+    "rule": "OUTPUT_SCHEMA_INVALID",
+    "output_schema_id": "request-goal-candidate-v15",
+    "affected_field_paths": ["$.constraints.additional_constraints[0].field"],
+    "invalid_constraint_fields": ["status"],
+    "schema_repair_attempted": true,
+    "schema_repair_changed_result": false
+  },
+  "first_failure": {
+    "owner": "request_understanding.identify_goal",
+    "producer": "LLM structured candidate",
+    "reason": "reserved status 의미를 additional_constraints에 생성했고 repair도 같은 invalid shape를 반환",
+    "secondary": "source/output responsibility, Retrieval, Preview 모두 미도달"
+  },
+  "counts": {"llm": 2, "connector_read": 0, "resource_ref": 0, "evidence": 0, "action": 0, "approval": 0, "provider_write": 0, "send": 0},
+  "final_response": "요청을 처리하는 중 내부 검증에 실패해 결과나 변경안을 준비하지 못했습니다. 외부 변경은 실행하지 않았습니다. 잠시 후 다시 요청해 주세요.",
+  "trace": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a0973e-65a6-70f1-b406-b1db2f36df55/run/01a0973e-65a6-70f1-b406-b1db2f36df55"
+}

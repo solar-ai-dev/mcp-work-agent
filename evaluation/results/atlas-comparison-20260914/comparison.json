@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "repository": "solar-ai-dev/google-work-agent",
+  "branch": "codex/issue-251-connected-contract",
+  "successful_sha": "7afac9f55d329cb78ff1ed969cb8e9316c26fc1d",
+  "failure_report_sha": "cfcf1faf8b4ae9d979cd6684bfd04f87d3ce17d5",
+  "investigation_head": "55f85993b1ee08a3a972e48b1bcfaa2f494ede61",
+  "head_relation": {
+    "commits_ahead_of_failure_report": 1,
+    "note": "현재 HEAD의 결과를 cfcf 실패 결과와 혼합하지 않았다."
+  },
+  "execution_scope": {
+    "additional_runs": 0,
+    "product_code_changes": 0,
+    "approval_clicks": 0,
+    "provider_write_or_send": 0
+  },
+  "common_observed_binding": {
+    "entry_mode": "AGENT_SEARCH",
+    "selected_resource_ref_count": 0,
+    "model_id": "qwen3.5:9b",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "graph_profile": "SIX_ROLE_BASELINE",
+    "graph_version": "resume-contract-v2",
+    "identify_goal": {
+      "prompt_version": "1.0.62",
+      "content_hash": "98fc61337e02e8cc7099f52925bccbbc03e1f5a8b3f821f996c30ea5d592d7aa",
+      "output_schema_id": "request-goal-candidate-v16"
+    },
+    "retrieval_plan_query": {
+      "prompt_version": "1.0.28",
+      "content_hash": "f7b4f07157c2397c6650c297216069f01a627437b5418f59e966f1b9c1347ec8",
+      "output_schema_id": "retrieval-query-plan-candidate-v3"
+    }
+  },
+  "non_equivalent_conditions": {
+    "request_original": {
+      "successful_trace_value": null,
+      "failure_local_record_value_included_in_zip": false,
+      "semantic_case_match": true,
+      "byte_identity_confirmed": false,
+      "reason": "safe projection은 성공 Run의 사용자 원문을 보존하지 않는다."
+    },
+    "sampling": {
+      "successful_actual_temperature": null,
+      "successful_actual_seed": null,
+      "failure_actual_temperature": null,
+      "failure_actual_seed": null,
+      "same_values_confirmed": false,
+      "repository_defaults_only": {
+        "development_temperature": 0.0,
+        "development_seed": null,
+        "per_prompt_temperature": {
+          "request_understanding.identify_goal": 0.1,
+          "request_understanding.identify_source_dependencies": 0.05,
+          "request_understanding.identify_output_responsibilities": 0.0,
+          "request_understanding.detect_ambiguity": 0.0
+        }
+      }
+    },
+    "prompt": {
+      "successful_detect_ambiguity": {
+        "version": "1.0.15",
+        "content_hash": "a0a56b5ddcb1ded3736b215dcea34969534b6dfd3d643d56030a023fa408898b"
+      },
+      "failure_detect_ambiguity": {
+        "version": "1.0.17",
+        "content_hash": "5f90bab411ca73969c7ab94814061ca3f407713c62532863bca92dce417509a7"
+      },
+      "schema_id": "request-ambiguity-v2"
+    },
+    "run_budget": {
+      "successful_max_source_page_calls": 50,
+      "failure_max_source_page_calls": 8
+    },
+    "provider_or_query_snapshot": {
+      "same_selected_container_configuration_confirmed": false,
+      "successful_effective_query_recorded": false,
+      "failure_effective_query_recorded": true,
+      "fixture_or_connector_code_diff": false
+    }
+  },
+  "cases": {
+    "atlas_draft": {
+      "successful": {
+        "trace_id": "01a09b61-eba9-7ca2-8e6c-ed93e7405563",
+        "run_id": "6250c008-3f7c-4f73-b460-fe33aa8a0973",
+        "experiment_id": "issue-251-stabilization-final-7afac9f5",
+        "question_id": "issue-251-final-smoke-six",
+        "terminal": "WAITING_APPROVAL"
+      },
+      "failure": {
+        "trace_id": "01a09bee-9809-7970-bf22-604c33b2af1d",
+        "run_id": "3ecfaf76-2a6c-4e86-b19e-6b1f91749f43",
+        "experiment_id": "issue251-connected-contract-final-six",
+        "question_id": "q3-atlas-draft",
+        "langsmith_root_status": "success",
+        "domain_terminal": "BLOCKED"
+      },
+      "first_observed_non_equivalent_state": {
+        "boundary": "initialize.retry_budget",
+        "successful": {"max_source_page_calls": 50},
+        "failure": {"max_source_page_calls": 8}
+      },
+      "first_failure_causing_divergence": {
+        "boundary": "retrieval.execute_read container fan-out",
+        "successful": "47 READs cover CALENDAR_EVENT, TASK, CALENDAR, TASK_LIST",
+        "failure": "8 CALENDAR_EVENT reads consume the entire SOURCE_PAGE budget before other routes"
+      },
+      "actual_failure": {
+        "producer": "retrieval context_retriever",
+        "reason_chain": ["SOURCE_PAGE_LIMIT", "REQUIRED_SOURCE_PARTIAL", "CONTEXT_BLOCKED"],
+        "consumer": "main supervisor retrieval finalization",
+        "cause_certainty": "CONFIRMED"
+      },
+      "recommended_minimal_change": "먼저 동일 budget으로 비교한다. 상한 8이 제품 조건이면 materialized container plans를 required route 간 round-robin으로 배치한다."
+    },
+    "atlas_q19": {
+      "successful": {
+        "trace_id": "01a09b64-e655-75e2-9ea7-47d990985691",
+        "run_id": "90612c3d-2997-4d89-a0a4-7fd9b70d98fc",
+        "experiment_id": "issue-251-stabilization-final-7afac9f5",
+        "question_id": "issue-251-final-smoke-six",
+        "terminal": "COMPLETED"
+      },
+      "failure": {
+        "trace_id": "01a09bf3-63de-7802-ba66-c9b2efcde097",
+        "run_id": "70a3c07b-489a-4373-88f6-b9349f703aac",
+        "experiment_id": "issue251-connected-contract-final-six",
+        "question_id": "q6-atlas-q19",
+        "langsmith_root_status": "error",
+        "domain_status": "RECOVERY_REQUIRED"
+      },
+      "earlier_non_causal_difference": {
+        "boundary": "request_understanding identify_goal/source dependency projection",
+        "successful_fields": ["title", "scheduled_date", "description"],
+        "failure_fields": ["title", "due", "notes"],
+        "successful_gmail_message_required_information_count": 4,
+        "failure_gmail_message_required_information_count": 3,
+        "causal_link_confirmed": false
+      },
+      "first_failure_causing_divergence": {
+        "boundary": "post-search continuation",
+        "successful": "second gmail_search_threads result exhausts continuation, then detail hydration begins",
+        "failure": "first three pages retain has_next_page and deterministic plan remains NEXT_PAGE"
+      },
+      "actual_failure": {
+        "producer": "retrieval assessor follow-up authorization",
+        "consumer": "retrieval executor round advance",
+        "error": "RetrievalRoundLimitExceeded",
+        "exhausted_internal_boundary": "MAX_RETRIEVAL_ROUNDS=3 with current_round_no=2 and another NEXT_PAGE",
+        "non_exhausted_counters": {
+          "additional_retrieval_rounds_used": "0/2",
+          "source_page_calls_used": "3/8",
+          "connector_calls_used": "3/50",
+          "detail_fetches_used": "0/12"
+        },
+        "cause_certainty": "BOUNDARY_CONFIRMED_UPSTREAM_QUERY_VS_PROVIDER_UNRESOLVED"
+      },
+      "recommended_minimal_change": "authorize_retrieval_followup에 실제 deterministic follow-up operation을 사용하고 NEXT_PAGE가 4번째 round에 진입하기 전에 PARTIAL로 닫는다.",
+      "present_in_investigation_head": true
+    }
+  }
+}

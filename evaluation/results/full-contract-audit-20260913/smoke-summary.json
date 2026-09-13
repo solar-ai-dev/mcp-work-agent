@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "product_sha": "05d226423b0a6b7295dea0b60ad50b519159d155",
+  "model": {
+    "id": "qwen3.5:9b",
+    "digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "temperature": 0.2,
+    "seed": 1729,
+    "source_dependency_temperature": 0.05
+  },
+  "langsmith": {
+    "project": "google-work-agent-development",
+    "experiment": "full-contract-audit-post-fixes-20260913",
+    "root_trace_rate": "6/6",
+    "duplicate_root_count": 0,
+    "sensitive_payload_exposure_added": 0
+  },
+  "totals": {
+    "official_runs": 6,
+    "business_pass": 1,
+    "business_fail": 5,
+    "llm_calls": 63,
+    "connector_reads": 19,
+    "provider_writes": 0,
+    "provider_sends": 0,
+    "rerun_to_pass": 0
+  },
+  "cases": [
+    {
+      "case": "no-target-calendar",
+      "run_id": "07695080-7abe-40b2-a643-c4a5f39b2875",
+      "trace_id": "01a097db-f5c5-7082-8772-bdcaa9a1b9d9",
+      "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a097db-f5c5-7082-8772-bdcaa9a1b9d9/run/01a097db-f5c5-7082-8772-bdcaa9a1b9d9",
+      "contract": "PASS",
+      "business": "PASS",
+      "terminal": "WAITING_CONFIRMATION",
+      "first_failure": null,
+      "llm_calls": 6,
+      "connector_reads": 0,
+      "evidence": 0,
+      "actions": 0
+    },
+    {
+      "case": "selected-calendar-event",
+      "run_id": "61325f85-709c-4de3-9b3f-3c66cd9d250b",
+      "trace_id": "01a097dc-586a-7eb1-89b9-166bfa1fffd6",
+      "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a097dc-586a-7eb1-89b9-166bfa1fffd6/run/01a097dc-586a-7eb1-89b9-166bfa1fffd6",
+      "contract": "FAIL",
+      "business": "FAIL",
+      "terminal": "BLOCKED",
+      "first_failure": "request_understanding.identify_output_responsibilities",
+      "llm_calls": 8,
+      "connector_reads": 1,
+      "evidence": 0,
+      "actions": 0
+    },
+    {
+      "case": "atlas-cross-source-draft",
+      "run_id": "ec5d3ac5-5ce5-443e-9baa-3a96b682a746",
+      "trace_id": "01a097dc-ce07-7f22-83b8-b5905151b1d6",
+      "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a097dc-ce07-7f22-83b8-b5905151b1d6/run/01a097dc-ce07-7f22-83b8-b5905151b1d6",
+      "contract": "FAIL",
+      "business": "FAIL",
+      "terminal": "BLOCKED",
+      "first_failure": "request_understanding.identify_source_dependencies",
+      "llm_calls": 12,
+      "connector_reads": 2,
+      "evidence": 0,
+      "actions": 0
+    },
+    {
+      "case": "quartz-draft-update",
+      "run_id": "c725aa58-e622-4d0c-9399-3b28909aaaa3",
+      "trace_id": "01a097dd-9d83-78d3-9539-393582b4d116",
+      "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a097dd-9d83-78d3-9539-393582b4d116/run/01a097dd-9d83-78d3-9539-393582b4d116",
+      "contract": "PASS_UNTIL_PLANNING",
+      "business": "FAIL",
+      "terminal": "RECOVERY_REQUIRED",
+      "first_failure": "planning.compose_arguments_per_output_route",
+      "llm_calls": 10,
+      "connector_reads": 1,
+      "evidence": 1,
+      "actions": 0
+    },
+    {
+      "case": "juniper-all-titles",
+      "run_id": "fb18e728-2cab-43d4-b822-a9196b2af3bb",
+      "trace_id": "01a097de-595d-7061-8e69-b7da4057fa3f",
+      "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a097de-595d-7061-8e69-b7da4057fa3f/run/01a097de-595d-7061-8e69-b7da4057fa3f",
+      "contract": "PASS",
+      "business": "FAIL",
+      "terminal": "COMPLETED",
+      "first_failure": "retrieval.plan_query/provider initial query coverage",
+      "llm_calls": 11,
+      "connector_reads": 2,
+      "evidence": 1,
+      "actions": 0
+    },
+    {
+      "case": "atlas-q19",
+      "run_id": "3ffca642-793d-45ab-8b0c-5c09d04fc9e9",
+      "trace_id": "01a097df-00de-71c0-89e5-814c712ad91f",
+      "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a097df-00de-71c0-89e5-814c712ad91f/run/01a097df-00de-71c0-89e5-814c712ad91f",
+      "contract": "PASS",
+      "business": "FAIL",
+      "terminal": "COMPLETED_WITH_PARTIAL_RESULT",
+      "first_failure": "retrieval.plan_query",
+      "llm_calls": 16,
+      "connector_reads": 13,
+      "evidence": 8,
+      "actions": 0
+    }
+  ]
+}

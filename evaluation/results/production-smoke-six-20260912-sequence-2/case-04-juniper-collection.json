@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "case": "Juniper 전체 제목",
+  "business": "FAIL",
+  "terminal": "COMPLETED",
+  "terminal_result_kind": "SUCCESS",
+  "run_id": "3e9b60c5-9c37-4bc2-9eac-ada8b9cfc845",
+  "trace_id": "01a095fb-1e6f-72b2-b986-91db97ae8fc0",
+  "trace_url": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a095fb-1e6f-72b2-b986-91db97ae8fc0/run/01a095fb-1e6f-72b2-b986-91db97ae8fc0",
+  "coverage": {
+    "atomic_owner_called": true,
+    "semantic_output": [],
+    "expected": ["EXHAUSTIVE"],
+    "first_failure": "request_understanding.identify_coverage_requirement LLM semantic producer"
+  },
+  "retrieval": {
+    "initial_operation": "SEARCH",
+    "initial_keyword_match_mode": "ANY",
+    "first_page_result_count": 20,
+    "has_next_page": true,
+    "continuation": "HAS_MORE",
+    "next_page_calls": 0,
+    "detail_fetches": 12,
+    "collection_item_count": 20,
+    "evidence_count": 8
+  },
+  "sufficiency": "SUFFICIENT",
+  "actual_answer": "20개 제목을 반환하면서 모두 확인했다고 표현",
+  "expected_title_count": 26,
+  "llm_calls": 15,
+  "connector_reads": 13,
+  "provider_writes": 0,
+  "provider_sends": 0
+}

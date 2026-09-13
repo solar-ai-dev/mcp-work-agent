@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "batches": [
+    {
+      "id": "TR-001",
+      "sha": "055646a0",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q",
+      "scope": "full non-browser regression at the then-current contract",
+      "result": "3816 passed, 1 warning",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-002",
+      "sha": "05d226423b0a6b7295dea0b60ad50b519159d155",
+      "command": "production compiled LangGraph smoke runner, six cases serially",
+      "scope": "qwen3.5:9b + actual Google Workspace READ + LangSmith",
+      "result": "6 executed; Business PASS 1, FAIL 5; root traces 6/6; WRITE 0",
+      "exit_code": 0,
+      "started_at": "2026-09-12T23:02:49.931857+00:00",
+      "artifact": "smoke-summary.json"
+    },
+    {
+      "id": "TR-003",
+      "sha": "05d226423b0a6b7295dea0b60ad50b519159d155",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q",
+      "scope": "full Python regression including deterministic production-composition E2E",
+      "result": "3874 passed, 9 failed, 1 warning",
+      "exit_code": 1,
+      "duration_seconds": 479.12,
+      "failure_classification": "3 stale Review assertions; 6 PROFILE_LLM_LIMIT_EXHAUSTED across two scenarios and three profiles"
+    },
+    {
+      "id": "TR-004",
+      "sha": "871abf9c",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q tests/e2e/test_langgraph_real_production.py::test_approved_write_executes__claims_and_verifies__through_real_mcp",
+      "scope": "fixed stale Review assertion, all Graph profiles",
+      "result": "3 passed, 1 warning",
+      "exit_code": 0,
+      "duration_seconds": 15.24
+    },
+    {
+      "id": "TR-005",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q tests/architecture tests/unit/application/prompt_runtime tests/unit/llm/test_prompt_repair_schema_repairer.py tests/component/langgraph/test_production_agent_subgraphs.py tests/integration/langgraph",
+      "scope": "architecture, Prompt Runtime, schema repair, compiled subgraphs and LangGraph integration",
+      "result": "511 passed",
+      "exit_code": 0,
+      "duration_seconds": 39.50
+    },
+    {
+      "id": "TR-006",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\ruff.exe check src tests launcher release scripts",
+      "scope": "Python lint",
+      "result": "PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-007",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\mypy.exe --explicit-package-bases src tests launcher release scripts",
+      "scope": "full documented type gate",
+      "result": "Success: no issues found in 1723 source files",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-008",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\python.exe -m compileall -q src launcher release scripts tests",
+      "scope": "Python compile gate",
+      "result": "PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-009",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": "npx vitest run",
+      "working_directory": "frontend",
+      "scope": "Frontend unit/component/architecture",
+      "result": "41 files, 266 tests passed",
+      "exit_code": 0,
+      "duration_seconds": 19.04
+    },
+    {
+      "id": "TR-010",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": "npm --prefix frontend run typecheck; lint; build (serial commands)",
+      "scope": "Frontend type/lint/production build",
+      "result": "PASS / PASS / PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-011",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": ".\\.venv\\Scripts\\python.exe evaluation/check_workspace.py",
+      "scope": "dataset structure, links, Prompt separation, email scope and hashes",
+      "result": "PASS; business semantics and Live explicitly NOT TESTED",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-012",
+      "sha": "f8f5ed5d31251afb439404b5aa9c54575cbea9bb",
+      "command": "..\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+      "working_directory": "evaluation",
+      "scope": "evaluation workspace tools",
+      "result": "78 passed, 1 skipped (platform symlink unavailable)",
+      "exit_code": 0,
+      "duration_seconds": 3.561
+    },
+    {
+      "id": "TR-013",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/e2e/test_langgraph_real_production.py::test_partial_approval__executes_only__the_approved_action tests/e2e/test_langgraph_real_production.py::test_restart_recreates__production_composition_and__resumes_durable_interrupt tests/e2e/test_langgraph_real_production.py::test_unresolved_current_run_target__waits_before__retrieval_or_connector tests/e2e/test_langgraph_real_production.py::test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_llm -q",
+      "scope": "confirmed budget and stable-target decisions through compiled production composition, three Graph profiles",
+      "result": "6 passed, 6 failed; selected-resource and unresolved-target cases passed; partial approval and restart confirmation remained BLOCKED within the confirmed 18/20 profile limits; external writes 0",
+      "exit_code": 1,
+      "duration_seconds": 162.64,
+      "failure_classification": "REMAINING_PRODUCT_DECISION; no retry-to-pass or budget escalation"
+    },
+    {
+      "id": "TR-014",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/unit/adapters/system/test_workflow_outcome_projector.py tests/unit/api/test_composition.py tests/unit/application/use_cases/run/test_guard_run_budget.py tests/unit/application/use_cases/run/test_guard_run_budget_policy.py tests/unit/adapters/langgraph/main/test_supervisor.py tests/unit/application/agents/planning/test_bind_gmail_draft_update_identity.py tests/unit/application/use_cases/plan/test_validate_plan_for_publication.py tests/unit/application/agents/retrieval/test_bind_exact_resource_refs.py -q",
+      "scope": "four confirmed decisions, direct producer-consumer and boundary regressions",
+      "result": "124 passed, 1 deprecation warning",
+      "exit_code": 0,
+      "duration_seconds": 2.13
+    },
+    {
+      "id": "TR-015",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/prompt/test_prompt_manifest_source_caller_equality.py tests/unit/application/prompt_runtime/test_prompt_registry.py tests/unit/application/prompt_runtime/test_load_prompt_input_contract.py tests/unit/application/prompt_runtime/test_assemble_prompt.py tests/unit/application/prompt_runtime/contracts/test_prompt_runtime_input_contract.py -q",
+      "scope": "Prompt manifest, registry and input-contract exact-set; Prompt source unchanged",
+      "result": "56 passed",
+      "exit_code": 0,
+      "duration_seconds": 5.46
+    },
+    {
+      "id": "TR-016",
+      "sha": "b6c42a75c0f2cbe611e719dfb2f90789cf236cab",
+      "command": "ruff changed files; mypy 12 changed source files; git diff --check",
+      "scope": "decision implementation static gates",
+      "result": "PASS / PASS / PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-017",
+      "sha": "24aeab3f2a671771c4bb41985d95ed603235ffa1",
+      "command": "production compiled LangGraph post-decision smoke runner, six cases serially",
+      "scope": "qwen3.5:9b + actual Google Workspace READ + LangSmith; prompt-local source/output temperatures 0.05/0.0",
+      "result": "6 executed; Contract PASS 6, Business PASS 3, FAIL 3; root/node/LLM traces 6/6; Connector traces 4/4 when called; WRITE 0",
+      "exit_code": 0,
+      "artifact": "post-decision-smoke-summary.json"
+    },
+    {
+      "id": "TR-018",
+      "sha": "24aeab3f2a671771c4bb41985d95ed603235ffa1",
+      "command": "owner-focused planning and output-responsibility test batches",
+      "scope": "selected Event output policy and Quartz no-op Draft planning contract",
+      "result": "27 router tests, 335 Request Understanding/Prompt/component tests, and 249 planning/component tests passed; Ruff, focused mypy and diff checks passed",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-019",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": "actual Production Run node-input replay with qwen3.5:9b, seed 1729, candidate variants then temperatures 0.0/0.1/0.2/0.4",
+      "scope": "identify_goal, identify_output_responsibilities, identify_source_dependencies, detect_ambiguity and plan_query semantic owners",
+      "result": "q19 identify_goal selected 0.1 as the lowest 5/5 correct value; selected Event output selected 0.0; Atlas ambiguity and Juniper output remain semantic failures without a safe deterministic correction",
+      "exit_code": 0,
+      "artifact": "semantic-experiments.json"
+    },
+    {
+      "id": "TR-020",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest affected Request Understanding, Planning, Retrieval, compiled component/integration and Prompt architecture suites -q",
+      "scope": "final directly affected and adjacent automatic regression",
+      "result": "1100 passed",
+      "exit_code": 0,
+      "duration_seconds": 7.27
+    },
+    {
+      "id": "TR-021",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": ".\\.venv\\Scripts\\mypy.exe --explicit-package-bases src tests launcher release scripts",
+      "scope": "full repository type gate",
+      "result": "10 test-fixture typing errors in three recently changed test files; Product source errors 0",
+      "exit_code": 1,
+      "failure_classification": "CONFIRMED_TEST_TYPE_CONTRACT_DEFECT"
+    },
+    {
+      "id": "TR-022",
+      "sha": "854b9200f0cd9d9a07a9bbe6ff3bfeb40cb1e888",
+      "command": "72 direct fixture tests; Ruff; full mypy; git diff --check",
+      "scope": "test-only typing alignment without assertion or Product behavior change",
+      "result": "72 passed; Ruff PASS; mypy 1723 source files PASS; diff check PASS",
+      "exit_code": 0
+    },
+    {
+      "id": "TR-023",
+      "sha": "074a3cc50da59b0cb64ef41a484ebdc4e6f11283",
+      "command": "latest-SHA Production smoke precondition and LangSmith gate",
+      "scope": "restarted production backend, persisted Google Workspace credential and selected Calendar precondition",
+      "result": "BLOCKED before Graph Run creation: Google refresh credential requires reauthorization; official runs 0; Provider WRITE 0",
+      "exit_code": 1,
+      "failure_classification": "EXTERNAL_PRECONDITION_REAUTH_REQUIRED"
+    }
+  ],
+  "non_result_invocations": [
+    {
+      "command": "python -m mypy .",
+      "reason": "not the repository documented gate; exposed evaluation import/package-base setup and was replaced by the corrected documented command",
+      "counted_as_product_failure": false
+    },
+    {
+      "command": "unittest discover from repository root",
+      "reason": "wrong working directory relative to evaluation README; repeated once from evaluation/",
+      "counted_as_product_failure": false
+    },
+    {
+      "command": "npm --prefix frontend test -- --run",
+      "reason": "npm invocation entered Vitest watch after 266 tests passed; terminated and repeated with npx vitest run",
+      "counted_as_product_failure": false
+    }
+  ]
+}

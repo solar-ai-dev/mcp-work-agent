@@ -9,6 +9,8 @@
 - [datasets](datasets/) — 현재 시험 자료·질문별 Gold와 버전 고정 machine-readable Dataset/fixture
 - [checks](checks/) — 안전·검증 기준
 - [experiments](experiments/) — baseline 및 이후 실제 실험 요약
+- [results](results/) — Git history에서 복구한 과거 실행·비교 원시 기록
+- [실행기록.md](실행기록.md) — 과거 실행 누적 기록
 - [tests](tests/) — evaluation tooling 검증
 
 ## 세 종류를 분리해서 사용한다
@@ -132,7 +134,7 @@ UI·선택·확인은 실제 화면으로 검증한다. 반복 실행은 정상 
 
 실패는 **요청 의미 / 후보 수집 / 상세·정규화 / Evidence / Sufficiency / 최종 답변**으로 나눠 본다. 필요한 사실·적절한 범위·실제 근거가 기준이다. 컨텍스트 개수, 고정 Query, 모든 Node 방문, 필수 재검색 횟수는 정답이 아니다. Review도 제품의 일부이므로 그 PASS를 독립 평가 대신 사용하지 않는다.
 
-실험 기록은 [experiments](experiments/)에 순번이 있는 파일 하나로 남긴다. 임시 trace·JSON·ZIP은 repository에 누적하지 않고 원시 관측은 LangSmith와 Git history에서 확인한다. 코드/Prompt 상세 diff는 Git에 남긴다.
+새 실험 요약은 [experiments](experiments/)에 순번이 있는 파일 하나로 남긴다. 복구된 과거 원시 기록은 [results](results/)와 [실행기록.md](실행기록.md)에 동결해 보존하고, 새 임시 trace·JSON·ZIP은 추가로 누적하지 않는다. 코드/Prompt 상세 diff는 Git에 남긴다.
 
 ## 자료의 출처와 한계
 

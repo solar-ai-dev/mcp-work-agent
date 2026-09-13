@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "batch_id": "production-smoke-six-20260912-sequence-2",
+  "branch": "codex/issue-251-connected-contract",
+  "product_execution_sha": "d8e6c77946aca6389096b5f55a9ce95e7755ebec",
+  "result_commit_sha": "SELF: commit containing this artifact",
+  "runtime": {
+    "graph": "production compiled LangGraph",
+    "model": "qwen3.5:9b",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "temperature": 0.2,
+    "seed": 1729,
+    "langsmith_project": "google-work-agent-development",
+    "langsmith_experiment": "production-smoke-six-d8e6c779-20260912",
+    "identify_goal_prompt": "request_understanding.identify_goal@1.1.0",
+    "identify_goal_schema": "request-goal-candidate-v16",
+    "coverage_prompt": "request_understanding.identify_coverage_requirement@1.0.0",
+    "coverage_schema": "request-coverage-requirement-v1"
+  },
+  "counts": {
+    "official_runs": 6,
+    "business_pass": 0,
+    "business_fail": 6,
+    "rerun_to_pass": 0,
+    "qwen_9b": 6,
+    "fallback_4b": 0,
+    "llm_calls": 72,
+    "connector_reads": 41,
+    "source_page_calls": 29,
+    "detail_fetches": 12,
+    "provider_writes": 0,
+    "provider_sends": 0,
+    "langsmith_root_traces": "6/6",
+    "typed_coverage_projection": "6/6"
+  },
+  "product_changed_during_batch": false,
+  "cases": [
+    "case-01-ambiguous-calendar.json",
+    "case-02-selected-event.json",
+    "case-03-atlas-draft.json",
+    "case-04-juniper-collection.json",
+    "case-05-atlas-q19.json",
+    "case-06-quartz-draft-update.json"
+  ],
+  "verification": {
+    "automated_tests": "871 passed",
+    "ruff": "PASS",
+    "directly_affected_mypy": "PASS",
+    "full_repository_mypy": "81 existing errors in 24 test files",
+    "diff_check": "PASS"
+  }
+}
