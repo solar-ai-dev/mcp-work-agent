@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "algorithm": "SHA-256",
+  "files": [
+    {"path": "case-01-no-target-calendar.json", "sha256": "b63b28554728e407ae30f38c32d6c98caee560836b3f85aadee7bf79e99c6006"},
+    {"path": "case-02-selected-calendar-event.json", "sha256": "b9e5fdb1ed2bf631100632f1fdd709692035e25cf36bdd3f593999f047963eb4"},
+    {"path": "case-03-atlas-draft.json", "sha256": "b26aa8c50f210915cc4f3432f5632252e165649972446a6ee1f18cc9e7e4a483"},
+    {"path": "case-04-juniper-titles.json", "sha256": "100966ad671af8297f94a5cab653316f69862f7ef1354707713cc0eac2073f1f"},
+    {"path": "case-05-atlas-q19.json", "sha256": "3449438e9c5a12f01a9448698f8a5751d16bf56d7c0c421003824f0e1282d130"},
+    {"path": "case-06-quartz-draft.json", "sha256": "8d74bc83c9b1d2246ec28671d3fd73a142e9639e1effecd260b473e595d7a043"},
+    {"path": "comparison.json", "sha256": "b2802c0b1bb9d444f3460ad6813cf0548a627a5f2844b0dda7762655b39a52c4"},
+    {"path": "README.md", "sha256": "41dd796fc1b26e95e7fb27182d25ad0912cabce3873ab00b27b32e8dc1633bd1"},
+    {"path": "summary.json", "sha256": "fbac6df0d64440feca96dfd0d0d3c4f1ee254cda14ae061ceab7c53df05e777d"},
+    {"path": "traces/index.json", "sha256": "92b5b33a41f840e26c87c1138419280b7400bcbbe1f1bf74e32f10f119b24596"}
+  ]
+}

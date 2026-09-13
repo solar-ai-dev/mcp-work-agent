@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "case": "Atlas cross-source Draft",
+  "run_id": "a11c3589-c1f4-472b-8640-da352d2eca28",
+  "langgraph_thread_id": "c24cea1c-58b7-4b00-a170-0acdb1008423b",
+  "business": "FAIL",
+  "contract": "FAIL",
+  "terminal": "BLOCKED",
+  "terminal_result_kind": "BLOCKED",
+  "truthfulness": "PASS",
+  "safety": "PASS",
+  "schema_validity": "PASS",
+  "validator_contract_validity": "FAIL",
+  "node_business_semantics": "FAIL",
+  "request_understanding": {
+    "expected_source_dependencies": ["TASK", "CALENDAR_EVENT"],
+    "actual_source_dependencies": ["GMAIL_DRAFT", "TASK_LIST", "TASK", "CALENDAR", "CALENDAR_EVENT"],
+    "source_required_information_counts": {"GMAIL_DRAFT": 5, "TASK_LIST": 1, "TASK": 6, "CALENDAR": 2, "CALENDAR_EVENT": 8},
+    "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+    "gmail_message_send": "NONE",
+    "requires_confirmation": false
+  },
+  "retrieval": {
+    "initial_operation": "SEARCH",
+    "initial_constraint_kinds": ["CONTAINER_REF"],
+    "connector_reads": 1,
+    "acquisition_resource_count": 20,
+    "evidence": 0,
+    "sufficiency": "ROUTE_RECONSIDERATION_REQUIRED",
+    "followup": {
+      "has_current_round": true,
+      "prior_query_attempt_count": 1,
+      "read_result_summary_count": 1,
+      "validation_stage": "ROUND_VALIDATOR",
+      "reason_code": "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
+      "affected_field_paths": ["$.route_queries"]
+    },
+    "durable_semantic_revision_count": 0
+  },
+  "planning": "NOT_REACHED",
+  "preview": "NOT_REACHED",
+  "first_failure": {
+    "owner": "request_understanding.identify_source_dependencies",
+    "producer": "LLM semantic output",
+    "reason": "필요한 TASK/CALENDAR_EVENT 외에 CREATE 대상 GMAIL_DRAFT와 container TASK_LIST/CALENDAR를 SOURCE_REQUIRED로 과선택",
+    "secondary": "route reconsideration follow-up query가 ROUND_VALIDATOR에서 차단"
+  },
+  "counts": {"llm": 11, "connector_read": 1, "resource_ref": 0, "evidence": 0, "action": 0, "approval": 0, "provider_write": 0, "send": 0},
+  "final_response": "요청을 처리하는 중 내부 검증에 실패해 결과나 변경안을 준비하지 못했습니다. 외부 변경은 실행하지 않았습니다. 잠시 후 다시 요청해 주세요.",
+  "trace": "https://smith.langchain.com/o/abfc5c65-0dac-4bab-9116-d6ecb654559d/projects/p/bb148490-6fe2-4a00-9ac6-73ea946231e0/trace/01a0980d-d25f-7ff0-8d2a-20bc61fa5fed/run/01a0980d-d25f-7ff0-8d2a-20bc61fa5fed"
+}

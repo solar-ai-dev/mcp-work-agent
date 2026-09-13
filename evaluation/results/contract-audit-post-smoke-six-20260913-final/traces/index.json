@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "project": "google-work-agent-development",
+  "experiment_id": "contract-audit-post-smoke-six-20260913-final",
+  "raw_payload_included": false,
+  "runs": [
+    {
+      "run_id": "7b7cf28f-f598-4eab-a62d-908280119ea4",
+      "langgraph_thread_id": "74672cea-f31c-4fa7-8839-60607a5e713f",
+      "roots": [
+        {"root_id": "01a09805-e1b8-7b12-a603-e5ee96e443fb", "kind": "initial execution", "status": "success", "span_count": 13, "node": 6, "llm": 6, "connector": 0},
+        {"root_id": "01a09807-3829-7a32-b0c0-35bc90b6c82c", "kind": "confirmation resume", "status": "success", "span_count": 64, "node": 29, "llm": 11, "connector": 23}
+      ],
+      "node_order_summary": ["request_understanding", "WAITING_CONFIRMATION", "same-run resume", "request_understanding", "tool_route", "context_retriever", "planning", "terminal_commit"],
+      "durable_semantic_revision_count": 0,
+      "failure": {"owner": "planning.compose_answer", "reason": "temporal rendering mismatch"}
+    },
+    {
+      "run_id": "70434218-164b-49a4-a5b9-60f1ebed8d3e",
+      "langgraph_thread_id": "08153349-1e28-4e07-bc08-6617f1cc5d0c1",
+      "root_id": "01a09808-d8c3-7d72-b0f6-c3573baf4526",
+      "status": "error",
+      "span_count": 24,
+      "node": 15,
+      "llm": 8,
+      "connector": 0,
+      "node_order_summary": ["request_understanding", "tool_route", "plan_query", "terminal_commit"],
+      "durable_semantic_revision_count": 0,
+      "observed_plan_query_llm_dispatch_count": 2,
+      "failure": {"owner": "request_understanding.identify_output_responsibilities", "secondary": "RETRIEVAL_ROUTE_SCOPE_VIOLATION"}
+    },
+    {
+      "run_id": "a11c3589-c1f4-472b-8640-da352d2eca28",
+      "langgraph_thread_id": "c24cea1c-58b7-4b00-a170-0acdb1008423b",
+      "root_id": "01a0980d-d25f-7ff0-8d2a-20bc61fa5fed",
+      "status": "error",
+      "span_count": 44,
+      "node": 31,
+      "llm": 11,
+      "connector": 1,
+      "node_order_summary": ["request_understanding", "tool_route", "context_retriever", "route reconsideration", "plan_query", "terminal_commit"],
+      "durable_semantic_revision_count": 0,
+      "failure": {"owner": "request_understanding.identify_source_dependencies", "secondary": "ROUND_VALIDATOR / RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID"}
+    },
+    {
+      "run_id": "b661f715-4d58-4e7f-8be3-688a4b1e3dba",
+      "langgraph_thread_id": "c1c3828d-1049-40ff-b1ed-6631ec88e166f",
+      "root_id": "01a09809-fe90-7ba1-9b19-68bda727d2f4",
+      "status": "success",
+      "span_count": 145,
+      "node": 115,
+      "llm": 16,
+      "connector": 13,
+      "node_order_summary": ["request_understanding", "tool_route", "context_retriever", "plan_query/search", "detail-fetch loop", "sufficiency/partial", "planning", "terminal_commit"],
+      "durable_semantic_revision_count": 1,
+      "failure": {"owner": "retrieval.plan_query", "reason": "initial query contains STATUS_SCOPE only"}
+    },
+    {
+      "run_id": "da7b179f-006c-401d-a0f8-506e5a09a64d",
+      "langgraph_thread_id": "dca2e557-e737-485b-9a35-37f5e9aac706f",
+      "root_id": "01a0980c-29cc-7750-9258-f88fc8bc0336",
+      "status": "success",
+      "span_count": 140,
+      "node": 113,
+      "llm": 13,
+      "connector": 13,
+      "node_order_summary": ["request_understanding", "tool_route", "context_retriever", "plan_query/search", "detail-fetch loop", "sufficiency/sufficient", "planning", "terminal_commit"],
+      "durable_semantic_revision_count": 0,
+      "failure": null
+    },
+    {
+      "run_id": "6bb112d2-31c9-4c1e-85ac-174a52915c89",
+      "langgraph_thread_id": "39cf00fa-fe3d-4b8a-acb9-012bc7ff47fcf",
+      "root_id": "01a09811-02de-71f1-97d0-d5ecb1a9cdb3",
+      "status": "error",
+      "span_count": 38,
+      "node": 26,
+      "llm": 10,
+      "connector": 1,
+      "node_order_summary": ["request_understanding", "tool_route", "context_retriever", "sufficiency/sufficient", "planning", "compose_arguments_per_output_route"],
+      "durable_semantic_revision_count": 0,
+      "failure": {"error_type": "PlanningArgumentBindingError", "owner": "planning.compose_arguments_per_output_route"}
+    }
+  ]
+}
