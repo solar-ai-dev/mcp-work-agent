@@ -295,12 +295,9 @@ class _ComponentInferencePort:
                     "missing_fields": ["event_identity"],
                 }
             if self.searchable_target:
-                first_attempt = self.calls.count(prompt_id) == 1
                 return {
-                    "missing_information_owner": "USER" if first_attempt else "CONNECTOR",
-                    "missing_fields": (
-                        ["target_resource"] if first_attempt else ["shipment criteria and owner"]
-                    ),
+                    "missing_information_owner": "CONNECTOR",
+                    "missing_fields": ["shipment criteria and owner"],
                 }
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
@@ -1093,11 +1090,14 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         "request_understanding.identify_source_dependencies",
         "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
+        "request_understanding.detect_ambiguity",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 
-def test_request_understanding__compiled_searchable_target__normalizes_false_confirmation() -> None:
+def test_request_understanding__compiled_searchable_target__keeps_semantic_connector_owner() -> (
+    None
+):
     llm = _ComponentInferencePort(searchable_target=True)
     graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,

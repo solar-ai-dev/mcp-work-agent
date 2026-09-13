@@ -157,15 +157,11 @@ def test_connector_owned_information__before_retrieval__proceeds_without_confirm
     }
 
 
-def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_revision() -> None:
+def test_connector_metadata_does_not__override_user_owner__selected_by_semantic_call() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "missing_information_owner": "USER",
-                "missing_fields": ["납품 일정"],
-            },
-            {
-                "missing_information_owner": "CONNECTOR",
                 "missing_fields": ["납품 일정"],
             },
         ]
@@ -194,25 +190,18 @@ def test_connector_need_reclassified_as_user__contract_conflict__uses_bounded_re
     )
 
     assert ambiguity == {
-        "requires_confirmation": False,
-        "reason_codes": [],
-        "missing_fields": [],
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["납품 일정"],
     }
-    assert len(runtime.calls) == 2
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
-    )
-    assert len(budget["semantic_revisions_used_by_failure"]) == 1
+    assert len(runtime.calls) == 1
+    assert budget["semantic_revisions_used_by_failure"] == {}
 
 
-def test_detect_ambiguity__with_searchable_target_reclassified_as_user__uses_connector_owner(
+def test_detect_ambiguity__with_searchable_target__keeps_connector_owner_from_semantic_call(
 ) -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
-            {
-                "missing_information_owner": "USER",
-                "missing_fields": ["target_resource"],
-            },
             {
                 "missing_information_owner": "CONNECTOR",
                 "missing_fields": ["final shipment criteria and owner"],
@@ -379,8 +368,10 @@ def test_selected_gmail_read__retrievable_content_gap__still_assesses_ambiguity(
     assert len(runtime.calls) == 1
 
 
-def test_general_advice__model_invented_choice__does_not_ask_user() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[])
+def test_general_advice__semantic_call_returns_no_missing_information() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
+    )
     request = _answer_only_request("프로젝트 회의 준비 원칙을 한 문장으로 알려줘.")
     candidate: RequestGoalCandidateV1 = {
         "goal": "프로젝트 회의 준비 원칙 제공",
@@ -411,7 +402,40 @@ def test_general_advice__model_invented_choice__does_not_ask_user() -> None:
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert runtime.calls == []
+    assert len(runtime.calls) == 1
+
+
+def test_targetless_calendar_request__without_hints__still_asks_for_target() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "특정 일정의 날짜 확인",
+        "completion_conditions": ["대상 일정의 날짜를 답한다"],
+        "constraints": [],
+        "requested_effect_hints": [],
+        "requested_resource_hints": [],
+        "analysis_requirement": "NONE",
+    }
+
+    result = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_answer_only_request("그 일정 언제야?"),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["target_resource"],
+    }
+    assert len(runtime.calls) == 1
 
 
 def test_selected_gmail_analysis__user_owned_choice__may_require_confirmation() -> None:
@@ -664,12 +688,12 @@ def test_unselected_calendar_event_identity__without_target_anchor__is_user_owne
     assert len(runtime.calls) == 1
 
 
-def test_searchable_calendar_event_identity__with_target_anchor__uses_connector_owner() -> None:
+def test_searchable_calendar_event_identity__keeps_connector_owner_from_semantic_call() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "missing_information_owner": "USER",
-                "missing_fields": ["event_identity"],
+                "missing_information_owner": "CONNECTOR",
+                "missing_fields": ["event_identity", "start"],
             },
         ]
     )
@@ -685,16 +709,12 @@ def test_searchable_calendar_event_identity__with_target_anchor__uses_connector_
     assert len(runtime.calls) == 1
 
 
-def test_selected_event_identity__with_resource__keeps_resolved_conflict() -> None:
+def test_selected_event_identity__reclassified_as_user__is_rejected_structurally() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "missing_information_owner": "USER",
                 "missing_fields": ["event_identity"],
-            },
-            {
-                "missing_information_owner": "CONNECTOR",
-                "missing_fields": ["start"],
             },
         ]
     )
@@ -705,29 +725,22 @@ def test_selected_event_identity__with_resource__keeps_resolved_conflict() -> No
         "event-42",
     )
 
-    result = detect_ambiguity(
-        llm_runtime=runtime,
-        request=_request("그 일정 언제야?", selected_resources=(selected_event,)),
-        goal_candidate=_calendar_event_identity_candidate(),
-        prompt_ref=_prompt_ref(),
-    )
+    with pytest.raises(ValueError, match="selected current-run target"):
+        detect_ambiguity(
+            llm_runtime=runtime,
+            request=_request("그 일정 언제야?", selected_resources=(selected_event,)),
+            goal_candidate=_calendar_event_identity_candidate(),
+            prompt_ref=_prompt_ref(),
+        )
 
-    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert len(runtime.calls) == 2
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
-    )
+    assert len(runtime.calls) == 1
 
 
-def test_connector_owned_event_attribute__with_resolved_target__keeps_owner_conflict() -> None:
+def test_connector_metadata_does_not__reinterpret_user_owned_event_attribute() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
                 "missing_information_owner": "USER",
-                "missing_fields": ["start"],
-            },
-            {
-                "missing_information_owner": "CONNECTOR",
                 "missing_fields": ["start"],
             },
         ]
@@ -740,11 +753,12 @@ def test_connector_owned_event_attribute__with_resolved_target__keeps_owner_conf
         prompt_ref=_prompt_ref(),
     )
 
-    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert len(runtime.calls) == 2
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
-    )
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["start"],
+    }
+    assert len(runtime.calls) == 1
 
 
 def test_event_container_identity__without_selected_event__stays_container_scope() -> None:
@@ -752,10 +766,6 @@ def test_event_container_identity__without_selected_event__stays_container_scope
         outputs=[
             {
                 "missing_information_owner": "USER",
-                "missing_fields": ["calendar_identity"],
-            },
-            {
-                "missing_information_owner": "CONNECTOR",
                 "missing_fields": ["calendar_identity"],
             },
         ]
@@ -772,11 +782,12 @@ def test_event_container_identity__without_selected_event__stays_container_scope
         prompt_ref=_prompt_ref(),
     )
 
-    assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert len(runtime.calls) == 2
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT"
-    )
+    assert result == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["calendar_identity"],
+    }
+    assert len(runtime.calls) == 1
 
 
 def test_unselected_task_identity__without_target_anchor__uses_user_owner() -> None:
@@ -825,10 +836,6 @@ def test_selected_calendar_read__with_selected_resource__does_not_ask_identity()
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
-                "missing_information_owner": "USER",
-                "missing_fields": ["target_resource"],
-            },
-            {
                 "missing_information_owner": "CONNECTOR",
                 "missing_fields": ["event_time"],
             },
@@ -857,10 +864,7 @@ def test_selected_calendar_read__with_selected_resource__does_not_ask_identity()
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert len(runtime.calls) == 2
-    assert _call_input(runtime, 1)["failure_record"]["failure_reason_code"] == (
-        "REQUEST_AMBIGUITY_TARGET_ANCHOR_CONFLICT"
-    )
+    assert len(runtime.calls) == 1
 
 
 def test_selected_source__with_separate_target_gap__asks_without_revision() -> None:
@@ -987,8 +991,10 @@ def test_named_gmail_target__retrievable_date__does_not_ask_user() -> None:
     assert len(runtime.calls) == 1
 
 
-def test_general_handoff_advice__without_external_resources__skips_ambiguity_inference() -> None:
-    runtime = FakeStructuredInferencePort(outputs=[])
+def test_general_handoff_advice__without_external_resources__still_assesses_ambiguity() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
+    )
     candidate: RequestGoalCandidateV1 = {
         "goal": "업무 인수인계 메모의 일반적인 작성 항목 설명",
         "completion_conditions": ["일반적인 작성 항목을 답한다"],
@@ -1006,7 +1012,7 @@ def test_general_handoff_advice__without_external_resources__skips_ambiguity_inf
     )
 
     assert result == {"requires_confirmation": False, "reason_codes": [], "missing_fields": []}
-    assert runtime.calls == []
+    assert len(runtime.calls) == 1
 
 
 def test_selected_gmail_send__with_missing_recipient__preserves_confirmation() -> None:

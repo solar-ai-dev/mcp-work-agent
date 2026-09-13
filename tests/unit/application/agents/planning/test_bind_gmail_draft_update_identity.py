@@ -57,6 +57,29 @@ def test_gmail_draft_update__patch_preserves__unrequested_observed_values() -> N
     assert result["arguments"] == {"draft_id": "draft-actual", "payload": PAYLOAD}
 
 
+def test_quartz_baseline_snapshot__builds_exact_update_preview() -> None:
+    exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
+
+    result = _compose(
+        model_draft_id=None,
+        payload={"body": f"기존 본문\n{exact_sentence}"},
+        request_intent={
+            "constraints": [
+                {
+                    "kind": "USER_REQUIREMENT",
+                    "field": "original_search_request",
+                    "value": [f"초안 끝에 “{exact_sentence}”만 추가해줘. 보내지는 마."],
+                }
+            ],
+        },
+    )[0]
+
+    assert result["arguments"] == {
+        "draft_id": "draft-actual",
+        "payload": {**PAYLOAD, "body": f"기존 본문\n{exact_sentence}"},
+    }
+
+
 def test_gmail_draft_update__unchanged_patch__is_not_an_action_preview() -> None:
     with pytest.raises(GmailDraftUpdateAlreadySatisfiedError) as captured:
         _compose(model_draft_id=None, payload={"body": "기존 본문"})
