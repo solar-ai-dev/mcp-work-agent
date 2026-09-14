@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -114,6 +115,61 @@ class _ObservedRead:
         finally:
             payload["duration_ms"] = max(0, int((time.monotonic() - started) * 1_000))
             self._recorder.record(payload)
+
+
+class _RetrievalFaultReadAdapter:
+    """Apply evaluator-owned acquisition/ranking directives at the READ port."""
+
+    def __init__(self, *, delegate: Any, fault_adapter: FaultApplyingAdapter) -> None:
+        self._delegate = delegate
+        self._fault_adapter = fault_adapter
+
+    def execute_read(self, binding: Any, tool_arguments: dict[str, Any]) -> Any:
+        tool_id = str(binding.tool_id)
+        acquisition_rule = self._rule("RETRIEVAL_ACQUISITION")
+        if acquisition_rule is not None and tool_id == "gmail_search_threads":
+            stopped = self._fault_adapter.invoke(
+                boundary=acquisition_rule.boundary,
+                connector=acquisition_rule.connector,
+                operation=acquisition_rule.operations[0],
+                delegate=lambda: None,
+            )
+            if isinstance(stopped, Mapping) and stopped.get("status") == "BUDGET_STOPPED":
+                raise ConnectorOperationFailure(
+                    ConnectorFailureCode.RATE_LIMITED,
+                    str(stopped.get("reason_code") or "ACQUISITION_LIMIT_REACHED"),
+                    retryable=False,
+                )
+
+        result = self._delegate.execute_read(binding, tool_arguments)
+        ranking_rule = self._rule("RETRIEVAL_RANKING")
+        if ranking_rule is None or tool_id != "gmail_search_threads":
+            return result
+        output = getattr(result, "output", None)
+        if not isinstance(output, Mapping):
+            raise RuntimeError("ranking fault requires a Connector READ output")
+        items = output.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError("ranking fault requires a Connector READ item list")
+        ranked = self._fault_adapter.invoke(
+            boundary=ranking_rule.boundary,
+            connector=ranking_rule.connector,
+            operation=ranking_rule.operations[0],
+            delegate=lambda: list(items),
+        )
+        if not isinstance(ranked, list):
+            raise RuntimeError("ranking fault must return a candidate list")
+        return replace(result, output={**dict(output), "items": ranked})
+
+    def _rule(self, boundary: str) -> Any | None:
+        return next(
+            (
+                rule
+                for rule in self._fault_adapter.harness.profile.rules
+                if rule.boundary == boundary
+            ),
+            None,
+        )
 
 
 class _ObservedWrite:
@@ -269,35 +325,44 @@ def _case_resources(case: Mapping[str, Any]) -> list[dict[str, Any]]:
     for pack_name in case.get("resource_packs", []):
         pack = packs.get(pack_name, {}) if isinstance(packs, dict) else {}
         resources = pack.get("resources", []) if isinstance(pack, dict) else []
-        for raw in resources:
-            if not isinstance(raw, dict) or raw.get("resource_type") not in {
-                "gmail_thread",
-                "gmail_draft",
-                "task_list",
-                "task",
-                "calendar",
-                "calendar_event",
-            }:
-                continue
-            identity = {"resource_type", "resource_id", "parent_id", "version"}
-            payload = {key: value for key, value in raw.items() if key not in identity}
-            resource_type = str(raw["resource_type"])
-            if resource_type == "calendar":
-                payload["summary"] = str(payload.get("title") or raw["resource_id"])
-                payload["primary"] = bool(payload.get("primary", False))
-            elif resource_type == "calendar_event":
-                payload = _calendar_event_payload(payload, resource_id=str(raw["resource_id"]))
-            elif resource_type == "gmail_thread":
-                payload = _gmail_thread_payload(payload)
-            result.append(
-                {
-                    "resource_type": resource_type,
-                    "resource_id": raw["resource_id"],
-                    "parent_id": raw.get("parent_id"),
-                    "version": str(raw.get("version") or raw.get("etag") or "1"),
-                    "payload": payload,
-                }
-            )
+        result.extend(_normalize_provider_resources(resources))
+    return result
+
+
+def _normalize_provider_resources(resources: Sequence[Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    supported = {
+        "gmail_thread",
+        "gmail_draft",
+        "task_list",
+        "task",
+        "calendar",
+        "calendar_event",
+    }
+    for raw in resources:
+        if not isinstance(raw, Mapping) or raw.get("resource_type") not in supported:
+            continue
+        identity = {"resource_type", "resource_id", "parent_id", "version", "payload"}
+        nested = raw.get("payload")
+        payload = dict(nested) if isinstance(nested, Mapping) else {}
+        payload.update({key: value for key, value in raw.items() if key not in identity})
+        resource_type = str(raw["resource_type"])
+        if resource_type == "calendar":
+            payload["summary"] = str(payload.get("title") or raw["resource_id"])
+            payload["primary"] = bool(payload.get("primary", False))
+        elif resource_type == "calendar_event":
+            payload = _calendar_event_payload(payload, resource_id=str(raw["resource_id"]))
+        elif resource_type == "gmail_thread":
+            payload = _gmail_thread_payload(payload)
+        result.append(
+            {
+                "resource_type": resource_type,
+                "resource_id": raw["resource_id"],
+                "parent_id": raw.get("parent_id"),
+                "version": str(raw.get("version") or raw.get("etag") or "1"),
+                "payload": payload,
+            }
+        )
     return result
 
 
@@ -345,13 +410,12 @@ def _gmail_thread_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **payload,
         "subject": str(payload.get("subject") or first.get("subject") or ""),
-        "sender_name": first.get("sender_name"),
-        "sender_email": first.get("sender_email"),
-        "received_at": first.get("received_at"),
-        "message_ids": [
-            str(item["message_id"]) for item in message_items if item.get("message_id")
-        ],
-        "body": "\n\n".join(bodies) or None,
+        "sender_name": payload.get("sender_name") or first.get("sender_name"),
+        "sender_email": payload.get("sender_email") or first.get("sender_email"),
+        "received_at": payload.get("received_at") or first.get("received_at"),
+        "message_ids": [str(item["message_id"]) for item in message_items if item.get("message_id")]
+        or list(payload.get("message_ids", [])),
+        "body": payload.get("body") or "\n\n".join(bodies) or None,
         "messages": message_items,
         "message_count": len(message_items),
     }
@@ -361,6 +425,16 @@ def _runtime_bindings(
     runtime: CanonicalCaseRuntime, recorder: _Recorder
 ) -> tuple[DevelopmentRuntimeBindings, FaultApplyingAdapter | None]:
     resources = _case_resources(runtime.case)
+    context = runtime.case.get("evaluation_context")
+    if (
+        runtime.evaluation_mode == "SIMULATED_PROVIDER"
+        and isinstance(context, Mapping)
+        and context.get("simulated_fixture_ref")
+    ):
+        fixture_resources = runtime.simulated_fixture().get("resources")
+        if not isinstance(fixture_resources, list):
+            raise RuntimeError("simulated fixture resources must be a list")
+        resources = _normalize_provider_resources(fixture_resources)
     fault = (
         runtime.fault_adapter(fixture_provider=lambda _directive: resources)
         if runtime.fault_harness is not None
@@ -435,6 +509,11 @@ def _runtime_bindings(
                 checkpoints=checkpoints,
                 read_error_factory=_connector_failure,
             )
+        if fault is not None and any(
+            rule.boundary in {"RETRIEVAL_ACQUISITION", "RETRIEVAL_RANKING"}
+            for rule in fault.harness.profile.rules
+        ):
+            active = _RetrievalFaultReadAdapter(delegate=active, fault_adapter=fault)
         return _ObservedRead(active, recorder)
 
     def decorate_write(delegate: Any) -> Any:
