@@ -14,6 +14,7 @@ from google_work_agent.adapters.connectors.google.calendar.freebusy.query_freebu
 from google_work_agent.adapters.connectors.google.gmail.messages.get_message import (
     GetMessageOperation,
 )
+from google_work_agent.adapters.connectors.google.gmail.threads import search_threads
 from google_work_agent.adapters.connectors.google.gmail.threads.get_thread import (
     GetThreadOperation,
 )
@@ -26,6 +27,18 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
     GoogleOAuthSettings,
 )
+
+
+def _use_individual_gmail_hydration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        search_threads,
+        "GMAIL_METADATA_HYDRATION_CONFIG",
+        search_threads.GmailMetadataHydrationConfig(
+            transport="INDIVIDUAL",
+            batch_size=None,
+            http_concurrency_limit=server.GMAIL_METADATA_HYDRATION_MAX_WORKERS,
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -85,6 +98,7 @@ def test_gmail_list__enriches_current__page_thread_metadata(
     snippet: str | None,
     expected: str,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
     calls: list[tuple[str, dict[str, str | list[str]] | None]] = []
 
     def google_api(
@@ -211,9 +225,10 @@ def test_gmail_draft_search__with_listing_result__hydrates_provider_identity_and
     )
 
 
-def test_gmail_metadata_hydration__uses_three_workers__and_preserves_provider_order(
+def test_individual_gmail_hydration__uses_three_workers__and_preserves_provider_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
     thread_ids = [f"thread-{index}" for index in range(20)]
 
     def google_api(
@@ -254,6 +269,8 @@ def test_gmail_metadata_hydration__uses_three_workers__and_preserves_provider_or
 def test_gmail_metadata__hydration_failure_fails__the_whole_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
+
     def google_api(
         _state: server.GoogleWorkspaceCredentialProvider,
         _url: str,
@@ -283,6 +300,8 @@ def test_gmail_metadata__hydration_failure_fails__the_whole_page(
 def test_gmail_list_does__not_use_thread__id_as_subject_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
+
     def google_api(
         _state: server.GoogleWorkspaceCredentialProvider,
         url: str,
