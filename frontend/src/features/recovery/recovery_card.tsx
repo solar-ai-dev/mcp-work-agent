@@ -4,11 +4,14 @@ type RecoveryProjection = NonNullable<RunSnapshot["recovery"]>;
 
 export function RecoveryCard({ snapshot, busy, onResolve, onErrorAction = () => undefined }: { snapshot: RunSnapshot; busy: string | null; onResolve: (kind: RecoveryProjection["allowed_resolution_kinds"][number]) => void; onErrorAction?: (kind: "REAUTHENTICATE_GOOGLE" | "REAUTHENTICATE_CONNECTOR" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS") => void }): JSX.Element | null {
   const recovery = snapshot.recovery;
-  if (!recovery && !snapshot.error) return null;
+  const transientResumeOnlyError = snapshot.error
+    && snapshot.error.actions.some((action) => action.kind === "RESUME_SAFE_CHECKPOINT")
+    && !["RECOVERY_REQUIRED", "FAILED", "BLOCKED"].includes(snapshot.run.status);
+  if (!recovery && (!snapshot.error || transientResumeOnlyError)) return null;
   return (
     <article className="info-card">
-      <strong>Recovery</strong>
-      {recovery ? <><p>{recovery.reason_code}</p><div className="button-row">{recovery.allowed_resolution_kinds.map((kind) => <button className="button-secondary" type="button" key={kind} disabled={busy === `recovery-${kind}`} onClick={() => onResolve(kind)}>{resolutionLabel(kind)}</button>)}</div></> : null}
+      <strong>{recovery ? "복구가 필요합니다" : "작업을 완료하지 못했습니다"}</strong>
+      {recovery ? <><p>{recovery.message}</p><div className="button-row">{recovery.allowed_resolution_kinds.map((kind) => <button className="button-secondary" type="button" key={kind} disabled={busy === `recovery-${kind}`} onClick={() => onResolve(kind)}>{resolutionLabel(kind)}</button>)}</div></> : null}
       {snapshot.error ? <><p className="status-warn">{snapshot.error.message}</p><div className="button-row">{snapshot.error.actions.filter((action) => action.kind === "REAUTHENTICATE_GOOGLE" || action.kind === "REAUTHENTICATE_CONNECTOR" || action.kind === "OPEN_SETTINGS" || action.kind === "OPEN_DIAGNOSTICS").map((action) => <button className="button-secondary" type="button" key={`${action.kind}:${action.connector_id ?? ""}`} onClick={() => onErrorAction(action.kind as "REAUTHENTICATE_GOOGLE" | "REAUTHENTICATE_CONNECTOR" | "OPEN_SETTINGS" | "OPEN_DIAGNOSTICS")}>{errorActionLabel(action.kind, action.connector_id)}</button>)}</div></> : null}
     </article>
   );

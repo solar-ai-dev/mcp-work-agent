@@ -32,6 +32,36 @@ from google_work_agent.ports.system.contracts.workflow_handoff import (
 _UnitOfWorkFactory = Callable[[], UnitOfWork]
 
 
+def test_inactive_prompt__keeps_settings_and_modify_boundary__available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.support.fakes.langgraph_e2e import LangGraphE2EGeminiTransport
+    from tests.support.langgraph_product_driver import build_container
+
+    from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+    from google_work_agent.api import composition
+    from google_work_agent.application.prompt_runtime.prompt_registry import (
+        InactivePromptArtifactError,
+    )
+
+    def inactive(**kwargs: object) -> None:
+        raise InactivePromptArtifactError("fixture inactive release prompt")
+
+    monkeypatch.setattr(composition, "LangGraphWorkflowRuntime", inactive)
+    container = build_container(
+        tmp_path,
+        transport=LangGraphE2EGeminiTransport(),
+        monkeypatch=monkeypatch,
+        profile=GraphProfile.SIX_ROLE_BASELINE,
+    )
+    try:
+        assert callable(container.get_settings_handler)
+        assert callable(container.modify_action_handler)
+    finally:
+        for callback in container.shutdown_callbacks:
+            callback()
+
+
 class _ExecutionPort:
     def submit(self, submission: WorkflowExecutionSubmissionV2) -> RunExecutionAcceptedV1:
         return RunExecutionAcceptedV1(1, True, "ACCEPTED")

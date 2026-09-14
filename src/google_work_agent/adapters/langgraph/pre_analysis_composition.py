@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,11 +22,18 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptExecutionScope
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
+)
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
+from google_work_agent.ports.system.contracts.retrieval_head import RetrievalHeadV1
 from google_work_agent.ports.system.run_retrieval_cache_port import RunRetrievalCachePort
 
 
@@ -47,6 +54,7 @@ def build_pre_analysis_subgraphs(
     id_factory: Callable[[], str],
     graph_profile: GraphProfile,
     transition_run: Callable[[str, str], None],
+    should_stop_for_cancel: Callable[[str], bool],
     merge_decision: Callable[..., Any],
     confirm_request_understanding_inline: Callable[
         [Any], tuple[ConfirmationResponseProjectionV1 | None, dict[str, object] | None]
@@ -59,14 +67,27 @@ def build_pre_analysis_subgraphs(
     ],
     evidence_store: RunScopedEvidenceStore,
     read_result_cache: RunRetrievalCachePort,
+    now_ms: Callable[[], int],
+    timezone_provider: Callable[[], str],
     default_tasklist_id_provider: Callable[[], str | None] | None = None,
     default_calendar_id_provider: Callable[[], str | None] | None = None,
+    authorized_tasklist_ids_provider: Callable[[], Sequence[str]] | None = None,
+    authorized_calendar_ids_provider: Callable[[], Sequence[str]] | None = None,
+    repository_access: GetRepositoryAccessHandler | None = None,
+    connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
+    load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
+    update_run_budget: Callable[
+        [str, Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+    ]
+    | None = None,
 ) -> PreAnalysisSubgraphs:
     """Create nodes only; workflow policy remains in their Application owners."""
 
     return PreAnalysisSubgraphs(
         request_understanding=RequestUnderstandingSubgraph(
+            connector_prerequisites=connector_prerequisites,
             llm_runtime=llm_runtime,
+            tool_catalog=tool_catalog,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,
             id_factory=id_factory,
@@ -76,6 +97,7 @@ def build_pre_analysis_subgraphs(
             confirm_inline=confirm_request_understanding_inline,
         ).build(),
         tool_route=build_tool_routing_subgraph(
+            connector_prerequisites=connector_prerequisites,
             tool_catalog=tool_catalog,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
@@ -86,6 +108,9 @@ def build_pre_analysis_subgraphs(
             confirm_inline=confirm_tool_route_inline,
         ),
         context_retrieval=RetrievalSubgraph(
+            repository_access=repository_access,
+            load_retrieval_head=load_retrieval_head,
+            should_stop_for_cancel=should_stop_for_cancel,
             llm_runtime=llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,
@@ -98,8 +123,13 @@ def build_pre_analysis_subgraphs(
             tool_catalog=tool_catalog,
             read_result_cache=read_result_cache,
             confirm_inline=confirm_context_retrieval_inline,
+            now_ms=now_ms,
+            timezone_provider=timezone_provider,
             default_tasklist_id_provider=default_tasklist_id_provider,
             default_calendar_id_provider=default_calendar_id_provider,
+            authorized_tasklist_ids_provider=authorized_tasklist_ids_provider,
+            authorized_calendar_ids_provider=authorized_calendar_ids_provider,
+            update_run_budget=update_run_budget,
         ).build(),
     )
 

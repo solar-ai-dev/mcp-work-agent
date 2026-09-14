@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict
 from json import dumps
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -20,7 +20,7 @@ from google_work_agent.adapters.langgraph.main.state import (
     GraphState,
     GraphStateUpdateV1,
 )
-from google_work_agent.adapters.langgraph.main.supervisor import SupervisorDecisionV1
+from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorDecisionV1
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     BudgetProfile,
     promote_run_budget_profile,
@@ -30,7 +30,7 @@ from google_work_agent.application.use_cases.run.policy_confirmation_receipt imp
 )
 from google_work_agent.application.use_cases.run.request_confirmation import (
     RequestConfirmationCommand,
-    RequestConfirmationResult,
+    RequestConfirmationHandler,
 )
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
@@ -75,9 +75,7 @@ class ConfirmationControllerMixin:
     if TYPE_CHECKING:
         _graph_profile: GraphProfile
         _resume_target_registry: ResumeTargetRegistry
-        _request_confirmation_handler: Callable[
-            [RequestConfirmationCommand], RequestConfirmationResult
-        ]
+        _request_confirmation_handler: RequestConfirmationHandler
 
         def _request_from_state(self, state: GraphState) -> WorkflowStartRequest: ...
 

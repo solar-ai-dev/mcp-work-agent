@@ -82,6 +82,8 @@ export type ConversationHistoryResponse = {
 export type RunAction = {
   action_id: string;
   tool_name: string;
+  arguments: Record<string, unknown>;
+  target_display?: Record<string, string>;
   status: string;
   version: number;
   effect_type: string;
@@ -104,13 +106,12 @@ export type ApprovalSnapshot = {
 };
 
 export type ContextPreviewItem = {
-  segment_id: string;
-  role: "SUPPORTS" | "CONTRADICTS" | "CONTEXT";
-  source: "gmail" | "tasks" | "calendar";
-  resource_type: string;
-  resource_id: string;
-  display_label: string;
-  excerpt: string | null;
+  resource_identity: string;
+  category: "mail" | "task" | "calendar" | "github";
+  title: string;
+  preview: string;
+  content: string;
+  segment_ids: string[];
 };
 
 export type ContextPreview = {
@@ -119,6 +120,7 @@ export type ContextPreview = {
   retrieval_revision: number;
   items: ContextPreviewItem[];
   gmail_count: number;
+  github_count?: number;
   tasks_count: number;
   calendar_count: number;
   adjustment_allowed: boolean;
@@ -150,6 +152,28 @@ export type PendingInterrupt = {
 };
 
 export type RunSnapshot = {
+  activity?: {
+    schema_version: 1;
+    trace_cursor: number;
+    audit_cursor: number;
+    rows: {
+      execution_id: string;
+      sequence: number;
+      role: string;
+      state: "RUNNING" | "WAITING" | "RECORDED" | "PARTIAL" | "FAILED" | "INTERRUPTED" | "UNKNOWN";
+      label: string;
+      details: {
+        label: string;
+        value: string;
+        display_text?: string;
+        fact_id?: string;
+        state?: "RUNNING" | "WAITING" | "RECORDED" | "FAILED";
+        occurred_at_ms?: number;
+      }[];
+      started_at_ms: number;
+      updated_at_ms: number;
+    }[];
+  } | null;
   run: {
     run_id: string;
     conversation_id: string;
@@ -187,6 +211,7 @@ export type RunSnapshot = {
   pending_interrupt?: PendingInterrupt | null;
   recovery?: {
     reason_code: "UNKNOWN_RESULT" | "VERIFICATION_MISMATCH" | "CHECKPOINT_MISMATCH" | "CONTRACT_VIOLATION";
+    message: string;
     target: { target_kind: "RUN" } | { target_kind: "ACTION"; action_id: string };
     allowed_resolution_kinds: ("RECHECK" | "ACCEPT_PARTIAL" | "CREATE_CORRECTIVE_PLAN" | "CANCEL" | "FAIL")[];
   } | null;
@@ -270,13 +295,20 @@ export type ResourceItemMetadata = {
   timezone?: string;
   calendar_id?: string;
   location?: string | null;
+  repository?: string;
+  issue_number?: number;
+  description?: string;
+  issue_state?: "OPEN" | "CLOSED";
+  url?: string;
+  labels?: string[];
+  assignees?: string[];
 };
 
 export type ResourceItem = {
   schema_version: 1;
   selection_handle: string;
-  source: "gmail" | "tasks" | "calendar";
-  resource_type: "gmail_thread" | "task" | "calendar_event";
+  source: "gmail" | "tasks" | "calendar" | "github";
+  resource_type: "gmail_thread" | "task" | "calendar_event" | "github_issue";
   resource_id: string;
   parent_id?: string | null;
   title: string;
@@ -327,7 +359,21 @@ export type CalendarListItemWire = {
   location: string | null;
 };
 
-export type ResourceListItemWire = GmailListItemWire | TaskListItemWire | CalendarListItemWire;
+export type GitHubIssueListItemWire = {
+  schema_version: 1;
+  selection_handle: string;
+  resource_id: string;
+  repository: string;
+  issue_number: number;
+  title: string;
+  description: string;
+  issue_state: "OPEN" | "CLOSED";
+  url: string;
+  labels: string[];
+  assignees: string[];
+};
+
+export type ResourceListItemWire = GmailListItemWire | TaskListItemWire | CalendarListItemWire | GitHubIssueListItemWire;
 
 export type ResourceListWireResponse = {
   schema_version: 1;

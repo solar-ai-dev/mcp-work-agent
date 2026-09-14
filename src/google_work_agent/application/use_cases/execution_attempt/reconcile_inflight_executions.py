@@ -35,8 +35,10 @@ from google_work_agent.application.use_cases.run.resume_confirmation import Resu
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.delivery_certainty import (
     DeliveryCertainty,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
 )
 from google_work_agent.ports.persistence.execution_attempt_repository import (
@@ -348,7 +350,9 @@ def drain_inflight_executions_to_quiescence(
 ) -> int:
     for pass_index in range(1, max_passes + 1):
         result = handler(ReconcileInflightExecutionsCommand(schema_version=1, limit=batch_limit))
-        if not result.has_more or result.progressed_count == 0:
+        # A short batch can produce its next durable stage (unknown -> lookup -> verification).
+        # Pagination exhaustion is not lifecycle quiescence.
+        if result.progressed_count == 0:
             return pass_index
     raise RuntimeError("inflight execution startup drain did not reach quiescence")
 

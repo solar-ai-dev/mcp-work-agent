@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Required, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
 from google_work_agent.application.agents.state_artifact import (
     StateArtifactMetaV1,
@@ -65,6 +65,14 @@ class WorkRiskV1(TypedDict):
     evidence_refs: list[str]
 
 
+class RouteActionNecessityV1(TypedDict):
+    route_id: str
+    status: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
+    reason: str
+    evidence_refs: list[str]
+    candidate_refs: list[str]
+
+
 class WorkAnalysisResultV2(TypedDict):
     schema_version: Required[Literal[2]]
     meta: StateArtifactMetaV1
@@ -76,3 +84,6 @@ class WorkAnalysisResultV2(TypedDict):
     policy_confirmation_receipt_refs: list[StateArtifactRefV1]
     action_necessity: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
     action_necessity_reason: str | None
+    # Current producers always emit this route-scoped authority. Older persisted
+    # WorkAnalysisResultV2 artifacts retain the aggregate fields above.
+    route_action_necessities: NotRequired[list[RouteActionNecessityV1]]

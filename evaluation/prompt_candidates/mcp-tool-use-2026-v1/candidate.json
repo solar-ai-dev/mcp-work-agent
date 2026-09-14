@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "candidate_id": "mcp-tool-use-research-2026-v1",
-  "candidate_version": "1.0.0",
+  "candidate_version": "1.0.3",
   "status": "DRAFT",
   "base_product_sha": "21e8e8cc26a5c5fe985f05525ee04bef50d0af9e",
   "base_prompt_bundle_version": "canonical-prompt-runtime-v1",
   "base_prompt_manifest": "src/google_work_agent/application/prompt_runtime/prompt_manifest.json",
   "base_input_contract": "src/google_work_agent/application/prompt_runtime/prompt_runtime_input_contract_v1.json",
-  "candidate_prompt_version": "1.1.0-draft.1",
+  "candidate_prompt_version": "1.1.0-draft.4",
   "prompt_slot_count": 21,
   "activation_evidence": {
     "node_dev_pass": false,
@@ -18,90 +18,90 @@
   "sources": {
     "request_understanding.identify_goal": {
       "source": "sources/request_understanding.identify_goal.md",
-      "content_hash": "03a96e0d8e1ab153377707088e55ee3d3871206db254b756483b61ff3877926e"
+      "content_hash": "b37e1fdc8a6113626b9d1e19da94556152e950437e670097c5ce2b65473b8611"
     },
     "request_understanding.detect_ambiguity": {
       "source": "sources/request_understanding.detect_ambiguity.md",
-      "content_hash": "defa7b03d79917cce3a7f861d1093fbb38141c98a53d4e79103e7ffba21acde1"
+      "content_hash": "0a63ab8672bfe50fbae3691d337328fa8f1baf552ba1df23607032135405333a"
     },
     "tool_routing.determine_io_resources": {
       "source": "sources/tool_routing.determine_io_resources.md",
-      "content_hash": "fa346c5459891c19300023348334113df8f11aa7a53dba747f507ee5f6f442af"
+      "content_hash": "579d9beb44dee2154d78c665bcc434d4318525c30aed55ef002084c021721961"
     },
     "tool_routing.select_tool_if_needed": {
       "source": "sources/tool_routing.select_tool_if_needed.md",
-      "content_hash": "1cb7f6f0f1ed67cffa7b04e8e09f7bf379c616da51630b53cc04617014c89a5c"
+      "content_hash": "3dcefbf9aa4d3bc2309e3da7c72048c680ac085d68c74d77f3f2f9f90cd3228e"
     },
     "retrieval.plan_query": {
       "source": "sources/retrieval.plan_query.md",
-      "content_hash": "9f929812f990804d9ad30039c60e32306c855ce3d765d5e64e974cf5843aa5c0"
+      "content_hash": "de808a6dd22ea5b0acdae8e913b07e535f400728481ac02e9f86e59b7cc53d72"
     },
     "retrieval.select_evidence": {
       "source": "sources/retrieval.select_evidence.md",
-      "content_hash": "88c7242770879347df7b4362dc60224a6579f82b671ef8f45027075ce7baa9da"
+      "content_hash": "5922fc3339e7fa2350e094e6940e733c4057d2a2c484e1492f2363eadcbe65cc"
     },
     "retrieval.assess_sufficiency": {
       "source": "sources/retrieval.assess_sufficiency.md",
-      "content_hash": "6701d5c2d26642ba67bac8034e336dcb456bd3d8e55ac4cae1a09da99b734b33"
+      "content_hash": "0fe8c0623c3d3bee78a31c56a23f3417ff4365dce8baae881cb3af7267d94e91"
     },
     "work_analysis.extract_work_facts": {
       "source": "sources/work_analysis.extract_work_facts.md",
-      "content_hash": "d5c5b79a12604297ae90096a59029009dbda523a62854cc3cdff94ff0dac7c2d"
+      "content_hash": "7b2d8f142769849bd3cc5a42b533ccf0956d9f82dbabe58c80bd69b29558e0bf"
     },
     "work_analysis.resolve_entity_relations": {
       "source": "sources/work_analysis.resolve_entity_relations.md",
-      "content_hash": "c8b2ec24fdda78486d23190319a876ffb2fd8fcb71924e518df1431f86d8d012"
+      "content_hash": "7d3d991f9a985fe3f741a287f44a1fc1e4d9bae0625ff86e08e73249f024a50f"
     },
     "work_analysis.resolve_temporal_dependencies": {
       "source": "sources/work_analysis.resolve_temporal_dependencies.md",
-      "content_hash": "17ceea9f2109d55e501ec554dedbf550e8d24a4c37176013a29b066f2042623a"
+      "content_hash": "d320acd4c0423d493aa42447a90d5f0acfc5944d76519c0e74c9428595551f1b"
     },
     "work_analysis.detect_duplicate_conflict_candidates": {
       "source": "sources/work_analysis.detect_duplicate_conflict_candidates.md",
-      "content_hash": "21ff714de38301e0c52b7965aa4dbd76e3be1df53d83da7eb89b0c340604de3d"
+      "content_hash": "894508a203406fb2e9411800ecc187449a4566304d507b2fafedd0f40cc5116d"
     },
     "work_analysis.assess_information_gaps": {
       "source": "sources/work_analysis.assess_information_gaps.md",
-      "content_hash": "544cbb6b6a35b8aede0494e132f3e42fc0ece2121dad50162d3030461dce7647"
+      "content_hash": "e1a6a99d8604a8a5d1e46d45b244aa41d1d247a0c8d5eb25b60dbee1487c0c96"
     },
     "work_analysis.assess_operational_risks": {
       "source": "sources/work_analysis.assess_operational_risks.md",
-      "content_hash": "cb17b763215ef218ada95b2e2ca209b43c1bf18273c13c4ddbd838fb8794ac6e"
+      "content_hash": "bcdd4348c8dd5f8eed467660b50f39c4d0f2e381aab1a6b1a6f121bf6f50babf"
     },
     "planning.outline_answer": {
       "source": "sources/planning.outline_answer.md",
-      "content_hash": "f0159e1221aa92419c31e52e0d6be4c3fa3fc1d77e5047e3f82c03f2523d4870"
+      "content_hash": "44c796bac91ef67ac39f0b02dd5acce436c0d7ca3085a59b526beb8499dacbc9"
     },
     "planning.compose_answer": {
       "source": "sources/planning.compose_answer.md",
-      "content_hash": "a0b6420834caf8c865effb9e64b14bc2a83ada63f394a7380442df28c7a13d13"
+      "content_hash": "1f57d3ed80781ec04f0e444da6628dfd6af602e7abc55d9edcff35293beaba51"
     },
     "planning.draft_action_objective_per_output_route": {
       "source": "sources/planning.draft_action_objective_per_output_route.md",
-      "content_hash": "fa41954ea2cff7c619a613c8f4a089d0ea9ca25b319c0bbe9f365c63dfacfb17"
+      "content_hash": "31c39175e9a67d1950402acaf7c11d2e4f703e12e5c1fa3738321aa7c2e59f2d"
     },
     "planning.compose_arguments_per_output_route": {
       "source": "sources/planning.compose_arguments_per_output_route.md",
-      "content_hash": "16bd8038404beb789c4165efad3d585f9247c123b6ec319a923f72e86c4cf418"
+      "content_hash": "8cd2b39575c92d362f42e8abfd29a7b4318d5ddcc803b37185e63cefacf3e5c1"
     },
     "review.inspect_goal_and_evidence": {
       "source": "sources/review.inspect_goal_and_evidence.md",
-      "content_hash": "3730e42090124f63080a1e34016b8c8bb1b130112933475c7489e2e4925cfeec"
+      "content_hash": "3c3ce7bc11c897a05a5fadc91d09389970b350f03a657529cce7b8d17f8594a5"
     },
     "review.inspect_action_scope_and_route": {
       "source": "sources/review.inspect_action_scope_and_route.md",
-      "content_hash": "f92927d048290f509dc518c731f93c40cd3d1d6b4bde74c0079bbcd25365a2ae"
+      "content_hash": "aab5980ba2f583fae6feedb99b39dbc68d3de98f588b1b36c50548d9b468c6e7"
     },
     "review.inspect_constraints_and_policy_summary": {
       "source": "sources/review.inspect_constraints_and_policy_summary.md",
-      "content_hash": "6e89bb13f499d3d8e7b3aa07941760160604f3e7fb8ef4877604e6148c827fe1"
+      "content_hash": "fd6f600a9cc16c9ecd036456b647ac44515526b49c8eb9006f52ff1014a5d7e6"
     },
     "review.recheck_affected_dimensions": {
       "source": "sources/review.recheck_affected_dimensions.md",
-      "content_hash": "3a8661a6fd844225a293f57d4c90325c0519ce2f5a3ca226e9ade5e6c83cfbf9"
+      "content_hash": "222328c76b20a323d006458ed9aa81616844e021baf635f77882ddfa0c0898e9"
     }
   },
   "research_basis": "research-basis.md",
-  "research_basis_sha256": "c34e5271799f35d5b1215440d46b91cde9258c6b1800ef878328f728f6bbec09",
-  "candidate_bundle_hash": "c8dac65c279a24874ed868a5d42aea89ad0f4fd8bbb9c168533004dd5d5a3af8"
+  "research_basis_sha256": "22a97462f8b2ca7e137eaedc99896d6169cc87fab2dfb6aa7086d9558aeddb1f",
+  "candidate_bundle_hash": "6e239436fff43d405fc28100aa6990ee58cb4e49baa50308dee1454ca469802e"
 }

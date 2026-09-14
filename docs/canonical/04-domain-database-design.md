@@ -6,34 +6,24 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 문서명 | 04. Google Work Agent 도메인 · 데이터베이스 설계서 |
-| 상태 | Draft v1.27 |
-| 기준일 | 2026-08-24 |
+| 문서명 | 04. mcp-work-agent 도메인 · 데이터베이스 설계서 |
+| 상태 | Draft v1.29 |
+| 기준일 | 2026-09-07 |
 | 대상 | P0 MVP |
 | Database | SQLite |
 | 저장 형태 | 하나의 제품 DB 파일 · Domain과 LangGraph Checkpoint 논리 분리 |
 
 ## 1. 목적과 범위
 
-이 문서는 Google Work Agent의 Domain Aggregate, Entity, Value Object, Table, 관계, **lifecycle 결과의 persistence realization**, Transaction, 동시성, 멱등성, Pagination, N+1 방지, Index, Migration, Backup, Restore와 보존 정책을 정의한다. lifecycle command·허용 source state·guard·transition 자체는 Domain State Transition Contract를 참조하며 이 문서가 재정의하지 않는다.
+Domain의 영속 모델·관계·DB 불변조건과 Transaction 경계를 정의한다. lifecycle command·허용 source state·guard·transition은 `Domain State Transition Contract`, repository placement·naming은 `16 Repository Architecture`를 따른다.
 
-### 1.1 범위
-
-- Conversation·Run·Plan·Action Domain
-- Connector Resource 참조와 Evidence. DB Schema v1.9은 `actions.connector_id`와 `resource_refs.connector_id`를 영속하고 `ResourceRef`의 canonical connector identity를 `(run_id, connector_id, resource_type, resource_id)`로 고정한다. 여기서 `resource_id`는 Connector Provider가 부여한 external resource identifier를 저장하는 canonical persistence field다. current `ResourceRef.resource_type`은 해당 Resource를 만든/선택한 `SignedToolRegistryEntryV1.resource_type`을 exact-copy한다. P0 허용값은 current Signed Tool Registry의 Google Workspace resource vocabulary에 닫혀 있으며 새 Resource Type 추가 시에는 Registry 계약과 새 Migration을 함께 확장한다. 별도 `THREAD|MESSAGE|EVENT` 또는 `EMAIL|TASK|CALENDAR` 변환 vocabulary를 current persistence authority로 두지 않는다.
-- Approval·Execution·Verification
-- Trace·Audit
-- SQLite DDL과 Connection 설정
-- Connector Provider API·DB Batch 조회 경계
-- Optimistic Lock과 짧은 SQLite Write Lock
-
-### 1.2 비범위
-
-- LangGraph Library Checkpoint Table 내부 Schema
-- Tool별 Arguments JSON 상세 Schema
-- Connector Provider API Request·Response Schema
-- Vector DB·Embedding Index
-- Experiment Result 저장소
+| 이 문서가 정하는 것 | 이 문서에서 정하지 않는 것 |
+| --- | --- |
+| Conversation·Run·Plan·Action과 ResourceRef·Evidence의 영속 관계 | LangGraph Library Checkpoint Table 내부 Schema |
+| Approval·Execution·Verification·Receipt·Trace·Audit의 저장 | Tool별 Arguments JSON과 Provider Request·Response 상세 Schema |
+| SQLite DDL·Connection 설정·Index·조건부 갱신 | Vector DB·Embedding Index |
+| 동시성·멱등성·Pagination·N+1 방지·Batch 조회 경계 | Experiment Result 저장소 |
+| Migration·Backup·Restore·보존 정책의 persistence realization | lifecycle 전이와 Graph Node·Edge 설계 |
 
 ## 2. 최종 설계 결정
 
@@ -41,7 +31,7 @@
 | --- | --- | --- |
 | DB-001 | P0는 SQLite 파일 하나를 사용 | Domain과 Checkpoint를 한 번에 Backup·Restore하며 단일 사용자 부하에 충분하다. |
 | DB-002 | Domain과 Checkpoint는 논리적으로 분리 | Checkpoint는 Workflow 재개, Domain은 승인·실행 사실의 기준점이다. |
-| DB-003 | Connector Sidebar 목록·Local API continuation·Provider browse batch는 React Client Session Cache | 외부 Provider 원본 전체를 로컬에 복제하지 않는다. P0 Google Workspace의 Gmail page mapping, Tasks incomplete/completed batch, Calendar Month materialization은 세션 범위 UI cache이며 Domain 사실이 아니다. |
+| DB-003 | Connector Sidebar 목록·Local API continuation·Provider browse batch는 React Client Session Cache | 외부 Provider 원본 전체를 로컬에 복제하지 않으며, 탐색 cache는 Domain 사실이 아니다. |
 | DB-004 | 실제 사용 Resource와 최소 Evidence만 저장 | 대화 복구·승인 근거를 유지하면서 원문 보존을 최소화한다. |
 | DB-005 | 핵심 관계·상태는 정규화 | Join·Constraint·상태 전이를 DB에서 검증한다. |
 | DB-006 | 가변 Arguments와 불변 Snapshot은 JSON | Tool별 구조 변화와 승인 당시 값을 보존한다. |
@@ -54,11 +44,16 @@
 
 ### 3.0 Local API와 상태 기준점
 
-- React Client State와 SSE Event는 화면 Projection이며 승인·실행 사실의 기준점이 아니다.
-- FastAPI Route는 Repository SQL을 직접 실행하지 않고 Application use-case boundary를 호출한다.
-- 동일 상태 변경 REST Command 재전송은 `command_id + canonical request hash`의 Command Receipt로 판정하고, mutable Aggregate 갱신 경쟁은 `expected_version` 기반 조건부 상태 전이로 차단한다. Write 실행 중복 방지는 이 Command Receipt와 별도로 Approval Snapshot·Action Version·Idempotency Key 계약을 따른다.
-- SSE 연결 유실은 Domain 상태를 변경하지 않으며 재연결 후 REST Query로 현재 상태를 복원한다.
-- Frontend Sidebar Cache와 Google Page Token은 SQLite에 저장하지 않는다.
+| 항목 | 경계 |
+| --- | --- |
+| 상태 기준 | 승인·실행·검증·복구의 durable fact는 Domain Store가 기준이다. React Client State와 SSE Event는 화면 Projection이다. |
+| API 접근 | FastAPI Route는 Repository SQL을 직접 실행하지 않고 Application use-case boundary를 호출한다. |
+| 재전송과 동시 갱신 | 같은 Command 재전송은 Command Receipt의 `command_id + canonical request hash`, mutable Aggregate 갱신 경쟁은 `expected_version`으로 판정한다. 외부 Write 중복 방지는 별도의 Approval Snapshot·Action Version·Idempotency Key 계약을 따른다. |
+| SSE 연결 유실 | Domain 상태를 변경하지 않으며 재연결 후 REST Query로 현재 상태를 복원한다. |
+| Domain과 Checkpoint | 같은 SQLite 파일을 공유해도 logical ownership은 분리한다. Domain Repository가 Checkpoint row를 aggregate persistence로 노출하지 않는다. |
+| Agent 간 공유 | 같은 Run의 Agent는 하나의 Run·Conversation·`langgraph_thread_id`를 공유한다. Agent별 DB·Approval·Attempt를 만들지 않는다. |
+
+### 3.1 저장 위치
 
 ```
 %LOCALAPPDATA%/GoogleWorkAgent/
@@ -73,6 +68,8 @@
    └─ sanitized-*.log
 ```
 
+### 3.2 데이터별 저장소
+
 | 데이터 | 기준 저장소 |
 | --- | --- |
 | Conversation·Run·Plan·Action | SQLite Domain Table |
@@ -80,93 +77,100 @@
 | Command Receipt | SQLite Domain Table (`command_receipts` durable idempotency/replay authority) |
 | Workflow Handoff | SQLite Application-control Table (`workflow_handoffs`; Domain lifecycle authority가 아닌 crash-safe outbox) |
 | LangGraph State·Interrupt | 같은 SQLite 파일의 Library 관리 Table |
-| Google Sidebar 목록·Local API continuation·Tasks/Calendar materialized browse cache | React Client Session Cache |
+| Connector Sidebar 목록·Local API continuation·Gmail/Tasks/Calendar/GitHub Issue materialized browse cache | React Client Session Cache |
 | Agent 검색 중간 후보·전체 원문 | 현재 Run 메모리 |
 | Gmail 첨부파일 bytes | SQLite 비저장. 사용자 다운로드는 Stream, 발신은 짧은 TTL의 Local Attachment Staging |
 | 실제 사용 Resource·Evidence excerpt | SQLite Domain Table |
 | Google Refresh Token | Domain/SQLite 비저장. 09/10의 OS Keyring lifecycle 소비 |
 | Google Access Token | Domain/SQLite 비저장. Connector MCP Credential Provider process memory only |
-| LLM API Key | Domain/SQLite 비저장. 09/10의 `KEYRING | SESSION_ONLY` lifecycle 소비 |
+| LLM API Key | Domain/SQLite 비저장. 09/10의 `KEYRING \| SESSION_ONLY` lifecycle 소비 |
 | UI 비밀 아닌 설정 | app-settings.json |
 | Experiment Raw Result | 제품 DB와 분리된 Artifact |
+
+Domain DB에 저장하지 않는 검색 중간 자료는 다음과 같다.
+
+- Query candidate·Page Token·RAG candidate·대용량 원문은 05/06의 owner-local cache/state에 둔다. Domain DB의 두 번째 workflow truth로 만들지 않는다.
+- Raw Provider continuation/token·Provider query·MCP arguments·Prompt scratch·whole Sidebar cache는 Domain DB에 저장하지 않는다. Secret도 Domain/SQLite에 저장하지 않는다.
 
 ## 4. 도메인 경계와 Aggregate
 
 ### 4.1 Conversation Aggregate
 
-**Aggregate Root:** `Conversation`
+**Aggregate Root:** `Conversation` — `Conversation`, `Message`, `Run`으로 구성한다.
 
-- `Conversation`
-- `Message`
-- `Run`
+| 항목 | 불변조건 |
+| --- | --- |
+| Actor attribution | Conversation의 `account_id`는 로컬 세션으로 인증된 사용자 attribution이다. 기존 Google account ID를 보존하고, Google 미연결 시 `local-workspace`를 사용한다. Provider 계정이나 Credential을 생성·위조하지 않는다. |
+| Google Account와의 관계 | `conversations.account_id`와 `approvals.approved_by_account_id`는 non-null local actor attribution이며 `google_accounts` Foreign Key가 아니다. |
+| Connector 접근 | 선택 Resource의 Provider account는 해당 Connector의 signed handle·current credential/resource identity 검증을 따른다. Conversation actor를 Provider account와 비교하거나, Google actor와 GitHub account가 같아야 한다는 전역 조건으로 사용하지 않는다. |
+| 대화 목록 | 현재 계정의 기존 대화와 로컬 대화를 함께 조회한다. 계정 연결 후에도 로컬 대화를 유지하고 다른 Google 계정의 목록은 자동으로 합치지 않는다. 선택 Resource는 API의 session-bound handle/current Connector account 검증을 통과해야 한다. |
+| Open Run | Conversation당 `finished_at_ms IS NULL`인 Run은 최대 1개다. |
+| Message | Conversation에 속하고 선택적으로 Run을 참조한다. |
 
-불변 조건:
-
-- 현재 DB Schema v1.9에서도 Conversation은 하나의 Google Account에 속한다. 이는 P0 Google Workspace-first 영속 계약이며 Connector-neutral Core의 장기 의미로 승격하지 않는다.
-- `0007/0008`은 Action·ResourceRef의 connector identity를 일반화했지만 Conversation 소유권과 Connector Credential/Account 연결까지 일반화하지는 않았다. 두 번째 Connector가 Conversation-level account ownership을 요구하면 별도 새 Migration으로 확장하며 적용 Migration을 소급 수정하지 않는다.
-- Conversation당 `finished_at_ms IS NULL`인 Run은 최대 1개다.
-- Message는 Conversation에 속하고 선택적으로 Run을 참조한다.
+`0022_local_conversation_actor` forward Migration의 변경 범위는 Conversation·Approval의 Google Account 필수 FK 제거뿐이다. Approval의 non-null actor, Action FK, snapshot/hash, version, Claim·Attempt 경계는 유지한다.
 
 ### 4.2 Planning Aggregate
 
-**Aggregate Root:** `Plan`
+**Aggregate Root:** `Plan` — `Plan`, `Action`, `ActionDependency`, `ActionEvidence`로 구성한다.
 
-- `Plan`
-- `Action`
-- `ActionDependency`
-- `ActionEvidence`
-
-불변 조건:
-
-- Plan Revision은 같은 Run 안에서 1부터 증가한다.
-- current published Plan이 `SUPERSEDED`로 전이되는 UoW는 해당 Plan Action의 모든 `ACTIVE` Approval을 먼저 `REVOKED`로 만들고 같은 transaction에서 Plan supersession을 commit한다. `SUPERSEDED` Plan 아래에 `ACTIVE` Approval이 남는 snapshot은 불가능하다.
-- `SUPERSEDED` Plan의 Action/Approval은 history로 조회할 수 있지만 새 Approval/Attempt/Write authority가 아니다. Action lifecycle conditional write와 Claim은 owning Plan이 current published Plan이며 `Plan.status=WAITING_APPROVAL`인지 함께 검증한다.
-- Action의 Position은 Plan 안에서 유일하다.
-- 모든 실행 가능한 Action은 최소 1개 Evidence를 가진다.
-- Dependency는 자기 자신을 참조하지 않고 DAG여야 한다. Cycle 생성·검사는 deterministic Planning Application operation `planning.build_dependencies`와 `planning.validate_plan`이 수행하고, Domain은 published Plan의 aggregate invariant만 guard한다.
+| 항목 | 불변조건 |
+| --- | --- |
+| Revision | 같은 Run 안에서 1부터 증가한다. |
+| Plan 교체 시 Commit | current published Plan을 `SUPERSEDED`로 바꾸는 UoW는 해당 Plan Action의 모든 `ACTIVE` Approval을 먼저 `REVOKED`로 만든다. Approval revoke와 Plan supersession은 같은 Transaction에서 commit한다. |
+| 교체된 Plan | `SUPERSEDED` Plan 아래에 `ACTIVE` Approval이 남을 수 없다. 해당 Action/Approval은 조회 가능한 history일 뿐 새 Approval·Attempt·Write authority가 아니다. |
+| Child mutation·Claim | owning Plan이 current published Plan이고 `Plan.status=WAITING_APPROVAL`인지 함께 검증한다. |
+| Action Position | Plan 안에서 유일하다. |
+| Evidence | 모든 실행 가능한 Action은 최소 1개 Evidence를 가진다. |
+| Dependency | 자기 참조를 금지하고 DAG를 유지한다. Cycle 생성·검사는 deterministic Planning Application operation `planning.build_dependencies`와 `planning.validate_plan`이 수행한다. Domain은 published Plan의 aggregate invariant만 guard한다. |
 
 ### 4.3 Execution Aggregate
 
-**Aggregate Root:** `Action`
+**Aggregate Root:** `Action` — `Approval`, `ExecutionAttempt`, `Verification`을 포함한다.
 
-- `Approval`
-- `ExecutionAttempt`
-- `Verification`
+| 항목 | 불변조건 |
+| --- | --- |
+| Action 수정 | `version`을 증가시킨다. |
+| Approval | Action당 ACTIVE Approval은 최대 1개다. |
+| Attempt | Approval당 CLAIMED·EXECUTING·UNKNOWN_RESULT Attempt는 최대 1개다. |
+| Claim 전제 | Approval Snapshot과 Domain `arguments_hash`가 현재 Action과 일치해야 한다. owning Plan은 current published Plan(`WAITING_APPROVAL`)이고 Run은 Claim을 허용하는 `WAITING_APPROVAL \| VERIFYING`이어야 한다. |
+| Claim의 불충분 조건 | `Action=APPROVED + Approval=ACTIVE`만으로는 Claim할 수 없다. |
+| Verification | 모든 성공 Write Attempt는 Effect별 결정적 Verification으로 종료한다. CREATE·UPDATE는 GET 비교, DELETE는 대상 부재/삭제 상태 확인, SEND는 Sent 결과 조회를 사용한다. |
 
-불변 조건:
-
-- Action 수정은 `version`을 증가시킨다.
-- Action당 ACTIVE Approval은 최대 1개다.
-- Approval당 CLAIMED·EXECUTING·UNKNOWN_RESULT Attempt는 최대 1개다.
-- Approval Snapshot과 Domain `arguments_hash`가 현재 Action과 일치하고, Action의 owning Plan이 current published Plan(`WAITING_APPROVAL`)이며 Run이 Claim을 허용하는 `WAITING_APPROVAL | VERIFYING`일 때만 실행권을 Claim한다. `Action=APPROVED + Approval=ACTIVE`만으로는 충분하지 않다. 이 DB Hash는 `07`의 `approval_arguments_hash`에 해당한다.
-- `SCOPE_EXPANSION_REQUIRED`, `DUPLICATE_OVERRIDE_REQUIRED`, `CONFLICT_OVERRIDE_REQUIRED`처럼 정책상 별도 사용자 확인이 필요한 결정은 `PolicyConfirmationReceiptV1`로 고정한다. Receipt 원문을 위한 새 Table은 만들지 않고 LangGraph Checkpoint의 Typed State와 append-only `audit_events`로 보존하며, Write Action에 필요한 승인형 Receipt의 ID·결정 Context Hash는 Approval Snapshot JSON에 포함한다. Approval 시점에 필요한 Receipt가 없거나 현재 Action/Evidence/Route와 Context Hash가 맞지 않으면 Approval/Claim을 허용하지 않는다. 이 기능 자체는 기존 JSON Snapshot/Audit Event를 사용하며 별도 Migration을 요구하지 않는다. 이후 `0006~0008`은 Plan Aggregate 무결성과 connector identity라는 별도 concern을 위해 추가되었다.
-- 실제 MCP Dispatch Payload의 `execution_arguments_hash`는 Claim 발급 시점의 전송 무결성 값이며 Domain DB에 별도 영속 Column을 추가하지 않는다. 첨부파일 bytes 역시 Domain DB에 저장하지 않는다.
-- 모든 성공 Write Attempt는 Effect별 결정적 Verification으로 종료한다. CREATE·UPDATE는 GET 비교, DELETE는 대상 부재/삭제 상태 확인, SEND는 Sent 결과 조회를 사용한다.
+Domain `arguments_hash`는 `07`의 `approval_arguments_hash`에 해당한다.
 
 ### 4.4 Evidence Aggregate
 
-- `ResourceRef`
-- `Evidence`
+`ResourceRef`는 Run에서 실제로 사용한 Connector Resource의 최소 참조다. `Evidence`는 Action 판단과 승인 설명에 필요한 최소 excerpt다. 둘 다 Connector 원본의 복제본이 아니다.
 
-`ResourceRef`는 Connector 원본의 복제본이 아니라 Run에서 실제로 사용한 최소 참조다. `Evidence`는 Action 판단과 승인 설명에 필요한 최소 excerpt만 저장한다.
+| 항목 | 저장 의미 |
+| --- | --- |
+| Connector 식별 | `actions.connector_id`와 `resource_refs.connector_id`를 영속한다. |
+| Resource identity | `connector_id + resource_type + resource_id`로 식별한다. Run별 저장 유일성은 §8.3을 따른다. |
+| `resource_id` | Connector Provider가 부여한 external resource identifier를 저장하는 canonical persistence field다. |
+| `ResourceRef.resource_type` | 해당 Resource를 만든/선택한 current `SignedToolRegistryEntryV1.resource_type`을 exact-copy한다. Google Workspace와 GitHub를 포함한 현재 등록 Connector 범위에 닫혀 있다. |
+| Row 생성 범위 | 모든 Registry resource가 반드시 ResourceRef row를 요구하지는 않는다. |
 
-**Connector 일반화 경계:** Core와 DB Schema v1.9의 ResourceRef identity는 `connector_id + resource_type + resource_id` 조합이며, `resource_id`가 Connector Provider의 external resource identifier를 담는 canonical persistence field다. `0007`이 `connector_id`를 Action/ResourceRef에 추가하고 기존 Google row를 `google_workspace`로 backfill했으며, `0008`이 pre-connector uniqueness를 제거해 connector-aware identity를 단일 권위로 만들었다. current persistence 의미에서 `resource_type`은 `SignedToolRegistryEntryV1.resource_type`의 exact Connector resource identifier다. 모든 Registry resource가 반드시 ResourceRef row를 요구하는 것은 아니지만, 저장되는 ResourceRef는 별도 family enum으로 변환하지 않는다. 신규 Connector/Resource Type 지원 시에는 concern-owned Tool/Registry 계약과 새 Schema Migration으로 허용값을 확장하며 기존 Migration을 소급 수정하지 않는다.
+저장되는 ResourceRef를 별도 family enum으로 변환하지 않는다. `THREAD|MESSAGE|EVENT` 또는 `EMAIL|TASK|CALENDAR`를 별도의 persistence vocabulary로 두지 않는다. 신규 Connector/Resource Type의 영속 constraint 확장은 concern-owned Tool/Registry 계약과 새 forward migration으로 보강하며 적용 Migration을 소급 수정하지 않는다.
 
 ### 4.5 Observability
 
-- `TraceEvent`: 개발·성능·장애 진단. Terminal Run에 귀속된 Trace는 owning Run의 configured `retention_days`와 같은 창을 사용하며 default가 30일이다. 별도 fixed 30-day authority를 만들지 않는다.
-- `AuditEvent`: 정책 확인·승인·수정·거절·차단·실행·검증의 안전 기록, 90일 보존
+| 데이터 | 목적 |
+| --- | --- |
+| `TraceEvent` | 개발·성능·장애 진단 |
+| `AuditEvent` | 정책 확인·승인·수정·거절·차단·실행·검증의 안전 기록 |
 
-Audit는 더 긴 보존을 위해 Domain Foreign Key를 사용하지 않고 최소 식별자만 저장한다.
+Trace는 owning Run과 같은 보존 기간을 사용하며 독립된 fixed 30-day authority를 두지 않는다. 보존·삭제 기준은 §20에 둔다. Audit는 더 긴 보존을 위해 Domain Foreign Key 없이 최소 식별자만 저장한다.
 
 ## 5. Entity와 Value Object
 
 | 분류 | 구성 |
 | --- | --- |
-| Entity | Conversation, Message, Run, Plan, Action, ResourceRef, Evidence, Approval, ExecutionAttempt, Verification, CommandReceipt. `GoogleAccount`는 현재 DB Schema v1.9에서도 P0 Connector-specific 계정 Entity이며 Connector-neutral account model은 후속 Migration 설계 대상이다. |
+| Entity | Conversation, Message, Run, Plan, Action, ResourceRef, Evidence, Approval, ExecutionAttempt, Verification, CommandReceipt, GoogleAccount |
 | Join Entity | ActionDependency, ActionEvidence |
 | Append Event | TraceEvent, AuditEvent |
 | Value Object | CanonicalArguments, ArgumentsHash, SourceSnapshot, PolicyConfirmationReceiptV1, IdempotencyKey, RecoveryContextV1, RecoveryFingerprint, Cursor, RunBudget, VerificationDiff |
+
+`GoogleAccount`는 Google Connector connection record이며 Conversation actor의 필수 parent나 다른 Connector account authority가 아니다.
 
 ### 5.1 ID와 시간
 
@@ -179,7 +183,6 @@ Audit는 더 긴 보존을 위해 Domain Foreign Key를 사용하지 않고 최�
 
 ```mermaid
 erDiagram
-    GOOGLE_ACCOUNTS ||--o{ CONVERSATIONS : "계정의 대화"
     CONVERSATIONS ||--o{ MESSAGES : "대화의 메시지"
     CONVERSATIONS ||--o{ RUNS : "대화에서 실행"
     RUNS ||--o{ PLANS : "계획 개정"
@@ -210,7 +213,7 @@ erDiagram
 | Planning | plans | Plan Revision |
 | Planning | actions | Tool Action 현재 상태 |
 | Planning | action_dependencies | Action DAG Edge |
-| Context | resource_refs | 사용된 Google Resource 최소 참조 |
+| Context | resource_refs | 사용된 Connector Resource 최소 참조 |
 | Context | evidence | 최소 근거 excerpt |
 | Context | action_evidence | Action·Evidence 다대다 관계 |
 | Approval | approvals | 승인 Revision·Snapshot·Hash |
@@ -221,63 +224,168 @@ erDiagram
 | Workflow Control | workflow_handoffs | committed Domain/user control → background continuation durable outbox; typed one-shot control payload와 target binding |
 | Audit | audit_events | Append-only 안전 기록 |
 
-`command_receipts.aggregate_id`는 여러 Aggregate Command를 포괄하는 논리 상관관계 값이며 모든 Aggregate에 대한 범용 FK를 의미하지 않는다. StartRun처럼 대상 Row 생성과 같은 Transaction에서 identity가 확정되는 Command도 있으므로 polymorphic hard FK를 임의 추가하지 않는다.
-
 ## 8. 핵심 Table 설계
 
 ### 8.1 runs
 
-- `entry_mode`: AGENT_SEARCH 또는 RESOURCE_SELECTED
-- `requested_mode`: `AUTO | LOCAL_GPU | API_LLM`; StartRun에서 immutable snapshot, same-Run restart/resume authority
-- `status`: Workflow의 현재 단계
-- `langgraph_thread_id`: Checkpoint 재개 Key
-- `budget_json`: 호출 수·Token·Retry·시간 상한 Snapshot
-- `version`: 낙관적 상태 전이
-- `finished_at_ms IS NULL`: Open Run
+| 필드·조건 | 의미 |
+| --- | --- |
+| `entry_mode` | AGENT_SEARCH 또는 RESOURCE_SELECTED |
+| `requested_mode` | 새 Run은 `LOCAL_GPU \| API_LLM`. StartRun UoW에서 저장하는 immutable snapshot이며 same-Run restart/resume의 durable authority다. |
+| `status` | Workflow의 현재 단계 |
+| `langgraph_thread_id` | Checkpoint 재개 Key |
+| `budget_json` | 호출 수·Token·Retry·시간 상한 Snapshot |
+| `default_github_repository_json` | Migration 0021로 추가된 legacy immutable snapshot. 기존 Run history/resume 해석에만 사용하며, 새 Run의 접근 allowlist나 WRITE target authority로 사용하지 않는다. 기존 row는 다시 쓰지 않는다. |
+| `version` | 낙관적 상태 전이 |
+| `finished_at_ms IS NULL` | Open Run |
+
+기존 `AUTO` row는 과거 실행 해석과 안전한 resume compatibility를 위해 보존한다. history rewrite, process-local runtime mode 또는 user preference로 기존 `runs.requested_mode`를 덮어쓰지 않는다.
 
 Partial UNIQUE Index로 Conversation당 Open Run 하나를 보장한다.
 
 ### 8.2 plans와 actions
 
-Plan을 수정할 때 기존 Revision을 덮어쓰지 않고 새로운 `revision_no`를 추가한다. Action의 현재 Arguments는 `arguments_json`, 승인 대상 Hash는 `arguments_hash`, 실행 후 기대값은 `expected_json`에 저장한다.
+| 저장 대상 | 방식 |
+| --- | --- |
+| Plan 수정 | 기존 Revision을 덮어쓰지 않고 새 `revision_no`를 추가한다. |
+| Action 현재 Arguments | `arguments_json` |
+| 승인 대상 Hash | `arguments_hash` |
+| 실행 후 기대값 | `expected_json` |
+| Action 변경 이력 | P0에서 별도의 전체 Revision Table을 만들지 않는다. 승인 당시 불변값은 Approval Snapshot, 변경 사실은 Audit로 보존한다. |
 
-Action 자체의 전체 Revision Table은 P0에서 만들지 않는다. 승인 당시 불변값은 Approval Snapshot, 변경 사실은 Audit로 보존한다.
+#### Review freshness와 결과 저장
+
+Action의 arguments/source/policy/tool-schema binding이 바뀌는 modify/retry/expired-refresh는 기존 Approval을 재활성화하지 않고 Review freshness를 `REQUIRED`로 reset한다. 이전 Review PASS를 current Plan/Action revision에 자동 승계하지 않는다.
+
+fresh Review 결과의 유일한 writer는 Application persistence operation **`plan.record_review_result`**다. 06 Review가 결정적으로 검증한 `PlanReviewResultV2`를 현재 Plan/Action revision에 조건부 기록하며, 새 Domain lifecycle command가 아니다.
+
+`RecordReviewResultCommandV1`의 최소 입력:
+
+```text
+command_id, plan_id, expected_plan_version
+review_artifact_id, review_version, disposition, based_on_action_versions
+```
+
+| 판정 | 저장·Gate 동작 |
+| --- | --- |
+| Version 일치 | 현재 Plan version과 각 bound Action version이 모두 일치할 때만 Repository UoW가 결과를 기록한다. disposition은 입력과 동일한 값으로 durable 저장한다. |
+| Current `PASS` | `disposition=PASS`인 current result만 review gate를 `PASSED`로 연다. |
+| 그 외 disposition | `REVISE`, `RETRIEVE_MORE`, `ROUTE_RECONSIDERATION`, `CONFIRM`, `BLOCK`은 current disposition으로 저장하지만 Approval 가능 gate는 열지 않는다. |
+| Review 중 수정 | Modify/retry/expired-refresh로 Plan/Action revision이 바뀌면 조건부 write는 conflict로 실패한다. stale PASS는 durable authority가 아니다. |
+
+이 operation은 Approval 생성·Action status 전이·lifecycle guard를 직접 수행하지 않는다. `ApproveAction`이 durable current PASS fact를 읽어 기존 Domain guard를 집행한다. Workflow/FastAPI의 직접 DB 수정과 SQL trigger의 Review 의미 생성은 금지한다. Review disposition 생성·routing은 `06`이 소유한다.
 
 ### 8.3 resource_refs와 evidence
 
-- Connector Provider 전체 원문·Sidebar Cache는 Domain DB에 저장하지 않는다. Resource List의 `selection_handle`은 Local API/Application의 ephemeral authenticated wire identity이며 DB row가 아니다. `RESOURCE_SELECTED` StartRun에서 handle 검증이 끝난 identity만 새 Run의 StartRun UoW 안에서 최소 `ResourceRef`로 materialize한다.
-- 동일 `(run_id, connector_id, resource_type, resource_id)`는 한 번만 저장한다. `source` 같은 pre-connector 분류를 canonical uniqueness key로 다시 사용하지 않는다.
-- FreeBusy 같은 비Resource 조회 전체 응답은 ResourceRef로 저장하지 않고 Derived Evidence로 필요한 결과만 보존한다.
-- `version_token`은 Connector별 Provider version/etag/history/update 의미를 해당 Connector MCP Server Adapter가 정규화한다. P0 Google Workspace에서는 Gmail history/internal date, Google ETag·updated 등이 첫 구현 예다.
+| 항목 | 저장 규칙 |
+| --- | --- |
+| 일반 Retrieval | Action Row를 만들지 않는다. Run-scoped ResourceRef/Evidence와 bounded cache/reference separation만 persistence 대상으로 다룬다. |
+| 원문·Sidebar Cache | Connector Provider 전체 원문과 Sidebar Cache는 Domain DB에 저장하지 않는다. |
+| `selection_handle` | Local API/Application의 ephemeral authenticated wire identity이며 DB row가 아니다. `RESOURCE_SELECTED` StartRun에서 handle 검증이 끝난 identity만 같은 StartRun UoW 안에 최소 `ResourceRef`로 materialize한다. |
+| 저장 유일성 | 동일 `(run_id, connector_id, resource_type, resource_id)`는 한 번만 저장한다. `source` 같은 pre-connector 분류를 uniqueness key로 다시 사용하지 않는다. |
+| 비Resource 조회 | FreeBusy 같은 전체 응답을 ResourceRef로 저장하지 않는다. Derived Evidence에 필요한 결과만 보존한다. |
+| `version_token` | Provider version/etag/history/update 의미를 해당 Connector MCP Server Adapter가 정규화한다. Google Workspace 예시는 Gmail history/internal date, Google ETag·updated다. |
+
+`ToolRoutePlanV2.input_plan.input_routes`/Query/Read/RAG의 의미는 05/06을 따른다.
 
 ### 8.4 approvals
 
 Approval은 Action 현재값과 분리된 승인 이력이다.
 
-- `approval_no`: Action 내 승인 순번
-- `action_version`: 승인된 Action Version
-- `status`: ACTIVE·EXPIRED·CONSUMED·REVOKED
-- `arguments_snapshot_json`: 승인 당시 Arguments
-- `source_snapshot_json`: 관련 Resource ID·Version Token 목록
-- `idempotency_key`: 한 Approval 실행 문맥
-- `recovery_fingerprint`: Connector Write 응답 유실·결과 불명 시 동일 외부 Effect의 기존 결과 후보 탐색
+| 필드 | 의미 |
+| --- | --- |
+| `approval_no` | Action 내 승인 순번 |
+| `action_version` | 승인된 Action Version |
+| `status` | ACTIVE·EXPIRED·CONSUMED·REVOKED |
+| `arguments_snapshot_json` | 승인 당시 Arguments |
+| `source_snapshot_json` | 관련 Resource ID·Version Token 목록 |
+| `idempotency_key` | 한 Approval 실행 문맥 |
+| `recovery_fingerprint` | Connector Write 응답 유실·결과 불명 시 동일 외부 Effect의 기존 결과 후보 탐색 |
 
 같은 Action Version도 Approval 만료 후 다시 승인할 수 있으므로 `(action_id, action_version)` UNIQUE는 사용하지 않는다. 대신 Action당 ACTIVE Approval 하나만 허용한다.
 
+#### 정책 확인 Receipt
+
+`SCOPE_EXPANSION_REQUIRED`, `DUPLICATE_OVERRIDE_REQUIRED`, `CONFLICT_OVERRIDE_REQUIRED`처럼 별도 사용자 확인이 필요한 결정은 `PolicyConfirmationReceiptV1`로 고정한다.
+
+| 항목 | 규칙 |
+| --- | --- |
+| Receipt 보존 | Receipt 원문용 새 Table을 만들지 않는다. LangGraph Checkpoint의 Typed State와 append-only `audit_events`로 보존한다. |
+| Approval 결합 | Write Action에 필요한 승인형 Receipt의 ID·결정 Context Hash를 Approval Snapshot JSON에 포함한다. |
+| 누락·불일치 | 필요한 Receipt가 없거나 현재 Action/Evidence/Route와 Context Hash가 맞지 않으면 Approval/Claim을 허용하지 않는다. |
+| 저장 구조 | 기존 JSON Snapshot/Audit Event를 사용하므로 이 기능 자체는 별도 Migration을 요구하지 않는다. |
+
+실제 MCP Dispatch Payload의 `execution_arguments_hash`는 Claim 발급 시점의 전송 무결성 값이다. Domain DB에 별도 영속 Column을 추가하지 않으며, 첨부파일 bytes도 Domain DB에 저장하지 않는다.
+
 ### 8.5 execution_attempts와 verifications
 
-- Write `FAILED` 재시도는 기존 Approval·Idempotency Key·Attempt를 재사용하지 않는다. `PrepareWriteRetry: FAILED → MODIFIED` 후 Review/Domain Validation을 다시 통과하고 **새 Approval**을 생성하며, 새 Approval의 고유 `approval_id` 때문에 새 `idempotency_key`가 생성된다. 새 Approval에서 첫 `ExecutionAttempt.attempt_no`는 1이다.
-- 하나의 Approval에 실행 중·결과 불명 Attempt는 동시에 하나만 존재한다.
-- `UNKNOWN_RESULT` 해결 전 새 Approval·새 Write Attempt·새 Write를 만들지 않는다.
-- Connector dispatch 결과의 `delivery_certainty`는 `execution_attempts.response_metadata_json.delivery_certainty`에 `NOT_SENT | MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST` 중 하나로 영속한다. `error_detail_json`은 오류 상세를 담되 전달 확실성의 기준점으로 사용하지 않는다. 별도 Column을 추가하지 않는다.
-- `BeginExecutionAttempt(applied=true)` commit은 **dispatch-intent uncertainty cut**이다. 이 commit 이후 결과 persistence 전에 process loss가 발생하면 실제 Connector callable 진입 여부를 추측하지 않고 `MAY_HAVE_BEEN_SENT`로 보수적으로 reconcile한다. `NOT_SENT`는 Begin 전 실패이거나 live Connector/MCP boundary가 provider dispatch 0을 명시적으로 증명한 경우에만 기록한다. 추가 `DISPATCH_STARTED` column/marker를 만들지 않는다.
-- Post-Begin process-loss reconciliation은 새 table/status를 만들지 않고 existing durable facts를 phase marker로 사용한다. Repository projection `ExecutionReconciliationCandidateV1`의 closed kinds는 `POST_BEGIN_ORPHAN | UNKNOWN_RESULT_UNRESOLVED | EXECUTED_AWAITING_VERIFICATION | FAILED_AWAITING_CONTINUATION`이다. `POST_BEGIN_ORPHAN`은 Attempt=`EXECUTING` + APPLIED Begin receipt + terminal dispatch result 없음, `UNKNOWN_RESULT_UNRESOLVED`는 Action/Attempt=`UNKNOWN_RESULT` + matching active RecoveryContext 없음, `EXECUTED_AWAITING_VERIFICATION`은 Action=`EXECUTED` + Verification 미완료다. `FAILED_AWAITING_CONTINUATION`은 reconciliation의 deterministic `ResolveAsFailed` Receipt가 존재하고 current cancel intent 또는 다른 approved/executable Action 때문에 automatic continuation이 필요한 경우다; stable FAILED user-decision/retry wait는 제외한다. 이 projection은 startup-only Application reconciliation에서만 소비하며 current live worker ownership을 판단하는 lease가 아니다.
-- Reconciliation의 각 state-changing sub-command는 deterministic identity를 사용한다: base `system:execution-attempt-reconcile:<execution_attempt_id>`는 `MarkUnknownResult`, suffix `:recover-existing | :resolve-failed | :require-recovery | :begin-verification | :resolve-recovery-recheck`는 해당 기존 Domain command의 replay identity다. Verification continuation은 `system:execution-attempt-reconcile:<execution_attempt_id>:verification`, resolved-failed automatic continuation은 `...:post-failed` WorkflowHandoff trigger로 dedupe한다. 따라서 `MarkUnknownResult`/`RecoverExistingResult`/`BeginVerification` 중 어느 commit 뒤에 crash가 나도 durable state 또는 staged handoff가 다음 startup phase를 결정한다.
-- 모든 성공 Write Attempt는 Effect별 하나 이상의 Verification을 가진다.
+#### 재시도와 결과 보존
+
+| 항목 | 규칙 |
+| --- | --- |
+| Write `FAILED` 재시도 | `PrepareWriteRetry: FAILED → MODIFIED` 후 Review/Domain Validation을 다시 통과하고 새 Approval을 만든다. 기존 Approval·Idempotency Key·Attempt를 재사용하지 않는다. |
+| 새 Attempt identity | 새 Approval의 고유 `approval_id`로 새 `idempotency_key`를 만든다. 첫 `ExecutionAttempt.attempt_no`는 1이다. |
+| 동시 Attempt | 한 Approval에 실행 중·결과 불명 Attempt는 동시에 하나만 존재한다. |
+| `UNKNOWN_RESULT` | 해결 전 새 Approval·새 Write Attempt·새 Write를 만들지 않는다. |
+| 성공 Write | Effect별 하나 이상의 Verification을 가진다. |
+
+#### 전달 확실성
+
+`delivery_certainty`는 **`execution_attempts.response_metadata_json.delivery_certainty`**에 영속한다.
+
+```text
+NOT_SENT | MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST
+```
+
+`error_detail_json`은 오류 상세용이며 전달 확실성의 기준점으로 사용하지 않는다. 별도 Column은 추가하지 않는다.
+
+**`BeginExecutionAttempt(applied=true)` commit은 dispatch-intent uncertainty cut이다.** 이 commit 뒤 결과 저장 전에 process loss가 발생하면 실제 Connector callable 진입 여부를 추측하지 않고 `MAY_HAVE_BEEN_SENT`로 보수적으로 reconcile한다.
+
+`NOT_SENT`를 기록할 수 있는 경우는 Begin 전 실패 또는 live Connector/MCP boundary가 provider dispatch 0을 명시적으로 증명한 경우뿐이다. 추가 `DISPATCH_STARTED` column/marker는 만들지 않는다.
+
+#### Process-loss reconciliation용 영속 사실
+
+새 table/status 대신 existing durable facts를 phase marker로 사용한다. Repository projection `ExecutionReconciliationCandidateV1`의 closed kinds는 다음과 같다.
+
+| Kind | 후보 조건 |
+| --- | --- |
+| `POST_BEGIN_ORPHAN` | Attempt=`EXECUTING` + APPLIED Begin receipt + terminal dispatch result 없음 |
+| `UNKNOWN_RESULT_UNRESOLVED` | Action/Attempt=`UNKNOWN_RESULT` + matching active RecoveryContext 없음 |
+| `EXECUTED_AWAITING_VERIFICATION` | Action=`EXECUTED` + Verification 미완료 |
+| `FAILED_AWAITING_CONTINUATION` | reconciliation의 deterministic `ResolveAsFailed` Receipt가 있고, current cancel intent 또는 다른 approved/executable Action 때문에 automatic continuation이 필요함 |
+
+stable FAILED user-decision/retry wait는 후보에서 제외한다. 이 projection은 **startup-only Application reconciliation**에서만 소비하며 current live worker ownership을 판단하는 lease가 아니다.
+
+각 state-changing sub-command는 다음 deterministic identity를 사용한다.
+
+```text
+base = system:execution-attempt-reconcile:<execution_attempt_id>
+```
+
+| Identity | 기존 Command·용도 |
+| --- | --- |
+| base | `MarkUnknownResult` replay identity |
+| base + `:recover-existing` | `RecoverExistingResult` replay identity |
+| base + `:resolve-failed` | `ResolveAsFailed` replay identity |
+| base + `:require-recovery` | `RequireRecovery` replay identity |
+| base + `:begin-verification` | `BeginVerification` replay identity |
+| base + `:resolve-recovery-recheck` | `ResolveRecovery(RECHECK)` replay identity |
+| `system:execution-attempt-reconcile:<execution_attempt_id>:verification` | Verification continuation의 WorkflowHandoff trigger |
+| `...:post-failed` | resolved-failed automatic continuation의 WorkflowHandoff trigger |
+
+Handoff trigger로 continuation을 dedupe한다. `MarkUnknownResult`/`RecoverExistingResult`/`BeginVerification` 중 어느 commit 뒤에 crash가 나도 durable state 또는 staged handoff로 다음 startup phase를 결정한다.
+
+#### Legacy READ 호환 저장
+
+expired/retry/legacy READ 관련 command가 current State Contract에서 유효할 때 Repository UoW는 `expected_version`, immutable prior Approval/Receipt, review freshness reset, append-only Audit를 보존한다.
+
+legacy/compatibility READ Plan/Action은 Approval·ExecutionAttempt·Verification Row를 생성하지 않는다. 새 Release Retrieval은 이 compatibility path를 사용하지 않는다. 허용 command와 전이는 State Contract를 따르며 이 절에서 추가하지 않는다.
 
 ### 8.6 Command Receipt durable persistence
 
-상태 변경 Command의 `CommandReceipt`는 HTTP 캐시나 Audit 대체물이 아니라 **Domain DB의 durable idempotency record**다. 최소 논리 필드는 다음과 같다.
+`CommandReceipt`는 HTTP 캐시나 Audit 대체물이 아니라 **Domain DB의 durable idempotency record**다.
+
+최소 논리 필드:
 
 ```
 command_id            # unique command identity
@@ -289,20 +397,24 @@ status                 # RECEIVED | APPLIED | REJECTED
 response_summary       # replay 가능한 결정적 Command 결과 요약
 ```
 
-필수 DB 의미:
+| 상황 | 필수 DB 동작 |
+| --- | --- |
+| 같은 ID·같은 Hash | `command_id`가 가리키는 저장된 `APPLIED \| REJECTED` 결과를 replay한다. |
+| 같은 ID·다른 Hash | 기존 Receipt의 status/result를 덮어쓰지 않고 conflict로 거부한다. Domain mutation은 0건이다. 11 Observability가 요구하는 hash-mismatch 보안 Audit은 별도 append-only event로 기록할 수 있다. |
+| 신규 Command | `RECEIVED` 예약, Guard 판정, 허용된 Domain mutation, 필수 Audit, 최종 `APPLIED \| REJECTED` 결과를 §10.0의 같은 짧은 Transaction에 저장한다. |
+| 신규 Command 거절 | Guard/Version/State 때문에 적용되지 않은 **신규 command_id**도 결정적 `REJECTED` 결과를 남긴다. 같은 ID·같은 Hash를 미래의 다른 상태에서 재평가하지 않는다. |
+| Commit 상태 | `RECEIVED`는 Transaction 안의 중간 상태다. 정상 commit 결과는 `APPLIED \| REJECTED`여야 한다. |
+| 비정상 저장 | committed `RECEIVED`만 남거나 Domain mutation에 최종 Receipt가 없으면 정상 성공이 아니다. Startup/Recovery는 추측 적용하지 않고 fail-closed reconcile한다. |
 
-- `command_id`는 단일 Receipt identity이며 같은 ID·같은 `request_hash`는 저장된 `APPLIED | REJECTED` 결과를 replay한다.
-- 같은 `command_id`·다른 `request_hash`는 기존 Receipt를 덮어쓰지 않고 conflict로 거부한다. 기존 Receipt의 status/result는 불변이며 Domain mutation은 0건이다. 11 Observability가 요구하는 hash-mismatch 보안 Audit은 별도 append-only event로 기록할 수 있다.
-- 신규 Command의 `RECEIVED` 예약, Guard 판정, Domain mutation(허용된 경우), 필수 Audit, 최종 `APPLIED | REJECTED` 결과 확정은 §10.0의 같은 짧은 Transaction에 속한다. Guard/Version/State 때문에 적용되지 않은 **신규 command_id**도 결정적 rejection 결과를 `REJECTED` Receipt로 남겨 이후 같은 ID·같은 hash가 미래의 다른 상태에서 재평가되지 않게 한다.
-- `RECEIVED`는 같은 Transaction 안의 중간 상태다. 정상 commit 결과는 `APPLIED | REJECTED`여야 하며 committed `RECEIVED`만 남거나 Domain mutation은 있는데 최종 Receipt가 없는 상태는 정상 성공이 아니다. Startup/Recovery는 이를 추측 적용하지 않고 fail-closed reconcile 대상으로 취급한다.
-- Audit Event만으로 Command Receipt를 대체하지 않으며, in-memory dedupe만으로 구현하지 않는다.
+Audit Event 또는 in-memory dedupe만으로 Command Receipt를 대체하지 않는다.
 
-현재 적용 Schema에 이 durable relation이 없다면 이는 구현 재량이 아니라 **forward migration이 필요한 Domain DB schema blocker**다. 적용된 과거 Migration을 소급 수정해서 해결하지 않는다.
+`command_receipts.aggregate_id`는 여러 Aggregate Command를 포괄하는 논리 상관관계 값이지 범용 FK가 아니다. StartRun처럼 대상 Row 생성과 같은 Transaction에서 identity가 확정될 수 있으므로 polymorphic hard FK를 임의 추가하지 않는다.
 
+현재 적용 Schema에 이 durable relation이 없으면 **forward migration이 필요한 Domain DB schema blocker**다. 적용된 과거 Migration을 소급 수정하지 않는다.
 
 ### 8.7 `workflow_handoffs` — Domain commit → background execution durable outbox
 
-`workflow_handoffs`는 Domain Aggregate가 아니라 **same-Run Application/Workflow control persistence**다. 이 절은 row가 보존해야 하는 durable fact와 DB invariant만 정의한다. Workflow target/precedence는 `06`, typed Port·wire operation은 `07`, startup/live driving order는 `10`이 소유한다.
+`workflow_handoffs`는 Domain Aggregate가 아니라 **same-Run Application/Workflow control persistence**다. 이 절은 durable fact와 DB invariant를 정의한다. Workflow target/precedence는 `06`, typed Port·wire operation은 `07`, startup/live driving order는 `10`을 따른다.
 
 최소 logical fields:
 
@@ -334,35 +446,42 @@ superseded_at_ms?
 version                     optimistic integer
 ```
 
-Persistence invariants:
-
-- workflow continuation이 필요한 owning mutation은 CommandReceipt/Audit와 `PENDING` handoff stage를 **같은 UoW**에서 commit한다. Handoff stage 실패 시 해당 transaction의 lifecycle mutation도 commit하지 않는다.
-- `trigger_command_id` replay는 같은 durable handoff identity를 재사용한다. 같은 command identity로 두 개의 control payload authority를 만들지 않는다.
-- `run_sequence`는 server-owned same-Run commit order이며 `UNIQUE(run_id, run_sequence)`로 방어한다. `CONSUMED|SUPERSEDED`만 settled다.
-- non-NONE control payload는 unconsumed row에서 hash와 함께 durable해야 하고, settled row에서는 body를 지워도 historical `control_kind/hash`는 보존한다.
-- worker visibility 전에 execution admission과 `expected_run_version`이 durable해야 한다. Admission claim/release/settlement는 handoff optimistic version과 owning Run authority epoch를 조건부로 검사하며, stale admitted NORMAL row가 lower-sequence head로 부활해서는 안 된다. Exact callable/result shape는 `07`이 소유한다.
-- command-time observed checkpoint/binding과 applied checkpoint evidence는 restart 후 exact replay/reconciliation을 판정할 만큼 durable해야 한다. `active_handoff_id/run_sequence` lineage 자체의 workflow release semantics는 `06/07`을 따른다.
-- cancel/terminal supersession은 **durable execution admission이 없는** obsolete unconsumed row만 same-UoW에서 retire할 수 있다. 이미 admission이 있는 row의 stale authority 처리는 admission settlement fence로 결정한다.
-- `BLOCKED_BINDING`은 데이터 손실이나 임의 latest-checkpoint 선택으로 해소하지 않는다. Recovery orchestration은 `06/07/10`의 owning contract를 소비한다.
-
-이 절에 startup loop, WEP return-code algorithm, registered target matrix를 다시 적지 않는다. 그런 변경이 발생해도 위 durable fact/invariant가 그대로라면 04는 수정 대상이 아니다.
+| 항목 | Persistence invariant |
+| --- | --- |
+| 원자 Commit | continuation이 필요한 owning mutation은 CommandReceipt/Audit와 `PENDING` handoff stage를 같은 UoW에서 commit한다. Handoff stage 실패 시 lifecycle mutation도 commit하지 않는다. |
+| Trigger 재사용 | `trigger_command_id` replay는 같은 durable handoff identity를 재사용한다. 같은 command identity에 두 control payload authority를 만들지 않는다. |
+| Commit 순서 | `run_sequence`는 server-owned same-Run commit order다. `UNIQUE(run_id, run_sequence)`로 방어하며 `CONSUMED\|SUPERSEDED`만 settled다. |
+| Control payload | non-NONE payload는 unconsumed row에서 hash와 함께 durable해야 한다. settled row의 body를 지워도 historical `control_kind/hash`는 보존한다. |
+| Execution admission | worker visibility 전에 admission과 `expected_run_version`이 durable해야 한다. claim/release/settlement는 handoff optimistic version과 owning Run authority epoch를 조건부로 검사한다. stale admitted NORMAL row가 lower-sequence head로 부활하면 안 된다. |
+| Checkpoint 근거 | command-time observed checkpoint/binding과 applied checkpoint evidence는 restart 후 exact replay/reconciliation을 판정할 만큼 durable해야 한다. `active_handoff_id/run_sequence` lineage의 release semantics는 06/07을 따른다. |
+| Cancel·terminal supersession | durable execution admission이 없는 obsolete unconsumed row만 same-UoW에서 retire한다. 이미 admission이 있는 row의 stale authority는 admission settlement fence로 처리한다. |
+| `BLOCKED_BINDING` | 데이터 손실이나 임의 latest-checkpoint 선택으로 해소하지 않는다. Recovery orchestration은 06/07/10을 따른다. |
 
 ### 8.8 Retrieval revision readable authority
 
-`RetrievalResultV1.meta.revision`의 Application-readable authority는 Domain row나 Plan revision이 아니다. LangGraph adapter가 successful Retrieval owner checkpoint를 저장할 때 함께 기록하는 typed **`RetrievalHeadV1(run_id, langgraph_thread_id, retrieval_revision, retrieval_artifact_id, checkpoint_id, checkpoint_generation)`** metadata가 단일 readable authority다.
+`RetrievalResultV1.meta.revision`의 Application-readable authority는 Domain row나 Plan revision이 아니다. LangGraph adapter가 successful Retrieval owner checkpoint와 함께 기록하는 **`RetrievalHeadV1` metadata**가 단일 readable authority다.
 
-- `CheckpointPort.load_retrieval_head(run_id)`만 Application Query/CAS가 이 값을 읽는 경로다. Application이 `checkpoint_blob`을 deserialize하지 않는다.
-- `ContextPreviewResponseV1.retrieval_revision`과 `ContextAdjustmentRequestV1.expected_retrieval_revision` 비교는 같은 `RetrievalHeadV1.retrieval_revision`을 사용한다. Plan revision/Run version으로 대체하지 않는다.
-- successful new Retrieval revision의 checkpoint commit과 RetrievalHead 갱신은 같은 checkpointer transaction이다. app restart 후에도 head가 복원되어 stale CAS를 거부할 수 있다.
-- RetrievalHead는 workflow projection metadata이고 Domain semantic fact가 아니므로 새 Domain lifecycle command를 만들지 않는다.
+```text
+RetrievalHeadV1(
+  run_id, langgraph_thread_id, retrieval_revision,
+  retrieval_artifact_id, checkpoint_id, checkpoint_generation
+)
+```
 
-## 9. 상태 전이
+| 항목 | 규칙 |
+| --- | --- |
+| Application 조회 | Query/CAS는 `CheckpointPort.load_retrieval_head(run_id)`만 사용한다. Application이 `checkpoint_blob`을 deserialize하지 않는다. |
+| Revision 비교 | `ContextPreviewResponseV1.retrieval_revision`과 `ContextAdjustmentRequestV1.expected_retrieval_revision`은 같은 `RetrievalHeadV1.retrieval_revision`을 사용한다. Plan revision/Run version으로 대체하지 않는다. |
+| 원자 갱신 | successful new Retrieval revision의 checkpoint commit과 RetrievalHead 갱신은 같은 checkpointer transaction이다. restart 후 head를 복원해 stale CAS를 거부한다. |
+| 의미 경계 | workflow projection metadata이며 Domain semantic fact가 아니다. 새 Domain lifecycle command를 만들지 않는다. |
 
-> **Authority boundary:** 아래 상태/전이 표기는 Domain persistence와 aggregate 정합성을 설명하기 위한 **derivative projection**이다. lifecycle command·허용 source state·guard·transition의 normative semantics는 `Domain State Transition Contract`가 소유한다. 이 절의 derivative state vocabulary가 State Transition Contract와 다르면 State Transition Contract가 우선한다.
+## 9. 상태 영속화
+
+아래 상태 값과 취소·복구 설명은 **persistence projection**이다. Command·허용 source state·guard·target state·next command는 `Domain State Transition Contract`를 따른다. 이 문서와 다르면 State Contract가 우선한다.
 
 ### 9.1 Run status persistence vocabulary
 
-04가 소유하는 것은 Run row에 저장되는 status vocabulary와 persistence/invariant realization이다. 허용 source state와 command별 target state는 Domain State Transition Contract를 참조한다.
+Run row는 다음 상태 값을 column/constraint/projection에서 보존한다.
 
 ```text
 CREATED | ANALYZING | RETRIEVING | WAITING_CONFIRMATION | PLANNING | WAITING_APPROVAL |
@@ -370,52 +489,67 @@ EXECUTING | VERIFYING | CANCEL_REQUESTED | CANCELLED | REAUTH_REQUIRED | RECOVER
 COMPLETED | BLOCKED | FAILED
 ```
 
-현재 Release 승인형 Write에서 Run `EXECUTING` 사용 여부와 같은 lifecycle 의미도 owning State Transition Contract가 최종 authority다. 이 문서는 DB column/constraint/projection에서 해당 값을 안정적으로 보존하는 책임만 가진다.
+현재 Release 승인형 Write에서 Run `EXECUTING`을 사용하는지 등 lifecycle 의미는 State Contract가 결정한다.
 
 ### 9.2 Action status persistence vocabulary
 
-Action row는 current Domain contract가 사용하는 상태 식별자를 영속할 수 있어야 하며 optimistic version과 immutable execution/verification evidence를 보존한다. exact allowed transition graph·terminal classification·effect별 FAILED semantics는 Domain State Transition Contract를 참조한다.
+Action row는 상태 식별자와 optimistic version, immutable execution/verification evidence를 보존한다.
 
 ```text
 PROPOSED | MODIFIED | APPROVED | EXPIRED | EXECUTING | EXECUTED | UNKNOWN_RESULT | FAILED |
 VERIFIED | MISMATCH | REJECTED | BLOCKED | CANCELLED | DEPENDENCY_BLOCKED
 ```
 
-Repository는 Application/Domain command의 validated result만 조건부 UPDATE로 반영하며 임의 SQL state setter를 제공하지 않는다.
+Repository는 Application/Domain command의 validated result만 조건부 UPDATE로 반영한다. 임의 SQL state setter를 제공하지 않는다. exact transition graph·terminal classification·Effect별 FAILED semantics는 State Contract를 따른다.
 
 ### 9.3 취소 상태 계약
 
-이 절은 **취소의 persistence projection만** 소유한다. `RequestCancel`·`CancelPendingAction`·`FinalizeCancel`·Recovery CANCEL의 source state/guard/transition은 Domain State Transition Contract가 유일한 lifecycle authority다.
+| 항목 | Persistence 규칙 |
+| --- | --- |
+| Cancel intent | APPLIED `RequestCancel` Command Receipt가 restart 후 `cancel_intent_active`를 재구성하는 durable source다. checkpoint-only flag를 별도 authority로 두지 않는다. |
+| 취소 정리 | pending Action terminalization, ACTIVE Approval revoke, Plan/Run terminal snapshot을 각각의 owning command transaction에서 원자적으로 보존한다. |
+| 기존 실행 사실 | 확정된 execution/verification 사실을 취소 때문에 재작성하지 않는다. 성공한 external effect를 DB 변경으로 rollback한 것처럼 표현하지 않는다. |
 
-- APPLIED `RequestCancel` Command Receipt는 restart 후에도 `cancel_intent_active`를 재구성할 수 있는 durable source다. 별도 checkpoint-only flag를 authority로 두지 않는다.
-- 취소 정리 과정에서 State Contract가 요구하는 pending Action terminalization, ACTIVE Approval revoke, Plan/Run terminal snapshot은 각각의 owning command transaction에서 원자적으로 보존되어야 한다.
-- 이미 확정된 execution/verification 사실은 취소 때문에 재작성하지 않으며, 성공한 external effect를 DB 상태 변경으로 rollback한 것처럼 표현하지 않는다.
-- exact 허용 상태·우선순위·in-flight 처리 순서는 이 문서에서 반복하지 않고 State Contract를 참조한다.
+`RequestCancel`·`CancelPendingAction`·`FinalizeCancel`·Recovery CANCEL의 guard와 in-flight 처리 순서는 State Contract를 따른다.
 
 ### 9.4 Verification MISMATCH Recovery 계약
 
-이 절은 **Verification/Recovery persistence projection**만 소유한다. `StoreVerification`, `RequireRecovery`, `ResolveRecovery`의 lifecycle legality와 disposition 의미는 Domain State Transition Contract가 소유한다.
+| 항목 | Persistence 규칙 |
+| --- | --- |
+| Verification | append-only evidence로 남는다. 확정된 `MISMATCH` Action/Verification fact는 immutable하다. |
+| Run 상태 | Action status로 암묵 재계산하지 않고 owning lifecycle command의 결과만 영속한다. |
+| Recovery 결과 | 새 Plan revision 또는 terminal snapshot이 필요하면 기존 MISMATCH/Approval/Attempt/Verification fact를 덮어쓰지 않고 새 durable fact를 추가한다. |
 
-- Verification은 append-only evidence로 남고, 확정된 `MISMATCH` Action/Verification fact는 immutable하다.
-- Run은 Action status를 보고 암묵 재계산하지 않고 owning lifecycle command의 결과만 영속한다.
-- Recovery 선택이 새 Plan revision 또는 terminal snapshot을 요구하면 기존 MISMATCH/Approval/Attempt/Verification fact를 덮어쓰지 않고 새 durable fact를 추가한다.
-- cancel intent와 Recovery가 결합될 때 어떤 disposition이 허용되는지는 State Contract를 그대로 소비하며 이 절에서 별도 matrix를 유지하지 않는다.
+`StoreVerification`, `RequireRecovery`, `ResolveRecovery`의 legality와 cancel intent 결합 시 허용 disposition은 State Contract를 따른다.
 
 ### 9.4-A RecoveryContext durable persistence
 
-`RequireRecovery`가 적용되면 04는 State Transition Contract의 `RecoveryContextV1` logical fact를 restart-safe하게 저장한다. 최소 durable 의미는 `reason`, `scope`, optional `action_id/execution_attempt_id/verification_id`, `pre_recovery_status`, optional registered resume target, reason-specific target/reference fingerprint, observed external/verification/contract/checkpoint fingerprint, `last_recheck_input_hash`다.
+`RequireRecovery`가 적용되면 `RecoveryContextV1`을 restart-safe하게 저장한다.
 
-정확한 physical realization은 Run column 집합, owner-local recovery record, JSON snapshot 중 하나를 선택할 수 있는 04 implementation choice지만 **Checkpoint-only 또는 process-memory-only 저장은 금지**한다. `ResolveRecovery` handler는 이 durable context version과 current state를 읽어 reason/disposition legality와 `NO_PROGRESS`를 판정한다.
+| 최소 durable 의미 | 내용 |
+| --- | --- |
+| Recovery 구분 | `reason`, `scope` |
+| 관련 실행 참조 | optional `action_id/execution_attempt_id/verification_id` |
+| 이전 상태·재개 | `pre_recovery_status`, optional registered resume target |
+| 대상 근거 | reason-specific target/reference fingerprint |
+| 관측 근거 | observed external/verification/contract/checkpoint fingerprint |
+| 재확인 입력 | `last_recheck_input_hash` |
 
-Terminal Recovery persistence는 lifecycle owner의 coupled mutation을 그대로 원자화한다.
+물리 저장은 Run column 집합, owner-local recovery record, JSON snapshot 중 선택할 수 있다. **Checkpoint-only 또는 process-memory-only 저장은 금지**한다. `ResolveRecovery` handler는 이 durable context version과 current state로 reason/disposition legality와 `NO_PROGRESS`를 판정한다. 재개 위치는 Workflow/Checkpoint의 registered target을 사용하며 여기서 Node/Edge를 정의하지 않는다.
 
-- `ACCEPT_PARTIAL`: pending Action `CANCELLED`, ACTIVE Approval `REVOKED`, current Plan `COMPLETED`, Run `COMPLETED`, durable result `PARTIAL`.
-- `CANCEL`: pending Action `CANCELLED`, ACTIVE Approval `REVOKED`, current Plan `CANCELLED`, Run `CANCELLED`; 외부 mutation이 이미 관측되었으면 result `PARTIAL`, 없으면 `CANCELLED`.
-- `FAIL`: unresolved external-delivery uncertainty가 없어야 하며 pending Action `BLOCKED`, ACTIVE Approval `REVOKED`, current Plan `CANCELLED`, Run `FAILED`, result `FAILED`.
+Terminal Recovery는 lifecycle owner가 요구하는 다음 coupled mutation을 원자화한다.
 
-기존 `VERIFIED | MISMATCH | FAILED | REJECTED | BLOCKED | CANCELLED | DEPENDENCY_BLOCKED` facts는 위 terminal cleanup에서 다른 결과로 재작성하지 않는다.
+| Resolution | pending Action | ACTIVE Approval | current Plan | Run | Durable result·조건 |
+| --- | --- | --- | --- | --- | --- |
+| `ACCEPT_PARTIAL` | `CANCELLED` | `REVOKED` | `COMPLETED` | `COMPLETED` | `PARTIAL` |
+| `CANCEL` | `CANCELLED` | `REVOKED` | `CANCELLED` | `CANCELLED` | 외부 mutation이 이미 관측됐으면 `PARTIAL`, 없으면 `CANCELLED` |
+| `FAIL` | `BLOCKED` | `REVOKED` | `CANCELLED` | `FAILED` | unresolved external-delivery uncertainty가 없어야 함. result=`FAILED` |
+
+기존 `VERIFIED | MISMATCH | FAILED | REJECTED | BLOCKED | CANCELLED | DEPENDENCY_BLOCKED` facts는 terminal cleanup에서 다른 결과로 재작성하지 않는다.
 
 ## 10. Transaction 경계
+
+Connector/LLM 외부 호출 동안 SQLite Write Transaction을 유지하지 않는다. 호출 전 필요한 authority fact를 짧은 Transaction으로 commit하고, 호출 후 `expected_version`과 current lifecycle fact를 다시 검사해 결과를 조건부 저장한다. 두 Transaction 사이 authority가 바뀌면 성공을 추정하지 않는다.
 
 ### 10.0 Domain 상태 변경 Command의 공통 Receipt 원자성
 
@@ -437,7 +571,7 @@ BEGIN IMMEDIATE
 
 - Receipt 판정은 Approval revoke, Plan cancel, Action mutation 같은 child mutation보다 먼저 수행한다.
 - Receipt·Domain mutation·Audit는 하나의 Transaction으로 commit 또는 rollback한다.
-- Repository transaction abstraction/path authority는 16의 `ports/persistence/unit_of_work.py → UnitOfWork`와 SQLite `adapters/persistence/sqlite/unit_of_work.py → SqliteUnitOfWork`가 소유한다. 04는 atomicity invariant만 소유한다.
+- Transaction abstraction은 `UnitOfWork`, SQLite 구현은 `SqliteUnitOfWork`다. `ports/persistence/unit_of_work.py → UnitOfWork`와 `adapters/persistence/sqlite/unit_of_work.py → SqliteUnitOfWork`의 naming·placement는 16을 따르며, 이 문서는 atomicity invariant만 정한다.
 - Browser가 제공한 `request_hash`, `approval_id`, `idempotency_key`, `source_snapshot`, actor metadata는 영속 권위로 신뢰하지 않는다. Canonical Request Hash와 권위 값은 서버가 현재 Domain 사실에서 계산·resolve한다.
 - `applied=false` 또는 State/Version/Receipt conflict이면 외부 MCP Write를 호출하지 않는다.
 
@@ -446,7 +580,13 @@ BEGIN IMMEDIATE
 
 Continuation-required external control handler는 owning lifecycle mutation을 적용하는 같은 `SqliteUnitOfWork` 안에서 `WorkflowHandoffRepository.stage_pending(...)`까지 완료한 뒤 commit한다. `run.schedule_run_execution`은 이 transaction **밖에서, commit 성공 후** `handoff_id`만 받아 submit한다. 따라서 외부 Connector/LLM I/O를 SQLite transaction 안에 넣지 않으면서도 `commit succeeded / schedule lost` 상태는 durable outbox로 복구한다.
 
-`WorkflowExecutionPort.submit` 결과가 `ALREADY_RUNNING | SHUTTING_DOWN`이어도 Domain transaction을 되돌리지 않고 handoff를 redrive 가능한 상태로 유지한다. `BINDING_MISMATCH`는 handoff를 `BLOCKED_BINDING`으로 만들고 Recovery reconciliation을 요구한다. post-commit path에서 `NOT_COMMITTED`가 반환되면 architecture invariant violation이며 handoff는 `PENDING`으로 보존해 startup reconciliation이 재판정한다.
+`WorkflowExecutionPort.submit`의 post-commit 결과는 다음처럼 처리한다.
+
+| Post-commit submit 결과 | Persistence 처리 |
+| --- | --- |
+| `ALREADY_RUNNING`, `SHUTTING_DOWN` | Domain transaction을 되돌리지 않고 handoff를 redrive 가능한 상태로 유지한다. |
+| `BINDING_MISMATCH` | handoff를 `BLOCKED_BINDING`으로 만들고 Recovery reconciliation을 요구한다. |
+| `NOT_COMMITTED` | architecture invariant violation이다. handoff는 `PENDING`으로 보존해 startup reconciliation이 재판정한다. |
 
 ### 10.1 Run 시작
 
@@ -528,6 +668,16 @@ ClaimExecution COMMIT
 
 **`BeginExecutionAttempt` COMMIT이 `applied=true`인 뒤에만** Connector MCP Write를 호출할 수 있다. 실패/충돌/취소 intent 감지 시 외부 Write는 0건이며 `current_status + next_allowed_commands`로 재조정한다.
 
+**Pre-dispatch Claim 중단**
+
+`AbortClaimedExecution`은 다음 owner guard 결과를 받아 Attempt/Action/Audit/Receipt를 한 Transaction으로 commit한다.
+
+- current Attempt=`CLAIMED`, Action=`EXECUTING`
+- matching consumed Approval/Claim
+- APPLIED BeginExecutionAttempt receipt 없음
+
+Provider/MCP I/O는 0이다. 정확한 transition semantics는 State Contract를 따른다.
+
 ### 10.5 외부 Write와 결과
 
 ```
@@ -545,7 +695,7 @@ BEGIN IMMEDIATE
 → COMMIT
 ```
 
-P0 첫 Connector는 Google Workspace지만 Domain/Application이 Google Provider API를 직접 호출한다는 의미가 아니다.
+현재 Google Workspace와 GitHub Connector는 같은 connector-neutral Domain/Application 경계를 사용하며, Domain/Application이 Provider API를 직접 호출한다는 의미가 아니다.
 
 ### 10.6 GET Verification
 
@@ -565,6 +715,37 @@ Action Verification 결과만으로 Run `status`를 암묵 재계산해 덮어�
 
 `action_dependencies`에는 별도 dependency result/status를 저장하지 않는다. Verification COMMIT 뒤 다음 Action의 readiness는 **predecessor Action의 durable `VERIFIED` 상태를 read-only로 평가**한다. `StoreVerification`이 dependency row를 갱신하거나 새 dependency lifecycle/status authority를 만들지 않는다.
 
+### 10.7 종료 결과와 최종 ASSISTANT Message
+
+다음 Application handler는 terminal Domain transition과 함께 **정확히 하나의 final ASSISTANT Message**를 같은 UoW에 stage한다.
+
+```text
+CompleteAnswerOnlyRun
+CompleteReadOnlyRun (legacy)
+CompleteWriteRun
+BlockRun
+FinalizeCancel
+ResolveRecovery(ACCEPT_PARTIAL|CANCEL|FAIL) (terminal)
+```
+
+Message는 새 lifecycle semantics가 아니라 terminal command의 required durable effect다.
+
+| 항목 | 원자성·저장 조건 |
+| --- | --- |
+| Message 유일성 | applied terminal lifecycle receipt + run identity에 final ASSISTANT Message는 하나만 존재해야 한다. Command replay로 중복 생성하지 않는다. |
+| 물리 구현 | 별도 `final`/`terminal_run_version` column 또는 receipt-linked uniqueness는 implementation choice다. 다른 문서가 별도 column 이름을 authority로 만들지 않는다. |
+| 종료 결과 | `terminal_result_kind = SUCCESS \| PARTIAL \| BLOCKED \| FAILED \| CANCELLED`를 restart 후 Run Snapshot에서 복원할 수 있어야 한다. Run column 또는 terminal-result record로 저장할 수 있지만 Trace/SSE-only 값은 금지한다. |
+| UoW 시작 전 | `TerminalAssistantMessageInputV1`의 content/result kind를 완성·검증한다. UoW 중 LLM/Connector 호출은 금지한다. |
+| 실패 | required Audit 또는 Message stage가 실패하면 Receipt/Domain mutation까지 rollback한다. |
+| Commit 이후 | Diagnostic Trace와 SSE Projection은 별도로 처리한다. Trace는 별도 short UoW에 기록할 수 있으며 Trace/SSE 실패가 committed Domain truth를 rollback하지 않는다. |
+
+**경로별 저장 차이**
+
+| 완료 경로 | 함께 저장할 사실·제약 |
+| --- | --- |
+| Answer-only | State Contract가 완료를 허용할 때 Plan/Action 없이 CommandReceipt + Run terminal mutation + required Audit + ASSISTANT Message를 하나의 Application UoW로 원자화한다. Open Write/UNKNOWN_RESULT가 있으면 completion writer는 fail closed한다. |
+| Legacy READ | `CompleteReadOnlyRun` 적용 시 current Plan terminal mutation + Run terminal mutation + CommandReceipt + required Audit + final ASSISTANT Message + durable `terminal_result_kind`를 같은 short UoW로 commit한다. |
+
 ## 11. 동시성·Lock
 
 ### 11.1 적용
@@ -579,6 +760,8 @@ Action Verification 결과만으로 Run `status`를 암묵 재계산해 덮어�
 | Approval | 승인 이력 Insert + ACTIVE 하나 Partial UNIQUE |
 | Verification·Audit | Append-only |
 | Migration·Restore·Purge | 짧은 전용 BEGIN IMMEDIATE |
+
+`expected_version` 기반 조건부 UPDATE는 영향 Row 1개를 확인하고 mutable row version을 증가시킨다. stale write는 conflict로 거부한다.
 
 ### 11.2 사용하지 않음
 
@@ -614,14 +797,14 @@ Connector Provider가 공통 Idempotency Header를 제공한다고 가정하지 
 
 ```
 connector_id
-Conversation owner account identity  # P0: Google account_id
+Conversation actor identity  # 기존 Google account_id 또는 local-workspace; 접근 권한이 아님
 Tool 유형 / Effect
 대상 Resource identity(resource_type + resource_id), 존재하는 경우
 정규화된 제목·핵심 시간/기한·수신자 집합 등 Effect별 business fingerprint
 canonical_arguments_hash
 ```
 
-CREATE처럼 사전 `resource_id`가 없는 Effect는 해당 항목을 생략하고 Effect별 business fingerprint로 후보를 좁힌다. 두 번째 Connector에서 별도 connector-account persistence가 필요해지면 기존 Google-specific account binding을 일반화하는 **새 forward migration**을 추가하며 적용 Migration을 소급 수정하지 않는다.
+CREATE처럼 사전 `resource_id`가 없는 Effect는 해당 항목을 생략하고 Effect별 business fingerprint로 후보를 좁힌다. Google 외 Connector에 별도 connector-account persistence가 필요해지면 기존 Google-specific account binding을 일반화하는 **새 forward migration**을 추가하며 적용 Migration을 소급 수정하지 않는다.
 
 ### 12.3 보장 범위
 
@@ -657,7 +840,7 @@ Conversation·Message·Run·Audit은 `(timestamp_ms, id)` Keyset Cursor를 사�
 ```sql
 SELECT id, title, updated_at_ms
 FROM conversations
-WHERE account_id = :account_id
+WHERE account_id IN (:account_id, 'local-workspace')
   AND (
        updated_at_ms < :cursor_time
        OR (updated_at_ms = :cursor_time AND id < :cursor_id)
@@ -694,11 +877,11 @@ Sidebar 목록 batch
 → 클릭·선택한 Resource만 상세 조회
 ```
 
-복수 선택 상세 조회는 **Application-level bounded batch responsibility**로 처리한다. Provider가 개별 상세 Endpoint만 제공해 concrete Adapter 내부 HTTP 호출이 여러 번 필요하더라도 중복 제거, 제한된 동시성, 메모리 재사용, 후보 수 상한을 적용한다. 구체 Port method와 MCP Tool ID는 `07 Interface`, repository path/file/symbol은 `16 Repository Architecture`가 소유한다.
+복수 선택 상세 조회는 **Application-level bounded batch responsibility**로 처리한다. Provider가 개별 상세 Endpoint만 제공해 concrete Adapter 내부 HTTP 호출이 여러 번 필요하더라도 중복 제거, 제한된 동시성, 메모리 재사용, 후보 수 상한을 적용한다. 구체 Port method와 MCP Tool ID는 `07 Interface`, repository 배치 문법은 `16 Repository Architecture`가 소유한다.
 
 ## 16. Persistence repository capability boundary
 
-04가 요구하는 Repository 책임은 method 이름이 아니라 다음 persistence capability다. 구체 operation/path/file/symbol은 16이 단일 권위로 매핑한다.
+04가 요구하는 Repository 책임은 method 이름이 아니라 다음 persistence capability다. 구현은 16의 owner-local naming·placement·single-authority 문법을 따른다.
 
 - Conversation/Message keyset page read
 - Run snapshot read
@@ -748,7 +931,15 @@ busy_timeout = 5000ms
 
 SQLAlchemy·Alembic은 P0 고정 기술로 강제하지 않는다. 명시적 SQL Migration과 Checksum을 기준으로 하며 Adapter 선택은 구현 단계에서 결정한다.
 
-**Command Receipt migration realization requirement:** 모든 **Domain Aggregate 상태 변경 lifecycle Command**는 durable `command_receipts`를 요구한다. non-Domain operational command는 07의 별도 replay authority를 사용한다. 구현 시 migration set에서 relation과 필수 uniqueness/request-hash/result persistence가 존재하는지 확인하고, 없으면 다음 사용 가능한 numeric 순번의 **새 forward migration**을 추가한다. 적용된 `0001~0008`을 소급 수정하지 않는다. 의미 권위는 이 문서와 State Transition Contract이며 migration 번호는 implementation history다.
+**Migration과 설계 계약의 구분**
+
+- Migration version/checksum은 이 문서 버전과 별개의 실행 계약이다. SQL Migration은 persistent invariant를 구현하는 artifact이며 독립 설계 authority가 아니다.
+- required `CHECK/UNIQUE/FK/partial UNIQUE/trigger/conditional-update` 의미와 실패 조건은 이 문서의 invariant contract를 따른다. SQL syntax와 migration ordering은 implementation realization이다.
+- 적용 Migration이 required invariant를 충족하지 않으면 `FORWARD_NUMERIC_MIGRATION_REQUIRED`로 처리한다. 다음 numeric forward migration으로 보강하고 과거 migration bytes는 변경하지 않는다.
+
+Migration 실행·startup ordering·operational DB configuration은 10, Repository/Adapter의 ownership·naming·placement·dependency는 16, 구현 준수 검증은 12와 State Transition Test Matrix를 따른다.
+
+**Command Receipt migration realization requirement:** 모든 **Domain Aggregate 상태 변경 lifecycle Command**는 durable `command_receipts`를 요구한다. non-Domain operational command는 07의 별도 replay authority를 사용한다. 구현 시 discovered migration set에서 relation과 필수 uniqueness/request-hash/result persistence가 존재하는지 확인하고, 없으면 다음 사용 가능한 numeric 순번의 **새 forward migration**을 추가한다. 이미 적용된 migration은 번호와 무관하게 소급 수정하지 않는다. 의미 권위는 이 문서와 State Transition Contract이며 migration 번호는 implementation history다.
 
 ### 19.2 Backup
 
@@ -779,10 +970,19 @@ SQLAlchemy·Alembic은 P0 고정 기술로 강제하지 않는다. 명시적 SQL
 | Message | `created_at_ms` | 적용 | 연결된 retained/open Run의 재구성에 필요한 Message는 보호 |
 | Conversation | `updated_at_ms` | 적용 | open Run=0이고 retained Message/Run child=0일 때만 parent 삭제 |
 | Audit | Audit timestamp | **고정 90일** | `retention_days` 영향 없음; 업무 원문 없이 최소 식별·상태만 보존 |
-| Google Sidebar Cache | UI session | 미적용 | 세션 종료 시 폐기 |
+| Connector Sidebar Cache | UI session | 미적용 | 세션 종료 시 폐기 |
 | Secret | 09/10 credential lifecycle | 미적용 | Domain/SQLite에 저장하지 않음 |
 
-`RetentionRepository.purge_batch(cutoffs, batch_limit)`의 `cutoffs`는 Application `PurgeRetentionHandler`가 persisted `retention_days`와 위 category rules로 계산한 typed cutoff set만 받는다. 구현자가 임의 target list를 만들지 않는다. Purge 순서는 **Run child/Checkpoint/Receipt eligibility 확정 → Run → eligible Message → child가 0인 Conversation**이며 Foreign Key/replay invariant를 깨지 않는다. nonterminal Run과 그 owning Conversation, unresolved Recovery/Reauth, current replay에 필요한 Receipt는 항상 보호한다.
+`RetentionRepository.purge_batch(cutoffs, batch_limit)`의 `cutoffs`는 Application `PurgeRetentionHandler`가 persisted `retention_days`와 위 category rules로 계산한 typed cutoff set만 받는다. 구현자가 임의 target list를 만들지 않는다.
+
+```text
+Run child/Checkpoint/Receipt eligibility 확정
+→ Run
+→ eligible Message
+→ child가 0인 Conversation
+```
+
+Foreign Key/replay invariant를 깨지 않는다. nonterminal Run과 그 owning Conversation, unresolved Recovery/Reauth, current replay에 필요한 Receipt는 항상 보호한다.
 
 모든 Table에 `deleted_at`을 일괄 추가하지 않는다. 사용자 명시 Conversation 삭제는 같은 child-first 규칙으로 실제 삭제하고 Audit에는 업무 원문 없이 최소 ID만 남긴다.
 
@@ -797,88 +997,7 @@ SQLAlchemy·Alembic은 P0 고정 기술로 강제하지 않는다. 명시적 SQL
 - Read Replica
 - 대규모 Archive·자동 Vacuum 고도화
 
-
-## 22. Persistence contract handoff
-
-이 문서에서 정의한 persistent fact·invariant를 구현으로 넘길 때 concern ownership을 다음처럼 유지한다.
-
-- `04 Domain·DB` — persistent fact, aggregate invariant, transaction/consistency semantics를 소유한다.
-- `Domain State Transition Contract` — lifecycle transition·guard·command semantics를 소유한다.
-- `10 Infrastructure` — migration 실행·startup ordering·operational DB configuration을 소유한다.
-- `16 Repository Architecture` — Repository/Adapter의 path·file·symbol·callable placement를 매핑한다.
-- `12 Test`와 `State Transition Test Matrix` — 위 계약의 구현 준수를 검증하며 새 persistence/lifecycle 의미를 만들지 않는다.
-
-SQL migration은 위 semantic authority를 구현하는 downstream artifact이며 별도 설계 authority가 아니다.
-
-
-## 23. Current migration · persistence boundary
-
-이 절은 current persistence authority와 migration implementation boundary만 정의한다.
-
-- DB Schema v1.9의 설계 수준 invariant는 이 문서의 current sections가 소유한다.
-- required `CHECK/UNIQUE/FK/partial UNIQUE/trigger/conditional-update` 의미는 이 문서의 current invariant contract가 소유한다. SQL syntax와 migration ordering은 implementation realization이며 10/12/16이 검증한다.
-- 적용된 migration이 아래 invariant를 구현하지 않으면 applied migration을 다시 쓰지 않고 `FORWARD_NUMERIC_MIGRATION_REQUIRED`로 처리한다.
-- Domain DB와 LangGraph Checkpointer는 같은 SQLite 파일을 공유할 수 있지만 logical ownership은 분리한다. Domain Repository가 Checkpoint row를 aggregate persistence로 노출하지 않는다.
-- Raw Provider continuation/token, Secret, Prompt scratch, whole Sidebar cache는 Domain DB에 저장하지 않는다.
-- Reauth/Recovery resume 위치는 Workflow/Checkpoint concern의 등록된 target을 따르며 이 문서가 node/edge authority를 만들지 않는다.
-
-
-## 24. Domain lifecycle persistence projection — derivative only
-
-### 24.1 Authority boundary
-
-이 절은 lifecycle command를 새로 정의하지 않는다. **Command 이름·허용 source state·semantic guard·target state·next allowed command는 Domain State Transition Contract가 소유한다.** Lifecycle closure는 이 snapshot에 포함된 `Domain State Transition Contract`와 `State Transition Test Matrix`를 함께 따른다. 이 문서의 persistence projection은 lifecycle semantics를 중복 정의하지 않는다.
-
-### 24.2 Persistence responsibilities owned by 04
-
-Lifecycle owner가 허용한 command를 Application이 호출했을 때 04가 소유하는 것은 다음 persistence realization이다.
-
-- Aggregate row와 immutable snapshot/receipt의 저장 위치와 관계
-- `expected_version` 조건부 UPDATE와 영향 Row 1개 확인
-- mutable row version 증가와 stale write conflict 판정
-- Command Receipt의 `command_id + canonical request hash` replay/conflict persistence
-- Action 변경/재시도/expired-refresh에 따른 Approval revocation과 Review freshness reset의 durable realization
-- Claim/ExecutionAttempt/Verification의 atomic write-set과 외부 I/O 전후 Transaction 분리
-- Audit/Trace에 기록할 durable fact의 persistence projection
-- DB-level final defense가 필요한 invariant의 required enforcement class
-
-이 절에서 lifecycle state name을 예로 들더라도 **허용 전이 표로 읽지 않는다.** source-state/guard/next-state 전체 표는 중복 authority를 만들기 때문에 제거한다.
-
-### 24.3 Review freshness persistence
-
-Action의 arguments/source/policy/tool-schema binding이 바뀌는 modify/retry/expired-refresh persistence는 기존 Approval을 재활성화하지 않고 Review freshness를 `REQUIRED`로 reset해야 한다. 이전 Review PASS는 current Plan/Action revision에 자동 승계되지 않는다.
-
-### 24.3-A Terminal Assistant Message durable effect
-
-`CompleteAnswerOnlyRun`, legacy `CompleteReadOnlyRun`, `CompleteWriteRun`, `BlockRun`, `FinalizeCancel`, terminal `ResolveRecovery(ACCEPT_PARTIAL|CANCEL|FAIL)`의 Application handler는 terminal Domain transition을 commit할 때 **정확히 하나의 final ASSISTANT Message**를 같은 UoW에 stage한다. Message는 lifecycle semantics가 아니라 terminal command의 required durable effect다. Command replay가 duplicate Message를 만들지 않도록 **applied terminal lifecycle receipt + run identity에 대해 final ASSISTANT Message가 하나만 존재해야 한다.** 이를 별도 `final`/`terminal_run_version` column으로 구현할지 receipt-linked uniqueness로 구현할지는 04의 implementation choice이며 다른 문서가 column 이름을 새 authority로 만들지 않는다.
-
-`terminal_result_kind = SUCCESS | PARTIAL | BLOCKED | FAILED | CANCELLED`는 restart 뒤 Run Snapshot에서 복원 가능한 durable terminal projection이어야 한다. Run column 또는 terminal-result record 중 exact physical representation은 04 implementation choice지만 Trace/SSE-only 값이어서는 안 된다.
-
-`TerminalAssistantMessageInputV1`의 content/result kind는 UoW 시작 전에 완성·검증되어야 하며 UoW 중 LLM/Connector 호출은 금지한다. required Audit와 Message stage 중 하나라도 실패하면 Receipt/Domain mutation까지 rollback한다. Diagnostic Trace와 SSE Projection은 commit 이후 별도 concern에서 처리하며 실패해도 committed Domain truth를 rollback하지 않는다.
-
-fresh canonical Review 결과를 durable review gate에 반영하는 writer는 **Application persistence operation `plan.record_review_result`**가 소유한다. 이는 Domain lifecycle command를 새로 만드는 것이 아니라, 06 Review가 결정적으로 검증한 `PlanReviewResultV2`를 현재 Plan/Action revision에 조건부 기록하는 persistence boundary다.
-
-`RecordReviewResultCommandV1`은 최소 `command_id`, `plan_id`, `expected_plan_version`, `review_artifact_id`, `review_version`, `disposition`, `based_on_action_versions`를 포함한다. Repository UoW는 현재 Plan version과 각 bound Action version이 모두 일치할 때만 결과를 기록한다. `disposition=PASS`인 current result만 review gate를 `PASSED`로 열 수 있고, `REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION | CONFIRM | BLOCK`은 모두 durable current disposition으로 저장되지만 Approval 가능 gate를 열지 않는다. Review 도중 Modify/retry/expired-refresh로 Plan/Action revision이 바뀌면 조건부 write는 conflict로 실패하며 stale PASS는 durable authority가 되지 않는다.
-
-이 operation은 Approval 생성, Action status 전이, lifecycle guard를 직접 수행하지 않는다. `ApproveAction`은 이 durable current PASS fact를 읽어 기존 Domain guard를 집행한다. Workflow/FastAPI가 DB를 직접 수정하거나 SQL trigger가 Review 의미를 발명하는 경로는 계속 금지한다.
-
-### 24.4 Command Receipt / concurrency realization
-
-State-changing Local API command는 Domain mutation과 Receipt adjudication을 같은 short SQLite transaction에서 처리한다.
-
-```text
-BEGIN IMMEDIATE
-→ command_id lookup
-→ same id + same hash: prior result replay
-→ same id + different hash: conflict, old receipt immutable
-→ expected_version / invariant validation
-→ Domain mutation + durable Audit/Receipt
-→ COMMIT
-```
-
-외부 Connector/LLM I/O를 이 write transaction 안에서 기다리지 않는다.
-
-### 24.5 Required persistent enforcement contract
+## 22. Required persistent enforcement contract
 
 아래는 구현자가 반드시 SQLite final defense로 실현해야 하는 **설계 invariant**다. SQL 문법 자체는 구현 세부지만 enforcement class와 실패 의미는 선택사항이 아니다.
 
@@ -900,88 +1019,19 @@ BEGIN IMMEDIATE
 
 Migration implementation은 위 ID를 test trace로 연결한다. 이미 적용된 migration이 부족하면 다음 numeric forward migration으로 보강하고, 과거 migration bytes는 변경하지 않는다. 10은 discovery/order/checksum, 16은 placement/naming, 12는 실제 enforcement regression을 소유한다.
 
-### 24.6 Downstream projection rule
+## 23. 테스트 완료 조건
 
-06 Workflow, 07 Interface, 08 Sequence, 12 Test는 04의 persistence fact를 참조할 수 있지만 이 절에서 lifecycle semantic authority를 역으로 추출하지 않는다. Lifecycle mapping은 포함된 State Transition Contract/Test Matrix와 대조하며 이 문서가 command/state/guard를 독립 재정의하지 않는다.
-
-
-## 25. Legacy lifecycle persistence compatibility projection
-
-이 절은 **legacy/compatibility lifecycle command의 존재를 새로 정의하지 않는다.** 허용 source state·guard·target state·next command의 유일한 authority는 `Domain State Transition Contract`다. 04는 그 command가 실제로 존재할 경우 필요한 persistence realization만 기록한다.
-
-- expired/retry/legacy READ 관련 command가 current State Contract에서 유효하면 Repository UoW는 `expected_version`, immutable prior Approval/Receipt, review freshness reset, append-only Audit를 보존한다.
-- legacy READ compatibility가 유지되는 동안 READ Action은 Approval/ExecutionAttempt/Verification Row를 만들지 않는 persistence invariant를 지킨다.
-- command 이름·source state·transition table을 이 문서에서 복제하지 않는다. lifecycle parity는 포함된 State Contract/Test Matrix로 검증한다.
-
-
-## 26. Release Graph persistence/application projection
-
-Release Graph의 semantic routing/command authority는 05/06/07 및 Domain State Transition Contract에 있다. 04가 소유하는 것은 다음 persistence 사실뿐이다.
-
-### 26.1 Retrieval persistence boundary
-
-- 일반 Connector Retrieval은 Action Row를 만들지 않는다.
-- `ToolRoutePlanV2.input_plan.input_routes`/Query/Read/RAG 의미는 05/06이 소유하며 04는 Run-scoped ResourceRef/Evidence persistence와 bounded cache/reference separation만 소유한다.
-- Retrieval raw continuation/Provider query/MCP arguments는 Domain DB에 저장하지 않는다.
-
-### 26.2 Answer-only persistence boundary
-
-- Answer-only completion이 current State Contract에서 허용될 때 Plan/Action 없이 **CommandReceipt + Run terminal mutation + required Audit + ASSISTANT Message**를 하나의 Application UoW로 원자화한다. Diagnostic Trace는 Domain truth가 아니므로 이 transaction에 필수로 묶지 않고 commit 이후 별도 short UoW로 기록할 수 있다.
-- Open Write/UNKNOWN_RESULT가 있으면 completion writer는 fail closed한다.
-
-### 26.3 Legacy READ persistence boundary
-
-- legacy/compatibility READ Plan/Action이 State Contract에 존재하는 동안 그 path는 Approval·ExecutionAttempt·Verification Row를 생성하지 않는다.
-- `CompleteReadOnlyRun`이 적용되면 current Plan terminal mutation + Run terminal mutation + CommandReceipt + required Audit + final ASSISTANT Message + durable `terminal_result_kind`를 같은 short UoW로 commit한다.
-- 새 Release Retrieval은 이 compatibility path를 사용하지 않는다.
-
-### 26.4 Write retry/unknown-result persistence boundary
-
-- Write 실패/retry/UNKNOWN_RESULT의 허용 command/transition은 State Contract가 소유한다.
-- 04는 새 retry가 기존 Approval/Attempt/Idempotency identity를 재사용하지 않고, UNKNOWN_RESULT가 해소되기 전 새 Write Attempt를 만들지 않는 persistence invariant만 소유한다.
-
-### 26.5 Multi-Agent state ownership
-
-- 모든 Agent는 하나의 Run·Conversation·`langgraph_thread_id`를 공유하되 Agent별 DB/Approval/Attempt를 만들지 않는다.
-- Query candidate·Page Token·RAG candidate·대용량 원문은 05/06 owner-local cache/state에 남고 Domain DB의 두 번째 workflow truth가 되지 않는다.
-- 승인·실행·검증·복구 durable fact는 기존 Domain Store가 기준이다.
-
-
-## 27. Cross-cutting persistence projections
-
-이 절은 앞 절에 흩어진 **추가 durable fact만** 모은다. Effect 의미·lifecycle command·Recovery route 자체는 `01-B`, State Contract, `06/07`의 owner contract를 따른다.
-
-### 27.1 External I/O transaction boundary
-
-Connector/LLM 외부 호출 동안 SQLite Write Transaction을 유지하지 않는다. 호출 전 필요한 authority fact를 짧은 transaction으로 commit하고, 호출 후에는 `expected_version`과 current lifecycle fact를 다시 검사해 결과를 조건부 저장한다. 두 transaction 사이에 authority가 바뀌면 성공을 추정하지 않는다.
-
-### 27.2 Review disposition persistence
-
-`plan.record_review_result`는 current `PlanReviewResultV2` disposition을 동일 값으로 durable 저장한다. current revision의 `PASS`만 review gate를 열 수 있으며, stale Plan/Action revision에 대한 PASS write는 version conflict로 실패한다. Review가 어떤 disposition을 만들고 어디로 route하는지는 `06`이 소유한다.
-
-### 27.3 Per-Run requested mode
-
-`runs.requested_mode = AUTO | LOCAL_GPU | API_LLM`은 StartRun UoW에서 immutable snapshot으로 저장하며 same-Run restart/resume의 durable authority다. process-local runtime mode나 user preference가 기존 Run 값을 덮어쓰지 않는다.
-
-### 27.4 Pre-dispatch claimed-attempt abort
-
-`AbortClaimedExecution` persistence는 current Attempt=`CLAIMED`, Action=`EXECUTING`, matching consumed Approval/Claim, APPLIED BeginExecutionAttempt receipt 없음이라는 owner guard 결과를 받아 Attempt/Action/Audit/Receipt를 한 transaction으로 commit한다. Provider/MCP I/O는 0이다. 정확한 transition semantics는 State Contract가 소유한다.
-
-## 28. 테스트 완료 조건
-
-- Schema를 새 SQLite 파일에 적용할 수 있다.
-- `quick_check = ok`, Foreign Key 위반 0건이다.
-- Conversation당 Open Run 2개 생성이 차단된다.
-- 상태 변경 Command의 `command_receipts`가 앱 재시작 후에도 영속되고, 같은 `command_id + request_hash`는 기존 결과를 replay하며 Domain/Audit 추가 변경이 0건이다.
-- 같은 `command_id`에 다른 `request_hash`가 오면 기존 Receipt를 덮어쓰지 않고 conflict로 차단한다.
-- Receipt 예약·Domain mutation·필수 Audit·APPLIED 결과 확정 중 하나라도 실패하면 같은 Transaction이 rollback되어 반쪽 적용이 남지 않는다.
-- Action당 ACTIVE Approval 2개 생성이 차단된다.
-- Approval당 Active Attempt 2개 생성이 차단된다.
-- 동일 Action 실행권 Claim 경쟁에서 1개만 성공한다.
-- UNKNOWN_RESULT 해결 전 새 Approval·새 Attempt·새 Write가 차단된다.
-- Write FAILED retry는 새 Approval·새 Idempotency Key·새 attempt_id를 사용하고 새 Approval의 첫 `attempt_no = 1`이다.
-- Write FAILED가 남아 있는 동안 `CompleteWriteRun`과 dependent Action terminalization이 차단된다.
-- `delivery_certainty`가 `execution_attempts.response_metadata_json.delivery_certainty`에 보존되고 오류 상세와 혼용되지 않는다.
-- Plan Bundle 조회가 정해진 Query Budget을 넘지 않는다.
-- Google 목록의 한 visible page를 조회한 뒤 같은 page의 모든 항목에 대한 상세 자동 호출이 발생하지 않는다.
-- Migration 실패 시 원본 DB와 Backup이 보존되고 Safe Mode로 전환한다.
+| 검증 항목 | 완료 조건 |
+| --- | --- |
+| Schema 무결성 | 새 SQLite 파일에 Schema를 적용할 수 있고 `quick_check = ok`, Foreign Key 위반 0건이다. |
+| 동시 생성 방어 | Conversation당 Open Run 2개, Action당 ACTIVE Approval 2개, Approval당 Active Attempt 2개 생성을 차단한다. |
+| Receipt 영속·Replay | 앱 재시작 후 `command_receipts`를 보존한다. 같은 `command_id + request_hash`는 기존 결과를 replay하고 Domain/Audit 추가 변경은 0건이다. |
+| Hash conflict | 같은 `command_id`에 다른 `request_hash`가 오면 기존 Receipt를 덮어쓰지 않고 conflict로 차단한다. |
+| 원자성 | Receipt 예약·Domain mutation·필수 Audit·APPLIED 결과 확정 중 하나라도 실패하면 같은 Transaction을 rollback해 반쪽 적용을 남기지 않는다. |
+| Claim 경쟁 | 동일 Action 실행권 Claim 경쟁에서 1개만 성공한다. |
+| `UNKNOWN_RESULT` | 해결 전 새 Approval·새 Attempt·새 Write를 차단한다. |
+| Write FAILED retry | 새 Approval·새 Idempotency Key·새 `attempt_id`를 사용하고 새 Approval의 첫 `attempt_no = 1`이다. |
+| 미해결 FAILED | Write FAILED가 남아 있으면 `CompleteWriteRun`과 dependent Action terminalization을 차단한다. |
+| 전달 확실성 | `delivery_certainty`를 `execution_attempts.response_metadata_json.delivery_certainty`에 보존하고 오류 상세와 혼용하지 않는다. |
+| 조회 비용 | Plan Bundle 조회가 정해진 Query Budget을 넘지 않는다. Google 목록의 visible page 조회 뒤 같은 page 모든 항목의 상세 자동 호출이 발생하지 않는다. |
+| Migration 실패 | 원본 DB와 Backup을 보존하고 Safe Mode로 전환한다. |

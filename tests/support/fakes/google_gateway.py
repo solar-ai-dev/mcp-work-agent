@@ -19,10 +19,12 @@ from google_work_agent.ports.connector.contracts.google_workspace import (
     GmailThreadDetail,
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
+    TimeRange,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
-    TimeRange,
 )
 from tests.support.fixtures import ProductFixtureSnapshot
 

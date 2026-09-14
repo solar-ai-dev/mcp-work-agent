@@ -27,6 +27,7 @@ def inspect_constraints_and_policy_summary_node(
             work_analysis=projected.get("work_analysis"),
             evidence=projected.get("evidence", ()),
             confirmation_response=projected.get("confirmation_response"),
+            user_action_modifications=projected.get("user_action_modifications", ()),
             invoke=invoke,
         )
     }

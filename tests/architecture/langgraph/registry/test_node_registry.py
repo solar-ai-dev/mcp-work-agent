@@ -15,9 +15,10 @@ from google_work_agent.adapters.langgraph.registry.node_registry import (
 from google_work_agent.ports.system.contracts.workflow_binding import GraphProfileIdV1
 
 
-def test_node_registry_is__the_exact_canonical__thirty_five_node_manifest() -> None:
+def test_node_registry_is__the_exact_canonical__node_manifest() -> None:
     assert RUNTIME_NODE_OWNERS == {
         "request.identify_goal": "REQUEST_UNDERSTANDING",
+        "request.identify_temporal_scope": "REQUEST_UNDERSTANDING",
         "request.detect_ambiguity": "REQUEST_UNDERSTANDING",
         "request.finalize": "REQUEST_UNDERSTANDING",
         "route.determine_resources": "TOOL_ROUTE",
@@ -38,6 +39,7 @@ def test_node_registry_is__the_exact_canonical__thirty_five_node_manifest() -> N
         "analysis.resolve_temporal_dependencies": "WORK_ANALYSIS",
         "analysis.detect_duplicate_conflict_candidates": "WORK_ANALYSIS",
         "analysis.validate_relations": "WORK_ANALYSIS",
+        "analysis.assess_action_necessity": "WORK_ANALYSIS",
         "analysis.assess_information_gaps": "WORK_ANALYSIS",
         "analysis.assess_operational_risks": "WORK_ANALYSIS",
         "analysis.finalize": "WORK_ANALYSIS",

@@ -13,6 +13,7 @@ used by the per-route Planning argument writer.
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import cast
 
 from google_work_agent.application.agents.planning.resolve_default_container import (
     PlanningArgumentBindingError,
@@ -52,13 +53,13 @@ _GMAIL_DRAFT_PAYLOAD = {
     "required": ["to", "subject", "body"],
     "properties": {
         "to": _EMAIL_LIST,
-        # MCP rejects an explicitly-present empty cc/bcc list.  Omitting the
-        # field is the representation for "no cc/bcc".
-        "cc": _EMAIL_LIST,
-        "bcc": _EMAIL_LIST,
+        "cc": {**_EMAIL_LIST, "minItems": 0},
+        "bcc": {**_EMAIL_LIST, "minItems": 0},
         "subject": _STRING,
         "body": _STRING,
-        "thread_id": _NON_EMPTY_STRING,
+        "thread_id": {"type": ["string", "null"], "minLength": 1},
+        "in_reply_to": {"type": ["string", "null"], "minLength": 1},
+        "references": {"type": ["string", "null"], "minLength": 1},
         "attachments": {
             "type": "array",
             "items": _ATTACHMENT_DESCRIPTOR,
@@ -93,6 +94,7 @@ _CALENDAR_CREATE_PAYLOAD = {
         "title": _NON_EMPTY_STRING,
         "start": _NON_EMPTY_STRING,
         "end": _NON_EMPTY_STRING,
+        "location": _STRING,
         "description": _STRING,
         "attendees": _ATTENDEE_LIST,
     },
@@ -126,12 +128,15 @@ _PLANNING_TOOL_SCHEMAS: dict[str, JsonObject] = {
         required=["draft_id", "payload"],
         properties={
             "draft_id": _NON_EMPTY_STRING,
-            "payload": {**_GMAIL_DRAFT_PAYLOAD, "required": [], "minProperties": 1},
+            "payload": {
+                **_GMAIL_DRAFT_PAYLOAD,
+                "required": list(cast(JsonObject, _GMAIL_DRAFT_PAYLOAD["properties"])),
+            },
         },
     ),
     "gmail_send": _object_schema(
-        required=["draft_id"],
-        properties={"draft_id": _NON_EMPTY_STRING},
+        required=["payload"],
+        properties={"draft_id": _NON_EMPTY_STRING, "payload": _GMAIL_DRAFT_PAYLOAD},
     ),
     "tasks_create_task": _object_schema(
         required=["task_list_id", "payload"],
@@ -214,13 +219,33 @@ _PLANNING_TOOL_SCHEMAS: dict[str, JsonObject] = {
 }
 
 
-def planning_tool_argument_schema(tool_id: str) -> JsonObject:
+def planning_tool_argument_schema(tool_id: str, *, modification: bool = False) -> JsonObject:
     """Return a defensive copy of one registered Planning write schema."""
 
     schema = _PLANNING_TOOL_SCHEMAS.get(tool_id)
     if schema is None:
         raise PlanningArgumentBindingError(
             f"no Planning business argument schema registered for selected tool: {tool_id}"
+        )
+    if modification:
+        if tool_id != "tasks_create_task":
+            raise PlanningArgumentBindingError("Natural-language modification requires Task CREATE")
+        fields = cast(JsonObject, _TASK_CREATE_PAYLOAD["properties"])
+        return deepcopy(
+            _object_schema(
+                required=["payload"],
+                properties={
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": fields["title"],
+                            "notes": fields["notes"],
+                            "due": {"anyOf": [fields["scheduled_date"], {"type": "null"}]},
+                        },
+                    }
+                },
+            )
         )
     return deepcopy(schema)
 

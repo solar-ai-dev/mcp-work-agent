@@ -12,7 +12,7 @@ class WindowsInstallerDefinition:
     """Canonical Windows x64, current-user installation definition."""
 
     app_id: str = "GoogleWorkAgent"
-    app_name: str = "Google Work Agent"
+    app_name: str = "mcp-work-agent"
     publisher: str = "Solar AI"
     architecture: str = "x64"
     install_scope: str = "CURRENT_USER"
@@ -57,7 +57,7 @@ class WindowsInstallerDefinition:
         source = _inno_quote(str(bundle_root / "*"))
         output = _inno_quote(str(output_dir))
         launcher = self.launcher_relative_path.replace("/", "\\")
-        filename = f"GoogleWorkAgent-{app_version}-{deployment_profile}-Setup"
+        filename = f"mcp-work-agent-{app_version}-{deployment_profile}-Setup"
         return "\n".join(
             (
                 "[Setup]",

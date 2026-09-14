@@ -9,6 +9,7 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestGoalCandidateV1,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
     validate_confirmation_response_projection_v1,
@@ -19,6 +20,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 class DetectAmbiguityInput(TypedDict):
     request: WorkflowStartRequest
     goal_candidate: RequestGoalCandidateV1
+    retry_budget: RunBudgetV2
     confirmation_response: NotRequired[ConfirmationResponseProjectionV1]
 
 
@@ -30,6 +32,7 @@ def project_detect_ambiguity_input(state: RequestUnderstandingStateV2) -> Detect
     projected: DetectAmbiguityInput = {
         "request": request_from_run_input_state(state),
         "goal_candidate": candidate,
+        "retry_budget": state["retry_budget"],
     }
     prompt_context = state.get("prompt_context", {})
     confirmation = prompt_context.get("confirmation_response")

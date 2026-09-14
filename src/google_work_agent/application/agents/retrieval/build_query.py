@@ -11,12 +11,17 @@ from typing import cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ParticipantConstraintV1,
     RetrievalConstraintKindV1,
     RetrievalV2ValidationError,
     RouteQueryIntentV2,
     SemanticRetrievalConstraintV1,
     SourceFetchPlanV1,
+    TemporalRangeConstraintV1,
     validate_retrieval_query_plan_v2,
+)
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    PersonCandidateV1,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
@@ -44,6 +49,9 @@ def build_query(
     validated_resource_refs: Mapping[str, Collection[str]] | None = None,
     validated_container_refs: Mapping[str, Collection[str]] | None = None,
     detail_candidate_refs: Collection[str] = (),
+    person_candidates: Sequence[PersonCandidateV1] = (),
+    selected_person_identities: Mapping[str, str] | None = None,
+    read_result_summaries: Sequence[Mapping[str, object]] | None = None,
 ) -> list[SourceFetchPlanV1]:
     """Validate/merge semantic constraints and materialize deterministic read plans."""
     prior_plans = prior_plans or {}
@@ -73,9 +81,70 @@ def build_query(
             policy=route_policies[route_id],
             prior_plan=prior_plans.get(route_id),
             prior_read_result_handle=prior_read_result_handles.get(route_id),
+            person_candidates=(
+                person_candidates
+                if route_by_id[route_id]["resource_type"]
+                in {
+                    "EMAIL",
+                    "GMAIL_THREAD",
+                    "GMAIL_MESSAGE",
+                }
+                else ()
+            ),
+            selected_person_identities=selected_person_identities or {},
+            read_result_summaries=read_result_summaries,
         )
-        for route_id in validated["retrieval_order"]
+        for route_id in (query["route_id"] for query in validated["route_queries"])
     ]
+
+
+def materialize_container_read_plans(
+    plans: Sequence[SourceFetchPlanV1],
+) -> list[SourceFetchPlanV1]:
+    """Fan one authorized semantic scope out into single-container provider plans."""
+    materialized: list[SourceFetchPlanV1] = []
+    for plan in plans:
+        container = next(
+            (
+                constraint
+                for constraint in plan["effective_constraints"]
+                if constraint["kind"] == "CONTAINER_REF"
+            ),
+            None,
+        )
+        if (
+            container is None
+            or plan["operation_kind"] not in {"SEARCH", "FREEBUSY"}
+            or plan["resource_type"] not in {"TASK", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+            or len(container["container_refs"]) == 1
+        ):
+            materialized.append(plan)
+            continue
+        for ref in container["container_refs"]:
+            constraints = [
+                (
+                    {"kind": "CONTAINER_REF", "container_refs": [ref]}
+                    if constraint["kind"] == "CONTAINER_REF"
+                    else constraint
+                )
+                for constraint in plan["effective_constraints"]
+            ]
+            normalized = _normalize_constraints(
+                cast(list[SemanticRetrievalConstraintV1], constraints)
+            )
+            materialized.append(
+                {
+                    **plan,
+                    "effective_constraints": normalized,
+                    "query_identity_hash": _query_identity(
+                        cast(InputToolRouteV1, plan),
+                        plan["operation_kind"],
+                        normalized,
+                        plan["detail_candidate_ref"],
+                    ),
+                }
+            )
+    return materialized
 
 
 def bind_required_container_constraints(
@@ -84,7 +153,7 @@ def bind_required_container_constraints(
     route_policies: Mapping[str, RouteConstraintPolicy],
     validated_container_refs: Mapping[str, Collection[str]] | None,
 ) -> object:
-    """Inject only a pre-validated required container into INITIAL SEARCH."""
+    """Bind the complete code-owned container scope to each required SEARCH."""
     if not isinstance(plan, Mapping):
         return plan
     bound = deepcopy(dict(plan))
@@ -105,23 +174,31 @@ def bind_required_container_constraints(
         ):
             continue
         refs = list(dict.fromkeys((validated_container_refs or {}).get(route_id, ())))
-        if len(refs) != 1:
+        if not refs:
             raise RetrievalV2ValidationError(
-                f"route {route_id} requires one validated container authority"
+                f"route {route_id} requires validated container authority"
             )
         search_spec = raw_query.get("search_spec")
-        if not isinstance(search_spec, dict) or search_spec.get("mode") != "INITIAL":
+        if not isinstance(search_spec, dict):
             continue
-        constraints = search_spec.get("constraints")
+        constraints = (
+            search_spec.get("constraints")
+            if search_spec.get("mode") == "INITIAL"
+            else (
+                search_spec.get("constraint_delta", {}).get("upsert_constraints")
+                if isinstance(search_spec.get("constraint_delta"), dict)
+                else None
+            )
+        )
         if not isinstance(constraints, list):
             continue
-        if not any(
-            isinstance(constraint, Mapping) and constraint.get("kind") == "CONTAINER_REF"
+        constraints[:] = [
+            constraint
             for constraint in constraints
-        ):
-            constraints.append({"kind": "CONTAINER_REF", "container_refs": refs})
+            if not (isinstance(constraint, Mapping) and constraint.get("kind") == "CONTAINER_REF")
+        ]
+        constraints.append({"kind": "CONTAINER_REF", "container_refs": refs})
     return bound
-
 
 def _build_one(
     query: RouteQueryIntentV2,
@@ -130,17 +207,56 @@ def _build_one(
     policy: RouteConstraintPolicy,
     prior_plan: SourceFetchPlanV1 | None,
     prior_read_result_handle: str | None,
+    person_candidates: Sequence[PersonCandidateV1],
+    selected_person_identities: Mapping[str, str],
+    read_result_summaries: Sequence[Mapping[str, object]] | None,
 ) -> SourceFetchPlanV1:
     operation = query["operation"]
+    if operation in {"SEARCH", "FREEBUSY"}:
+        _validate_changed_removals(
+            query,
+            policy=policy,
+            prior_plan=prior_plan,
+        )
     effective = (
         _effective_constraints(query, policy=policy, prior_plan=prior_plan)
         if operation in {"SEARCH", "FREEBUSY"}
         else ([] if prior_plan is None else prior_plan["effective_constraints"])
     )
+    if prior_plan is not None and operation in {"SEARCH", "FREEBUSY"}:
+        _validate_person_promotion(
+            prior_plan["effective_constraints"],
+            effective,
+            person_candidates=person_candidates,
+            selected_person_identities=selected_person_identities,
+        )
+    resource_type = route["resource_type"]
+    _validate_route_materializability(
+        operation=operation,
+        resource_type=resource_type,
+        constraints=effective,
+    )
+    normalized = _normalize_constraints(effective)
+    query_identity = _query_identity(route, operation, normalized, query["detail_candidate_ref"])
+    if operation == "NEXT_PAGE" and prior_plan is not None:
+        query_identity = (
+            _query_identity(route, "SEARCH", normalized, None)
+            if prior_plan["operation_kind"] == "DETAIL_FETCH"
+            else prior_plan["query_identity_hash"]
+        )
+        if read_result_summaries is not None:
+            pending = [
+                summary["read_result_handle"]
+                for summary in read_result_summaries
+                if summary.get("route_id") == route["route_id"]
+                and summary.get("query_identity_hash") == query_identity
+                and summary.get("has_next_page") is True
+                and summary.get("exhausted") is not True
+                and isinstance(summary.get("read_result_handle"), str)
+            ]
+            prior_read_result_handle = cast(str, pending[-1]) if pending else None
     if operation == "NEXT_PAGE" and prior_read_result_handle is None:
         raise RetrievalV2ValidationError("NEXT_PAGE requires a validated prior read-result handle")
-    resource_type = route["resource_type"]
-    normalized = _normalize_constraints(effective)
     return {
         "schema_version": 1,
         "route_id": route["route_id"],
@@ -148,11 +264,7 @@ def _build_one(
         "resource_type": resource_type,
         "operation_kind": operation,
         "effective_constraints": normalized,
-        "query_identity_hash": (
-            prior_plan["query_identity_hash"]
-            if operation == "NEXT_PAGE" and prior_plan is not None
-            else _query_identity(route, operation, normalized, query["detail_candidate_ref"])
-        ),
+        "query_identity_hash": query_identity,
         "prior_read_result_handle": prior_read_result_handle,
         "detail_candidate_ref": query["detail_candidate_ref"],
     }
@@ -192,6 +304,118 @@ def _effective_constraints(
     return effective
 
 
+def _validate_route_materializability(
+    *,
+    operation: object,
+    resource_type: str,
+    constraints: Sequence[SemanticRetrievalConstraintV1],
+) -> None:
+    """Reject semantic plans that the frozen route cannot lower without data loss."""
+
+    if operation != "SEARCH" or resource_type not in {
+        "EMAIL",
+        "GMAIL_THREAD",
+        "GMAIL_MESSAGE",
+        "GMAIL_DRAFT",
+    }:
+        return
+
+    for constraint in constraints:
+        kind = constraint["kind"]
+        if kind == "PARTICIPANT":
+            participant = cast(ParticipantConstraintV1, constraint)
+            if any(item["role"] == "ATTENDEE" for item in participant["participants"]):
+                raise RetrievalV2ValidationError(
+                    "Gmail SEARCH cannot enforce Calendar attendee membership",
+                    affected_field_paths=(
+                        "$.route_queries[].search_spec.constraints[?(@.kind=='PARTICIPANT')]",
+                    ),
+                )
+        elif kind == "TEMPORAL_RANGE":
+            temporal = cast(TemporalRangeConstraintV1, constraint)
+            if temporal["axis"] not in {"MESSAGE_TIME", "EVENT_TIME"}:
+                raise RetrievalV2ValidationError(
+                    "Gmail SEARCH only supports message-time filters "
+                    "or event-time evidence criteria",
+                    affected_field_paths=(
+                        "$.route_queries[].search_spec.constraints[?(@.kind=='TEMPORAL_RANGE')].axis",
+                    ),
+                )
+
+
+def _validate_changed_removals(
+    query: RouteQueryIntentV2,
+    *,
+    policy: RouteConstraintPolicy,
+    prior_plan: SourceFetchPlanV1 | None,
+) -> None:
+    spec = query["search_spec"]
+    if spec is None or spec["mode"] != "CHANGED":
+        return
+    if prior_plan is None:
+        raise RetrievalV2ValidationError("CHANGED SEARCH requires a prior query")
+    removals = set(spec["constraint_delta"]["remove_constraint_kinds"])
+    prior_kinds = {item["kind"] for item in prior_plan["effective_constraints"]}
+    removable = prior_kinds - policy.required_kinds
+    if not removals.issubset(removable):
+        raise RetrievalV2ValidationError(
+            "CHANGED SEARCH removes a constraint that is not removable",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraint_delta.remove_constraint_kinds",
+            ),
+        )
+
+
+def _validate_person_promotion(
+    prior: Sequence[SemanticRetrievalConstraintV1],
+    effective: Sequence[SemanticRetrievalConstraintV1],
+    *,
+    person_candidates: Sequence[PersonCandidateV1],
+    selected_person_identities: Mapping[str, str],
+) -> None:
+    previous_participant = next(
+        (item for item in prior if item["kind"] == "PARTICIPANT"),
+        None,
+    )
+    current_participant = next(
+        (item for item in effective if item["kind"] == "PARTICIPANT"),
+        None,
+    )
+    if current_participant is None or current_participant["kind"] != "PARTICIPANT":
+        return
+    previous_identities = (
+        set()
+        if previous_participant is None or previous_participant["kind"] != "PARTICIPANT"
+        else {item["identity"] for item in previous_participant["participants"]}
+    )
+    added_identities = {
+        item["identity"] for item in current_participant["participants"]
+    } - previous_identities
+    if not added_identities:
+        return
+    resolved_identities: set[str] = set()
+    for mention in {item["mention"] for item in person_candidates}:
+        identities = {
+            item["identity"]
+            for item in person_candidates
+            if item["mention"] == mention and item["source_segment_ids"]
+        }
+        selected = selected_person_identities.get(mention)
+        if selected in identities:
+            resolved_identities.add(selected)
+        elif len(identities) == 1:
+            resolved_identities.update(identities)
+    if not added_identities.issubset(resolved_identities):
+        raise RetrievalV2ValidationError(
+            "CHANGED SEARCH promotes a participant without validated evidence",
+            reason_code="QUERY_USER_CONSTRAINT_MISSING",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraint_delta",
+                "$.source_fetch_plans[].effective_constraints[?(@.kind=='PARTICIPANT')]",
+            ),
+        )
+
+
 def _validate_policies(
     routes: Mapping[str, InputToolRouteV1],
     policies: Mapping[str, RouteConstraintPolicy],
@@ -204,7 +428,23 @@ def _validate_policies(
 
 
 def _canonical_constraints(constraints: Sequence[SemanticRetrievalConstraintV1]) -> str:
-    return json.dumps(list(constraints), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    normalized = []
+    for constraint in sorted(constraints, key=lambda item: item["kind"]):
+        item = dict(constraint)
+        for key, value in item.items():
+            if isinstance(value, list):
+                item[key] = (
+                    list(value)
+                    if item.get("kind") == "KEYWORD"
+                    and item.get("match_mode") == "PHRASE"
+                    and key == "terms"
+                    else sorted(
+                        value,
+                        key=lambda member: json.dumps(member, sort_keys=True, ensure_ascii=True),
+                    )
+                )
+        normalized.append(item)
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def _normalize_constraints(
@@ -237,8 +477,8 @@ def _query_identity(
 
 # Preserved attempt construction is owned by this query-building operation.
 
-RETRIEVAL_CONFIG_VERSION = "deterministic-retrieval-v2"
-SCORE_CONFIG_VERSION = "lexical-score-v1"
+RETRIEVAL_CONFIG_VERSION = "deterministic-retrieval-v3"
+SCORE_CONFIG_VERSION = "semantic-signal-score-v2"
 THRESHOLD_CONFIG_VERSION = "selection-threshold-v1"
 
 
@@ -255,8 +495,33 @@ def build_query_attempt(
     page_state_hash: str | None,
     candidate_count: int | None,
     stop_reason: str | None,
+    prior_query_attempts: Sequence[QueryAttemptV1],
+    change_reason_code: str | None,
 ) -> QueryAttemptV1:
     """Record validated read meaning without raw provider continuation."""
+    previous = next(
+        (
+            attempt
+            for attempt in reversed(prior_query_attempts)
+            if attempt["run_id"] == run_id and attempt["route_id"] == plan["route_id"]
+        ),
+        None,
+    )
+    previous_constraints = {
+        item["kind"]: item
+        for item in ([] if previous is None else previous["normalized_intent_constraints"])
+    }
+    current_constraints = {item["kind"]: item for item in plan["effective_constraints"]}
+    added: list[str] = sorted(
+        kind
+        for kind, value in current_constraints.items()
+        if previous_constraints.get(kind) != value
+    )
+    removed: list[str] = sorted(
+        kind
+        for kind, value in previous_constraints.items()
+        if current_constraints.get(kind) != value
+    )
     return {
         "schema_version": 1,
         "query_attempt_id": query_attempt_id,
@@ -275,9 +540,9 @@ def build_query_attempt(
         },
         "previous_query_hash": previous_query_hash,
         "page_state_hash": page_state_hash,
-        "added_constraints": [],
-        "removed_constraints": [],
-        "change_reason_code": None,
+        "added_constraints": added,
+        "removed_constraints": removed,
+        "change_reason_code": change_reason_code,
         "candidate_count": candidate_count,
         "top_score": None,
         "score_margin": None,
@@ -293,14 +558,34 @@ def followup_planner_projection(
     *,
     current_round_no: int,
     prior_query_attempts: list[QueryAttemptV1],
-    unresolved_sufficiency_issues: list[dict[str, object]],
+    unresolved_sufficiency_issues: Collection[Mapping[str, object]],
     read_result_summaries: list[dict[str, object]],
 ) -> dict[str, object]:
     """Bounded local-only follow-up input; raw cache contents are excluded."""
     return {
         "current_round_no": current_round_no,
-        "prior_query_attempts": cast(list[dict[str, object]], prior_query_attempts),
-        "unresolved_sufficiency_issues": unresolved_sufficiency_issues,
+        "prior_query_attempts": [
+            {
+                key: cast(Mapping[str, object], attempt)[key]
+                for key in (
+                    "query_attempt_id",
+                    "route_id",
+                    "round_no",
+                    "attempt_no",
+                    "operation_kind",
+                    "normalized_intent_constraints",
+                    "previous_query_hash",
+                    "added_constraints",
+                    "removed_constraints",
+                    "change_reason_code",
+                    "candidate_count",
+                    "stop_reason",
+                )
+                if key in attempt
+            }
+            for attempt in prior_query_attempts
+        ],
+        "unresolved_sufficiency_issues": [dict(issue) for issue in unresolved_sufficiency_issues],
         "read_result_summaries": read_result_summaries,
     }
 

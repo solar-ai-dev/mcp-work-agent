@@ -1,173 +1,130 @@
 # 06. Agent · Workflow 설계서
 
-> **Authority:** Agent·Workflow runtime topology, State projection, Node/Edge/Interrupt와 registered continuation semantics. Domain lifecycle은 State Contract, Retrieval은 `05`, typed interface는 `07`을 따른다.  
-> **상태:** Draft v7.29 · **기준일:** 2026-09-05 · **DB Schema:** v1.9 · **대상:** P0 MVP
+> **목적:** 요청 처리의 책임, 상태 전달, 분기와 안전한 중단·재개를 정의한다.  
+> **Authority:** Agent·Workflow orchestration, State projection, Node/Edge/Interrupt와 registered continuation semantics.  
+> **상태:** Draft v7.31 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 0. 먼저 이해할 것
 
-- **Main Graph:** 전체 Run의 순서·분기·Interrupt·Back-edge를 결정하는 결정적 LangGraph Supervisor다.
-- **Main State:** 다음 단계가 재사용해야 하는 확정된 Versioned Typed Result만 누적한다.
-- **Agent Subgraph:** 하나의 전문 책임을 수행하는 LangGraph다. 내부에 여러 LLM·Deterministic Node와 Local State를 가질 수 있다.
-- **Subgraph Local State:** 해당 invocation의 작업 메모리다. Parent에 자동 승계되지 않는다.
-- **Node Input Projection:** Node가 실제로 필요한 State 필드만 전달한다. 모든 Node가 전체 State를 보지 않는다.
-- **Schema:** Node·Subgraph가 만들 수 있는 구조와 닫힌 값을 통제한다.
-- **Prompt:** 선택된 Node가 지금 해야 할 한 가지 판단·작성 작업만 지시한다.
-- **Edge:** Node Result와 공식 State를 기준으로 코드가 결정한다. LLM 자유 텍스트가 다음 Node를 선택하지 않는다.
-- **Tool Route:** IN에서 어떤 Connector·Resource·Read Tool을 사용할지, OUT으로 어떤 Connector·Resource·Effect·Tool을 사용할지 한 번 결정해 Main State에 저장한다. Downstream Agent는 재선택하지 않는다. P0 첫 Connector는 Google Workspace다.
-- **Write:** 어떤 Agent Subgraph도 직접 실행하지 않는다.
+이 문서는 Workflow가 어떤 결과를 받아 어디로 진행하고, 언제 멈추거나 재개하는지 설명한다. Domain lifecycle은 State Contract, Retrieval 의미는 `05`, typed interface는 `07`, Prompt·Failure는 `15`, 네이밍·배치·의존성 규칙은 `16`을 따른다.
+
+세부 Graph 구성과 실험 후보는 확정 제품 요구와 구분한다. 아래의 현재 Profile·Node·Schema 식별자는 기존 binding을 이해하기 위한 참조로 보존하되, 미래의 Agent 수·Node 수·실험 구성을 고정하는 근거로 사용하지 않는다. 이미 시작한 Run의 binding과 안전 조건은 실험을 이유로 임의 변경하지 않는다.
+
+| 개념 | 역할 |
+| --- | --- |
+| Main Graph / Supervisor | 검증된 상태·결과로 Run의 분기·Interrupt·Back-edge를 결정한다. 업무 내용은 생성하지 않는다. |
+| Main State | 다음 책임이 재사용할 Run 입력과 확정된 Versioned Typed Result를 보존한다. |
+| Agent Subgraph | 전문 책임을 수행한다. 내부에 여러 LLM·Deterministic Node와 Local State를 둘 수 있다. |
+| Subgraph Local State | 해당 invocation의 작업 메모리다. Parent에 자동 승계하지 않는다. |
+| Node Input Projection | 현재 Node에 필요한 Typed 필드만 전달한다. |
+| Schema / Prompt | Schema는 출력 구조·허용값을, Prompt는 해당 호출의 판단·작성 책임을 제한한다. |
+| Edge | Node Result와 공식 State를 코드가 연결한다. LLM 자유 텍스트가 직접 선택하지 않는다. |
+| Tool Route | IN의 Connector·Resource·Read Tool과 OUT의 Resource·Effect·Tool을 확정한다. Google Workspace와 GitHub는 같은 connector-neutral 경계를 사용한다. |
+| Write | Agent Subgraph가 직접 실행하지 않는다. 승인·실행·검증은 결정적 Application·Domain 경계가 담당한다. |
 
 ## 1. Main LangGraph
 
-### 1.1 Current baseline flow
+### 1.1 요청 처리 흐름
 
-```mermaid
-flowchart TD
-    START["START"] --> INIT["INITIALIZE · StartAnalysis"]
-    INIT --> REQ["Request Understanding Subgraph"]
-    REQ -->|"complete"| ROUTE["Tool Route Subgraph"]
-    REQ -->|"needs confirmation"| CONF["WAITING_CONFIRMATION / interrupt"]
-    REQ -->|"invalid · answer/block terminal intent"| RESP["RESPONSE_SYNTHESIS"]
-    CONF -->|"resume owner subgraph at checkpoint"| RESUME["ORIGINATING SUBGRAPH CHECKPOINT"]
-    RESUME -.-> REQ
-    RESUME -.-> ROUTE["Tool Route Subgraph"]
-    RESUME -.-> RET["Retrieval Subgraph"]
-    RESUME -.-> ANA["Work Analysis Subgraph"]
-    RESUME -.-> PLAN["Planning Subgraph"]
-    RESUME -.-> REV["Review Subgraph"]
-    ROUTE -->|"needs confirmation"| CONF
-    ROUTE -->|"blocked · block terminal intent"| RESP
-    ROUTE -->|"IN route exists"| RET["Retrieval Subgraph"]
-    ROUTE -->|"ROUTE_READY no IN / NO_TOOL_NEEDED + policy precondition 없음 + analysis not required"| PLAN["Planning Subgraph"]
-    ROUTE -->|"ROUTE_READY no IN / NO_TOOL_NEEDED + analysis required"| ANA["Work Analysis Subgraph"]
-    RET -->|"needs confirmation"| CONF
-    RET -->|"blocked · block terminal intent"| RESP
-    RET -->|"partial + usable evidence + effective analysis required"| ANA
-    RET -->|"partial + usable evidence + effective analysis not required"| PLAN
-    RET -->|"partial + no usable evidence · answer-only terminal intent"| RESP
-    RET -->|"needs more data + local budget · bounded local loop"| RET
-    RET -->|"route reconsideration"| ROUTE
-    RET -->|"sufficient / no fetch needed + effective analysis required"| ANA
-    RET -->|"sufficient / no fetch needed + effective analysis not required"| PLAN
-    ANA -->|"needs more data + existing IN route"| RET
-    ANA -->|"needs more data + no IN route → route reconsideration"| ROUTE
-    ANA -->|"route reconsideration"| ROUTE
-    ANA -->|"needs confirmation"| CONF
-    ANA -->|"blocked · block terminal intent"| RESP
-    ANA -->|"complete"| PLAN["Planning Subgraph"]
-    PLAN -->|"route reconsideration"| ROUTE
-    PLAN -->|"needs confirmation"| CONF
-    PLAN -->|"blocked · block terminal intent"| RESP
-    PLAN -->|"answer only"| RESP["RESPONSE_SYNTHESIS"]
-    PLAN -->|"action plan"| REV["Review Subgraph"]
-    REV -->|"REVISE"| PLAN
-    REV -->|"RETRIEVE_MORE + existing IN route"| RET
-    REV -->|"RETRIEVE_MORE + no IN route → ROUTE_RECONSIDERATION"| ROUTE
-    REV -->|"ROUTE_RECONSIDERATION"| ROUTE
-    REV -->|"CONFIRM"| CONF
-    REV -->|"BLOCK · block terminal intent"| RESP
-    REV -->|"PASS"| DOM["DOMAIN_VALIDATION"]
-    DOM -->|"REQUIRE_APPROVAL"| APP["WAITING_APPROVAL"]
-    DOM -->|"BLOCK · block terminal intent"| RESP
-    APP --> PRE["PREFLIGHT"]
-    PRE -->|"claim applied=true / ready"| EXEC["ACTION_EXECUTION"]
-    PRE -->|"reapproval required"| APP
-    PRE -->|"recovery required"| REC["RECOVERY"]
-    PRE -->|"policy blocked · block terminal intent"| RESP
-    PRE -->|"applied=false · state/version/command conflict"| RECON["DOMAIN_RECONCILE · current_status + next_allowed_commands"]
-    RECON -->|"approval path"| APP
-    RECON -->|"recovery path"| REC
-    RECON -->|"reauth/cancel/in-flight resolution"| DOMWAIT["SUSPEND · Domain 상태 해소 대기"]
-    RECON -->|"already terminal"| FIN
-    EXEC -->|"executed / verification target exists"| VER["VERIFICATION"]
-    EXEC -->|"unknown result / recovery required"| REC
-    EXEC -->|"failed · NOT_SENT + independent executable action remains"| PRE
-    EXEC -->|"failed · NOT_SENT + no independent executable action"| FAILWAIT["SUSPEND · FAILED retry/cancel 대기"]
-    FAILWAIT -->|"prepare-retry applied / review required"| REV
-    FAILWAIT -->|"cancel ready"| RESP
-    VER -->|"verified + next executable action"| PRE
-    VER -->|"verified + unresolved FAILED·NOT_SENT remains"| FAILWAIT
-    VER -->|"verified + no executable action + no unresolved failure · write-complete intent"| RESP
-    VER -->|"recovery required"| REC
-    REC -->|"existing result recovered / recheck required"| VER
-    REC -->|"CREATE_CORRECTIVE_PLAN"| PLAN
-    REC -->|"ACCEPT_PARTIAL terminal intent"| RESP
-    REC -->|"Domain RECOVERY_REQUIRED 유지"| SUSP["SUSPEND · explicit resolve/re-auth 대기"]
-    SUSP -->|"resolve-recovery / safe resume"| REC
-    REC -->|"FAIL/CANCEL terminal intent"| RESP
-    RESP --> TCOMMIT["TERMINAL_COMMIT"]
-    TCOMMIT --> FIN["FINALIZE"]
-    FIN --> END["END"]
-```
-
-### 1.1-A 전역 Domain 상태 오버레이
-
-Main Graph의 업무 Edge와 별개로 다음 Domain 상태는 현재 안전 checkpoint 위에 전역적으로 적용한다. 모든 Node에서 같은 선을 반복해서 그리지 않는다.
-
-- `REAUTH_REQUIRED`: Retrieval·Approval/Preflight·Verification·Recovery 등 Connector 접근 중 Credential 갱신이 실패하면 현재 checkpoint와 in-flight 사실을 보존하고 suspend한다. suspend 시 동일 Run의 `RegisteredResumeTargetRefV2 + langgraph_thread_id + checkpoint identity`를 저장한다. `ResumeAfterReauth`는 active Resume Target Registry의 `graph_version`과 owner/target을 검증한 뒤 **등록된 같은 안전 target**으로만 복귀하며, stale/unknown target은 추측 resume하지 않고 Recovery로 fail closed한다. 이미 dispatch된 Write를 재전송하지 않는다.
-
-
-Main-control resume target closed mapping:
+다음은 책임 흐름이다. 모든 요청이 모든 Subgraph를 순서대로 실행한다는 뜻은 아니다.
 
 ```text
-Retrieval / Agent semantic node credential failure
-→ AGENT_NODE target (same semantic owner + profile-resolved compiled subgraph + exact node)
-
-Run=WAITING_APPROVAL
-+ current WRITE Attempt가 EXECUTING/UNKNOWN_RESULT/EXECUTED-awaiting-verification이 아님
-+ BeginExecutionAttempt 전 PREFLIGHT credential failure
-→ MAIN_CONTROL:PREFLIGHT
-
-Run=WAITING_APPROVAL
-+ current WRITE Attempt가 EXECUTING이거나 delivery certainty가 불명확
-→ PREFLIGHT resume 금지
-→ delivery certainty / existing-result reconciliation
-→ durable EXECUTED이면 MAIN_CONTROL:VERIFICATION
-→ UNKNOWN_RESULT 또는 여전히 불명확하면 MAIN_CONTROL:RECOVERY
-
-Run=EXECUTING
-+ Legacy READ Action=EXECUTING
-+ ExecutionAttempt row 없음
-+ AUTH_EXPIRED
-→ MAIN_CONTROL:READ_EXECUTION
-→ OAuth 완료 후 같은 READ Action을 non-mutating read boundary에서 재개
-
-Run=VERIFYING / Verification read credential failure
-→ MAIN_CONTROL:VERIFICATION
-
-Run=RECOVERY_REQUIRED / Recovery lookup credential failure
-→ MAIN_CONTROL:RECOVERY
-
-Run=CANCEL_REQUESTED
-→ resume target is the safe stage already required to settle the in-flight fact (VERIFICATION or RECOVERY), never generic execution replay
+요청 의미·범위 확인
+→ 필요한 Tool Route 확정
+→ 필요한 자료 수집·업무 분석
+→ 답변 또는 실행안 준비
+→ 답변 종료 / 실행안 검토·승인·실행·검증
 ```
 
-Current `MainResumeStageIdV1` is exactly `RETRIEVAL_ENTRY | PLANNING_ENTRY | REVIEW_ENTRY | PREFLIGHT | READ_EXECUTION | VERIFICATION | RECOVERY | CANCEL_RESOLUTION`. `INITIALIZE`, `DOMAIN_VALIDATION`, `ACTION_EXECUTION`, `RESPONSE_SYNTHESIS`, `TERMINAL_COMMIT`, `FINALIZE` are not resume targets. `RETRIEVAL_ENTRY/PLANNING_ENTRY/REVIEW_ENTRY/CANCEL_RESOLUTION` are deterministic external-control re-entry stages, not new Agents. `PREFLIGHT` is the canonical approved-action execution entry and may also be a Reauth return target when its child-fact guard is valid; it is not Reauth-only. `READ_EXECUTION` remains legacy/compatibility READ-only control only.
+| 판단 지점 | 진행 기준 |
+| --- | --- |
+| 자료 수집 | IN Route가 있으면 Retrieval로 진행한다. 자료가 필요하지 않은 요청은 생략할 수 있다. |
+| 업무 분석 | 요청 의미와 결정적 Policy Precondition으로 `effective_analysis_required`를 계산한다. 상세는 §18을 따른다. |
+| 추가 정보 | 같은 Route의 추가 검색, Route 재검토, 사용자 확인을 구분한다. |
+| 답변 | 근거와 결과 범위를 보존해 종료한다. PARTIAL을 답변이 있다는 이유로 SUCCESS로 바꾸지 않는다. |
+| 외부 변경 | Review와 Domain Validation 이후 사용자 승인·Claim·실행·검증을 거친다. |
+| 실패·중단 | 현재 Domain 상태와 외부 전달 사실을 먼저 확인한다. 다음 단계로 자동 진행하지 않는다. |
 
-- `CANCEL_REQUESTED`: Claim 전이면 미실행 Action·Approval을 정리하고 `FinalizeCancel`로 닫을 수 있다. Claim 이후 in-flight Action이 있으면 신규 Claim·Write만 차단하고 `EXECUTED | UNKNOWN_RESULT | FAILED` 결과를 먼저 확정한다. `EXECUTED`는 Verification, `UNKNOWN_RESULT`는 Recovery를 거친다. Recovery 중 cancel intent가 활성인 경우 `CREATE_CORRECTIVE_PLAN`·일반 `ACCEPT_PARTIAL → COMPLETED`는 금지하고, terminal snapshot이 되면 `ResolveRecovery(CANCEL)` 또는 Verification 복귀 후 `FinalizeCancel`로 닫는다.
-- `RECOVERY`: Workflow phase는 `Action.UNKNOWN_RESULT`의 bounded existing-result lookup을 먼저 수행할 수 있다. 이 자동 lookup 동안 Run이 아직 `WAITING_APPROVAL | CANCEL_REQUESTED`이면 새 Write 없이 결과만 판별하고, 결과가 끝내 불명확하거나 명시적 recovery reason이 발생한 경우에만 `RequireRecovery(reason)`으로 Domain Run을 `RECOVERY_REQUIRED`에 둔다. 이미 `RECOVERY_REQUIRED`인 경우 Recovery Node는 **처리·routing·suspend/resume orchestration**만 담당하며 등록된 `ResolveRecovery` 결과를 소비한다. Domain lifecycle semantics는 State Transition Contract가 소유한다.
-- `BLOCKED`: Claim 전 `BlockRun`이 실제 적용된 경우만 Terminal이다. in-flight Write가 존재하는 동안 정책·보안 문제가 새로 발견되어도 기존 실행 사실을 `BLOCKED`로 덮어쓰지 않는다.
+결과별 분기는 §1.3, 실행·검증 경계는 §12에 둔다. 세부 Node 배치와 반복 전략은 이 흐름에서 고정하지 않는다.
 
-### 1.1-B FINALIZE 계약
+### 1.1-A 전역 Domain 상태와 재개
 
-`FINALIZE`는 임의의 Run 상태 변경 Node가 아니다. **Terminal lifecycle handler의 UoW가 Run terminal mutation + final ASSISTANT Message + required Audit를 이미 commit한 뒤**, FINALIZE는 diagnostic Trace emit과 SSE Projection publish만 orchestration하는 마지막 Main Graph 단계다. FINALIZE가 Message를 다시 INSERT하거나 Domain status를 변경하지 않는다.
+재인증·취소·복구는 업무 흐름과 별도로 현재 안전 checkpoint에 적용한다. `workflow_phase`가 Domain `Run.status`를 대신하지 않는다.
 
+| 상황 | Workflow 처리 |
+| --- | --- |
+| `REAUTH_REQUIRED` | 현재 checkpoint와 in-flight 사실을 보존하고 suspend한다. 같은 Run의 `RegisteredResumeTargetRefV2 + langgraph_thread_id + checkpoint identity`를 저장한다. |
+| 재인증 후 재개 | `ResumeAfterReauth`가 active Registry의 `graph_version`·owner·target을 검증한 뒤 등록된 같은 안전 target으로만 복귀한다. stale/unknown target은 추측 resume하지 않고 Recovery로 보낸다. |
+| `CANCEL_REQUESTED` · Claim 전 | 미실행 Action·Approval을 정리하고 `FinalizeCancel`로 닫는다. |
+| 취소 · in-flight 존재 | 신규 Claim·Write를 막고 `EXECUTED \| UNKNOWN_RESULT \| FAILED`를 먼저 확정한다. EXECUTED는 Verification, UNKNOWN_RESULT는 Recovery로 보낸다. |
+| 취소 중 Recovery | `CREATE_CORRECTIVE_PLAN`과 일반 `ACCEPT_PARTIAL → COMPLETED`는 금지한다. 결과가 확정되면 `ResolveRecovery(CANCEL)` 또는 Verification 후 `FinalizeCancel`로 닫는다. |
+| `UNKNOWN_RESULT` lookup | Run이 `WAITING_APPROVAL \| CANCEL_REQUESTED`인 동안에도 새 Write 없이 bounded existing-result lookup을 할 수 있다. 끝내 불명확하거나 명시적 recovery reason이 생길 때 `RequireRecovery`를 적용한다. |
+| 이미 `RECOVERY_REQUIRED` | Recovery Node는 등록된 `ResolveRecovery` 결과를 소비해 routing·suspend/resume만 조정한다. |
+| `BLOCKED` | Claim 전 `BlockRun`이 적용된 경우에만 Terminal로 취급한다. in-flight Write를 정책 차단으로 덮어쓰지 않는다. |
+
+#### 재인증 시 target 선택
+
+Run 상태만이 아니라 current Action·Attempt·delivery fact를 함께 사용한다. 이미 dispatch된 Write를 재전송하지 않는다.
+
+| 중단 지점·현재 사실 | 등록 target / 처리 |
+| --- | --- |
+| Retrieval 또는 Agent semantic node의 credential failure | 같은 semantic owner·profile-resolved compiled subgraph·node의 `AGENT_NODE` |
+| `WAITING_APPROVAL` + current Write가 EXECUTING/UNKNOWN_RESULT/EXECUTED-awaiting-verification이 아님 + Begin 전 PREFLIGHT credential failure | `MAIN_CONTROL:PREFLIGHT` |
+| `WAITING_APPROVAL` + current Write Attempt EXECUTING 또는 전달 여부 불명 | PREFLIGHT 금지. 기존 결과 확인 후 durable EXECUTED이면 `MAIN_CONTROL:VERIFICATION`, 불명확하면 `MAIN_CONTROL:RECOVERY` |
+| `EXECUTING` + Legacy READ Action EXECUTING + ExecutionAttempt row 없음 + AUTH_EXPIRED | `MAIN_CONTROL:READ_EXECUTION`; 같은 non-mutating READ의 재개 |
+| `VERIFYING` + verification read credential failure | `MAIN_CONTROL:VERIFICATION` |
+| `RECOVERY_REQUIRED` + recovery lookup credential failure | `MAIN_CONTROL:RECOVERY` |
+| `CANCEL_REQUESTED` | 현재 in-flight 사실을 정리하는 VERIFICATION 또는 RECOVERY. 일반 execution replay 금지 |
+
+`MainResumeStageIdV1`의 closed set은 §2.1의 선언을 사용한다.
+
+| 구분 | 의미 |
+| --- | --- |
+| `RETRIEVAL_ENTRY / PLANNING_ENTRY / REVIEW_ENTRY / CANCEL_RESOLUTION` | 결정적 external-control 재진입 지점이며 새 Agent가 아니다. |
+| `PREFLIGHT` | 승인된 Action의 실행 진입점이다. child-fact Guard를 만족하면 재인증 복귀에도 사용할 수 있다. |
+| `READ_EXECUTION` | Legacy/compatibility READ-only 제어 경계다. |
+| `INITIALIZE / DOMAIN_VALIDATION / ACTION_EXECUTION / RESPONSE_SYNTHESIS / TERMINAL_COMMIT / FINALIZE` | resume target이 아니다. |
+
+### 1.1-B 응답 준비·종료 Commit·FINALIZE
+
+```text
+RESPONSE_SYNTHESIS
+→ TERMINAL_COMMIT
+→ FINALIZE
 ```
-Answer-only·처리 불가 안내 → RESPONSE_SYNTHESIS → TERMINAL_COMMIT(CompleteAnswerOnlyRun) → COMPLETED → FINALIZE
-Policy block              → deterministic blocked response → TERMINAL_COMMIT(BlockRun) → BLOCKED → FINALIZE
-Write 정상 완료           → RESPONSE_SYNTHESIS → TERMINAL_COMMIT(CompleteWriteRun) → COMPLETED → FINALIZE
-Cancel 완료               → deterministic cancel response → TERMINAL_COMMIT(FinalizeCancel) → CANCELLED → FINALIZE
-Recovery 실패             → deterministic failure response → TERMINAL_COMMIT(ResolveRecovery(FAIL)) → FAILED → FINALIZE
-Recovery 부분 수용        → RESPONSE_SYNTHESIS → TERMINAL_COMMIT(ResolveRecovery(ACCEPT_PARTIAL)) → COMPLETED → FINALIZE
-```
 
-`RESPONSE_SYNTHESIS`의 단일 책임은 terminal command 전에 `TerminalAssistantMessageInputV1`을 만드는 것이다. Answer-only는 Planning의 검증된 `AnswerDraftV2`, Write는 persisted Plan/Action/Verification Result, Recovery/Cancel/Block은 typed reason/result만 입력으로 사용한다. P0에서 이 단계는 **deterministic Application formatting**이며 새 LLM call을 하지 않는다. Run status·Policy·Approval·Execution·Verification 결과를 결정하거나 변경하지 않는다. `BLOCKED | CANCELLED | FAILED`의 result kind와 reason code는 deterministic input으로 고정되며 Prompt가 바꿀 수 없다.
+| 단계 | 책임 | 하지 않는 일 |
+| --- | --- | --- |
+| `RESPONSE_SYNTHESIS` | terminal command 전에 `TerminalAssistantMessageInputV1`을 결정적으로 작성한다. | 추가 LLM 호출, 상태·정책·승인·실행·검증 결과 변경 |
+| `TERMINAL_COMMIT` | `TerminalCommitIntentV1.kind`에 맞는 기존 lifecycle handler 하나를 호출한다. Receipt·Run terminal mutation·final ASSISTANT Message·required Audit는 같은 UoW에 Commit한다. | 새 Domain 전이 발명, unknown kind/status/version 추측 |
+| `FINALIZE` | terminal snapshot 확인 후 `trace_event.emit_trace_event`와 `sse_event.project_run_event`를 호출하고 END로 간다. | Message 재삽입, Domain status 변경, 관측 실패에 따른 rollback·Connector 재실행 |
 
-`TERMINAL_COMMIT`은 `TerminalCommitIntentV1.kind`를 closed dispatch하여 정확히 하나의 기존 lifecycle handler(`CompleteAnswerOnlyRun | CompleteReadOnlyRun(legacy) | CompleteWriteRun | BlockRun | FinalizeCancel | terminal ResolveRecovery`)만 호출한다. 각 handler가 Receipt + Domain terminal mutation + final ASSISTANT Message + required Audit를 같은 UoW로 commit한다. `TERMINAL_COMMIT` 자체는 새 Domain semantics를 만들지 않고, unknown kind/status/version은 fail closed한다. API에서 terminal `ResolveRecovery`가 이미 같은 atomic contract로 commit된 뒤 Graph가 resume된 경우에는 terminal snapshot + final Message 존재를 확인하고 중복 command를 호출하지 않는다.
+#### 응답 입력
 
-`FINALIZE` runtime adapter는 `adapters/langgraph/main/nodes/finalize_node.py` 하나이며 terminal snapshot을 확인한 뒤 `trace_event.emit_trace_event`와 `sse_event.project_run_event`를 호출하고 END로 간다. 둘의 실패는 Domain rollback이나 Connector 재실행을 만들지 않는다.
+| 결과 | 사용 입력 |
+| --- | --- |
+| Answer-only | Planning이 검증한 `AnswerDraftV2` |
+| Write | persisted Plan·Action·Verification Result |
+| Recovery / Cancel / Block | typed reason/result |
 
-Run이 `WAITING_APPROVAL | VERIFYING | REAUTH_REQUIRED | RECOVERY_REQUIRED | CANCEL_REQUESTED` 같은 비Terminal 상태인데 대응 Domain Command가 적용되지 않았다면 `FINALIZE → END`로 진행하지 않고 suspend한다. `Request.INVALID`처럼 사용자에게 실행 불가를 설명하고 끝내는 비정책 경로는 `CompleteAnswerOnlyRun`으로 닫으며, Policy 위반은 `BlockRun`을 사용한다.
+`BLOCKED | CANCELLED | FAILED`의 result kind와 reason code는 결정적 입력에서 고정한다. 최종 `content`는 현재 Run의 요청 언어와 durable outcome을 반영하며, generic 완료 문장·raw state·reason code만으로 답변을 대신하지 않는다.
 
+#### 종료 종류별 handler
+
+| 종료 종류 | 기존 handler | Run 결과 |
+| --- | --- | --- |
+| Answer-only·비정책 처리불가 안내 | `CompleteAnswerOnlyRun` | COMPLETED |
+| 정책 차단 | `BlockRun` | BLOCKED |
+| Write 정상 완료 | `CompleteWriteRun` | COMPLETED |
+| Legacy READ 정상·부분 완료 | `CompleteReadOnlyRun` | COMPLETED |
+| 취소 완료 | `FinalizeCancel` | CANCELLED |
+| Recovery 실패 | `ResolveRecovery(FAIL)` | FAILED |
+| Recovery 부분 수용 | `ResolveRecovery(ACCEPT_PARTIAL)` | COMPLETED |
+| Recovery 취소 | `ResolveRecovery(CANCEL)` | CANCELLED |
+
+API에서 terminal `ResolveRecovery`가 이미 Commit됐다면, 재개 시 terminal snapshot과 final Message를 확인하고 command를 다시 호출하지 않는다. Legacy READ action의 finalize/fail handler는 Action·Evidence만 확정하고 parent Run은 `CompleteReadOnlyRun`으로 닫는다.
+
+`WAITING_APPROVAL | VERIFYING | REAUTH_REQUIRED | RECOVERY_REQUIRED | CANCEL_REQUESTED` 등 비Terminal 상태에서 대응 Domain Command가 적용되지 않았다면 `FINALIZE → END`로 진행하지 않고 suspend한다.
 
 ### 1.1-C External-control handoff target matrix
 
@@ -186,27 +143,29 @@ External HTTP control과 deterministic stale-preflight refresh처럼 background 
 | Reauth completed | RESUME_BACKGROUND | exact target stored by `RequireReauth`, after `ResumeAfterReauth(applied=true)` | none |
 | Recovery `RECHECK` | conditional | reason-specific matrix below; `NO_PROGRESS` = STAY_SUSPENDED | none |
 | Recovery `CREATE_CORRECTIVE_PLAN` | RESUME_BACKGROUND | `MAIN_CONTROL:PLANNING_ENTRY` | none |
-| Recovery `ACCEPT_PARTIAL | CANCEL | FAIL` | TERMINAL_NO_RESUME | Domain terminal commit result is projected; no background business continuation | none |
+| Recovery `ACCEPT_PARTIAL \| CANCEL \| FAIL` | TERMINAL_NO_RESUME | Domain terminal commit result is projected; no background business continuation | none |
 | `SAFE_CHECKPOINT_RESUME` | RESUME_BACKGROUND | exact validated target from current checkpoint/binding; matrix-forbidden state rejects with invocation 0 | none |
-| RequestCancel | RESUME_BACKGROUND or Application bootstrap settlement | checkpoint가 있으면 `MAIN_CONTROL:CANCEL_RESOLUTION`; `CREATED + first checkpoint 없음`이면 새 RESUME row 0; START admission 전(PENDING|BLOCKED_BINDING)은 Graphless SUPERSEDED settlement, admission 후(DISPATCHED+admission)는 admission checkpoint 뒤 cancel-intent gate가 CANCEL_RESOLUTION로 전환 | none |
+| RequestCancel | RESUME_BACKGROUND or Application bootstrap settlement | checkpoint가 있으면 `MAIN_CONTROL:CANCEL_RESOLUTION`; `CREATED + first checkpoint 없음`이면 새 RESUME row 0; START admission 전(PENDING / BLOCKED_BINDING)은 Graphless SUPERSEDED settlement, admission 후(DISPATCHED+admission)는 admission checkpoint 뒤 cancel-intent gate가 CANCEL_RESOLUTION로 전환 | none |
 
-Deterministic stage semantics:
+#### 재진입 단계의 책임
 
-- `RETRIEVAL_ENTRY`: verifies current Run can enter/re-enter Retrieval, applies existing `BeginRetrieval` when source status requires it, then starts Retrieval from frozen current input routes. For user adjustment, control kind determines exclusion-vs-bounded-need behavior; it never invents a new route.
-- `PLANNING_ENTRY`: enters current Planning subgraph through the existing deterministic `planning.choose_answer_or_action_from_route` entry operation; no synthetic resume node is created.
-- `REVIEW_ENTRY`: `ModifyAction | PrepareWriteRetry | RefreshExpiredAction`의 current persisted Plan/Action을 대상으로 current Review subgraph의 runtime node `review.inspect_goal_and_evidence`에 진입한 뒤 registered Review node chain을 따라 aggregate/validate한다. `RefreshExpiredAction`이 stale preflight에서 발생해도 direct Review call이 아니라 같은 durable handoff target을 사용한다.
-- `CANCEL_RESOLUTION`: deterministic main-control node that calls `run.continue_cancel_resolution`; it coordinates only existing `CancelPendingAction/FailReadAction/CompleteReadAction/FinalizeReadAction/BeginVerification/Recovery/FinalizeCancel` contracts and creates no new lifecycle transition.
+| 단계 | 처리 |
+| --- | --- |
+| `RETRIEVAL_ENTRY` | 현재 Run의 Retrieval 진입 가능성을 검사하고 필요한 경우 기존 `BeginRetrieval`을 적용한다. frozen current input routes에서 시작하며, 사용자 조정은 exclusion 또는 bounded need로 전달한다. 새 Route를 만들지 않는다. |
+| `PLANNING_ENTRY` | 기존 결정적 `planning.choose_answer_or_action_from_route`를 통해 Planning에 진입한다. synthetic resume node를 만들지 않는다. |
+| `REVIEW_ENTRY` | Modify·PrepareRetry·Refresh 이후 current persisted Plan/Action으로 `review.inspect_goal_and_evidence`에 진입해 registered chain의 aggregate/validate를 수행한다. stale preflight의 Refresh도 direct call이 아니라 같은 handoff를 사용한다. |
+| `CANCEL_RESOLUTION` | `run.continue_cancel_resolution`을 호출한다. 기존 `CancelPendingAction / FailReadAction / CompleteReadAction / FinalizeReadAction / BeginVerification / Recovery / FinalizeCancel`만 조정하며 새 lifecycle 전이를 만들지 않는다. |
 
-Recovery RECHECK exact continuation:
+#### Recovery RECHECK continuation
 
-```text
-UNKNOWN_RESULT          → MAIN_CONTROL:RECOVERY; recovered EXECUTED routes to VERIFICATION, resolved FAILED reconciles to PREFLIGHT or decision suspend
-VERIFICATION_MISMATCH   → MAIN_CONTROL:VERIFICATION
-CHECKPOINT_MISMATCH     → validated RecoveryContext.registered_resume_target; invalid remains RECOVERY_REQUIRED
-CONTRACT_VIOLATION      → validated RecoveryContext.registered_resume_target/pre_recovery target; invalid remains RECOVERY_REQUIRED
-NO_PROGRESS             → no handoff / remain suspended
-CREATE_CORRECTIVE_PLAN  → MAIN_CONTROL:PLANNING_ENTRY
-```
+| 사유·결과 | target / 처리 |
+| --- | --- |
+| `UNKNOWN_RESULT` | `MAIN_CONTROL:RECOVERY`; recovered EXECUTED는 VERIFICATION, resolved FAILED는 PREFLIGHT 또는 decision suspend |
+| `VERIFICATION_MISMATCH` | `MAIN_CONTROL:VERIFICATION` |
+| `CHECKPOINT_MISMATCH` | 검증된 `RecoveryContext.registered_resume_target`; invalid이면 RECOVERY_REQUIRED 유지 |
+| `CONTRACT_VIOLATION` | 검증된 `RecoveryContext.registered_resume_target/pre_recovery target`; invalid이면 RECOVERY_REQUIRED 유지 |
+| `NO_PROGRESS` | handoff 없이 suspend 유지 |
+| `CREATE_CORRECTIVE_PLAN` | `MAIN_CONTROL:PLANNING_ENTRY` |
 
 ### 1.1-D One-shot control application
 
@@ -222,94 +181,115 @@ Same-Run ordering, admission/release result codes, supersession race, startup/li
 
 ### 1.2 Main Supervisor 불변조건
 
-- Supervisor는 **Workflow Controller**이며 업무 의미·Tool Argument·계획 내용을 생성하지 않는다.
-- Agent는 다른 Agent/Subgraph를 직접 호출하지 않는다. 필요한 다음 단계는 Typed Disposition으로 Parent에 반환한다.
-- 모든 Subgraph Result/Disposition은 Supervisor Router에서 정확히 하나의 다음 Edge 또는 Terminal/Interrupt 경로를 가진다. 정의되지 않은 Enum·Version·Disposition은 fail-closed로 처리하며 추측 Routing을 금지한다. bounded Schema Repair로 정상화되지 않는 unknown contract 결과는 다음 Agent로 보내거나 FINALIZE하지 않고 `RequireRecovery(CONTRACT_VIOLATION)`로 Run을 `RECOVERY_REQUIRED`에 두며, 복구 불가가 확정된 경우에만 `ResolveRecovery(FAIL) → FAILED`로 닫는다.
-- `WAITING_CONFIRMATION`은 공통 Router가 아니라 LangGraph interrupt 경계다. 공식 `NEEDS_CONFIRMATION`을 받으면 Application이 먼저 Domain `RequestConfirmation`을 적용한다. pre-publish owner는 `ANALYZING | RETRIEVING | PLANNING`, published-Plan Review `CONFIRM`은 State Transition Contract의 guarded `WAITING_APPROVAL | VERIFYING` source를 사용한다. Domain command가 `pre_confirmation_status`와 registered resume binding을 durable하게 고정한 뒤 `semantic_owner_id + AgentNodeResumeTargetV2 + interrupt_id`를 checkpoint에 저장하고 interrupt한다. 사용자 응답 검증 후에는 `ResumeConfirmation`으로 발생 전 안전 Domain 상태를 복원한 뒤 같은 owner Subgraph checkpoint에서 재개한다. 사용자 응답이 upstream 의미를 바꾸는 경우에만 Supervisor가 Request Understanding 등 State Owner로 Back-edge한다.
-- 앞 단계의 공식 State를 downstream Subgraph가 직접 덮어쓰지 않는다.
-- Main State 공식 Artifact는 **단일 Owner + 다수 Consumer** 규칙을 따른다. Request Understanding만 `request_intent`, Tool Route만 `tool_route_plan.input_plan/output_plan`, Retrieval만 `retrieval_result`, Work Analysis만 `work_analysis_result`, Planning만 `planning_result`, Review만 `plan_review`의 새 revision을 생성할 수 있다. `policy_confirmation_receipts`는 Agent Artifact가 아니라 실제 interrupt 응답을 검증한 Application/Confirmation Controller만 append할 수 있으며 Agent가 임의 생성·수정할 수 없다.
-- Subgraph 반환은 전체 Main State 교체가 아니라 **owner field + 허용된 workflow signal만 갱신하는 patch merge**다. Local State의 누락 필드나 `None`을 이유로 다른 Main State field를 초기화·삭제하지 않는다.
-- Retrieval 자신의 `NEEDS_MORE_DATA`는 local budget이 남아 있는 동안 **Subgraph 반환이 아니다.** 같은 Retrieval invocation 안에서 `SufficiencyIssueV2 + QueryAttemptV1 + read_result_handles`의 bounded Local Projection을 사용해 다음 Query/Page/Detail을 계획·실행한다. Raw continuation은 `05 Retrieval` semantics를 구현하는 `07 RunRetrievalCachePort`의 P0 `InMemoryRunRetrievalCache`만 보관하며 Supervisor·Main State·`WorkflowSignalV1`·`RetrievalRequiredV1`은 이 self-loop에 관여하지 않는다. Follow-up `SEARCH`는 `RetrievalQueryPlanV2`의 typed semantic `ChangedSearchSpecV1`을 거쳐 결정적 `SourceFetchPlanBuilder`가 materialize하며, LLM이 Provider-native Query·RFC3339·MCP Arguments를 생성하지 않는다. Work Analysis/Review가 만드는 외부 추가 Retrieval 요청만 `RetrievalRequiredV1`을 사용한다.
-- Downstream Node는 upstream Artifact를 read-only Projection으로 소비하며 동일 의미를 다시 조사해 대체 Artifact를 만들지 않는다. 재판단이 필요하면 직접 수정하지 않고 해당 Owner로 Back-edge한다.
-- Planning Action의 Tool identity는 `OutputToolRouteV1.selected_tool_id`를 결정적 Assembler가 복사해 materialize한다. Argument Writer나 Planning LLM이 Tool을 다시 선택·교체하지 않는다.
-- 이전 결정이 잘못되었다고 판단되면 `*_RECONSIDERATION_REQUIRED`를 반환하고 Supervisor가 해당 State Owner Subgraph로 Back-edge한다.
-- Back-edge로 upstream 공식 State가 새 revision으로 교체되면 그 State에 의존하는 downstream 공식 State는 stale 처리 후 재생성한다.
-- Supervisor의 다음 단계 판정은 `artifact is not None`이 아니라 **현재 active dependency revision에 대한 freshness 검증**을 통과한 Artifact만 사용한다. `meta.based_on`이 현재 revision과 맞지 않는 stale Artifact는 존재하더라도 완료 상태로 간주하지 않는다.
-- 정상 경로의 Tool Route는 한 번만 확정한다. Route 변경은 명시적 Back-edge에서만 허용한다.
-- Tool Route는 LLM의 의미 Route 후보를 받은 뒤 `01-B`의 **Policy Precondition Read**를 결정적 코드로 보강한다. P0에서 `TASK + CREATE`는 기존 미완료 Task 중복 검사용 Tasks READ를, `CALENDAR + CREATE`는 대상 Calendar의 충돌 검사용 Event/FreeBusy READ를 필수 IN Route로 추가한다. 이는 새로운 의미 판단이나 두 번째 Tool 선택이 아니며 OUT Route를 변경하지 않는다. 단, 사용자가 Source·기간·Resource 범위를 명시적으로 제한했고 필수 Read가 그 범위를 벗어나면 `ToolRoute.NEEDS_CONFIRMATION`으로 `SCOPE_EXPANSION_REQUIRED`를 반환해 추가 범위와 이유를 먼저 확인한다. 확인 전에는 범위를 확장하지 않으며, 사용자가 거절하면 Policy Precondition을 우회한 Write Plan을 만들지 않고 BLOCK/안내로 종료한다. 사용자가 이미 같은 Resource의 더 좁은 IN Route를 지정했다면 그 범위 안에서 필수 검사를 충족하고, 검사가 불가능하면 동일하게 확인/차단으로 전환한다.
-- Tool Route의 Registry binding은 signed registry의 Resource·Effect·Schema 적합성을 검증하는 **결정적 eligibility filtering**만 허용한다. 모델 부담을 줄이기 위한 임의 heuristic shortlist로 등록 Tool을 선제 제거하지 않는다. 후보가 하나면 코드가 확정하고, 여러 eligible 후보의 의미 선택이 필요한 경우에만 Route Subgraph의 작은 선택 Node가 판단한다.
-- Release Graph에서 모든 외부 Connector READ 의미는 `InputRoutePlanV1 → Retrieval`이 소유하며 실제 외부 조회는 Retrieval의 결정적 Application Node가 **`ConnectorReadPort`를 통해 registered Connector Read Tool만 호출**해 수행한다. React·FastAPI Route·Application·LangGraph·Agent·Domain은 Provider API/SDK를 직접 호출하지 않는다. Provider API 호출은 해당 Connector MCP Server 내부 Adapter 구현에만 존재한다. P0 Google Workspace Connector는 Gmail·Tasks·Calendar Provider API를 이 경계 안에서만 호출한다. FreeBusy interval 교집합·차집합과 가능한 시간 구간 계산처럼 결정적으로 계산 가능한 Calendar 연산도 Retrieval의 deterministic Application Node가 소유하고 LLM Work Analysis에 산술 계산을 맡기지 않는다. `OutputPlanV1`의 Action Route는 `CREATE | UPDATE | SEND | DELETE`만 허용하며 READ Action을 새 Planning 결과로 만들지 않는다. Domain의 기존 READ Action 계약은 호환 경계로 유지하되 `SIX_ROLE_BASELINE` profile의 Planning 출력에는 사용하지 않는다. 따라서 Release Main Graph의 `DOMAIN_VALIDATION`은 Action Plan에 대해 `REQUIRE_APPROVAL | BLOCK`만 정상 진입으로 사용하며 `ALLOW_READ`는 Legacy/호환 실행 경계 테스트에서만 유지한다.
-- `INITIALIZE`는 Run 생성 직후 Domain `StartAnalysis`를 정확히 한 번 적용해 `CREATED → ANALYZING`을 만든 뒤 Request Understanding으로 간다. `StartAnalysis.applied=false`이면 Request Agent를 호출하지 않고 현재 Domain 상태를 재조정한다.
-- Main Graph가 새 Retrieval invocation에 진입할 때 Run이 `ANALYZING | PLANNING`이면 `BeginRetrieval`로 `RETRIEVING`을 만든다. 같은 Retrieval Subgraph 내부의 Additional Retrieval/local loop처럼 이미 `RETRIEVING`이면 반복 호출하지 않는다.
-- Main Graph가 Planning에 새로 진입할 때 Run이 `ANALYZING | RETRIEVING`이면 `BeginPlanning`으로 `PLANNING`을 만든다. no-fetch 경로는 `ANALYZING → PLANNING`, Retrieval 완료 경로는 `RETRIEVING → PLANNING`이다. published Plan의 durable Review가 `REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION`을 요구하면 `WAITING_APPROVAL | VERIFYING`에서 State Transition Contract의 guarded `BeginPlanning`과 그 Plan-supersession child-authority fence를 적용해 current Plan을 `SUPERSEDED`로 만들고 Run을 `PLANNING`으로 되돌린다. 이미 성공·검증된 외부 효과와 immutable final Action facts는 보존하며 unresolved in-flight/UNKNOWN_RESULT/MISMATCH가 있으면 이 back-edge를 허용하지 않는다. Review `REVISE`처럼 Run이 이미 `PLANNING`인 bounded pre-publish revision에서는 반복 호출하지 않는다.
-- `PREFLIGHT`는 실행으로 자동 fall-through하지 않는다. Domain Claim/Preflight 결과가 `applied=true`이고 현재 Approval·Policy Confirmation Receipt·Arguments/Execution Hash·State Version이 모두 유효할 때만 `ACTION_EXECUTION`으로 간다. 재승인이 필요하면 `WAITING_APPROVAL`, 복구가 필요하면 `RECOVERY`로 라우팅한다. Policy 위반은 Claim 전 `BlockRun`이 실제 적용되어 Run이 `BLOCKED`가 된 경우에만 `FINALIZE`한다. 일반 `applied=false`·State/Version/Command conflict는 Terminal로 간주하지 않고 `current_status + next_allowed_commands`를 재조회해 재승인·Recovery·Reauth·Cancel/in-flight resolution·기존 Terminal 중 하나로 결정적으로 조정한다. 같은 Claim을 무조건 자동 재시도하지 않는다.
-- `ACTION_EXECUTION` 결과도 자동으로 `VERIFICATION`에 fall-through하지 않는다. Action이 `EXECUTED`이고 검증 대상이 있을 때만 Verification으로 간다. `UNKNOWN_RESULT`는 Recovery로 간다. `NOT_SENT`로 확정된 `FAILED`는 그 Action의 retry/cancel decision fact를 보존하되 **dependency가 없는 다른 approved/executable Action이 있으면 scheduler가 다음 Action의 `PREFLIGHT`로 계속 진행**한다. FAILED predecessor에 의존하는 Action은 Claim하지 않는다. 더 실행할 독립 Action이 없을 때만 `FAILWAIT`에 suspend한다. 다른 독립 Action을 모두 실행·검증한 뒤에도 unresolved `FAILED + NOT_SENT`가 하나라도 남으면 `CompleteWriteRun`하지 않고 `FAILWAIT`로 간다. `prepare-retry`가 `FAILED → MODIFIED`와 Plan Review Gate를 적용한 뒤에는 Review Subgraph부터 재검토하고, PASS + Domain Validation 이후에만 새 Approval로 진행한다. 취소·차단은 Terminal 경로를 따른다.
-- 승인형 Write의 첫 Verification 진입에서는 Domain `BeginVerification`으로 Run을 `WAITING_APPROVAL → VERIFYING`으로 전이한다. 취소 요청 뒤 이미 `EXECUTED`된 결과를 확인하는 경우에는 `CANCEL_REQUESTED → VERIFYING`을 허용하되 APPLIED `RequestCancel` Receipt에서 `cancel_intent_active`를 계속 재구성한다. Run이 이미 `VERIFYING`인 다중 Action DAG에서는 다음 VERIFIED predecessor 뒤 다음 Action의 Preflight/Execution을 계속하되 `BeginVerification`을 반복 호출하지 않는다. 모든 승인 대상 Action이 Terminal이고 미해결 결과가 없을 때 cancel intent가 없으면 `CompleteWriteRun`, cancel intent가 있으면 `FinalizeCancel`을 적용한 뒤 최종 응답으로 간다.
-- `ACTION_EXECUTION` 중 Cancel 요청은 즉시 Terminal Edge를 만들지 않는다. Domain `RequestCancel`의 APPLIED Receipt가 durable cancel intent가 되어 신규 Claim·Write를 차단한다. 현재 in-flight Action을 `EXECUTED | UNKNOWN_RESULT | FAILED` 중 하나로 먼저 확정하고, `EXECUTED`는 Verification, `UNKNOWN_RESULT`는 Recovery, Credential 문제는 Reauth를 완료한다. 이 과정에서 Run.status가 `VERIFYING | RECOVERY_REQUIRED | REAUTH_REQUIRED`로 바뀌어도 cancel intent는 Receipt로 유지한다. 결과 확정 후 Run이 `RECOVERY_REQUIRED`이면 `ResolveRecovery(CANCEL)`, `VERIFYING | REAUTH_REQUIRED | CANCEL_REQUESTED`이고 더 확인할 결과가 없으면 `FinalizeCancel`을 사용하며 `CompleteWriteRun`보다 취소 종료를 우선한다.
-- `RECOVERY`도 `VERIFICATION`으로 자동 loop하지 않는다. 기존 결과 회수나 재검증이 필요한 경우에만 Verification으로 돌아간다. `CREATE_CORRECTIVE_PLAN`은 Domain `RECOVERY_REQUIRED → PLANNING` 전이에 맞춰 Planning으로 Back-edge하고 새 Plan Revision을 만든다. `ACCEPT_PARTIAL`·실패 확정은 terminal result를 합성한다. Domain이 `RECOVERY_REQUIRED`인 동안은 Graph를 suspend해 명시적 `resolve-recovery`/재인증을 기다리며, 차단·취소는 Terminal로 간다.
-- `workflow_phase`는 LangGraph의 routing/checkpoint 위치이며 Domain `Run.status`의 권위 복제본이 아니다. `REAUTH_REQUIRED`, `CANCEL_REQUESTED/CANCELLED`, `RECOVERY_REQUIRED` 같은 제품 상태와 Approval·Execution·Verification 사실은 Domain Store가 소유한다. 이런 Domain 상태가 발생하면 Graph는 안전 checkpoint에서 suspend/resume하며, 충돌 시 Domain 상태를 우선한다.
+#### 결과·책임·freshness
+
+| 항목 | 규칙 |
+| --- | --- |
+| Controller 책임 | 업무 의미·Tool Arguments·계획 내용을 생성하지 않는다. Agent 간 직접 호출을 연결해 주는 자유형 실행기가 아니다. |
+| 결과 분기 | 공식 Result/Disposition은 정확히 하나의 Edge·Interrupt·Terminal 경로로 연결한다. |
+| unknown contract | 정의되지 않은 Enum·Version·Disposition은 추측하지 않는다. bounded Schema Repair 후에도 유효하지 않으면 `RequireRecovery(CONTRACT_VIOLATION)`으로 suspend하고, 복구 불가가 확정될 때만 `ResolveRecovery(FAIL)`로 닫는다. |
+| 상태 갱신 | Subgraph는 owner field와 허용 signal만 patch merge한다. 누락 필드나 `None`으로 다른 Owner의 State를 지우지 않는다. Owner 표는 §2.3을 따른다. |
+| 재판단 | downstream은 upstream Artifact를 read-only로 소비한다. 변경이 필요하면 `*_RECONSIDERATION_REQUIRED`로 해당 Owner에 Back-edge한다. |
+| freshness | Artifact 존재 여부만으로 완료를 판단하지 않는다. 현재 active revision과 `meta.based_on`이 맞는 결과만 사용한다. 필요한 downstream 재생성은 §2.4를 따른다. |
+
+#### 진입·실행 분기
+
+| 시점 | 적용 조건과 후속 처리 |
+| --- | --- |
+| Run 초기화 | `INITIALIZE`가 `StartAnalysis`를 정확히 한 번 적용한 뒤 Request Understanding을 호출한다. `applied=false`이면 Agent 호출 없이 Domain 상태를 재조정한다. |
+| 새 Retrieval invocation | Run이 `ANALYZING \| PLANNING`이면 `BeginRetrieval`을 적용한다. 이미 RETRIEVING인 local loop에는 반복 적용하지 않는다. |
+| 새 Planning 진입 | Run이 `ANALYZING \| RETRIEVING`이면 `BeginPlanning`을 적용한다. 이미 PLANNING인 bounded revision에는 반복 적용하지 않는다. |
+| published Plan 재검토 | durable Review가 `REVISE \| RETRIEVE_MORE \| ROUTE_RECONSIDERATION`이면 State Contract의 Guard와 Plan-supersession fence를 적용한다. 성공·검증된 외부 효과와 immutable final Action fact를 보존하며 unresolved in-flight/UNKNOWN_RESULT/MISMATCH가 있으면 Back-edge하지 않는다. |
+| `PREFLIGHT` | Claim/Preflight `applied=true`와 현재 Approval·Policy Confirmation Receipt·Arguments/Execution Hash·State Version을 모두 확인한 경우에만 ACTION_EXECUTION으로 간다. |
+| Preflight 실패·경쟁 | 재승인은 WAITING_APPROVAL, 복구는 RECOVERY로 보낸다. 일반 `applied=false` 또는 conflict는 `current_status + next_allowed_commands`를 재조회해 조정한다. 같은 Claim을 무조건 재시도하지 않는다. |
+| Policy 차단 | Claim 전 `BlockRun`이 적용돼 실제 BLOCKED가 된 경우에만 종료 처리한다. |
+| 실행 결과 | EXECUTED이고 검증 대상이 있을 때만 Verification, UNKNOWN_RESULT이면 Recovery로 간다. FAILED 처리는 아래 기준을 따른다. |
+| 첫 Write 검증 | `BeginVerification`을 적용한다. 취소 후 EXECUTED 결과도 `CANCEL_REQUESTED → VERIFYING`으로 검증하되 cancel intent를 유지한다. 이미 VERIFYING인 다중 Action에서는 반복 적용하지 않는다. |
+| 완료 판정 | 승인 대상 Action이 모두 final이고 미해결 결과가 없을 때, cancel intent가 없으면 `CompleteWriteRun`, 있으면 취소 종료를 우선한다. |
+
+#### FAILED와 취소
+
+| 상황 | 처리 |
+| --- | --- |
+| `FAILED + NOT_SENT` + 독립된 approved/executable Action 존재 | 실패 Action의 retry/cancel decision fact를 보존하고 다음 Action의 PREFLIGHT로 진행한다. FAILED predecessor에 의존하는 Action은 Claim하지 않는다. |
+| 더 실행할 독립 Action 없음 | `FAILWAIT`에 suspend한다. 다른 Action이 모두 검증됐어도 unresolved FAILED가 남으면 `CompleteWriteRun`하지 않는다. |
+| `prepare-retry` 적용 | `FAILED → MODIFIED`와 Plan Review Gate 적용 후 Review부터 재검토한다. PASS·Domain Validation 이후 새 Approval로 진행한다. |
+| 실행 중 Cancel | APPLIED RequestCancel Receipt로 신규 Claim·Write를 차단한다. in-flight 결과 확정·Verification/Recovery/필요 Reauth를 거친 뒤 닫는다. |
+| 취소 종료 선택 | RECOVERY_REQUIRED이면 `ResolveRecovery(CANCEL)`, 그 외 `VERIFYING \| REAUTH_REQUIRED \| CANCEL_REQUESTED`에서 더 확인할 결과가 없으면 `FinalizeCancel`을 적용한다. 중간 Run 상태가 바뀌어도 Receipt의 cancel intent를 유지한다. |
+
+Recovery는 기존 결과 회수·재검증이 필요할 때만 Verification으로 돌아간다. `CREATE_CORRECTIVE_PLAN`은 기존 Domain 전이에 따라 새 Plan Revision을 준비하고, `ACCEPT_PARTIAL`·실패 확정은 terminal 결과를 준비한다. RECOVERY_REQUIRED에서는 명시적 resolution/재인증을 기다리며 자동 loop하지 않는다.
+
+Confirmation은 §10.2, Tool Route의 필수 READ 보강은 §5.3, Retrieval 내부 반복은 §5.4에 둔다.
 
 ### 1.3 Supervisor Disposition → Edge 완전성
 
-모든 공식 Result는 정확히 하나의 다음 Edge·Interrupt·Terminal 경로를 가져야 한다.
+아래 표는 현재 Result의 소비 규칙이다. 모든 요청에 고정된 Node 순서를 강제하는 표가 아니다. 분석 필요 여부는 §18의 effective analysis Guard를 적용한다. Terminal 표기는 §1.1-B의 응답·Commit·FINALIZE 절차를 뜻한다.
 
-```
-Request.COMPLETE → Tool Route
-Request.NEEDS_CONFIRMATION → interrupt(Request owner)
-Request.INVALID → 비정책 처리불가이면 `CompleteAnswerOnlyRun`, 정책 차단이면 `BlockRun` → FINALIZE
+#### Request Understanding · Tool Route
 
-ToolRoute.ROUTE_READY + IN 있음(사용자 의미 Route 또는 Policy Precondition Route) → Retrieval
-ToolRoute.ROUTE_READY + IN 없음 → Work Analysis/Planning
-ToolRoute.NO_TOOL_NEEDED + `analysis_requirement=NONE` → Planning(Answer)
-ToolRoute.NO_TOOL_NEEDED + `analysis_requirement=REQUIRED` → Work Analysis → Planning(Answer)
-ToolRoute.NEEDS_CONFIRMATION → interrupt(Tool Route owner)
-  - `SCOPE_EXPANSION_REQUIRED`: 사용자 지정 범위 밖의 Policy Precondition Read가 필요한 경우 추가 Source·기간·Resource와 이유를 확인
-ToolRoute.BLOCKED → `BlockRun` applied → FINALIZE
+| 결과·조건 | 다음 책임 / 처리 |
+| --- | --- |
+| `Request.COMPLETE` | Tool Route |
+| `Request.NEEDS_CONFIRMATION` | Request owner에서 interrupt |
+| `Request.INVALID` | 비정책 처리불가는 `CompleteAnswerOnlyRun`, 정책 차단은 `BlockRun`을 적용해 종료 |
+| `ToolRoute.ROUTE_READY` + IN 있음 | Retrieval. 사용자 의미 Route와 필수 Policy Precondition Route 모두 포함 |
+| `ToolRoute.ROUTE_READY` + IN 없음 | effective analysis 필요 여부에 따라 Work Analysis 또는 Planning |
+| `ToolRoute.NO_TOOL_NEEDED` | analysis가 필요하면 Work Analysis 후 Planning(Answer), 아니면 Planning(Answer) |
+| `ToolRoute.NEEDS_CONFIRMATION` | Tool Route owner에서 interrupt. `SCOPE_EXPANSION_REQUIRED`는 추가 범위·이유를 먼저 확인 |
+| `ToolRoute.BLOCKED` | `BlockRun` 적용 후 종료 |
 
-Retrieval.SUFFICIENT → Work Analysis 또는 Planning
-Retrieval.NO_FETCH_NEEDED → Work Analysis 또는 Planning
-Retrieval.NEEDS_MORE_DATA → local budget이 남으면 Retrieval bounded local loop; budget exhausted면 Retrieval 내부 결정적 Guard가 `NEEDS_CONFIRMATION | PARTIAL | BLOCKED` 중 하나로 정규화한 뒤 Main Supervisor에 반환
-Retrieval.NEEDS_CONFIRMATION → interrupt(Retrieval owner)
-Retrieval.ROUTE_RECONSIDERATION_REQUIRED → Tool Route
-Retrieval.PARTIAL + usable Evidence → Work Analysis 또는 Planning (coverage=PARTIAL 유지)
-Retrieval.PARTIAL + usable Evidence 없음 → `CompleteAnswerOnlyRun` → FINALIZE
-Retrieval.BLOCKED → `BlockRun` applied → FINALIZE
+초기 Connector prerequisite 실패는 §5.3의 `PREREQUISITE_UNMET` 종료 경로를 따른다.
 
-WorkAnalysis.COMPLETE → Planning
-WorkAnalysis.NEEDS_MORE_DATA + current InputRoutePlan has route → Retrieval (`RetrievalRequiredV1` 전달)
-WorkAnalysis가 부족 정보를 현재 InputRoutePlan으로 해결할 수 없거나 새 Route가 필요하다고 판단 → owner-local finalizer가 `ROUTE_RECONSIDERATION_REQUIRED + RouteReconsiderationRequiredV1`로 정규화 → Tool Route. no-route 상태를 `NEEDS_MORE_DATA + RetrievalRequiredV1`로 Tool Route에 보내지 않는다.
-WorkAnalysis.NEEDS_CONFIRMATION → interrupt(Work Analysis owner)
-  - `DUPLICATE_OVERRIDE_REQUIRED`: 정확 중복을 인지하고도 동일 Resource 추가 생성을 원하는 경우 2차 확인
-  - `CONFLICT_OVERRIDE_REQUIRED`: 검증된 일정 충돌을 Override하려는 경우 2차 확인
-WorkAnalysis.ROUTE_RECONSIDERATION_REQUIRED → Tool Route
-WorkAnalysis.BLOCKED → `BlockRun` applied → FINALIZE
+#### Retrieval · Work Analysis
 
-Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS
-Planning.PLAN_READY → Review
-Planning.NEEDS_CONFIRMATION → interrupt(Planning owner)
-Planning.ROUTE_RECONSIDERATION_REQUIRED → Tool Route
-Planning.BLOCKED → `BlockRun` applied → FINALIZE
+| 결과·조건 | 다음 책임 / 처리 |
+| --- | --- |
+| `Retrieval.SUFFICIENT / NO_FETCH_NEEDED` | Work Analysis 또는 Planning |
+| Retrieval 내부 `NEEDS_MORE_DATA` + local budget 있음 | 같은 invocation 안의 bounded local loop |
+| Retrieval 내부 `NEEDS_MORE_DATA` + budget 소진 | 결정적 Guard가 `NEEDS_CONFIRMATION \| PARTIAL \| BLOCKED`로 정규화한 뒤 Parent에 반환 |
+| `Retrieval.NEEDS_CONFIRMATION` | Retrieval owner에서 interrupt |
+| `Retrieval.ROUTE_RECONSIDERATION_REQUIRED` | Tool Route |
+| `Retrieval.PARTIAL` + usable Evidence 있음 | coverage=PARTIAL을 유지해 Work Analysis 또는 Planning |
+| `Retrieval.PARTIAL` + usable Evidence 없음 | `CompleteAnswerOnlyRun`으로 종료 |
+| `Retrieval.BLOCKED` | `BlockRun` 적용 후 종료 |
+| `WorkAnalysis.COMPLETE` | Planning |
+| `WorkAnalysis.NEEDS_MORE_DATA` + 현재 IN Route로 해결 가능 | `RetrievalRequiredV1`을 전달해 Retrieval 재진입 |
+| `WorkAnalysis.REQUEST_RECONSIDERATION_REQUIRED` | 현재 Evidence가 현재 Request Intent를 반증·보완한 경우 기존 Request Understanding owner로 재진입. Intent revision을 만들고 Tool Route 이후 dependent artifact를 fresh하게 다시 생성 |
+| Work Analysis의 부족 정보를 현재 Route로 해결 불가 | owner-local finalizer가 `ROUTE_RECONSIDERATION_REQUIRED + RouteReconsiderationRequiredV1`로 정규화해 Tool Route로 전달 |
+| `WorkAnalysis.NEEDS_CONFIRMATION` | Work Analysis owner에서 interrupt. 중복·충돌 Override는 각각 `DUPLICATE_OVERRIDE_REQUIRED / CONFLICT_OVERRIDE_REQUIRED`를 사용 |
+| `WorkAnalysis.ROUTE_RECONSIDERATION_REQUIRED` | Tool Route |
+| `WorkAnalysis.BLOCKED` | `BlockRun` 적용 후 종료 |
 
-Review.PASS → DOMAIN_VALIDATION
-Review.REVISE → pre-publish이면 Planning local revision; published Plan이면 State Contract post-review matrix에 따라 guarded `BeginPlanning` → Planning
-Review.RETRIEVE_MORE + current InputRoutePlan has route → pre-publish이면 Retrieval; published Plan이면 guarded `BeginPlanning`으로 새 Plan revision context를 만든 뒤 Retrieval (`RetrievalRequiredV1` 전달)
-Review evidence gap을 현재 InputRoutePlan으로 해결할 수 없거나 새 Route가 필요함 → owner-local finalizer가 `ROUTE_RECONSIDERATION + RouteReconsiderationRequiredV1`로 정규화. published Plan이면 guarded `BeginPlanning`으로 current Plan을 supersede한 뒤 Tool Route로 back-edge한다. no-route 상태를 `RETRIEVE_MORE + RetrievalRequiredV1`로 Tool Route에 보내지 않는다.
-Review.ROUTE_RECONSIDERATION → pre-publish이면 Tool Route; published Plan이면 guarded `BeginPlanning` 후 Tool Route
-Review.CONFIRM → pre-publish 또는 State Contract가 허용한 published-Plan `WAITING_APPROVAL | VERIFYING`에서 `RequestConfirmation` applied 후 interrupt(Review owner)
-Review.BLOCK → State Contract `BlockRun` guard가 허용할 때만 applied → FINALIZE; in-flight/UNKNOWN_RESULT/MISMATCH가 있으면 Recovery/reauth/cancel resolution을 우선한다.
-```
+no-route 상황을 `NEEDS_MORE_DATA + RetrievalRequiredV1`로 Tool Route에 전달하지 않는다.
 
-정의되지 않은 `schema_version`, Enum, disposition은 fail-closed이며 임의 기본 Edge로 보내지 않는다.
+#### Planning · Review
+
+| 결과·조건 | 다음 책임 / 처리 |
+| --- | --- |
+| `Planning.ANSWER_ONLY` | RESPONSE_SYNTHESIS. 최초 terminal projection은 Retrieval의 PARTIAL을 보존하며, 저장된 terminal 결과를 checkpoint coverage로 덮어쓰지 않음 |
+| `Planning.PLAN_READY` | Review |
+| `Planning.NEEDS_CONFIRMATION` | Planning owner에서 interrupt |
+| `Planning.ROUTE_RECONSIDERATION_REQUIRED` | Tool Route |
+| `Planning.BLOCKED` | `BlockRun` 적용 후 종료 |
+| `Review.PASS` | DOMAIN_VALIDATION |
+| `Review.REVISE` | pre-publish는 Planning revision, published Plan은 guarded `BeginPlanning` 후 Planning |
+| `Review.RETRIEVE_MORE` + 현재 IN Route로 해결 가능 | pre-publish는 Retrieval, published Plan은 guarded `BeginPlanning`으로 새 Plan revision context를 만든 뒤 Retrieval. `RetrievalRequiredV1` 전달 |
+| Review evidence gap을 현재 Route로 해결 불가 | owner-local finalizer가 `ROUTE_RECONSIDERATION + RouteReconsiderationRequiredV1`로 정규화. published Plan은 guarded `BeginPlanning`으로 supersede한 뒤 Tool Route |
+| `Review.ROUTE_RECONSIDERATION` | pre-publish는 Tool Route, published Plan은 guarded `BeginPlanning` 후 Tool Route |
+| `Review.CONFIRM` | pre-publish 또는 State Contract가 허용한 published `WAITING_APPROVAL \| VERIFYING`에서 `RequestConfirmation` 적용 후 Review owner interrupt |
+| `Review.BLOCK` | State Contract의 `BlockRun` Guard를 통과해 적용된 경우만 종료. in-flight/UNKNOWN_RESULT/MISMATCH가 있으면 Recovery·Reauth·Cancel resolution 우선 |
+
+no-route 상황을 `RETRIEVE_MORE + RetrievalRequiredV1`로 Tool Route에 전달하지 않는다. 정의되지 않은 schema version·Enum·disposition은 임의 기본 Edge로 보내지 않는다.
 
 ### 1.4 Graph Profile
 
-Workflow semantic closed set은 다음 세 값이다. typed shared contract의 repository placement는 16의 `ports/system/contracts/workflow_binding.py`, Interface projection은 07 `WorkflowBindingV1`을 따른다.
+아래는 현재 문서에 정의된 `GraphProfileIdV1`과 profile binding이다. Interface projection은 `07 WorkflowBindingV1`, repository placement는 `16`을 따른다. 실험의 비교 후보·개수·최종 Graph 구성은 여기서 고정하지 않는다.
 
 ```python
 GraphProfileIdV1 = Literal["SINGLE_BASELINE", "THREE_STAGE", "SIX_ROLE_BASELINE"]
 ```
 
-세 Profile은 **모두 구현·테스트 대상**이다. `13 Evaluation`의 Product Decision Record가 Release profile을 선택하기 전에도 구현자는 임의로 하나를 삭제하거나 통합하지 않는다. Service composition은 startup `GraphProfileIdV1`을 받아 해당 compiled graph를 선택하고, StartRun 시 그 profile과 `graph_version`을 Run 전용 workflow binding에 snapshot한다. 동일 Run resume은 저장된 binding과 같은 profile/version만 허용한다.
+Profile 목록을 모든 후보의 구현·비교 의무로 사용하지 않는다. 선택된 구성의 Service composition은 startup `GraphProfileIdV1`로 compiled graph를 선택하고, StartRun에서 profile과 `graph_version`을 Run binding에 snapshot한다. 동일 Run resume은 저장된 binding과 같은 profile/version만 허용한다.
 
 | Profile | 구조 | 목적 |
 | --- | --- | --- |
@@ -318,22 +298,6 @@ GraphProfileIdV1 = Literal["SINGLE_BASELINE", "THREE_STAGE", "SIX_ROLE_BASELINE"
 | `SIX_ROLE_BASELINE` | Agent Subgraph 6개. Request Understanding / Tool Route / Retrieval / Work Analysis / Planning / Review | 최대 전문화 Multi-Agent Baseline |
 
 Semantic owner와 physical compiled Subgraph identity는 아래 **exact profile binding**으로만 연결한다.
-
-```text
-SemanticAgentOwnerIdV1 = REQUEST_UNDERSTANDING | TOOL_ROUTE | RETRIEVAL | WORK_ANALYSIS | PLANNING | REVIEW
-
-CompiledAgentSubgraphIdV1 =
-  UNIFIED_AGENT
-  | STAGE_REQUEST_ROUTE_RETRIEVAL
-  | STAGE_ANALYSIS_PLANNING
-  | STAGE_REVIEW
-  | SIX_REQUEST_UNDERSTANDING
-  | SIX_TOOL_ROUTE
-  | SIX_RETRIEVAL
-  | SIX_WORK_ANALYSIS
-  | SIX_PLANNING
-  | SIX_REVIEW
-```
 
 | semantic owner | SINGLE_BASELINE | THREE_STAGE | SIX_ROLE_BASELINE |
 | --- | --- | --- | --- |
@@ -357,12 +321,14 @@ CompiledAgentSubgraphIdV1 =
 
 ### 2.1 Main State 계약
 
+#### Run 입력과 Phase
+
 ```python
 class RunInputV1:
     entry_mode: Literal["AGENT_SEARCH", "RESOURCE_SELECTED"]
     user_request: str
     selected_resource_refs: list[SelectedResourceRefV1]
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
 
 WorkflowPhaseV2 = Literal[
     "INITIALIZE", "REQUEST_UNDERSTANDING", "TOOL_ROUTING", "RETRIEVAL",
@@ -370,9 +336,11 @@ WorkflowPhaseV2 = Literal[
     "WAITING_CONFIRMATION", "WAITING_APPROVAL", "PREFLIGHT", "ACTION_EXECUTION",
     "READ_EXECUTION", "VERIFICATION", "RECOVERY", "RESPONSE_SYNTHESIS", "TERMINAL_COMMIT", "FINALIZE"
 ]
+```
 
-`WorkflowPhaseV2`는 Main State에 저장하는 **routing/checkpoint phase enum**이다. `READ_EXECUTION`은 `PublishReadOnlyPlan`이 만든 Legacy/compatibility READ-only Run에서만 사용되는 non-mutating compatibility phase이며 Release approval-gated Write topology의 새 Agent Node가 아니다. Main Graph 도식의 `DOMAIN_RECONCILE`, `SUSPEND · Domain 상태 해소 대기`, `SUSPEND · FAILED retry/cancel 대기`, `ORIGINATING SUBGRAPH CHECKPOINT`는 결정적 control/checkpoint node이며 별도 `WorkflowPhaseV2` 값이 아니다. 구현은 도식에 등장한다는 이유로 이 control node 이름을 Phase enum에 임의 추가하지 않는다. 반대로 `REAUTH_REQUIRED`, `CANCEL_REQUESTED`, `CANCELLED`는 Domain `Run.status`이며 `workflow_phase`에 복제하지 않는다.
+#### 실행·검증 결과
 
+```python
 class ExecutionSummaryV1:
     schema_version: Literal[1]
     action_id: str
@@ -387,7 +355,11 @@ class VerificationSummaryV1:
     verification_id: str
     routing_outcome: Literal["VERIFIED", "MISMATCH"]
     source_action_version: int
+```
 
+#### 호출 예산
+
+```python
 class RunBudgetV2:
     schema_version: Literal[2]
     profile: Literal["NORMAL", "RETRIEVAL_HEAVY", "REVISION_HEAVY"]
@@ -405,15 +377,17 @@ class RunBudgetV2:
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[100]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
     review_rechecks_used: int
     additional_retrieval_rounds_used: int
+```
 
-`ComponentCircuitStateV1`은 10 Infrastructure의 process-local operational contract가 소유한다. Workflow Main State에는 Circuit truth를 복제하지 않고 outbound Application operation이 현재 circuit을 조회한다.
+#### Prompt·Trace metadata
 
+```python
 class PromptContextV1:
     schema_version: Literal[1]
     run_id: str
@@ -429,7 +403,11 @@ class TraceContextV1:
     conversation_id: str
     run_id: str
     parent_span_id: str | None
+```
 
+#### 종료 제어
+
+```python
 TerminalCommitKindV1 = Literal[
     "COMPLETE_ANSWER_ONLY", "COMPLETE_READ_ONLY", "COMPLETE_WRITE", "BLOCK_RUN", "FINALIZE_CANCEL",
     "RECOVERY_ACCEPT_PARTIAL", "RECOVERY_CANCEL", "RECOVERY_FAIL"
@@ -441,7 +419,11 @@ class TerminalCommitIntentV1:
     expected_run_version: int
     terminal_message: TerminalAssistantMessageInputV1
     reason_codes: list[str]
+```
 
+#### Main State
+
+```python
 class GraphState:
     schema_version: Literal[2]
     run_id: str
@@ -470,20 +452,23 @@ class GraphState:
     trace_context: TraceContextV1
 ```
 
-Main State control/projection type 불변조건:
+#### Control·Projection 사용 조건
 
-- `graph_profile`은 Run 시작 시 `WorkflowBindingV1`에 snapshot된 값의 projection이며 Run 중 변경하지 않는다. checkpoint resume에서 active compiled graph profile/version이 binding과 다르면 추측 변환하지 않고 Recovery로 fail closed한다.
-
-- `TerminalCommitIntentV1`은 **deterministic terminal control projection**이다. `kind`는 이미 결정된 Domain/Recovery outcome에서만 생성하고 Product LLM이 선택할 수 없다. `TERMINAL_COMMIT`이 성공하면 즉시 clear한다. command idempotency key는 `run_id + expected_run_version + kind`의 canonical hash로 결정적으로 생성하여 checkpoint replay가 중복 terminal mutation/Message를 만들지 않는다.
-
-- `ExecutionSummaryV1`과 `VerificationSummaryV1`은 **Domain-backed routing projection**이다. `routing_outcome`은 이미 Domain/Application 결과로 확정된 사실을 투영할 뿐 새 Domain lifecycle state/guard를 정의하지 않는다. Summary를 써서 Domain Store의 Action/Attempt/Verification 사실을 생성하거나 덮어쓰지 않는다.
-- `RunBudgetV2`는 결정적 Workflow budget controller만 갱신한다. 현재 15 Prompt·Failure의 active profile `NORMAL=14 / RETRIEVAL_HEAVY=20 / REVISION_HEAVY=18 / ABSOLUTE=24`, Schema Repair 1, Planning Revision 2, Additional Retrieval 2 계약과 01/01-B의 per-Run connector-call/context-token/retry/maximum-execution-time 상한을 함께 집행한다. 모든 counter는 음수가 아니고 단조 증가하며 Profile 승격은 이미 사용한 call을 초기화하지 않는다. Run 시작 시 10 Settings의 validated budget snapshot을 고정하고 elapsed time은 `ClockPort`로 검사한다. Retrieval page/detail upper bound는 05 current budget(`MAX_TOTAL_SOURCE_PAGES=8`, `MAX_TOTAL_DETAIL_RESOURCES=12` 및 source-local detail 제한)의 Release Default를 넘을 수 없으며 Settings가 더 작은 값을 선택할 수 있다. 어떤 hard limit도 초과되기 전에 다음 outbound/LLM operation을 차단하고 bounded failure/recovery result를 반환한다.
-- `PromptContextV1`은 Prompt Registry 선택/추적 metadata만 담는다. Prompt 원문, raw `user_request`, Conversation History, previous-run Artifact, Tool Result 원문을 숨은 context로 저장하지 않는다. 실제 Product Prompt 입력은 각 Node의 typed projection이 소유한다.
-- `TraceContextV1`은 request/run correlation propagation 전용이며 Domain/Workflow business truth가 아니다. `trace_id/request_id/run_id`를 바꿔 lifecycle 또는 idempotency authority를 만들지 않는다.
+| 항목 | 조건 |
+| --- | --- |
+| `graph_profile` | Run 시작 시 WorkflowBinding에 저장한 값의 projection이다. Run 중 변경하지 않으며 compiled profile/version 불일치는 Recovery로 fail closed한다. |
+| `WorkflowPhaseV2` | routing/checkpoint 위치다. 도식의 DOMAIN_RECONCILE·SUSPEND·ORIGINATING SUBGRAPH CHECKPOINT는 별도 Phase 값이 아니다. REAUTH_REQUIRED·CANCEL_REQUESTED·CANCELLED 같은 Domain 상태를 복제하지 않는다. |
+| `READ_EXECUTION` | PublishReadOnlyPlan이 만든 Legacy/compatibility READ-only Run의 non-mutating phase이며 새 승인형 Write Agent가 아니다. |
+| `TerminalCommitIntentV1` | 결정된 Domain/Recovery outcome에서만 만든다. Product LLM이 kind를 고르지 않는다. 성공 Commit 후 clear하며 `run_id + expected_run_version + kind`의 canonical hash로 command idempotency key를 생성한다. |
+| `ExecutionSummaryV1 / VerificationSummaryV1` | Domain/Application이 확정한 사실의 routing projection이다. Domain state·guard를 새로 정의하거나 Action/Attempt/Verification 사실을 덮어쓰지 않는다. |
+| `RunBudgetV2` | 결정적 budget controller만 갱신한다. snapshot·counter·차단 규칙은 §11을 따른다. |
+| `ComponentCircuitStateV1` | `10`의 process-local operational contract다. Main State에 Circuit truth를 복제하지 않고 outbound Application operation이 조회한다. |
+| `PromptContextV1` | Registry 선택·추적 metadata만 담는다. Prompt·raw user_request·Conversation History·previous-run Artifact·Tool 원문을 숨은 입력으로 저장하지 않는다. |
+| `TraceContextV1` | correlation propagation 전용이다. trace/request/run ID 변경으로 lifecycle·idempotency 권위를 만들지 않는다. |
 
 #### WorkflowSignalV1
 
-`workflow_signal`은 공식 업무 Artifact가 아니라 interrupt/back-edge를 위한 일시적 제어 신호다. 가능한 형태를 discriminated union으로 닫는다.
+`workflow_signal`은 확정 업무 Artifact가 아니라 현재 interrupt/back-edge 요청 하나를 담는 transient field다. 타입은 다음 discriminated union으로 닫고, producer·consumer·clear 시점은 §3.7에서 정의한다.
 
 ```python
 SemanticAgentOwnerIdV1 = Literal[
@@ -535,6 +520,17 @@ class RouteReconsiderationRequiredV1:
     kind: Literal["ROUTE_RECONSIDERATION_REQUIRED"]
     reason_codes: list[str]
 
+class RequestReconsiderationObservationV1:
+    evidence_ref: str
+    resource_ref: str
+    excerpt: str
+
+class RequestReconsiderationRequiredV1:
+    kind: Literal["REQUEST_RECONSIDERATION_REQUIRED"]
+    reason_codes: list[str]
+    based_on_request_intent: StateArtifactMetaV1
+    observations: list[RequestReconsiderationObservationV1]
+
 class RetrievalNeedV1:
     required_information: str
     reason_codes: list[str]  # minItems=1
@@ -554,26 +550,43 @@ class BlockedSignalV1:
     kind: Literal["BLOCKED"]
     reason_codes: list[str]
 
-WorkflowSignalV1 = ConfirmationRequiredV1 | RouteReconsiderationRequiredV1 | RetrievalRequiredV1 | BlockedSignalV1
+WorkflowSignalV1 = ConfirmationRequiredV1 | RouteReconsiderationRequiredV1 | RequestReconsiderationRequiredV1 | RetrievalRequiredV1 | BlockedSignalV1
 ```
 
-불변조건:
+#### 추가 Retrieval과 Context Adjustment
 
-- `RetrievalNeedV1.required_information`은 비어 있지 않은 단일 정보 요구를 표현하고 `reason_codes`는 최소 1개를 가진다. 동일 Signal 안의 Need는 정규화한 `required_information + reason_codes` 기준으로 stable dedup한다.
-- `ContextAdjustmentV1`은 Agent가 생성하는 `WorkflowSignalV1`이 아니라 `run.adjust_context`가 검증해 같은 Run 실행에 한 번만 전달하는 external control projection이다. `EXCLUDE_EVIDENCE`는 05가 소유하는 deterministic stable `segment_id` 중 current Preview membership이 검증된 값만 허용하고 `retrieval_need=null`; Retrieval owner는 handoff payload를 clear하기 전에 이 IDs를 `RetrievalState.exclusion_obligation_segment_ids`에 materialize/checkpoint한다. `RETRIEVE_MORE`는 `excluded_segment_ids=[]`이고 `retrieval_need.reason_codes`에 `USER_CONTEXT_ADJUSTMENT`를 포함한다. Retrieval control patch는 이 need를 `RetrievalState.pending_user_retrieval_need`에 checkpoint-commit하고 새 RetrievalResult revision finalize 시에만 clear한다.
-- Supervisor는 Context Adjustment를 Retrieval owner로만 전달한다. 조정된 Retrieval revision이 생기면 `meta.based_on` freshness가 downstream 재실행 범위를 결정하며 Browser/Agent가 stale artifact를 직접 삭제하거나 수정하지 않는다.
-- `RetrievalNeedV1`에는 Connector·Resource 종류·Tool ID·Raw Query·Page Token·MCP Arguments를 넣지 않는다. Retrieval은 현재 active `InputRoutePlanV1.input_routes` 안에서만 Need를 소비하며, 해당 Route로 해결할 수 없거나 새 Route가 필요하면 `RouteReconsiderationRequiredV1`을 사용한다.
-- Work Analysis의 `assess_information_gaps`는 현재 IN Route로 해결 가능한 부족 정보만 `retrieval_needs`로 만들고 `NEEDS_MORE_DATA` 시 `RetrievalRequiredV1`으로 투영한다. Review `RETRIEVE_MORE`는 `EvidenceGapV1.required_information`의 각 항목을 `RetrievalNeedV1` 하나로 투영하고 해당 gap `code`를 `reason_codes`에 보존한다.
-- Retrieval 자신의 `NEEDS_MORE_DATA`는 같은 frozen IN Route의 bounded local loop이므로 `RetrievalRequiredV1`을 만들지 않는다. `RetrievalRequiredV1`은 Work Analysis·Review처럼 다른 Owner가 Retrieval 재진입을 요청할 때만 사용한다.
-- `RegisteredResumeTargetRefV2`는 active compiled Main Graph의 `ResumeTargetRegistry`가 발급·검증한다. `AGENT_NODE` target은 `SemanticAgentOwnerIdV1 + selected GraphProfileIdV1 → CompiledAgentSubgraphIdV1` exact binding과 NodeRegistry entry를 모두 검증한다. `MAIN_CONTROL` target은 closed `MainResumeStageIdV1`만 허용한다. LLM·Agent 자유 문자열·사용자 입력은 target kind/owner/subgraph/stage/node/graph_version의 authority가 아니다.
-- `graph_version`은 compiled Main Graph의 resume-contract version이다. Prompt·Dataset·DB Schema·Tool Registry version과 분리하며, 등록 가능한 semantic-owner/compiled-subgraph/node/main-stage target 또는 interrupt/resume topology가 바뀌면 version을 올린다. Checkpoint의 `graph_version`이 active Registry와 다르면 추측 resume하지 않고 unknown-contract fail-closed 경로를 따른다.
-- `ConfirmationRequiredV1`의 `question/options`는 검증된 Subgraph 결과에서 올 수 있지만 `interrupt_id`, `semantic_owner_id`, `resume_target`은 deterministic Workflow/Application boundary가 확정한다. 같은 `interrupt_id + semantic_owner_id + resume_target`을 `RequestConfirmation`에 바인딩하고 `applied=true` 이후에만 checkpoint 저장과 LangGraph interrupt를 생성한다.
-- `options=[]`는 자유 텍스트 응답, `options`가 하나 이상이면 닫힌 선택 응답을 뜻한다. 닫힌 선택 응답은 등록된 값 중 하나만 허용하며 임의 텍스트를 승인/정책 결정으로 해석하지 않는다.
-- `workflow_signal`은 현재 제어 요청 하나만 담는 transient Main State field다. 해당 Edge/Interrupt owner가 소비한 뒤 clear하며 history list나 두 번째 workflow truth를 만들지 않는다.
-- UI/API pending interrupt는 07의 current `PendingInterruptResponseV1`로만 one-way projection한다. 정의되지 않은 legacy interrupt DTO alias compatibility alias를 current contract로 사용하지 않는다.
+| 입력 | 허용값·처리 |
+| --- | --- |
+| `RetrievalNeedV1` | 비어 있지 않은 단일 `required_information`과 하나 이상의 `reason_codes`. 동일 Signal 안에서 정규화한 두 값으로 stable dedup한다. |
+| Need에 넣지 않는 값 | Connector·Resource 종류·Tool ID·Raw Query·Page Token·MCP Arguments |
+| Need 소비 범위 | 현재 active InputRoutePlan 안에서만 소비한다. 해결할 수 없으면 `RouteReconsiderationRequiredV1`을 사용한다. |
+| Work Analysis의 Need | `assess_information_gaps`가 현재 IN Route로 해결 가능한 부족 정보만 생성한다. NEEDS_MORE_DATA일 때 `RetrievalRequiredV1`으로 투영한다. |
+| Review의 Need | RETRIEVE_MORE의 각 `EvidenceGapV1.required_information` 항목을 Need로 만들고 gap code를 reason_codes에 보존한다. |
+| Retrieval 자체 반복 | 같은 invocation의 NEEDS_MORE_DATA에는 `RetrievalRequiredV1`을 만들지 않는다. |
+| `ContextAdjustmentV1` | Agent Signal이 아니다. `run.adjust_context`가 검증한 same-Run external control이며 Supervisor는 Retrieval owner에만 전달한다. |
+| `EXCLUDE_EVIDENCE` | current Preview membership이 검증된 stable segment ID만 허용하고 `retrieval_need=null`. payload clear 전에 `exclusion_obligation_segment_ids`를 checkpoint에 materialize한다. |
+| `RETRIEVE_MORE` | `excluded_segment_ids=[]`, reason_codes에 `USER_CONTEXT_ADJUSTMENT` 포함. `pending_user_retrieval_need`에 checkpoint-commit하고 fresh RetrievalResult revision finalize 시에만 clear한다. |
 
-```
+조정 후 downstream 재실행은 `meta.based_on` freshness로 결정한다. Browser나 Agent가 stale Artifact를 직접 삭제·수정하지 않는다.
 
+#### 등록된 Resume Target과 Confirmation
+
+| 항목 | 규칙 |
+| --- | --- |
+| Target 발급·검증 | active compiled Main Graph의 `ResumeTargetRegistry`만 수행한다. |
+| `AGENT_NODE` | semantic owner + selected profile의 exact compiled-subgraph binding과 NodeRegistry entry를 모두 검사한다. |
+| `MAIN_CONTROL` | 선언된 `MainResumeStageIdV1`만 허용한다. |
+| target 입력 권위 | LLM 자유 문자열·Agent 제안·사용자 입력이 kind/owner/subgraph/stage/node/graph_version을 확정하지 않는다. |
+| `graph_version` | compiled Main Graph의 resume-contract version이다. Prompt·Dataset·DB·Tool Registry version과 독립이다. target 또는 interrupt/resume topology가 바뀌면 증가시키며 mismatch checkpoint는 추측 resume하지 않는다. |
+| `question/options` | 검증된 Subgraph 결과에서 올 수 있다. |
+| `interrupt_id / semantic_owner_id / resume_target` | 결정적 Workflow/Application이 확정해 같은 RequestConfirmation에 bind한다. `applied=true` 이후에만 checkpoint 저장과 interrupt를 생성한다. |
+| `options=[]` | 자유 텍스트 응답 |
+| options 하나 이상 | 등록된 값 안의 닫힌 선택 응답. 임의 텍스트를 승인·정책 결정으로 해석하지 않는다. |
+| pending interrupt 표시 | `07 PendingInterruptResponseV1`로만 one-way projection한다. 정의되지 않은 legacy DTO alias를 current contract로 사용하지 않는다. |
+
+#### PolicyConfirmationReceiptV1
+
+```python
 class PolicyConfirmationReceiptV1:
     schema_version: Literal[1]
     meta: StateArtifactMetaV1
@@ -586,49 +599,63 @@ class PolicyConfirmationReceiptV1:
     affected_resource_refs: list[str]
 ```
 
-- `PolicyConfirmationReceiptV1`은 LLM/Agent가 생성하지 않는다. 실제 사용자 interrupt 응답을 받은 Application/Confirmation Controller만 생성하며 Main State의 `policy_confirmation_receipts`에 append한다. `meta.based_on`은 확인 질문을 발생시킨 현재 RequestIntent/InputRoute/OutputRoute/Retrieval 등 공식 Artifact revision만 참조하며, `meta.artifact_id`가 Audit의 `confirmation_receipt_id`다. 일반 의미 Clarification은 owner Artifact의 새 revision으로 흡수할 수 있으므로 Receipt 영속 대상이 아니고, 정책상 별도 증명이 필요한 Scope 확장·중복 Override·충돌 Override만 이 Receipt를 요구한다.
-- `decision=APPROVED`이고 `decision_context_hash`와 `meta.based_on`이 현재 active Request/Route/Retrieval revision에 맞는 Receipt만 해당 Policy Precondition을 충족한다. Scope 확장으로 생성되는 `InputRoutePlanV1.meta.based_on`과 Override 후 생성되는 `WorkAnalysisResultV2.meta.based_on`은 사용한 Receipt revision을 포함한다. Upstream revision 변경으로 Context가 달라지면 기존 Receipt는 stale이며 재사용하지 않는다. `DECLINED` Receipt는 Audit/설명 근거일 뿐 허용 근거가 아니다.
-- Write Plan이 정책 Override에 의존하면 Domain Validation은 필요한 APPROVED Receipt를 확인하고 Approval Snapshot에 Receipt ID와 Context Hash를 포함한다. Receipt가 없거나 stale이면 Approval로 진행하지 않는다.
-- Confirmation resume는 `semantic_owner_id + AgentNodeResumeTargetV2 + interrupt_id`로 결정한다. `resume_target`은 LLM이 작성하는 자유 문자열이 아니라 현재 `graph_version`의 `NodeRegistry` entry를 근거로 `ResumeTargetRegistry`가 발급·검증하는 `AgentNodeResumeTargetV2`이다. 모든 확인 응답을 Request Understanding으로 되돌리지 않는다.
-- Workflow Signal은 확정 Artifact를 직접 수정하지 않는다. Upstream 재판단이 필요하면 Supervisor가 해당 State Owner로 Back-edge한다.
+| 항목 | 사용 조건 |
+| --- | --- |
+| 생성·저장 | 실제 사용자 interrupt 응답을 검증한 Application/Confirmation Controller만 생성해 `policy_confirmation_receipts`에 append한다. Agent/LLM은 생성·수정하지 않는다. |
+| 적용 대상 | Scope 확장·중복 Override·충돌 Override. 일반 Clarification은 owner Artifact revision으로 흡수할 수 있으며 별도 Receipt 영속 대상이 아니다. |
+| 근거 revision | 질문을 발생시킨 current RequestIntent/InputRoute/OutputRoute/Retrieval 등 공식 revision만 `meta.based_on`에 참조한다. `meta.artifact_id`는 Audit의 confirmation_receipt_id다. |
+| 허용 근거 | APPROVED이고 decision_context_hash·based_on이 현재 active revision과 일치하는 Receipt만 사용한다. DECLINED는 Audit·설명용이지 허용 근거가 아니다. |
+| 후속 결과 | Scope 확장의 InputRoutePlan과 Override 후 WorkAnalysisResult는 사용한 Receipt revision을 based_on에 포함한다. Context가 달라지면 재사용하지 않는다. |
+| Write 계획 | Domain Validation이 유효한 APPROVED Receipt를 확인하고 Approval Snapshot에 Receipt ID·Context Hash를 넣는다. 누락·stale이면 Approval로 진행하지 않는다. |
+
+Confirmation은 같은 `semantic_owner_id + AgentNodeResumeTargetV2 + interrupt_id`로 재개한다. 모든 응답을 Request Understanding으로 되돌리거나 Signal로 upstream Artifact를 직접 수정하지 않는다.
 
 ### 2.2 Main State에 저장하는 것
 
-Main State에는 다음 단계가 재사용해야 하는 **Run 입력과 공식 결과**만 둔다. `run_input`은 사용자가 이번 Run에 실제로 제출한 요청과 Entry Context의 기준점이며 downstream이 임의로 변경하지 않는다.
+Main State는 이번 Run의 입력과 다음 책임이 재사용할 공식 결과를 담는다. `run_input`을 downstream이 임의 변경하지 않는다.
 
-**Conversation과 Run State 격리:** `conversation_id`는 Message·Run Timeline을 묶는 상관관계 ID일 뿐 Main State 상속 Key가 아니다. Terminal Run 뒤 같은 Conversation에서 시작하는 새 Run은 새 `langgraph_thread_id`와 새 `RunInputV1`로 초기화하며 `request_intent`, `tool_route_plan`, `retrieval_result`, `work_analysis_result`, `planning_result`, `plan_review`, `policy_confirmation_receipts`, `workflow_signal`, `prompt_context`를 이전 Run에서 복사하지 않는다. 이전 Run Checkpoint를 새 Run의 시작점으로 사용하지도 않는다.
+| 구분 | 보존 범위 |
+| --- | --- |
+| Run 입력 | 사용자가 이번 Run에 제출한 요청과 명시적으로 선택한 Entry Context |
+| 공식 결과 | request_intent, tool_route_plan, retrieval_result, work_analysis_result, planning_result, plan_review |
+| 실행 관련 | 승인·실행·검증 reference와 허용된 control projection |
+| 대용량 원문·검색 후보 | Run Retrieval Cache Handle로 참조한다. Main State에 원문을 복제하지 않는다. |
 
-새 Run의 Request Understanding Projection은 현재 `run_input.user_request + run_input.selected_resource_refs`만 소비한다. 과거 Conversation Message를 숨은 Prompt Context로 append하지 않는다. `관련 메일 찾아줘`처럼 이전 Run 없이는 대상을 결정할 수 있고 이번 Run에 명시적 Resource가 없는 표현은 현재 Run에서 `NEEDS_CONFIRMATION`으로 해결한다. 반대로 동일 Run의 Confirmation/재인증/Recovery는 기존 owner/thread/checkpoint를 resume하므로 새 Run 격리 규칙의 예외가 아니라 **동일 Run 연속성**이다.
+#### 새 Run과 same-Run resume
 
-```
-run_input
-→ request_intent
-→ tool_route_plan
-→ retrieval_result
-→ work_analysis_result
-→ planning_result
-→ plan_review
-→ approval / execution / verification reference
-```
+`conversation_id`는 Timeline 상관관계 ID이지 State 상속 Key가 아니다. Terminal Run 뒤 새 요청은 새 `langgraph_thread_id + RunInputV1`로 시작한다. 이전 Run의 Request·Route·Retrieval·Analysis·Planning·Review·Receipt·Signal·PromptContext나 Checkpoint를 복사하지 않는다.
 
-저장하지 않는 것:
+새 Run의 Request Understanding Projection은 현재 `run_input.user_request + run_input.selected_resource_refs`만 소비한다. 과거 Conversation Message를 숨은 Prompt Context로 append하지 않는다.
 
-- LLM raw completion
-- Prompt 원문
-- Repair 중간 candidate
-- Query 후보 전체
-- Page Token
-- 전체 Gmail·Calendar·Tasks 원문
-- RAG 후보 전체와 내부 score 전체
-- Subgraph 내부 임시 validation state
-- 아직 확정되지 않은 confirmation/reconsideration용 candidate (이 값은 `workflow_signal`로만 전달)
+동일 Run의 Confirmation·재인증·Recovery는 기존 owner/thread/checkpoint를 resume한다. 새 Run 격리의 예외가 아니라 동일 Run 연속성이다.
 
-대용량 원문과 세부 Retrieval 후보는 Run Retrieval Cache Handle로 참조한다. Retrieval-dependent checkpoint는 current handle dependency만 `GraphCheckpointEnvelopeV1.retrieval_cache_requirements`로 bounded projection하며 raw result/token은 metadata에 넣지 않는다. Cache의 concrete authority는 `RunRetrievalCachePort → InMemoryRunRetrievalCache`이며, resume 시 handle loss를 durable workflow restart로 바꾸는 유일한 Application owner는 `run.reconcile_retrieval_cache_restart`다. Background/LangGraph adapter는 이 Handler를 driving boundary로 호출할 수 있지만 cache lookup 결과를 근거로 Repository row를 직접 stage하지 않는다.
+> **표현 확인 필요:** 원문은 `관련 메일 찾아줘`를 NEEDS_CONFIRMATION으로 처리하면서 조건을 “이전 Run 없이는 대상을 결정할 수 있고”라고 적고 있다. 조건의 의도가 불명확해 문장을 반대로 고치거나 새 해석을 확정하지 않는다.
 
+#### 저장하지 않는 것
+
+| 분류 | 제외 대상 |
+| --- | --- |
+| 추론 중간물 | LLM raw completion, Prompt 원문, Repair candidate, 임시 validation state |
+| 검색 중간물 | Query 후보 전체, Page Token, 전체 Gmail·Calendar·Tasks 원문, RAG 후보·내부 score 전체 |
+| 미확정 제어 후보 | confirmation/reconsideration 후보를 업무 Artifact로 저장하지 않는다. 허용된 제어 요청만 workflow_signal로 전달한다. |
+
+#### Retrieval cache와 checkpoint
+
+| 상황 | 처리 |
+| --- | --- |
+| Retrieval-dependent checkpoint | 필요한 handle dependency만 `GraphCheckpointEnvelopeV1.retrieval_cache_requirements`에 투영한다. raw result/token은 넣지 않는다. |
+| handle loss | `RunRetrievalCachePort → InMemoryRunRetrievalCache`를 소비하는 `run.reconcile_retrieval_cache_restart`가 durable restart를 소유한다. Background/LangGraph adapter는 Handler를 호출할 뿐 Repository row를 직접 stage하지 않는다. |
+| Plan/Evidence가 durable한 WAITING_APPROVAL / EXECUTING / VERIFYING | 이전 Retrieval 원문 cache 유실로 재검색하거나 승인·검증 continuation을 막지 않는다. persisted Action/Approval/Evidence와 fresh preflight/Verification READ를 사용한다. |
+| 수정·재계획으로 PLANNING / RETRIEVING 재진입 | 해당 Retrieval cache prerequisite를 다시 적용한다. |
 
 ### 2.2-A Retrieval head projection
 
-Application-readable current Retrieval revision is 07/04의 `RetrievalHeadV1` typed checkpoint metadata. Main State `retrieval_result.meta.revision`과 successful Retrieval checkpoint를 저장할 때 adapter가 동일 revision/head를 함께 commit한다. `run.project_context_preview`와 `run.adjust_context`는 `CheckpointPort.load_retrieval_head(run_id)`를 사용하며 opaque Main State/checkpoint blob을 열지 않는다.
+| 항목 | 규칙 |
+| --- | --- |
+| Application이 읽는 current revision | `07/04 RetrievalHeadV1` typed checkpoint metadata |
+| checkpoint 저장 | adapter가 `retrieval_result.meta.revision`과 successful Retrieval checkpoint의 동일 revision/head를 함께 Commit |
+| Preview·Adjustment 조회 | `run.project_context_preview`와 `run.adjust_context`는 `CheckpointPort.load_retrieval_head(run_id)` 사용 |
+| 금지 | opaque Main State/checkpoint blob을 열어 current revision을 읽거나 추측하지 않음 |
 
 ### 2.3 State Owner
 
@@ -658,7 +685,9 @@ Application-readable current Retrieval revision is 07/04의 `RetrievalHeadV1` ty
 | `prompt_context` | Prompt Runtime/Registry를 호출하는 결정적 runtime 경계 | PromptRef 선택·runtime 입력 계약을 위한 control context. business Artifact나 숨은 Conversation memory가 아니다. |
 | `trace_context` | Application/Workflow observability propagation | Correlation/Trace context이며 Domain 또는 Agent business truth가 아니다. |
 
-이 필드들도 patch allowlist를 가진다. Agent Subgraph의 일반 owner-field patch가 `approved_plan_id`, execution/verification summary, receipt/budget/prompt/trace context를 임의 변경하면 계약 위반이다. 특히 Domain-backed 세 reference/summary는 Domain Result `applied=true` 또는 이미 확정된 Domain 사실을 결정적으로 projection한 경우에만 갱신하며, Graph State가 Domain Store보다 우선하지 않는다.
+이 필드들도 patch allowlist를 가진다. Agent의 일반 owner-field patch로 approved_plan_id, execution/verification summary, receipt/budget/prompt/trace context를 변경하지 않는다.
+
+Domain-backed reference/summary는 `applied=true` 또는 이미 확정된 Domain 사실을 결정적으로 projection한 경우에만 갱신한다. Graph State가 Domain Store보다 우선하지 않는다.
 
 ### 2.4 Revision·Invalidation
 
@@ -675,38 +704,61 @@ class StateArtifactMetaV1:
     based_on: list[StateArtifactRefV1]
 ```
 
-규칙:
+| 변경·판단 | 처리 |
+| --- | --- |
+| stale 판정 | 하드코딩된 단계 목록이 아니라 based_on의 upstream artifact_id·revision과 현재 활성 revision의 불일치로 계산한다. |
+| InputRoutePlan 변경 | 이를 참조한 Retrieval과 downstream만 stale 처리한다. |
+| OutputPlan 변경 | 이를 참조한 Planning·Review 등만 stale 처리한다. Input Route와 Retrieval이 같으면 다시 검색하지 않는다. |
+| RequestIntent / Retrieval / WorkAnalysis 변경 | 같은 dependency 원칙으로 필요한 downstream만 재생성한다. |
+| Domain 사실 | Graph invalidation으로 승인·실행·검증 사실을 소급 변경하지 않는다. |
 
-- 공식 Artifact의 stale 판정은 하드코딩된 단계 목록이 아니라 `meta.based_on`에 기록된 upstream `artifact_id + revision`과 현재 활성 revision의 불일치로 계산한다.
-- `InputRoutePlanV1`이 바뀌면 이를 `based_on`으로 참조한 Retrieval 및 그 downstream Artifact만 stale 된다.
-- `OutputPlanV1`이 바뀌면 이를 참조한 Planning·Review 등 downstream Artifact만 stale 되며, Input Route와 Retrieval이 그대로라면 Retrieval을 다시 수행하지 않는다.
-- `request_intent`, `retrieval_result`, `work_analysis_result`도 동일한 dependency 원칙으로 필요한 downstream만 재생성한다.
-- Domain Store의 승인·실행·검증 사실은 Graph State invalidation으로 소급 변경하지 않는다.
-- `Review.REVISE → Planning revision`에서는 새 `planning_result` revision이 생성되는 즉시 기존 `plan_review`는 **현재 Review PASS/route authority로는 stale**이다. 다만 그 stale `ReviewReviseV2.issues`의 `affected_dimensions`와 optional `affected_action_ids` / `affected_route_ids`는 **동일 Planning Revision에 바로 이어지는 Review RECHECK의 bounded selector/context로만** 읽을 수 있다. 이 제한적 전달은 이전 `plan_review`를 current Review 결과로 복권시키지 않으며, 별도 장기 `WorkflowSignal`이나 새 Main State owner field를 만들지 않는다. RECHECK가 새 `PlanReviewResultV2` revision을 생성하면 직전 REVISE selector context는 소비 완료로 폐기한다.
-- dimension-only REVISE(`affected_dimensions` non-empty, action/route IDs empty)는 위 bounded context 경로로 그대로 전달해야 하며, stale Review를 current로 간주하거나 action/route identity를 임의 생성해서는 안 된다.
+#### Planning revision 후 Review RECHECK
+
+| 시점 | 허용되는 사용 |
+| --- | --- |
+| 새 planning_result revision 생성 | 기존 plan_review는 current PASS·route authority로는 stale이다. |
+| 바로 이어지는 RECHECK | 직전 `ReviewReviseV2.issues.affected_dimensions`와 optional action/route IDs만 bounded selector/context로 읽는다. 별도 장기 WorkflowSignal이나 Main State owner field를 만들지 않는다. |
+| dimension-only REVISE | affected_dimensions가 non-empty이고 action/route IDs가 빈 값이어도 그대로 전달한다. ID를 임의 생성하지 않는다. |
+| 새 PlanReviewResult revision 생성 | 직전 REVISE selector/context를 소비 완료로 폐기한다. |
+
+이 제한적 전달은 stale Review를 current Review로 복권시키지 않는다.
 
 ## 3. Typed Schema 계약
 
 ### 3.1 RequestIntentV2
 
-Request Understanding은 사용자 요청의 의미만 구조화한다. 실제 Tool을 선택하지 않는다.
+Request Understanding은 사용자 요청의 의미를 구조화하며 실제 Tool을 선택하지 않는다.
 
 ```python
 class ConstraintProvenanceV1:
     source: Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
     start_offset: int
     end_offset: int
+    source_text: str | None = None
 
 class ConstraintV1:
     kind: Literal["PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"]
     field: str
     value: str | list[str]
     provenance: ConstraintProvenanceV1 | None = None
+    source_resource_type: str | None = None
 
 class AmbiguityV1:
     requires_confirmation: bool
     reason_codes: list[str]
     missing_fields: list[str]
+
+class SourceResourceResponsibilityV1:
+    resource_type: str
+    required_information: list[str]
+
+class OutputResourceResponsibilityV1:
+    resource_type: str
+    effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+
+class ResourceResponsibilitiesV1:
+    source_reads: list[SourceResourceResponsibilityV1]
+    outputs: list[OutputResourceResponsibilityV1]
 
 class RequestIntentV2:
     schema_version: Literal[2]
@@ -716,22 +768,70 @@ class RequestIntentV2:
     constraints: list[ConstraintV1]
     requested_effect_hints: list[Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]]
     requested_resource_hints: list[str]
+    resource_responsibilities: ResourceResponsibilitiesV1 | None = None
     analysis_requirement: Literal["NONE", "REQUIRED"]
     ambiguity: AmbiguityV1
 ```
 
-- `requested_*_hints`는 사용자 요청에 나타난 의미적 힌트다. Registry Tool 이름이 아니다.
-- 사용자 목표·완료조건·제약을 벗어나 Tool Route나 Action Argument를 생성하지 않는다.
-- `analysis_requirement`은 사용자 의미상 Evidence 또는 사용자 입력을 별도 업무 사실/관계로 해석해야 하는지를 나타낸다. 단순 조회·요약뿐 아니라 사용자가 Action Arguments를 직접 충분히 제공한 단순 ACTION도 `NONE`일 수 있다. 다만 Supervisor의 실제 Analysis 호출 여부는 이 값만 보지 않고 현재 Output Route에 적용되는 Policy Precondition도 결정적으로 평가한다. `TASK + CREATE`의 중복 검사와 `CALENDAR + CREATE`의 충돌 검사는 P0 필수이므로 사용자 의미상 `analysis_requirement=NONE`이어도 Retrieval 후 Work Analysis를 건너뛰지 않는다. `output_mode=ACTION` 자체만으로 Analysis를 강제하지는 않는다.
+| 필드·상황 | 해석 |
+| --- | --- |
+| requested hints | 사용자 요청의 의미적 힌트다. Registry Tool 이름이 아니며 목표·완료조건·제약 밖의 Route나 Arguments를 허용하지 않는다. |
+| resource_responsibilities | 현재 atomic Request Understanding 경로가 source/output 해결 책임을 보존한다. `source_reads`는 Connector가 해결할 기존 사실·identity인 required_information을, `outputs`는 사용자 요청의 Write effect를 가진다. UPDATE/DELETE처럼 기존 Resource를 바꾸는 요청은 같은 Resource type이 source와 output에 함께 있어야 하며, 파생 requested hints와 정확히 일치해야 한다. |
+| ambiguity candidate | `missing_information_owner: NONE \| USER \| CONNECTOR`를 반환한다. CONNECTOR는 Retrieval로 해소하고 USER만 Confirmation으로 보낸다. candidate-only 분류를 확정 AmbiguityV1에 저장하지 않는다. |
+| RESOURCE_SELECTED | 검증된 selected_resource_refs를 identify_goal·detect_ambiguity에 동일하게 전달한다. READ로 얻을 수 있는 본문·제목·발신자는 user-owned missing choice가 아니다. |
+| 실제 사용자 선택 | recipient·시간·범위 등 사용자만 결정할 값은 선택 Resource가 있어도 자동 보완하지 않는다. Write의 필수 선택 누락은 Confirmation을 유지한다. |
+| analysis_requirement | 별도 업무 사실·관계 해석 필요 여부다. 단순 조회·요약과 충분한 직접 ACTION은 NONE일 수 있다. 실제 Analysis 적용 조건은 §18을 따른다. |
 
 #### Identity-bearing constraint provenance
 
+**Source 검증**
+
 - Provider identity로 사용되는 constraint는 finalized `RequestIntentV2`에 들어가기 전에 `request.finalize`의 기존 `finalize_intent → validate_intent` 단계에서 deterministic provenance 검증을 통과해야 한다. LLM은 constraint와 source span 후보를 제안할 수 있을 뿐 `provenance`를 확정하는 authority가 아니다.
+
 - `start_offset:end_offset`은 `source`가 가리키는 현재 Run의 정확한 사용자 요청 또는 동일 Run Confirmation 응답 문자열에 대한 half-open span이다. 결정적 validator가 범위와 exact source slice를 constraint 값에 대조한 뒤에만 `ConstraintProvenanceV1`을 부여한다. 대조되지 않은 LLM 선언은 authority가 아니며 identity-bearing constraint로 사용할 수 없다.
+- 정규화 값과 원문 표현이 다른 source scope는 `source_text`로 정확한 원문 span을 보존한다. 특히 `SCOPE.status`는 `source_resource_type`을 함께 가져야 하며, 원문 또는 동일 Run Confirmation에 명시된 source Resource 상태만 허용한다. Output effect·완료 후 기대 상태·다른 Resource 상태는 source search scope의 provenance가 아니다. LLM이 제안한 `source_text`와 Resource binding은 `finalize_intent → validate_intent`가 현재 Run source와 대조하며, 단순한 canonical status 문자열 포함 검사로 대체하지 않는다.
+
+#### Source/output resolution responsibility
+
+- 현재 atomic Request Understanding 경로는 단일·교차 Resource 여부와 무관하게 `resource_responsibilities`를 확정한다. nullable 표현은 compatibility 입력을 위한 것이며, 평면 resource/effect 목록을 정상 downstream이 다시 source/output으로 분류하게 두지 않는다.
+- `source_reads`의 각 항목은 `resource_type`과 Connector가 해결할 기존 사실 또는 exact resource identity인 `required_information`을 가진다. Retrieval 전 부재는 user-owned missing choice가 아니다.
+- `outputs`의 각 항목은 `resource_type`과 `CREATE | UPDATE | SEND | DELETE` 중 하나인 `effect`를 가진다. 같은 Write 결과의 Verification reread는 별도 source read 책임으로 만들지 않는다.
+- source/output 책임을 투영한 Resource와 Effect 집합은 `requested_resource_hints`와 `requested_effect_hints`에 정확히 일치해야 한다. 불일치·중복 항목·지원하지 않는 Resource/effect 조합과 같은 Resource UPDATE/DELETE의 source 누락은 Provider 호출 전 Request Understanding validator가 거절한다.
+- Tool Route는 검증된 책임을 IN Resource와 OUT Resource/Effect로 결정적으로 투영한다. Tool 이름과 Registry binding은 계속 Tool Route owner가 소유한다.
+
+#### Natural-language target anchor와 identity
+
+- 자연어 target anchor는 검색·discovery constraint이며 그 자체가 target identity authority가 아니다.
+- 사용자가 선택한 `SelectedResourceRef`가 있으면 그 stable identity가 우선 authority다.
+- 선택 Resource가 없으면 현재 Run Retrieval에서 해당 target scope의 eligible stable `ResourceRef`가 정확히 하나로 결속되고 Action evidence가 그 identity를 참조할 때만 existing-resource target으로 승격한다.
+- substring·title similarity·LLM 유사 판단으로 identity를 확정하지 않는다. eligible 후보가 복수면 discovery 또는 confirmation을 유지하며 Planning이 임의의 한 후보를 선택해 Write target으로 만들 수 없다.
+
+**GitHub repository와 선택 Issue**
+
 - GitHub repository identity는 `kind="RESOURCE", field="repository"`인 단일 문자열 `owner/repository`로 표현한다. owner와 repository가 모두 비어 있지 않고 정확히 하나의 `/`로 구분되어야 하며, source에 없는 owner를 연결 계정·organization·최근 사용값·Provider 검색 결과·hard-coded 값 또는 LLM 추측으로 보완하지 않는다.
+
 - `repository`처럼 owner가 없는 bare 값은 기존 deterministic default authority가 없는 한 `AmbiguityV1.requires_confirmation=true`로 처리한다. 기존 Request Understanding nested Confirmation과 동일 Run checkpoint resume를 사용하며 GitHub 전용 node, state, edge 또는 resume target을 추가하지 않는다.
-- current-run `SelectedResourceRefV1`이 GitHub Issue를 나타내면 `(connector_id="github", resource_type="github_issue", resource_id="owner/repository#issue_number", parent_resource_id="owner/repository")`를 보존하며, 검증된 `parent_resource_id`가 repository container authority가 될 수 있다. 동일 Run의 explicit provenance-validated repository도 존재하면 두 identity는 exact match해야 한다. 불일치에는 silent precedence를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로를 사용한다.
+
+선택된 GitHub Issue는 다음 identity를 보존한다.
+
+| 필드 | 값 |
+| --- | --- |
+| connector_id | github |
+| resource_type | github_issue |
+| resource_id | owner/repository#issue_number |
+| parent_resource_id | owner/repository |
+
+검증된 parent_resource_id는 repository container authority가 될 수 있다. 같은 Run의 explicit provenance-validated repository가 있으면 exact match해야 한다. 불일치에 silent precedence를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로를 사용한다.
+
 - 이 provenance는 `ConstraintV1`의 선택적 source binding이며 새 Main State field나 장기 repository authority Artifact가 아니다. 권위는 기존 finalized `RequestIntentV2`, `SelectedResourceRefV1`/`ResourceRef`, frozen Route와 immutable Planning arguments 안에만 존재한다.
+
+**Run allowlist와 현재 접근**
+
+- Settings GitHub Repository 목록은 Run 시작 시 account/immutable-ID-bound allowlist로 동결한다. 이는 사용자 문장의 target provenance가 아니며 LLM이 생산하지 않는다. explicit/selected repository는 이 목록 안에서만 범위를 좁힌다.
+
+- allowlist가 여러 개이거나 target이 미결정이면 첫 항목이나 legacy default로 WRITE target을 보정하지 않는다. 필요한 사용자 결정은 기존 Confirmation을 사용한다. 이전 Run/checkpoint는 시작 당시 binding을 유지하고 현재 Settings로 보충하지 않는다.
+
+- `retrieval.execute_read`는 사용 전 current Provider access와 frozen allowlist를 검증한다. 권한 실패는 no-result가 아니며 반복/대체 Repository fallback을 금지한다. 승인, mandatory Write 정보, Claim/Attempt 정책은 변경하지 않는다.
 
 ### 3.2 ToolRoutePlanV2
 
@@ -760,9 +860,12 @@ class ActionOutputPlanV1:
 OutputPlanV1 = AnswerOutputPlanV1 | ActionOutputPlanV1
 ```
 
-- `AnswerOutputPlanV1`에는 `output_routes` 필드 자체가 존재하지 않는다.
-- `ActionOutputPlanV1.output_routes`는 최소 1개이며 Registry에 없는 Tool ID를 표현할 수 없다.
-- ANSWER + Write Tool 같은 불가능 조합은 사후 의미 Validator에만 의존하지 않고 Schema/union 경계에서 먼저 차단한다.
+| 출력 variant | Schema 조건 |
+| --- | --- |
+| ANSWER | output_routes 필드 자체가 없어야 한다. 빈 list를 합성해도 contract violation이다. |
+| ACTION | output_routes가 하나 이상이고 Registry에 없는 Tool ID는 표현할 수 없다. |
+
+ANSWER + Write Tool처럼 불가능한 조합은 Schema/union 경계에서 먼저 차단한다.
 
 ```python
 
@@ -786,11 +889,12 @@ class OutputToolRouteV1:
 규칙:
 
 - Tool 이름·Effect는 Signed Tool Registry의 실제 Entry에서만 선택한다.
+- Tool Route의 output effect는 `RequestIntentV2.requested_effect_hints`의 Write subset을 초과할 수 없다. READ-only intent에 LLM이 CREATE/UPDATE/SEND/DELETE 후보를 반환하면 결정적 경계가 `ANSWER`로 축소하며 Write Route는 0이어야 한다.
+- `RESOURCE_SELECTED`의 exact resource type은 semantic candidate보다 우선하는 current-Run scope다. 후보가 다른 resource family를 제안하면 bounded semantic revision 또는 fail-closed하며 선택 identity를 새 값으로 교체하지 않는다.
 - `input_routes`는 Retrieval이 사용할 허용 Read Tool 범위를 보존한다. Retrieval LLM이 다시 Tool 종류를 고르지 않는다.
 - `output_routes`의 실제 Action Tool은 여기서 확정한다. Planning은 Tool을 다시 선택하지 않고 Arguments·내용만 작성한다.
 - 후보 수를 임의 shortlisting하여 필요한 Tool을 제거하지 않는다. Main State에는 확정된 Route와 Registry binding을 온전히 보존한다.
 - 특정 Node Prompt에는 전체 ToolRoute를 복제하지 않고 필요한 Route Projection만 전달한다.
-- `output_mode=ANSWER`이면 JSON/object shape에 `output_routes` 필드가 **존재하지 않아야 한다**. `output_mode=ACTION`이면 `output_routes`가 존재하고 1개 이상이어야 한다. Serializer/validator가 ANSWER variant에 빈 `output_routes=[]`를 합성하면 contract violation이다.
 - `input_routes[].allowed_read_tool_ids`는 Registry에서 READ capability로 등록된 Tool만 포함한다.
 - `InputToolRouteV1.resource_type`과 `OutputToolRouteV1.resource_type`은 별도 `EMAIL/TASK/CALENDAR` family가 아니라 `SignedToolRegistryEntryV1.resource_type`의 canonical Connector resource identifier를 그대로 보존한다. 한 Input Route의 모든 `allowed_read_tool_ids`는 동일한 Registry `resource_type`과 exact match해야 하며, 서로 다른 resource type은 별도 Route다.
 - `output_routes[].selected_tool_id`의 Registry resource/effect는 해당 Route의 `resource_type/effect`와 정확히 일치해야 한다.
@@ -798,7 +902,12 @@ class OutputToolRouteV1:
 
 ### 3.3 RetrievalResultV1 — 05 Retrieval owner reference
 
-`RetrievalResultV1`의 **정확한 field/schema 권위는 05 Context·Retrieval**이다. 06은 같은 이름의 class를 다시 정의하지 않는다. Workflow는 해당 versioned artifact를 read-only로 Main State에 보존하고 `coverage`, `evidence_refs`, `source_statuses`, `availability_results` 등 필요한 필드만 Node Projection으로 좁혀 소비한다. Raw Query Plan·Page Token·후보 전체·RAG 내부 score는 05가 정의한 Retrieval Local State 또는 Run Cache에만 둔다.
+정확한 field/schema 권위는 `05 Context·Retrieval`이다. 06은 같은 class를 다시 정의하지 않는다.
+
+| Workflow 소비 | 보존 위치 |
+| --- | --- |
+| coverage, evidence_refs, source_statuses, availability_results 등 필요한 필드 | versioned artifact를 Main State에 read-only로 보존하고 Node Projection으로 좁힘 |
+| Raw Query Plan, Page Token, 후보 전체, RAG 내부 score | 05의 Retrieval Local State 또는 Run Cache. Main State에 복제하지 않음 |
 
 ### 3.4 WorkAnalysisResultV2
 
@@ -830,6 +939,13 @@ class WorkRiskV1:
     description: str
     evidence_refs: list[str]
 
+class RouteActionNecessityV1:
+    route_id: str
+    status: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
+    reason: str
+    evidence_refs: list[str]
+    candidate_refs: list[str]
+
 class WorkAnalysisResultV2:
     schema_version: Literal[2]
     meta: StateArtifactMetaV1
@@ -839,11 +955,20 @@ class WorkAnalysisResultV2:
     risks: list[WorkRiskV1]
     action_necessity: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
     action_necessity_reason: str | None
+    route_action_necessities: list[RouteActionNecessityV1]
     policy_confirmation_receipt_refs: list[StateArtifactRefV1]
     evidence_refs: list[str]
 ```
 
-업무 분석은 Evidence의 의미를 해석하지만 Tool 선택·Tool Arguments·정책 최종 판정을 하지 않는다. `DUPLICATE_OVERRIDE` 또는 `CONFLICT_OVERRIDE`로 `action_necessity=REQUIRED`가 된 경우 `policy_confirmation_receipt_refs`에는 현재 Context에서 유효한 APPROVED Receipt가 반드시 포함되고 `meta.based_on`도 해당 Receipt revision을 참조한다. `action_necessity=NOT_REQUIRED`는 예를 들어 정확한 중복 Resource가 이미 존재해 사용자가 요구한 효과가 현재 상태에서 이미 충족된 경우처럼 **새 Action을 만들 필요가 없다는 업무 사실**을 뜻한다. 이는 Output Route를 다시 선택하는 것이 아니며 Tool Route는 요청된 capability의 기록으로 유지한다.
+업무 분석은 Evidence를 해석하지만 Tool 선택·Arguments 작성·정책 최종 판정은 하지 않는다.
+
+| 결과 | 의미·조건 |
+| --- | --- |
+| Route별 `NOT_REQUIRED` | 정확한 중복 등 현재 관측이 해당 Route의 요청 효과를 이미 충족해 새 Action이 필요 없다는 업무 사실이다. Output Route는 capability 기록으로 유지한다. |
+| Route별 `REQUIRED` | 해당 Route의 실행 후보를 Planning이 작성한다. 다른 Route의 `NOT_REQUIRED`가 이 Route를 제거하지 않는다. |
+| Override 후 `REQUIRED` | DUPLICATE_OVERRIDE 또는 CONFLICT_OVERRIDE에 필요한 current APPROVED Receipt를 policy_confirmation_receipt_refs와 based_on에 포함한다. |
+
+aggregate `action_necessity`는 route-scoped 결과에서 결정적으로 파생하는 persisted compatibility 필드이며 별도 의미 판정 authority가 아니다. 현재 Planning은 `route_action_necessities`만 소비해 필요한 Route를 선별한다.
 
 ### 3.5 Planning Result
 
@@ -957,6 +1082,7 @@ PlanReviewResultV2 = (
 
 - `RetrievalRequiredV1`은 `RetrievalNeedV1[]`로 부족한 정보·Evidence 종류와 추가 조회 목적을 기록한다.
 - `RouteReconsiderationRequiredV1`은 `reason_codes`로 현재 Route 재검토 사유를 기록하고 Tool Route를 직접 덮어쓰지 않는다. 영향 Route 상세는 해당 Subgraph의 typed issue/result가 함께 보존한다.
+- `RequestReconsiderationRequiredV1`은 현재 Request Intent revision과 이를 반증·보완한 현재 Evidence 관측을 함께 묶는다. local fact repair나 Route 문제에는 사용하지 않는다.
 - Review의 계획 수정 요청은 별도 WorkflowSignal 타입을 만들지 않고 `ReviewReviseV2.issues`를 Planning revision Input Projection으로 전달한다.
 - Signal은 해당 Back-edge/Interrupt가 소비되면 clear하며 장기 업무 사실로 취급하지 않는다.
 
@@ -966,6 +1092,7 @@ PlanReviewResultV2 = (
 | --- | --- | --- | --- |
 | `ConfirmationRequiredV1` | 6개 owner Subgraph의 공식 `NEEDS_CONFIRMATION` finalization | Supervisor → Application `RequestConfirmation` → LangGraph interrupt | 등록된 interrupt/checkpoint가 성립하고 해당 confirmation control path가 signal을 인수한 뒤. Resume 이후 business fact로 유지하지 않는다. |
 | `RouteReconsiderationRequiredV1` | Retrieval / Work Analysis / Planning의 `ROUTE_RECONSIDERATION_REQUIRED`, Review의 `ROUTE_RECONSIDERATION` | Supervisor → Tool Route Back-edge | Tool Route owner가 reconsideration input projection으로 인수할 때 |
+| `RequestReconsiderationRequiredV1` | Work Analysis가 현재 Evidence로 현재 Request Intent의 의미 재검토 필요를 확정한 경우 | Supervisor → 기존 Request Understanding Back-edge | Request Understanding이 같은 artifact identity의 새 revision을 확정하고 dependent artifact를 invalidate한 뒤 |
 | `RetrievalRequiredV1` | Work Analysis `NEEDS_MORE_DATA` 또는 Review `RETRIEVE_MORE`가 **현재 InputRoutePlan으로 해결 가능할 때만** | Supervisor → Retrieval Back-edge | Retrieval owner가 additional-retrieval input projection으로 인수할 때. Retrieval 자체 local `NEEDS_MORE_DATA` self-loop에는 생성하지 않는다. |
 | `BlockedSignalV1` | role-local blocked/block finalization이 reason code를 control signal로 전달해야 하는 경우 | Supervisor terminal handler → 필요한 Domain `BlockRun`/terminal reconciliation | terminal/reconcile control path가 reason을 인수한 뒤. Domain terminal 사실의 대체 authority로 남기지 않는다. |
 
@@ -990,12 +1117,14 @@ class SubgraphReturnV2[T]:
 
 ### 4.1 Agent와 LLM Call
 
-- **Agent:** Main Supervisor가 호출하는 LangGraph Subgraph다.
-- **Role:** 해당 Subgraph가 Main State에 추가하는 공식 결과와 책임 경계다.
-- **Node:** Subgraph 내부의 한 단계다. LLM Node 또는 Deterministic Node일 수 있다.
-- **LLM Call:** 모델 추론 1회다. Agent 수·Node 수와 동일하지 않다.
-- **Local State:** 해당 Subgraph invocation 안에서 단계적으로 채워지는 작업 메모리다.
-- **Node Projection:** Local/Main State 중 현재 Node에 필요한 Typed 필드만 전달하는 입력 계약이다.
+| 개념 | 구분 |
+| --- | --- |
+| Agent | Main Supervisor가 호출하는 LangGraph Subgraph |
+| Role | 공식 결과와 책임 경계 |
+| Node | Subgraph 내부 단계. LLM 또는 Deterministic Node |
+| LLM Call | 모델 추론 1회. Agent·Node 개수와 같지 않음 |
+| Local State | invocation 안의 작업 메모리 |
+| Node Projection | 현재 Node에 필요한 Local/Main State의 Typed 입력 |
 
 ### 4.2 공통 Runtime Envelope
 
@@ -1021,7 +1150,7 @@ SubgraphDispositionV2 = Literal[
     "SUFFICIENT", "NO_FETCH_NEEDED", "NEEDS_MORE_DATA", "PARTIAL",
     "ANSWER_ONLY", "PLAN_READY",
     "PASS", "REVISE", "RETRIEVE_MORE", "ROUTE_RECONSIDERATION", "CONFIRM",
-    "NEEDS_CONFIRMATION", "ROUTE_RECONSIDERATION_REQUIRED", "BLOCKED", "BLOCK"
+    "NEEDS_CONFIRMATION", "REQUEST_RECONSIDERATION_REQUIRED", "ROUTE_RECONSIDERATION_REQUIRED", "BLOCKED", "BLOCK"
 ]
 ```
 
@@ -1029,22 +1158,22 @@ SubgraphDispositionV2 = Literal[
 
 ### 4.3 Node Input Projection 원칙
 
-예를 들어 Main State가 `A=request_intent`, `B=tool_route`, `C=retrieval_result`, `D=work_analysis`를 갖더라도 모든 Node가 `A+B+C+D`를 받지 않는다.
+Node는 자신의 Output에 필요한 최소 State만 받는다. Main State에 값이 있다는 이유로 모든 Node에 전달하지 않는다.
 
-```
-Tool Route determine resources ← request_intent
-Retrieval plan_query          ← request_intent + input_routes + retrieval_budget (follow-up은 bounded prior QueryAttemptV1·SufficiencyIssue·read-result summary 추가)
-Retrieval availability        ← user time constraints + normalized busy intervals (deterministic)
-Retrieval RAG select          ← request_intent + ranked/fetched segment handles
-Retrieval sufficiency         ← request_intent + selected evidence + retrieval_budget
-Work Analysis fact extraction ← user_request + request_intent + optional evidence
-Planning compose_answer       ← user_request + request_intent + optional work_analysis + evidence refs
-Planning objective writer     ← user_request + one OutputToolRouteV1 + optional work_analysis + evidence refs
-Planning argument writer      ← one OutputToolRouteV1 + validated ActionObjectiveCandidateV1 + Tool Schema
-Review inspect                ← request_intent + action_plan + evidence/policy summary
-```
+| 책임 | 입력 Projection 예 |
+| --- | --- |
+| Tool Route determine resources | request_intent |
+| Retrieval plan_query | request_intent + input_routes + retrieval_budget (follow-up은 bounded prior QueryAttemptV1·SufficiencyIssue·read-result summary 추가) |
+| Retrieval availability | user time constraints + normalized busy intervals (deterministic) |
+| Retrieval RAG select | request_intent + ranked/fetched segment handles |
+| Retrieval sufficiency | request_intent + selected evidence + retrieval_budget |
+| Work Analysis fact extraction | user_request + request_intent + optional evidence |
+| Planning compose_answer | user_request + request_intent + optional work_analysis + evidence refs |
+| Planning objective writer | user_request + one OutputToolRouteV1 + optional work_analysis + evidence refs |
+| Planning argument writer | one OutputToolRouteV1 + validated ActionObjectiveCandidateV1 + Tool Schema |
+| Review inspect | request_intent + action_plan + evidence/policy summary |
 
-Node는 자신의 Output Schema에 필요한 최소 State만 본다. Request Subgraph는 `run_input`을 projection하고, Back-edge로 재진입한 Subgraph는 필요한 `workflow_signal`만 추가 projection한다.
+Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 Node에 필요한 workflow_signal만 추가한다. 아래 입력은 전체 State의 숨은 승계를 허용하지 않는다.
 
 ### 4.4 Local Loop
 
@@ -1068,16 +1197,20 @@ Node는 자신의 Output Schema에 필요한 최소 State만 본다. Request Sub
 
 ### 5.2 Request Understanding Subgraph
 
-```
-START
-→ identify_goal
-→ detect_ambiguity
-→ finalize_intent
-→ validate_intent
-→ END
-```
+| 책임 | 처리 |
+| --- | --- |
+| `identify_goal` | 목표·완료조건·일반 제약·분석 필요 후보를 만든다. Resource 역할과 source status를 만들지 않으며 원문 period를 보존한다. |
+| `identify_source_dependencies` | Runtime이 제공한 READ 가능 Resource 후보별로 기존 사실·현재 상태·identity가 필요한지 판정한다. Output effect는 판정하지 않는다. |
+| `identify_output_responsibilities` | Runtime이 제공한 output 가능 Resource 후보 중 사용자가 요청한 Write effect만 sparse 목록으로 반환한다. 빈 목록은 외부 output 없음이며 `NONE` 항목을 만들지 않는다. Source dependency는 판정하지 않는다. |
+| `merge_resource_responsibilities` | 검증된 두 atomic 결정을 기존 `ResourceResponsibilitiesV1.source_reads/outputs`로 결정적으로 조립한다. |
+| `identify_source_status` | 확정된 `source_reads.resource_type`만 대상으로 추가 source 상태 범위를 판단한다. output effect·Resource 역할·Tool·Query는 바꾸지 않는다. |
+| `identify_temporal_scope` | Gmail period가 있을 때 `MESSAGE_TIME \| EVENT_TIME`을 판단한다. 없으면 pass-through한다. 일반 코드의 키워드·정규식으로 이 의미를 교체하지 않는다. |
+| `detect_ambiguity` | 사용자 선택 누락과 Connector READ로 해소할 정보를 구분한다. 입력은 목표·완료조건·제약과 분리 확정된 `resource_responsibilities`만 사용하고, 이를 합친 legacy resource/effect hint는 다시 판단 근거로 쓰지 않는다. 초기 연결 검사에는 §5.3의 같은 Application use case를 사용한다. |
+| `finalize_intent → validate_intent` | 실제 current-run source text와 identity-bearing 후보를 대조해 provenance를 부여하고 확정한다. |
 
-권장 Local State:
+각 LLM 호출은 자기 책임만 수행한다. 시간축 operation은 새로운 identity resolver나 Main Agent owner가 아니다. 표는 책임 구분이며 미래 Node 개수나 물리 배치를 고정하지 않는다.
+
+현재 문서의 Local State 참조:
 
 ```python
 class RequestGoalCandidateV1:
@@ -1086,6 +1219,7 @@ class RequestGoalCandidateV1:
     constraints: list[ConstraintV1]
     requested_effect_hints: list[Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]]
     requested_resource_hints: list[str]
+    resource_responsibilities: ResourceResponsibilitiesV1 | None
     analysis_requirement: Literal["NONE", "REQUIRED"]
 
 class RequestUnderstandingStateV2:
@@ -1097,23 +1231,18 @@ class RequestUnderstandingStateV2:
     final_intent: RequestIntentV2 | None
 ```
 
-각 LLM Node는 목표 파악 또는 모호성 판단 중 자기 책임만 수행한다. 구현에서 한 호출로 합치는 Profile이 존재해도 Output Contract의 의미 책임은 분리해 평가한다.
-
-Identity-bearing constraint도 이 기존 흐름 안에서만 처리한다. `identify_goal`과 `detect_ambiguity`는 후보를 만들고, `request.finalize`가 actual current-run source text와 대조하여 provenance를 부여한 뒤 `validate_intent`를 통과시킨다. 새 Request Understanding operation이나 Main Graph topology를 만들지 않는다.
-
 ### 5.3 Tool Route Subgraph
 
-```
-START
-→ determine_io_resources
-→ bind_registry_candidates
-→ select_tool_if_needed
-→ finalize_route
-→ validate_route
-→ END
-```
+| 책임 | 처리 |
+| --- | --- |
+| `determine_io_resources` | 정상 current Intent에서는 확정된 `resource_responsibilities`를 IN Resource와 OUT Resource·Effect로 결정적으로 투영한다. responsibilities가 없는 compatibility Intent에서만 bounded LLM fallback으로 기존 hints의 역할을 복원하며 새 Resource/effect를 고르지 않는다. 실제 Tool 이름은 생성하지 않는다. |
+| `bind_registry_candidates` | Signed Tool Registry의 Resource·Effect·Schema 적합성으로 실제 후보를 결정적으로 결합한다. |
+| `select_tool_if_needed` | 후보 하나는 결정적으로 확정하고, 여러 후보의 의미 선택이 필요한 경우에만 해당 Route의 후보 안에서 선택한다. |
+| `finalize_route / validate_route` | Route와 Registry binding을 확정·검증해 Main State에 병합한다. downstream은 Tool을 재선택하지 않는다. |
 
-권장 Local State:
+모델 부담 감소만을 이유로 heuristic shortlist를 만들거나 등록 Tool을 제거하지 않는다. OUT Route의 Tool identity는 Planning Assembler가 복사한다.
+
+현재 문서의 Local State 참조:
 
 ```python
 class OutputRouteIntentV1:
@@ -1135,83 +1264,112 @@ class ToolRouteStateV1:
     request_intent: RequestIntentV2
     registry_snapshot_ref: str
     io_resource_candidate: IORouteIntentV1 | None
+    io_resource_failure: FailureRecordV1 | None
     registry_candidates: list[RegistryCandidateSetV1]
     bound_input_routes: list[InputToolRouteV1]
     bound_output_routes: list[OutputToolRouteV1]
     final_route: ToolRoutePlanV2 | None
 ```
 
-- `determine_io_resources`: 사용자 의미에서 IN Resource와 OUT Resource·Effect만 판단하며 실제 Tool 이름을 생성하지 않는다.
-- `bind_registry_candidates`: Signed Tool Registry에서 해당 Resource·Effect를 수행할 수 있는 실제 Tool 후보를 결정적으로 결합한다.
-- Registry 후보가 하나면 추가 LLM 호출 없이 자동 선택한다.
-- 후보가 여러 개일 때만 `select_tool_if_needed`가 **그 Route의 Registry 후보 안에서** 하나를 고른다. 전체 Registry를 임의로 축소하거나 새 Tool 이름을 만들지 않는다.
-- 확정 Route를 Main State에 병합한 뒤 downstream은 Tool을 다시 선택하지 않는다.
+`io_resource_failure`는 `determine_io_resources`의 bounded semantic revision이 소진됐을 때 마지막 typed validation failure를 보존한다. 사용자 확인 interrupt의 reason과 affected path는 이 record에서 투영하며 generic route 상태로 덮어쓰지 않는다.
+
+#### Policy Precondition READ
+
+| 상황 | 처리 |
+| --- | --- |
+| TASK CREATE | 기존 미완료 Task의 중복 검사용 Tasks READ를 필수 IN Route에 보강한다. |
+| CALENDAR CREATE | 대상 Calendar의 충돌 검사용 Event/FreeBusy READ를 보강한다. |
+| 공통 | 결정적 PolicyPreconditionResolver의 보강이며 두 번째 의미 Tool 선택이 아니다. OUT Route를 변경하지 않는다. |
+| 사용자 지정 Source·기간·Resource 밖의 READ 필요 | `SCOPE_EXPANSION_REQUIRED`로 추가 범위·이유를 먼저 확인한다. 확인 전 materialize/실행하지 않는다. |
+| 범위 확장 거절·검사 불가 | 필수 검사를 우회한 Write Plan을 만들지 않고 확인/차단·안내로 처리한다. 같은 Resource의 더 좁은 사용자 IN Route가 있으면 먼저 그 범위에서 검사를 충족한다. |
+
+#### 요청 단위 초기 Connector prerequisite
+
+| 호출 지점 | 검사 |
+| --- | --- |
+| Tool Routing `validate_route` | Registry로 검증된 IN/OUT Connector ID를 `CheckConnectorPrerequisites`에 전달한다. Application이 OAuth Credential Port의 token-free status·필수 권한을 검사한다. |
+| Request Understanding `detect_ambiguity` | 같은 use case를 사용한다. goal resource hint가 Registry에 정확히 등록된 경우에만 Connector로 매핑해, 미연결인데 repository 등 추가 입력을 먼저 묻지 않도록 한다. |
+| unknown hint | 이름·문자열·keyword로 추측하지 않는다. 기존 의미 해소와 최종 Route 검증을 유지한다. |
+| Main Graph | Google/GitHub 전용 분기나 Provider I/O를 추가하지 않는다. |
+
+| 상황 | 결과·보존 조건 |
+| --- | --- |
+| 새 Run | `admitted_connector_ids=[]`에서 시작한다. 통과한 ID는 same-Run Back-edge·checkpoint·resume에서 보존한다. Prompt 입력·credential·접근 권위는 아니다. |
+| admission 후 인증 만료 | 기존 접근/REAUTH_REQUIRED 안전 경로를 사용한다. |
+| 초기 미연결·초기 REAUTH_REQUIRED·권한 부족·구성 실패 | `ToolRouteResultV1.PREREQUISITE_UNMET`과 bounded 안내로 전달한다. Request 쪽 검사 실패도 `finalize_intent → end`의 terminal handoff를 사용하며 ambiguity LLM·Confirmation interrupt를 만들지 않는다. |
+| 초기 실패 종료 | `FinalizeIntentV1(intent=COMPLETED, result_kind=PARTIAL, reason_code=CONNECTOR_PREREQUISITE_UNMET, prerequisite_message=...)`에서 `CompleteAnswerOnlyRun`으로 닫는다. 실행하지 않았으며 Settings 조치 후 새 요청이 필요함을 알린다. |
+| 종료 금지 조건 | Plan/Action/in-flight 또는 Domain REAUTH_REQUIRED가 이미 있으면 초기 실패 종료를 적용하지 않는다. |
+| admitted_connector_ids 없는 배포 전 checkpoint | 초기 admission을 소급 적용하지 않는다. 기존 실행·재인증 계약을 유지한다. |
+| Repository 설치·접근 | 기존 `GetRepositoryAccess`/Connector READ owner로 검증한다. 실패를 no-result로 바꾸거나 다른 repository로 fallback하지 않는다. |
+| OAuth callback | Run-neutral이다. 초기 실패에서 인증 대기 checkpoint·interrupt·자동 resume를 만들지 않는다. |
+
+> **선언 확인 필요:** 초기 실패 처리에는 `PREREQUISITE_UNMET`이 있지만 §4.2의 `SubgraphDispositionV2`에는 없다. 기존 타입 선언에 값을 임의 추가하거나 다른 disposition으로 치환하지 않는다.
 
 ### 5.4 Retrieval Subgraph
 
-Retrieval은 **Run-scoped RAG**를 포함한다. 영구 Vector Index는 필수가 아니지만, Google에서 가져온 후보를 그대로 LLM에 전달하지 않고 관련 Segment를 Retrieval/Reranking하여 Evidence를 구성한다.
+Retrieval은 고정된 IN Route에서 자료 수집·관련 Segment 선별·Evidence 구성·충분성 판정을 수행한다. Run-scoped RAG를 포함하되 영구 Vector Index는 필수가 아니다. 가져온 후보 전체를 다음 LLM에 전달하지 않는다.
 
-```
-START
-→ plan_query
-→ build_query
-→ execute_read
-→ normalize_segments
-→ rag_retrieve_rerank
-→ select_evidence
-→ assess_sufficiency
-→ finalize_retrieval
-→ END
-```
+`RetrievalState`와 `RetrievalResultV1`의 정확한 schema·검색 의미는 `05`를 사용한다. query attempts, source statuses, availability results, read/segment handles, RAG candidates, evidence selection, sufficiency, final result를 별도로 재정의하지 않는다.
 
-Local State 권위:
+raw user_request를 Local State/Prompt의 독립 semantic authority로 추가하지 않는다.
 
-- `RetrievalState`의 정확한 schema는 **05 Context·Retrieval**이 소유한다. 06은 이를 다시 class로 정의하지 않는다.
-- 반드시 05의 `query_attempts`, `source_statuses`, `availability_results`, read/segment handles, RAG candidates, evidence selection, sufficiency, final result를 그대로 사용한다.
-- raw `user_request`를 Retrieval Local State/Prompt의 별도 semantic authority field로 추가하지 않는다. Retrieval Prompt는 current `RequestIntentV2`를 소비한다.
+#### 현재 책임별 입력
 
-Node 입력 Projection:
+| 책임 | 입력 |
+| --- | --- |
+| `plan_query` · 최초 | request_intent + input_routes + retrieval_budget |
+| `plan_query` · 후속 | 최초 입력 + current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary |
+| `plan_query` · 사용자 추가 검색 | checkpointed pending_user_retrieval_need. raw UI request나 이미 clear한 handoff payload를 다시 읽지 않음 |
+| `build_query` | query_plan + input_routes. 결정적 처리 |
+| `execute_read` | 검증된 Query + allowed_read_tool_ids. 결정적 Application operation에서 ConnectorReadPort 호출 |
+| `normalize_segments` | Read Result Handle. 결정적 처리 |
+| `rag_retrieve_rerank` | request_intent + segment_handles |
+| `select_evidence` | request_intent + top RAG candidates. EXCLUDE_EVIDENCE는 이 단계의 결정적 exclusion input |
+| `assess_sufficiency` | request_intent + selected evidence |
 
-- `plan_query` initial: `request_intent + input_routes + retrieval_budget`
-- `plan_query` follow-up: initial projection + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary`
-- `plan_query` user context adjustment: initial projection + checkpointed `RetrievalState.pending_user_retrieval_need` for `RETRIEVE_MORE`; raw UI request나 already-cleared handoff payload를 다시 읽지 않는다. `EXCLUDE_EVIDENCE`는 Query Planner 입력이 아니라 `select_evidence`의 deterministic exclusion input이다.
-- `build_query`: `query_plan + input_routes` — deterministic
-- `execute_read`: 검증된 Query + `allowed_read_tool_ids` — deterministic
-- `normalize_segments`: Read Result Handle — deterministic
-- `rag_retrieve_rerank`: `request_intent + segment_handles`
-- `select_evidence`: `request_intent + top rag candidates`
-- `assess_sufficiency`: `request_intent + selected evidence`
+#### 반복·Route 변경
 
-같은 IN Route 안에서 Query·Page·상세 조회를 추가하는 것은 Retrieval Subgraph Local Loop다. 새로운 Provider/Resource Route가 필요하면 `ROUTE_RECONSIDERATION_REQUIRED`를 Parent에 반환한다.
+| 상황 | 처리 |
+| --- | --- |
+| 같은 Route 안의 Query/Page/Detail 추가 | Retrieval invocation 내부의 bounded loop다. Parent signal을 만들지 않고 SufficiencyIssueV2·QueryAttemptV1·read_result_handles의 Local Projection을 사용한다. |
+| follow-up SEARCH 변경 | typed ChangedSearchSpecV1을 결정적 SourceFetchPlanBuilder가 materialize한다. LLM은 Provider-native Query·RFC3339·MCP Arguments를 만들지 않는다. |
+| raw continuation | `RunRetrievalCachePort → InMemoryRunRetrievalCache`에만 보존한다. Supervisor·Main State·WorkflowSignal은 소유하지 않는다. |
+| 다른 Owner가 추가 검색 요청 | Work Analysis·Review가 `RetrievalRequiredV1`으로 부족 정보를 전달한다. |
+| 새로운 Provider/Resource Route 필요 | `ROUTE_RECONSIDERATION_REQUIRED`를 Parent에 반환한다. Retrieval이 Tool을 다시 선택하지 않는다. |
+
+FreeBusy interval의 교집합·차집합·가용 시간 계산도 결정적 Retrieval Application 책임이다. LLM Work Analysis에 산술 계산을 맡기지 않는다.
+
+#### 인물 선택 후 같은 Run 검색
+
+05가 제공한 후보 선택은 `retrieval.assess_sufficiency` origin과 finalize interrupt boundary를 사용한다.
+
+| 조건 | 처리 |
+| --- | --- |
+| 검증된 선택 + acquisition budget 있음 | finalize → plan_query로 같은 frozen Route의 exact identity 검색 |
+| 재검색 시 보존 | Query history·Evidence·선택 provenance. 새 Domain 상태/resume target을 만들지 않음 |
+| 추가 수집 불가 | 기존 PARTIAL/BLOCKED 종료 규칙 적용 |
+
+
+`person_candidates`, `selected_person_identities`, `unresolved_event_dates`는 05 소유 typed 결과다. 기존 checkpoint에서 필드가 없으면 빈 값으로 읽고, Workflow가 인물·행사 연도를 재해석하지 않는다.
 
 ### 5.5 Work Analysis Subgraph
 
-```
-START
-→ extract_work_facts                         # LLM
-→ resolve_entity_relations                   # LLM / conditional
-→ resolve_temporal_dependencies              # LLM / conditional
-→ detect_duplicate_conflict_candidates       # LLM / conditional
-→ validate_relations                         # deterministic
-→ assess_information_gaps                    # LLM
-→ assess_operational_risks                   # LLM / conditional
-→ assemble_work_analysis                     # deterministic
-→ validate_work_analysis                     # deterministic
-→ END
-```
+| 책임 | 생성·검증 범위 |
+| --- | --- |
+| `extract_work_facts` | Evidence에 명시되거나 근거로 추론 가능한 업무 사실 |
+| `resolve_entity_relations` | 사람·업무·Resource identity·ownership/reference 관계 후보. entity_relation_candidates만 갱신 |
+| `resolve_temporal_dependencies` | 날짜·기간·선후·dependency 후보. temporal_dependency_candidates만 갱신. Calendar 산술·DAG 검증은 소유하지 않음 |
+| `detect_duplicate_conflict_candidates` | fact↔fact duplicate_conflict_candidates 제안. DUPLICATES·CONFLICTS_WITH 최종 판정 아님 |
+| `assess_requested_task_satisfaction` | 현재 Task 관측이 요청 업무를 이미 만족하는지 SATISFIED·NOT_SATISFIED·UNDETERMINED로 평가. fact↔fact 관계는 만들지 않음 |
+| `validate_relations` | 세 후보 collection을 정규화된 Source·Calendar availability·Task 현재 상태로 검증해 validated_relations·relation_validation_ambiguities 기록 |
+| `assess_action_necessity` | frozen Output Route별 현재 적용 여부를 한 번 판단. Task CREATE는 앞선 중복 검토 결과에서 결정적으로 파생 |
+| `assess_information_gaps` | 현재 목표의 부족 정보와 해결 가능한 Retrieval Need. ambiguity_candidates·retrieval_needs만 갱신 |
+| `assess_operational_risks` | 과잉 실행·일정/업무 위험을 operational_risk_candidates에 기록. 실행 필요성·Policy·Approval·중복·충돌을 다시 판단하지 않음 |
+| `assemble_work_analysis / validate_work_analysis` | 검증된 결과를 WorkAnalysisResultV2로 조립·검증 |
 
-원칙:
+서로 다른 의미 판단을 한 LLM 호출에 facts·relations·dependencies·duplicates·gaps·risks로 모두 요구하지 않는다. Tool이나 Action Arguments를 만들지 않는다.
 
-- `extract_work_facts`는 Evidence에서 업무 사실만 구조화한다.
-- `resolve_entity_relations`는 사람·업무·Resource 사이의 의미 관계 후보만 만든다.
-- `resolve_temporal_dependencies`는 날짜·시간·선후행·업무 dependency 후보만 만든다. Calendar interval 산술이나 deterministic DAG 검증을 소유하지 않는다.
-- `detect_duplicate_conflict_candidates`는 Task 중복·Calendar 충돌 후보만 제안하며 최종 `DUPLICATES`·`CONFLICTS_WITH` authority가 아니다.
-- `validate_relations`가 정규화된 Source 데이터와 현재 상태로 relation을 확정한다. LLM relation 후보는 그대로 final authority가 될 수 없다.
-- `assess_information_gaps`는 현재 목표를 판단하는 데 아직 부족한 정보와 해결 가능한 retrieval need만 만들고 `ambiguity_candidates + retrieval_needs`만 갱신한다.
-- `assess_operational_risks`는 실행 필요성·과잉 실행 가능성·일정/업무 위험을 `operational_risk_candidates`에만 기록하되 Policy allow/deny, Approval, duplicate/conflict 최종 판정을 하지 않는다.
-- 하나의 LLM 호출이 facts + entity relations + temporal dependencies + duplicate/conflict candidates + gaps + risks를 동시에 생성하지 않는다.
-
-권장 Local State:
+현재 문서의 Local State 참조:
 
 ```python
 class TemporalDependencyCandidateV1:
@@ -1248,32 +1406,32 @@ class WorkAnalysisStateV2:
     final_analysis: WorkAnalysisResultV2 | None
 ```
 
-- `extract_work_facts`: Evidence에 명시되거나 근거로 추론 가능한 업무 사실만 구조화한다.
-- `resolve_entity_relations`: 사람·업무·Resource identity·ownership/reference 관계 후보만 분석하고 `entity_relation_candidates`만 갱신한다.
-- `resolve_temporal_dependencies`: 날짜·기간·선후·dependency 관계 후보만 분석하고 `temporal_dependency_candidates`만 갱신한다.
-- `detect_duplicate_conflict_candidates`: duplicate/conflict candidate만 `duplicate_conflict_candidates`에 제안하며 확정 판정은 하지 않는다.
-- `validate_relations`: 결정적 Node다. `entity_relation_candidates + temporal_dependency_candidates + duplicate_conflict_candidates`의 검증 대상 후보를 정규화된 Source 데이터와 Calendar availability/Task 현재 상태로 검증해 `validated_relations`와 `relation_validation_ambiguities`를 기록한다. 검증 전 candidate collection은 `WorkAnalysisResultV2.relations`에 직접 들어갈 수 없다. 정확 중복이 `validated_relations`로 확정된 경우 기본값은 `action_necessity=NOT_REQUIRED`이며 기존 Resource를 보여주고 새 Action을 만들지 않는다. 사용자가 중복 사실을 인지한 상태에서 동일 Resource 추가 생성을 명시적으로 요구한 경우에도 즉시 Planning하지 않고 `WorkAnalysis.NEEDS_CONFIRMATION` + `DUPLICATE_OVERRIDE_REQUIRED` Confirmation으로 2차 확인한 뒤에만 새 생성 후보를 허용한다. 검증된 Calendar 충돌은 `CONFLICT_OVERRIDE_REQUIRED` Confirmation 없이 충돌 Action Plan으로 진행할 수 없다. 유사 후보·검증 불가 관계는 ambiguity/risk 또는 추가 확인으로 남긴다. 다른 관계 유형도 가능한 경우 Source ID·Evidence ref 무결성을 결정적으로 검증한 뒤 assemble한다.
-- Tool·Action Arguments는 생성하지 않는다.
+#### 조건부 적용과 관계 확정
+
+| 상황 | 처리 |
+| --- | --- |
+| Policy Precondition만으로 진입한 Task/Calendar CREATE | entity/temporal 책임을 우회해 guarded duplicate/conflict 책임을 적용한다. |
+| 서로 다른 fact operand가 2개 미만 | relation schema상 후보가 없으므로 빈 candidate를 결정적으로 만든다. validate_relations와 이후 Policy 판단은 생략하지 않는다. |
+| analysis_requirement=REQUIRED | 전체 semantic relation 책임을 유지한다. |
+| 검증 전 relation 후보 | WorkAnalysisResultV2.relations에 직접 넣지 않는다. |
+| 정확 중복 확정 | 해당 Route를 `NOT_REQUIRED`로 두고 기존 Resource를 보여주며 새 Action을 만들지 않는다. |
+| 중복을 인지하고도 추가 생성 요청 | 즉시 Planning하지 않는다. WorkAnalysis.NEEDS_CONFIRMATION + DUPLICATE_OVERRIDE_REQUIRED로 2차 확인한 뒤 새 생성 후보를 허용한다. |
+| 검증된 Calendar 충돌 | CONFLICT_OVERRIDE_REQUIRED Confirmation 없이 충돌 Action Plan으로 진행하지 않는다. |
+| 유사 후보·검증 불가 관계 | ambiguity/risk 또는 추가 확인으로 남긴다. 가능한 관계는 Source ID·Evidence ref 무결성을 검증한 뒤 조립한다. |
 
 ### 5.6 Planning Subgraph
 
 Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
-```
-START
-→ choose_answer_or_action (deterministic Application operation `planning.choose_answer_or_action_from_route`; 별도 checkpoint/resume Runtime Node 아님)
-→ [ANSWER route] outline_answer
-→ [ANSWER route] compose_answer
-→ [ACTION route + analysis.action_necessity=NOT_REQUIRED] outline_answer → compose_answer(no-action reason)
-→ [ACTION route otherwise] draft_action_objective_per_output_route
-→ [ACTION route otherwise] compose_arguments_per_output_route
-→ [ACTION] build_dependencies
-→ assemble_plan
-→ validate_plan
-→ END
-```
+| 현재 입력 | 적용 책임 |
+| --- | --- |
+| ANSWER Route | outline_answer · compose_answer |
+| 모든 ACTION Route가 `NOT_REQUIRED` | 근거와 no-action reason을 답변으로 작성 |
+| 하나 이상의 ACTION Route가 `REQUIRED` | 필요한 Route만 action objective와 Tool Arguments 작성, 결정적 dependency 구성·Plan 조립·검증 |
 
-권장 Local State:
+분기 진입은 `planning.choose_answer_or_action_from_route`의 결정적 Application operation이며 별도 checkpoint/resume Runtime Node가 아니다.
+
+현재 문서의 Local State 참조:
 
 ```python
 class ActionObjectiveCandidateV1:
@@ -1304,31 +1462,47 @@ class PlanningStateV2:
     final_result: AnswerDraftV2 | ActionPlanDraftV2 | None
 ```
 
-규칙:
+#### Route와 Action 작성
 
 - `OutputPlanV1`은 사용자가 요구한 **출력 capability와 허용 Tool 경로**를 고정하지만 실제 Action 생성이 항상 필요하다는 보장은 아니다. Retrieval/Analysis에서 현재 상태가 이미 목표를 충족함이 확인되면 Planning은 Route를 변경하지 않고 Evidence 기반 Answer로 종료할 수 있다.
 - `draft_action_objective_per_output_route`는 frozen Output Route 하나에 대해 `ActionObjectiveCandidateV1`을 만들고 해당 `route_id`의 `action_objective_candidates`만 갱신한다. 사용자 목표·target semantics·scope constraint만 작성하며 Tool identity/effect/arguments를 바꾸지 않는다.
-- `compose_arguments_per_output_route`는 같은 `route_id`의 검증된 `ActionObjectiveCandidateV1` + 현재 Route의 `selected_tool_id` + 해당 Tool Schema만 보고 `ToolArgumentCandidateV1`의 business arguments를 직렬화한다. objective가 없거나 route_id가 맞지 않으면 fail closed한다.
+- `compose_arguments_per_output_route`는 같은 `route_id`의 검증된 `ActionObjectiveCandidateV1` + 현재 Route의 `selected_tool_id` + 해당 Tool Schema + 현재 검증된 Request Intent 제약만 보고 `ToolArgumentCandidateV1`의 business arguments를 직렬화한다. objective가 없거나 route_id가 맞지 않으면 fail closed한다.
+#### 대상 Evidence 보존
+
+| 상황 | 보존·검증 조건 |
+| --- | --- |
+| 선택된 GitHub Issue UPDATE/CLOSE/REOPEN | immutable repository, finalized selected identity, 검증된 인자의 issue number와 exact match하는 이미 확보된 target Evidence reference를 같은 argument composition에서 보존한다. |
+| LLM이 사용자 요청 reference만 반환 | 대상 identity provenance를 소실시키지 않는다. |
+| 다른 Issue·없는 Evidence | 붙이거나 만들지 않는다. 사업 값과 선택 대상의 충돌을 보정하지 않으며 후속 Domain target binding·Approval 권위를 유지한다. |
+| ACTION Review | Planning과 같은 current-Run Action Evidence projection, 즉 확보된 Retrieval Evidence와 persisted USER Message origin을 제공한다. |
+| 사용자 요청 Evidence | Review에서 누락하거나 외부 Resource로 위조하지 않는다. 기존 project_current_action_evidence를 사용하고 별도 producer를 만들지 않는다. |
+
+#### 결정적 작성과 검증
+
+- 제목만 지정된 정확한 Task CREATE와 제목·날짜·시작·종료·Timezone이 모두 지정된 정확한 Calendar CREATE는 frozen Output Route와 검증된 Request Intent가 각각 하나로 일치할 때 동일 candidate schema를 결정적으로 materialize할 수 있다. 필드가 부족하거나 복수 제약·추가 의미 판단이 남아 있으면 기존 LLM Node를 유지하며, 결정적 결과도 기존 assemble/validate 경계를 우회하지 않는다.
 - current registered Tool catalog 전체를 Planning Node에 다시 노출해 Tool을 재선택하게 하지 않는다. Tool 수는 Registry closed set에서 파생되며 Planning 문서가 별도 numeric authority를 갖지 않는다.
 - Tool Candidate shortlisting을 Planning에서 수행하지 않는다. Tool 선택 책임은 Tool Route가 이미 소유한다.
-- 각 Action의 Business Arguments 작성만 LLM이 수행한다. 다중 Action Dependency의 생성·정규화·cycle 검증은 frozen `OutputPlanV1`의 route 관계와 검증된 Action 후보를 입력으로 받는 결정적 Planning Application Node가 소유한다. P0 resolver는 Business Arguments에 이미 고정된 안정적 외부 Resource identity가 같은 Action들에 한해 frozen route 순서에서 후속 Action을 직전 동일 Resource Action에 연결한다. CREATE처럼 실행 전 Provider-generated resource ID를 알 수 없는 Action에는 dependency를 추정하지 않고, 서로 다른 Resource Action은 병렬로 유지한다.
-- `planning.compose_dependencies` Product PromptRef/LLM Node는 두지 않는다. Dependency는 deterministic `planning.build_dependencies`가 소유하며 이를 위해 Product Prompt Slot을 추가하지 않는다.
-- 최종 `ActionPlanDraftV2` 조립은 결정적 Application Node가 수행한다.
+#### Dependency와 최종 조립
+
+Action의 Business Arguments 작성과 Dependency 구성을 구분한다. 다중 Action의 dependency 생성·정규화·cycle 검증은 frozen OutputPlanV1의 route 관계와 검증된 Action 후보를 받는 결정적 Planning Application 책임이다.
+
+| 대상 | 현재 P0 resolver 처리 |
+| --- | --- |
+| Business Arguments에 같은 안정적 외부 Resource identity가 고정된 Action | frozen route 순서에서 후속 Action을 직전 동일 Resource Action에 연결 |
+| CREATE처럼 Provider-generated ID를 실행 전에 모르는 Action | dependency를 추정하지 않음 |
+| 서로 다른 Resource Action | 병렬 유지 |
+
+`planning.compose_dependencies` PromptRef/LLM Node는 두지 않는다. 기존 결정적 `planning.build_dependencies`가 소유하며 Prompt Slot을 추가하지 않는다. 최종 ActionPlanDraftV2 조립도 결정적 Application이 수행한다.
 
 ### 5.7 Review Subgraph
 
-```
-START
-→ inspect_goal_and_evidence                # LLM
-→ [ACTION] inspect_action_scope_and_route   # LLM
-→ inspect_constraints_and_policy_summary    # LLM / conditional
-→ aggregate_review_findings                 # deterministic
-→ validate_review                            # deterministic
-→ [REVISE 이후] recheck_affected_dimensions # LLM / affected dimensions only
-→ aggregate_review_findings                 # deterministic
-→ validate_review                            # deterministic
-→ END
-```
+| 책임 | 검사 범위 |
+| --- | --- |
+| inspect_goal_and_evidence | 목표 부합, 근거 충분성, unsupported claim·모순 |
+| inspect_action_scope_and_route | ACTION의 실행 필요성, frozen Route 일치, scope expansion |
+| inspect_constraints_and_policy_summary | 사용자 제약과 supplied policy summary. 새 정책을 만들지 않음 |
+| aggregate_review_findings / validate_review | 결정적 precedence로 findings를 합성하고 최종 disposition 검증 |
+| recheck_affected_dimensions | REVISE가 지정한 dimension만 재검사한 뒤 aggregate/validate 재통과 |
 
 세 inspector의 intermediate output은 free-form object가 아니라 다음 typed contract로 닫는다.
 
@@ -1353,80 +1527,39 @@ class ReviewInspectorResultV1:
 - `affected_action_ids` / `affected_route_ids`는 비어 있을 수 있으며 dimension-only finding을 유효하게 보존한다.
 - `finding_kind`는 finding 분류이지 최종 routing disposition이 아니다. 최종 `PASS | REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION | CONFIRM | BLOCK`은 `aggregate_review_findings`의 deterministic precedence가 결정한다.
 
+#### 검사 적용·RECHECK
+
 검사 책임을 한 Prompt에 합치지 않는다.
 
-- `inspect_goal_and_evidence`는 goal fit, evidence adequacy, unsupported claim/contradiction만 검사한다.
-- `inspect_action_scope_and_route`는 ACTION plan에서 action necessity, frozen Tool Route 일치, scope expansion 여부만 검사한다.
-- `inspect_constraints_and_policy_summary`는 사용자 제약과 **supplied policy summary**의 위반 여부만 검사하며 새 정책을 만들지 않는다.
-- `aggregate_review_findings`는 세 결과의 severity/disposition을 deterministic precedence로 합성한다. LLM이 최종 routing authority를 소유하지 않는다.
-- `recheck_affected_dimensions`는 REVISE가 표시한 `affected_dimensions`만 재검사한다. `affected_action_ids`와 `affected_route_ids`가 있으면 해당 dimension의 bounded context로만 사용하며, action/route ID가 `null`이어도 dimension-only RECHECK가 가능해야 한다. Finding 문자열이나 전체 Plan은 recheck selector가 아니다. RECHECK 결과도 `aggregate_review_findings → validate_review`를 다시 통과한 뒤에만 최종 disposition이 유효하다.
-- Function/Tool Calling을 사용할 수 있으나 Adapter는 `name + arguments`의 일반 계약만 알고 Domain Result 매핑은 Application Layer가 수행한다.
-- `PASS`, `REVISE`, `RETRIEVE_MORE`, `ROUTE_RECONSIDERATION`, `CONFIRM`, `BLOCK`은 닫힌 Schema와 deterministic aggregation으로 제한한다.
-- Review가 Route 오류를 발견해도 `tool_route_plan`을 직접 변경하지 않는다.
+| 상황 | 적용 기준 |
+| --- | --- |
+| 정확한 Task/Calendar CREATE | 검증된 Intent·frozen Route와 Plan이 일치하고 필수 중복/충돌 분석이 끝났으며 ambiguity·risk·relation·override가 모두 비어 있을 때, inspector 결과를 빈 Finding으로 결정적으로 만들 수 있다. |
+| 조건 미충족·Confirmation/Policy 판단 남음 | 해당 inspector LLM을 유지한다. 위 최적화로 Domain Validation·Approval·Verification을 생략하지 않는다. |
+| aggregate_review_findings | 세 결과를 deterministic severity/disposition precedence로 합성한다. LLM이 최종 routing authority를 갖지 않는다. |
+| recheck_affected_dimensions | REVISE가 표시한 affected_dimensions만 재검사한다. action/route IDs가 있으면 해당 dimension의 bounded context로만 사용한다. |
+| dimension-only RECHECK | action/route ID가 없어도 가능해야 한다. 원문의 `null` 표기와 타입의 빈 list 허용은 임의로 치환하지 않는다. Finding 문자열·전체 Plan은 selector가 아니다. |
+| RECHECK 후 반환 | aggregate_review_findings → validate_review를 다시 통과한 뒤 최종 disposition을 반환한다. |
+| Function/Tool Calling | Adapter는 name + arguments의 일반 계약만 알고 Domain Result 매핑은 Application이 수행한다. |
+| Route 오류 발견 | tool_route_plan을 직접 변경하지 않는다. |
+
+최종 PASS·REVISE·RETRIEVE_MORE·ROUTE_RECONSIDERATION·CONFIRM·BLOCK은 닫힌 Schema와 결정적 aggregation으로 제한한다.
 
 ## 6. Workflow Phase
 
-Main Phase는 전문 책임 경계만 표현한다.
+`WorkflowPhaseV2`의 값은 §2.1의 선언 한곳에서 정의한다. Phase는 Main routing/checkpoint 위치이며, Query 계획·Read·RAG·Sufficiency는 Retrieval 내부 Node State다.
 
-```
-INITIALIZE
-REQUEST_UNDERSTANDING
-WAITING_CONFIRMATION
-TOOL_ROUTING
-RETRIEVAL
-WORK_ANALYSIS
-PLANNING
-REVIEW
-DOMAIN_VALIDATION
-WAITING_APPROVAL
-PREFLIGHT
-ACTION_EXECUTION
-VERIFICATION
-RESPONSE_SYNTHESIS
-TERMINAL_COMMIT
-RECOVERY
-FINALIZE
-```
-
-Query 계획·Read 실행·RAG Evidence 선택·Sufficiency는 Main Phase가 아니라 Retrieval Subgraph 내부 Node State다.
-
-Run Status는 기존 Domain 계약의 `CREATED, ANALYZING, RETRIEVING, WAITING_CONFIRMATION, PLANNING, WAITING_APPROVAL, EXECUTING, VERIFYING, CANCEL_REQUESTED, CANCELLED, REAUTH_REQUIRED, RECOVERY_REQUIRED, COMPLETED, BLOCKED, FAILED`를 유지한다.
+Domain Run Status는 State Contract를 따른다. Graph에 제어 Node가 추가되거나 화면에 상태가 표시된다는 이유로 Phase·Domain 상태 값을 새로 만들지 않는다.
 
 ## 7. Node Result·Edge 계약
 
-- Request Understanding: `COMPLETE | NEEDS_CONFIRMATION | INVALID`
-- Tool Route: `ROUTE_READY | NO_TOOL_NEEDED | NEEDS_CONFIRMATION | BLOCKED`
-- Retrieval: `SUFFICIENT | NO_FETCH_NEEDED | NEEDS_MORE_DATA | NEEDS_CONFIRMATION | ROUTE_RECONSIDERATION_REQUIRED | PARTIAL | BLOCKED`
-- Work Analysis: `COMPLETE | NEEDS_MORE_DATA | NEEDS_CONFIRMATION | ROUTE_RECONSIDERATION_REQUIRED | BLOCKED`
-- Planning: `ANSWER_ONLY | PLAN_READY | NEEDS_CONFIRMATION | ROUTE_RECONSIDERATION_REQUIRED | BLOCKED`
-- Review: `PASS | REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION | CONFIRM | BLOCK`
-- Domain (Release Action path): `REQUIRE_APPROVAL | BLOCK`; `ALLOW_READ`는 Legacy/compatibility READ Action 경계에서만 유지
+role별 Result의 소비 경로는 §1.3, 공통 disposition 타입은 §4.2를 따른다. Node는 자기 Role의 허용 subset만 반환하며 다른 Role의 disposition을 임의 사용하지 않는다.
 
-주요 정상/Back-edge 요약 — Interrupt·Blocked·Terminal 완전성은 §1.3이 단일 권위:
+| Domain Validation 경로 | 결과 경계 |
+| --- | --- |
+| Release Action Plan | REQUIRE_APPROVAL 또는 BLOCK |
+| Legacy/compatibility READ Action | ALLOW_READ는 이 경계에서만 유지 |
 
-```
-Request COMPLETE → Tool Route
-Tool Route ROUTE_READY + IN 있음 → Retrieval
-Tool Route ROUTE_READY + IN 없음 + `analysis_requirement=NONE` + ANSWER → Planning
-Tool Route ROUTE_READY + IN 없음 + `analysis_requirement=REQUIRED` → Work Analysis
-Tool Route NO_TOOL_NEEDED → Planning(answer)
-Retrieval SUFFICIENT/NO_FETCH_NEEDED + `analysis_requirement=REQUIRED` → Work Analysis
-Retrieval SUFFICIENT/NO_FETCH_NEEDED + `analysis_requirement=NONE` + ANSWER → Planning
-Retrieval NEEDS_MORE_DATA + local budget → Retrieval local loop
-Retrieval NEEDS_MORE_DATA + budget exhausted → Confirmation 또는 PARTIAL/BLOCKED를 정책에 따라 반환
-Retrieval ROUTE_RECONSIDERATION_REQUIRED → Tool Route (RouteReconsiderationRequiredV1 전달)
-Analysis NEEDS_MORE_DATA + current IN route → Retrieval (`RetrievalRequiredV1` 전달)
-Analysis ROUTE_RECONSIDERATION_REQUIRED → Tool Route (RouteReconsiderationRequiredV1 전달)
-Analysis COMPLETE → Planning
-Planning ANSWER_ONLY → Response Synthesis
-Planning PLAN_READY → Review
-Planning ROUTE_RECONSIDERATION_REQUIRED → Tool Route
-Review REVISE → Planning (`ReviewReviseV2.issues` 전달)
-Review RETRIEVE_MORE + current IN route → Retrieval (`RetrievalRequiredV1` 전달)
-User Context Adjustment + current IN route → Retrieval (`ContextAdjustmentV1` 전달); new route 필요 시 기존 Route Reconsideration edge 사용
-Review ROUTE_RECONSIDERATION → Tool Route (RouteReconsiderationRequiredV1 전달)
-Review PASS → Domain Validation
-```
+사용자 Context Adjustment는 §1.1-C의 등록된 target으로 전달하고, 새로운 Route가 필요하면 기존 Route Reconsideration을 사용한다.
 
 ## 8. Tasks 시간 의미
 
@@ -1439,58 +1572,53 @@ Review PASS → Domain Validation
 
 ## 9. Answer-only / READ / WRITE
 
-### 9.1 Answer-only
+| 요청·결과 | Workflow 구분 |
+| --- | --- |
+| Answer-only | output_mode=ANSWER이고 외부 IN Route가 없으면 Retrieval을 생략할 수 있다. Analysis 적용은 §18을 따른다. |
+| Read-backed Answer | IN Route에서 Retrieval/RAG로 근거를 확보하고 필요한 경우에만 Analysis를 적용해 답변한다. 일반 Retrieval은 Action Row를 만들지 않는다. |
+| WRITE | 고정된 OUT Route의 실행안을 검토·승인한 뒤 §12의 Claim·Begin·실행·검증 경계를 따른다. Retrieval/Analysis를 모든 WRITE에 강제하지 않는다. |
 
-`ToolRoutePlanV2.output_plan.output_mode=ANSWER`이고 외부 IN Route가 없으면 Retrieval을 건너뛸 수 있다.
-
-```
-Request → Tool Route → Planning.answer → COMPLETED
-```
-
-### 9.2 Read-backed Answer
-
-```
-Request → Tool Route(IN only) → Retrieval/RAG → [필요할 때만 Work Analysis] → Planning.answer → COMPLETED
-```
-
-일반 Retrieval API 호출은 Action Row를 만들지 않는다. `ALLOW_READ`는 기존 명시적 READ Action/Domain 호환 경로에만 남기며, 새 표준 Retrieval-backed Answer는 Domain Action을 만들지 않고 Planning.answer에서 Response로 간다.
-
-### 9.3 WRITE
-
-```
-Request → Tool Route(IN/OUT) → Retrieval → Work Analysis → Planning(arguments only)
-→ Review → Domain Validation → Approval → ClaimExecution COMMIT → ClaimContext 구성 → BeginExecutionAttempt COMMIT(applied=true) → MCP Write → Verification
-```
-
-승인 이후 Tool·Effect·Arguments·Target을 LLM이 변경하지 않는다.
+`ALLOW_READ`는 원문이 정의한 명시적 READ Action/Domain 호환 경계의 값이며, 새 표준 Retrieval-backed Answer의 경로가 아니다. 승인 이후 Tool·Effect·Arguments·Target을 LLM이 변경하지 않는다.
 
 ## 10. Retry·Recovery·Interrupt
 
 ### 10.1 Retry Kind
 
-```
-SCHEMA_REPAIR
-SEMANTIC_REVISION
-WORKFLOW_REDIRECTION
-DETERMINISTIC_RETRY
-DETERMINISTIC_RECOVERY
-```
+| 종류 | 처리 범위 |
+| --- | --- |
+| SCHEMA_REPAIR | 현재 Node의 Output Shape만 교정 |
+| SEMANTIC_REVISION | 같은 Subgraph의 의미 책임 안에서 수정 |
+| WORKFLOW_REDIRECTION | 다른 전문 책임이 필요한 경우 Parent로 전달 |
+| DETERMINISTIC_RETRY | 401·429·5xx·Timeout 등은 일반 코드가 Retry·Reauth 처리 |
+| DETERMINISTIC_RECOVERY | UNKNOWN_RESULT·Verification MISMATCH는 LLM 재계획이 아니라 기존 Recovery 처리 |
 
-- Schema Repair는 현재 Node Output Shape만 교정한다.
-- Semantic Revision은 같은 Subgraph 책임 범위에서만 허용한다.
-- 다른 책임이 필요하면 Workflow Redirection을 사용한다.
-- 401·429·5xx·Timeout은 일반 코드 Retry·Reauth 대상이다.
-- `UNKNOWN_RESULT`와 Verification `MISMATCH`는 LLM 재계획 대상이 아니다.
-- `ResolveRecovery(RECHECK)`는 동일 `recovery_fingerprint + external-state fingerprint + verification input`에 새 정보가 없는 상태로 자동 반복하지 않는다. 동일 입력의 no-progress RECHECK는 새 Verification round를 만들지 않고 사용자 선택을 유지한 채 suspend하거나 등록된 다른 resolution을 요구한다. changed external state 또는 changed recovery fingerprint가 있을 때만 새 RECHECK round로 인정한다.
+같은 `recovery_fingerprint + external-state fingerprint + verification input`의 RECHECK를 자동 반복하지 않는다. 새 정보가 없으면 새 Verification round를 만들지 않고 suspend 또는 등록된 다른 resolution을 기다린다. external state나 recovery fingerprint가 달라져야 새 RECHECK round로 인정한다.
 
 ### 10.2 Interrupt
 
-- `WAITING_CONFIRMATION`
-- `WAITING_APPROVAL`
-- `REAUTH_REQUIRED`
-- `RECOVERY_REQUIRED`
+중단 대상은 WAITING_CONFIRMATION, WAITING_APPROVAL, REAUTH_REQUIRED, RECOVERY_REQUIRED다. 중단 전에 Main Checkpoint를 저장하고 같은 Thread에서 재개한다.
 
-Interrupt 전에 Main Checkpoint를 저장하고 같은 Thread에서 재개한다.
+#### Confirmation 순서
+
+```text
+검증된 NEEDS_CONFIRMATION / CONFIRM
+→ RequestConfirmation 적용
+→ pre_confirmation_status와 registered resume binding 보존
+→ semantic_owner_id + AgentNodeResumeTargetV2 + interrupt_id checkpoint 저장
+→ LangGraph interrupt
+→ 사용자 응답 검증
+→ ResumeConfirmation 적용
+→ 발생 전 안전 Domain 상태와 같은 owner checkpoint에서 재개
+```
+
+| 상황 | 조건 |
+| --- | --- |
+| pre-publish owner | State Contract의 ANALYZING / RETRIEVING / PLANNING source 사용 |
+| published Plan Review CONFIRM | guarded WAITING_APPROVAL / VERIFYING source만 사용 |
+| 사용자 응답이 upstream 의미 변경 | 필요한 State Owner로 명시적 Back-edge |
+| upstream 의미 변경 없음 | Request Understanding 공통 재시작 없이 같은 owner에서 계속 |
+
+WAITING_CONFIRMATION은 공통 Router가 아니라 interrupt 경계다. Receipt·options·target 검증은 §2.1의 control 계약을 사용한다.
 
 ## 11. Budget
 
@@ -1503,16 +1631,30 @@ REVIEW_RECHECK_PER_PLANNING_REVISION=1
 NORMAL_MAX_LLM_CALLS=14
 RETRIEVAL_HEAVY_MAX_LLM_CALLS=20
 REVISION_HEAVY_MAX_LLM_CALLS=18
-ABSOLUTE_MAX_LLM_CALLS=24
+ABSOLUTE_MAX_LLM_CALLS=100
 ```
 
 - 책임 분리를 위해 Subgraph 내부 Node 수가 증가해도 모든 Node가 LLM Call일 필요는 없다.
 - Query Builder, Registry Binding, Read 실행, Segment Normalize, Plan Assembly, Validator는 결정적 코드 우선이다.
 - LLM Call 수가 Agent 수 또는 Node 수와 같다고 가정하지 않는다.
 
+#### Run 예산 집행
+
+| 항목 | 규칙 |
+| --- | --- |
+| 기준 | Run 시작 시 `10 Settings`의 validated budget snapshot을 고정한다. |
+| compatibility | absolute 상한은 100이다. 과거 저장값 24/36은 현재 계약을 읽을 때 100으로 정규화하며 사용량 counter는 reset하지 않는다. |
+| Profile 관측값 | `NORMAL=14`, `REVISION_HEAVY=18`, `RETRIEVAL_HEAVY=20`은 실행 특성 관측용이며 LLM dispatch를 차단하지 않는다. |
+| counter | 음수가 아니며 단조 증가한다. Profile 승격으로 사용량을 초기화하지 않는다. |
+| 집행 범위 | LLM·Repair·Revision·Retrieval 외에도 per-Run Connector call, Context token, Retry, 최대 실행 시간을 검사한다. elapsed time은 ClockPort로 확인한다. |
+| Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=50`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |
+| 초과 직전 | 다음 outbound/LLM operation을 막고 bounded failure/recovery result를 반환한다. |
+
+위 수치는 현재 실행 상한이다. 실험 case 수나 최적 성능의 목표값을 뜻하지 않으며, 반복 전략 자체를 고정하지 않는다.
+
 ## 12. 실행·검증 경계
 
-READ:
+### READ
 
 ```
 InputRoutePlanV1
@@ -1521,9 +1663,11 @@ InputRoutePlanV1
 → RetrievalResultV1
 ```
 
-일반 Connector READ는 Retrieval이 소유하며 Action·Approval·ExecutionAttempt·Verification Row를 만들지 않는다. 별도 READ Action lifecycle과 호환 실행 체인은 존재하지 않는다.
+일반 Connector READ는 Retrieval이 소유하며 Action·Approval·ExecutionAttempt·Verification Row를 만들지 않는다.
 
-WRITE:
+> **확인 필요:** 원문 이 절은 “별도 READ Action lifecycle과 호환 실행 체인은 존재하지 않는다”고 적고 있지만, §1·§2·§7·§9는 Legacy READ 경로를 정의한다. 이 불일치를 문서 정리만으로 해소하거나 lifecycle·resume target을 삭제하지 않는다.
+
+### WRITE
 
 ```
 PROPOSED | MODIFIED
@@ -1542,13 +1686,15 @@ PROPOSED | MODIFIED
 
 `ClaimExecution` Commit 전 Write는 물론, Claim Commit만으로도 Write할 수 없다. `BeginExecutionAttempt`가 `applied=true`로 Commit되어 Attempt=`EXECUTING`인 뒤에만 외부 Write를 시작한다. 승인 이후 인자를 LLM이 재생성하지 않는다.
 
-FAILED:
+### FAILED
 
-```
+```text
 FAILED → prepare_write_retry → MODIFIED → 새 승인 → 새 Attempt
 ```
 
-UNKNOWN_RESULT:
+새 승인 전 Review·Domain Validation과 독립 Action의 계속 실행 조건은 §1.2를 따른다.
+
+### UNKNOWN_RESULT
 
 ```
 CREATE → RESOURCE_SEARCH (Recovery Fingerprint 기반 Resource Search)
@@ -1583,47 +1729,41 @@ Tool 관련 실패 Owner:
 
 Planning에서 발견된 Tool 불일치는 `TOOL_ROUTE_EFFECT_MISMATCH` 또는 대응 Route failure로 정규화하고 Tool Route 재검토로 redirect한다.
 
-### 13.1 Runtime Node ID → semantic/repository operation closure
+### 13.1 Runtime Node와 Application operation의 구분
 
-Runtime Node ID와 repository operation ID는 다른 namespace이므로 문자열 equality를 강제하지 않는다. **전체 current Runtime Node/stage 1:1 mapping의 repository authority는 16/01 `Runtime Node ID → Application operation closed mapping`이며 모든 current ID를 열거한다.** 아래 표는 이름이 다르거나 여러 deterministic operation이 한 runtime node 안에서 이어지는 non-identity/special mapping만 요약한다. supporting deterministic operation은 명시된 runtime node 내부에서 실행되며 별도 checkpoint/resume target을 만들지 않는다.
+| 구분 | 의미 |
+| --- | --- |
+| Runtime Node ID | checkpoint·resume 가능한 물리 실행 단위 |
+| Application operation ID | Owner 내부의 의미 책임 |
+| 이름 관계 | 서로 다른 namespace다. 문자열 equality를 강제하지 않는다. |
+| 결정적 Node | 여러 검증 operation을 순서대로 호출할 수 있다. |
+| supporting operation | 별도 파일이라는 이유로 Node·checkpoint·resume target이 되지 않는다. |
 
-| Runtime stage/node | Semantic/Application operation | Runtime placement |
-| --- | --- | --- |
-| `request.identify_goal` | `request_understanding.identify_goal` | 독립 runtime node |
-| `request.detect_ambiguity` | `request_understanding.detect_ambiguity` | 독립 runtime node |
-| `request.finalize` | `request_understanding.finalize_intent` → `request_understanding.validate_intent` | 같은 deterministic finalize node 내부 |
-| Tool Route precondition stage | `tool_routing.resolve_policy_preconditions` | Registry binding 전 deterministic stage, 별도 LLM node 아님 |
-| `retrieval.rag_retrieve` | `retrieval.rag_retrieve_rerank` | 독립 runtime node |
-| `analysis.finalize` | `work_analysis.assemble_work_analysis` → `work_analysis.validate_work_analysis` | 같은 deterministic finalize node 내부 |
-| Planning subgraph entry | `planning.choose_answer_or_action_from_route` | route branch 결정 deterministic entry operation, 별도 resume node 아님 |
-| `planning.derive_dependencies` | `planning.build_dependencies` | 독립 deterministic runtime node |
-| Planning argument pre-bind | `planning.resolve_default_container` | argument writer 전 deterministic stage |
-| `planning.assemble` | `planning.assemble_plan` → `planning.validate_plan` | 같은 deterministic assemble node 내부 |
-| `review.inspect_action_scope_route` | `review.inspect_action_scope_and_route` | 독립 runtime node |
-| `review.inspect_constraints_policy` | `review.inspect_constraints_and_policy_summary` | 독립 runtime node |
-| `review.aggregate_findings` | `review.aggregate_review_findings` → `review.validate_review` | 같은 deterministic aggregate node 내부 |
-
-`validate_intent`, `choose_answer_or_action_from_route`, `resolve_policy_preconditions`, `resolve_default_container`, `validate_work_analysis`, `validate_plan`, `validate_review`는 독립 LangGraph Node를 요구하지 않는다. 16은 각 semantic operation의 file/symbol을 매핑한다.
+구체 파일 inventory는 이 문서나 16에 복제하지 않는다. 실제 registry·composition·production caller·architecture test로 확인한다.
 
 ## 14. Node Registry
 
-이 절의 표는 실행 흐름 설명용 요약이다. **Runtime Node ID 자체는 이 06 문서가 소유**하고, repository owner/path/file/symbol 이름은 `16 Repository Architecture`가 매핑한다. 두 identifier namespace는 같은 semantic responsibility를 가리킬 수 있지만 문자열이 같아야 하는 것은 아니다. 예를 들어 현재 Runtime Node ID의 `request.*`, `analysis.*` 표기는 checkpoint/resume topology의 runtime identity이고, repository capability label의 `request_understanding.*`, `work_analysis.*`는 code ownership/naming identity다. 16은 Runtime Node ID를 자동 rename하지 않으며, 구현 시 두 식별자를 명시적으로 매핑해야 한다.
+Runtime Node ID는 이 문서가 소유하고, repository owner·naming·placement는 `16`을 따른다. Node Registry는 runtime 책임을 나타내며 PromptRef 개수나 repository operation label과 같지 않다.
 
-Node Registry는 **Subgraph와 Node의 실제 runtime 책임**을 나타내며 PromptRef 수나 repository operation label과 동일하지 않다.
+| 현재 namespace 예 | 구분 |
+| --- | --- |
+| request.* / analysis.* | checkpoint/resume topology의 Runtime identity |
+| request_understanding.* / work_analysis.* | repository ownership/naming identity |
 
-### 14.0 Current heavy-Agent atomic registry
+### 14.0 Work Analysis · Planning · Review
 
-아래 registry가 Work Analysis / Planning / Review의 **current semantic authority**다. Request Understanding / Tool Route / Retrieval의 current registry는 §14.1에 유지한다. 이 문서에 정의되지 않은 broad/legacy runtime ID는 current Node·Prompt·resume authority가 아니다.
+아래는 현재 문서가 정의한 runtime ID와 책임의 대응이다. Request Understanding / Tool Route / Retrieval은 §14.1에 둔다. ID·binding은 보존하되, 표를 미래의 고정 Node 수나 실험 후보 목록으로 사용하지 않는다. 등록되지 않은 broad/legacy ID를 Node·Prompt·resume 권위로 사용하지 않는다.
 
 | node_id | subgraph | type | 단일 책임 |
 | --- | --- | --- | --- |
 | `analysis.extract_facts` | work_analysis | LLM | Evidence-grounded work facts |
 | `analysis.resolve_entity_relations` | work_analysis | LLM/conditional | entity/resource relation candidates only |
 | `analysis.resolve_temporal_dependencies` | work_analysis | LLM/conditional | temporal/dependency candidates only |
-| `analysis.detect_duplicate_conflict_candidates` | work_analysis | LLM/conditional | duplicate/conflict candidates only |
+| `analysis.detect_duplicate_conflict_candidates` | work_analysis | LLM/conditional | fact↔fact duplicate/conflict candidate와 requested Task satisfaction을 서로 다른 atomic Prompt로 평가해 기존 typed assessment로 조립 |
 | `analysis.validate_relations` | work_analysis | deterministic | duplicate/conflict/current-state relation validation |
+| `analysis.assess_action_necessity` | work_analysis | LLM/conditional | frozen output route별 현재 적용 여부. Task CREATE는 중복 검토에서 결정적으로 파생 |
 | `analysis.assess_information_gaps` | work_analysis | LLM | missing information / retrieval needs only |
-| `analysis.assess_operational_risks` | work_analysis | LLM/conditional | operational risk / action-necessity candidate only |
+| `analysis.assess_operational_risks` | work_analysis | LLM/conditional | operational risk only |
 | `analysis.finalize` | work_analysis | deterministic | `assemble_work_analysis` → `validate_work_analysis` → `WorkAnalysisResultV2`; 두 deterministic operation은 이 runtime node 안에서 연속 실행 |
 | `planning.outline_answer` | planning | LLM | answer evidence/conclusion outline only |
 | `planning.compose_answer` | planning | LLM | answer prose from approved outline/evidence |
@@ -1641,18 +1781,19 @@ Node Registry는 **Subgraph와 Node의 실제 runtime 책임**을 나타내며 P
 Runtime-node closure rule:
 
 - `validate_work_analysis`, `validate_plan`, `validate_review`는 각각 독립 Product LLM responsibility가 아니며 **별도 LangGraph Runtime Node ID를 만들지 않는다**. 현재 runtime topology에서는 `analysis.finalize`, `planning.assemble`, `review.aggregate_findings` node 내부의 deterministic Application operation으로 실행한다.
-- 따라서 16의 operation-per-file mapping에는 validator 파일이 독립적으로 존재할 수 있지만, 06의 Resume Target Registry/Node Registry에는 위 세 validator를 별도 node/resume target으로 등록하지 않는다.
+- 따라서 validator operation이 독립 파일에 존재할 수 있지만, 06의 Resume Target Registry/Node Registry에는 위 세 validator를 별도 node/resume target으로 등록하지 않는다.
 - `review.recheck` 결과는 반드시 `review.aggregate_findings`로 돌아가 그 node 내부 `aggregate_review_findings → validate_review`를 재통과한 뒤에만 disposition을 반환한다.
 
 registered node/resume target set이 변경되면 compiled Resume Target Registry의 `graph_version`을 반드시 증가시키고, 현재 registry와 일치하지 않는 checkpoint는 추측 resume하지 않는다.
 
-Repository placement는 16/06의 `NodeRegistry`와 `ResumeTargetRegistry`가 단일 authority다. 06은 runtime node/resume semantics만 소유하며 Registry path/file/symbol이나 duplicate lookup table을 정의하지 않는다.
+`NodeRegistry`와 `ResumeTargetRegistry`는 runtime lookup의 단일 production authority다. 06은 runtime node/resume semantics만 소유하며 Registry path/file/symbol이나 duplicate code inventory를 정의하지 않는다.
 
-### 14.1 Current Request Understanding / Tool Route / Retrieval registry
+### 14.1 Request Understanding · Tool Route · Retrieval
 
 | node_id | subgraph | type | 주요 입력 | 주요 출력 |
 | --- | --- | --- | --- | --- |
-| `request.identify_goal` | request_understanding | LLM | request | goal candidate |
+| `request.identify_goal` | request_understanding | LLM | request | goal 후보 → resource 책임 → source status를 순서대로 조립한 goal candidate |
+| `request.identify_temporal_scope` | request_understanding | LLM/conditional | request + goal period/context | temporal axis를 더한 goal candidate |
 | `request.detect_ambiguity` | request_understanding | LLM/conditional | request + goal | ambiguity |
 | `request.finalize` | request_understanding | deterministic | local candidates | `finalize_intent → validate_intent → RequestIntentV2` |
 | `route.determine_resources` | tool_route | LLM | `RequestIntentV2` | IN/OUT resource·effect candidate |
@@ -1660,7 +1801,7 @@ Repository placement는 16/06의 `NodeRegistry`와 `ResumeTargetRegistry`가 단
 | `route.select_tool` | tool_route | LLM/conditional | route candidate + registered candidates | selected candidate |
 | `route.finalize` | tool_route | deterministic | selected candidate + Registry | `ToolRoutePlanV2` |
 | `route.validate` | tool_route | deterministic | final route | validated route |
-| `retrieval.plan_query` | retrieval | LLM | intent + input routes | `RetrievalQueryPlanV2` |
+| `retrieval.plan_query` | retrieval | LLM/conditional | intent + input routes; exact selected detail은 deterministic materialization | `RetrievalQueryPlanV2` |
 | `retrieval.build_query` | retrieval | deterministic | query plan + route | validated query |
 | `retrieval.execute_read` | retrieval | deterministic | query + allowed read tools | read handles |
 | `retrieval.normalize_segments` | retrieval | deterministic | read handles | segment handles |
@@ -1669,68 +1810,25 @@ Repository placement는 16/06의 `NodeRegistry`와 `ResumeTargetRegistry`가 단
 | `retrieval.assess_sufficiency` | retrieval | LLM | intent + evidence | `SufficiencyResultV2` |
 | `retrieval.finalize` | retrieval | deterministic | local results | `RetrievalResultV1` |
 
-## 15. Workflow-local 구현 순서
+## 15. Workflow 구성 경계
 
-전체 repository/build 순서는 `16 Repository Architecture`의 Design Freeze implementation order를 따른다. 06 안에서는 **선행 Schema/Application operation이 이미 정의되었다는 전제**로 다음 Workflow adapter 순서만 소유한다.
+Workflow의 구현 순서나 세부 Node 분해를 고정된 작업 계획으로 두지 않는다. 구성 시에는 정의된 Schema·Application operation을 사용하고, Graph adapter는 아직 없는 Domain·Port·Application 책임을 임시 구현하거나 generic service로 흡수하지 않는다.
 
-```text
-1. GraphState owner fields + typed projections
-2. Request Understanding / Tool Routing node adapters
-3. Retrieval node adapters + bounded local loop
-4. Work Analysis atomic node adapters
-5. Planning node adapters + deterministic assembler/validator binding
-6. Review node adapters + aggregate/validate/recheck binding
-7. Main routers/edges/back-edges
-8. interrupt/resume/checkpoint target binding
-9. Workflow contract tests
-10. Prompt registry/caller final synchronization
-```
-
-Graph adapter가 아직 정의되지 않은 Domain/Port/Application 책임을 임시 구현하거나 generic service로 흡수하면 실패다.
+네이밍·배치·의존성 규칙은 `16`을 유지한다. supporting operation 파일을 추가했다는 이유로 별도 Node·checkpoint·resume target을 만들지 않는다는 §13.1의 구분도 유지한다.
 
 ## 16. Prompt Registry
 
-Prompt는 구조가 확정된 뒤 마지막으로 정합한다.
+PromptRef·선택 Key·입력 계약의 상세는 `15 Agent Capability·Failure·Prompt`를 따른다. Workflow에서는 호출 지점과 책임의 연결만 사용한다.
 
-Prompt 선택 Key:
-
-```
-agent_role
-subgraph_name
-node_name
-node_state
-purpose
-input_schema_version
-output_schema_version
-```
-
-PromptRef:
-
-```
-prompt_bundle_version
-prompt_id
-prompt_version
-content_hash
-agent_role
-subgraph_name
-node_name
-node_state
-purpose
-input_schema_version
-output_schema_version
-```
-
-규칙:
-
-- Supervisor는 Prompt 원문을 읽거나 선택하지 않는다.
-- 선택된 LLM Node가 Prompt Registry에서 PromptRef를 확정한다.
-- Prompt는 해당 Node가 받은 Projection 밖의 State를 가정하지 않는다.
-- Prompt는 다른 Subgraph의 책임을 다시 수행하도록 지시하지 않는다.
-- Tool Route 이후 Retrieval·Planning Prompt가 Tool을 재선택하도록 지시하지 않는다.
-- Repair·Revision은 별도 Purpose를 사용하고 호출당 최대 1회 Schema Repair를 기본으로 한다.
-- Prompt 원문·Completion 원문은 Main Graph State·일반 Trace·Audit에 저장하지 않는다.
-- 실행·검증·승인·정책 판정에는 LLM Prompt를 사용하지 않는다.
-- 신규/변경 Prompt는 Node DEV/HOLDOUT·Safety Gate 전 `RUNTIME_ACTIVE`로 승격하지 않는다.
+| 항목 | Workflow 규칙 |
+| --- | --- |
+| Prompt 선택 | Supervisor는 원문을 읽거나 선택하지 않는다. 선택된 LLM Node가 Registry에서 PromptRef를 확정한다. |
+| 입력 | 해당 Node의 Projection 밖 State를 가정하지 않는다. |
+| 책임 | 다른 Subgraph 책임을 다시 수행하거나 Tool Route 이후 Retrieval·Planning에서 Tool을 재선택하지 않는다. |
+| Repair / Revision | 별도 Purpose를 사용하며 현재 bounded Repair 계약을 따른다. |
+| 저장 | Prompt·Completion 원문을 Main State·일반 Trace·Audit에 저장하지 않는다. |
+| 결정적 경계 | 실행·검증·승인·정책 판정에 LLM Prompt를 사용하지 않는다. |
+| 활성화 | 신규·변경 Prompt는 필요한 Node DEV/HOLDOUT·Safety Gate 전 RUNTIME_ACTIVE로 승격하지 않는다. 평가 절차 자체는 여기서 중복 정의하지 않는다. |
 
 ## 17. Attachment Agent 경계
 
@@ -1742,28 +1840,82 @@ output_schema_version
 
 ## 18. Effective Analysis와 Planning Binding
 
-`RequestIntentV2.analysis_requirement`은 사용자의 요청 자체가 업무 관계·파생 의미·위험 해석을 요구하는지를 나타낸다. **ACTION이라는 이유만으로 `REQUIRED`가 되지 않는다.**
+`analysis_requirement`은 요청 자체의 업무 관계·파생 의미·위험 해석 필요성이다. ACTION이라는 이유만으로 REQUIRED가 되지 않는다.
 
-```
+```text
 request_analysis_required
 OR deterministic_policy_precondition_requires_analysis
 = effective_analysis_required
 ```
 
-- 단순 조회와 직접 Action은 `analysis_requirement=NONE`일 수 있다.
-- `TASK + CREATE` duplicate check와 `CALENDAR + CREATE` conflict check는 Request Understanding이 아니라 `PolicyPreconditionResolver`가 effective analysis를 추가한다.
-- 따라서 `analysis_requirement=NONE`인 Calendar CREATE도 conflict evidence가 필요하면 Retrieval → Work Analysis를 거친다.
-- 반대로 직접 SEND/Task UPDATE처럼 별도 relation/risk 해석이 필요 없고 정책 precondition도 없으면 Work Analysis를 skip할 수 있다.
-- SIX reference route도 이 effective analysis guard를 사용하며 `output_mode=ACTION` 자체를 Work Analysis 호출 조건으로 사용하지 않는다.
+| 상황 | 적용 기준 |
+| --- | --- |
+| 단순 조회·충분한 직접 Action | analysis_requirement=NONE일 수 있다. |
+| TASK CREATE / CALENDAR CREATE | PolicyPreconditionResolver가 중복·충돌 검사를 위한 effective analysis를 추가한다. Request Understanding이 정책 검사를 대신 결정하지 않는다. |
+| analysis_requirement=NONE인 Calendar CREATE | conflict evidence가 필요하면 Retrieval과 Work Analysis를 거친다. |
+| 직접 SEND / Task UPDATE | 별도 relation·risk 해석이나 Policy Precondition이 없으면 Analysis를 생략할 수 있다. |
+| 외부 자료가 필요 없는 직접 Gmail Draft CREATE/SEND | Retrieval을 생략하고 current-Run USER_MESSAGE Evidence로 Planning·Review·Approval을 진행할 수 있다. 존재하지 않는 Acquisition 결과를 요구하거나 가짜 외부 Evidence를 만들지 않는다. |
+| 기존 Draft UPDATE/SEND / Reply | 원본 identity에 필요한 Retrieval·target binding을 유지한다. |
 
-Planning Argument Writer 전에 07 Interface current contract의 `DefaultContainerResolver`가 required system/container fields를 결정적으로 바인딩한다. Planning LLM은 `tasklist_id`/`calendar_id`를 추측·재선택하지 않으며, 해석 불가 시 Argument Writer를 호출하지 않는다.
+SIX reference route도 같은 effective analysis Guard를 사용하며 output_mode=ACTION만으로 Analysis를 강제하지 않는다.
+
+Planning Argument Writer 전에 `07 DefaultContainerResolver`가 required system/container 필드를 결정적으로 bind한다. LLM은 tasklist_id·calendar_id를 추측·재선택하지 않으며, 해석 불가 시 Argument Writer를 호출하지 않는다.
 
 ## 19. Runtime reconstruction · pre-dispatch reconciliation
 
 ### 19.1 Per-Run LLM mode reconstruction
 
-Main State의 `RunInputV1.requested_mode`와 `WorkflowBindingV1.requested_mode`는 persisted Run.requested_mode의 projection이다. START/RESUME `RunExecutionRefV1`도 같은 값을 전달한다. 모든 `StructuredInferencePort.infer` caller는 이 per-Run 값을 사용하며 Settings `preferred_llm_mode` 또는 process runtime mode로 same-Run 값을 덮어쓰지 않는다.
+| 항목 | binding 기준 |
+| --- | --- |
+| RunInputV1.requested_mode / WorkflowBindingV1.requested_mode | persisted Run.requested_mode의 projection |
+| START/RESUME RunExecutionRefV1 | 같은 requested_mode 전달 |
+| StructuredInferencePort.infer caller | per-Run 값을 사용 |
+| 덮어쓰기 금지 | Settings preferred_llm_mode 또는 process runtime mode로 same-Run 값을 교체하지 않음 |
 
 ### 19.2 Post-Claim pre-dispatch reconciliation
 
-`PREFLIGHT/ACTION_EXECUTION` 진입 시 current Attempt가 `CLAIMED`인데 APPLIED BeginExecutionAttempt가 없고 cancel/restart/invalid ClaimContext/credential failure 때문에 Begin을 적용할 수 없으면 external Write를 시도하지 않고 `AbortClaimedExecution`으로 settle한다. `Attempt=EXECUTING` + APPLIED BeginExecutionAttempt인데 terminal dispatch result가 없는 채 process가 재시작되면 pre-Begin Abort 경로로 되감지 않는다. Startup-only `execution_attempt.reconcile_inflight_executions` batch coordinator가 이를 `MAY_HAVE_BEEN_SENT → MarkUnknownResult`로 보수적으로 고정한다. 그 coordinator는 기존 durable Action/Attempt/Recovery/Verification facts를 phase marker로 사용해 `UNKNOWN_RESULT` lookup과 recovered `EXECUTED`→Verification entry까지 재개 가능하게 만들며 Connector Write replay는 0이다. Live workflow reconciliation loop는 current-process `EXECUTING` Attempt를 이 orphan path로 분류하지 않는다. cancel outcome은 `FinalizeCancel`, non-cancel FAILED는 독립 executable Action continuation 또는 FAILWAIT 규칙을 따른다. hidden CLAIMED→FAILED/CANCELLED mutation을 만들지 않는다.
+| 현재 사실 | 처리 |
+| --- | --- |
+| Attempt=CLAIMED + APPLIED Begin 없음 + cancel/restart/invalid ClaimContext/credential failure로 Begin 불가 | 외부 Write 없이 `AbortClaimedExecution`으로 settle한다. hidden CLAIMED→FAILED/CANCELLED mutation을 만들지 않는다. |
+| Attempt=EXECUTING + APPLIED Begin + terminal dispatch result 없이 process restart | pre-Begin Abort로 되감지 않는다. startup-only `execution_attempt.reconcile_inflight_executions`가 MAY_HAVE_BEEN_SENT → MarkUnknownResult로 고정한다. |
+| UNKNOWN_RESULT 이후 | coordinator는 durable Action·Attempt·Recovery·Verification facts를 phase marker로 사용해 lookup과 recovered EXECUTED의 Verification 진입을 이어간다. Connector Write replay는 0이다. |
+| 현재 process의 live EXECUTING | live reconciliation loop가 startup orphan 경로로 분류하지 않는다. |
+| cancel 결과 | FinalizeCancel owner로 닫는다. |
+| non-cancel FAILED | 독립 executable Action continuation 또는 §1.2의 FAILWAIT 기준을 따른다. |
+
+#### Startup continuation
+
+| 조건 | 처리 |
+| --- | --- |
+| batch가 limit보다 작음 | 그 이유만으로 drain을 끝내지 않는다. 기존 bounded pass에서 durable progress가 멈출 때까지 UNKNOWN_RESULT → lookup → Verification handoff를 진행한다. |
+| handoff가 이미 stage됨 | 새 startup candidate batch를 점유하지 않고 기존 handoff owner가 처리한다. |
+| Domain에서 EXECUTED로 복구됨 | Verification handoff가 crash checkpoint의 미완료 ACTION_EXECUTION task를 대체한다. 두 Node를 같은 superstep에서 실행하지 않는다. |
+
+#### 취소 후 최종 응답
+
+Verification으로 Run이 VERIFYING이 돼도 cancellation receipt는 유지한다. RESPONSE_SYNTHESIS는 Supervisor의 cancel_intent_active를 받아 FINALIZE_CANCEL intent로 연결한다. 확인된 외부 효과가 있으면 PARTIAL, 없으면 CANCELLED로 표현하되 최종 판단·저장은 FinalizeCancel owner가 검증한다.
+
+## 19-A. Product LLM inference tier binding
+
+각 Product LLM runtime caller는 PromptRef와 함께 closed `InferenceTierV1 = WORKER | REASONING`을 결정적으로 전달한다. Tier는 모델 이름이 아니라 호출 복잡도·책임 등급이며 Graph Edge, Agent owner, Prompt semantics를 바꾸지 않는다.
+
+- `WORKER`: 13 Gate에서 bounded extraction/classification이 검증된 Prompt slot만 허용한다.
+- `REASONING`: ambiguity 판정, Tool Route semantic selection, Retrieval planning/sufficiency, Work Analysis, Planning, Review를 기본으로 한다.
+- 동일 Prompt slot의 tier는 signed Prompt/Model release binding에서 고정하며 LLM 출력, free text, Runtime confidence가 바꿀 수 없다.
+- Resume/Repair/Revision은 원 호출의 tier와 Run model binding을 유지한다. tier fallback이나 model substitution을 만들지 않는다.
+- Agent State와 Checkpoint에는 concrete model name을 실행 권위로 저장하지 않고 PromptRef/tier/release-profile identity와 관측 결과만 보존한다.
+
+지원 모델은 `qwen3.5:9b`, `qwen3.5:4b`이며 새 Run 시작 시 하나를 binding한다. WORKER/REASONING class는 Prompt 책임 metadata일 뿐 역할별 모델 switching 신호가 아니다. 진행 중 Run에서는 재검사나 inference 오류로 concrete model을 바꾸지 않는다.
+
+## 19-B. State-derived conditional execution
+
+| 판단 단위 | 적용 기준 |
+| --- | --- |
+| 전체 stage/Subgraph | Main Supervisor가 RunInputV1과 current typed artifact에서 조건을 도출한다. LLM 출력이나 별도 장기 skip_* boolean은 routing authority가 아니다. |
+| 내부 Node | Subgraph가 자기 Local State·current artifact로 applicability를 판단한다. 새로 만들 정보가 없으면 실행하지 않는다. |
+| 결정적 산출 가능 | LLM 호출만 생략하고 같은 Owner의 builder/validator가 canonical artifact를 만든다. Artifact 계약 자체는 생략하지 않는다. |
+| 생략 금지 | Validation·Policy·Approval·Domain transition·Write safety·Verification·Recovery·unknown-contract fail-closed는 비용을 이유로 건너뛰지 않는다. |
+| RESOURCE_SELECTED의 exact identity | query-planning LLM을 생략할 수 있어도 canonical detail read·Evidence/RAG·Sufficiency는 유지한다. |
+| 선택 단일 Resource와 Intent의 단일 output type이 같고 UPDATE/DELETE effect 하나가 확정됨 | 기존 Tool Routing builder가 IN/OUT candidate를 결정적으로 만든다. 다른 Resource 변환·복수 effect·미해결 ambiguity에는 적용하지 않는다. |
+
+같은 effect 안의 concrete Tool 선택, Registry validation, Policy와 Approval은 생략하지 않는다.

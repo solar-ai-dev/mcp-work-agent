@@ -8,18 +8,21 @@ from google_work_agent.application.use_cases.operational_replay import execute_o
 from google_work_agent.ports.system.operational_command_replay_port import (
     OperationalCommandReplayPort,
 )
-from google_work_agent.ports.system.runtime_mode_port import RequestedRuntimeModeV1, RuntimeModePort
+from google_work_agent.ports.system.runtime_mode_port import (
+    RuntimeModePort,
+    SelectableRuntimeModeV1,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class UpdateRuntimeModeCommand:
     command_id: str
-    requested_mode: RequestedRuntimeModeV1
+    requested_mode: SelectableRuntimeModeV1
 
 
 @dataclass(frozen=True, slots=True)
 class UpdateRuntimeModeResult:
-    requested_mode: RequestedRuntimeModeV1
+    requested_mode: SelectableRuntimeModeV1
     operation_ref: str
     replayed: bool
 
@@ -37,6 +40,8 @@ class UpdateRuntimeModeHandler:
         self._has_active_run = has_active_run
 
     def __call__(self, command: UpdateRuntimeModeCommand) -> UpdateRuntimeModeResult:
+        if command.requested_mode not in {"LOCAL_GPU", "API_LLM"}:
+            raise ValueError("unsupported requested runtime mode")
         if self._has_active_run():
             raise RuntimeError("RUNTIME_MODE_CHANGE_BLOCKED_BY_ACTIVE_RUN")
         outcome = execute_operational_command(
@@ -56,7 +61,7 @@ class UpdateRuntimeModeHandler:
         )
         payload = cast(dict[str, object], outcome.bounded_result)
         return UpdateRuntimeModeResult(
-            requested_mode=cast(RequestedRuntimeModeV1, payload["requested_mode"]),
+            requested_mode=cast(SelectableRuntimeModeV1, payload["requested_mode"]),
             operation_ref=outcome.operation_ref,
             replayed=outcome.replayed,
         )

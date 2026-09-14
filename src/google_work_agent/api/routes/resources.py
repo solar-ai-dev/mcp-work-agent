@@ -1,7 +1,7 @@
 """Resource projection routes over canonical Application use cases."""
 
 from dataclasses import asdict
-from typing import NoReturn, cast
+from typing import Literal, NoReturn, cast
 
 from fastapi import APIRouter, Header, Path, Query, Request
 
@@ -25,6 +25,7 @@ from google_work_agent.api.schemas.resources.list_calendars import (
 )
 from google_work_agent.api.schemas.resources.list_resources import (
     CalendarListItemV1,
+    GitHubIssueListItemV1,
     GmailListItemV1,
     ResourceListItemV1,
     ResourceListResponse,
@@ -82,6 +83,7 @@ def list_task_lists(
     dependencies: ResourceRouteDependency,
     page_token: str | None = Query(default=None),
     page_size: int = Query(default=50, ge=1, le=100),
+    include_unselected: bool = Query(default=False),
     x_api_contract_version: str | None = Header(default=None),
 ) -> TaskListContainerListResponseV1:
     _enforce_resource_access(request, dependencies, x_api_contract_version)
@@ -91,7 +93,9 @@ def list_task_lists(
         _raise_resource_handler_unavailable(request)
     try:
         result = cast(ListTaskListsHandler, handler)(
-            ListTaskListsQuery(session_digest, account_id, page_token, page_size)
+            ListTaskListsQuery(
+                session_digest, account_id, page_token, page_size, include_unselected
+            )
         )
     except ConnectorOperationFailure as error:
         _raise_connector_failure(error, request_id=request.state.request_id)
@@ -104,6 +108,7 @@ def list_calendars(
     dependencies: ResourceRouteDependency,
     page_token: str | None = Query(default=None),
     page_size: int = Query(default=50, ge=1, le=100),
+    include_unselected: bool = Query(default=False),
     x_api_contract_version: str | None = Header(default=None),
 ) -> CalendarContainerListResponseV1:
     _enforce_resource_access(request, dependencies, x_api_contract_version)
@@ -113,7 +118,9 @@ def list_calendars(
         _raise_resource_handler_unavailable(request)
     try:
         result = cast(ListCalendarsHandler, handler)(
-            ListCalendarsQuery(session_digest, account_id, page_token, page_size)
+            ListCalendarsQuery(
+                session_digest, account_id, page_token, page_size, include_unselected
+            )
         )
     except ConnectorOperationFailure as error:
         _raise_connector_failure(error, request_id=request.state.request_id)
@@ -407,6 +414,47 @@ def list_calendar_resources(
     )
 
 
+@router.get("/github", response_model=ResourceListResponse)
+def list_github_issue_resources(
+    request: Request,
+    dependencies: ResourceRouteDependency,
+    repository: str = Query(min_length=3, max_length=200),
+    state: str = Query(default="OPEN", pattern="^(OPEN|CLOSED|ALL)$"),
+    x_api_contract_version: str | None = Header(default=None),
+) -> ResourceListResponse:
+    _enforce_resource_access(request, dependencies, x_api_contract_version)
+    session_digest, account_id = _selection_identity(request, dependencies, connector_id="github")
+    try:
+        handler = dependencies.list_resources_handler
+        if not isinstance(handler, ListResourcesHandler):
+            _raise_resource_handler_unavailable(request)
+        result = handler(
+            ListResourcesQuery(
+                source="github",
+                session_digest=session_digest,
+                account_id=account_id,
+                repository=repository,
+                issue_state=state,
+            )
+        )
+    except ConnectorOperationFailure as error:
+        _raise_connector_failure(error, request_id=request.state.request_id)
+    page = result.page
+    return ResourceListResponse(
+        schema_version=1,
+        items=_project_resource_items(
+            dependencies,
+            page.items,
+            session_digest=session_digest,
+            account_id=account_id,
+            connector_id="github",
+        ),
+        next_page_token=None,
+        total_count=len(page.items),
+        projection_version=dependencies.api_contract_version,
+    )
+
+
 def _raise_connector_failure(error: ConnectorOperationFailure, *, request_id: str) -> None:
     mapping = {
         ConnectorFailureCode.INVALID_ARGUMENT: ("INVALID_ARGUMENT", 422),
@@ -424,7 +472,11 @@ def _raise_connector_failure(error: ConnectorOperationFailure, *, request_id: st
     error_code, status_code = mapping[error.code]
     raise ApiRequestError(
         error_code=error_code,
-        user_message="Resource request could not be completed.",
+        user_message=(
+            "설정에서 사용할 자료로 선택한 뒤 다시 요청해 주세요."
+            if error.detail_code == "RESOURCE_NOT_SELECTED"
+            else "자료 요청을 완료하지 못했습니다. 연결 및 접근 권한을 확인해 주세요."
+        ),
         status_code=status_code,
         request_id=request_id,
         retryable=error.retryable,
@@ -455,9 +507,17 @@ def _raise_resource_handler_unavailable(request: Request) -> NoReturn:
     )
 
 
-def _selection_identity(request: Request, dependencies: ResourceRouteDependency) -> tuple[str, str]:
+def _selection_identity(
+    request: Request,
+    dependencies: ResourceRouteDependency,
+    connector_id: str | None = None,
+) -> tuple[str, str]:
     session_token = request.cookies.get(local_session_cookie_name(dependencies.service_instance_id))
-    account_id = dependencies.current_account_id()
+    account_id = (
+        dependencies.current_account_id()
+        if connector_id is None
+        else dependencies.current_account_ids.get(connector_id, lambda: None)()
+    )
     if session_token is None or account_id is None:
         raise ApiRequestError(
             error_code="LOCAL_SESSION_INVALID",
@@ -485,6 +545,7 @@ def _project_resource_items(
     *,
     session_digest: str,
     account_id: str,
+    connector_id: str | None = None,
 ) -> list[ResourceListItemV1]:
     projected: list[ResourceListItemV1] = []
     for item in items:
@@ -492,7 +553,7 @@ def _project_resource_items(
             IssueSelectionHandleCommand(
                 session_digest=session_digest,
                 account_id=account_id,
-                connector_id=dependencies.resource_connector_id,
+                connector_id=connector_id or dependencies.resource_connector_id,
                 resource_type=item.resource_type,
                 resource_id=item.resource_id,
                 parent_resource_id=item.parent_id,
@@ -545,6 +606,24 @@ def _project_resource_items(
                     location=_optional_projection_text(item.metadata.get("location")),
                 )
             )
+        elif item.source == "github":
+            if item.parent_id is None:
+                raise ValueError("GitHub Issue resource projection is malformed")
+            projected.append(
+                GitHubIssueListItemV1(
+                    schema_version=1,
+                    selection_handle=selection_handle,
+                    resource_id=item.resource_id,
+                    repository=item.parent_id,
+                    issue_number=_required_projection_int(item.metadata.get("issue_number")),
+                    title=item.title,
+                    description=_optional_projection_text(item.metadata.get("description")) or "",
+                    issue_state=_required_issue_state(item.metadata.get("state")),
+                    url=_required_projection_text(item.metadata.get("url")),
+                    labels=_projection_text_list(item.metadata.get("labels")),
+                    assignees=_projection_text_list(item.metadata.get("assignees")),
+                )
+            )
         else:
             raise ValueError("Resource projection source is unsupported")
     return projected
@@ -560,3 +639,21 @@ def _optional_projection_text(value: object) -> str | None:
     if value is None:
         return None
     return _required_projection_text(value)
+
+
+def _required_projection_int(value: object) -> int:
+    if type(value) is not int or value < 1:
+        raise ValueError("Resource projection field is malformed")
+    return value
+
+
+def _required_issue_state(value: object) -> Literal["OPEN", "CLOSED"]:
+    if value not in {"OPEN", "CLOSED"}:
+        raise ValueError("GitHub Issue state is malformed")
+    return cast(Literal["OPEN", "CLOSED"], value)
+
+
+def _projection_text_list(value: object) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("Resource projection list is malformed")
+    return value

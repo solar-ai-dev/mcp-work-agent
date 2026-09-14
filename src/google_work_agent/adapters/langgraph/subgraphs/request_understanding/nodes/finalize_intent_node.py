@@ -23,8 +23,13 @@ def finalize_intent_node(
     intent = finalize_intent(
         projection["goal_candidate"],
         projection["ambiguity_candidate"],
-        artifact_id=id_factory(),
+        artifact_id=(
+            id_factory()
+            if "prior_intent" not in projection
+            else projection["prior_intent"]["meta"]["artifact_id"]
+        ),
         user_request=projection["request"].request_text,
+        repository_default=projection["request"].default_github_repository,
         confirmation_response_text=(
             None
             if "confirmation_response" not in projection
@@ -33,5 +38,6 @@ def finalize_intent_node(
                 or projection["confirmation_response"]["free_text"]
             )
         ),
+        prior_intent=projection.get("prior_intent"),
     )
     return {"final_intent": intent, "request_intent": intent}

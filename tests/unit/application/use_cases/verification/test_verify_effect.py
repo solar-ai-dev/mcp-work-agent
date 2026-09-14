@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 
@@ -12,7 +13,7 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
     VerifyEffectHandler,
     VerifyEffectQueryV1,
 )
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
+from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
@@ -22,6 +23,7 @@ from google_work_agent.ports.connector.contracts.validated_connector_tool_bindin
 class _ReadPort:
     payload: dict[str, object]
     binding: ValidatedConnectorToolBindingV1 | None = None
+    resource_id: str | None = None
 
     def execute_read(
         self,
@@ -33,10 +35,53 @@ class _ReadPort:
             1,
             binding.tool_id,
             "request-1",
-            {"item": {"payload": self.payload}},
+            {
+                "item": {
+                    "payload": cast(dict[str, JsonValue], self.payload),
+                    **({"resource_id": self.resource_id} if self.resource_id is not None else {}),
+                }
+            },
             None,
             None,
         )
+
+
+@pytest.mark.parametrize("body_present", [True, False])
+def test_gmail_verification__absent_reply_headers_are_optional__body_is_required(
+    body_present: bool,
+) -> None:
+    expected: dict[str, object] = {
+        "to": ["to@example.com"],
+        "cc": [],
+        "bcc": [],
+        "subject": "회신",
+        "body": "",
+        "attachments": [],
+        "in_reply_to": None,
+        "references": None,
+        "sent": True,
+    }
+    actual = {k: v for k, v in expected.items() if k not in {"in_reply_to", "references"}}
+    if not body_present:
+        actual.pop("body")
+    read = _ReadPort(actual, resource_id="message-1")
+    result = VerifyEffectHandler(
+        connector_read=read,  # type: ignore[arg-type]
+        tool_registry=load_signed_tool_registry(),
+    )(
+        VerifyEffectQueryV1(
+            "run-1",
+            "action-1",
+            "attempt-1",
+            "SEND",
+            {"payload": expected},
+            SelectedResourceRefV1(
+                1, "ref-1", "google_workspace", "gmail_message", "message-1", None
+            ),
+        )
+    )
+    assert result.status == ("VERIFIED" if body_present else "MISMATCH")
+    assert read.binding is not None and read.binding.tool_id == "gmail_get_message"
 
 
 def test_verify_effect__has_exact__application_owner() -> None:
@@ -54,9 +99,7 @@ def test_verify_effect__has_exact__application_owner() -> None:
             {"title": "created", "body": "approved"},
             {
                 "title": "created",
-                "description": (
-                    "approved\n\n<!-- gwa-recovery-fingerprint:fingerprint-1 -->"
-                ),
+                "description": ("approved\n\n<!-- gwa-recovery-fingerprint:fingerprint-1 -->"),
                 "state": "OPEN",
             },
         ),
@@ -68,7 +111,7 @@ def test_verify_effect__has_exact__application_owner() -> None:
 def test_github_verification__uses_connector_read__and_approved_subset(
     expected: dict[str, object], actual: dict[str, object]
 ) -> None:
-    read = _ReadPort(actual)
+    read = _ReadPort({**actual, "parent_id": "acme/repo"}, resource_id="acme/repo#7")
     handler = VerifyEffectHandler(
         connector_read=read,  # type: ignore[arg-type]
         tool_registry=load_signed_tool_registry(),
@@ -98,3 +141,81 @@ def test_github_verification__uses_connector_read__and_approved_subset(
         "github",
         "github_get_issue",
     )
+
+
+def test_github_verification__provider_differs_from_approval__cannot_succeed() -> None:
+    read = _ReadPort({"title": "unapproved title", "description": "body", "state": "OPEN"})
+    handler = VerifyEffectHandler(
+        connector_read=read,  # type: ignore[arg-type]
+        tool_registry=load_signed_tool_registry(),
+    )
+    result = handler(
+        VerifyEffectQueryV1(
+            run_id="run-1",
+            action_id="action-1",
+            execution_attempt_id="attempt-1",
+            effect="UPDATE",
+            expected_effect={"title": "approved title"},
+            target_resource_ref=SelectedResourceRefV1(
+                1,
+                "ref-1",
+                "github",
+                "github_issue",
+                "acme/repo#7",
+                "acme/repo",
+            ),
+        )
+    )
+    assert result.status != "VERIFIED"
+
+
+@pytest.mark.parametrize(
+    "connector,resource,parent",
+    [
+        ("google_workspace", "acme/repo#7", "acme/repo"),
+        ("github", "other/repo#7", "acme/repo"),
+        ("github", "acme/repo#0", "acme/repo"),
+        ("github", "acme/repo#07", "acme/repo"),
+        ("github", "acme/..#7", "acme/.."),
+    ],
+)
+def test_github_verification__invalid_target_binding__blocks_before_read(
+    connector: str,
+    resource: str,
+    parent: str,
+) -> None:
+    read = _ReadPort({})
+    handler = VerifyEffectHandler(
+        connector_read=read,  # type: ignore[arg-type]
+        tool_registry=load_signed_tool_registry(),
+    )
+    with pytest.raises(ValueError):
+        handler(
+            VerifyEffectQueryV1(
+                "run-1",
+                "action-1",
+                "attempt-1",
+                "UPDATE",
+                {"state": "CLOSED"},
+                SelectedResourceRefV1(1, "ref-1", connector, "github_issue", resource, parent),
+            )
+        )
+    assert read.binding is None
+
+
+def test_github_verification__same_body_on_other_issue__cannot_verify() -> None:
+    read = _ReadPort({"title": "Title", "parent_id": "acme/repo"}, resource_id="acme/repo#8")
+    result = VerifyEffectHandler(
+        connector_read=read,  # type: ignore[arg-type]
+        tool_registry=load_signed_tool_registry(),
+    )(
+        VerifyEffectQueryV1(
+            "run-1",
+            "action-1",
+            "attempt-1",
+            "UPDATE",
+            {"title": "Title"},
+            SelectedResourceRefV1(1, "ref-1", "github", "github_issue", "acme/repo#7", "acme/repo"),
+        )
+    )
+    assert result.status == "MISMATCH"

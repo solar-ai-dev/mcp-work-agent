@@ -6,6 +6,9 @@ from typing import TypedDict, Unpack
 
 import pytest
 
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.application.use_cases.resource.get_resource_count import (
     GetResourceCountHandler,
     GetResourceCountQuery,
@@ -20,9 +23,6 @@ from google_work_agent.application.use_cases.resource.list_resources import (
     ResourceListPage,
 )
 from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
-)
-from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
     OpaqueConnectorResourceAccess as _OpaqueConnectorResourceAccess,
 )
 from google_work_agent.ports.connector.connector_failure import (
@@ -31,7 +31,8 @@ from google_work_agent.ports.connector.connector_failure import (
 )
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GmailThreadDetail,
-    GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
 )
 
@@ -201,6 +202,10 @@ class _ResourceServiceStub:
         )
         return ResourcePage(items=(), next_page_token=page.next_page_token)
 
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage:
+        del repository, state
+        return ResourcePage(items=(), next_page_token=None)
+
     def list_task_lists_page(self, *, page_token: str | None, page_size: int) -> ResourcePage:
         del page_token, page_size
         return ResourcePage(items=(), next_page_token=None)
@@ -252,13 +257,37 @@ class _ResourceServiceStub:
         return datetime(2026, 1, 1, tzinfo=UTC)
 
 
+class _GmailPaginationServiceStub(_ResourceServiceStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gmail_metadata_modes: list[bool] = []
+
+    def list_gmail_threads(
+        self,
+        *,
+        query: str,
+        page_token: str | None,
+        page_size: int,
+        include_thread_metadata: bool = True,
+    ) -> ResourceListPage:
+        del query, page_size
+        self.gmail_page_tokens.append(page_token)
+        self.gmail_metadata_modes.append(include_thread_metadata)
+        next_token = {
+            None: "provider-gmail-page-2",
+            "provider-gmail-page-2": "provider-gmail-page-3",
+            "provider-gmail-page-3": None,
+        }[page_token]
+        return ResourceListPage(source="gmail", items=(), next_page_token=next_token)
+
+
 def _token_factory(values: Iterator[str]) -> Callable[[], str]:
     return lambda: next(values)
 
 
 def test_provider_page_token__is_replaced_by__server_local_handle() -> None:
     raw = _ResourceServiceStub()
-    store = LocalResourceContinuationStore(
+    store = InMemoryResourceContinuationAdapter(
         token_factory=_token_factory(iter(("local-gmail-1", "local-gmail-2")))
     )
     service = OpaqueConnectorResourceAccess(raw, continuation_store=store)
@@ -283,9 +312,94 @@ def test_provider_page_token__is_replaced_by__server_local_handle() -> None:
     assert second.next_page_token is None
 
 
+def test_gmail_pagination_chain__with_two_pages__supports_continuation() -> None:
+    raw = _GmailPaginationServiceStub()
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(
+            token_factory=_token_factory(iter(("local-page-2", "local-page-3")))
+        ),
+    )
+
+    first = service.list_gmail_threads(query="in:inbox", page_token=None, page_size=20)
+    second = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=first.next_page_token,
+        page_size=20,
+    )
+
+    assert second.next_page_token == "local-page-3"
+    assert raw.gmail_page_tokens == [None, "provider-gmail-page-2"]
+    assert raw.gmail_metadata_modes == [True, True]
+
+
+def test_gmail_pagination_chain__with_uncached_middle_page__supports_three_pages() -> None:
+    raw = _GmailPaginationServiceStub()
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(
+            token_factory=_token_factory(iter(("local-page-2", "local-page-3")))
+        ),
+    )
+
+    first = service.list_gmail_threads(query="in:inbox", page_token=None, page_size=20)
+    intermediate = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=first.next_page_token,
+        page_size=20,
+        include_thread_metadata=False,
+    )
+    target = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=intermediate.next_page_token,
+        page_size=20,
+    )
+
+    assert target.next_page_token is None
+    assert raw.gmail_page_tokens == [
+        None,
+        "provider-gmail-page-2",
+        "provider-gmail-page-3",
+    ]
+    assert raw.gmail_metadata_modes == [True, False, True]
+
+
+def test_gmail_pagination_chain__with_cached_middle_page__supports_three_pages() -> None:
+    raw = _GmailPaginationServiceStub()
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(
+            token_factory=_token_factory(iter(("local-page-2", "local-page-3")))
+        ),
+    )
+
+    first = service.list_gmail_threads(query="in:inbox", page_token=None, page_size=20)
+    cached = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=first.next_page_token,
+        page_size=20,
+    )
+    target = service.list_gmail_threads(
+        query="in:inbox",
+        page_token=cached.next_page_token,
+        page_size=20,
+    )
+
+    assert target.next_page_token is None
+    assert raw.gmail_page_tokens == [
+        None,
+        "provider-gmail-page-2",
+        "provider-gmail-page-3",
+    ]
+    assert raw.gmail_metadata_modes == [True, True, True]
+
+
 def test_provider_token_cannot__be_replayed_as__a_local_continuation() -> None:
     raw = _ResourceServiceStub()
-    service = OpaqueConnectorResourceAccess(raw)
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(),
+    )
 
     with pytest.raises(ConnectorOperationFailure) as caught:
         service.list_gmail_threads(
@@ -300,7 +414,7 @@ def test_provider_token_cannot__be_replayed_as__a_local_continuation() -> None:
 
 def test_local_continuation_is__bound_to_its__exact_query_scope() -> None:
     raw = _ResourceServiceStub()
-    store = LocalResourceContinuationStore(
+    store = InMemoryResourceContinuationAdapter(
         token_factory=_token_factory(iter(("local-scope-1", "local-scope-2")))
     )
     service = OpaqueConnectorResourceAccess(raw, continuation_store=store)
@@ -321,7 +435,7 @@ def test_local_continuation_is__bound_to_its__exact_query_scope() -> None:
 
 def test_local_continuation__cannot_cross__resource_sources() -> None:
     raw = _ResourceServiceStub()
-    store = LocalResourceContinuationStore(
+    store = InMemoryResourceContinuationAdapter(
         token_factory=_token_factory(iter(("local-source-1", "local-source-2")))
     )
     service = OpaqueConnectorResourceAccess(raw, continuation_store=store)
@@ -341,7 +455,10 @@ def test_local_continuation__cannot_cross__resource_sources() -> None:
 
 def test_count_paths__do_not_allocate__or_resolve_continuations() -> None:
     raw = _ResourceServiceStub()
-    service = OpaqueConnectorResourceAccess(raw)
+    service = OpaqueConnectorResourceAccess(
+        raw,
+        continuation_store=InMemoryResourceContinuationAdapter(),
+    )
 
     assert service.count_gmail_threads(query="").total_count == 0
     assert service.count_tasks(task_list_id=None).total_count == 0
@@ -349,29 +466,3 @@ def test_count_paths__do_not_allocate__or_resolve_continuations() -> None:
         service.count_calendar_resources(calendar_id=None, time_min=None, time_max=None).total_count
         == 0
     )
-
-
-def test_local_continuation__is_session_account__bound_and_expires() -> None:
-    now_ms = 100
-    store = LocalResourceContinuationStore(
-        token_factory=lambda: "local-bound",
-        now_ms=lambda: now_ms,
-        ttl_ms=10,
-    )
-    scope = ("a" * 64, "account-1", "gmail", "", "20", "metadata")
-    handle = store.issue(scope=scope, provider_page_token="provider-secret")
-
-    with pytest.raises(GoogleWorkspaceGatewayError):
-        store.resolve(
-            scope=("b" * 64, "account-1", "gmail", "", "20", "metadata"),
-            local_handle=handle,
-        )
-    with pytest.raises(GoogleWorkspaceGatewayError):
-        store.resolve(
-            scope=("a" * 64, "account-2", "gmail", "", "20", "metadata"),
-            local_handle=handle,
-        )
-
-    now_ms = 110
-    with pytest.raises(GoogleWorkspaceGatewayError):
-        store.resolve(scope=scope, local_handle=handle)

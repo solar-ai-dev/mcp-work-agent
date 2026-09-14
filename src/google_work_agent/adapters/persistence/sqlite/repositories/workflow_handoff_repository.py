@@ -129,22 +129,51 @@ class SqliteWorkflowHandoffRepository:
                 SELECT
                     workflow_handoffs.*,
                     ROW_NUMBER() OVER (
-                        PARTITION BY run_id
+                        PARTITION BY workflow_handoffs.run_id
                         ORDER BY
                             CASE
-                                WHEN status IN ('BLOCKED_BINDING', 'PENDING', 'DISPATCHED') THEN 0
+                                WHEN workflow_handoffs.status IN (
+                                    'BLOCKED_BINDING', 'PENDING', 'DISPATCHED'
+                                ) THEN 0
                                 ELSE 1
                             END,
                             CASE
-                                WHEN status = 'CONSUMED'
-                                     AND applied_checkpoint_id IS NOT NULL THEN -run_sequence
-                                ELSE run_sequence
+                                WHEN workflow_handoffs.status = 'CONSUMED'
+                                     AND applied_checkpoint_id IS NOT NULL
+                                THEN -workflow_handoffs.run_sequence
+                                ELSE workflow_handoffs.run_sequence
                             END ASC
                     ) AS run_rank
                 FROM workflow_handoffs
+                JOIN runs ON runs.id = workflow_handoffs.run_id
                 WHERE
-                    (status = 'CONSUMED' AND applied_checkpoint_id IS NOT NULL)
-                    OR status IN ('BLOCKED_BINDING', 'PENDING', 'DISPATCHED')
+                    workflow_handoffs.status IN (
+                        'BLOCKED_BINDING', 'PENDING', 'DISPATCHED'
+                    )
+                    OR (
+                        workflow_handoffs.status = 'CONSUMED'
+                        AND workflow_handoffs.applied_checkpoint_id IS NOT NULL
+                        AND runs.status IN (
+                            'CREATED', 'ANALYZING', 'RETRIEVING', 'PLANNING',
+                            'EXECUTING', 'VERIFYING', 'CANCEL_REQUESTED'
+                        )
+                        OR (
+                            workflow_handoffs.status = 'CONSUMED'
+                            AND workflow_handoffs.applied_checkpoint_id IS NOT NULL
+                            AND runs.status = 'WAITING_APPROVAL'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM plans
+                                WHERE plans.run_id = runs.id
+                                  AND plans.review_status = 'REQUIRED'
+                                  AND plans.revision_no = (
+                                      SELECT MAX(current_plan.revision_no)
+                                      FROM plans AS current_plan
+                                      WHERE current_plan.run_id = runs.id
+                                  )
+                            )
+                        )
+                    )
             )
             SELECT * FROM ranked
             WHERE run_rank = 1

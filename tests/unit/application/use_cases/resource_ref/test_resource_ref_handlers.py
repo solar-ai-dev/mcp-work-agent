@@ -4,6 +4,9 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import cast
 
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.application.use_cases.resource.connector_read_projection import (
     ConnectorReadProjection,
 )
@@ -28,11 +31,12 @@ from google_work_agent.application.use_cases.resource.list_resources import (
     ListResourcesQuery,
 )
 from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
     OpaqueConnectorResourceAccess,
 )
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GmailThreadDetail,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
@@ -204,6 +208,10 @@ class _ResourceAccess:
         )
         return ResourcePage(items=(), next_page_token=None)
 
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage:
+        del repository, state
+        return ResourcePage(items=(), next_page_token=None)
+
     def count_gmail_page(
         self,
         *,
@@ -313,7 +321,6 @@ def test_list_resources_handler__owns_gmail_defaults__projection_and_page_valida
         "gmail",
         "",
         "500",
-        "metadata",
     )
     item = result.page.items[0]
     assert result.page.next_page_token == "local-next"
@@ -533,7 +540,7 @@ def test_canonical_list__handler_preserves_opaque__provider_token_boundary() -> 
     raw = ConnectorResourceAccess(gateway=cast(ConnectorReadProjection, gateway))
     opaque = OpaqueConnectorResourceAccess(
         raw,
-        continuation_store=LocalResourceContinuationStore(
+        continuation_store=InMemoryResourceContinuationAdapter(
             token_factory=_token_factory(iter(("local-next",)))
         ),
     )
@@ -573,7 +580,7 @@ def test_completed_tasks_materialize__terminal_pages_filter__dedupe_without_api_
     )
     opaque = OpaqueConnectorResourceAccess(
         raw,
-        continuation_store=LocalResourceContinuationStore(
+        continuation_store=InMemoryResourceContinuationAdapter(
             token_factory=lambda: (_ for _ in ()).throw(
                 AssertionError("completed browse allocated an API continuation")
             )
@@ -612,7 +619,7 @@ def test_non_completed__tasks_preserve__opaque_continuation_behavior() -> None:
     )
     opaque = OpaqueConnectorResourceAccess(
         raw,
-        continuation_store=LocalResourceContinuationStore(
+        continuation_store=InMemoryResourceContinuationAdapter(
             token_factory=_token_factory(iter(("local-task-next",)))
         ),
     )
@@ -656,7 +663,7 @@ def test_canonical_count__handler_never_allocates__api_continuation_handles() ->
     raw = ConnectorResourceAccess(gateway=cast(ConnectorReadProjection, gateway))
     opaque = OpaqueConnectorResourceAccess(
         raw,
-        continuation_store=LocalResourceContinuationStore(
+        continuation_store=InMemoryResourceContinuationAdapter(
             token_factory=lambda: (_ for _ in ()).throw(
                 AssertionError("count allocated an API continuation")
             )

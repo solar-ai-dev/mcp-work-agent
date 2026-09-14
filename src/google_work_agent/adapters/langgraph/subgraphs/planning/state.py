@@ -27,7 +27,6 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestIntentV2,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
-    EvidenceDraftV1,
     RetrievalResultV1,
 )
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
@@ -40,6 +39,10 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkAnalysisResultV2,
 )
+from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
+    PolicyConfirmationReceiptV1,
+)
+from google_work_agent.ports.system.contracts.confirmation import UserInterruptV1
 
 
 class PlanningInputState(AgentSubgraphInputEnvelope, total=False):
@@ -51,7 +54,11 @@ class PlanningInputState(AgentSubgraphInputEnvelope, total=False):
     work_analysis_result: WorkAnalysisResultV2 | None
     planning_result: PlanningResultV2 | None
     plan_review: PlanReviewResultV2 | None
+    user_interrupt: UserInterruptV1 | None
+    policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
     __modify_review_risks__: dict[str, dict[str, object]] | None
+    __modify_review_evidence__: list[dict[str, object]] | None
+    __replan_from_plan_id__: str
 
 
 class PlanningLocalState(GraphState):
@@ -60,8 +67,9 @@ class PlanningLocalState(GraphState):
     user_request: NotRequired[str]
     output_plan: NotRequired[dict[str, object]]
     work_analysis: NotRequired[dict[str, object]]
-    evidence: NotRequired[list[EvidenceDraftV1]]
+    evidence: NotRequired[list[dict[str, object]]]
     evidence_refs: NotRequired[list[str]]
+    source_snapshots: NotRequired[dict[str, dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
     answer_outline: NotRequired[AnswerOutlineV1]
     planning_disposition: NotRequired[str]

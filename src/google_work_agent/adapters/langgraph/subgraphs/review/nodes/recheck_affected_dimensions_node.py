@@ -43,6 +43,10 @@ def recheck_affected_dimensions_node(
         confirmation_response=_optional_mapping(
             projected.get("confirmation_response"), "confirmation_response"
         ),
+        user_action_modifications=_mapping_sequence(
+            projected.get("user_action_modifications", ()),
+            "user_action_modifications",
+        ),
         invoke=invoke,
     )
     return {

@@ -31,9 +31,7 @@ class _RuntimeHandle:
 
 
 class _ConnectorWithoutProcess:
-    def __init__(
-        self, *, descriptor: object, runtime_registry: object, **_kwargs: object
-    ) -> None:
+    def __init__(self, *, descriptor: object, runtime_registry: object, **_kwargs: object) -> None:
         self.descriptor = descriptor
         self.runtime_registry = runtime_registry
         self.connector_id = descriptor.connector_id  # type: ignore[attr-defined]
@@ -41,7 +39,7 @@ class _ConnectorWithoutProcess:
     def start(self) -> None:
         self.runtime_registry.register(  # type: ignore[attr-defined]
             self.connector_id,
-            _RuntimeHandle(self.connector_id),  # type: ignore[arg-type]
+            _RuntimeHandle(self.connector_id),
         )
 
     def close(self) -> None:
@@ -73,6 +71,14 @@ def test_build_connectors__registers_google_workspace__and_github(
 
     assert bundle.runtime_registry.connector_ids() == ("github", "google_workspace")
     assert set(bundle.connectors) == {"google_workspace", "github"}
+    google_environment = (
+        bundle.connectors["google_workspace"].descriptor.artifact_config.extra_environment
+    )
+    assert google_environment == {
+        composition.ATTACHMENT_STAGING_DIR_ENV: str((tmp_path / "attachments").resolve()),
+        "GOOGLE_OAUTH_ENV": "DEVELOPMENT",
+        "GOOGLE_OAUTH_CLIENT_ID": "unused",
+    }
     github_environment = bundle.connectors["github"].descriptor.artifact_config.extra_environment
     assert github_environment == {
         "GITHUB_APP_CLIENT_ID": "github-client-id",

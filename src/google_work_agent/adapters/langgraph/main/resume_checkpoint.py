@@ -9,7 +9,7 @@ from google_work_agent.adapters.langgraph.main.state import (
     GraphState,
     WorkflowPhase,
 )
-from google_work_agent.adapters.langgraph.main.supervisor import SupervisorTarget
+from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorTarget
 from google_work_agent.domain.run.model import RunStatusV1
 from google_work_agent.ports.system.contracts.workflow_binding import GraphProfileIdV1
 from google_work_agent.ports.system.contracts.workflow_execution import (
@@ -207,7 +207,7 @@ class ResumeCheckpointMixin:
         if binding is None:
             return None
         snapshot = self._graph.get_state(
-            self._config_for_thread(binding.workflow_key), subgraphs=True
+            self._config_for_thread(binding.workflow_key)
         )
         latest = self._checkpoint_port.load_same_run_checkpoint(run_id, binding.langgraph_thread_id)
         if latest is None or latest.registered_resume_target is None:

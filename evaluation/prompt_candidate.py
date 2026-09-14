@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -82,8 +84,8 @@ def load_prompt_candidate(candidate_path: Path, *, repository_root: Path) -> Pro
     base_prompt_bundle_version = _required_string(payload, "base_prompt_bundle_version")
     candidate_prompt_version = _required_string(payload, "candidate_prompt_version")
     prompt_slot_count = _required_int(payload, "prompt_slot_count")
-    if prompt_slot_count != 21:
-        raise PromptCandidateError("prompt_slot_count must be exactly 21")
+    if prompt_slot_count < 1:
+        raise PromptCandidateError("prompt_slot_count must be positive")
 
     activation = _required_object(payload, "activation_evidence")
     _require_exact_fields(activation, _ACTIVATION_FIELDS, "activation_evidence")
@@ -106,13 +108,19 @@ def load_prompt_candidate(candidate_path: Path, *, repository_root: Path) -> Pro
         entry = cast(dict[str, object], value)
         _require_exact_fields(entry, _SOURCE_FIELDS, f"sources.{slot_id}")
         relative = _required_string(entry, "source")
-        if not relative.startswith("sources/"):
-            raise PromptCandidateError(f"candidate source must live under sources/: {slot_id}")
+        _validate_slot_id(slot_id)
+        if relative != f"sources/{slot_id}.md":
+            raise PromptCandidateError(f"source must preserve its slot filename: {slot_id}")
         source_path = _child_path(candidate_dir, relative, f"sources.{slot_id}.source")
         expected_hash = _required_sha256_or_git_sha(entry, "content_hash", length=64)
         if not source_path.is_file() or file_sha256(source_path) != expected_hash:
             raise PromptCandidateError(f"candidate source hash mismatch: {slot_id}")
         source_hashes[slot_id] = expected_hash
+
+    actual_sources = {p.name for p in (candidate_dir / "sources").glob("*.md")}
+    expected_sources = {f"{slot}.md" for slot in sources}
+    if actual_sources != expected_sources:
+        raise PromptCandidateError("candidate manifest and source-file sets differ")
 
     research_path = _child_path(
         candidate_dir, _required_string(payload, "research_basis"), "research_basis"
@@ -142,86 +150,137 @@ def load_prompt_candidate(candidate_path: Path, *, repository_root: Path) -> Pro
 
 
 def materialize_prompt_candidate(
-    *, candidate_path: Path, repository_root: Path, output_dir: Path
+    *,
+    candidate_path: Path,
+    repository_root: Path,
+    output_dir: Path,
+    keep_extra_product_slots: bool = False,
 ) -> MaterializedPromptCandidate:
-    """Overlay candidate text on current Product-owned slot metadata."""
+    """Build a DRAFT copy; never edit Product or candidate source in place.
 
+    Exact slot equality is the default. An explicit opt-in may preserve extra
+    Product slots byte-for-byte; it never invents a source for a new slot.
+    Structural compatibility is not proof of Prompt semantics or model quality.
+    """
+    if type(keep_extra_product_slots) is not bool:
+        raise PromptCandidateError("keep_extra_product_slots must be boolean")
     bundle = load_prompt_candidate(candidate_path, repository_root=repository_root)
     destination_root = output_dir.resolve()
     active_prompt_root = bundle.base_prompt_manifest.parent.resolve()
-    if _is_within(destination_root, bundle.candidate_dir) or _is_within(
-        destination_root, active_prompt_root
+    for protected in (bundle.candidate_dir, active_prompt_root, bundle.base_input_contract.parent):
+        if _is_within(destination_root, protected) or _is_within(protected, destination_root):
+            raise PromptCandidateError("materialization cannot overlap source artifacts")
+    if destination_root.exists() and (
+        not destination_root.is_dir() or any(destination_root.iterdir())
     ):
-        raise PromptCandidateError("candidate materialization cannot overwrite source artifacts")
-    if destination_root.exists() and any(destination_root.iterdir()):
         raise PromptCandidateError("materialization output must be absent or empty")
 
     base_manifest = _load_object(bundle.base_prompt_manifest)
     base_contract = _load_object(bundle.base_input_contract)
     if base_manifest.get("prompt_bundle_version") != bundle.base_prompt_bundle_version:
-        raise PromptCandidateError("base Prompt bundle version mismatch")
+        raise PromptCandidateError(
+            "base Prompt bundle version mismatch; review the current binding"
+        )
     base_slots = _required_object_list(base_manifest, "slots")
     contract_entries = _required_object_list(base_contract, "entries")
     base_by_id = _unique_by_string_key(base_slots, "prompt_slot_id", "base Prompt slots")
     contract_by_id = _unique_by_string_key(
         contract_entries, "prompt_slot_id", "Prompt input contract"
     )
-    if set(base_by_id) != set(bundle.source_hashes) or set(contract_by_id) != set(base_by_id):
-        raise PromptCandidateError("candidate, manifest, and input contract slot sets differ")
+    if not base_by_id or set(contract_by_id) != set(base_by_id):
+        raise PromptCandidateError("Product manifest and input contract slot sets differ")
+    candidate_ids = set(bundle.source_hashes)
+    unknown = candidate_ids - set(base_by_id)
+    extra = set(base_by_id) - candidate_ids
+    if unknown or (extra and not keep_extra_product_slots):
+        raise PromptCandidateError(
+            f"candidate/Product slot mismatch: candidate-only={sorted(unknown)}, "
+            f"Product-only={sorted(extra)}; review bindings; preserving extra Product slots "
+            "requires explicit keep_extra_product_slots"
+        )
 
-    candidate_sources = _required_object(bundle.payload, "sources")
+    # Validate every binding and byte sequence before creating output files.
+    output_sources: dict[str, bytes] = {}
     materialized_slots: list[dict[str, object]] = []
-    sources_root = destination_root / "sources"
-    sources_root.mkdir(parents=True, exist_ok=True)
+    candidate_sources = _required_object(bundle.payload, "sources")
     for raw_slot in base_slots:
         slot_id = _required_string(raw_slot, "prompt_slot_id")
+        _validate_slot_id(slot_id)
         contract = contract_by_id[slot_id]
         for field in ("runtime_node_id", "input_schema_version", "output_schema_version"):
-            if raw_slot.get(field) != contract.get(field):
+            if field not in raw_slot or field not in contract or raw_slot[field] is None:
+                raise PromptCandidateError(f"missing current Prompt contract: {slot_id}.{field}")
+            if raw_slot[field] != contract[field]:
                 raise PromptCandidateError(f"current Prompt contract mismatch: {slot_id}.{field}")
-        candidate_entry = cast(dict[str, object], candidate_sources[slot_id])
-        relative_source = _required_string(candidate_entry, "source")
-        source_path = _child_path(bundle.candidate_dir, relative_source, slot_id)
-        target = _child_path(destination_root, relative_source, slot_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source_path, target)
-
         materialized = dict(raw_slot)
-        materialized.update(
-            {
-                "prompt_version": bundle.candidate_prompt_version,
-                "content_hash": bundle.source_hashes[slot_id],
-                "activation_status": "DRAFT",
-                "node_dev_pass": False,
-                "node_holdout_pass": False,
-                "safety_gate_pass": False,
-                "manifest_approved": False,
-                "activation_evidence": None,
-                "source": relative_source,
-            }
-        )
+        if slot_id in candidate_ids:
+            entry = cast(dict[str, object], candidate_sources[slot_id])
+            relative = _required_string(entry, "source")
+            source = _child_path(bundle.candidate_dir, relative, slot_id)
+            expected = bundle.source_hashes[slot_id]
+            materialized["prompt_version"] = bundle.candidate_prompt_version
+        else:
+            # Existing runtimes may resolve sources implicitly by slot ID.
+            relative = cast(str, raw_slot.get("source", f"sources/{slot_id}.md"))
+            if not isinstance(relative, str) or relative != f"sources/{slot_id}.md":
+                raise PromptCandidateError(f"unexpected current Product source binding: {slot_id}")
+            source = _child_path(active_prompt_root, relative, slot_id)
+            expected = _required_sha256_or_git_sha(raw_slot, "content_hash", length=64)
+        try:
+            content = source.read_bytes()
+            content.decode("utf-8")
+        except (OSError, UnicodeError) as error:
+            raise PromptCandidateError(f"cannot read source for {slot_id}") from error
+        if hashlib.sha256(content).hexdigest() != expected:
+            raise PromptCandidateError(f"source hash mismatch: {slot_id}")
+        if relative in output_sources:
+            raise PromptCandidateError(f"duplicate materialized source path: {relative}")
+        output_sources[relative] = content
+        # No activation evidence is transferable to a newly assembled candidate.
+        materialized.update({
+            "source": relative,
+            "content_hash": expected,
+            "activation_status": "DRAFT",
+            "node_dev_pass": False,
+            "node_holdout_pass": False,
+            "safety_gate_pass": False,
+            "manifest_approved": False,
+            "activation_evidence": None,
+        })
         materialized_slots.append(materialized)
 
     output_manifest = dict(base_manifest)
     output_manifest["prompt_bundle_version"] = bundle.candidate_id
     output_manifest["slots"] = materialized_slots
-    prompt_manifest_path = destination_root / "prompt_manifest.json"
-    prompt_manifest_path.write_text(
-        json.dumps(output_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    input_contract_path = destination_root / "prompt_runtime_input_contract_v1.json"
-    shutil.copyfile(bundle.base_input_contract, input_contract_path)
-    for slot in materialized_slots:
-        slot_id = _required_string(slot, "prompt_slot_id")
-        source_path = _child_path(destination_root, _required_string(slot, "source"), slot_id)
-        if file_sha256(source_path) != slot["content_hash"]:
-            raise PromptCandidateError(f"materialized source hash mismatch: {slot_id}")
+    manifest_bytes = (json.dumps(output_manifest, ensure_ascii=False, indent=2,
+                                sort_keys=True) + "\n").encode("utf-8")
+    input_contract_bytes = bundle.base_input_contract.read_bytes()
+    destination_root.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".prompt-candidate-", dir=destination_root.parent))
+    try:
+        for relative, content in output_sources.items():
+            target = _child_path(staging, relative, "materialized source")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        (staging / "prompt_manifest.json").write_bytes(manifest_bytes)
+        (staging / "prompt_runtime_input_contract_v1.json").write_bytes(input_contract_bytes)
+        # Do not replace a target that acquired files while this operation ran.
+        if destination_root.exists():
+            if not destination_root.is_dir() or any(destination_root.iterdir()):
+                raise PromptCandidateError("materialization output changed during preparation")
+            destination_root.rmdir()
+        staging.rename(destination_root)
+    except OSError as error:
+        raise PromptCandidateError(f"cannot publish candidate copy: {destination_root}") from error
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
+    prompt_manifest_path = destination_root / "prompt_manifest.json"
     return MaterializedPromptCandidate(
         output_dir=destination_root,
         prompt_manifest_path=prompt_manifest_path,
-        input_contract_path=input_contract_path,
+        input_contract_path=destination_root / "prompt_runtime_input_contract_v1.json",
         prompt_manifest_hash=file_sha256(prompt_manifest_path),
         candidate_bundle_hash=bundle.candidate_bundle_hash,
     )
@@ -306,7 +365,14 @@ def _required_sha256_or_git_sha(payload: dict[str, object], field: str, *, lengt
     return value
 
 
+def _validate_slot_id(slot_id: str) -> None:
+    if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", slot_id):
+        raise PromptCandidateError(f"invalid Prompt slot identifier: {slot_id!r}")
+
+
 def _repository_path(root: Path, relative: str, label: str) -> Path:
+    if "\\" in relative or ":" in relative or "\x00" in relative:
+        raise PromptCandidateError(f"{label} must use a portable relative path")
     path = Path(relative)
     if path.is_absolute():
         raise PromptCandidateError(f"{label} must be repository-relative")
@@ -314,6 +380,8 @@ def _repository_path(root: Path, relative: str, label: str) -> Path:
 
 
 def _child_path(parent: Path, relative: str, label: str) -> Path:
+    if "\\" in relative or ":" in relative or "\x00" in relative:
+        raise PromptCandidateError(f"{label} must use a portable relative path")
     path = Path(relative)
     if path.is_absolute():
         raise PromptCandidateError(f"{label} must be relative")

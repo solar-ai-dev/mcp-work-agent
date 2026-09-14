@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 import pytest
 
@@ -17,10 +18,14 @@ from google_work_agent.application.use_cases.recovery.lookup_unknown_result impo
 from google_work_agent.application.use_cases.verification.verify_effect import (
     SelectedResourceRefV1,
 )
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
+)
+from google_work_agent.ports.connector.connector_read_port import (
+    ConnectorReadPort,
+    ConnectorReadResultV1,
+    JsonValue,
 )
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
@@ -29,20 +34,20 @@ from google_work_agent.ports.connector.contracts.validated_connector_tool_bindin
 
 @dataclass
 class _ReadPort:
-    responses: list[dict[str, object]]
-    calls: list[tuple[str, str, dict[str, object]]] = field(default_factory=list)
+    responses: list[dict[str, JsonValue]]
+    calls: list[tuple[str, str, dict[str, JsonValue]]] = field(default_factory=list)
 
     def execute_read(
         self,
         binding: ValidatedConnectorToolBindingV1,
-        arguments: dict[str, object],
+        arguments: dict[str, JsonValue],
     ) -> ConnectorReadResultV1:
         self.calls.append((binding.connector_id, binding.tool_id, arguments))
         return ConnectorReadResultV1(
             1,
             binding.tool_id,
             f"request-{len(self.calls)}",
-            self.responses.pop(0),  # type: ignore[arg-type]
+            self.responses.pop(0),
             None,
             None,
         )
@@ -53,7 +58,7 @@ class _SecondReadFailurePort(_ReadPort):
     def execute_read(
         self,
         binding: ValidatedConnectorToolBindingV1,
-        arguments: dict[str, object],
+        arguments: dict[str, JsonValue],
     ) -> ConnectorReadResultV1:
         if self.calls:
             raise ConnectorOperationFailure(
@@ -64,13 +69,11 @@ class _SecondReadFailurePort(_ReadPort):
         return super().execute_read(binding, arguments)
 
 
-def _handler(read: _ReadPort) -> LookupUnknownResultHandler:
+def _handler(read: ConnectorReadPort) -> LookupUnknownResultHandler:
     return LookupUnknownResultHandler(
-        connector_read=read,  # type: ignore[arg-type]
+        connector_read=read,
         tool_registry=load_signed_tool_registry(),
-        recovery_search_binding=github_internal_read_binding(
-            "search_by_recovery_fingerprint"
-        ),
+        recovery_search_binding=github_internal_read_binding("search_by_recovery_fingerprint"),
     )
 
 
@@ -85,6 +88,69 @@ def _target() -> SelectedResourceRefV1:
     )
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"connector_id": "google_workspace"},
+        {"parent_resource_id": "other/repo"},
+        {"resource_id": "acme/repo#07"},
+        {"resource_id": "acme/r?x=1#7", "parent_resource_id": "acme/r?x=1"},
+    ],
+)
+def test_github_recovery__invalid_binding__prevents_read(changes: dict[str, str]) -> None:
+    read = _ReadPort([])
+    with pytest.raises(ValueError, match="identity"):
+        _handler(read)(
+            LookupUnknownResultQueryV1(
+                "run",
+                "action",
+                "attempt",
+                "UPDATE",
+                "fingerprint",
+                replace(
+                    _target(),
+                    connector_id=changes.get("connector_id", "github"),
+                    parent_resource_id=changes.get("parent_resource_id", "acme/repo"),
+                    resource_id=changes.get("resource_id", "acme/repo#7"),
+                ),
+            )
+        )
+    assert read.calls == []
+
+
+def test_github_recovery__same_content_wrong_issue__is_not_proof() -> None:
+    read = _ReadPort([{"item": {"resource_id": "acme/repo#8", "payload": {"state": "CLOSED"}}}])
+    result = _handler(read)(
+        LookupUnknownResultQueryV1(
+            "run",
+            "action",
+            "attempt",
+            "UPDATE",
+            "fingerprint",
+            _target(),
+            "github_close_issue",
+            {"repository": "acme/repo", "issue_number": 7},
+        )
+    )
+    assert result.disposition == "UNRESOLVED"
+
+
+def test_github_create_recovery__wrong_connector__prevents_search() -> None:
+    read = _ReadPort([])
+    with pytest.raises(ValueError, match="identity"):
+        _handler(read)(
+            LookupUnknownResultQueryV1(
+                "run",
+                "action",
+                "attempt",
+                "CREATE",
+                "fingerprint",
+                replace(_target(), connector_id="google_workspace"),
+            )
+        )
+    assert read.calls == []
+
+
 def test_lookup_unknown_result__has_exact__application_owner() -> None:
     assert (
         LookupUnknownResultHandler.__module__
@@ -93,9 +159,35 @@ def test_lookup_unknown_result__has_exact__application_owner() -> None:
     assert LookupUnknownResultHandler.__name__ == "LookupUnknownResultHandler"
 
 
+def test_recovery__revoked_resource__remains_unresolved(tmp_path: Path) -> None:
+    from google_work_agent.adapters.system.json_settings import (
+        FileSettingsStore,
+        JsonSettingsAdapter,
+    )
+    from google_work_agent.application.use_cases.resource.require_resource_selection import (
+        RequireResourceSelectionHandler,
+        SelectedResourceReadPort,
+    )
+
+    settings = replace(
+        JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json")).get_settings(),
+        selected_github_repositories=(),
+    )
+    read = _ReadPort([])
+    scoped = SelectedResourceReadPort(
+        read, RequireResourceSelectionHandler(lambda: settings, lambda _: "account")
+    )
+    query = LookupUnknownResultQueryV1(
+        "run", "action", "attempt", "CREATE", "fingerprint", _target()
+    )
+    result = _handler(scoped)(query)
+    assert result.disposition == "UNRESOLVED" and result.reason_codes == ["RESOURCE_NOT_SELECTED"]
+    assert read.calls == [] and query.target_resource_ref == _target()
+
+
 def test_github_create_unknown__requires_unique_complete_search__then_get_compare() -> None:
     marker = "<!-- gwa-recovery-fingerprint:fingerprint-1 -->"
-    candidate = {
+    candidate: dict[str, JsonValue] = {
         "resource_id": "acme/repo#7",
         "payload": {"title": "created", "description": f"approved\n\n{marker}"},
     }
@@ -153,7 +245,7 @@ def test_github_create_unknown__requires_unique_complete_search__then_get_compar
     ],
 )
 def test_github_create_zero_ambiguous_or_incomplete_search__stays__unresolved(
-    search_output: dict[str, object]
+    search_output: dict[str, JsonValue],
 ) -> None:
     read = _ReadPort([search_output])
     query = LookupUnknownResultQueryV1(
@@ -186,9 +278,7 @@ def test_github_create_get_compare_error__stays__unresolved() -> None:
                     {
                         "resource_id": "acme/repo#7",
                         "payload": {
-                            "description": (
-                                "<!-- gwa-recovery-fingerprint:fingerprint-1 -->"
-                            )
+                            "description": ("<!-- gwa-recovery-fingerprint:fingerprint-1 -->")
                         },
                     }
                 ],
@@ -245,11 +335,9 @@ def test_github_create_get_compare_error__stays__unresolved() -> None:
 def test_github_targeted_unknown__uses_get__compare(
     tool_name: str,
     arguments: dict[str, object],
-    payload: dict[str, object],
+    payload: dict[str, JsonValue],
 ) -> None:
-    read = _ReadPort(
-        [{"item": {"resource_id": "acme/repo#7", "payload": payload}}]
-    )
+    read = _ReadPort([{"item": {"resource_id": "acme/repo#7", "payload": payload}}])
 
     result = _handler(read)(
         LookupUnknownResultQueryV1(

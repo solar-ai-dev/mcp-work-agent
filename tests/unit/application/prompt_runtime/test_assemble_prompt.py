@@ -34,6 +34,7 @@ def _projection() -> dict[str, object]:
         "request_intent": {"goal": "summary"},
         "answer_outline": {"sections": ["summary"]},
         "evidence": [],
+        "temporal_constraints": [],
     }
 
 
@@ -44,9 +45,24 @@ def test_assemble_prompt__uses_registered_source__and_allowlisted_projection(
     prompt_ref = registry.lookup_by_id("planning.compose_answer")
 
     assembled = assemble_prompt(prompt_ref, _projection(), registry=registry)
+    source = registry.source_text(prompt_ref.prompt_id).rstrip()
 
-    assert assembled.startswith("You are the Planning answer-composition node.")
+    assert assembled.startswith(f"{source}\n\n")
+    assert "Product-wide context: mcp-work-agent is a workplace productivity product" in assembled
+    assert "workplace productivity product, not a social companion" in assembled
+    assert "Product display language is Korean" in assembled
+    assert "Internal codes are metadata, never button labels" in assembled
+    assert "without simulating feelings" in assembled
+    assert "restrained professional voice" in assembled
+    assert "precise, calm language" in assembled
     assert '"user_request":"summarize"' in assembled
+    assert (
+        '"answer": "회의 일정은 9월 15일 오후 4시이며 장소는 3층 회의실 B입니다."'
+        in assembled
+    )
+    assert '"answer": "{\\"sections\\":[...]}"' in assembled
+    assert '"answer": "[{\\"section_title\\":...}]"' in assembled
+    assert '"answer": "```json ... ```"' in assembled
 
 
 def test_assemble_prompt_rejects__forbidden_previous_run__and_evaluation_fields(
@@ -96,6 +112,8 @@ def test_assemble_prompt__adds_bounded__failure_instruction(tmp_path: Path) -> N
     )
 
     assert "Bounded failure instruction" in assembled
+    assert "preserve all unaffected fields" in assembled
+    assert "return the complete corrected object" in assembled
     assert "OUTPUT_SCHEMA_INVALID" in assembled
     assert "experiment_disposition" not in assembled
 
@@ -116,8 +134,9 @@ def test_evaluation_and_development_scope__use_same__draft_base_source() -> None
         registry=registry,
         execution_scope=DEVELOPMENT_SMOKE,
     )
+    source = registry.source_text(prompt_ref.prompt_id).rstrip()
 
-    assert evaluation_assembled.startswith("You are the Planning answer-composition node.")
+    assert evaluation_assembled.startswith(f"{source}\n\n")
     assert development_assembled == evaluation_assembled
 
 
@@ -173,3 +192,33 @@ def test_repair_envelope__reuses_base_source__and_binds_candidate(tmp_path: Path
     assert "Candidate output to repair" in assembled
     assert '"answer":123' in assembled
     assert "OUTPUT_SCHEMA_INVALID" in assembled
+
+
+def test_compose_prose_revision__without_raw_answer__uses_base_projection(tmp_path: Path) -> None:
+    registry = _active_registry(tmp_path)
+    prompt_ref = registry.lookup_by_id("planning.compose_answer")
+    failure = build_failure_record_v1(
+        failure_reason_code="COMPOSE_ANSWER_PROSE_INVALID",
+        failure_origin="LLM_OUTPUT",
+        detected_by="RUNTIME_DOMAIN_VALIDATOR",
+        runtime_disposition="RETRYABLE",
+        experiment_disposition="RUN_REVISION",
+        affected_field_paths=["$.answer"],
+    )
+
+    assembled = assemble_prompt(
+        prompt_ref,
+        {
+            "base_projection": _projection(),
+            "candidate_output": None,
+            "failure_record": failure,
+        },
+        registry=registry,
+    )
+
+    assert "COMPOSE_ANSWER_PROSE_INVALID" in assembled
+    assert "Allowed current-Run input projection" in assembled
+    assert "Candidate output to repair" not in assembled
+    assert "기존의 잘못된 `answer`는 입력에 포함되지 않는다" in assembled
+    assert "`answer` 필드를 만들거나 최종 사용자 답변 문장을 완성하지 않는다" in assembled
+    assert "일반화된 `sections`" in assembled

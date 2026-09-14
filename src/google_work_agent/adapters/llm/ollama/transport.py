@@ -10,6 +10,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from google_work_agent.ports.llm.local_model_catalog_port import InstalledLocalModelV1
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
+from google_work_agent.ports.llm.runtime_selection import OLLAMA_FIXED_LOOPBACK_ENDPOINT
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ActualRuntime,
     AvailabilityState,
@@ -22,6 +27,8 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     ToolCallProviderResponse,
     ToolDefinition,
 )
+
+OLLAMA_PRODUCT_CONTEXT_TOKENS = 16_384
 
 
 class OllamaTransport(Protocol):
@@ -141,6 +148,31 @@ class _OllamaStructuredInferenceMechanics:
 class OllamaHTTPClient(OllamaTransport):
     """Minimal stdlib HTTP client for local loopback Ollama."""
 
+    def list_installed_models(self) -> tuple[InstalledLocalModelV1, ...]:
+        try:
+            payload = _get_json(
+                endpoint=OLLAMA_FIXED_LOOPBACK_ENDPOINT,
+                path="/api/tags",
+                timeout_seconds=2,
+            )
+        except TimeoutError as error:
+            raise LocalModelCatalogUnavailableError("LOCAL_MODEL_INSPECTION_TIMEOUT") from error
+        except (HTTPError, URLError, ValueError) as error:
+            raise LocalModelCatalogUnavailableError("LOCAL_MODEL_INSPECTION_FAILED") from error
+        raw_models = payload.get("models", [])
+        if not isinstance(raw_models, list):
+            raise LocalModelCatalogUnavailableError("LOCAL_MODEL_INSPECTION_FAILED")
+        models = {
+            name: InstalledLocalModelV1(
+                model_id=name,
+                digest=_optional_str(item.get("digest")),
+            )
+            for item in raw_models
+            if isinstance(item, dict)
+            and (name := str(item.get("name", "")).strip())
+        }
+        return tuple(models[name] for name in sorted(models))
+
     def probe(self, *, endpoint: str, model_id: str | None, timeout_seconds: int) -> ProbeResult:
         _validate_loopback_endpoint(endpoint)
         try:
@@ -220,24 +252,23 @@ class OllamaHTTPClient(OllamaTransport):
                         "content_hash": prompt_ref.content_hash,
                     },
                     "input": prompt_input,
+                    "output_schema": output_schema.json_schema,
                 },
                 sort_keys=True,
+                ensure_ascii=False,
             ),
             "stream": False,
+            "think": False,
             "format": dict(output_schema.json_schema),
         }
-        # docs/15 section 9.5 (Runtime Prompt Activation Gate): "options" is
-        # Ollama's documented /api/generate sampling-parameter object. Only
-        # sent when the caller (the Gate Runner) explicitly fixes sampling
-        # conditions -- omitted entirely otherwise, so production dispatch
-        # (which never sets these) produces the exact same payload as before.
-        options: dict[str, object] = {}
+        # The Run context budget is 16K. Keep Ollama's provider window aligned
+        # so a valid repair response is not truncated by its 4K default.
+        options: dict[str, object] = {"num_ctx": OLLAMA_PRODUCT_CONTEXT_TOKENS}
         if sampling_temperature is not None:
             options["temperature"] = sampling_temperature
         if sampling_seed is not None:
             options["seed"] = sampling_seed
-        if options:
-            payload["options"] = options
+        payload["options"] = options
         response = _post_json(
             endpoint=endpoint,
             path="/api/generate",
@@ -245,13 +276,18 @@ class OllamaHTTPClient(OllamaTransport):
             timeout_seconds=timeout_seconds,
         )
         content = response.get("response", "{}")
+        total_duration_ns = _optional_int(response.get("total_duration"))
         return ProviderResponsePayload(
             content=content,
             model=str(response.get("model", model_id)),
             provider_request_id=None,
             input_tokens=_optional_int(response.get("prompt_eval_count")),
             output_tokens=_optional_int(response.get("eval_count")),
-            latency_ms=_optional_int(response.get("total_duration")) or 0,
+            latency_ms=(
+                0
+                if total_duration_ns is None
+                else max(0, total_duration_ns // 1_000_000)
+            ),
             estimated_cost_usd=None,
         )
 
@@ -293,6 +329,7 @@ class OllamaHTTPClient(OllamaTransport):
                             "input": prompt_input,
                         },
                         sort_keys=True,
+                        ensure_ascii=False,
                     ),
                 },
             ],
@@ -309,13 +346,12 @@ class OllamaHTTPClient(OllamaTransport):
             ],
             "stream": False,
         }
-        options: dict[str, object] = {}
+        options: dict[str, object] = {"num_ctx": OLLAMA_PRODUCT_CONTEXT_TOKENS}
         if sampling_temperature is not None:
             options["temperature"] = sampling_temperature
         if sampling_seed is not None:
             options["seed"] = sampling_seed
-        if options:
-            payload["options"] = options
+        payload["options"] = options
         response = _post_json(
             endpoint=endpoint,
             path="/api/chat",
@@ -338,13 +374,18 @@ class OllamaHTTPClient(OllamaTransport):
             for call in raw_calls
             if isinstance(call, dict) and isinstance(function := call.get("function"), dict)
         )
+        total_duration_ns = _optional_int(response.get("total_duration"))
         return ToolCallProviderResponse(
             calls=calls,
             model=str(response.get("model", model_id)),
             provider_request_id=None,
             input_tokens=_optional_int(response.get("prompt_eval_count")),
             output_tokens=_optional_int(response.get("eval_count")),
-            latency_ms=_optional_int(response.get("total_duration")) or 0,
+            latency_ms=(
+                0
+                if total_duration_ns is None
+                else max(0, total_duration_ns // 1_000_000)
+            ),
             estimated_cost_usd=None,
         )
 

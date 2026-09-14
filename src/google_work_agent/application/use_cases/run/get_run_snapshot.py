@@ -25,6 +25,9 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     RunBudgetV2,
     validate_run_budget_v2,
 )
+from google_work_agent.application.use_cases.run.project_action_target_display import (
+    project_action_target_display,
+)
 from google_work_agent.application.use_cases.run.project_context_preview import (
     ProjectContextPreviewHandler,
     ProjectContextPreviewQueryV1,
@@ -39,6 +42,10 @@ from google_work_agent.application.use_cases.run.project_external_llm_transfer_s
     ExternalLlmTransferScopeV1,
     ProjectExternalLlmTransferScopeHandler,
     ProjectExternalLlmTransferScopeQueryV1,
+)
+from google_work_agent.application.use_cases.run.project_run_activity import (
+    ProjectRunActivityHandler,
+    RunActivityV1,
 )
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.action.model import (
@@ -55,6 +62,7 @@ from google_work_agent.domain.verification.model import VerificationStatus
 from google_work_agent.ports.persistence.approval_repository import active_approval_tuple
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +103,8 @@ class PendingInterruptV1:
 class ActionSnapshotResult:
     action_id: str
     tool_name: str
+    arguments: dict[str, object]
+    target_display: dict[str, str]
     status: str
     version: int
     effect_type: str
@@ -130,9 +140,11 @@ class GetExecutionContextResult:
     status: str
     version: int
     request_text: str
+    user_message_id: str | None
     selected_resource_ids: tuple[str, ...]
     run_budget: RunBudgetV2
     selected_resources: tuple[SelectedResourceRef, ...] = ()
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +164,7 @@ class GetRunSnapshotResult:
     execution_status: dict[str, object]
     verification_summary: dict[str, object]
     recovery_summary: dict[str, object]
+    activity: RunActivityV1 | None = None
 
     @property
     def run_id(self) -> str:
@@ -172,6 +185,7 @@ class GetRunSnapshotHandler:
         project_error_actions: ProjectErrorActionsHandler | None = None,
         project_external_llm_transfer_scope: ProjectExternalLlmTransferScopeHandler | None = None,
         resolve_pending_confirmation: Callable[[str], Mapping[str, object] | None] | None = None,
+        is_run_active: Callable[[str], bool] = lambda _run_id: False,
         tool_registry: SignedToolRegistry | None = None,
         message_limit: int = 200,
     ) -> None:
@@ -181,6 +195,7 @@ class GetRunSnapshotHandler:
         self._project_error_actions = project_error_actions
         self._project_external_llm_transfer_scope = project_external_llm_transfer_scope
         self._resolve_pending_confirmation = resolve_pending_confirmation
+        self._is_run_active = is_run_active
         self._tool_registry = tool_registry
         self._message_limit = message_limit
 
@@ -189,6 +204,20 @@ class GetRunSnapshotHandler:
             run = unit_of_work.runs.get_snapshot(query.run_id)
             if run is None:
                 return None
+            observed_runtimes = unit_of_work.traces.list_observed_runtimes(run.id)
+            activity = ProjectRunActivityHandler()(
+                unit_of_work,
+                run.id,
+                run_status=run.status.value,
+                is_run_active=self._is_run_active(run.id),
+            )
+            actual_runtime = (
+                "MIXED"
+                if len(observed_runtimes) > 1
+                else observed_runtimes[0]
+                if observed_runtimes
+                else run.actual_runtime
+            )
             message_records = _messages_for_run(
                 unit_of_work,
                 conversation_id=run.conversation_id,
@@ -206,6 +235,14 @@ class GetRunSnapshotHandler:
                     ),
                     tool_registry=self._tool_registry,
                     delivery_certainty=project_latest_delivery_certainty(unit_of_work, action.id),
+                    target_display=project_action_target_display(
+                        resource_ref=(
+                            None
+                            if action.target_resource_ref_id is None
+                            else unit_of_work.resource_refs.get(action.target_resource_ref_id)
+                        ),
+                        evidence=unit_of_work.evidence.list_for_action(action.id),
+                    ),
                 )
                 for action in action_records
             )
@@ -253,7 +290,7 @@ class GetRunSnapshotHandler:
                 version=run.version,
                 entry_mode=run.entry_mode,
                 requested_mode=run.requested_mode,
-                actual_runtime=run.actual_runtime,
+                actual_runtime=actual_runtime,
                 started_at_ms=run.started_at_ms,
                 finished_at_ms=run.finished_at_ms,
                 next_allowed_commands=tuple(
@@ -282,6 +319,7 @@ class GetRunSnapshotHandler:
                 "NONE" if run.terminal_result_kind is None else run.terminal_result_kind.value
             ),
             projection_version=1,
+            activity=activity,
             approvals=tuple(approvals),
             execution_status={
                 "action_count": len(actions),
@@ -326,9 +364,17 @@ class GetRunSnapshotHandler:
             status=run.status.value,
             version=run.version,
             request_text="" if first_user_message is None else first_user_message.content,
+            user_message_id=None if first_user_message is None else first_user_message.id,
             selected_resource_ids=tuple(record.resource_id for record in resources),
             run_budget=validate_run_budget_v2(loads(run.budget_json)),
             selected_resources=tuple(_selected_resource_ref(record) for record in resources),
+            default_github_repository=(
+                None
+                if run.default_github_repository_json is None
+                else GitHubRepositoryDefaultV1.from_payload(
+                    loads(run.default_github_repository_json)
+                )
+            ),
         )
 
     def _optional_context_preview(self, run_id: str) -> ProjectContextPreviewResultV1 | None:
@@ -395,9 +441,13 @@ def _action_snapshot(
     approval_allowed: bool,
     tool_registry: SignedToolRegistry | None,
     delivery_certainty: DeliveryCertaintyV1 | None,
+    target_display: dict[str, str],
 ) -> ActionSnapshotResult:
     status = ActionStatusV1(action.status)
     effect_type = EffectType(action.effect_type)
+    arguments = loads(action.arguments_json)
+    if not isinstance(arguments, dict):
+        raise ValueError("persisted Action arguments must be an object")
     editable_fields: tuple[str, ...] = ()
     if tool_registry is not None:
         entry = tool_registry.get_required(action.connector_id, action.tool_name)
@@ -407,6 +457,8 @@ def _action_snapshot(
     return ActionSnapshotResult(
         action_id=action.id,
         tool_name=action.tool_name,
+        arguments=arguments,
+        target_display=target_display,
         status=status.value,
         version=action.version,
         effect_type=effect_type.value,

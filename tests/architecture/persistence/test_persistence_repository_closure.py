@@ -140,8 +140,12 @@ def test_canonical_repository__ports_have__exact_public_surfaces() -> None:
     )
     assert _methods(RetentionRepository) == {"purge_batch"}
     assert _methods(SqliteRetentionRepository) == {"purge_batch"}
-    assert _methods(TraceEventRepository) == {"append", "list_page", "purge_before"}
-    assert _methods(SqliteTraceEventRepository) == {"append", "list_page", "purge_before"}
+    assert _methods(TraceEventRepository) == {
+        "append", "list_page", "list_observed_runtimes", "purge_before",
+    }
+    assert _methods(SqliteTraceEventRepository) == {
+        "append", "list_page", "list_observed_runtimes", "purge_before",
+    }
     assert _methods(AuditEventRepository) == {"append", "list_page", "purge_before"}
     assert _methods(SqliteAuditEventRepository) == {"append", "list_page", "purge_before"}
 

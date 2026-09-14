@@ -22,7 +22,7 @@ class RunContextBudgetV2(ApiModel):
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[100]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -31,7 +31,8 @@ class RunContextBudgetV2(ApiModel):
 
 
 class SelectedResourceResponse(ApiModel):
-    source: str
+    resource_ref_id: str
+    connector_id: str
     resource_type: str
     resource_id: str
     parent_resource_id: str | None

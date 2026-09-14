@@ -9,18 +9,19 @@ from google_work_agent.ports.system.contracts.operational_command_replay import 
 )
 
 type RequestedRuntimeModeV1 = Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+type SelectableRuntimeModeV1 = Literal["LOCAL_GPU", "API_LLM"]
 
 
 class RuntimeModePort(Protocol):
     def get_requested_mode(self) -> RequestedRuntimeModeV1: ...
 
     def set_requested_mode(
-        self, requested_mode: RequestedRuntimeModeV1, operation_ref: str
-    ) -> RequestedRuntimeModeV1: ...
+        self, requested_mode: SelectableRuntimeModeV1, operation_ref: str
+    ) -> SelectableRuntimeModeV1: ...
 
     def reconcile_update(
-        self, operation_ref: str, requested_mode: RequestedRuntimeModeV1
+        self, operation_ref: str, requested_mode: SelectableRuntimeModeV1
     ) -> OperationalReconcileResultV1: ...
 
 
-__all__ = ["RequestedRuntimeModeV1", "RuntimeModePort"]
+__all__ = ["RequestedRuntimeModeV1", "RuntimeModePort", "SelectableRuntimeModeV1"]

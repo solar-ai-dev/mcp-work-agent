@@ -56,6 +56,7 @@ export function useTasks({
   const requestRef = useRef({ generation: 0, key: "" });
   const completedRequestRef = useRef(0);
   const preloadRef = useRef<Promise<SourceCount> | null>(null);
+  const scopeGenerationRef = useRef(0);
   const sortInFlightRef = useRef(new Set<string>());
   const previousFilterRef = useRef(filter);
   const previousBrowseScopeRef = useRef(`${accountId ?? "anon"}|${parentId ?? ""}`);
@@ -72,6 +73,7 @@ export function useTasks({
   const reset = useCallback((): void => {
     cacheRef.current.clear();
     preloadRef.current = null;
+    scopeGenerationRef.current += 1;
     completedRequestRef.current += 1;
     setCompleted({ expanded: false, initialized: false, items: [], pageIndex: 0, loading: false, error: null });
     resetView();
@@ -106,6 +108,7 @@ export function useTasks({
     const isCurrent = (): boolean => requestRef.current.generation === generation && requestRef.current.key === key;
     const cached = !force ? cacheRef.current.get(key) : undefined;
     if (!force && cached && cached.nextPageToken === null) {
+      setCount({ value: cached.items.length, exact: true });
       setItems(cached.items); setNextPageToken(null); setTotalCount(cached.totalCount); setPageIndex(targetPageIndex); setLastLoadedPageIndex(targetPageIndex); setLoaded(true); setLoading(false); setError(null);
       return;
     }
@@ -130,8 +133,8 @@ export function useTasks({
           token = response.next_page_token;
         } while (token !== null);
         const sorted = sortByScheduledDate(nextItems);
-        cacheRef.current.set(key, { items: sorted, nextPageToken: null, totalCount: sorted.length });
         if (!isCurrent()) return;
+        cacheRef.current.set(key, { items: sorted, nextPageToken: null, totalCount: sorted.length });
         setItems(sorted); setNextPageToken(null); setTotalCount(sorted.length); setPageIndex(targetPageIndex); setLastLoadedPageIndex(targetPageIndex); setLoaded(true); setLoading(false); setError(null); setCount({ value: sorted.length, exact: true });
       } catch (cause) {
         if (isCurrent()) { setLoading(false); setError(cause instanceof ApiClientError ? cause.message : "리소스를 불러오지 못했습니다."); }
@@ -152,8 +155,8 @@ export function useTasks({
       const nextItems = force || cachedItems.length === 0 ? response.items : [...cachedItems, ...response.items];
       const token = response.next_page_token;
       const nextTotal = token === null ? nextItems.length : null;
-      cacheRef.current.set(key, { items: nextItems, nextPageToken: token, totalCount: nextTotal });
       if (!isCurrent()) return;
+      cacheRef.current.set(key, { items: nextItems, nextPageToken: token, totalCount: nextTotal });
       setItems(nextItems); setNextPageToken(token); setTotalCount(nextTotal); setPageIndex(targetPageIndex); setLastLoadedPageIndex(targetPageIndex); setLoaded(true); setLoading(false); setError(null); setCount({ value: nextItems.length, exact: token === null });
     } catch (cause) {
       if (isCurrent()) setError(cause instanceof ApiClientError ? cause.message : "리소스를 불러오지 못했습니다.");
@@ -163,12 +166,18 @@ export function useTasks({
 
   const preload = useCallback(async (): Promise<SourceCount> => {
     if (preloadRef.current) return preloadRef.current;
-    const key = cacheKey(accountId, null, "provider", "");
+    const key = cacheKey(accountId, parentId, "provider", "");
+    const generation = scopeGenerationRef.current;
     preloadRef.current = (async (): Promise<SourceCount> => {
       const cached = cacheRef.current.get(key);
-      if (cached) return { value: cached.items.length, exact: cached.nextPageToken === null };
+      if (cached) {
+        const result = { value: cached.items.length, exact: cached.nextPageToken === null };
+        setCount(result);
+        return result;
+      }
       try {
-        const response = await listResources({ source: "tasks", taskListId: null, continuation: null, pageSize: PROVIDER_BATCH_SIZE });
+        const response = await listResources({ source: "tasks", taskListId: parentId, continuation: null, pageSize: PROVIDER_BATCH_SIZE });
+        if (generation !== scopeGenerationRef.current) return null;
         const result = { value: response.items.length, exact: response.next_page_token === null };
         cacheRef.current.set(key, { items: response.items, nextPageToken: response.next_page_token, totalCount: result.exact ? result.value : null });
         setCount(result);
@@ -176,7 +185,7 @@ export function useTasks({
       } catch { return null; }
     })();
     return preloadRef.current;
-  }, [accountId]);
+  }, [accountId, parentId]);
 
   const refresh = useCallback(async (): Promise<void> => { cacheRef.current.delete(cacheKey(accountId, parentId, sort, filter)); await loadPage(0, { force: true }); void loadCompleted(true); }, [accountId, filter, loadCompleted, loadPage, parentId, sort]);
   const setSort = useCallback((nextSort: TaskSort): void => { if (sort === nextSort) return; setSortState(nextSort); resetView(); }, [resetView, sort]);
@@ -193,8 +202,8 @@ export function useTasks({
     const scope = `${accountId ?? "anon"}|${parentId ?? ""}`;
     if (previousBrowseScopeRef.current === scope) return;
     previousBrowseScopeRef.current = scope;
-    resetView();
-  }, [accountId, parentId, resetView]);
+    reset();
+  }, [accountId, parentId, reset]);
 
   return { items, nextPageToken, pageIndex, lastLoadedPageIndex, loaded, loading, error, totalCount, sort, count, completed, loadPage, preload, loadCompleted, refresh, reset, setSort, toggleCompleted, showMoreCompleted };
 }

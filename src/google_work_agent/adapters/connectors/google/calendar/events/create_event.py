@@ -16,21 +16,7 @@ def _calendar_create_event(
         claim_context=arguments.get("claim_context"),
         execution_arguments=workspace_support._execution_arguments(arguments),
     )
-    body: dict[str, object] = {
-        "summary": workspace_support._text_argument(payload, "title", maximum=1024),
-        "start": {"dateTime": workspace_support._text_argument(payload, "start", maximum=64)},
-        "end": {"dateTime": workspace_support._text_argument(payload, "end", maximum=64)},
-    }
-    description = workspace_support._optional_text(payload.get("description"))
-    recovery_fingerprint = workspace_support._optional_text(payload.get("recovery_fingerprint"))
-    if recovery_fingerprint:
-        marker = workspace_support._recovery_marker(recovery_fingerprint)
-        description = f"{description}\n\n{marker}" if description else marker
-    if description:
-        body["description"] = description
-    attendees = workspace_support._calendar_attendees_argument(payload)
-    if attendees is not None:
-        body["attendees"] = attendees
+    body = _calendar_create_body(payload)
     calendar_path = workspace_support.quote(calendar_id, safe="")
     response = workspace_support._google_api_post(
         state,
@@ -38,6 +24,32 @@ def _calendar_create_event(
         body,
     )
     return {"item": workspace_support._event_snapshot(response, calendar_id)}
+
+
+def _calendar_create_body(payload: dict[str, object]) -> dict[str, object]:
+    body: dict[str, object] = {
+        "summary": workspace_support._text_argument(payload, "title", maximum=1024),
+        "start": {"dateTime": workspace_support._text_argument(payload, "start", maximum=64)},
+        "end": {"dateTime": workspace_support._text_argument(payload, "end", maximum=64)},
+    }
+    description = payload.get("description")
+    if description is not None and not isinstance(description, str):
+        raise workspace_support._WorkspaceToolError("INVALID_ARGUMENT")
+    recovery_fingerprint = workspace_support._optional_text(payload.get("recovery_fingerprint"))
+    if recovery_fingerprint:
+        marker = workspace_support._recovery_marker(recovery_fingerprint)
+        description = f"{description}\n\n{marker}" if description else marker
+    if description is not None:
+        body["description"] = description
+    if "location" in payload:
+        location = payload["location"]
+        if not isinstance(location, str):
+            raise workspace_support._WorkspaceToolError("INVALID_ARGUMENT")
+        body["location"] = location
+    attendees = workspace_support._calendar_attendees_argument(payload)
+    if attendees is not None:
+        body["attendees"] = attendees
+    return body
 
 
 class CreateEventOperation:

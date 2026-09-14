@@ -31,13 +31,10 @@ def _gmail_get_message(
             (),
             payload.get("historyId"),
             {
-                "subject": headers.get("subject", message_id),
+                **workspace_support._gmail_message_content(payload),
                 "snippet": workspace_support._optional_text(payload.get("snippet")),
                 "from": headers.get("from"),
-                "to": headers.get("to"),
                 "received_at": headers.get("date"),
-                "body": workspace_support._gmail_message_body(payload),
-                "attachments": workspace_support._gmail_attachment_metadata(payload),
             },
         )
     }

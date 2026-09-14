@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -11,6 +13,10 @@ import google_work_agent.application.agents.retrieval.contracts.schema_validatio
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval import (
+    gmail_metadata_collection_is_answer_target as gmail_metadata_collection,
+)
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     ContextResult,
@@ -18,23 +24,50 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     EvidenceDraftV1,
     MissingInformationRequiredForValue,
     MissingInformationV1,
+    PersonCandidateV1,
     SufficiencyIssueTypeValue,
     SufficiencyIssueV2,
     SufficiencyResolutionSourceValue,
     SufficiencyResultV2,
 )
+from google_work_agent.application.agents.retrieval.is_complete_create_policy_read import (
+    is_complete_create_policy_read,
+)
+from google_work_agent.application.agents.retrieval.match_person_mention import (
+    project_person_candidates,
+)
+from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
+    project_unresolved_event_dates,
+)
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     RetrievalValidationError,
 )
+from google_work_agent.application.agents.retrieval.project_attempted_detail_refs import (
+    project_attempted_detail_refs,
+)
+from google_work_agent.application.agents.retrieval.project_query_temporal_constraints import (
+    project_query_temporal_constraints,
+)
+from google_work_agent.application.agents.retrieval.require_read_evidence_support import (
+    require_read_evidence_support,
+)
+from google_work_agent.application.agents.task_calendar_draft_source import (
+    is_task_calendar_draft_source_target,
+)
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    business_required_source_routes,
     coarse_resource_category,
+    normalize_resource_type,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    InputToolRouteV1,
     ToolRoutePlanV2,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     MAX_ADDITIONAL_ACQUISITIONS,
+    BudgetDecision,
     RunBudgetV2,
+    approve_additional_acquisition,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
@@ -45,6 +78,474 @@ from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.workflow_handoff import RequestedModeV1
+
+# Outline + compose, each with its existing one-call repair allowance.
+READ_ANSWER_CALL_RESERVE = 4
+
+
+def _answer_call_reserve(intent: RequestIntentV2) -> int:
+    # Seven Work Analysis semantic operations precede Planning when required.
+    return READ_ANSWER_CALL_RESERVE + (7 if intent.get("analysis_requirement") == "REQUIRED" else 0)
+
+
+def deterministic_sufficiency(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+    retry_budget: RunBudgetV2,
+    confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+    person_candidates: Sequence[PersonCandidateV1] = (),
+    selected_person_identities: Mapping[str, str] | None = None,
+    query_attempts: Sequence[QueryAttemptV1] = (),
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
+) -> SufficiencyResultV2 | None:
+    """Close bounded READ acquisition without starving its grounded answer."""
+    for mention in dict.fromkeys(item["mention"] for item in person_candidates):
+        identities = {item["identity"] for item in person_candidates if item["mention"] == mention}
+        chosen = (selected_person_identities or {}).get(mention)
+        if chosen not in identities:
+            chosen = next(iter(identities)) if len(identities) == 1 else None
+        if chosen is None:
+            return {
+                "schema_version": 2,
+                "status": "NEEDS_CONFIRMATION",
+                "issues": [
+                    {
+                        "slot": "person_identity",
+                        "issue_type": "CONFLICT",
+                        "required": True,
+                        "resolution_source": "USER",
+                        "safety_critical": False,
+                        "reason_codes": ["PERSON_IDENTITY_AMBIGUOUS"],
+                    }
+                ],
+            }
+        searched = any(
+            constraint["kind"] == "PARTICIPANT"
+            and any(item["identity"].casefold() == chosen for item in constraint["participants"])
+            for attempt in query_attempts
+            if attempt["operation_kind"] == "SEARCH"
+            for constraint in attempt["normalized_intent_constraints"]
+        )
+        if not searched:
+            return {
+                "schema_version": 2,
+                "status": "NEEDS_MORE_DATA",
+                "issues": [
+                    {
+                        "slot": "person_identity_search",
+                        "issue_type": "MISSING",
+                        "required": True,
+                        "resolution_source": "GOOGLE",
+                        "safety_critical": False,
+                        "reason_codes": ["PERSON_IDENTITY_SEARCH_REQUIRED"],
+                    }
+                ],
+            }
+    if confirmation_response is not None:
+        return None
+    collection_followup = _require_unread_exhaustive_collection_pages(
+        {"schema_version": 2, "status": "SUFFICIENT", "issues": []},
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        read_result_summaries=read_result_summaries,
+    )
+    if collection_followup["issues"]:
+        return enforce_sufficiency_guard(
+            {**collection_followup, "status": "NEEDS_MORE_DATA"},
+            request_intent=request_intent,
+            retry_budget=retry_budget,
+            evidence_supported_partial_possible=bool(evidence_drafts),
+        )
+    remaining = retry_budget["absolute_llm_call_limit"] - retry_budget["llm_calls_used"]
+    if remaining > _answer_call_reserve(request_intent) or set(
+        request_intent["requested_effect_hints"]
+    ) != {"READ"}:
+        metadata_candidates = [
+            draft
+            for draft in evidence_drafts
+            if (draft["locator"] or {}).get("is_metadata_only") is True
+        ]
+        detail_need = _require_gmail_candidate_details(
+            {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            evidence_drafts=metadata_candidates,
+            detail_candidate_refs=acquisition_result["resource_handles"],
+            attempted_detail_candidate_refs=project_attempted_detail_refs(query_attempts),
+        )
+        if detail_need["issues"]:
+            return detail_need
+        source_result = _deterministic_source_sufficiency(
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+            retry_budget=retry_budget,
+            confirmation_response=confirmation_response,
+        )
+        return (
+            _guard_event_year(
+                source_result,
+                request_intent,
+                evidence_drafts,
+                query_attempts,
+            )
+            if source_result is not None
+            else None
+        )
+    result = _fail_closed_on_empty_required_acquisition(
+        {
+            "schema_version": 2,
+            "status": "PARTIAL",
+            "issues": [
+                {
+                    "slot": "retrieval_budget",
+                    "issue_type": "MISSING",
+                    "required": False,
+                    "resolution_source": "POLICY",
+                    "safety_critical": False,
+                    "reason_codes": ["ANSWER_CAPACITY_RESERVED"],
+                }
+            ],
+        },
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+    )
+    if any(issue["required"] and issue["safety_critical"] for issue in result["issues"]):
+        return {**result, "status": "BLOCKED"}
+    return result
+
+
+def _deterministic_source_sufficiency(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+    retry_budget: RunBudgetV2,
+    confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+) -> SufficiencyResultV2 | None:
+    if (
+        not evidence_drafts
+        and set(request_intent["requested_effect_hints"]) == {"READ"}
+        and _all_required_source_scopes_complete(tool_route_plan, acquisition_result)
+        and _all_required_sources_returned_no_resources(tool_route_plan, acquisition_result)
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if not evidence_drafts and _has_bounded_read_stop(acquisition_result):
+        guarded = _fail_closed_on_empty_required_acquisition(
+            {"schema_version": 2, "status": "PARTIAL", "issues": []},
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+        )
+        return {
+            **guarded,
+            "status": (
+                "PARTIAL"
+                if set(request_intent["requested_effect_hints"]) == {"READ"}
+                else "BLOCKED"
+            ),
+        }
+    if (
+        not evidence_drafts
+        and set(request_intent["requested_effect_hints"]) == {"READ"}
+        and acquisition_result["source_summaries"]
+        and all(
+            summary.get("status") == "COMPLETE" and summary.get("resource_count") == 0
+            for summary in acquisition_result["source_summaries"]
+        )
+    ):
+        empty_result = _fail_closed_on_empty_required_acquisition(
+            {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+        )
+        if empty_result["issues"]:
+            return enforce_sufficiency_guard(
+                empty_result,
+                request_intent=request_intent,
+                retry_budget=retry_budget,
+                evidence_supported_partial_possible=False,
+            )
+    terminal_read_failure = any(
+        summary.get("status") == "FAILED"
+        and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED"}
+        for summary in acquisition_result["source_summaries"]
+    )
+    if terminal_read_failure:
+        guarded = _fail_closed_on_empty_required_acquisition(
+            {"schema_version": 2, "status": "PARTIAL", "issues": []},
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            evidence_drafts=evidence_drafts,
+        )
+        return enforce_sufficiency_guard(
+            guarded,
+            request_intent=request_intent,
+            retry_budget=retry_budget,
+            evidence_supported_partial_possible=bool(evidence_drafts),
+        )
+    if _is_complete_gmail_metadata_collection(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if _is_complete_gmail_thread_reply(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if _is_complete_selected_gmail_read(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if is_complete_create_policy_read(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if _is_complete_selected_resource_action(
+        request_intent,
+        tool_route_plan,
+        acquisition_result,
+        evidence_drafts,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    if _is_complete_task_calendar_draft_source(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        confirmation_response=confirmation_response,
+    ):
+        return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    return None
+
+
+def _is_complete_task_calendar_draft_source(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: Sequence[EvidenceDraftV1],
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    """Close a fully scoped cross-resource Draft source read without semantic guesses."""
+
+    ambiguity = request_intent.get("ambiguity")
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or not is_task_calendar_draft_source_target(request_intent)
+        or not isinstance(ambiguity, Mapping)
+        or ambiguity.get("requires_confirmation") is not False
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+    ):
+        return False
+    output_plan = tool_route_plan["output_plan"]
+    if output_plan["output_mode"] != "ACTION":
+        return False
+    output_routes = output_plan["output_routes"]
+    if len(output_routes) != 1:
+        return False
+    output_route = output_routes[0]
+    if not (
+        output_route["resource_type"] == "GMAIL_DRAFT"
+        and output_route["connector_id"] == "google_workspace"
+        and output_route["effect"] == "CREATE"
+        and output_route["selected_tool_id"] == "gmail_create_draft"
+    ):
+        return False
+    evidence_resources = {
+        "TASK"
+        if item["resource_handle"].startswith("task:")
+        else "CALENDAR_EVENT"
+        if item["resource_handle"].startswith("calendar_event:")
+        else "OTHER"
+        for item in evidence_drafts
+    }
+    if evidence_resources != {"TASK", "CALENDAR_EVENT"}:
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    source_routes = [
+        route for route in routes if route["resource_type"] in {"TASK", "CALENDAR_EVENT"}
+    ]
+    if {route["resource_type"] for route in source_routes} != {"TASK", "CALENDAR_EVENT"}:
+        return False
+    return all(
+        route["required"]
+        and (
+            summaries := _latest_scope_summaries(
+                _route_summaries(route, routes, acquisition_result)
+            )
+        )
+        and all(
+            summary.get("status") == "COMPLETE"
+            and summary.get("scope_complete") is True
+            and summary.get("continuation_status") == "EXHAUSTED"
+            for summary in summaries
+        )
+        for route in source_routes
+    )
+
+
+def _is_complete_gmail_metadata_collection(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or tool_route_plan["output_plan"]["output_mode"] != "ANSWER"
+        or request_intent["ambiguity"]["requires_confirmation"]
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+        or not acquisition_result["resource_handles"]
+        or not gmail_metadata_collection.gmail_metadata_collection_is_answer_target(
+            request_intent
+        )
+        or not _all_required_source_scopes_complete(tool_route_plan, acquisition_result)
+    ):
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    return (
+        len(routes) == 1
+        and routes[0]["required"]
+        and routes[0]["resource_type"] == "GMAIL_THREAD"
+    )
+
+
+def _is_complete_gmail_thread_reply(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
+        or request_intent["ambiguity"]["requires_confirmation"]
+        or set(request_intent["requested_effect_hints"]) != {"READ", "SEND"}
+        or set(request_intent["requested_resource_hints"]) != {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+        or not evidence_drafts
+    ):
+        return False
+    input_routes = tool_route_plan["input_plan"]["input_routes"]
+    output_routes = tool_route_plan["output_plan"]["output_routes"]
+    if len(input_routes) != 1 or len(output_routes) != 1:
+        return False
+    input_route, output_route = input_routes[0], output_routes[0]
+    if (
+        input_route["connector_id"] != "google_workspace"
+        or input_route["resource_type"] != "GMAIL_THREAD"
+        or not input_route["required"]
+        or "gmail_get_thread" not in input_route["allowed_read_tool_ids"]
+        or output_route["connector_id"] != "google_workspace"
+        or output_route["resource_type"] != "GMAIL_MESSAGE"
+        or output_route["effect"] != "SEND"
+        or output_route["selected_tool_id"] != "gmail_send"
+    ):
+        return False
+    summaries = _route_summaries(input_route, input_routes, acquisition_result)
+    if not summaries or any(summary.get("status") != "COMPLETE" for summary in summaries):
+        return False
+    acquired_handles = set(acquisition_result["resource_handles"])
+    thread_ids: set[str] = set()
+    for draft in evidence_drafts:
+        locator = draft["locator"]
+        if not isinstance(locator, Mapping):
+            return False
+        thread_id = locator.get("thread_id")
+        message_id = locator.get("rfc822_message_id")
+        if (
+            not isinstance(thread_id, str)
+            or not thread_id
+            or not isinstance(message_id, str)
+            or not message_id
+            or draft["resource_handle"] != f"gmail_thread:{thread_id}"
+            or draft["resource_handle"] not in acquired_handles
+        ):
+            return False
+        thread_ids.add(thread_id)
+    return len(thread_ids) == 1
+
+
+def _is_complete_selected_resource_action(
+    intent: RequestIntentV2,
+    plan: ToolRoutePlanV2 | None,
+    acquisition: AcquisitionResultV1,
+    evidence: list[EvidenceDraftV1],
+) -> bool:
+    if (
+        plan is None
+        or plan["output_plan"]["output_mode"] != "ACTION"
+        or intent["analysis_requirement"] != "NONE"
+        or intent["ambiguity"]["requires_confirmation"]
+        or acquisition["status"] != "COMPLETE"
+        or acquisition["missing_slots"]
+    ):
+        return False
+    inputs, outputs = plan["input_plan"]["input_routes"], plan["output_plan"]["output_routes"]
+    if len(inputs) != 1 or len(outputs) != 1:
+        return False
+    route, output = inputs[0], outputs[0]
+    if (
+        route["connector_id"] not in {"github", "google_workspace"}
+        or "RESOURCE_SELECTED" not in route["reason_codes"]
+        or not route["required"]
+        or output["connector_id"] != route["connector_id"]
+        or output["resource_type"] != route["resource_type"]
+        or output["effect"] not in {"UPDATE", "DELETE"}
+        or set(intent["requested_effect_hints"]) - {"READ"} != {output["effect"]}
+    ):
+        return False
+    selected = {
+        f"{route['resource_type'].lower()}:{identity}"
+        for constraint in intent["constraints"]
+        if constraint["field"] == "selected_resource_id" and isinstance(constraint["value"], list)
+        for identity in constraint["value"]
+        if isinstance(identity, str)
+    }
+    summaries = _route_summaries(route, inputs, acquisition)
+    return (
+        len(selected) == 1
+        and bool(summaries)
+        and all(item.get("status") == "COMPLETE" for item in summaries)
+        and selected == {item["resource_handle"] for item in evidence}
+        and selected.issubset(
+            {
+                handle
+                for item in summaries
+                for handle in cast(list[str], item.get("resource_handles", []))
+            }
+        )
+    )
 
 
 def assess_sufficiency(
@@ -58,8 +559,23 @@ def assess_sufficiency(
     evidence_drafts: list[EvidenceDraftV1],
     retry_budget: RunBudgetV2,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+    attempted_detail_candidate_refs: Collection[str] = (),
+    query_attempts: Sequence[QueryAttemptV1] = (),
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> SufficiencyResultV2:
     """Assess evidence completeness, then apply the deterministic insufficient-data guard."""
+    deterministic = deterministic_sufficiency(
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+        retry_budget=retry_budget,
+        confirmation_response=confirmation_response,
+        query_attempts=query_attempts,
+        read_result_summaries=read_result_summaries,
+    )
+    if deterministic is not None:
+        return deterministic
     prompt_input: dict[str, object] = {
         "request_intent": request_intent,
         "selected_evidence": selected_evidence_prompt_projection(evidence_drafts),
@@ -68,6 +584,8 @@ def assess_sufficiency(
             acquisition_result=acquisition_result,
         ),
         "budget_state": budget_state_prompt_projection(retry_budget),
+        "temporal_constraints": project_query_temporal_constraints(query_attempts),
+        "read_result_summaries": [dict(item) for item in read_result_summaries],
     }
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
@@ -75,14 +593,377 @@ def assess_sufficiency(
         requested_mode,
         prompt_ref,
         prompt_input,
-        SUFFICIENCY_OUTPUT_SCHEMA,
+        sufficiency_output_schema(tool_route_plan),
     )
     validated = validate_sufficiency_result_v2(result.structured_output)
-    return enforce_sufficiency_guard(
+    validated = _fail_closed_on_empty_required_acquisition(
+        validated,
+        tool_route_plan=tool_route_plan,
+        acquisition_result=acquisition_result,
+        evidence_drafts=evidence_drafts,
+    )
+    validated = _require_unread_exhaustive_collection_pages(
+        validated,
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        read_result_summaries=read_result_summaries,
+    )
+    if not any(issue["slot"] == "collection_coverage" for issue in validated["issues"]):
+        validated = _require_gmail_candidate_details(
+            validated,
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            evidence_drafts=evidence_drafts,
+            detail_candidate_refs=acquisition_result["resource_handles"],
+            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+        )
+    validated = require_read_evidence_support(
+        validated,
+        request_intent=request_intent,
+        tool_route_plan=tool_route_plan,
+        evidence_drafts=evidence_drafts,
+    )
+    validated = _bind_issue_routes(validated, tool_route_plan=tool_route_plan)
+    if (
+        validated["status"] == "SUFFICIENT"
+        and not any(issue["required"] for issue in validated["issues"])
+        and set(request_intent["requested_effect_hints"]) == {"READ"}
+        and any(item["kind"] == "PERSON" for item in request_intent["constraints"])
+        and not project_person_candidates(request_intent, evidence_drafts)
+    ):
+        return {
+            "schema_version": 2,
+            "status": "PARTIAL",
+            "issues": [
+                *validated["issues"],
+                {
+                    "slot": "person_identity",
+                    "issue_type": "MISSING",
+                    "required": False,
+                    "resolution_source": "GOOGLE",
+                    "safety_critical": False,
+                    "reason_codes": ["PERSON_IDENTITY_UNRESOLVED"],
+                },
+            ],
+        }
+    validated = enforce_sufficiency_guard(
         validated,
         request_intent=request_intent,
         retry_budget=retry_budget,
         evidence_supported_partial_possible=bool(evidence_drafts),
+    )
+    return _guard_event_year(validated, request_intent, evidence_drafts, query_attempts)
+
+
+def _require_unread_exhaustive_collection_pages(
+    result: SufficiencyResultV2,
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    read_result_summaries: Sequence[Mapping[str, object]],
+) -> SufficiencyResultV2:
+    """Reject an LLM SUFFICIENT candidate while required collection pages remain."""
+
+    exhaustive = any(
+        constraint["kind"] == "SCOPE"
+        and constraint["field"] == "coverage_requirement"
+        and constraint["value"] == "EXHAUSTIVE"
+        for constraint in request_intent["constraints"]
+    )
+    if not exhaustive or result["status"] != "SUFFICIENT" or tool_route_plan is None:
+        return result
+
+    routes = {
+        route["route_id"]: route
+        for route in business_required_source_routes(
+            tool_route_plan["input_plan"]["input_routes"]
+        )
+    }
+    issues = [
+        issue
+        for issue in result["issues"]
+        if issue["slot"] != "collection_coverage"
+    ]
+    for summary in read_result_summaries:
+        route_id = summary.get("route_id")
+        if not isinstance(route_id, str):
+            continue
+        route = routes.get(route_id)
+        if (
+            route is None
+            or summary.get("has_next_page") is not True
+            or summary.get("exhausted") is True
+        ):
+            continue
+        issues.append(
+            {
+                "slot": "collection_coverage",
+                "route_id": route_id,
+                "issue_type": "MISSING",
+                "required": True,
+                "resolution_source": (
+                    "GOOGLE" if route["connector_id"] == "google_workspace" else "CONNECTOR"
+                ),
+                "safety_critical": False,
+                "reason_codes": ["COLLECTION_PAGE_REMAINS"],
+            }
+        )
+    return {**result, "issues": issues}
+
+
+def _guard_event_year(
+    result: SufficiencyResultV2,
+    intent: RequestIntentV2,
+    evidence: Sequence[EvidenceDraftV1],
+    attempts: Sequence[QueryAttemptV1],
+) -> SufficiencyResultV2:
+    if (
+        result["status"] == "SUFFICIENT"
+        and not any(issue["required"] for issue in result["issues"])
+        and set(intent["requested_effect_hints"]) == {"READ"}
+        and project_unresolved_event_dates(evidence, attempts)
+    ):
+        return {
+            "schema_version": 2,
+            "status": "PARTIAL",
+            "issues": [
+                *result["issues"],
+                {
+                    "slot": "event_year",
+                    "issue_type": "MISSING",
+                    "required": False,
+                    "resolution_source": "GOOGLE",
+                    "safety_critical": False,
+                    "reason_codes": ["EVENT_YEAR_UNCONFIRMED"],
+                },
+            ],
+        }
+    return result
+
+
+def _fail_closed_on_empty_required_acquisition(
+    result: SufficiencyResultV2,
+    *,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+) -> SufficiencyResultV2:
+    """Preserve route-specific failure, policy and empty-result facts independently of the LLM."""
+    if tool_route_plan is None:
+        return result
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    issues = list(result["issues"])
+    evidence_handles = {draft["resource_handle"] for draft in evidence_drafts}
+    for route in business_required_source_routes(routes):
+        summaries = _route_summaries(route, routes, acquisition_result)
+        status = _worst_source_status(summaries)[0] if summaries else "NOT_ATTEMPTED"
+        is_policy = bool(route["reason_codes"]) and all(
+            code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
+            for code in route["reason_codes"]
+        )
+        if is_policy and status == "COMPLETE":
+            continue
+        route_handles = {
+            handle
+            for summary in summaries
+            for handle in cast(list[str], summary.get("resource_handles", []))
+        }
+        has_evidence = bool(evidence_handles & route_handles)
+        if (
+            not route_handles
+            and sum(other["resource_type"] == route["resource_type"] for other in routes) == 1
+        ):
+            resource_type = (
+                normalize_resource_type(route["resource_type"])
+                if route["resource_type"] == "EMAIL"
+                else route["resource_type"]
+            )
+            has_evidence = any(
+                handle.startswith(resource_type.lower() + ":") for handle in evidence_handles
+            )
+        if status in {"COMPLETE", "PARTIAL"} and has_evidence:
+            continue
+        no_resources = bool(summaries) and all(
+            summary.get("resource_count") == 0 for summary in summaries
+        )
+        reason = (
+            "REQUIRED_SOURCE_" + status
+            if status != "COMPLETE"
+            else "REQUIRED_SOURCE_RETURNED_NO_RESOURCES"
+            if no_resources
+            else "REQUIRED_SOURCE_HAS_NO_RELEVANT_EVIDENCE"
+        )
+        access_reasons = [
+            "SOURCE_" + str(summary["error_code"])
+            for summary in summaries
+            if summary.get("status") == "FAILED"
+            and summary.get("error_code") in {"NOT_FOUND", "PERMISSION_DENIED"}
+        ]
+        issues.append(
+            {
+                "slot": "required_source_evidence",
+                "route_id": route["route_id"],
+                "issue_type": "MISSING",
+                "required": True,
+                "resolution_source": "POLICY"
+                if is_policy
+                else "GOOGLE"
+                if route["connector_id"] == "google_workspace"
+                else "CONNECTOR",
+                "safety_critical": is_policy,
+                "reason_codes": list(dict.fromkeys([reason, *access_reasons])),
+            }
+        )
+    return {
+        "schema_version": 2,
+        "status": result["status"],
+        "issues": issues,
+    }
+
+
+def _all_required_source_scopes_complete(
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+) -> bool:
+    if tool_route_plan is None:
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    required_routes = business_required_source_routes(routes)
+    if not required_routes:
+        return False
+    for route in required_routes:
+        summaries = _route_summaries(route, routes, acquisition_result)
+        latest_summaries = _latest_scope_summaries(summaries)
+        if not latest_summaries or any(
+            summary.get("scope_complete") is not True for summary in latest_summaries
+        ):
+            return False
+        checked = sum(
+            cast(int, summary.get("checked_read_count", 0)) for summary in summaries
+        )
+        known = sum(cast(int, summary.get("known_scope_count", 0)) for summary in summaries)
+        if known < 1 or checked < known:
+            return False
+    return True
+
+
+def _all_required_sources_returned_no_resources(
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+) -> bool:
+    if tool_route_plan is None:
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    required_routes = business_required_source_routes(routes)
+    return bool(required_routes) and all(
+        (summaries := _route_summaries(route, routes, acquisition_result))
+        and all(
+            summary.get("status") == "COMPLETE"
+            and summary.get("resource_count") == 0
+            for summary in summaries
+        )
+        for route in required_routes
+    )
+
+
+def _latest_scope_summaries(
+    summaries: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    latest: dict[str, Mapping[str, object]] = {}
+    for index, summary in enumerate(summaries):
+        query_identity = summary.get("query_identity_hash")
+        key = query_identity if isinstance(query_identity, str) else f"summary:{index}"
+        latest[key] = summary
+    return list(latest.values())
+
+
+def _has_bounded_read_stop(acquisition_result: AcquisitionResultV1) -> bool:
+    return any(
+        summary.get("termination_kind") == "BUDGET_STOPPED"
+        for summary in acquisition_result["source_summaries"]
+    )
+
+
+def _bind_issue_routes(
+    result: SufficiencyResultV2,
+    *,
+    tool_route_plan: ToolRoutePlanV2 | None,
+) -> SufficiencyResultV2:
+    routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    issues: list[SufficiencyIssueV2] = []
+    for original in result["issues"]:
+        issue = original.copy()
+        source = issue["resolution_source"]
+        route_id = issue.get("route_id")
+        if route_id is not None and not any(route["route_id"] == route_id for route in routes):
+            raise RetrievalValidationError("sufficiency issue references an unknown frozen route")
+        if source in {"GOOGLE", "CONNECTOR"}:
+            eligible = [
+                route
+                for route in routes
+                if (route["connector_id"] == "google_workspace") == (source == "GOOGLE")
+            ]
+            if route_id is not None:
+                if not any(route["route_id"] == route_id for route in eligible):
+                    raise RetrievalValidationError("sufficiency issue Connector binding conflicts")
+            elif len(eligible) == 1:
+                issue["route_id"] = eligible[0]["route_id"]
+            elif len(eligible) > 1:
+                issue["resolution_source"] = "ROUTE"
+        issues.append(issue)
+    return {**result, "issues": issues}
+
+
+def _route_summaries(
+    route: InputToolRouteV1,
+    routes: Sequence[InputToolRouteV1],
+    acquisition_result: AcquisitionResultV1,
+) -> list[dict[str, object]]:
+    source = _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(route["resource_type"])]
+    source_route_count = sum(
+        _RESOURCE_TYPE_TO_SOURCE_NAME[coarse_resource_category(item["resource_type"])] == source
+        for item in routes
+    )
+    return [
+        summary
+        for summary in acquisition_result["source_summaries"]
+        if summary.get("source") == source
+        and summary.get("connector_id", route["connector_id"]) == route["connector_id"]
+        and (
+            summary.get("route_id") == route["route_id"]
+            or (summary.get("route_id") is None and source_route_count == 1)
+        )
+    ]
+
+
+def _is_complete_selected_gmail_read(
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    acquisition_result: AcquisitionResultV1,
+    evidence_drafts: list[EvidenceDraftV1],
+    confirmation_response: ConfirmationResponseProjectionV1 | None,
+) -> bool:
+    if (
+        confirmation_response is not None
+        or tool_route_plan is None
+        or tool_route_plan["output_plan"]["output_mode"] != "ANSWER"
+        or request_intent["analysis_requirement"] != "NONE"
+        or set(request_intent["requested_effect_hints"]) != {"READ"}
+        or acquisition_result["status"] != "COMPLETE"
+        or acquisition_result["missing_slots"]
+        or not evidence_drafts
+    ):
+        return False
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    if len(routes) != 1:
+        return False
+    route = routes[0]
+    return (
+        route["resource_type"] == "GMAIL_THREAD"
+        and route["required"]
+        and "RESOURCE_SELECTED" in route["reason_codes"]
+        and all(draft["resource_handle"].startswith("gmail_thread:") for draft in evidence_drafts)
     )
 
 
@@ -128,10 +1009,9 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
     """Apply the canonical fail-closed precedence independently of LLM confidence."""
 
     required = tuple(issue for issue in context.issues if issue.required)
-    if any(
-        issue.safety_critical or issue.resolution_source is ResolutionSource.POLICY
-        for issue in required
-    ):
+    if any(issue.resolution_source is ResolutionSource.POLICY for issue in required):
+        return InsufficientDataDisposition.BLOCKED
+    if any(issue.safety_critical for issue in required):
         return InsufficientDataDisposition.BLOCKED
     if any(issue.resolution_source is ResolutionSource.USER for issue in required):
         return InsufficientDataDisposition.NEEDS_CONFIRMATION
@@ -145,11 +1025,7 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
         and context.budget_remaining > 0
     ):
         return InsufficientDataDisposition.RETRIEVE_MORE
-    if (
-        context.budget_remaining <= 0
-        and context.read_only
-        and context.evidence_supported_partial_possible
-    ):
+    if context.budget_remaining <= 0 and context.read_only:
         return InsufficientDataDisposition.PARTIAL
     if context.write_required_data_missing:
         if context.user_can_resolve_write_gap:
@@ -161,6 +1037,37 @@ def decide_insufficient_data(context: InsufficientDataContext) -> InsufficientDa
 
 
 # Preserved deterministic evaluator is owned by this sufficiency operation.
+
+
+def sufficiency_output_schema(tool_route_plan: ToolRoutePlanV2 | None) -> OutputSchemaDefinition:
+    """Constrain route references and source ownership to the frozen route set."""
+    schema = deepcopy(SUFFICIENCY_OUTPUT_SCHEMA.json_schema)
+    routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    properties = cast(dict[str, object], schema["properties"])
+    issues = cast(dict[str, object], properties["issues"])
+    item = cast(dict[str, object], issues["items"])
+    fields = cast(dict[str, object], item["properties"])
+    if routes:
+        fields["route_id"] = {"type": "string", "enum": [route["route_id"] for route in routes]}
+        resolution_source = cast(dict[str, object], fields["resolution_source"])
+        allowed_sources = cast(list[str], resolution_source["enum"])
+        has_google_route = any(route["connector_id"] == "google_workspace" for route in routes)
+        has_other_connector_route = any(
+            route["connector_id"] != "google_workspace" for route in routes
+        )
+        resolution_source["enum"] = [
+            source
+            for source in allowed_sources
+            if (source != "GOOGLE" or has_google_route)
+            and (source != "CONNECTOR" or has_other_connector_route)
+        ]
+    else:
+        fields.pop("route_id", None)
+    return OutputSchemaDefinition(
+        schema_version=SUFFICIENCY_OUTPUT_SCHEMA.schema_version,
+        json_schema=schema,
+    )
+
 
 SUFFICIENCY_OUTPUT_SCHEMA = OutputSchemaDefinition(
     schema_version="sufficiency-result-v2",
@@ -196,6 +1103,7 @@ SUFFICIENCY_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     ],
                     "properties": {
                         "slot": {"type": "string"},
+                        "route_id": {"type": "string", "minLength": 1},
                         "issue_type": {"type": "string", "enum": ["MISSING", "CONFLICT"]},
                         "required": {"type": "boolean"},
                         "resolution_source": {
@@ -225,7 +1133,9 @@ _SOURCE_STATUS_MAP: dict[str, tuple[str, str | None]] = {
     "PARTIAL": ("PARTIAL", None),
     "AUTH_REQUIRED": ("FAILED", "AUTH_REQUIRED"),
     "RATE_LIMITED": ("FAILED", "RATE_LIMITED"),
-    "BUDGET_EXHAUSTED": ("FAILED", "BUDGET_EXHAUSTED"),
+    # Compatibility for checkpoints written before bounded stops were
+    # represented as PARTIAL source coverage.
+    "BUDGET_EXHAUSTED": ("PARTIAL", None),
     "FAILED": ("FAILED", "FAILED"),
 }
 _SOURCE_STATUS_PRIORITY = {"COMPLETE": 1, "PARTIAL": 2, "FAILED": 3}
@@ -285,25 +1195,51 @@ def source_statuses_prompt_projection(
     AcquisitionResultV1.source_summaries -- never the raw Provider/MCP
     response. tool_route_plan may be absent the same way
     The canonical plan_query prompt projection treats it defensively."""
-    routes = () if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
-    summaries_by_source: dict[str, list[dict[str, object]]] = {}
-    for summary in acquisition_result["source_summaries"]:
-        summaries_by_source.setdefault(str(summary.get("source")), []).append(summary)
+    routes = (
+        ()
+        if tool_route_plan is None
+        else business_required_source_routes(
+            tool_route_plan["input_plan"]["input_routes"]
+        )
+    )
     projections: list[dict[str, object]] = []
     for route in routes:
         resource_type = coarse_resource_category(route["resource_type"])
-        source_name = _RESOURCE_TYPE_TO_SOURCE_NAME[resource_type]
-        summaries = summaries_by_source.get(source_name, [])
+        summaries = _route_summaries(route, routes, acquisition_result)
         if not summaries:
             status, failure_kind = "NOT_ATTEMPTED", None
         else:
             status, failure_kind = _worst_source_status(summaries)
+        checked_read_count = sum(
+            cast(int, summary.get("checked_read_count", 0)) for summary in summaries
+        )
+        known_scope_count = sum(
+            cast(int, summary.get("known_scope_count", 0)) for summary in summaries
+        )
+        latest_summaries = _latest_scope_summaries(summaries)
+        scope_complete = bool(latest_summaries) and known_scope_count > 0 and all(
+            summary.get("scope_complete") is True for summary in latest_summaries
+        ) and checked_read_count >= known_scope_count
+        continuation_status = (
+            "HAS_MORE"
+            if any(
+                summary.get("continuation_status") == "HAS_MORE"
+                for summary in latest_summaries
+            )
+            else "EXHAUSTED"
+            if scope_complete
+            else "UNKNOWN"
+        )
         projections.append(
             {
                 "route_id": route["route_id"],
                 "resource_type": resource_type,
                 "status": status,
                 "failure_kind": failure_kind,
+                "checked_read_count": checked_read_count,
+                "known_scope_count": known_scope_count,
+                "scope_complete": scope_complete,
+                "continuation_status": continuation_status,
             }
         )
     return projections
@@ -316,6 +1252,15 @@ def _worst_source_status(summaries: list[dict[str, object]]) -> tuple[str, str |
     for summary in summaries:
         raw_status = str(summary.get("status"))
         status, failure_kind = _SOURCE_STATUS_MAP.get(raw_status, ("FAILED", raw_status))
+        if raw_status == "FAILED":
+            error_code = str(summary.get("error_code"))
+            if error_code == "BUDGET_EXHAUSTED":
+                status, failure_kind = "PARTIAL", None
+            else:
+                failure_kind = {
+                    "NOT_FOUND": "NOT_FOUND",
+                    "PERMISSION_DENIED": "SCOPE",
+                }.get(error_code, failure_kind)
         priority = _SOURCE_STATUS_PRIORITY.get(status, 3)
         if priority > worst_priority:
             worst_priority = priority
@@ -366,7 +1311,8 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
     _require_exact_keys(
         issue,
         path,
-        {"slot", "issue_type", "required", "resolution_source", "safety_critical", "reason_codes"},
+        {"slot", "issue_type", "required", "resolution_source", "safety_critical", "reason_codes"}
+        | ({"route_id"} if "route_id" in issue else set()),
     )
     issue_type = _require_string(issue, "issue_type", path)
     if issue_type not in _ISSUE_TYPE_VALUES:
@@ -380,7 +1326,7 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
     safety_critical = issue.get("safety_critical")
     if not isinstance(safety_critical, bool):
         raise RetrievalValidationError(f"{path}.safety_critical must be boolean")
-    return {
+    validated: SufficiencyIssueV2 = {
         "slot": _require_string(issue, "slot", path),
         "issue_type": cast(SufficiencyIssueTypeValue, issue_type),
         "required": required,
@@ -388,6 +1334,9 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
         "safety_critical": safety_critical,
         "reason_codes": _require_string_list(issue["reason_codes"], f"{path}.reason_codes"),
     }
+    if "route_id" in issue:
+        validated["route_id"] = _require_string(issue, "route_id", path)
+    return validated
 
 
 def enforce_sufficiency_guard(
@@ -406,6 +1355,21 @@ def enforce_sufficiency_guard(
     read_only = all(effect == "READ" for effect in request_intent["requested_effect_hints"])
     budget_state = budget_state_prompt_projection(retry_budget)
     budget_remaining = cast(int, budget_state["additional_rounds_remaining"])
+    if any(issue["slot"] == "gmail_candidate_detail" for issue in sufficiency_result["issues"]):
+        budget_remaining = max(
+            0, retry_budget["max_detail_fetches"] - retry_budget["detail_fetches_used"]
+        )
+    if any(
+        set(issue["reason_codes"])
+        & {
+            "SOURCE_NOT_FOUND",
+            "SOURCE_PERMISSION_DENIED",
+        }
+        for issue in sufficiency_result["issues"]
+    ):
+        # A different query cannot restore a missing target or repository access.
+        # This is eligibility for another acquisition, not mutation of RunBudget.
+        budget_remaining = 0
     issues = tuple(
         InsufficientDataIssue(
             issue_type=issue["issue_type"],
@@ -442,6 +1406,163 @@ def enforce_sufficiency_guard(
     }
 
 
+def _require_gmail_candidate_details(
+    result: SufficiencyResultV2,
+    *,
+    request_intent: RequestIntentV2,
+    tool_route_plan: ToolRoutePlanV2 | None,
+    evidence_drafts: list[EvidenceDraftV1],
+    detail_candidate_refs: Collection[str] = (),
+    attempted_detail_candidate_refs: Collection[str],
+) -> SufficiencyResultV2:
+    """Hydrate semantic matches before treating search previews as business evidence."""
+
+    requested_effects = set(request_intent["requested_effect_hints"])
+    output_routes = (
+        []
+        if tool_route_plan is None or tool_route_plan["output_plan"]["output_mode"] != "ACTION"
+        else tool_route_plan["output_plan"]["output_routes"]
+    )
+    thread_reply_requires_detail = requested_effects == {"READ", "SEND"} and any(
+        route["resource_type"] == "GMAIL_MESSAGE" and route["effect"] == "SEND"
+        for route in output_routes
+    )
+    metadata_collection_answer = (
+        gmail_metadata_collection.gmail_metadata_collection_is_answer_target(request_intent)
+    )
+    read_requires_detail = requested_effects == {"READ"} and not metadata_collection_answer and (
+        request_intent["analysis_requirement"] == "REQUIRED"
+        or any(
+            (draft["locator"] or {}).get("is_metadata_only") is True for draft in evidence_drafts
+        )
+        or any(
+            item["kind"] == "PERSON" or item["field"] == "business_concepts"
+            for item in request_intent["constraints"]
+        )
+        or any(
+            item["field"] == "temporal_axis"
+            and "EVENT_TIME"
+            in (item["value"] if isinstance(item["value"], list) else [item["value"]])
+            for item in request_intent["constraints"]
+        )
+    )
+    if (
+        tool_route_plan is None
+        or not (read_requires_detail or thread_reply_requires_detail)
+        or "GMAIL_THREAD" not in request_intent["requested_resource_hints"]
+    ):
+        return result
+    routes = tool_route_plan["input_plan"]["input_routes"]
+    if not any(
+        route["resource_type"] == "GMAIL_THREAD"
+        and "gmail_get_thread" in route["allowed_read_tool_ids"]
+        and "RESOURCE_SELECTED" not in route["reason_codes"]
+        for route in routes
+    ):
+        return result
+    attempted = set(attempted_detail_candidate_refs)
+    selected_refs = {
+        draft["resource_handle"]
+        for draft in evidence_drafts
+        if draft["resource_handle"].startswith("gmail_thread:")
+    }
+    reply_candidate_refs = (
+        {ref for ref in detail_candidate_refs if ref.startswith("gmail_thread:")}
+        if thread_reply_requires_detail
+        else set()
+    )
+    missing_refs = (selected_refs | reply_candidate_refs) - attempted
+    if not missing_refs:
+        return result
+    issue: SufficiencyIssueV2 = {
+        "slot": "gmail_candidate_detail",
+        "issue_type": "MISSING",
+        "required": True,
+        "resolution_source": "GOOGLE",
+        "safety_critical": False,
+        "reason_codes": ["CANDIDATE_DETAIL_REQUIRED"],
+    }
+    return {
+        "schema_version": 2,
+        "status": result["status"],
+        "issues": [
+            *[
+                existing
+                for existing in result["issues"]
+                if existing["slot"] != "gmail_candidate_detail"
+            ],
+            issue,
+        ],
+    }
+
+
+def authorize_retrieval_followup(
+    sufficiency_result: SufficiencyResultV2,
+    *,
+    request_intent: RequestIntentV2,
+    retry_budget: RunBudgetV2,
+    evidence_supported_partial_possible: bool,
+    can_acquire_new_information: bool,
+    detail_fetch_count: int = 0,
+) -> tuple[SufficiencyResultV2, RunBudgetV2, bool]:
+    """Charge one owner-local follow-up or normalize an exhausted result.
+
+    ``NEEDS_MORE_DATA`` is not a Parent-facing disposition.  The Retrieval
+    owner consumes the same durable Run budget used by cross-owner back-edges
+    before it schedules another read.  If no slot remains, the existing
+    sufficiency guard deterministically closes the result as PARTIAL/BLOCKED
+    (or another non-loop disposition) instead of leaking it to Main.
+    """
+
+    if sufficiency_result["status"] != "NEEDS_MORE_DATA":
+        return sufficiency_result, retry_budget, False
+    if (
+        set(request_intent["requested_effect_hints"]) == {"READ"}
+        and retry_budget["absolute_llm_call_limit"] - retry_budget["llm_calls_used"]
+        <= _answer_call_reserve(request_intent) + 2
+    ):
+        # Another query/evidence pass must leave the answer's existing allowance intact.
+        return {**sufficiency_result, "status": "PARTIAL"}, retry_budget, False
+    if not can_acquire_new_information:
+        read_only = all(effect == "READ" for effect in request_intent["requested_effect_hints"])
+        return (
+            {
+                "schema_version": 2,
+                "status": ("PARTIAL" if read_only else "BLOCKED"),
+                "issues": sufficiency_result["issues"],
+            },
+            retry_budget,
+            False,
+        )
+    if detail_fetch_count > 0:
+        # Dispatch consumes DETAIL_FETCH. Hydration is not a semantic search round.
+        if (
+            detail_fetch_count
+            <= retry_budget["max_detail_fetches"] - retry_budget["detail_fetches_used"]
+        ):
+            return sufficiency_result, retry_budget, True
+        return (
+            {
+                **sufficiency_result,
+                "status": "PARTIAL"
+                if set(request_intent["requested_effect_hints"]) == {"READ"}
+                else "BLOCKED",
+            },
+            retry_budget,
+            False,
+        )
+    authorization = approve_additional_acquisition(retry_budget)
+    if authorization["decision"] == BudgetDecision.ALLOW.value:
+        return sufficiency_result, authorization["run_budget"], True
+    normalized = enforce_sufficiency_guard(
+        sufficiency_result,
+        request_intent=request_intent,
+        retry_budget=authorization["run_budget"],
+        evidence_supported_partial_possible=evidence_supported_partial_possible,
+    )
+    return normalized, authorization["run_budget"], False
+
+
 def _issue_description(issue: SufficiencyIssueV2) -> str:
     if issue["reason_codes"]:
         return "; ".join(issue["reason_codes"])
@@ -462,6 +1583,7 @@ def missing_information_projection(
             "code": issue["slot"],
             "description": _issue_description(issue),
             "required_for": _RESOLUTION_SOURCE_TO_REQUIRED_FOR[issue["resolution_source"]],
+            "reason_codes": list(issue["reason_codes"]),
         }
         for issue in issues
     ]

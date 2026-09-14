@@ -7,7 +7,17 @@ from typing import Any, cast
 
 from langgraph.types import Command
 
-from google_work_agent.adapters.langgraph.main.state import GraphState
+from google_work_agent.adapters.langgraph.main.state import (
+    CONTEXT_CANONICAL_PLANS_KEY,
+    CONTEXT_CURRENT_ROUND_NO_KEY,
+    CONTEXT_QUERY_ATTEMPTS_KEY,
+    CONTEXT_READ_BINDINGS_KEY,
+    CONTEXT_READ_RESULT_HANDLES_KEY,
+    CONTEXT_SEGMENT_HANDLES_KEY,
+    CONTEXT_SUFFICIENCY_OUTPUT_KEY,
+    GraphState,
+    request_from_run_input_state,
+)
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     provider_dispatch_execution_scope,
@@ -45,6 +55,12 @@ class WorkflowInvocationCoordinator:
         graph_version: str = "v1",
         now_ms: Callable[[], int] = lambda: 0,
         retrieval_node: str = "context_retriever",
+        callbacks: Sequence[Any] = (),
+        update_run_budget: Callable[
+            [str, Callable[[Mapping[str, object]], Mapping[str, object]]],
+            Mapping[str, object],
+        ]
+        | None = None,
     ) -> None:
         self._graph = graph
         self._graph_profile = graph_profile
@@ -62,13 +78,23 @@ class WorkflowInvocationCoordinator:
         self._cancel_signals = cancel_signals
         self._now_ms = now_ms
         self._retrieval_node = retrieval_node
+        self._callbacks = callbacks
+        self._update_run_budget = update_run_budget
 
     def prepare_start(self, request: WorkflowStartRequest) -> None:
         """Durably materialize input state without invoking the first owner node."""
-        config = self.config_for_thread(request.workflow_key)
+        config = self.config_for_thread(
+            request.workflow_key,
+            product_run_id=request.run_id,
+        )
+        # This invocation only materializes the checkpoint up to START. The
+        # semantic execution begins in start(), which owns the observable root.
+        config["callbacks"] = []
         snapshot = self._graph.get_state(config)
         if snapshot.values or snapshot.next:
-            if tuple(snapshot.next) != (self._start_node,):
+            if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(
+                cast(GraphState, snapshot.values)
+            ):
                 raise ValueError("workflow thread is not at the prepared START boundary")
             return
         self._graph.invoke(
@@ -78,11 +104,20 @@ class WorkflowInvocationCoordinator:
         )
 
     def start(self, request: WorkflowStartRequest) -> WorkflowInvocationResult:
-        with provider_dispatch_execution_scope(run_id=request.run_id, now_ms=self._now_ms):
-            config = self.config_for_thread(request.workflow_key)
+        with provider_dispatch_execution_scope(
+            run_id=request.run_id,
+            now_ms=self._now_ms,
+            durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
+        ):
+            config = self.config_for_thread(
+                request.workflow_key,
+                product_run_id=request.run_id,
+            )
             snapshot = self._graph.get_state(config)
             if snapshot.values or snapshot.next:
-                if tuple(snapshot.next) != (self._start_node,):
+                if tuple(snapshot.next) != (self._start_node,) or not self.is_profile_compatible(
+                    cast(GraphState, snapshot.values)
+                ):
                     return WorkflowInvocationResult(
                         run_id=request.run_id,
                         workflow_key=request.workflow_key,
@@ -98,8 +133,15 @@ class WorkflowInvocationCoordinator:
             )
 
     def resume(self, request: WorkflowResumeRequest) -> WorkflowInvocationResult:
-        with provider_dispatch_execution_scope(run_id=request.run_id, now_ms=self._now_ms):
-            config = self.config_for_thread(request.workflow_key)
+        with provider_dispatch_execution_scope(
+            run_id=request.run_id,
+            now_ms=self._now_ms,
+            durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
+        ):
+            config = self.config_for_thread(
+                request.workflow_key,
+                product_run_id=request.run_id,
+            )
             snapshot = self._graph.get_state(config)
             if not snapshot.values and not snapshot.next:
                 return WorkflowInvocationResult(
@@ -119,6 +161,29 @@ class WorkflowInvocationCoordinator:
                 target_node = request.normal_handoff_target_node
                 if not target_node:
                     raise ValueError("NORMAL_HANDOFF requires a materialized target node")
+                if (
+                    target_node == "verification"
+                    and "action_execution" in snapshot.next
+                    and self._has_executed_action(request.run_id)
+                    and self._latest_unknown_action(request.run_id) is None
+                ):
+                    # Startup already settled the external effect. Replace the crashed
+                    # execution task instead of scheduling Verification beside it.
+                    self._graph.update_state(
+                        config,
+                        {
+                            "workflow_phase": "VERIFICATION",
+                            "__logical_target__": "verification",
+                            "__target__": "verification",
+                            "user_interrupt": None,
+                        },
+                        as_node="action_execution",
+                    )
+                    self._graph.invoke(None, config=config)
+                    return self.result_from_thread(
+                        workflow_key=request.workflow_key,
+                        run_id=request.run_id,
+                    )
                 if target_node == "cancel_resolution":
                     # Cancellation preempts any user interrupt already pending
                     # at this root checkpoint (most commonly approval). Fork
@@ -155,6 +220,15 @@ class WorkflowInvocationCoordinator:
                             "__target__": self._retrieval_node,
                             "__workflow_control__": None,
                             "acquisition_result": None,
+                            "retrieval_result": None,
+                            CONTEXT_CANONICAL_PLANS_KEY: {},
+                            CONTEXT_QUERY_ATTEMPTS_KEY: [],
+                            CONTEXT_READ_RESULT_HANDLES_KEY: [],
+                            CONTEXT_READ_BINDINGS_KEY: {},
+                            CONTEXT_SEGMENT_HANDLES_KEY: [],
+                            CONTEXT_SUFFICIENCY_OUTPUT_KEY: None,
+                            CONTEXT_CURRENT_ROUND_NO_KEY: None,
+                            "exclusion_obligation_segment_ids": [],
                             "user_interrupt": None,
                         },
                         as_node=target_node,
@@ -278,8 +352,15 @@ class WorkflowInvocationCoordinator:
         )
 
     def recover_open_run(self, request: WorkflowRecoveryRequest) -> WorkflowInvocationResult:
-        with provider_dispatch_execution_scope(run_id=request.run_id, now_ms=self._now_ms):
-            config = self.config_for_thread(request.workflow_key)
+        with provider_dispatch_execution_scope(
+            run_id=request.run_id,
+            now_ms=self._now_ms,
+            durable_dispatch_accountant=self._dispatch_accountant(request.run_id),
+        ):
+            config = self.config_for_thread(
+                request.workflow_key,
+                product_run_id=request.run_id,
+            )
             snapshot = self._graph.get_state(config)
             if not snapshot.values and not snapshot.next:
                 return WorkflowInvocationResult(
@@ -319,6 +400,19 @@ class WorkflowInvocationCoordinator:
                 run_id=request.run_id,
             )
 
+    def _dispatch_accountant(
+        self, run_id: str
+    ) -> (
+        Callable[
+            [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+        ]
+        | None
+    ):
+        update_run_budget = self._update_run_budget
+        if update_run_budget is None:
+            return None
+        return lambda update: update_run_budget(run_id, update)
+
     def _continue_from_domain_facts(
         self,
         *,
@@ -355,9 +449,21 @@ class WorkflowInvocationCoordinator:
             return None
         return self._resume_reauth_execution(values), "action_execution"
 
-    @staticmethod
-    def config_for_thread(workflow_key: str) -> dict[str, object]:
-        return {"configurable": {"thread_id": workflow_key}}
+    def config_for_thread(
+        self,
+        workflow_key: str,
+        *,
+        product_run_id: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "configurable": {"thread_id": workflow_key},
+            "callbacks": list(self._callbacks),
+            "metadata": {
+                "product_run_id": product_run_id,
+                "graph_profile": self._graph_profile.value,
+                "graph_version": self._graph_version,
+            },
+        }
 
     def workflow_result_from_state(
         self,
@@ -433,10 +539,16 @@ class WorkflowInvocationCoordinator:
         )
 
     def is_profile_compatible(self, state: GraphState) -> bool:
-        return (
+        if not (
             state.get("graph_profile") == self._graph_profile.value
             and state.get("graph_version") == self._graph_version
-        )
+        ):
+            return False
+        try:
+            request_from_run_input_state(state)
+        except (TypeError, ValueError):
+            return False
+        return True
 
 
 def _first_pending_confirmation_interrupt(tasks: Sequence[Any]) -> dict[str, object] | None:

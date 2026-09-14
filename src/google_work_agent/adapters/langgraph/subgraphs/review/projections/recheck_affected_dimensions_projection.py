@@ -15,6 +15,7 @@ _FIELDS = (
     "evidence",
     "policy_summary",
     "confirmation_response",
+    "user_action_modifications",
 )
 
 

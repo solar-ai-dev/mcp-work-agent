@@ -10,6 +10,9 @@ def _calendar_list_events(
 ) -> dict[str, object]:
     calendar_id = workspace_support._text_argument(arguments, "calendar_id", maximum=2048)
     params = workspace_support._page_params(arguments)
+    query = arguments.get("query")
+    if query is not None:
+        params["q"] = workspace_support._text_value(query, maximum=2048)
     time_min = arguments.get("time_min")
     if time_min is not None:
         params["timeMin"] = workspace_support._text_value(time_min, maximum=64)

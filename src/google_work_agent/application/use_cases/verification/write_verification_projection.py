@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from email.utils import getaddresses
 from typing import cast
 
-_RECOVERY_MARKER_PREFIX = "\u200bgwa-recovery-fingerprint:"
+from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
+    strip_resource_recovery_marker,
+)
 
 
 def build_expected_verification_projection(
@@ -30,32 +33,38 @@ def build_expected_verification_projection(
     """
 
     args = dict(arguments)
-    if tool_name == "gmail_send":
-        # SENT_LOOKUP verifies the exact message resource returned by the
-        # successful dispatch via its persisted fallback resource id.  A fresh
-        # gmail_get_message snapshot does not expose the pre-send draft_id, so
-        # existence + resource type is the deterministic comparable surface.
-        return {"resource_type": "gmail_message"}
+    if tool_name in {"github_create_issue", "github_update_issue"}:
+        return {key: args[key] for key in ("title", "body") if key in args}
+    if tool_name in {"github_close_issue", "github_reopen_issue"}:
+        return {"state": "CLOSED" if tool_name == "github_close_issue" else "OPEN"}
     if tool_name in {"calendar_delete_event", "tasks_delete_task"}:
         # DELETE verification owns its explicit absent projection in
         # VerifyWriteActionService; no provider-generated Expected is needed.
         return {"absent": True}
-    if tool_name in {"gmail_create_draft", "gmail_update_draft"}:
+    if tool_name in {"gmail_create_draft", "gmail_update_draft", "gmail_send"}:
         payload = _mapping(args.get("payload"), "payload")
-        expected_payload: dict[str, object] = {}
-        if "subject" in payload:
-            expected_payload["subject"] = _string(payload["subject"], "payload.subject")
-        if "to" in payload:
-            expected_payload["to"] = _email_header(payload["to"], "payload.to")
-        if "thread_id" in payload:
-            expected_payload["thread_id"] = _string(payload["thread_id"], "payload.thread_id")
-        # Current Gmail draft verification snapshot is metadata-only. Body,
-        # cc/bcc and attachment-content verification require a richer
-        # Connector verification projection before they can be claimed here.
+        expected_payload: dict[str, object] = {
+            "to": _string_list(payload.get("to"), "payload.to"),
+            "cc": _string_list(payload.get("cc", []), "payload.cc"),
+            "bcc": _string_list(payload.get("bcc", []), "payload.bcc"),
+            "subject": _required_string(payload, "subject"),
+            "body": _required_string(payload, "body"),
+            "in_reply_to": payload.get("in_reply_to"),
+            "references": payload.get("references"),
+            "attachments": payload.get("attachments", []),
+        }
+        if payload.get("thread_id") is not None:
+            expected_payload["thread_id"] = payload["thread_id"]
+        if tool_name == "gmail_send":
+            expected_payload["sent"] = True
         return {"payload": expected_payload}
     if tool_name in {"tasks_create_task", "tasks_update_task"}:
         payload = _mapping(args.get("payload"), "payload")
-        task_expected_payload: dict[str, object] = {}
+        task_expected_payload: dict[str, object] = {
+            "parent_id": _required_string(args, "task_list_id"),
+        }
+        if tool_name == "tasks_create_task":
+            task_expected_payload.update({"notes": "", "due": None, "status": "needsAction"})
         for name in ("title", "notes", "status"):
             if name in payload:
                 task_expected_payload[name] = payload[name]
@@ -64,13 +73,28 @@ def build_expected_verification_projection(
         return {"payload": task_expected_payload}
     if tool_name in {"calendar_create_event", "calendar_update_event"}:
         payload = _mapping(args.get("payload"), "payload")
-        event_expected_payload: dict[str, object] = {}
-        # The current Event verification snapshot exposes only title/start/end
-        # from the mutable business fields. description/attendees are approved
-        # business arguments but are intentionally omitted until the Connector
-        # verification snapshot exposes them; comparing an unobservable field
-        # would turn every otherwise-correct write into MISMATCH.
-        for argument_name in ("title", "start", "end"):
+        event_expected_payload: dict[str, object] = {
+            "parent_id": _required_string(args, "calendar_id"),
+        }
+        if tool_name == "calendar_create_event":
+            event_expected_payload.update(
+                {
+                    "description": "",
+                    "location": "",
+                    "attendees": [],
+                    "status": "confirmed",
+                }
+            )
+        # Calendar GET exposes these approved fields. Missing or altered values
+        # must fail comparison, including lost attendees or description.
+        for argument_name in (
+            "title",
+            "start",
+            "end",
+            "location",
+            "description",
+            "attendees",
+        ):
             if argument_name in payload:
                 event_expected_payload[argument_name] = payload[argument_name]
         return {"payload": event_expected_payload}
@@ -135,17 +159,33 @@ def normalize_actual_verification_projection(
     if not isinstance(payload_value, dict):
         return normalized
     payload = cast(dict[str, object], payload_value)
-    if tool_name in {"gmail_create_draft", "gmail_update_draft"}:
-        recipients = payload.get("to")
-        if isinstance(recipients, list) and all(isinstance(item, str) for item in recipients):
-            payload["to"] = ", ".join(cast(list[str], recipients))
+    if tool_name in {"gmail_create_draft", "gmail_update_draft", "gmail_send"}:
+        for field in ("to", "cc", "bcc"):
+            recipients = payload.get(field)
+            if isinstance(recipients, str):
+                recipients = [recipients]
+            if isinstance(recipients, list) and all(isinstance(item, str) for item in recipients):
+                payload[field] = sorted(address for _, address in getaddresses(recipients))
+        body = payload.get("body")
+        if isinstance(body, str):
+            content = strip_resource_recovery_marker(body) or ""
+            payload["body"] = content.replace("\r\n", "\n").strip()
+        attachments = payload.get("attachments")
+        if isinstance(attachments, list):
+            payload["attachments"] = [
+                {key: item.get(key) for key in ("filename", "mime_type", "size_bytes")}
+                for item in attachments
+                if isinstance(item, dict)
+            ]
     if tool_name in {"tasks_create_task", "tasks_update_task"}:
         due = payload.get("due")
         if isinstance(due, str) and len(due) >= 10:
             payload["due"] = due[:10]
         notes = payload.get("notes")
         if isinstance(notes, str):
-            payload["notes"] = _strip_recovery_marker(notes)
+            payload["notes"] = strip_resource_recovery_marker(notes)
+        elif "notes" in payload and notes is None:
+            payload["notes"] = ""
     if tool_name in {"calendar_create_event", "calendar_update_event"}:
         for field_name in ("start", "end"):
             value = payload.get(field_name)
@@ -153,7 +193,12 @@ def normalize_actual_verification_projection(
                 payload[field_name] = _canonical_calendar_instant(value)
         description = payload.get("description")
         if isinstance(description, str):
-            payload["description"] = _strip_recovery_marker(description)
+            payload["description"] = strip_resource_recovery_marker(description)
+        elif "description" in payload and description is None:
+            payload["description"] = ""
+        location = payload.get("location")
+        if "location" in payload and location is None:
+            payload["location"] = ""
         attendees = payload.get("attendees")
         if isinstance(attendees, list):
             payload["attendees"] = sorted(str(item) for item in attendees)
@@ -168,25 +213,7 @@ def _canonical_calendar_instant(value: str) -> str:
         return value
     if parsed.tzinfo is None:
         return value
-    return (
-        parsed.astimezone(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
-
-
-def _strip_recovery_marker(value: str) -> str:
-    """Remove only the server-generated recovery suffix, preserving business text."""
-
-    marker_index = value.find(_RECOVERY_MARKER_PREFIX)
-    if marker_index < 0:
-        return value
-    visible = value[:marker_index]
-    # CREATE appends the marker with two newlines.  Remove those separator
-    # characters as execution metadata too, without trimming user whitespace
-    # in the no-marker case.
-    return visible[:-2] if visible.endswith("\n\n") else visible
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _mapping(value: object, path: str) -> dict[str, object]:
@@ -211,10 +238,6 @@ def _string_list(value: object, path: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"{path} must be a string list")
     return list(cast(list[str], value))
-
-
-def _email_header(value: object, path: str) -> str:
-    return ", ".join(_string_list(value, path))
 
 
 def _deep_mapping_copy(value: Mapping[str, object]) -> dict[str, object]:

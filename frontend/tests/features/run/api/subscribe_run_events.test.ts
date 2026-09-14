@@ -14,7 +14,7 @@ const payloads: Record<RunSseEventType, Record<string, unknown>> = {
   action_status: { action_id: "a-1", status: "APPROVED" },
   verification_result: { action_id: "a-1", outcome: "VERIFIED" },
   reauth_required: { connector_id: "google" },
-  recovery_required: { recovery: { reason_code: "CHECKPOINT_MISMATCH", target: { target_kind: "RUN" }, allowed_resolution_kinds: ["RECHECK", "CANCEL", "FAIL"] } },
+  recovery_required: { recovery: { reason_code: "CHECKPOINT_MISMATCH", message: "저장된 진행 위치를 다시 확인해야 합니다.", target: { target_kind: "RUN" }, allowed_resolution_kinds: ["RECHECK", "CANCEL", "FAIL"] } },
   completed: { status: "COMPLETED", result_kind: "SUCCESS" },
   error: { error_code: "INTERNAL_ERROR", recoverable: false },
 };
@@ -22,7 +22,7 @@ const payloads: Record<RunSseEventType, Record<string, unknown>> = {
 class FakeEventSource {
   listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
   onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
   close = vi.fn();
   constructor(public readonly url: string, public readonly init?: EventSourceInit) {}
   addEventListener(type: string, listener: (event: MessageEvent<string>) => void): void {
@@ -87,5 +87,22 @@ describe("subscribeRunEvents", () => {
     context.current().emitRaw("run_status", { schema_version: 1 }, "bad-3");
     expect(context.onEvent).not.toHaveBeenCalled();
     expect(context.onStateChange).toHaveBeenCalledTimes(3);
+  });
+
+  test("native disconnect does not become a server contract error", () => {
+    const context = setup();
+    context.current().onerror?.(new Event("error"));
+    for (const listener of context.current().listeners.get("error") ?? []) {
+      listener(new Event("error") as MessageEvent<string>);
+    }
+    expect(context.onEvent).not.toHaveBeenCalled();
+    expect(context.onStateChange).toHaveBeenCalledOnce();
+    expect(context.onStateChange).toHaveBeenCalledWith("실시간 연결을 다시 시도하고 있습니다.");
+    context.current().emit("error", payloads.error);
+    expect(context.onEvent).toHaveBeenCalledOnce();
+    context.current().onerror?.(new MessageEvent("error", { data: "server event" }));
+    expect(context.onStateChange).toHaveBeenCalledOnce();
+    context.current().onopen?.();
+    expect(context.onStateChange).toHaveBeenLastCalledWith("실시간 상태가 연결되었습니다.");
   });
 });

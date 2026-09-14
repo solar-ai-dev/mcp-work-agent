@@ -1,5 +1,8 @@
 """Installed connector connection routes over canonical Application use cases."""
 
+import logging
+from typing import NoReturn
+
 from fastapi import APIRouter, Header, Request
 
 from google_work_agent.api.dependencies.access_control import enforce_access
@@ -22,6 +25,8 @@ from google_work_agent.api.schemas.google_connections.start_google_oauth import 
     AuthorizationStartV1,
     StartAuthorizationRequestV1,
 )
+from google_work_agent.api.security.cookies import local_session_cookie_name
+from google_work_agent.api.security.sessions import calculate_session_digest
 from google_work_agent.application.use_cases.connection.get_connection_status import (
     GetConnectionStatusHandler,
     GetConnectionStatusQuery,
@@ -38,6 +43,10 @@ from google_work_agent.application.use_cases.operational_replay import (
     OperationalCommandConflict,
     OperationalCommandUncertain,
 )
+from google_work_agent.application.use_cases.resource.list_repositories import (
+    ListRepositoriesQuery,
+    ListRepositoriesResult,
+)
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
@@ -45,6 +54,58 @@ from google_work_agent.ports.connector.connector_failure import (
 from google_work_agent.ports.system.api_access_port import EndpointPolicy
 
 router = APIRouter(prefix="/api/v1/connections")
+logger = logging.getLogger(__name__)
+
+
+@router.get("/github/repositories", response_model=ListRepositoriesResult)
+def list_github_repositories(
+    request: Request,
+    dependencies: GoogleRouteDependency,
+    cursor: str | None = None,
+    x_api_contract_version: str | None = Header(default=None),
+) -> ListRepositoriesResult:
+    enforce_access(request, policy=EndpointPolicy.API_SESSION_REQUIRED)
+    enforce_supported_api_contract_version(
+        supported_version=dependencies.api_contract_version,
+        request_id=request.state.request_id,
+        request_version=x_api_contract_version,
+    )
+    connection = _resolve_connector(dependencies, "github", request.state.request_id)
+    handler = dependencies.list_repositories_handler
+    if handler is None:
+        raise ApiRequestError(
+            error_code="SERVICE_BUSY",
+            status_code=503,
+            user_message="GitHub Repository 연결 준비가 필요합니다.",
+            request_id=request.state.request_id,
+            detail_code="GITHUB_REPOSITORIES_UNAVAILABLE",
+        )
+    try:
+        account_id = connection.current_account_id()
+        session_token = request.cookies.get(
+            local_session_cookie_name(dependencies.service_instance_id)
+        )
+        if account_id is None or session_token is None:
+            raise ConnectorOperationFailure(
+                code=ConnectorFailureCode.AUTH_REQUIRED,
+                detail_code="GITHUB_ACCOUNT_NOT_CONNECTED",
+            )
+        return handler(
+            ListRepositoriesQuery(calculate_session_digest(session_token), account_id, cursor)
+        )
+    except ConnectorOperationFailure as error:
+        logger.warning(
+            "github_repository_listing_failed code=%s request_id=%s",
+            error.detail_code,
+            request.state.request_id,
+            extra={
+                "request_id": request.state.request_id,
+                "detail_code": error.detail_code,
+                "connector_id": "github",
+                "failure_code": error.code.value,
+            },
+        )
+        _raise_connector_failure(error, request_id=request.state.request_id)
 
 
 @router.post(
@@ -136,6 +197,8 @@ def get_google_connection(
         connection_status=result.connection_status,
         granted_scopes=list(result.granted_scopes),
         missing_required_scopes=list(result.missing_required_scopes),
+        authorization_status=result.authorization_status,
+        detail_code=result.detail_code,
     )
 
 
@@ -212,7 +275,7 @@ def _raise_operational_failure(
     ) from error
 
 
-def _raise_connector_failure(error: ConnectorOperationFailure, *, request_id: str) -> None:
+def _raise_connector_failure(error: ConnectorOperationFailure, *, request_id: str) -> NoReturn:
     if error.code is ConnectorFailureCode.CONFIGURATION_ERROR:
         if error.detail_code == "GOOGLE_OAUTH_CLIENT_ID_MISSING":
             user_message = "The connector OAuth client ID is not configured."

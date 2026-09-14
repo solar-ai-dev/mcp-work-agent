@@ -13,7 +13,7 @@ def _gmail_get_draft(
     payload = workspace_support._google_api(
         state,
         f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_path}",
-        {"format": "metadata"},
+        {"format": "full"},
     )
     return {"item": workspace_support._gmail_draft_snapshot(payload)}
 

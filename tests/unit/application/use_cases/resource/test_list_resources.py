@@ -8,7 +8,7 @@ from google_work_agent.application.use_cases.resource.list_resources import (
     ListResourcesQuery,
 )
 from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
@@ -100,6 +100,34 @@ class _Access:
         )
         raise AssertionError("calendar access is outside this test")
 
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage:
+        assert repository == "solar-ai-dev/google-work-agent"
+        assert state == "OPEN"
+        return ResourcePage(
+            items=(
+                ResourceSnapshot(
+                    fixture_snapshot_id="solar-ai-dev/google-work-agent#181",
+                    resource_type=ResourceType.GITHUB_ISSUE,
+                    resource_id="solar-ai-dev/google-work-agent#181",
+                    parent_id="solar-ai-dev/google-work-agent",
+                    related_resource_ids=("solar-ai-dev/google-work-agent",),
+                    version="2026-09-06T00:00:00Z",
+                    recovery_fingerprint=None,
+                    payload={
+                        "repository": "solar-ai-dev/google-work-agent",
+                        "issue_number": 181,
+                        "title": "Runtime closure",
+                        "description": "Connector Sidebar",
+                        "state": "OPEN",
+                        "url": "https://github.com/solar-ai-dev/google-work-agent/issues/181",
+                        "labels": ["product"],
+                        "assignees": ["octocat"],
+                    },
+                ),
+            ),
+            next_page_token=None,
+        )
+
     def default_task_list_id(self) -> str | None:
         return None
 
@@ -138,3 +166,30 @@ def test_list_resources__rejects_unknown_source__without_provider_call() -> None
 
     assert error.value.detail_code == "RESOURCE_SOURCE_NOT_FOUND"
     assert access.gmail_query is None
+
+
+def test_list_resources__projects_github_issues__through_existing_resource_authority() -> None:
+    result = ListResourcesHandler(_Access())(
+        ListResourcesQuery(
+            source="github",
+            session_digest="a" * 64,
+            account_id="github:42",
+            repository="solar-ai-dev/google-work-agent",
+        )
+    )
+
+    item = result.page.items[0]
+    assert result.page.source == "github"
+    assert item.source == "github"
+    assert item.resource_type == "github_issue"
+    assert item.title == "Runtime closure"
+    assert item.link_url == "https://github.com/solar-ai-dev/google-work-agent/issues/181"
+    assert item.metadata == {
+        "repository": "solar-ai-dev/google-work-agent",
+        "issue_number": 181,
+        "description": "Connector Sidebar",
+        "state": "OPEN",
+        "url": "https://github.com/solar-ai-dev/google-work-agent/issues/181",
+        "labels": ["product"],
+        "assignees": ["octocat"],
+    }

@@ -15,6 +15,10 @@ class ConnectionMetadataV1(ApiModel):
     ]
     granted_scopes: list[str]
     missing_required_scopes: list[str]
+    authorization_status: (
+        Literal["PENDING", "SLOW_DOWN", "APPROVED", "EXPIRED", "DENIED"] | None
+    ) = None
+    detail_code: str | None = None
 
 
 __all__ = ["ConnectionMetadataV1"]

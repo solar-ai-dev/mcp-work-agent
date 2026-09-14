@@ -21,9 +21,17 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 from google_work_agent.application.use_cases.resource.issue_selection_handle import (
     ResourceSelectionHandlePayloadV1,
 )
+from google_work_agent.application.use_cases.run.complete_answer_only_run import (
+    CompleteAnswerOnlyRunCommand,
+    CompleteAnswerOnlyRunHandler,
+)
 from google_work_agent.application.use_cases.run.get_run_snapshot import (
     GetExecutionContextQuery,
     GetRunSnapshotHandler,
+)
+from google_work_agent.application.use_cases.run.start_analysis import (
+    StartAnalysisCommand,
+    StartAnalysisHandler,
 )
 from google_work_agent.application.use_cases.run.start_run import StartRunCommand, StartRunHandler
 from google_work_agent.ports.system.contracts.workflow_execution import (
@@ -54,9 +62,65 @@ def _command() -> StartRunCommand:
         conversation_id="conversation-1",
         request_text="hello",
         entry_mode="AGENT_SEARCH",
-        requested_mode="AUTO",
+        requested_mode="LOCAL_GPU",
         api_contract_version="1",
     )
+
+
+def test_local_request__terminates_once__and_resubmission_creates_new_run(tmp_path: Path) -> None:
+    path = _database(tmp_path)
+    with connect_sqlite(path) as connection:
+        connection.execute("UPDATE conversations SET account_id='local-workspace'")
+        connection.execute("DELETE FROM google_accounts")
+    factory = sqlite_unit_of_work_factory(path)
+    identifiers = iter(f"local-{index}" for index in range(30))
+    start = StartRunHandler(
+        unit_of_work_factory=factory,
+        checkpoint_port=sqlite_checkpoint(path),
+        now_ms=lambda: 10,
+        id_factory=identifiers.__next__,
+        graph_profile="SIX_ROLE_BASELINE",
+        graph_version="test",
+        tool_registry=load_signed_tool_registry(),
+    )
+    first = start(_command())
+    analyzing = StartAnalysisHandler(unit_of_work_factory=factory, now_ms=lambda: 11)(
+        StartAnalysisCommand(first.run_id, first.run_version, "analysis", "b" * 64),
+    )
+    finish = CompleteAnswerOnlyRunHandler(
+        unit_of_work_factory=factory,
+        now_ms=lambda: 12,
+        message_id_factory=identifiers.__next__,
+    )
+    command = CompleteAnswerOnlyRunCommand(
+        command_id="finish",
+        conversation_id="conversation-1",
+        run_id=first.run_id,
+        assistant_message="GitHub 연결 후 요청을 다시 보내주세요.",
+        expected_version=analyzing.current_version,
+        request_hash="c" * 64,
+        result_kind="PARTIAL",
+    )
+    completed = finish(command)
+    replayed = finish(command)
+    assert completed.result_kind == "PARTIAL"
+    assert completed.assistant_message_id == replayed.assistant_message_id
+    second = start(replace(_command(), command_id="new-request", request_hash="d" * 64))
+    assert second.applied
+    assert first.run_id != second.run_id
+    assert first.workflow_key != second.workflow_key
+    with connect_sqlite(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM google_accounts").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM messages WHERE run_id=? AND role='ASSISTANT'", (first.run_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute(
+            "SELECT status, terminal_result_kind FROM runs WHERE id=?", (first.run_id,)
+        ).fetchone()[:] == ("COMPLETED", "PARTIAL")
 
 
 @pytest.mark.parametrize(
@@ -65,6 +129,7 @@ def _command() -> StartRunCommand:
         replace(_command(), request_text=""),
         replace(_command(), request_text="가" * 21846),
         replace(_command(), entry_mode="UNKNOWN"),
+        replace(_command(), requested_mode="AUTO"),
         replace(_command(), requested_mode="UNKNOWN"),
         replace(_command(), entry_mode="RESOURCE_SELECTED"),
     ),
@@ -91,8 +156,16 @@ def test_start_run_rejects__noncanonical_input_before__any_durable_write(
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
 
-def test_start_run_freezes__current_settings_into__durable_run_budget(tmp_path: Path) -> None:
+@pytest.mark.parametrize("local_actor", [False, True])
+def test_start_run_freezes__current_settings_into__durable_run_budget(
+    tmp_path: Path,
+    local_actor: bool,
+) -> None:
     database_path = _database(tmp_path)
+    if local_actor:
+        with connect_sqlite(database_path) as connection:
+            connection.execute("UPDATE conversations SET account_id='local-workspace'")
+            connection.execute("DELETE FROM google_accounts")
     handler = StartRunHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(database_path),
         checkpoint_port=sqlite_checkpoint(database_path),

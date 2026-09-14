@@ -1,37 +1,22 @@
 # 08. 시퀀스 설계서
 
-> **Authority:** cross-layer participant interaction order와 crash/replay cut. State/Workflow/API/Infrastructure semantics는 해당 owner를 따른다.  
-> **상태:** Draft v3.28 · **기준일:** 2026-08-26 · **대상:** P0 MVP
+> **Authority:** cross-layer participant interaction order와 crash/replay cut. State/Workflow/API/Infrastructure semantics는 해당 owner를 따른다.
+> **상태:** Draft v3.32 · **기준일:** 2026-09-07 · **대상:** P0 MVP
 
 ## 1. 목적과 범위
 
-이 문서는 주요 Use Case에서 React, FastAPI, Application, LangGraph Supervisor, 전문 Agent, Domain, Connector MCP Runtime, Provider API와 SQLite가 **어떤 순서로 상호작용하는지** 정의한다. P0 구체 시퀀스는 Google Workspace Connector를 사용한다.
+주요 Use Case에서 React, FastAPI, Application, Supervisor, Agent, Domain, Connector MCP Runtime, Provider API와 SQLite가 **어떤 순서로 상호작용하는지** 정의한다. Google Workspace와 GitHub는 같은 connector-neutral 실행 경계를 사용하며 Provider별 차이는 해당 Connector 내부에 둔다.
 
-이 문서가 소유하는 내용:
+| 범위 | 내용 |
+| --- | --- |
+| 이 문서가 정하는 것 | 요청·조회·확인·승인·실행·검증·복구의 cross-boundary 호출 순서, Transaction과 외부 호출 사이의 경계, crash/replay 시점별 처리 |
+| 다른 문서가 정하는 것 | State·Guard는 `Domain State Transition Contract`, 영속 사실·DB invariant는 `04`, Node·State·Workflow target/edge는 `06`, typed schema·Port·REST/MCP는 `07`, process lifecycle은 `10`, 운영 절차는 `14`, repository placement는 `16` |
 
-- 요청 시작과 SSE 연결 순서
-- Tool Route와 Retrieval/RAG 순서
-- 사용자 확인 Interrupt와 재개
-- Answer-only, WRITE Plan 분기와 Legacy/호환 READ-only Plan 경계
-- 승인·수정·거절·만료
-- Action DAG·부분 승인·부분 실패
-- Write 실패 재시도와 `UNKNOWN_RESULT` 복구
-- OAuth 재인증, 취소, 새로고침, 앱 재시작, MCP 장애
-- 외부 호출과 DB Transaction의 분리
+Domain Command·상태는 호출 순서를 설명하기 위한 참조다. 이 문서가 lifecycle 의미나 다른 owner의 계약을 다시 정의하지 않는다.
 
-이 문서가 소유하지 않는 내용:
+### 1.1 시퀀스를 읽는 기준
 
-- LangGraph Node·상태 Schema 상세 → `06`
-- REST·MCP Pydantic Schema 상세 → `07`
-- Domain lifecycle command·허용 source state·guard·transition semantics → `Domain State Transition Contract`
-- Domain 영속 사실·Table·Index·persistence realization → `04`; exact DB enforcement → 04 Domain·DB required DB invariant contract
-- 운영자 대응 절차 → `14`
-
-따라서 이 문서의 Domain Command/상태 표기는 **호출 순서와 상호작용 시퀀스의 reference**이며 lifecycle semantics를 새로 정의하지 않는다.
-
-### 1.1 Authority boundary
-
-시퀀스는 **상호작용 순서와 crash/replay cut**만 소유한다. State/guard는 State Contract, Workflow target/edge는 `06`, typed schema/Port는 `07`, process lifecycle은 `10`, repository placement는 `16`을 직접 소비한다. 이 문서의 sequence 예시는 해당 owner 계약을 재정의하지 않는다.
+Agent 내부 분해와 Graph 구성은 호출 예와 구분한다. 아래의 책임별 흐름이 모든 요청에 같은 Agent·Node 순서를 강제하는 것은 아니다. 승인·Commit·외부 호출·결과 저장·재개 사이의 안전 순서는 유지한다.
 
 ## 2. 공통 참여자
 
@@ -47,37 +32,65 @@
 | DOM | Domain | Aggregate guard, lifecycle 상태 전이, version/freshness invariant 판정. Product Policy를 재정의하지 않음 |
 | DB | SQLite Domain Store | 영속 Domain 사실·Receipt·Audit·Read Model 저장 |
 | CP | CheckpointPort | Graph 재개 위치·checkpoint 저장/조회 추상 경계. concrete LangGraph Checkpointer Adapter는 이 Port 뒤에 있으며 Domain Store transaction과 별도다. |
-| MCP | Connector Application Ports · Registry · MCP Runtime | Application에는 ConnectorReadPort / ConnectorWritePort / OAuthCredentialPort를 노출하고, 그 뒤에서 MCP Client/Server를 조정한다. P0 concrete Server는 Google Workspace MCP Server다. |
-| G | Google Provider APIs | Gmail·Tasks·Calendar 원본 시스템. 시퀀스에서 G에 직접 연결할 수 있는 참여자는 Google Workspace MCP Server 내부 Provider Adapter뿐이다. |
+| MCP | Connector Application Ports · Registry · MCP Runtime | Application에는 ConnectorReadPort / ConnectorWritePort / OAuthCredentialPort를 노출하고, 그 뒤에서 Google Workspace와 GitHub MCP Client/Server를 조정한다. |
+| P | Provider APIs | Google Workspace 또는 GitHub 원본 시스템. 시퀀스에서 P에 직접 연결할 수 있는 참여자는 해당 Connector MCP Server 내부 Provider Adapter뿐이다. |
+
+### 2.1 저장 경계 표기
+
+현재 sequence에서 `DOM`은 **pure Domain guard/transition calculation**만 의미한다. Domain은 Repository/SQLite를 호출하지 않는다.
+
+- `APP->>DOM` — Application handler가 Domain command/guard를 평가한다.
+- `APP->>DB` — Domain 결과가 유효한 뒤 Application `UnitOfWork`가 **Repository Port를 통해** Receipt·Domain mutation·required Audit를 짧은 transaction으로 commit한다. Mermaid의 `DB` participant는 concrete DB direct import가 아니라 `UnitOfWork → Repository Port → SQLite Adapter` persistence boundary의 축약이다.
+- `DOM->>DB` — **금지**. Domain→Persistence direct dependency를 뜻할 수 있으므로 current sequence에 사용하지 않는다.
+- Connector/MCP/LLM external I/O 중에는 `UnitOfWork` transaction을 열어 두지 않는다. 외부 결과는 호출 종료 뒤 별도의 짧은 UoW로 저장한다.
 
 ## 3. 공통 순서 원칙
 
-1. React는 Google API, MCP, SQLite를 직접 호출하지 않는다.
-2. FastAPI Route는 SQL과 Domain 상태 전이를 직접 수행하지 않는다.
-3. Agent는 다른 Agent를 직접 호출하지 않고 Supervisor로 결과를 반환한다.
-4. LLM Agent는 MCP Tool을 직접 호출하지 않는다. 검증된 Application Node가 Port를 호출한다.
-5. Google API·LLM·MCP 외부 호출 중 SQLite Transaction을 유지하지 않는다.
-6. 상태 변경은 Domain Command Result가 `applied=true`일 때만 다음 단계로 진행한다.
-7. SSE 전송 실패는 Domain 실패가 아니다.
-8. 승인 이후 LLM은 Tool·Arguments·대상 Resource·Dependency를 변경하지 않는다.
-9. 일반 Retrieval 호출은 Action Row를 만들지 않는다.
-10. **Legacy/호환 READ Action**은 Approval·ExecutionAttempt·Verification Row를 만들지 않는다. 현재 Release Graph의 일반 READ는 `InputRoutePlanV1 → Retrieval`이 소유하며 새 표준 Answer/Write 준비 경로에서 READ Action을 생성하지 않는다.
-11. Supervisor는 Node만 Routing하며, 선택된 Agent·Application Node가 각 LLM 호출 전에 `agent_role + subgraph_name + node_name + node_state + purpose`로 PromptRef를 확정한다.
-12. Repair·Revision은 원 호출 Prompt를 묵시적으로 재사용하지 않고 등록된 별도 PromptRef를 사용할 수 있다.
-13. Confirmation은 공통 재시작이 아니라 LangGraph interrupt다. `interrupt_id`가 `semantic_owner_id + AgentNodeResumeTargetV2`를 보존하며 응답 후 selected Graph Profile의 exact compiled Subgraph checkpoint에서 재개한다. `resume_target`은 LLM 자유 문자열이 아니라 `ResumeTargetRegistry`가 NodeRegistry + semantic-owner/profile→compiled-subgraph binding으로 발급·검증한다. 응답이 upstream 의미를 변경할 때만 Supervisor가 State Owner로 Back-edge한다.
-14. 모든 공식 Subgraph disposition은 정확히 하나의 Supervisor Edge·Interrupt·Terminal 경로를 가진다. 알 수 없는 Enum·Version·disposition은 bounded repair 뒤에도 유효하지 않으면 다음 Agent/Tool로 추측 Routing하지 않고 `RequireRecovery(CONTRACT_VIOLATION) → RECOVERY_REQUIRED`로 suspend한다. 복구 불가가 확정된 경우에만 `ResolveRecovery(FAIL) → FAILED`로 닫는다.
-15. 외부 Connector 호출의 직접 제품 caller는 Application의 결정적 use-case/Application operation이다. 순서는 `Workflow/FastAPI Route → Application canonical operation → Application SignedToolRegistry binding → Connector Application Port → Core-side Connector Adapter → ConnectorRuntimeRegistry + MCPClientPort → Connector MCP Server → Provider API`이며 Workflow/LangGraph는 Application operation을 통해서만 Connector I/O를 요청한다. Application operation은 adapter-level `ConnectorRuntimeRegistry`/`MCPClientPort`를 직접 import/call하지 않는다. React·FastAPI Route·Application·LangGraph·Agent·Domain이 Provider API를 직접 호출하는 시퀀스는 금지한다. Local `/api/v1`은 Frontend용 제품 API이며 Provider API 우회 경로가 아니다. P0 Google Workspace는 이 공통 순서를 따른다.
-16. Preflight/Claim 결과가 `applied=false`이면 MCP Write로 fall-through하거나 즉시 FINALIZE하지 않는다. Domain Result의 `current_status + next_allowed_commands`를 재조회해 재승인·Recovery·Reauth·Cancel/in-flight resolution·이미 Terminal 중 하나로 결정적으로 조정한다. Policy Block은 Claim 전 `BlockRun`이 실제 적용된 경우에만 Terminal이며 같은 Claim의 무조건 자동 재시도는 금지한다.
-17. Recovery는 기존 결과 회수·재검증이 필요한 경우에만 Verification으로 돌아간다. Domain이 `RECOVERY_REQUIRED`이면 같은 상태에서 명시적 resolve/re-auth를 기다리고, 실패가 확정되면 terminal result를 반환한다. 무조건 `Recovery → Verification` 반복은 금지한다.
-18. `FINALIZE`는 Run 상태를 임의 변경하지 않는다. Answer-only는 `CompleteAnswerOnlyRun`, Policy 차단은 `BlockRun`, 정상 Write 완료는 `CompleteWriteRun`, 취소는 `FinalizeCancel`, Recovery 종료는 terminal `ResolveRecovery(...)` Application handler가 **Run terminal mutation + final ASSISTANT Message + required Audit**를 같은 UoW로 commit한다. 그 뒤 FINALIZE는 diagnostic Trace와 SSE Projection만 publish한다. 비Terminal Run을 FINALIZE가 직접 덮어쓰거나 Message를 재삽입하지 않는다.
-19. `REAUTH_REQUIRED`와 `CANCEL_REQUESTED`는 업무 Agent Edge와 별개인 전역 Domain suspend/resume 상태다. 재인증은 현재 안전 checkpoint로 복귀하고, 실행 중 취소는 in-flight 결과 확정·필요 Verification/Recovery 뒤에만 `FinalizeCancel`한다.
+### 호출 경계
 
-### 3.0-A Conversation · Run 시작/재개 구분
+```text
+Workflow / FastAPI Route
+→ Application canonical operation
+→ Application SignedToolRegistry binding
+→ Connector Application Port
+→ Core-side Connector Adapter
+→ ConnectorRuntimeRegistry + MCPClientPort
+→ Connector MCP Server
+→ Provider API
+```
 
-- **Terminal Run 뒤 새 USER 요청:** 같은 `conversation_id`를 유지할 수 있지만 Browser는 새 Run/Message/Workflow identity를 제출하지 않는다. Application은 server-owned `run_id`, `user_message_id`, `workflow_key`, `langgraph_thread_id`를 먼저 preallocate하고 `WorkflowBindingV1`을 materialize한 뒤 Domain `StartRun` guard를 평가한다. 04 §10.1의 StartRun UoW가 Run·USER Message·선택 ResourceRef·initial WorkflowBinding·START handoff를 commit한 후 `RunInputV1`을 구성한다. 과거 `langgraph_thread_id`/Checkpoint/Main State를 이어받지 않는다.
-- **비Terminal 동일 Run 재개:** confirmation·reauth·recovery·명시적 `/resume`만 기존 `run_id + langgraph_thread_id + checkpoint`를 사용한다.
-- Conversation Timeline 복원은 UI Query이며 Graph resume 자체가 아니다. 과거 Message가 화면에 표시돼도 새 Run Request Understanding/Prompt 입력으로 자동 전달하지 않는다.
-- 같은 Conversation에 Open Run이 있으면 새 `StartRun`을 병렬 생성하지 않는다.
+이 경로는 Google Workspace와 GitHub에 공통 적용한다. Local `/api/v1`은 Frontend용 API이며 Provider API 우회 경로가 아니다.
+
+| 항목 | 규칙 |
+| --- | --- |
+| 직접 호출 금지 | React는 Provider API·MCP·SQLite를, FastAPI Route는 SQL·Domain 전이를 직접 수행하지 않는다. Application operation은 adapter-level `ConnectorRuntimeRegistry`/`MCPClientPort`를 직접 import/call하지 않는다. React·FastAPI Route·Application·LangGraph·Agent·Domain은 Provider API를 직접 호출하지 않는다. |
+| Agent 호출 | Agent는 다른 Agent를 직접 호출하지 않고 Supervisor로 결과를 반환한다. LLM Agent는 MCP Tool을 직접 호출하지 않으며 검증된 결정적 Application Node가 Port를 호출한다. |
+| 외부 호출과 저장 | Provider API·LLM·MCP 호출 중 SQLite Transaction을 유지하지 않는다. 상태 변경 결과가 `applied=true`일 때만 다음 단계로 진행한다. |
+| 승인 이후 | LLM은 승인된 Tool·Arguments·대상 Resource·Dependency를 변경하지 않는다. |
+| 조회와 실행 기록 | 일반 Retrieval은 Action Row를 만들지 않는다. Legacy/호환 READ Action에는 Approval·ExecutionAttempt·Verification Row를 만들지 않는다. 새 표준 Answer/Write 준비 경로의 READ는 `InputRoutePlanV1 → Retrieval`이 소유한다. |
+| 알 수 없는 결과 | 모든 공식 Subgraph disposition은 하나의 Supervisor Edge·Interrupt·Terminal 경로로 연결한다. Enum·Version·disposition이 bounded repair 후에도 유효하지 않으면 추측 Routing하지 않고 `RequireRecovery(CONTRACT_VIOLATION) → RECOVERY_REQUIRED`로 suspend한다. 복구 불가가 확정된 경우만 `ResolveRecovery(FAIL) → FAILED`로 닫는다. |
+| Preflight/Claim 거절 | `applied=false`이면 MCP Write 또는 즉시 FINALIZE로 진행하지 않는다. `current_status + next_allowed_commands`를 다시 읽어 재승인·Recovery·Reauth·Cancel/in-flight resolution·이미 Terminal 중 해당 경로로 조정한다. 같은 Claim을 무조건 재시도하지 않으며, Policy Block은 Claim 전 `BlockRun`이 적용된 경우에만 Terminal이다. |
+| 복구·취소 | Recovery는 기존 결과 회수·재검증이 필요한 경우에만 Verification으로 돌아간다. `RECOVERY_REQUIRED`에서는 명시적 resolve/re-auth를 기다리며 무조건적인 Recovery↔Verification 반복은 금지한다. `REAUTH_REQUIRED`와 `CANCEL_REQUESTED`는 업무 Edge와 별개의 Domain suspend/resume 상태다. 취소는 in-flight 결과와 필요한 Verification/Recovery를 먼저 확정한다. |
+| 화면 전달 | SSE 전송 실패는 Domain 실패가 아니다. |
+
+### 종료 저장과 표시
+
+```text
+종료 사유에 맞는 메시지 입력 생성
+→ 해당 terminal lifecycle handler
+→ Run terminal mutation + final ASSISTANT Message + required Audit를 같은 UoW로 COMMIT
+→ FINALIZE: diagnostic Trace·SSE Projection publish
+```
+
+| 종료 사유 | 담당 Command |
+| --- | --- |
+| Answer-only | `CompleteAnswerOnlyRun` |
+| Policy 차단 | `BlockRun` |
+| 정상 Write 완료 | `CompleteWriteRun` |
+| 취소 | `FinalizeCancel` |
+| Recovery 종료 | terminal `ResolveRecovery(...)` |
+
+`FINALIZE`는 Run 상태를 임의 변경하거나 비Terminal Run을 덮어쓰지 않으며, 최종 Message를 다시 삽입하지 않는다.
 
 ### 3.1 공통 Confirmation Interrupt·Resume
 
@@ -108,74 +121,61 @@ published Review disposition = CONFIRM
 - `RequestConfirmation.applied=false`이면 interrupt를 새로 만들지 않고 현재 Domain 상태를 재조정한다.
 - `ResumeConfirmation.applied=false`이면 Agent를 재호출하지 않고 Conflict/Recovery를 처리한다.
 - Policy Confirmation은 검증된 실제 사용자 응답에서만 `PolicyConfirmationReceiptV1`과 Audit을 만들며 Agent/LLM이 Receipt를 생성하지 않는다.
-- 사용자 응답이 upstream 의미를 변경하는 경우에만 resume 후 해당 State Owner로 명시적 Back-edge한다.
+- `interrupt_id`는 `semantic_owner_id + AgentNodeResumeTargetV2`를 보존한다. `ResumeTargetRegistry`는 NodeRegistry와 semantic-owner/profile→compiled-subgraph binding으로 target을 발급·검증한다. LLM 자유 문자열은 `resume_target`이 아니다.
+- 응답 후 selected Graph Profile의 exact compiled Subgraph checkpoint에서 재개한다. 사용자 응답이 upstream 의미를 변경하는 경우에만 해당 State Owner로 명시적 Back-edge한다.
 - API raw resume payload는 Confirmation Controller가 `interrupt_id`와 option 범위를 검증한 뒤 bounded `ConfirmationResponseProjectionV1`으로 one-way projection한다. 같은 owner의 resumed invocation에만 `confirmation_response` Projection으로 전달하며, 다른 Agent·Main State·일반 Trace로 자동 승계하지 않는다. Raw payload·checkpoint metadata·resume target 자체는 Product Prompt 입력이 아니다.
 
-### 3.2 Local SLLM atomic Subgraph 호출 순서
+### 3.2 Agent Subgraph 호출·복귀
 
-Agent 간 순서는 바꾸지 않지만, Local SLLM Profile에서는 책임이 큰 Subgraph 내부 LLM 호출을 다음처럼 세분화한다.
+아래의 Node A/B는 LLM 판단과 결정적 처리가 이어지는 호출 예다. 정확한 내부 Node 목록이나 Graph 크기를 정하지 않는다.
 
-```
-Work Analysis
-  extract_work_facts LLM
-  → resolve_entity_relations LLM (필요 시)
-  → resolve_temporal_dependencies LLM (필요 시)
-  → detect_duplicate_conflict_candidates LLM (필요 시)
-  → deterministic validate_relations
-  → assess_information_gaps LLM
-  → assess_operational_risks LLM (필요 시)
-  → deterministic assemble_work_analysis
-  → deterministic validate_work_analysis
+```mermaid
+sequenceDiagram
+    participant SUP as Main Supervisor
+    participant AG as Agent Subgraph
+    participant LS as Typed Local State
+    participant N1 as Node A
+    participant N2 as Node B
+    participant LLM as LLM Adapter
+    participant APP as Deterministic Application Node
 
-Planning ACTION
-  frozen Output Route 1개
-  → draft_action_objective_per_output_route LLM
-  → compose_arguments_per_output_route LLM/tool-schema
-  → 다음 Output Route
-  → deterministic build_dependencies
-  → deterministic assemble_plan
-  → deterministic validate_plan
-
-Review ACTION
-  inspect_goal_and_evidence LLM
-  → inspect_action_scope_and_route LLM
-  → inspect_constraints_and_policy_summary LLM (필요 시)
-  → deterministic aggregate_review_findings
-  → deterministic validate_review
-```
-
-이 호출들은 같은 owner Subgraph 안에서 Local State를 통해 이어지며 Agent→Agent handoff가 아니다. 중간 Candidate는 Main State의 새 authority가 아니고 invocation 종료 시 공식 Result로만 병합한다. 강한 Runtime의 node fusion은 06/15가 요구하는 parity gate를 통과한 Profile에서만 허용한다. Product LLM 호출은 Run당 hard cap 24를 넘지 않는다.
-
-### 3.2-A Review REVISE → Planning revision → affected-dimension RECHECK
-
-`Review.REVISE`는 전체 Review를 처음부터 다시 실행하라는 의미가 아니다. 순서는 다음으로 고정한다.
-
-```
-Review
-→ ReviewReviseV2.issues
-   - affected_dimensions          # 필수 selector
-   - affected_action_ids          # optional bounded context
-   - affected_route_ids           # optional bounded context
-→ Supervisor: Planning Back-edge
-→ Planning revision Input Projection에 ReviewReviseV2.issues 전달
-→ Planning이 새 planning_result revision 생성
-→ Review 재진입 시 직전 REVISE issue의 affected_dimensions를 RECHECK Projection으로 전달
-→ recheck_affected_dimensions
-→ deterministic aggregate_review_findings
-→ deterministic validate_review
-→ PASS | REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION | CONFIRM | BLOCK
+    SUP->>AG: Subgraph Input Projection + invocation_id
+    AG->>LS: Typed Local State 초기화
+    LS->>N1: Node A가 필요한 필드만 Projection
+    opt Node A가 LLM 판단
+        N1->>LLM: PromptRef + Typed Input
+        LLM-->>N1: Candidate Output
+    end
+    N1->>LS: validated local result 저장
+    LS->>N2: Node B가 필요한 필드만 Projection
+    opt Node B가 deterministic work
+        N2->>APP: typed local input
+        APP-->>N2: deterministic result
+    end
+    N2->>LS: validated local result 저장
+    AG->>AG: final contract validation
+    AG-->>SUP: Versioned Typed Result + disposition
 ```
 
-- `affected_dimensions`가 비어 있지 않다면 `affected_action_ids=[]`, `affected_route_ids=[]`인 **dimension-only REVISE**도 유효하다. Action/Route ID를 임의 생성해 selector를 보충하지 않는다.
-- Finding 문장이나 전체 Plan을 RECHECK selector로 사용하지 않는다.
-- Planning Back-edge는 `ReviewReviseV2.issues`를 bounded revision context로 소비한다. 별도 장기 `WorkflowSignal` authority를 만들지 않는다.
-- Review 재진입은 새 `planning_result` revision과 직전 REVISE의 affected-dimension context를 함께 사용한다. 이미 PASS한 dimension의 Product LLM inspector를 무조건 재호출하지 않는다.
-- Review `REVISE`로 Run이 이미 `PLANNING`인 bounded revision에서는 `BeginPlanning`을 반복 적용하지 않는다.
+- Subgraph 내부 Node마다 필요한 State가 다르며 전체 Parent State를 일괄 전달하지 않는다.
 
+Local State는 invocation 범위에서만 유지한다. 같은 owner 안의 호출은 이 State로 이어지며 Agent→Agent handoff가 아니다. 중간 Candidate는 Main State의 새 authority가 되지 않는다. Parent에는 공식 Versioned Typed Result·disposition과 필요한 Typed Workflow Signal만 반환한다.
 
-### 3.3 External-control durable continuation common sequence
+Local SLLM의 atomic Node 목록과 분해 방식은 여기서 반복하지 않는다. 강한 Runtime의 node fusion은 `06/15`가 요구하는 parity gate를 통과한 Profile에서만 허용하며, Product LLM 호출은 hard cap 24를 넘지 않는다. Profile 승격과 resume은 기존 사용량 counter를 reset하지 않는다.
 
-모든 사용자 개입 API는 아래 sequence를 소비한다. 개별 기능 Sequence가 이 공통 경로를 생략해 `APP → SUP` 직접 호출처럼 보이면 이 절이 우선한다.
+#### 3.2.1 LLM 호출 전 PromptRef 선택
+
+모든 LLM 호출 전에 Supervisor가 선택한 Agent·Application Node가 다음 Key로 PromptRef를 확정한다.
+
+```
+agent_role + subgraph_name + node_name + node_state + purpose
+```
+
+Repair·Revision은 별도 PromptRef를 사용할 수 있으며 Prompt 선택 결과는 `prompt_id`·`prompt_version`·`content_hash`로 Trace한다.
+
+### 3.3 External-control durable continuation
+
+모든 사용자 개입 API는 아래 공통 경로를 소비한다. 개별 시퀀스의 `APP → SUP` 표기는 이 경계를 생략한 축약이지 직접 Graph 호출 권한이 아니다.
 
 ```mermaid
 sequenceDiagram
@@ -213,17 +213,25 @@ sequenceDiagram
     BG->>SUP: exact registered target; descendant checkpoint는 active_handoff lineage 승계
 ```
 
-Crash windows:
+> **원문 확인 사항 — 저장 주체:** 이 도식의 `DOM->>DB`는 §2.1의 “Domain→Persistence 직접 호출 금지” 표기와 충돌한다. 호출 주체는 이번 편집에서 임의로 바꾸지 않았다.
 
-- Domain/Handoff same-UoW COMMIT 후 **admission claim 전** crash: `PENDING` startup redrive. Domain command 재실행 0.
-- admission claim COMMIT 후 submit 전/후 crash: `DISPATCHED + persisted admission` redrive; exact same admission을 재사용한다.
-- `ALREADY_RUNNING`: **submitted admission과 다른 admission이 same-Run worker slot을 점유한 경우에만** 반환한다. 동일 `admission_id` replay가 이미 accepted/active이면 WEP는 idempotent `ACCEPTED`를 반환한다. non-ACCEPTED release 시 Repository가 admission `expected_run_version`을 current Run.version과 재검사하여 equal epoch이면 NORMAL을 PENDING으로 되돌리고, newer Cancel/Reauth/Recovery/terminal 등으로 epoch가 바뀌었으면 stale NORMAL을 SUPERSEDED로 retire한다. 따라서 release가 이미 지나간 preemption window를 되돌려 old lower-sequence head를 부활시키지 않는다. Process-memory queue is not ordering authority.
-- `SHUTTING_DOWN`: release 시 admission Run authority epoch가 current이면 NORMAL handoff는 PENDING으로 돌아가 next startup/live redrive 대상이 된다. newer control로 epoch가 stale이면 NORMAL은 SUPERSEDED되어 old head를 부활시키지 않는다.
-- newer checkpoint generation caused by lower settled handoffs: immutable target + current Domain guard를 재검증한 ordered checkpoint rebind만 허용; arbitrary latest-target guessing은 금지.
-- binding mismatch: release 시 Run authority epoch가 current일 때만 `BLOCKED_BINDING` durable commit → startup/live reconciler가 deterministic `system:handoff-binding-recovery:<handoff_id>` Recovery reconciliation → SUPERSEDED settlement. newer Reauth/Recovery/Cancel/terminal로 epoch가 이미 stale이면 old NORMAL handoff를 직접 SUPERSEDED하여 false CHECKPOINT_MISMATCH Recovery를 만들지 않는다.
-- CONSUMED 이후 crash: latest descendant checkpoint에 `active_handoff_id` lineage가 남고 current Domain/child-fact fence가 허용하면 `CONSUMED_CONTINUATION_RECOVERY`, not SAFE_CHECKPOINT_RESUME. `REAUTH_REQUIRED|RECOVERY_REQUIRED|terminal` 또는 non-cancel-compatible CANCEL_REQUESTED이면 old continuation 0.
+#### 중단·재제출 시점별 처리
+
+| 시점·결과 | 후속 처리 |
+| --- | --- |
+| Domain/Handoff same-UoW COMMIT 후, admission claim 전 crash | `PENDING` startup redrive. Domain Command 재실행은 0이다. |
+| admission claim COMMIT 후, submit 전/후 crash | `DISPATCHED + persisted admission`을 redrive하며 exact same admission을 재사용한다. |
+| `ALREADY_RUNNING` | submitted admission과 다른 admission이 same-Run worker slot을 점유한 경우에만 반환한다. 동일 `admission_id`가 이미 accepted/active이면 idempotent `ACCEPTED`다. Process-memory queue는 순서의 authority가 아니다. |
+| `ALREADY_RUNNING` 등 non-ACCEPTED release | Repository가 admission `expected_run_version`과 current `Run.version`을 재검사한다. equal epoch이면 NORMAL을 `PENDING`으로 되돌린다. newer Cancel/Reauth/Recovery/terminal로 stale이면 `SUPERSEDED`로 retire하여 old lower-sequence head를 부활시키지 않는다. |
+| `SHUTTING_DOWN` | current epoch이면 NORMAL을 `PENDING`으로 돌려 next startup/live redrive 대상으로 둔다. stale epoch이면 `SUPERSEDED`로 retire한다. |
+| lower settled handoff 이후 checkpoint generation 증가 | immutable target과 current Domain guard를 재검증한 ordered checkpoint rebind만 허용한다. 임의 latest-target 추측은 금지한다. |
+| binding mismatch + current epoch | `BLOCKED_BINDING` durable commit → startup/live reconciler의 `system:handoff-binding-recovery:<handoff_id>` Recovery reconciliation → `SUPERSEDED` settlement. |
+| binding mismatch + 이미 stale epoch | newer Reauth/Recovery/Cancel/terminal이 앞서면 old NORMAL을 직접 `SUPERSEDED`로 처리한다. false `CHECKPOINT_MISMATCH` Recovery를 만들지 않는다. |
+| CONSUMED 이후 crash | latest descendant checkpoint의 `active_handoff_id` lineage와 current Domain/child-fact fence가 유효할 때 `CONSUMED_CONTINUATION_RECOVERY`를 사용한다. `SAFE_CHECKPOINT_RESUME`가 아니다. `REAUTH_REQUIRED\|RECOVERY_REQUIRED\|terminal` 또는 non-cancel-compatible `CANCEL_REQUESTED`에서는 old continuation이 0이다. |
 
 ## 4. 앱 시작·Local Session·상태 복원
+
+### 4.1 Core 시작과 Local Session
 
 ```mermaid
 sequenceDiagram
@@ -236,7 +244,6 @@ sequenceDiagram
     participant REP as Domain Repository Ports
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant CP as CheckpointPort
-    participant K as 운영체제 키 저장소
     participant MCP as Connector Ports · MCP Runtime
     participant LLM as LLM Ports · Router
     participant FE as React 프런트엔드
@@ -275,11 +282,27 @@ sequenceDiagram
     alt compatibility = INCOMPATIBLE
         FE->>FE: mutation/SSE 비활성화 + update-required 안내
     end
+```
+
+### 4.2 Runtime 진단과 중단 Run 조회
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant API as FastAPI Route Adapter
+    participant APP as Application
+    participant REP as Domain Repository Ports
+    participant CP as CheckpointPort
+    participant K as 운영체제 키 저장소
+    participant MCP as Connector Ports · MCP Runtime
+    participant LLM as LLM Ports · Router
+    participant FE as React 프런트엔드
+
     FE->>API: GET /api/v1/runtime
     API->>APP: Runtime Status Query
-    APP->>MCP: Google 계정·Scope·재인증 상태 조회
-    MCP->>K: Refresh Token 존재·사용 가능 상태 확인
-    MCP-->>APP: Google Runtime Metadata
+    APP->>MCP: Connector별 계정·Scope/Permission·재인증 상태 조회
+    MCP->>K: Connector credential 존재·사용 가능 상태 확인
+    MCP-->>APP: Connector별 Runtime Metadata
     APP->>LLM: API Provider·Ollama 사용 가능 상태 조회
     LLM->>K: API Key 존재 여부 확인
     LLM-->>APP: LLM Runtime Metadata
@@ -288,7 +311,7 @@ sequenceDiagram
     APP->>CP: 해당 Run checkpoint availability 조회
     CP-->>APP: bounded checkpoint availability
     APP-->>API: Runtime Status Projection
-    API-->>FE: Runtime·Google·MCP·LLM·복구 가능 Run
+    API-->>FE: Runtime·Connector별 상태·MCP·LLM·복구 가능 Run
     opt 중단된 Run 존재
         FE->>API: GET /api/v1/runs/{run_id}
         API->>APP: Run Snapshot Query
@@ -301,19 +324,12 @@ sequenceDiagram
     end
 ```
 
-- `/health/ready`는 DB·Migration·정적 Asset·API Contract·Keyring Adapter·MCP Executable·Tool Schema 같은 Core Readiness를 판정한다.
-- Google Credential, API LLM Key, Ollama와 Model 사용 가능 여부는 `/api/v1/runtime` 진단 결과이며 누락 자체가 Core Service 시작 실패를 의미하지 않는다.
-- Bootstrap Secret은 한 번 교환한 뒤 폐기한다.
-- Checkpoint와 Domain 상태가 충돌하면 자동 추정하지 않고 `RECOVERY_REQUIRED`로 표시한다.
-
-### 4.1 Sequence persistence notation
-
-현재 sequence에서 `DOM`은 **pure Domain guard/transition calculation**만 의미한다. Domain은 Repository/SQLite를 호출하지 않는다.
-
-- `APP->>DOM` — Application handler가 Domain command/guard를 평가한다.
-- `APP->>DB` — Domain 결과가 유효한 뒤 Application `UnitOfWork`가 **Repository Port를 통해** Receipt·Domain mutation·required Audit를 짧은 transaction으로 commit한다. Mermaid의 `DB` participant는 concrete DB direct import가 아니라 `UnitOfWork → Repository Port → SQLite Adapter` persistence boundary의 축약이다.
-- `DOM->>DB` — **금지**. Domain→Persistence direct dependency를 뜻할 수 있으므로 current sequence에 사용하지 않는다.
-- Connector/MCP/LLM external I/O 중에는 `UnitOfWork` transaction을 열어 두지 않는다. 외부 결과는 호출 종료 뒤 별도의 짧은 UoW로 저장한다.
+| 구분 | 적용 조건 |
+| --- | --- |
+| Core Readiness | `/health/ready`는 DB·Migration·정적 Asset·API Contract·Keyring Adapter·MCP Executable·Tool Schema를 판정한다. |
+| 기능 사용 가능 여부 | Google/GitHub credential, Gemini API Key, Ollama·Model 상태는 `/api/v1/runtime` 진단 결과다. 누락 자체가 Core Service 시작 실패를 의미하지 않는다. |
+| Local Session | Bootstrap Secret은 한 번 교환한 뒤 폐기한다. |
+| 상태 충돌 | Checkpoint와 Domain 상태가 충돌하면 자동 추정하지 않고 `RECOVERY_REQUIRED`로 표시한다. |
 
 ## 5. Run 시작과 SSE 연결
 
@@ -347,177 +363,102 @@ sequenceDiagram
 ```
 
 - 동일 `command_id` 재전송은 기존 Run Result를 반환하거나 Version Conflict로 종료한다.
-- 동일 `conversation_id`의 과거 Run이 Terminal이면 이 요청은 **새 Run·새 `langgraph_thread_id`**를 생성한다. 이전 Run Checkpoint를 Graph invoke 입력으로 재사용하지 않는다.
-- 동일 Conversation에 비Terminal Run이 있으면 Open Run Guard가 두 번째 Run 생성을 차단한다. 기존 Run을 이어야 하는 경우 `/confirm`·`/resume` 등 해당 Run의 resume 계약을 사용한다.
-- Graph 실행 시작과 HTTP 응답 순서는 구현상 비동기일 수 있으나 Run Row Commit 이후 `run.schedule_run_execution → WorkflowExecutionPort`를 통해서만 시작한다. FastAPI Route가 concrete background primitive나 LangGraph executor를 직접 선택하지 않는다.
+- Graph 실행 시작과 HTTP 응답은 비동기일 수 있지만, Run Row Commit 이후 `run.schedule_run_execution → WorkflowExecutionPort`를 통해서만 시작한다. FastAPI Route는 concrete background primitive나 LangGraph executor를 직접 선택하지 않는다.
 
-## 6. AGENT_SEARCH 전체 조회·분석 시퀀스
+### 5.1 새 Run과 동일 Run 재개
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as 사용자
-    participant CONFCTL as Application Confirmation Controller
-    participant SUP as Main Supervisor
-    participant APP as Application
-    participant DOM as Domain
-    participant REQ as Request Understanding Subgraph
-    participant ROUTE as Tool Route Subgraph
-    participant RET as Retrieval Subgraph
-    participant ANA as Work Analysis Subgraph
-    participant PLAN as Planning Subgraph
-    participant REV as Review Subgraph
-    participant LLM as Prompt Registry·LLM Router
-    participant MCP as ConnectorReadPort
-    participant G as Google APIs
-    participant REP as Domain Repository Ports
-    participant DB as Application UoW · Repository Ports → SQLite Adapter
-    participant CP as CheckpointPort
+| 상황 | 처리 |
+| --- | --- |
+| Terminal Run 뒤 새 USER 요청 | 같은 `conversation_id`를 유지할 수 있지만 새 Run·새 `langgraph_thread_id`를 만든다. Browser는 새 Run/Message/Workflow identity를 제출하지 않는다. Application이 server-owned `run_id`, `user_message_id`, `workflow_key`, `langgraph_thread_id`를 먼저 preallocate하고 `WorkflowBindingV1`을 materialize한 뒤 `StartRun` guard를 평가한다. |
+| 새 Run의 저장과 입력 | StartRun UoW에서 Run·USER Message·선택 ResourceRef·initial WorkflowBinding·START handoff를 commit한 후 `RunInputV1`을 구성한다. 과거 `langgraph_thread_id`·Checkpoint·Main State는 이어받거나 Graph invoke 입력으로 재사용하지 않는다. |
+| 비Terminal 동일 Run 재개 | confirmation·reauth·recovery·명시적 `/resume`는 기존 `run_id + langgraph_thread_id + checkpoint`를 사용한다. 이어야 하는 Run의 `/confirm`·`/resume` 계약을 사용한다. |
+| 같은 Conversation에 Open Run 존재 | Open Run Guard가 두 번째 `StartRun`의 병렬 생성을 차단한다. |
+| Conversation Timeline 복원 | UI Query이며 Graph resume 자체가 아니다. 과거 Message가 화면에 보여도 새 Run Request Understanding/Prompt 입력으로 자동 전달하지 않는다. |
 
-    SUP->>APP: start_analysis(command)
-    APP->>DOM: StartAnalysis(expected_version)
-    APP->>DB: UoW commit · Run CREATED → ANALYZING + Receipt/Audit
-    DB-->>APP: COMMIT · applied=true
-    APP-->>SUP: ANALYZING ready
+## 6. AGENT_SEARCH 조회·분석 시퀀스
 
-    SUP->>REQ: Request Projection + invocation_id
-    REQ->>LLM: goal/ambiguity Node PromptRef
-    LLM-->>REQ: RequestIntent candidate
-    REQ->>REQ: Schema·Contract Validate / bounded repair
-    REQ-->>SUP: RequestIntentV2 + disposition
-    SUP->>CP: REQUEST_UNDERSTANDING Checkpoint
+현재 책임별 호출을 시작·Route·Retrieval·분석·계획으로 나눠 설명한다. Supervisor는 Agent Subgraph 단위로 Routing하며 내부 Node를 직접 호출하지 않는다.
 
-    SUP->>ROUTE: RequestIntentV2
-    ROUTE->>LLM: determine_resources PromptRef
-    LLM-->>ROUTE: IN/OUT Resource·Effect candidate
-    ROUTE->>ROUTE: deterministic `tool_routing.resolve_policy_preconditions`<br>TASK CREATE→Tasks duplicate READ<br>CALENDAR CREATE→Event/FreeBusy conflict READ
-    alt mandatory READ가 사용자 지정 범위 밖
-        ROUTE-->>SUP: NEEDS_CONFIRMATION<br>SCOPE_EXPANSION_REQUIRED
-        SUP-->>U: 추가 Source·기간·Resource와 이유 확인
-        U-->>CONFCTL: scope expansion 승인/거절
-        CONFCTL->>DB: PolicyConfirmationReceiptV1 + POLICY_CONFIRMATION_RECORDED
-        CONFCTL->>SUP: validated receipt + interrupt resume
-        SUP->>ROUTE: Tool Route owner checkpoint resume
-    end
-    ROUTE->>ROUTE: confirmed scope 안에서 deterministic Registry candidate binding
-    opt Registry candidate 여러 개
-        ROUTE->>LLM: select_tool PromptRef<br>registered eligible candidates only; heuristic shortlist 금지
-        LLM-->>ROUTE: selected candidate
-    end
-    ROUTE->>ROUTE: deterministic final route + validation
-    ROUTE-->>SUP: ToolRoutePlanV2
-    SUP->>CP: TOOL_ROUTING Checkpoint
+### 6.1 요청 이해와 Tool Route 확정
 
-    opt IN Route 존재
-        SUP->>APP: begin_retrieval(command)
-        APP->>DOM: BeginRetrieval(expected_version)
-        APP->>DB: UoW commit · Run ANALYZING 또는 PLANNING → RETRIEVING
-        DB-->>APP: COMMIT 또는 already RETRIEVING
-        SUP->>RET: User Request + Intent + ToolRoutePlanV2.input_plan.input_routes + budget
-        RET->>LLM: plan_query PromptRef
-        LLM-->>RET: RetrievalQueryPlanV2
-        RET->>RET: deterministic Query Builder
-        loop 필요한 Input Route/페이지/상세만
-            RET->>APP: retrieval.execute_read<br>validated query + allowed_read_tool_ids
-            APP->>MCP: ConnectorReadPort call
-            MCP->>G: Source-native API
-            G-->>MCP: Metadata / Detail Result
-            MCP-->>APP: Typed Read Result
-            APP-->>RET: normalized read result
-        end
-        opt Calendar availability 계산 필요
-            RET->>RET: deterministic FreeBusy interval normalize/subtract<br>AvailableIntervalV1[]
-        end
-        RET->>RET: normalize + segment + source security metadata
-        RET->>RET: Run-scoped RAG retrieve/rerank
-        RET->>LLM: select_evidence / assess_sufficiency
-        LLM-->>RET: Evidence + Sufficiency candidate
-        RET->>RET: Validate / finalize
-        RET-->>SUP: RetrievalResultV1
-        SUP->>CP: RETRIEVAL Checkpoint
-    end
+| 순서 | 호출·처리 | 반환·저장 |
+| --- | --- | --- |
+| 1 | Supervisor → Application `start_analysis` → Domain `StartAnalysis(expected_version)` | Run `CREATED → ANALYZING` + Receipt/Audit UoW COMMIT(`applied=true`) 뒤 Supervisor에 준비 결과 반환. |
+| 2 | Supervisor → Request Understanding: Request Projection + invocation_id | goal/ambiguity PromptRef의 RequestIntent candidate를 Schema·Contract 검증하고 bounded repair 후 `RequestIntentV2 + disposition` 반환. `REQUEST_UNDERSTANDING` checkpoint 저장. |
+| 3 | Supervisor → Tool Route: `RequestIntentV2` | 의미 판단으로 IN/OUT Resource·Effect candidate 준비. |
+| 4 | Tool Route의 결정적 `tool_routing.resolve_policy_preconditions` | TASK CREATE에는 Tasks duplicate READ, CALENDAR CREATE에는 Event/FreeBusy conflict READ 보강. |
+| 5 | 필수 READ가 사용자 지정 범위 밖이면 `SCOPE_EXPANSION_REQUIRED` 확인 | 추가 Source·기간·Resource·이유를 제시한다. 실제 사용자 승인/거절을 Confirmation Controller가 검증하고 `PolicyConfirmationReceiptV1 + POLICY_CONFIRMATION_RECORDED`를 저장한 뒤 Tool Route owner checkpoint에서 재개한다. 공통 Confirmation·handoff 경로를 따른다. |
+| 6 | 확인된 범위 안에서 결정적 Registry candidate binding | eligible candidate가 여러 개일 때만 `select_tool` PromptRef로 선택한다. heuristic shortlist는 금지한다. |
+| 7 | 결정적 final route + validation | `ToolRoutePlanV2`를 반환하고 `TOOL_ROUTING` checkpoint에 저장한다. |
 
-    alt effective analysis required = semantic REQUIRED or Policy Precondition
-        SUP->>ANA: User Request + Intent + optional RetrievalResult/Evidence Projection
-        ANA->>LLM: extract_work_facts PromptRef
-        LLM-->>ANA: WorkFacts candidate
-        opt entity relation analysis required
-            ANA->>LLM: resolve_entity_relations PromptRef
-            LLM-->>ANA: Entity relation candidates
-        end
-        opt temporal/dependency analysis required
-            ANA->>LLM: resolve_temporal_dependencies PromptRef
-            LLM-->>ANA: Temporal/dependency candidates
-        end
-        opt duplicate/conflict analysis required
-            ANA->>LLM: detect_duplicate_conflict_candidates PromptRef
-            LLM-->>ANA: Duplicate/conflict candidates
-        end
-        ANA->>ANA: deterministic validate_relations
-        ANA->>LLM: assess_information_gaps PromptRef
-        LLM-->>ANA: Information-gap candidate
-        opt operational risk analysis required
-            ANA->>LLM: assess_operational_risks PromptRef
-            LLM-->>ANA: Operational-risk candidate
-        end
-        ANA->>ANA: deterministic assemble_work_analysis + validate_work_analysis
-        alt exact duplicate default stop
-            ANA-->>SUP: WorkAnalysisResultV2<br>action_necessity=NOT_REQUIRED
-        else duplicate/conflict override requires confirmation
-            ANA-->>SUP: NEEDS_CONFIRMATION<br>DUPLICATE_OVERRIDE_REQUIRED or CONFLICT_OVERRIDE_REQUIRED
-            SUP-->>U: 2차 확인 interrupt
-            U-->>CONFCTL: override 승인/거절
-            CONFCTL->>DB: PolicyConfirmationReceiptV1 + POLICY_CONFIRMATION_RECORDED
-            CONFCTL->>SUP: validated receipt + interrupt resume
-            SUP->>ANA: same owner checkpoint resume
-            alt receipt decision = APPROVED
-                ANA->>ANA: confirmed override를 현재 relation/evidence Context에 결합
-                ANA-->>SUP: WorkAnalysisResultV2<br>action_necessity=REQUIRED + override receipt ref
-            else receipt decision = DECLINED
-                ANA-->>SUP: WorkAnalysisResultV2<br>action_necessity=NOT_REQUIRED
-            end
-        else no blocking relation
-            ANA->>ANA: typed local state + validate
-            ANA-->>SUP: WorkAnalysisResultV2<br>including action_necessity
-        end
-    else semantic NONE and no Policy Precondition analysis
-        SUP->>SUP: Work Analysis skip
-    end
+### 6.2 고정 IN Route에서 자료 조회
 
-    SUP->>APP: begin_planning(command)
-    APP->>DOM: BeginPlanning(expected_version)
-    APP->>DB: UoW commit · Run ANALYZING 또는 RETRIEVING → PLANNING
-    DB-->>APP: COMMIT 또는 already PLANNING
-    SUP->>PLAN: User Request + Intent + ToolRoutePlanV2.output_plan + optional Analysis + Evidence refs
-    alt output_mode = ANSWER
-        PLAN->>LLM: compose_answer PromptRef
-        LLM-->>PLAN: AnswerDraftV2
-        PLAN-->>SUP: AnswerDraftV2
-    else output_mode = ACTION and analysis.action_necessity = NOT_REQUIRED
-        PLAN->>LLM: compose evidence-backed no-action answer
-        LLM-->>PLAN: AnswerDraftV2
-        PLAN-->>SUP: AnswerDraftV2<br>새 Action 0
-    else output_mode = ACTION
-        loop Output Route별
-            PLAN->>LLM: user request + fixed OUT route의 selected_tool schema + optional analysis + evidence
-            LLM-->>PLAN: Tool Arguments candidate
-        end
-        PLAN->>PLAN: deterministic build_dependencies + assemble_plan + validate_plan
-        PLAN-->>SUP: ActionPlanDraftV2
-        SUP->>REV: Intent + Plan + Evidence/Policy Projection
-        REV->>LLM: inspect_goal_and_evidence / inspect_action_scope_and_route / inspect_constraints_and_policy_summary PromptRef(s)
-        LLM-->>REV: dimension finding(s)
-        REV->>REV: deterministic aggregate_review_findings + validate_review
-        REV->>REV: deterministic map + validate
-        REV-->>SUP: PlanReviewResultV2
-    end
+IN Route가 있을 때 Application `begin_retrieval` → Domain `BeginRetrieval(expected_version)` → Run `ANALYZING | PLANNING → RETRIEVING` UoW Commit 후 Retrieval을 호출한다. 이미 `RETRIEVING`인 local loop에서는 같은 Command를 반복 적용하지 않는다.
+
+입력은 `User Request + Intent + ToolRoutePlanV2.input_plan.input_routes + budget`의 해당 Projection이다.
+
+| 조회 계획 조건 | 처리 |
+| --- | --- |
+| exact RESOURCE_SELECTED detail이 current typed state에서 하나로 결정됨 | 결정적 `DETAIL_FETCH` materialization + validation. |
+| exact TASK CREATE duplicate pre-read가 allowlist 안의 explicit Task List 하나로 결정됨 | 결정적 TASK SEARCH materialization + validation. |
+| Query 의미 판단이 필요함 | `plan_query` PromptRef → `RetrievalQueryPlanV2` → 결정적 Query Builder. |
+
+```text
+Retrieval의 결정적 Read Node
+→ Application retrieval.execute_read(validated query + allowed_read_tool_ids)
+→ ConnectorReadPort
+→ Connector MCP 내부의 Source-native Provider API
+→ Metadata / Detail Result
+→ Typed Read Result
+→ Retrieval에 normalized read result 반환
 ```
 
-- Supervisor는 Agent Subgraph 단위로 Routing하고 Agent 내부 Node를 직접 호출하지 않는다.
-- Tool Route는 한 번 Main State에 저장되며 Retrieval·Planning이 Tool 종류를 다시 선택하지 않는다. Output Route는 요청된 capability를 고정하지만 Retrieval/Analysis에서 목표가 이미 충족된 정확 중복·동일 상태를 확인하면 Planning은 Route를 바꾸지 않고 새 Action 0개의 Evidence 기반 Answer로 종료할 수 있다. `InputRoutePlanV1`과 `OutputPlanV1`은 독립 revision/based_on을 가져 OUT-only 변경이 기존 Retrieval을 불필요하게 재실행시키지 않는다.
-- Retrieval은 고정 IN Route 안에서 Query→Read→Run-scoped RAG→Evidence→Sufficiency를 완료한다.
-- Planning은 고정 OUT Route의 `selected_tool_id`와 해당 Tool Schema만 사용해 Arguments를 작성한다.
-- Query candidate·RAG score·LLM candidate는 Subgraph Local State에, Provider raw continuation은 05/07의 Run Retrieval Cache entry에만 두고 Parent에는 공식 Typed Result와 필요한 Typed Workflow Signal만 반환한다.
+필요한 Input Route·페이지·상세만 반복한다. Calendar availability가 필요하면 FreeBusy interval을 결정적으로 normalize/subtract하여 `AvailableIntervalV1[]`을 계산한다.
+
+```text
+normalize + segment + source security metadata
+→ Run-scoped RAG retrieve/rerank
+→ Evidence 선택·Sufficiency 판단
+→ 검증·finalize
+→ RetrievalResultV1 반환
+→ RETRIEVAL checkpoint
+```
+
+### 6.3 필요한 분석과 사용자 확인
+
+`effective analysis required = semantic REQUIRED or Policy Precondition`일 때만 Work Analysis를 호출한다. 입력은 `User Request + Intent + optional RetrievalResult/Evidence Projection`이다. `semantic NONE`이고 Policy Precondition 분석도 없으면 생략한다.
+
+facts를 추출하고 필요한 entity·temporal/dependency·duplicate/conflict 관계, 정보 부족과 필요한 운영 위험을 분석한 뒤 결정적으로 조립·검증한다. 내부 atomic Node 나열은 이 시퀀스에서 반복하지 않는다.
+
+| 분석 결과 | 다음 처리 |
+| --- | --- |
+| exact duplicate default stop | 해당 Output Route에 `route_action_necessities[].status=NOT_REQUIRED`를 반환한다. |
+| duplicate/conflict override 확인 필요 | `NEEDS_CONFIRMATION`과 `DUPLICATE_OVERRIDE_REQUIRED \| CONFLICT_OVERRIDE_REQUIRED`를 반환한다. 사용자 2차 확인 → Controller의 Receipt/Audit 저장 → 같은 owner checkpoint 재개. |
+| override APPROVED | 현재 relation/evidence Context에 confirmed override를 결합하고 해당 Route를 `REQUIRED`로 두며 override receipt ref를 반환한다. |
+| override DECLINED | 해당 Route를 `NOT_REQUIRED`로 둔다. |
+| blocking relation 없음 | typed local state를 검증하고 Route별 실행 필요성을 포함한 `WorkAnalysisResultV2`를 반환한다. |
+
+### 6.4 계획과 검토
+
+Application `begin_planning` → Domain `BeginPlanning(expected_version)` → Run `ANALYZING | RETRIEVING → PLANNING` UoW Commit 후 Planning을 호출한다. 이미 `PLANNING`인 revision에서는 같은 Command를 반복 적용하지 않는다.
+
+입력은 `User Request + Intent + ToolRoutePlanV2.output_plan + optional Analysis + Evidence refs`다.
+
+| 계획 분기 | 반환까지의 순서 |
+| --- | --- |
+| `output_mode=ANSWER` | 근거 기반 답변 작성 → `AnswerDraftV2` 반환. |
+| `output_mode=ACTION` + 모든 Route가 `NOT_REQUIRED` | Evidence 기반 no-action 답변 작성 → 새 Action 0개의 `AnswerDraftV2` 반환. |
+| `output_mode=ACTION` + 하나 이상의 Route가 `REQUIRED` | 필요한 고정 Output Route의 `selected_tool` Schema와 optional Analysis·Evidence를 사용해 Tool Arguments candidate 작성 → 결정적 `build_dependencies + assemble_plan + validate_plan` → `ActionPlanDraftV2` 반환. |
+| Action Plan 검토 | Supervisor → Review: Intent + Plan + Evidence/Policy Projection → 해당 dimension 검사 → 결정적 `aggregate_review_findings + validate_review` 및 결과 mapping/validation → `PlanReviewResultV2` 반환. |
+
+### 6.5 Route와 중간 결과 보존
+
+| 대상 | 보존 경계 |
+| --- | --- |
+| 확정 Tool | Tool Route를 Main State에 저장한 뒤 Retrieval·Planning은 Tool 종류를 재선택하지 않는다. Retrieval Read는 `ToolRoutePlanV2.input_plan.input_routes[].allowed_read_tool_ids`, Planning은 `ToolRoutePlanV2.output_plan.output_routes[].selected_tool_id`와 해당 Schema만 사용한다. |
+| 목표가 이미 충족됨 | Output Route는 요청 capability를 고정한다. Retrieval/Analysis가 정확 중복·동일 상태를 확인하면 Route를 바꾸지 않고 새 Action 0개의 Evidence 기반 Answer로 종료할 수 있다. |
+| Route revision | `InputRoutePlanV1`과 `OutputPlanV1`은 독립 revision/based_on을 가진다. OUT-only 변경으로 기존 Retrieval을 불필요하게 재실행하지 않는다. |
+| 중간 자료 | Query candidate·RAG score·LLM candidate는 Subgraph Local State에 둔다. Provider raw continuation은 Run Retrieval Cache entry에만 두고 Parent에는 공식 Typed Result와 필요한 Typed Workflow Signal만 반환한다. |
 
 ## 7. RESOURCE_SELECTED 요청 시퀀스
 
@@ -536,9 +477,9 @@ sequenceDiagram
     participant RET as Retrieval Subgraph
     participant LLM as Prompt Registry·LLM Router
     participant MCP as ConnectorReadPort
-    participant G as Google APIs
+    participant G as 대상 Provider API
 
-    U->>FE: Gmail·Task·Event 선택 후 요청
+    U->>FE: Gmail·Task·Event·GitHub Issue 선택 후 요청
     FE->>API: POST /api/v1/runs<br>selected_resource_handles·command_id
     API->>APP: start_run(command)<br>selected_resource_handles signature/session/account 검증·resolve
     APP->>APP: §5의 server-owned ID preallocation + WorkflowBinding materialization 재사용
@@ -555,6 +496,7 @@ sequenceDiagram
     ROUTE-->>SUP: ToolRoutePlanV2<br>선택 Resource를 IN Route에 고정
 
     SUP->>RET: Intent + fixed input route + selected resource IDs
+    RET->>RET: deterministic DETAIL_FETCH materialization + validation<br>plan_query LLM 0
     loop Source별 선택 ID
         RET->>APP: retrieval.execute_read<br>validated ID GET
         APP->>MCP: ConnectorReadPort call
@@ -629,7 +571,7 @@ sequenceDiagram
     else Budget 소진
         SUP->>SUP: PARTIAL 또는 BLOCKED Guard
         opt PARTIAL + usable Evidence
-            SUP->>SUP: analysis_requirement에 따라 Work Analysis 또는 Planning으로 계속
+            SUP->>SUP: request analysis + Policy precondition의 effective analysis에 따라 Work Analysis 또는 Planning으로 계속
         end
     end
 
@@ -649,14 +591,24 @@ sequenceDiagram
     end
 ```
 
+> **원문 확인 사항 — Confirmation Commit:** 위 도식은 `ResumeConfirmation` 결과 Commit과 control/handoff Commit을 나눠 표시한다. §3.3의 same-UoW Commit 설명과 일치하지 않아 이번 편집에서는 어느 쪽도 임의로 고치지 않았다.
+
 - 새 Route가 필요하지 않은 Query/Page/Detail 확장은 Retrieval 책임이다. Retrieval 자신의 `NEEDS_MORE_DATA`는 local loop이며 `RetrievalRequiredV1`을 만들지 않는다.
 - Work Analysis `NEEDS_MORE_DATA`와 Review `RETRIEVE_MORE`만 현재 IN Route에서 해결 가능한 요구를 `RetrievalRequiredV1`으로 투영한다. 새 Route가 필요하면 Tool Route로 back-edge한다.
 - Tool Route revision이 바뀌면 해당 Route에 의존한 Retrieval·Analysis·Planning·Review 결과를 stale 처리하고 다시 생성한다.
-- 사용자 Context Adjustment는 `WAITING_APPROVAL`에서 아직 어떤 Action도 승인되지 않았고 in-flight 실행이 0일 때만 허용한다. `run.adjust_context`는 expected Run/Retrieval revision과 Preview membership을 검증하고 `BeginPlanning(USER_CONTEXT_ADJUSTMENT)`으로 current Plan을 `SUPERSEDED`한 뒤 same Run을 Retrieval로 재진입시킨다. `EXCLUDE_EVIDENCE`는 new selection에서 selected segment를 제외하고, `RETRIEVE_MORE`는 `RetrievalNeedV1(USER_CONTEXT_ADJUSTMENT)`로 추가 조회한다. 새 Retrieval revision에 의존하지 않는 기존 Analysis/Plan/Review는 stale이므로 재사용하지 않는다.
 - Agent가 다른 Agent를 직접 호출하지 않는다.
 
 
-### 8.1 Context Adjustment exact re-entry
+### 8.1 Context Adjustment 재진입
+
+| 단계 | 처리 |
+| --- | --- |
+| 허용 시점 | `WAITING_APPROVAL`에서 어떤 Action도 아직 승인되지 않았고 in-flight 실행이 0일 때만 허용한다. |
+| 요청 검증 | `run.adjust_context`가 expected Run/Retrieval revision과 Preview membership을 검증한다. |
+| 계획 대체 | `BeginPlanning(USER_CONTEXT_ADJUSTMENT)`으로 current Plan을 `SUPERSEDED`한 뒤 같은 Run을 Retrieval로 재진입시킨다. |
+| Evidence 제외 | `EXCLUDE_EVIDENCE`는 새 selection에서 선택 segment를 제외한다. |
+| 추가 조회 | `RETRIEVE_MORE`는 `RetrievalNeedV1(USER_CONTEXT_ADJUSTMENT)`로 추가 조회한다. |
+| 기존 결과 | 새 Retrieval revision에 의존하지 않는 기존 Analysis·Plan·Review는 stale이므로 재사용하지 않는다. |
 
 ```text
 EXCLUDE_EVIDENCE
@@ -674,6 +626,19 @@ RETRIEVE_MORE
 ```
 
 둘 다 raw HTTP body나 Browser-mutated `excluded_segment_ids`를 checkpoint에 주입하지 않는다.
+
+### 8.2 부족한 정보와 Budget 소진
+
+| 조건 | 다음 처리 |
+| --- | --- |
+| POLICY/safety-critical required issue | `BLOCKED` |
+| USER required issue | `NEEDS_CONFIRMATION` |
+| GOOGLE required issue + budget | `RETRIEVE_MORE` |
+| budget exhausted + usable Evidence | `PARTIAL`을 유지한 뒤 Work Analysis 또는 Planning |
+| budget exhausted + usable Evidence 없음 | `CompleteAnswerOnlyRun → FINALIZE` |
+| Write 필수 정보 부족 | CONFIRMATION 또는 BLOCKED |
+
+모든 Graph Profile은 동일 Supervisor Guard를 사용한다.
 
 ## 9. Answer-only Run 완료
 
@@ -706,7 +671,33 @@ Answer-only Run에는 Plan·Action·Approval·Attempt·Verification Row를 만�
 
 Connector READ는 §6·§7의 Retrieval subgraph 안에서만 실행한다. 별도 READ Plan/Action lifecycle, READ 전용 Domain transition, Approval·ExecutionAttempt·Verification Row는 만들지 않는다. 인증 만료는 동일 Retrieval owner의 checkpoint/resume 계약으로 재개하며 `ConnectorWritePort` 호출은 0이다.
 
+> **원문 확인 사항 — READ 범위:** 이 절은 별도 READ Plan/Action lifecycle을 두지 않는다고 설명하지만, 공통 원칙·취소·확인 항목에는 Legacy/호환 READ 경로가 남아 있다. 원문은 이를 기존 Domain `READ` Effect와 회귀 테스트를 위한 경계이며 새 SIX Release Planning의 정상 경로가 아니라고도 설명한다. 유지·제거 여부는 이번 편집에서 결정하지 않았다.
+
 ## 11. WRITE Plan 저장·승인·실행·검증
+
+### 11.1 Plan 저장
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as React 프런트엔드
+    participant API as FastAPI
+    participant APP as Application
+    participant DOM as Domain
+    participant DB as Application UoW · Repository Ports → SQLite Adapter
+    participant SUP as Supervisor
+
+    SUP->>APP: publish_plan(command)
+    APP->>APP: Schema Validator · Tool/Argument/Output Schema validation
+    APP->>APP: Policy Validator · allowlist/effect/policy preconditions validation
+    APP->>APP: Semantic Validator · Evidence binding·DAG·중복·충돌 validation
+    APP->>DOM: PublishPlan guard · expected_version·source status·review freshness
+    APP->>DB: UoW commit · Receipt·Plan·Action·Dependency·Evidence 저장<br>Run PLANNING → WAITING_APPROVAL · 같은 Transaction
+    DB-->>APP: COMMIT · applied=true·REQUIRE_APPROVAL
+    API-->>FE: plan_updated·approval_required
+```
+
+### 11.2 사용자 승인과 실행 재개
 
 ```mermaid
 sequenceDiagram
@@ -718,17 +709,6 @@ sequenceDiagram
     participant DOM as Domain
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant SUP as Supervisor
-    participant MCP as ConnectorWritePort · ConnectorReadPort
-    participant G as Google APIs
-
-    SUP->>APP: publish_plan(command)
-    APP->>APP: Schema Validator · Tool/Argument/Output Schema validation
-    APP->>APP: Policy Validator · allowlist/effect/policy preconditions validation
-    APP->>APP: Semantic Validator · Evidence binding·DAG·중복·충돌 validation
-    APP->>DOM: PublishPlan guard · expected_version·source status·review freshness
-    APP->>DB: UoW commit · Receipt·Plan·Action·Dependency·Evidence 저장<br>Run PLANNING → WAITING_APPROVAL · 같은 Transaction
-    DB-->>APP: COMMIT · applied=true·REQUIRE_APPROVAL
-    API-->>FE: plan_updated·approval_required
 
     U->>FE: Action 승인
     FE->>API: POST /api/v1/actions/{action_id}/approve<br>command_id·expected_version
@@ -742,10 +722,25 @@ sequenceDiagram
     APP->>DB: UoW commit · COMMIT
     DB-->>APP: COMMIT · applied=true + handoff_id
     APP->>SUP: post-commit schedule_run_execution(handoff_id) → WorkflowExecutionPort → MAIN_CONTROL:PREFLIGHT
+```
+
+### 11.3 Preflight·실행·검증
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as React 프런트엔드
+    participant API as FastAPI
+    participant APP as Application
+    participant DOM as Domain
+    participant DB as Application UoW · Repository Ports → SQLite Adapter
+    participant SUP as Supervisor
+    participant MCP as ConnectorWritePort · ConnectorReadPort
+    participant G as 대상 Provider API
 
     SUP->>APP: 실행 전 최신 Source 조회
     APP->>MCP: GET 대상·중복·충돌 자료
-    MCP->>G: Google GET
+    MCP->>G: 대상 Resource 최신 Read
     G-->>MCP: 최신 Resource
     MCP-->>APP: Current Snapshot
     APP->>APP: validate_action_arguments · final server dispatch args schema 검증
@@ -764,7 +759,7 @@ sequenceDiagram
         APP->>DB: UoW commit · Attempt CLAIMED → EXECUTING · Audit
         DB-->>APP: COMMIT · applied=true
         APP->>MCP: 승인된 Write Tool·고정 Arguments
-        MCP->>G: CREATE 또는 UPDATE
+        MCP->>G: 승인된 CREATE·UPDATE·SEND·DELETE
         G-->>MCP: Resource ID·Metadata
         MCP-->>APP: Write Result
         APP->>DOM: store_success
@@ -809,9 +804,18 @@ sequenceDiagram
     end
 ```
 
-외부 Write와 GET 수행 중 DB Transaction을 유지하지 않는다.
+외부 Write와 검증 Read 중에는 DB Transaction을 유지하지 않는다. `StoreVerification`은 Action·Verification만 저장하며, Run lifecycle은 `BeginVerification`, 별도 `RequireRecovery`, terminal Command가 처리한다.
 
-### 11.1 Google Task 날짜·시간 의미
+### 11.4 ClaimContext와 MCP dispatch 검증
+
+| 시점 | 처리 |
+| --- | --- |
+| `ClaimExecution` COMMIT 이후 | Application이 최종 MCP Payload를 구성한다. `build_claim_context`는 DB mutation 없이 `execution_arguments_hash`와 bounded-TTL `ClaimContextV2` / `claim_token`을 만든다. Action은 `EXECUTING`, Attempt는 `CLAIMED`, Approval은 `CONSUMED`다. |
+| `BeginExecutionAttempt` COMMIT | Attempt `CLAIMED → EXECUTING` + required Audit를 Commit한 뒤 MCP Write Tool을 호출한다. Claim Commit만으로 dispatch하지 않는다. |
+| MCP dispatch 직전 | 실제 인자를 재해시하고 Signature·Binding·Nonce·Claim을 검증한 뒤 Nonce를 소비한다. 검증 실패 시 Provider API를 호출하지 않고 `APPROVAL_INVALID` 또는 Claim Token 오류를 반환한다. |
+| dispatch 이후 | `StoreSuccess \| MarkFailed \| MarkUnknownResult`로 결과를 별도 짧은 UoW에 저장한 뒤 해당 Effect Verification을 수행한다. Begin 전 중단과 Begin 후 process loss는 취소·재시작 절에서 구분한다. |
+
+### 11.5 Google Task 날짜·시간 의미
 
 ```
 Gmail·사용자 요청에서 업무 마감만 확인
@@ -833,6 +837,15 @@ Gmail·사용자 요청에서 업무 마감만 확인
 ```
 
 Provider `needsAction`·`completed`는 Local API Projection에서 사용자 상태 `미완료`·`완료`로 정규화한다. 예정일 경과는 상태 전이나 자동 완료 시퀀스를 만들지 않는다.
+
+### 11.6 SEND·DELETE 검증 순서
+
+두 Effect 모두 Plan → Domain Validation → `WAITING_APPROVAL` → `ClaimExecution` COMMIT → ClaimContext → `BeginExecutionAttempt` COMMIT까지 같은 승인·실행 경계를 사용한다.
+
+| Effect | 호출 후 확인 | 결과 |
+| --- | --- | --- |
+| Gmail SEND | `gmail_send → Sent Lookup` | `VERIFIED \| MISMATCH \| UNKNOWN_RESULT` |
+| Calendar DELETE | `calendar_delete_event → target absence 확인` | `VERIFIED \| MISMATCH \| UNKNOWN_RESULT` |
 
 ## 12. 일부 승인과 Action DAG
 
@@ -873,21 +886,26 @@ sequenceDiagram
     APP-->>FE: 부분 실행 결과·종속 영향
 ```
 
-- `FAILED + NOT_SENT` Action이 생겨도 dependency가 없는 approved/executable Action이 남아 있으면 그 Action의 `PREFLIGHT`로 계속 진행한다. FAILED predecessor에 의존하는 Action은 Claim 0이다. 독립 Action까지 모두 처리한 뒤 unresolved `FAILED + NOT_SENT`가 남으면 그때 retry/cancel decision으로 suspend하며 `CompleteWriteRun`하지 않는다.
+| 남은 Action | 처리 |
+| --- | --- |
+| dependency 없는 approved/executable Action 존재 | `FAILED + NOT_SENT`가 있어도 다음 독립 Action의 `PREFLIGHT`로 계속 진행한다. |
+| FAILED predecessor에 의존 | Claim은 0이다. |
+| 독립 Action 처리 후 unresolved `FAILED + NOT_SENT`가 남음 | retry/cancel decision으로 suspend한다. `CompleteWriteRun`하지 않는다. |
 - 성공한 Action은 자동 롤백하지 않는다.
 - 종속 Action은 선행 Action의 `VERIFIED` 또는 계약된 성공 조건 이후에만 실행한다.
 
 ## 13. 승인 수정·거절·만료
 
-모든 Action mutation/Approval/Claim은 State Contract의 **Plan supersession child-authority fence**를 소비한다. owning Plan이 `SUPERSEDED`이면 old Action은 history projection일 뿐이며 approve/modify/reject/cancel/expire/refresh/retry/claim mutation은 effect 0이다. published Plan back-edge가 supersession을 commit할 때 old ACTIVE Approval revoke가 같은 UoW에 포함되므로 늦게 도착한 old HTTP command가 실행권을 되살릴 수 없다.
+### Plan supersession 이후의 명령
 
-Action Reject는 `PROPOSED·MODIFIED·APPROVED → REJECTED`만 허용한다. APPROVED Reject는 기존 ACTIVE Approval을 삭제하지 않고 `REVOKED`로 보존한다. Reject와 `ACTION_REJECTED` Audit, 미실행 transitive dependent의 `DEPENDENCY_BLOCKED`, dependent ACTIVE Approval revoke는 하나의 UoW에서 commit한다. 모든 Action이 final fact로 닫히고 unresolved가 0이면 Application이 `CompleteWriteRun`을 적용해 Plan/Run을 `COMPLETED`로 확정하고, 독립적인 미완료 Action이 있으면 계속 진행한다. 외부 Write가 한 건도 시작되지 않은 all-rejected/all-cancelled Plan은 State Contract에 따라 `WAITING_APPROVAL → COMPLETED`로 닫을 수 있다. 외부 Google/MCP Write와 새 ExecutionAttempt는 생성하지 않는다.
+모든 Action mutation·Approval·Claim은 State Contract의 **Plan supersession child-authority fence**를 소비한다.
+
+| 시점 | 처리 |
+| --- | --- |
+| published Plan back-edge의 supersession COMMIT | old ACTIVE Approval을 같은 UoW에서 revoke한다. |
+| owning Plan이 `SUPERSEDED` | old Action은 history projection이다. approve/modify/reject/cancel/expire/refresh/retry/claim mutation의 effect는 0이며, 늦은 old HTTP Command로 실행권을 되살릴 수 없다. |
 
 ### 13.1 사용자 수정
-
-Action 수정이 실제 Canonical Arguments를 변경하면 기존 Approval을 revoke한 뒤 같은 Transaction에서 Plan Review를 `REQUIRED`로 무효화한다. Commit 이후 기존 Profile의 Plan Review를 다시 실행하고, 06의 deterministic `validate_review` PASS를 Application `plan.record_review_result`가 `RecordReviewResultCommandV1`으로 current Plan/Action revision에 조건부 기록한 뒤 Domain Validation이 성공한 경우에만 새 Approval을 허용한다. Review 중 후속 Modify가 발생하면 `expected_plan_version`/bound Action version mismatch로 writer가 conflict를 반환하며 이전 Review 결과는 durable PASS가 되지 않는다.
-
-published Plan 재검토는 State Transition Contract의 post-review matrix를 그대로 사용한다. `REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION`은 `WAITING_APPROVAL | VERIFYING`에서 guard가 허용될 때 `BeginPlanning` UoW에서 old Plan의 `ACTIVE` Approval을 먼저 `REVOKED`로 닫고 current Plan을 `SUPERSEDED` 처리한 뒤 Run을 `PLANNING`으로 되돌려 필요한 Planning/Retrieval/Tool Route 경로를 재사용한다. supersession commit 이후 old Plan child는 history-only이며 approve/modify/retry/claim으로 실행권을 복구할 수 없다. 이미 성공·검증된 외부 효과와 immutable final Action facts는 보존한다. `CONFIRM`은 guarded `RequestConfirmation`, `BLOCK`은 guarded `BlockRun`만 사용할 수 있다. unresolved in-flight/UNKNOWN_RESULT/MISMATCH가 있으면 이 back-edge/block 대신 해당 Recovery/reauth/cancel resolution을 먼저 완료한다. 후속 PASS는 기존 Plan의 gate를 다시 열지 않고 새 revision을 저장하며 새 Action에 대해 Approval을 다시 받아야 한다.
 
 ```mermaid
 sequenceDiagram
@@ -915,6 +933,13 @@ sequenceDiagram
     API-->>FE: 수정 결과·새 승인 필요
 ```
 
+| 시점 | Review·Approval 처리 |
+| --- | --- |
+| Canonical Arguments가 실제로 바뀜 | 기존 Approval revoke와 Plan Review `REQUIRED` 무효화를 같은 Transaction에 반영한다. |
+| Commit 이후 | 기존 Profile의 Plan Review를 다시 실행한다. 결정적 `validate_review` PASS를 Application `plan.record_review_result`가 `RecordReviewResultCommandV1`으로 current Plan/Action revision에 조건부 기록한다. |
+| 새 승인 | current revision의 Review PASS가 기록되고 Domain Validation이 성공한 경우만 새 Approval을 허용한다. |
+| Review 중 후속 Modify 발생 | `expected_plan_version` 또는 bound Action version mismatch이면 writer가 conflict를 반환한다. 이전 Review 결과는 durable PASS가 되지 않는다. |
+
 ### 13.2 승인 만료
 
 ```
@@ -930,6 +955,58 @@ Approval 유효 시간 경과 또는 Source·Policy·Tool Schema 변경
 
 기존 Approval을 다시 `ACTIVE`로 만들지 않는다.
 
+### 13.3 Action 거절과 published Plan 재검토
+
+**거절 순서**
+
+```text
+PROPOSED·MODIFIED·APPROVED Action에 RejectAction
+→ Action REJECTED
+→ 기존 ACTIVE Approval은 삭제하지 않고 REVOKED로 보존
+→ ACTION_REJECTED Audit + 미실행 transitive dependent DEPENDENCY_BLOCKED + dependent ACTIVE Approval revoke
+→ 같은 UoW COMMIT
+```
+
+독립적인 미완료 Action이 있으면 계속 진행한다. 모든 Action이 final fact이고 unresolved가 0이면 `CompleteWriteRun`으로 Plan/Run을 `COMPLETED`로 확정한다. 외부 Write가 시작되지 않은 all-rejected/all-cancelled Plan도 State Contract에 따라 `WAITING_APPROVAL → COMPLETED`로 닫을 수 있으며, 이 종료에서 외부 Connector/MCP Write와 새 ExecutionAttempt는 생성하지 않는다.
+
+**published Plan 재검토 결과**
+
+| 결과·조건 | 후속 순서 |
+| --- | --- |
+| `REVISE \| RETRIEVE_MORE \| ROUTE_RECONSIDERATION` | `WAITING_APPROVAL \| VERIFYING`에서 guard가 허용할 때 `BeginPlanning` UoW로 old ACTIVE Approval `REVOKED` → current Plan `SUPERSEDED` → Run `PLANNING`을 처리한다. 필요한 Planning/Retrieval/Tool Route 경로를 재사용한다. |
+| `CONFIRM` | guarded `RequestConfirmation`만 사용한다. |
+| `BLOCK` | guarded `BlockRun`만 사용한다. |
+| unresolved in-flight/UNKNOWN_RESULT/MISMATCH 존재 | back-edge/block보다 해당 Recovery·reauth·cancel resolution을 먼저 완료한다. |
+| 후속 PASS | old Plan gate를 다시 열지 않는다. 새 revision을 저장하고 새 Action의 Approval을 다시 받는다. |
+
+State Transition Contract의 post-review matrix를 따른다. 이미 성공·검증된 외부 효과와 immutable final Action facts는 보존한다.
+
+### 13.4 Review REVISE → Planning revision → affected-dimension RECHECK
+
+`Review.REVISE`는 전체 Review를 처음부터 다시 실행하라는 의미가 아니다. 순서는 다음으로 고정한다.
+
+```
+Review
+→ ReviewReviseV2.issues
+   - affected_dimensions          # 필수 selector
+   - affected_action_ids          # optional bounded context
+   - affected_route_ids           # optional bounded context
+→ Supervisor: Planning Back-edge
+→ Planning revision Input Projection에 ReviewReviseV2.issues 전달
+→ Planning이 새 planning_result revision 생성
+→ Review 재진입 시 직전 REVISE issue의 affected_dimensions를 RECHECK Projection으로 전달
+→ recheck_affected_dimensions
+→ deterministic aggregate_review_findings
+→ deterministic validate_review
+→ PASS | REVISE | RETRIEVE_MORE | ROUTE_RECONSIDERATION | CONFIRM | BLOCK
+```
+
+- `affected_dimensions`가 비어 있지 않다면 `affected_action_ids=[]`, `affected_route_ids=[]`인 **dimension-only REVISE**도 유효하다. Action/Route ID를 임의 생성해 selector를 보충하지 않는다.
+- Finding 문장이나 전체 Plan을 RECHECK selector로 사용하지 않는다.
+- Planning Back-edge는 `ReviewReviseV2.issues`를 bounded revision context로 소비한다. 별도 장기 `WorkflowSignal` authority를 만들지 않는다.
+- Review 재진입은 새 `planning_result` revision과 직전 REVISE의 affected-dimension context를 함께 사용한다. 이미 PASS한 dimension의 Product LLM inspector를 무조건 재호출하지 않는다.
+- Review `REVISE`로 Run이 이미 `PLANNING`인 bounded revision에서는 `BeginPlanning`을 반복 적용하지 않는다.
+
 ## 14. Write 실패와 명시적 재시도
 
 ```mermaid
@@ -943,7 +1020,7 @@ sequenceDiagram
     actor U as 사용자
     participant SUP as Supervisor
 
-    APP->>DOM: mark_failed<br>Google 미변경이 확실한 오류
+    APP->>DOM: mark_failed<br>Provider 미변경이 확실한 오류
     APP->>DB: UoW commit · Attempt FAILED·Action FAILED
     DOM-->>APP: retry_eligible·reason
     API-->>FE: 실패 결과·재시도 준비 가능
@@ -972,12 +1049,23 @@ UNKNOWN_RESULT → EXECUTING
 
 ## 15. Write 응답 유실·UNKNOWN_RESULT 복구
 
+### 15.1 전달 여부 분류
+
+```text
+Connector MCP Write
+→ NOT_SENT | MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST
+→ NOT_SENT만 FAILED 후보
+→ 나머지는 UNKNOWN_RESULT + GET/Search Recovery
+```
+
+### 15.2 기존 결과 조회와 검증
+
 ```mermaid
 sequenceDiagram
     autonumber
     participant APP as Application
     participant MCP as ConnectorWritePort
-    participant G as Google APIs
+    participant G as 대상 Provider API
     participant DOM as Domain
     participant DB as Application UoW · Repository Ports → SQLite Adapter
     participant API as FastAPI
@@ -1045,7 +1133,37 @@ sequenceDiagram
 
 `NOT_FOUND` 한 번만으로 CREATE 미실행을 확정하지 않는다. 검색 범위·일관성 지연·권한 오류를 함께 판단한다.
 
+### 15.3 기존 결과 회수 후 Run 상태별 진입
+
+`RecoverExistingResult`로 Action을 `EXECUTED`로 복원한 뒤에는 current Run 상태를 사용한다.
+
+| Run 상태 | Verification 전 처리 |
+| --- | --- |
+| `WAITING_APPROVAL \| CANCEL_REQUESTED` | `BeginVerification` short UoW를 적용한다. |
+| `VERIFYING` | Run Command는 0이다. `BeginVerification`을 반복하지 않고 바로 verification reread로 진행한다. |
+| `RECOVERY_REQUIRED` | reason-specific `ResolveRecovery(RECHECK)`를 먼저 적용한다. |
+
+Verification Connector reread는 DB Write Transaction 밖에서 수행한다. `StoreVerification`은 Action·Verification만 저장하고, MISMATCH는 별도 `RequireRecovery(VERIFICATION_MISMATCH)` short UoW로 처리한다. Recovery 진입·해소에는 `RequireRecovery`·`ResolveRecovery` Domain Command를 사용한다.
+
+### 15.4 Verification MISMATCH 이후
+
+```text
+Verification MISMATCH
+→ Action MISMATCH 보존
+→ Run RECOVERY_REQUIRED
+→ 자동 수정·자동 rollback 금지
+```
+
+| 선택 | 후속 순서 |
+| --- | --- |
+| `ACCEPT_PARTIAL` | 미실행 Action `CANCELLED` + ACTIVE Approval `REVOKED` → current Plan `COMPLETED` → Run `COMPLETED` + result_kind `PARTIAL`. |
+| `CREATE_CORRECTIVE_PLAN` | 실제 Provider 상태 재조회 → Run `PLANNING` → 새 Plan Revision → 새 Approval·Claim·Attempt·Verification. |
+
+기존 MISMATCH Action이나 Approval을 교정 Write에 재사용하지 않는다.
+
 ## 16. OAuth 만료와 재인증 후 재개
+
+이 계약은 credential이 만료된 현재 Connector별로 적용한다. 아래는 Google OAuth의 concrete 예이며 GitHub도 자신의 credential·Device Flow를 사용하되 같은 Run binding과 no-resend 경계를 바꾸지 않는다.
 
 ```mermaid
 sequenceDiagram
@@ -1094,7 +1212,6 @@ sequenceDiagram
     API->>APP: run.resume_after_reauth(command_id, expected_version)
     APP->>DOM: ResumeAfterReauth(expected_version, registered_target_binding)
 
-`RegisteredResumeTargetRefV2(kind=MAIN_CONTROL)`의 global closed stage는 `RETRIEVAL_ENTRY | PLANNING_ENTRY | REVIEW_ENTRY | PREFLIGHT | READ_EXECUTION | VERIFICATION | RECOVERY | CANCEL_RESOLUTION`다. 그중 Reauth/Recovery가 저장하는 target은 실제 suspend 직전 safe point에 해당하는 등록 target만 허용한다. `PREFLIGHT`는 `Run=WAITING_APPROVAL`이면서 current Write Attempt in-flight fact가 0인 **BeginExecutionAttempt 전 credential failure**에만 Reauth return target으로 허용한다. `WAITING_APPROVAL + Attempt EXECUTING/uncertain`은 preflight로 rewind하지 않고 delivery/existing-result reconciliation 뒤 `VERIFICATION | RECOVERY`로 간다. `READ_EXECUTION`은 `Run=EXECUTING + Legacy READ Action=EXECUTING + ExecutionAttempt 없음`의 AUTH_EXPIRED에만 허용한다. `RETRIEVAL_ENTRY | PLANNING_ENTRY | REVIEW_ENTRY | CANCEL_RESOLUTION`은 06의 external-control matrix가 요구하는 경우에만 발급한다. `ACTION_EXECUTION`은 resume target이 아니며 승인형 Write dispatch 시작 뒤 generic execution replay는 0이다.
     APP->>DB: UoW commit · REAUTH_REQUIRED → saved pre_reauth_status + Receipt/Audit
     DB-->>APP: applied=true
     APP->>SUP: durable handoff → 검증된 same thread / RegisteredResumeTargetRefV2 resume
@@ -1105,7 +1222,30 @@ sequenceDiagram
 - Write 전달 여부가 불명확한 시점의 인증 오류는 `UNKNOWN_RESULT` 규칙을 우선한다.
 - Checkpoint가 없으면 자동 재실행하지 않고 `RECOVERY_REQUIRED`로 전환한다.
 
+### 16.1 재개 target 확인
+
+`RegisteredResumeTargetRefV2(kind=MAIN_CONTROL)`의 closed stage는 다음과 같다.
+
+```text
+RETRIEVAL_ENTRY | PLANNING_ENTRY | REVIEW_ENTRY | PREFLIGHT
+| READ_EXECUTION | VERIFICATION | RECOVERY | CANCEL_RESOLUTION
+```
+
+Reauth/Recovery에는 실제 suspend 직전 safe point에 해당하는 등록 target만 저장한다.
+
+| 상황·target | 허용 순서 |
+| --- | --- |
+| `PREFLIGHT` | `Run=WAITING_APPROVAL`이고 current Write Attempt in-flight fact가 0인 **BeginExecutionAttempt 전 credential failure**에만 Reauth return target으로 허용한다. |
+| `WAITING_APPROVAL + Attempt EXECUTING/uncertain` | preflight로 rewind하지 않는다. delivery/existing-result reconciliation 뒤 `VERIFICATION \| RECOVERY`로 간다. |
+| `READ_EXECUTION` | `Run=EXECUTING + Legacy READ Action=EXECUTING + ExecutionAttempt 없음`의 AUTH_EXPIRED에만 허용한다. |
+| `RETRIEVAL_ENTRY \| PLANNING_ENTRY \| REVIEW_ENTRY \| CANCEL_RESOLUTION` | Workflow의 external-control matrix가 요구하는 경우에만 발급한다. |
+| `ACTION_EXECUTION` | resume target이 아니다. 승인형 Write dispatch 시작 뒤 generic execution replay는 0이다. |
+
 ## 17. 취소
+
+`RequestCancel` 적용 뒤에는 신규 Claim·Write를 차단하고 이미 진행 중인 결과를 먼저 확정한다. 성공한 외부 Connector 변경은 롤백하지 않는다. 이미 성공한 Write가 있으면 취소 결과의 `result_kind`는 `PARTIAL`일 수 있다.
+
+### 17.1 취소 요청과 Handoff
 
 ```mermaid
 sequenceDiagram
@@ -1116,8 +1256,6 @@ sequenceDiagram
     participant APP as Application
     participant DOM as Domain
     participant DB as Application UoW · Repository Ports → SQLite Adapter
-    participant MCP as ConnectorReadPort · Connector runtime
-    participant G as Google APIs
 
     U->>FE: 실행 중단
     FE->>API: POST /api/v1/runs/{run_id}/cancel
@@ -1135,10 +1273,23 @@ sequenceDiagram
     else Run=CREATED + first checkpoint 없음 + START=DISPATCHED + durable execution admission
         APP->>DB: UoW stage · RequestCancel Receipt APPLIED + Run CANCEL_REQUESTED; admitted START retroactive SUPERSEDED 0
         APP->>DB: COMMIT
-        Note over APP,DB: cancel-induced Run.version advance makes old START admission authority-stale; release/settlement retires it via Architecture-18 authority-aware admission semantics
+        Note over APP,DB: cancel-induced Run.version advance makes old START admission authority-stale; release/settlement retires it via authority-aware admission semantics
         APP->>APP: current cancel authority continues; initialization/settlement yields Agent/LLM/Connector external effect 0
     end
     Note over APP,DOM: ContinueCancelResolutionHandler가 아래 existing lifecycle command들을 current durable child fact에 따라 조정
+```
+
+### 17.2 실행 전 작업과 Legacy READ 정리
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as React 프런트엔드
+    participant API as FastAPI
+    participant APP as Application
+    participant DOM as Domain
+    participant DB as Application UoW · Repository Ports → SQLite Adapter
+    participant MCP as ConnectorReadPort · Connector runtime
 
     alt LLM·Retrieval 내부 단계 · 실행 중 Action 없음
         APP->>APP: 다음 안전 지점에서 Graph 중단
@@ -1180,7 +1331,37 @@ sequenceDiagram
         APP->>DOM: FinalizeCancel(command)
         APP->>DB: terminal UoW commit · Run CANCEL_REQUESTED → CANCELLED + Plan CANCELLED + final ASSISTANT Message + required Audit
         API-->>FE: result_kind=CANCELLED
-    else Write 전달 후 결과 미확정
+    end
+```
+
+### 17.3 Claim 이후 Begin 이전 중단
+
+```text
+ClaimExecution COMMIT
+→ Action EXECUTING + Attempt CLAIMED + Approval CONSUMED
+→ [cancel / crash-restart / invalid ClaimContext / pre-Begin credential failure]
+→ BeginExecutionAttempt = not applied
+→ AbortClaimedExecution COMMIT
+→ Attempt FAILED
+→ Action CANCELLED (cancel intent) | FAILED (other pre-dispatch failure)
+→ Provider Write = 0
+→ FinalizeCancel 또는 existing retry/failwait path
+```
+
+Approval을 ACTIVE로 되돌리거나 새 Attempt를 자동 생성하지 않는다.
+
+### 17.4 Write 전달 후 결과 확정과 취소 완료
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant APP as Application
+    participant DOM as Domain
+    participant DB as Application UoW · Repository Ports → SQLite Adapter
+    participant MCP as ConnectorReadPort · Connector runtime
+    participant G as 대상 Provider API
+
+    alt Write 전달 후 결과 미확정
         opt Attempt가 아직 EXECUTING
             APP->>APP: classify_dispatch_result
             APP->>DOM: StoreSuccess | MarkFailed | MarkUnknownResult
@@ -1233,8 +1414,6 @@ sequenceDiagram
         end
     end
 ```
-
-취소는 성공한 Google 변경을 롤백하지 않는다.
 
 ## 18. SSE 단절·브라우저 새로고침
 
@@ -1324,7 +1503,28 @@ sequenceDiagram
     API-->>FE: current durable snapshot / required user action
 ```
 
-이미 `VERIFIED`인 Action과 `UNKNOWN_RESULT` 해결 전 Write는 재실행하지 않는다. Startup/live precedence는 **Domain progress pre-admission check → stale admitted-head retirement → CONSUMED active-continuation admission/reuse → BLOCKED_BINDING Recovery reconciliation → PENDING/DISPATCHED dispatch-head admission/redrive → generic SAFE checkpoint evaluation** 순서다. Persisted DISPATCHED admission의 `expected_run_version`이 current Run.version과 이미 다르면 WEP에 재제출하지 않고 `release_execution_admission(..., AUTHORITY_EPOCH_CHANGED)`로 NORMAL을 SUPERSEDED 처리한 뒤 current coordinator를 재판정한다. Admission claim 뒤 Domain authority가 바뀔 수 있으므로 owner I/O 전 settlement CAS도 동일 Run-version fence를 적용한다. mismatch=`AUTHORITY_STALE_RETIRED`이면 stale NORMAL row는 그 transaction에서 SUPERSEDED, recovery admission은 clear되고 old owner I/O=0이며 Application reconciliation이 state-specific coordinator를 선택한다. `CONSUMED_CONTINUATION_RECOVERY`는 latest checkpoint의 `active_handoff_id/run_sequence` lineage와 current Domain/child-fact/registered-target guard를 동시에 통과할 때만 허용되는 내부 lane이며 `SAFE_CHECKPOINT_RESUME`가 아니다. Initial applied checkpoint보다 generation이 진행된 descendant도 같은 lineage면 recover 가능하지만, `REAUTH_REQUIRED | RECOVERY_REQUIRED | terminal` 또는 cancel-incompatible `CANCEL_REQUESTED`에서는 state-specific coordinator가 우선한다. 따라서 generic SAFE source-state 금지를 우회하거나 완화하지 않는다.
+이미 `VERIFIED`인 Action과 `UNKNOWN_RESULT` 해결 전 Write는 재실행하지 않는다.
+
+**Startup/live reconciliation 우선순위**
+
+```text
+Domain progress pre-admission check
+→ stale admitted-head retirement
+→ CONSUMED active-continuation admission/reuse
+→ BLOCKED_BINDING Recovery reconciliation
+→ PENDING/DISPATCHED dispatch-head admission/redrive
+→ generic SAFE checkpoint evaluation
+```
+
+| 시점·조건 | 처리 |
+| --- | --- |
+| persisted DISPATCHED admission의 `expected_run_version`과 current `Run.version` 불일치 | WEP에 재제출하지 않는다. `release_execution_admission(..., AUTHORITY_EPOCH_CHANGED)`로 NORMAL을 `SUPERSEDED` 처리한 뒤 current coordinator를 재판정한다. |
+| admission claim 이후 Domain authority 변경 | owner I/O 전 settlement CAS에도 같은 Run-version fence를 적용한다. |
+| settlement mismatch = `AUTHORITY_STALE_RETIRED` | 같은 Transaction에서 stale NORMAL row는 `SUPERSEDED`, recovery admission은 clear된다. old owner I/O는 0이며 Application reconciliation이 state-specific coordinator를 선택한다. |
+| `CONSUMED_CONTINUATION_RECOVERY` | latest checkpoint의 `active_handoff_id/run_sequence` lineage와 current Domain/child-fact/registered-target guard를 모두 통과할 때만 허용하는 내부 lane이다. `SAFE_CHECKPOINT_RESUME`가 아니다. |
+| initial applied checkpoint보다 generation이 진행된 descendant | 같은 lineage이면 recover할 수 있다. 단 `REAUTH_REQUIRED \| RECOVERY_REQUIRED \| terminal` 또는 cancel-incompatible `CANCEL_REQUESTED`에서는 state-specific coordinator가 우선한다. |
+
+generic SAFE source-state 금지를 우회하거나 완화하지 않는다.
 
 ### 19.1 Retrieval cache-loss restart sequence
 
@@ -1345,6 +1545,18 @@ checkpoint/resume preparation
 
 Normal external-control handoff가 먼저 admission되어 있었다면 그 one-shot control을 checkpoint에 적용·settle한 뒤, semantic owner I/O 전에 같은 prerequisite Handler를 호출한다. 따라서 old PENDING handoff를 건너뛰거나 control payload를 잃지 않고, cache restart row는 settled predecessor 다음 `run_sequence`로 stage된다. Background/LangGraph adapter는 Handler를 drive할 뿐 WorkflowHandoffRepository를 직접 mutate하지 않는다.
 
+### 19.2 Begin Commit 이후 process loss
+
+`BeginExecutionAttempt` Commit 뒤 dispatch result persistence 전에 process가 사라지면, restart에서 Provider 호출 여부를 추측하지 않는다.
+
+| 순서 | 재시작 처리 |
+| --- | --- |
+| 1. startup-only reconciliation | `execution_attempt.reconcile_inflight_executions` batch Command가 deterministic system identity로 `MarkUnknownResult(MAY_HAVE_BEEN_SENT)`를 apply/replay한다. |
+| 2. 기존 결과 확인 | durable `UNKNOWN_RESULT_UNRESOLVED` candidate가 existing-result lookup을 수행한다. |
+| 3. 회수된 결과 검증 | recovered `EXECUTED_AWAITING_VERIFICATION` candidate가 Verification handoff를 처리한다. |
+
+각 중간 Commit 뒤 process loss가 발생해도 다음 startup이 이어간다. original Connector Write replay는 0이다.
+
 ## 20. MCP 프로세스 장애
 
 ```mermaid
@@ -1352,7 +1564,7 @@ sequenceDiagram
     autonumber
     participant APP as Application
     participant MCP as MCPClientPort · Connector Runtime
-    participant G as Google APIs
+    participant G as 대상 Provider API
     participant DOM as Domain
 
     MCP--xAPP: 프로세스 종료 감지
@@ -1375,7 +1587,38 @@ sequenceDiagram
 
 Write는 Transport 오류만으로 즉시 재전송하지 않는다.
 
-## 21. LLM Runtime 선택·Fallback
+## 21. LLM Runtime 검사·선택·호출
+
+### 21.1 LOCAL_CAPABLE 검사
+
+```text
+Application startup or Settings recheck
+→ Ollama loopback probe
+→ installed model inventory read
+→ supported model filter (qwen3.5:9b | qwen3.5:4b)
+→ one available: select it
+→ both available: preserve valid preference or request user selection
+→ no model / inspection failure: distinct unavailable projection
+→ Runtime Detail projection with selected and actual model
+```
+
+검사는 설치·pull·download side effect를 만들지 않는다. Browser가 endpoint/path/model tag를 공급하지 않으며 재검사가 진행 중 Run의 binding을 변경하지 않는다.
+
+### 21.2 Product LLM 호출 binding
+
+```text
+Agent/Application semantic operation
+→ PromptRef + requested_mode + InferenceTierV1
+→ StructuredInferencePort
+→ StructuredInferenceRuntimeRouter
+→ verified LocalModelProductDecisionV2.active_profile lookup + ModelManifestV2 binding validation
+→ resolved Ollama model OR allowed API runtime
+→ StructuredInferenceResultV2(actual_runtime, provider, model, local_model_profile_id, inference_tier)
+```
+
+LLM output은 tier/model을 선택하지 않는다. `WORKER` failure가 자동으로 `REASONING` 재호출을 만드는 규칙은 두지 않으며, 허용된 substitution/fallback은 03/10 Release policy와 13 Gate에서만 정의한다.
+
+### 21.3 선택한 Runtime 호출
 
 ```mermaid
 sequenceDiagram
@@ -1387,22 +1630,13 @@ sequenceDiagram
     participant DB as Trace·Checkpoint
 
     SUP->>LR: Agent Structured Output 요청
-    alt API_LLM 명시
+    alt Gemini 선택
         LR->>P: API 호출
         P-->>LR: Structured Output
-    else LOCAL_GPU 명시
+    else Local AI 선택
         LR->>O: Local 호출
         O-->>LR: 결과 또는 오류
-        Note over LR: 자동 API 전환 금지
-    else AUTO
-        LR->>O: Local 호출
-        alt 기술 오류·fallback 가능
-            O-->>LR: 연결·OOM·Timeout·반복 Schema 실패
-            LR->>P: API fallback 최대 1회
-            P-->>LR: Structured Output
-        else 정상
-            O-->>LR: Structured Output
-        end
+        Note over LR: Gemini 또는 다른 Local model로 자동 전환 금지
     end
     LR->>DB: actual_runtime·model·fallback reason·usage
     LR-->>SUP: 검증된 Agent Result
@@ -1426,6 +1660,8 @@ Launcher 종료 요청
 
 ## 23. Workflow Phase·Run Status·주요 Event 매핑
 
+아래는 현재 시퀀스의 상태·표시 매핑이다. Phase 자체가 Domain 상태를 변경하는 Command는 아니다.
+
 | Workflow Phase | Run Status | SSE Event |
 | --- | --- | --- |
 | `REQUEST_UNDERSTANDING` | `ANALYZING` | `phase_changed` |
@@ -1434,22 +1670,24 @@ Launcher 종료 요청
 | `WAITING_CONFIRMATION` | `WAITING_CONFIRMATION` | `confirmation_required` |
 | `WORK_ANALYSIS` | `ANALYZING` | `analysis_progress` |
 | `PLANNING` | `PLANNING` | `plan_updated` |
-| `REVIEW` | pre-publish=`PLANNING`; published re-review=`WAITING_APPROVAL | VERIFYING` — Review 자체는 Run status를 변경하지 않음 | `phase_changed`; disposition이 `BeginPlanning/RequestConfirmation/BlockRun`을 적용하면 해당 command/event가 별도 반영 |
+| `REVIEW` | pre-publish=`PLANNING`; published re-review=`WAITING_APPROVAL \| VERIFYING` — Review 자체는 Run status를 변경하지 않음 | `phase_changed`; disposition이 `BeginPlanning/RequestConfirmation/BlockRun`을 적용하면 해당 command/event가 별도 반영 |
 | `WAITING_APPROVAL` | `WAITING_APPROVAL` | `approval_required` |
 | `PREFLIGHT`, `ACTION_EXECUTION` | 승인형 Write는 `WAITING_APPROVAL` 유지 · Legacy/호환 경로만 `EXECUTING` 가능 | `action_status` |
 | `VERIFICATION` | `VERIFYING` | `verification_result` |
 | `RECOVERY` | `RECOVERY_REQUIRED` | `recovery_required` |
 | `RESPONSE_SYNTHESIS` | terminal command 적용 전 현재 비Terminal/terminal candidate 상태 | 없음 — deterministic terminal message input 생성 |
-| `TERMINAL_COMMIT` | terminal lifecycle handler 적용 후 `COMPLETED | BLOCKED | FAILED | CANCELLED` | terminal commit 이후 다음 단계에서 projection |
+| `TERMINAL_COMMIT` | terminal lifecycle handler 적용 후 `COMPLETED \| BLOCKED \| FAILED \| CANCELLED` | terminal commit 이후 다음 단계에서 projection |
 | `FINALIZE` | Terminal | `completed` 또는 `error` |
 
 ## 24. Transaction 경계 요약
+
+주요 저장 대상과 외부 호출 시점을 요약한다. 개별 시퀀스의 전체 UoW 목록을 대체하지 않는다.
 
 | 구간 | DB Transaction | 외부 호출 |
 | --- | --- | --- |
 | Run 시작 | Run·User Message 원자 저장 | 없음 |
 | Agent LLM 호출 | 없음 | API LLM 또는 Ollama |
-| Google Read | 없음 | MCP·Google API |
+| Connector Read | 없음 | MCP·Provider API |
 | Plan 저장 | Plan·Action·Evidence Batch | 없음 |
 | 승인 | Approval·Action·Audit | 없음 |
 | 실행 Claim | Action·Approval·Attempt(`CLAIMED`) + Receipt/Audit | 외부 호출 없음; Claim Commit은 dispatch authority가 아님 |
@@ -1460,24 +1698,13 @@ Launcher 종료 요청
 
 ## 25. 오류 처리 우선순위
 
-```
-APPROVAL_INVALID·POLICY_BLOCKED·VERSION_CONFLICT
-→ Write 호출 금지
-
-AUTH_EXPIRED
-→ REAUTH_REQUIRED·Checkpoint 재개
-
-RATE_LIMITED·UPSTREAM_5XX
-→ Read 제한 재시도 또는 부분 결과
-→ Write는 전달 여부 확인 후 처리
-
-TIMEOUT·MCP_UNAVAILABLE
-→ Write 전달 가능성에 따라 FAILED 또는 UNKNOWN_RESULT
-
-VERIFICATION_MISMATCH
-→ 자동 수정 금지·사용자 Recovery
-```
-
+| 오류 | 후속 처리 |
+| --- | --- |
+| `APPROVAL_INVALID·POLICY_BLOCKED·VERSION_CONFLICT` | Write 호출 금지. |
+| `AUTH_EXPIRED` | `REAUTH_REQUIRED`·Checkpoint 재개. |
+| `RATE_LIMITED·UPSTREAM_5XX` | Read는 제한 재시도 또는 부분 결과. Write는 전달 여부 확인 후 처리. |
+| `TIMEOUT·MCP_UNAVAILABLE` | Write 전달 가능성에 따라 `FAILED` 또는 `UNKNOWN_RESULT`. |
+| `VERIFICATION_MISMATCH` | 자동 수정 금지·사용자 Recovery. |
 
 ## 26. Command Receipt 시퀀스
 
@@ -1496,190 +1723,9 @@ Route가 Request 검증
 - 동일 ID·다른 Hash면 `DUPLICATE_COMMAND`다.
 - HTTP 응답 유실 후 재전송도 새 Run·Approval·Attempt를 만들지 않는다.
 
+## 27. 첨부파일 전달
 
-## 27. Claim Token 시퀀스
-
-```
-ClaimExecution Commit
-→ Application Claim handler가 bounded-TTL `ClaimContextV2` / `claim_token` 생성
-→ `BeginExecutionAttempt` Commit (`Attempt CLAIMED → EXECUTING` + required Audit)
-→ MCP Write Tool 호출
-→ MCP Signature·Binding·Nonce 검증
-→ Nonce 소비
-→ Connector Write
-```
-
-검증 실패 시 Google API를 호출하지 않고 `APPROVAL_INVALID` 또는 Claim Token 오류를 반환한다.
-
-
-## 28. Transaction · Recovery · SEND/DELETE 시퀀스
-
-```
-Claim/dispatch saga:
-1. `ClaimExecution` short UoW → COMMIT
-2. `build_claim_context` (DB mutation 0)
-3. `BeginExecutionAttempt` short UoW → COMMIT
-4. **process-loss cut:** Begin commit 뒤 dispatch result persistence 전 process가 사라지면 restart는 provider call 여부를 추측하지 않는다. startup-only `execution_attempt.reconcile_inflight_executions` batch Command가 deterministic system identity로 `MarkUnknownResult(MAY_HAVE_BEEN_SENT)`를 apply/replay한다. 이후 durable `UNKNOWN_RESULT_UNRESOLVED` candidate가 existing-result lookup을, recovered `EXECUTED_AWAITING_VERIFICATION` candidate가 Verification handoff를 소유하므로 각 중간 commit 뒤 process loss에도 다음 startup이 이어간다. original Connector Write replay = 0.
-
-5. Connector dispatch (DB Write Transaction 없음)
-6. `StoreSuccess | MarkFailed | MarkUnknownResult` short UoW → COMMIT
-
-Verification saga when Action is EXECUTED:
-7. Run이 `WAITING_APPROVAL | CANCEL_REQUESTED`이면 `BeginVerification` short UoW; 이미 `VERIFYING`이면 Run command 0
-7. verification Connector reread (DB Write Transaction 없음)
-8. `StoreVerification` short UoW → Action/Verification only
-9. MISMATCH이면 별도 `RequireRecovery(VERIFICATION_MISMATCH)` short UoW
-```
-
-Recovery는 `RequireRecovery`·`ResolveRecovery` Domain Command를 사용한다.
-
-`UNKNOWN_RESULT` lookup에서 `RecoverExistingResult`가 Action을 `EXECUTED`로 복원했을 때 Run이 이미 `VERIFYING`이면 `BeginVerification`을 반복하지 않고 바로 verification reread로 진행한다. Run이 `RECOVERY_REQUIRED`이면 먼저 reason-specific `ResolveRecovery(RECHECK)`를 적용한다.
-
-### Gmail SEND
-
-Plan(SEND) → Domain Validation → WAITING_APPROVAL → ClaimExecution COMMIT → ClaimContext → BeginExecutionAttempt COMMIT → gmail_send → Sent Lookup → VERIFIED | MISMATCH | UNKNOWN_RESULT.
-
-### Calendar DELETE
-
-Plan(DELETE) → Domain Validation → WAITING_APPROVAL → ClaimExecution COMMIT → ClaimContext → BeginExecutionAttempt COMMIT → calendar_delete_event → target absence 확인 → VERIFIED | MISMATCH | UNKNOWN_RESULT.
-
-
-## 29. Agent Subgraph 호출·복귀 시퀀스
-
-```mermaid
-sequenceDiagram
-    participant SUP as Main Supervisor
-    participant AG as Agent Subgraph
-    participant LS as Typed Local State
-    participant N1 as Node A
-    participant N2 as Node B
-    participant LLM as LLM Adapter
-    participant APP as Deterministic Application Node
-
-    SUP->>AG: Subgraph Input Projection + invocation_id
-    AG->>LS: Typed Local State 초기화
-    LS->>N1: Node A가 필요한 필드만 Projection
-    opt Node A가 LLM 판단
-        N1->>LLM: PromptRef + Typed Input
-        LLM-->>N1: Candidate Output
-    end
-    N1->>LS: validated local result 저장
-    LS->>N2: Node B가 필요한 필드만 Projection
-    opt Node B가 deterministic work
-        N2->>APP: typed local input
-        APP-->>N2: deterministic result
-    end
-    N2->>LS: validated local result 저장
-    AG->>AG: final contract validation
-    AG-->>SUP: Versioned Typed Result + disposition
-```
-
-- Subgraph 내부 Node마다 필요한 State가 다르며 전체 Parent State를 일괄 전달하지 않는다.
-- Local State는 invocation 범위에서만 유지하고 Parent에는 공식 Typed Result만 병합한다.
-- Release Graph의 일반 Google READ는 Retrieval Subgraph의 결정적 Read Node가 소유한다. 아래 READ Action 흐름은 기존 Domain `READ` Effect와 회귀 테스트를 위한 Legacy/호환 경계이며 새 SIX Release Planning이 생성하는 정상 경로가 아니다.
-
-Retrieval Subgraph의 결정적 Read Node는 `ToolRoutePlanV2.input_plan.input_routes[].allowed_read_tool_ids`만 사용할 수 있다.
-
-- Planning Subgraph는 `ToolRoutePlanV2.output_plan.output_routes[].selected_tool_id`를 읽고 Tool을 재선택하지 않는다.
-- Agent가 다른 Agent를 직접 호출하지 않는다. 다른 단계가 필요하면 Supervisor에 disposition을 반환한다.
-- 실제 Connector Write는 공통 승인·Claim·실행·검증 경로에서만 수행한다.
-
-
-### 29.1 LLM 호출 전 PromptRef 선택
-
-모든 LLM 호출 전에 Supervisor가 선택한 Agent·Application Node가 다음 Key로 PromptRef를 확정한다.
-
-```
-agent_role + subgraph_name + node_name + node_state + purpose
-```
-
-Repair·Revision은 별도 PromptRef를 사용할 수 있으며 Prompt 선택 결과는 `prompt_id`·`prompt_version`·`content_hash`로 Trace한다.
-
-
-## 30. Runtime E2E 취소·복구·전달 확실성
-
-### 30.1 Cancel
-
-```
-사용자 Cancel
-→ API가 command_id / expected_version 검증
-→ RequestCancel
-→ Run CANCEL_REQUESTED
-→ 신규 Claim·Write 차단
-→ 미실행 Action CANCELLED + ACTIVE Approval REVOKED
-→ EXECUTING/EXECUTED는 결과·Verification 확정
-→ UNKNOWN_RESULT가 있으면 RECOVERY_REQUIRED
-→ 모든 in-flight 결과 확정
-→ Plan/Run CANCELLED
-→ 이미 성공한 Write가 있으면 result_kind PARTIAL
-```
-
-취소는 성공한 Google 변경을 rollback하지 않는다.
-
-### 30.2 Insufficient Data
-
-```
-POLICY/safety-critical required issue → BLOCKED
-USER required issue                  → NEEDS_CONFIRMATION
-GOOGLE required issue + budget       → RETRIEVE_MORE
-budget exhausted + usable Evidence → PARTIAL 유지 후 Work Analysis 또는 Planning
-budget exhausted + usable Evidence 없음 → `CompleteAnswerOnlyRun` → FINALIZE
-Write 필수 정보 부족                 → CONFIRMATION 또는 BLOCKED
-```
-
-모든 Graph Profile은 동일 Supervisor Guard를 사용한다.
-
-### 30.3 Delivery Classification
-
-```
-Connector MCP Write
-→ NOT_SENT | MAY_HAVE_BEEN_SENT | SENT_RESPONSE_LOST
-→ NOT_SENT만 FAILED 후보
-→ 나머지는 UNKNOWN_RESULT + GET/Search Recovery
-```
-
-### 30.4 Verification MISMATCH
-
-```
-Verification MISMATCH
-→ Action MISMATCH 보존
-→ Run RECOVERY_REQUIRED
-→ 자동 수정·자동 rollback 금지
-→ ACCEPT_PARTIAL
-   → 미실행 Action CANCELLED + ACTIVE Approval REVOKED
-   → current Plan COMPLETED
-   → Run COMPLETED + result_kind PARTIAL
-또는
-→ CREATE_CORRECTIVE_PLAN
-   → 실제 Google 상태 재조회
-   → Run PLANNING
-   → 새 Plan Revision
-   → 새 Approval·Claim·Attempt·Verification
-```
-
-기존 MISMATCH Action이나 Approval을 교정 Write에 재사용하지 않는다.
-
-
-## 31. Claim V2·첨부파일 시퀀스
-
-### Write
-
-```
-Approval ACTIVE
-→ ClaimExecution DB Transaction
-→ Action EXECUTING + Attempt CLAIMED + Approval CONSUMED
-→ COMMIT
-→ Application 최종 MCP Payload 구성
-→ execution_arguments_hash + ClaimContextV2
-→ BeginExecutionAttempt DB Transaction
-→ Attempt CLAIMED → EXECUTING + Audit → COMMIT
-→ MCP 실제 인자 재해시·Claim 검증
-→ Connector Write
-→ StoreSuccess/MarkFailed/MarkUnknownResult
-→ 기존 Effect Verification
-```
-
-### 수신 첨부파일
+### 27.1 수신 첨부파일
 
 ```
 사용자 Download 선택
@@ -1690,7 +1736,7 @@ Approval ACTIVE
 → 사용자 파일
 ```
 
-### 발신 첨부파일
+### 27.2 발신 첨부파일
 
 ```
 사용자 파일 선택
@@ -1705,45 +1751,15 @@ Approval ACTIVE
 
 첨부파일 bytes는 어느 시퀀스에서도 LLM·Agent Context를 통과하지 않는다.
 
-### Claim 이후 Begin 이전 cancel/crash sequence
+## 28. 시퀀스 확인 항목
 
-```text
-ClaimExecution COMMIT
-→ Action EXECUTING + Attempt CLAIMED + Approval CONSUMED
-→ [cancel / crash-restart / invalid ClaimContext / pre-Begin credential failure]
-→ BeginExecutionAttempt = not applied
-→ AbortClaimedExecution COMMIT
-→ Attempt FAILED
-→ Action CANCELLED (cancel intent) | FAILED (other pre-dispatch failure)
-→ Provider Write = 0
-→ FinalizeCancel 또는 existing retry/failwait path
-```
+아래 항목은 기대 동작이며 구현·테스트 완료를 뜻하지 않는다.
 
-Approval을 ACTIVE로 되돌리거나 새 Attempt를 자동 생성하지 않는다.
-
-
-## 32. 정합성·테스트 완료 조건
-
-- Tool Route Subgraph와 Retrieval Subgraph의 책임이 분리된다.
-- Tool Route가 IN/OUT Tool을 한 번 확정하고 Retrieval·Planning이 재선택하지 않는다.
-- Retrieval LLM이 MCP를 직접 호출하는 경로가 없고 결정적 Read Node만 허용 Tool 범위에서 호출한다.
-- Retrieval은 Run-scoped RAG를 거쳐 Evidence를 반환한다.
-- 일반 Retrieval이 Action Row를 생성하지 않는다.
-- Answer-only Run이 Plan·Action 없이 완료된다.
-- **Legacy/호환 READ-only Plan**은 승인 없이 실행된다. 새 Release Planning의 primary path가 아니다.
-- Legacy READ Action에는 Approval·Attempt·Verification Row가 없다.
-- Legacy READ Output Schema 실패는 `FAILED`로 저장된다.
-- Write는 Approval + `ClaimExecution` Commit만으로 호출되지 않는다. `ClaimContextV2`가 current이고 cancel intent가 없는 상태에서 `BeginExecutionAttempt`가 `applied=true`로 Commit되어 Attempt=`EXECUTING`이 된 뒤에만 정확히 한 번 호출된다. 그 Commit 이후 새 Cancel이 APPLIED되면 해당 Attempt는 in-flight로 분류해 결과를 먼저 확정하고 추가 Claim/Write는 금지한다.
-- 승인 이후 LLM이 Arguments를 다시 생성하지 않는다.
-- `FAILED → MODIFIED → 새 승인`만 Write Retry로 허용된다.
-- `UNKNOWN_RESULT`에서 새 Attempt·Write가 차단된다.
-- 일부 승인·부분 실패 시 성공 Action을 보존한다.
-- SSE 단절과 브라우저 새로고침이 Write 재실행을 만들지 않는다.
-- OAuth 재인증은 같은 `langgraph_thread_id`의 안전한 Checkpoint에서 재개된다.
-- 외부 호출 중 SQLite Transaction을 유지하지 않는다.
-- MCP 장애에서 Write 전달 가능성을 확인하기 전 자동 재전송하지 않는다.
-- `RESOURCE_SELECTED`는 React→FastAPI→Application→Supervisor 경계를 지킨다.
-- 확인 응답 저장은 Application·Repository를 경유하며 FastAPI Route가 DB를 직접 수정하지 않는다.
-- 07에 정의된 `ConnectorReadPort` read capability만 시퀀스에서 사용한다.
-- Supervisor는 Node만 Routing하고 선택된 Agent·Application Node가 PromptRef를 확정하는지 검증한다.
-- `/health/ready`와 `/api/v1/runtime`의 책임이 분리된다.
+| 확인 범위 | 기대 동작 |
+| --- | --- |
+| 요청·조회 | Tool Route Subgraph와 Retrieval Subgraph의 책임이 분리된다.<br>Tool Route가 IN/OUT Tool을 한 번 확정하고 Retrieval·Planning이 재선택하지 않는다.<br>Retrieval LLM이 MCP를 직접 호출하는 경로가 없고 결정적 Read Node만 허용 Tool 범위에서 호출한다.<br>Retrieval은 Run-scoped RAG를 거쳐 Evidence를 반환한다.<br>일반 Retrieval이 Action Row를 생성하지 않는다.<br>`RESOURCE_SELECTED`는 React→FastAPI→Application→Supervisor 경계를 지킨다.<br>07에 정의된 `ConnectorReadPort` read capability만 시퀀스에서 사용한다. |
+| Answer-only·Legacy READ | Answer-only Run이 Plan·Action 없이 완료된다.<br>**Legacy/호환 READ-only Plan**은 승인 없이 실행된다. 새 Release Planning의 primary path가 아니다.<br>Legacy READ Action에는 Approval·Attempt·Verification Row가 없다.<br>Legacy READ Output Schema 실패는 `FAILED`로 저장된다. |
+| Write·재시도 | Write는 Approval + `ClaimExecution` Commit만으로 호출되지 않는다. `ClaimContextV2`가 current이고 cancel intent가 없는 상태에서 `BeginExecutionAttempt`가 `applied=true`로 Commit되어 Attempt=`EXECUTING`이 된 뒤에만 정확히 한 번 호출된다. 그 Commit 이후 새 Cancel이 APPLIED되면 해당 Attempt는 in-flight로 분류해 결과를 먼저 확정하고 추가 Claim/Write는 금지한다.<br>승인 이후 LLM이 Arguments를 다시 생성하지 않는다.<br>`FAILED → MODIFIED → 새 승인`만 Write Retry로 허용된다.<br>`UNKNOWN_RESULT`에서 새 Attempt·Write가 차단된다.<br>일부 승인·부분 실패 시 성공 Action을 보존한다. |
+| 재연결·복구 | SSE 단절과 브라우저 새로고침이 Write 재실행을 만들지 않는다.<br>OAuth 재인증은 같은 `langgraph_thread_id`의 안전한 Checkpoint에서 재개된다.<br>MCP 장애에서 Write 전달 가능성을 확인하기 전 자동 재전송하지 않는다. |
+| Transaction·화면 경계 | 외부 호출 중 SQLite Transaction을 유지하지 않는다.<br>확인 응답 저장은 Application·Repository를 경유하며 FastAPI Route가 DB를 직접 수정하지 않는다.<br>`/health/ready`와 `/api/v1/runtime`의 책임이 분리된다. |
+| Prompt 호출 | Supervisor는 Node만 Routing하고 선택된 Agent·Application Node가 PromptRef를 확정하는지 검증한다. |

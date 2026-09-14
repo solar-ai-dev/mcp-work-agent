@@ -4,6 +4,7 @@ from typing import NotRequired, TypedDict, cast
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagScoringConfig
 
@@ -11,6 +12,7 @@ from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import R
 class RagRetrieveRerankInput(TypedDict):
     segments: list[SourceSegment]
     request_intent: RequestIntentV2
+    source_plans: list[SourceFetchPlanV1]
     top_k: int
     config: NotRequired[RagScoringConfig]
 

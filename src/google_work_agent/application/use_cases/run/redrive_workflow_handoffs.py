@@ -30,8 +30,10 @@ from google_work_agent.application.use_cases.run.schedule_run_execution import (
     handoff_matches_preempting_run_authority,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
+from google_work_agent.domain.plan.model import PlanReviewStatus
 from google_work_agent.domain.recovery.model import RecoveryReasonV1
 from google_work_agent.domain.run.model import (
+    Run,
     RunStatusV1,
     is_preempting_run_status,
     is_terminal_run_status,
@@ -41,8 +43,6 @@ from google_work_agent.ports.system.contracts.workflow_handoff import WorkflowHa
 
 _RUN_NOT_EXECUTABLE = "RUN_NOT_EXECUTABLE"
 _CHECKPOINT_MISMATCH_RECOVERED = "CHECKPOINT_MISMATCH_RECOVERED"
-
-
 @dataclass(frozen=True, slots=True)
 class RedriveWorkflowHandoffsCommand:
     limit: int = 32
@@ -97,6 +97,8 @@ class RedriveWorkflowHandoffsHandler:
                 continue
             with self._unit_of_work_factory() as unit_of_work:
                 current_run = unit_of_work.runs.get(run_id)
+            if handoff.status == "CONSUMED" and self._awaits_user_decision(run_id, current_run):
+                continue
             if current_run is None or (
                 is_preempting_run_status(current_run.status)
                 and handoff.status != "BLOCKED_BINDING"
@@ -152,6 +154,16 @@ class RedriveWorkflowHandoffsHandler:
             actionable_count=actionable_count,
             has_more=has_more,
         )
+
+    def _awaits_user_decision(self, run_id: str, current_run: Run | None) -> bool:
+        status = None if current_run is None else current_run.status
+        if status is RunStatusV1.WAITING_CONFIRMATION:
+            return True
+        if status is not RunStatusV1.WAITING_APPROVAL:
+            return False
+        with self._unit_of_work_factory() as unit_of_work:
+            current_plan = unit_of_work.plans.get_current(run_id)
+        return current_plan is None or current_plan.review_status is PlanReviewStatus.PASSED
 
     def _reconcile_open_run_cache_prerequisites(self, limit: int) -> int:
         if self._reconcile_retrieval_cache_restart is None:

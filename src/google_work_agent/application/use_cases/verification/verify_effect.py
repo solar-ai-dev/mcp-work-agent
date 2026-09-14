@@ -1,11 +1,14 @@
 """Read and compare one external effect without lifecycle mutation."""
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from json import loads
-import re
 from typing import Literal, cast
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    is_fully_qualified_repository,
+)
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.write_persistence import (
     require_execution_binding,
@@ -15,6 +18,7 @@ from google_work_agent.application.use_cases.resource_ref.resolve_resource_ref i
     ResolveResourceRefQuery,
 )
 from google_work_agent.application.use_cases.verification.write_verification_projection import (
+    build_expected_verification_projection,
     calculate_verification_subset_diff,
     normalize_actual_verification_projection,
 )
@@ -113,7 +117,27 @@ class VerifyEffectHandler:
         )
         expected = _persisted_expected_effect(
             action.tool_name,
-            cast(dict[str, object], loads(action.arguments_json)),
+            cast(
+                dict[str, object],
+                loads(
+                    approval.arguments_snapshot_json
+                    if action.tool_name
+                    in {
+                        "tasks_create_task",
+                        "tasks_update_task",
+                        "calendar_create_event",
+                        "calendar_update_event",
+                        "gmail_create_draft",
+                        "gmail_update_draft",
+                        "gmail_send",
+                        "github_create_issue",
+                        "github_update_issue",
+                        "github_close_issue",
+                        "github_reopen_issue",
+                    }
+                    else action.arguments_json
+                ),
+            ),
             cast(dict[str, object], loads(action.expected_json)),
         )
         if action.effect_type == "SEND" and approval is not None:
@@ -175,7 +199,7 @@ class VerifyEffectHandler:
                 )
             raise
         if strategy == "SENT_LOOKUP":
-            candidates = result.output.get("items", [])
+            candidates = [result.output["item"]] if "item" in result.output else []
             if not isinstance(candidates, list) or len(candidates) != 1:
                 return VerificationResultV1(
                     "MISMATCH",
@@ -191,7 +215,9 @@ class VerifyEffectHandler:
             actual = _business_actual(
                 cast(dict[str, object], candidate), normalizer_tool_name="gmail_send"
             )
-            expected = _business_expected(query.expected_effect)
+            expected = _business_expected(query.expected_effect, normalizer_tool_name="gmail_send")
+            if query.target_resource_ref is not None:
+                expected["resource_id"] = query.target_resource_ref.resource_id
             diffs = calculate_verification_subset_diff(expected, actual)
             return VerificationResultV1(
                 "VERIFIED" if not diffs else "MISMATCH",
@@ -222,6 +248,18 @@ class VerifyEffectHandler:
             query.expected_effect,
             normalizer_tool_name=normalizer_tool_name,
         )
+        if (
+            normalizer_tool_name
+            in {
+                "tasks_update_task",
+                "calendar_update_event",
+                "github_update_issue",
+            }
+            and query.target_resource_ref is not None
+        ):
+            expected = {**expected, "resource_id": query.target_resource_ref.resource_id}
+            if normalizer_tool_name == "github_update_issue":
+                expected["parent_id"] = query.target_resource_ref.parent_resource_id
         diffs = calculate_verification_subset_diff(expected, actual)
         return VerificationResultV1(
             "VERIFIED" if not diffs else "MISMATCH",
@@ -247,7 +285,27 @@ class VerifyEffectHandler:
             _require_verification_source_state(action.status, attempt.status)
             expected = _persisted_expected_effect(
                 action.tool_name,
-                cast(dict[str, object], loads(action.arguments_json)),
+                cast(
+                    dict[str, object],
+                    loads(
+                        binding.approval.arguments_snapshot_json
+                        if action.tool_name
+                        in {
+                            "tasks_create_task",
+                            "tasks_update_task",
+                            "calendar_create_event",
+                            "calendar_update_event",
+                            "gmail_create_draft",
+                            "gmail_update_draft",
+                            "gmail_send",
+                            "github_create_issue",
+                            "github_update_issue",
+                            "github_close_issue",
+                            "github_reopen_issue",
+                        }
+                        else action.arguments_json
+                    ),
+                ),
                 cast(dict[str, object], loads(action.expected_json)),
             )
             if action.effect_type == "SEND":
@@ -284,10 +342,9 @@ class VerifyEffectHandler:
     ) -> tuple[str, dict[str, JsonValue]]:
         target = query.target_resource_ref
         if strategy == "SENT_LOOKUP":
-            fingerprint = query.expected_effect.get("recovery_fingerprint")
-            if not isinstance(fingerprint, str) or not fingerprint:
-                raise ValueError("SENT_LOOKUP requires recovery_fingerprint")
-            return "gmail_search_threads", {"query": fingerprint}
+            if target is None or target.resource_type.upper() != "GMAIL_MESSAGE":
+                raise ValueError("SENT_LOOKUP requires the exact sent Message resource")
+            return "gmail_get_message", {"message_id": target.resource_id}
         if target is None:
             raise ValueError("verification requires a target resource")
         resource_type = target.resource_type.upper()
@@ -308,12 +365,21 @@ class VerifyEffectHandler:
         if resource_type == "GMAIL_DRAFT":
             return "gmail_get_draft", {"draft_id": target.resource_id}
         if resource_type == "GITHUB_ISSUE":
-            if target.parent_resource_id is None:
+            if (
+                target.connector_id != "github"
+                or target.parent_resource_id is None
+                or not is_fully_qualified_repository(target.parent_resource_id)
+            ):
                 raise ValueError("GitHub verification requires repository identity")
             try:
                 issue_number = int(target.resource_id.rsplit("#", 1)[1])
             except (IndexError, ValueError) as error:
                 raise ValueError("GitHub issue identity is invalid") from error
+            if (
+                issue_number < 1
+                or target.resource_id != f"{target.parent_resource_id}#{issue_number}"
+            ):
+                raise ValueError("GitHub verification identity binding mismatch")
             return "github_get_issue", {
                 "repository": target.parent_resource_id,
                 "issue_number": issue_number,
@@ -343,6 +409,14 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
         if not isinstance(payload, dict)
         else {**{key: value for key, value in actual.items() if key != "payload"}, **payload}
     )
+    if normalizer_tool_name == "tasks_update_task" and "resource_id" in actual:
+        # A complete Task snapshot may omit absent optional Provider fields.
+        # Do not add these defaults to a partial UPDATE expectation.
+        business = {"notes": "", "due": None, **business}
+    if normalizer_tool_name == "calendar_update_event" and "resource_id" in actual:
+        business = {"description": "", "location": "", "attendees": [], **business}
+    if normalizer_tool_name in {"gmail_update_draft", "gmail_send"} and "resource_id" in actual:
+        business = {"in_reply_to": None, "references": None, **business}
     if normalizer_tool_name == "github_update_issue":
         description = business.get("description")
         if isinstance(description, str):
@@ -357,6 +431,8 @@ def _business_actual(actual: dict[str, object], *, normalizer_tool_name: str) ->
                 "title": business.get("title"),
                 "body": description,
                 "state": business.get("state"),
+                "resource_id": business.get("resource_id"),
+                "parent_id": business.get("parent_id"),
             }.items()
             if value is not None
         }
@@ -390,16 +466,20 @@ def _persisted_expected_effect(
     arguments: dict[str, object],
     fallback: dict[str, object],
 ) -> dict[str, object]:
-    if tool_name in {"github_create_issue", "github_update_issue"}:
-        return {
-            key: arguments[key]
-            for key in ("title", "body")
-            if key in arguments
-        }
-    if tool_name == "github_close_issue":
-        return {"state": "CLOSED"}
-    if tool_name == "github_reopen_issue":
-        return {"state": "OPEN"}
+    if tool_name in {
+        "tasks_create_task",
+        "tasks_update_task",
+        "calendar_create_event",
+        "calendar_update_event",
+        "gmail_create_draft",
+        "gmail_update_draft",
+        "gmail_send",
+        "github_create_issue",
+        "github_update_issue",
+        "github_close_issue",
+        "github_reopen_issue",
+    }:
+        return build_expected_verification_projection(tool_name=tool_name, arguments=arguments)
     return fallback
 
 

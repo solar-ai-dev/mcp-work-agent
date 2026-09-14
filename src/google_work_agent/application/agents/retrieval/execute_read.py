@@ -2,21 +2,52 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
-from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
-    coarse_resource_category,
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+    validated_repository_authority,
 )
-from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort, JsonValue
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
+from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
+from google_work_agent.application.agents.retrieval.guard_retrieval_read_repeat import (
+    guard_retrieval_read_repeat,
+)
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    normalize_resource_type,
+)
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+    GetRepositoryAccessQuery,
+)
+from google_work_agent.application.use_cases.run.consume_retrieval_read_budget import (
+    RetrievalReadBudgetExceeded,
+    consume_retrieval_read_budget,
+)
+from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
+from google_work_agent.ports.connector.connector_read_port import (
+    ConnectorReadPort,
+    ConnectorReadResultV1,
+    JsonValue,
+)
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 from google_work_agent.ports.system.run_retrieval_cache_port import (
     RunRetrievalCacheEntryV1,
     RunRetrievalCachePort,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RetrievalReadBindingError(ValueError):
@@ -26,11 +57,13 @@ class RetrievalReadBindingError(ValueError):
 @dataclass(frozen=True, slots=True)
 class RetrievalReadExecutionV1:
     schema_version: Literal[1]
-    status: Literal["COMPLETE", "EXHAUSTED"]
+    status: Literal["COMPLETE", "EXHAUSTED", "FAILED", "BUDGET_STOPPED"]
     read_result_handle: str
     tool_id: str
-    total_count: int | None
+    candidate_count: int | None
     provider_called: bool
+    failure_code: str | None = None
+    stop_reason: str | None = None
 
 
 def execute_read(
@@ -42,10 +75,21 @@ def execute_read(
     connector_reader: ConnectorReadPort,
     read_result_cache: RunRetrievalCachePort,
     read_result_handle: str,
+    run_budget: RunBudgetV2,
+    now_ms: int,
+    prior_query_attempts: Sequence[QueryAttemptV1],
+    repository_access: GetRepositoryAccessHandler | None = None,
+    request_intent: RequestIntentV2 | None = None,
+    selected_resources: Sequence[SelectedResourceRef] = (),
+    durable_budget_accountant: Callable[
+        [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
+    ]
+    | None = None,
 ) -> RetrievalReadExecutionV1:
     """Execute one registry-validated READ and keep its opaque continuation cache-local."""
     _validate_binding(plan, binding)
     arguments = dict(tool_arguments)
+    continuation = None
     if "page_token" in arguments or "next_page_token" in arguments:
         raise RetrievalReadBindingError("raw continuation must come only from Run Retrieval Cache")
 
@@ -68,7 +112,7 @@ def execute_read(
                 status="EXHAUSTED",
                 read_result_handle=entry.read_result_handle,
                 tool_id=entry.read_result.tool_id,
-                total_count=entry.read_result.total_count,
+                candidate_count=_candidate_count(entry.read_result),
                 provider_called=False,
             )
         if resolution.status != "FOUND" or resolution.entry is None:
@@ -80,7 +124,91 @@ def execute_read(
             raise RetrievalReadBindingError("FOUND continuation entry has no page token")
         arguments["page_token"] = continuation
 
-    result = connector_reader.execute_read(binding, arguments)
+    guard_retrieval_read_repeat(
+        plan=plan,
+        run_id=run_id,
+        tool_id=binding.tool_id,
+        canonical_arguments=tool_arguments,
+        continuation=continuation,
+        prior_query_attempts=prior_query_attempts,
+    )
+    if binding.connector_id == "github" and request_intent is not None:
+        repository = validated_repository_authority(
+            request_intent, selected_resources=selected_resources
+        )
+        if repository != arguments.get("repository"):
+            raise RetrievalReadBindingError("GitHub read differs from repository authority")
+        # Determine default usage independently of its value: an explicit request
+        # for the same repository is still explicit provenance.
+        without_default: RequestIntentV2 = {**request_intent}
+        without_default.pop("repository_default", None)
+        uses_default = (
+            validated_repository_authority(without_default, selected_resources=selected_resources)
+            is None
+        )
+        if uses_default:
+            if repository_access is None or repository is None:
+                raise RetrievalReadBindingError(
+                    "GitHub repository access validation is unavailable"
+                )
+            expected = GitHubRepositoryDefaultV1.from_payload(request_intent["repository_default"])
+            try:
+                repository_access(
+                    GetRepositoryAccessQuery(repository, expected),
+                    before_page=lambda: consume_retrieval_read_budget(
+                        run_budget,
+                        run_id=run_id,
+                        is_detail=False,
+                        now_ms=now_ms,
+                        durable_accountant=durable_budget_accountant,
+                    ),
+                )
+            except ConnectorOperationFailure as error:
+                return _failed_read(
+                    error,
+                    run_id=run_id,
+                    binding=binding,
+                    read_result_handle=read_result_handle,
+                    provider_called=False,
+                )
+            except RetrievalReadBudgetExceeded as error:
+                return RetrievalReadExecutionV1(
+                    schema_version=1,
+                    status="BUDGET_STOPPED",
+                    read_result_handle=read_result_handle,
+                    tool_id=binding.tool_id,
+                    candidate_count=None,
+                    provider_called=False,
+                    stop_reason=error.reason_code,
+                )
+    try:
+        consume_retrieval_read_budget(
+            run_budget,
+            run_id=run_id,
+            is_detail=plan["operation_kind"] == "DETAIL_FETCH",
+            now_ms=now_ms,
+            durable_accountant=durable_budget_accountant,
+        )
+    except RetrievalReadBudgetExceeded as error:
+        return RetrievalReadExecutionV1(
+            schema_version=1,
+            status="BUDGET_STOPPED",
+            read_result_handle=read_result_handle,
+            tool_id=binding.tool_id,
+            candidate_count=None,
+            provider_called=False,
+            stop_reason=error.reason_code,
+        )
+    try:
+        result = connector_reader.execute_read(binding, arguments)
+    except ConnectorOperationFailure as error:
+        return _failed_read(
+            error,
+            run_id=run_id,
+            binding=binding,
+            read_result_handle=read_result_handle,
+            provider_called=error.detail_code != "RESOURCE_NOT_SELECTED",
+        )
     read_result_cache.put_read_result(
         RunRetrievalCacheEntryV1(
             schema_version=1,
@@ -97,9 +225,50 @@ def execute_read(
         status="COMPLETE",
         read_result_handle=read_result_handle,
         tool_id=result.tool_id,
-        total_count=result.total_count,
+        candidate_count=_candidate_count(result),
         provider_called=True,
     )
+
+
+def _failed_read(
+    error: ConnectorOperationFailure,
+    *,
+    run_id: str,
+    binding: ValidatedConnectorToolBindingV1,
+    read_result_handle: str,
+    provider_called: bool,
+) -> RetrievalReadExecutionV1:
+    # Authentication and transient failures retain their existing runtime contract.
+    if error.code not in {ConnectorFailureCode.NOT_FOUND, ConnectorFailureCode.PERMISSION_DENIED}:
+        raise error
+    LOGGER.warning(
+        "Connector READ target is unavailable",
+        extra={
+            "run_id": run_id,
+            "connector_id": binding.connector_id,
+            "tool_id": binding.tool_id,
+            "failure_code": error.code.value,
+        },
+    )
+    return RetrievalReadExecutionV1(
+        schema_version=1,
+        status="FAILED",
+        read_result_handle=read_result_handle,
+        tool_id=binding.tool_id,
+        candidate_count=None,
+        provider_called=provider_called,
+        failure_code=error.code.value,
+    )
+
+
+def _candidate_count(result: ConnectorReadResultV1) -> int | None:
+    """Count this bounded read's resources, never the provider's total estimate."""
+    items = result.output.get("items")
+    if isinstance(items, list) and all(isinstance(item, dict) for item in items):
+        return len(items)
+    if isinstance(result.output.get("item"), dict):
+        return 1
+    return None
 
 
 def _validate_binding(
@@ -110,7 +279,7 @@ def _validate_binding(
         raise RetrievalReadBindingError("retrieval can execute READ bindings only")
     if binding.connector_id != plan["connector_id"]:
         raise RetrievalReadBindingError("connector binding differs from frozen route")
-    if coarse_resource_category(binding.resource_type) != coarse_resource_category(
+    if normalize_resource_type(binding.resource_type) != normalize_resource_type(
         plan["resource_type"]
     ):
         raise RetrievalReadBindingError("resource binding differs from frozen route")

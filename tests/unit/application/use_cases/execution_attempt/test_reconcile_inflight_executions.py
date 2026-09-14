@@ -8,7 +8,7 @@ from google_work_agent.application.use_cases.execution_attempt import (
     reconcile_inflight_executions,
 )
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.persistence.execution_attempt_repository import (
     ExecutionReconciliationCandidateV1,
 )
@@ -89,6 +89,27 @@ def test_post_begin__orphan_marks_unknown__without_resending_write() -> None:
     assert command.delivery_certainty is DeliveryCertainty.MAY_HAVE_BEEN_SENT
     assert command.expected_action_version == 3
     assert command.expected_attempt_version == 4
+
+
+def test_startup_drain__continues_short_batches__until_durable_progress_stops() -> None:
+    result = reconcile_inflight_executions.ReconcileInflightExecutionsResult
+    handler = Mock(side_effect=[result(1, 1, 1, False)] * 3 + [result(1, 1, 0, False)])
+    assert reconcile_inflight_executions.drain_inflight_executions_to_quiescence(handler) == 4
+    assert handler.call_count == 4
+
+
+def test_startup_drain__bounds_nonquiescent_handler__without_silent_success() -> None:
+    handler = Mock(
+        return_value=reconcile_inflight_executions.ReconcileInflightExecutionsResult(
+            1,
+            1,
+            1,
+            False,
+        )
+    )
+    with pytest.raises(RuntimeError, match="did not reach quiescence"):
+        reconcile_inflight_executions.drain_inflight_executions_to_quiescence(handler, max_passes=3)
+    assert handler.call_count == 3
 
 
 def test_pre_begin__orphan_aborts_claim__without_resending_write() -> None:

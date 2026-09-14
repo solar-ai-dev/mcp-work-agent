@@ -18,6 +18,9 @@ from google_work_agent.application.use_cases.connection.revoke_connection import
 from google_work_agent.application.use_cases.connection.start_authorization import (
     StartAuthorizationHandler,
 )
+from google_work_agent.application.use_cases.resource.list_repositories import (
+    ListRepositoriesHandler,
+)
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 
 
@@ -37,6 +40,8 @@ class GoogleRouteDependencies:
     revoke_handlers: dict[str, RevokeConnectionHandler]
     requested_scopes_by_connector: dict[str, tuple[str, ...]]
     current_account_ids: dict[str, Callable[[], str | None]]
+    list_repositories_handler: ListRepositoriesHandler | None = None
+    service_instance_id: str = ""
 
     def resolve(self, connector_name: str) -> ConnectorConnectionDependencies:
         connector_id = self.connector_ids.get(connector_name)
@@ -64,7 +69,9 @@ class ConnectorConnectionDependencies:
 
 def get_google_route_dependencies(request: Request) -> GoogleRouteDependencies:
     container = get_api_container(request)
-    connector_ids = container.connection_connector_ids or {"google": container.resource_connector_id}
+    connector_ids = container.connection_connector_ids or {
+        "google": container.resource_connector_id
+    }
     return GoogleRouteDependencies(
         api_contract_version=container.api_contract_version,
         start_authorization_handler=container.start_authorization_handler,
@@ -75,11 +82,18 @@ def get_google_route_dependencies(request: Request) -> GoogleRouteDependencies:
         requested_scopes=container.oauth_requested_scopes,
         current_account_id=container.current_account_id_provider,
         connector_ids=connector_ids,
-        start_handlers=container.start_authorization_handlers_by_connector or {container.resource_connector_id: container.start_authorization_handler},
-        status_handlers=container.get_connection_status_handlers_by_connector or {container.resource_connector_id: container.get_connection_status_handler},
-        revoke_handlers=container.revoke_connection_handlers_by_connector or {container.resource_connector_id: container.revoke_connection_handler},
-        requested_scopes_by_connector=container.oauth_requested_scopes_by_connector or {container.resource_connector_id: container.oauth_requested_scopes},
-        current_account_ids=container.current_account_id_providers_by_connector or {container.resource_connector_id: container.current_account_id_provider},
+        start_handlers=container.start_authorization_handlers_by_connector
+        or {container.resource_connector_id: container.start_authorization_handler},
+        status_handlers=container.get_connection_status_handlers_by_connector
+        or {container.resource_connector_id: container.get_connection_status_handler},
+        revoke_handlers=container.revoke_connection_handlers_by_connector
+        or {container.resource_connector_id: container.revoke_connection_handler},
+        requested_scopes_by_connector=container.oauth_requested_scopes_by_connector
+        or {container.resource_connector_id: container.oauth_requested_scopes},
+        current_account_ids=container.current_account_id_providers_by_connector
+        or {container.resource_connector_id: container.current_account_id_provider},
+        list_repositories_handler=container.list_repositories_handler,
+        service_instance_id=container.service_instance_id,
     )
 
 

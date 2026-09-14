@@ -19,7 +19,7 @@ from google_work_agent.adapters.llm.runtime.llm_credential_router import (
     SessionMemorySecretStore,
 )
 from google_work_agent.adapters.persistence.connection import connect_sqlite
-from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.migration import apply_migrations, discover_migrations
 from google_work_agent.adapters.runtime.safe_mode import SafeModeController
 from google_work_agent.adapters.system.filesystem_backup import FilesystemBackupAdapter
 from google_work_agent.adapters.system.process_maintenance_gate import (
@@ -162,7 +162,7 @@ def test_start_run_reaches__the_durable_execution__runtime_after_core_initializa
                 "request_text": "hello",
                 "entry_mode": "AGENT_SEARCH",
                 "selected_resource_handles": [],
-                "requested_mode": "AUTO",
+                "requested_mode": "LOCAL_GPU",
             },
         )
 
@@ -228,7 +228,9 @@ def test_deferred_initialization_runs__core_reconciliation_startup__and_shutdown
     ]
 
 
-def test_safe_mode__restore_migrates_then__rebinds_ready_core(tmp_path: Path) -> None:
+def test_safe_mode__restore_migrates_then__rebinds_ready_core(
+    tmp_path: Path,
+) -> None:
     runtime_root = tmp_path / "runtime"
     database_path = runtime_root / "data" / "google_work_agent.db"
     database_path.parent.mkdir(parents=True)
@@ -248,9 +250,9 @@ def test_safe_mode__restore_migrates_then__rebinds_ready_core(tmp_path: Path) ->
         maintenance_gate=ProcessMaintenanceGateAdapter(has_active_write=lambda: False),
         release_version="test",
         domain_contract_version="1",
-        schema_version="0019",
+        schema_version=f"{discover_migrations()[-1].version:04d}",
     )
-    backup = backup_adapter.create_backup("seed-safe-mode-restore")
+    backup_adapter.create_backup("seed-safe-mode-restore")
     connection = connect_sqlite(database_path)
     try:
         connection.execute(
@@ -295,28 +297,25 @@ def test_safe_mode__restore_migrates_then__rebinds_ready_core(tmp_path: Path) ->
     with TestClient(create_app(cast(ApiContainer, container))) as client:
         headers = _headers()
         _bootstrap(client, headers)
-        assert client.get("/health/ready", headers=headers).json()["status"] == "SAFE_MODE"
-
-        response = client.post(
-            "/api/v1/restore",
-            headers={**headers, "x-api-contract-version": "1"},
-            json={
-                "schema_version": 1,
-                "command_id": "restore-command-1",
-                "backup_ref": backup.backup_ref,
-            },
-        )
-
-        assert response.status_code == 200, response.json()
-        assert response.json()["status"] == "RESTORED"
         assert client.get("/health/ready", headers=headers).json()["status"] == "READY"
+        assert attempts == 2
+        restored = connect_sqlite(database_path)
+        try:
+            assert restored.execute(
+                "SELECT checksum FROM schema_migrations WHERE version=1"
+            ).fetchone()[0] != "0" * 64
+            assert restored.execute(
+                "SELECT COUNT(*) FROM google_accounts WHERE id='account-restored'"
+            ).fetchone()[0] == 1
+        finally:
+            restored.close()
         blocked = client.post(
             "/api/v1/restore",
             headers={**headers, "x-api-contract-version": "1"},
             json={
                 "schema_version": 1,
-                "command_id": "restore-command-2",
-                "backup_ref": backup.backup_ref,
+                "command_id": "restore-command-1",
+                "backup_ref": "not-used-while-ready",
             },
         )
         assert blocked.status_code == 409

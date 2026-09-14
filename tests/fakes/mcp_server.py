@@ -51,7 +51,16 @@ def main() -> None:
             payload = _control_payload(str(request.get("method", "")))
         elif message_type == "tool_call":
             arguments = cast(dict[str, object], request.get("arguments") or {})
+            payload_size = arguments.get("__test_payload_size")
+            if isinstance(payload_size, int) and not isinstance(payload_size, bool):
+                payload = {"content": "x" * payload_size}
+                sys.stdout.write(json.dumps({"id": request_id, "payload": payload}) + "\n")
+                sys.stdout.flush()
+                continue
             if arguments.get("__test_exit_after_dispatch") is True:
+                if arguments.get("__test_stderr_exception") is True:
+                    sys.stderr.write("RuntimeError: secret-access-token private-message-body\n")
+                    sys.stderr.flush()
                 os._exit(0)
             certainty = arguments.get("__test_delivery_certainty")
             if isinstance(certainty, str):

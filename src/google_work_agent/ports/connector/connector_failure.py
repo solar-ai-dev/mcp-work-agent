@@ -30,8 +30,10 @@ class ConnectorFailureCode(StrEnum):
     ATTACHMENT_INVALID = "ATTACHMENT_INVALID"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ConnectorOperationFailure(RuntimeError):
+    """Typed failure whose traceback remains writable by exception machinery."""
+
     code: ConnectorFailureCode
     detail_code: str
     retryable: bool = False

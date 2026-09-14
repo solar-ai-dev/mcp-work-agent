@@ -5,7 +5,7 @@ from __future__ import annotations
 from google_work_agent.adapters.connectors.github.github.mcp_server.github_api import (
     GitHubApiClient,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 from .issue_contract import (
     GITHUB_API_BASE,
@@ -24,9 +24,7 @@ def build_issue_create_request(create: GitHubIssueCreateInput) -> GitHubIssueMut
     body: dict[str, object] = {"title": create.title}
     issue_body = create.body
     if create.recovery_fingerprint is not None:
-        marker = RECOVERY_MARKER_TEMPLATE.format(
-            fingerprint=create.recovery_fingerprint
-        )
+        marker = RECOVERY_MARKER_TEMPLATE.format(fingerprint=create.recovery_fingerprint)
         issue_body = marker if issue_body is None else f"{issue_body}\n\n{marker}"
     if issue_body is not None:
         body["body"] = issue_body

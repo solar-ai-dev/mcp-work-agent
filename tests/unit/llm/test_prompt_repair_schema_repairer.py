@@ -20,6 +20,9 @@ from google_work_agent.adapters.llm.runtime.prompt_repair_schema_repairer import
     PromptRepairSchemaRepairer,
 )
 from google_work_agent.application.prompt_runtime.assemble_prompt import assemble_prompt
+from google_work_agent.application.prompt_runtime.contracts.failure_record import (
+    build_failure_record_v1,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PromptRegistry,
     default_prompt_manifest_path,
@@ -57,8 +60,10 @@ def _provider(transport: FakeAPIProviderTransport) -> GeminiStructuredInferenceA
     )
 
 
+@pytest.mark.parametrize("is_semantic_revision", [False, True])
 def test_repair_dispatches_the__same_base_prompt__with_full_input_shape(
     tmp_path: Path,
+    is_semantic_revision: bool,
 ) -> None:
     manifest_path = _active_manifest(tmp_path)
     transport = FakeAPIProviderTransport()
@@ -79,12 +84,26 @@ def test_repair_dispatches_the__same_base_prompt__with_full_input_shape(
         "request_intent": {"goal": "summary"},
         "answer_outline": {"sections": ["summary"]},
         "evidence": [],
+        "temporal_constraints": [{
+            "kind": "TEMPORAL_RANGE", "axis": "EVENT_TIME",
+            "start_local": "2026-09-01", "end_local": "2026-09-08",
+            "timezone": "Asia/Seoul",
+        }],
     }
 
     result = repairer.repair(
         provider=_provider(transport),
         prompt_ref=active_prompt_ref,
-        prompt_input=base_projection,
+        prompt_input={
+            "base_projection": base_projection,
+            "candidate_output": {"answer": "Ungrounded answer"},
+            "failure_record": build_failure_record_v1(
+                failure_reason_code="EVIDENCE_SELECTION_SEMANTIC_INVALID",
+                failure_origin="RETRIEVAL_RESULT", detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE", experiment_disposition="RUN_REVISION",
+                affected_field_paths=["$.answer"],
+            ),
+        } if is_semantic_revision else base_projection,
         failed_output={"answer": 123},
         output_schema=OUTPUT_SCHEMA,
         runtime_policy=RuntimePolicy(),
@@ -95,7 +114,7 @@ def test_repair_dispatches_the__same_base_prompt__with_full_input_shape(
         validator_errors=("$.answer must be string",),
     )
 
-    assert result == {"answer": "fixed"}
+    assert result.content == {"answer": "fixed"}
     assert len(transport.invocations) == 1
     call = transport.invocations[0]
     assert call["prompt_id"] == "planning.compose_answer"
@@ -120,6 +139,47 @@ def test_repair_dispatches_the__same_base_prompt__with_full_input_shape(
     )
     assert "Bounded failure instruction" in assembled
     assert '"failure_reason_code":"OUTPUT_SCHEMA_INVALID"' in assembled
+
+
+def test_repair_rejects__malformed_json__as_typed_schema_failure(tmp_path: Path) -> None:
+    manifest_path = _active_manifest(tmp_path)
+    transport = FakeAPIProviderTransport()
+    transport.queued_payloads.append(
+        ProviderResponsePayload(
+            content='{"answer":"truncated',
+            model="m",
+            provider_request_id=None,
+            input_tokens=None,
+            output_tokens=None,
+            latency_ms=0,
+        )
+    )
+    repairer = PromptRepairSchemaRepairer(manifest_path=manifest_path)
+    active_prompt_ref = load_prompt_reference("planning.compose_answer", manifest_path)
+
+    with pytest.raises(LLMInvocationError) as excinfo:
+        repairer.repair(
+            provider=_provider(transport),
+            prompt_ref=active_prompt_ref,
+            prompt_input={
+                "user_request": "summarize",
+                "request_intent": {"goal": "summary"},
+                "answer_outline": {"sections": ["summary"]},
+                "evidence": [],
+                "temporal_constraints": [],
+            },
+            failed_output={"answer": 123},
+            output_schema=OUTPUT_SCHEMA,
+            runtime_policy=RuntimePolicy(),
+            api_key="key-1",
+            attempt_no=1,
+            max_attempts=1,
+            failure_reason_code=LLMErrorCode.OUTPUT_SCHEMA_INVALID.value,
+            validator_errors=("$.answer must be string",),
+        )
+
+    assert excinfo.value.code is LLMErrorCode.OUTPUT_SCHEMA_INVALID
+    assert str(excinfo.value) == "schema repair returned invalid JSON"
 
 
 def test_repair_resolves__the_exact__base_prompt_id(tmp_path: Path) -> None:

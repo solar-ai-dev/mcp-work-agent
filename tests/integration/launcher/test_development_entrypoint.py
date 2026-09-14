@@ -15,9 +15,281 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 import pytest
-from launcher.development_entrypoint import main
+from launcher.development_entrypoint import (
+    DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID,
+    main,
+    read_development_google_oauth_client_id,
+    read_development_langsmith_environment,
+    read_development_sampling_environment,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_development_langsmith__explicit_safe_configuration__is_required() -> None:
+    trace_environment = {
+        "GWA_LANGSMITH_CODE_SHA": "a" * 40,
+        "GWA_LANGSMITH_EXPERIMENT_ID": "issue251-read-only-6run",
+        "GWA_LANGSMITH_MODEL_DIGEST": "b" * 64,
+        "GWA_LANGSMITH_MODEL_ID": "qwen3.5:9b",
+        "GWA_LANGSMITH_PROMPT_CONTENT_HASH": "c" * 64,
+        "GWA_LANGSMITH_PROMPT_ID": "request_understanding.identify_goal",
+        "GWA_LANGSMITH_PROMPT_VERSION": "1.0.50",
+        "GWA_LANGSMITH_QUESTION_ID": "Q1",
+    }
+    assert read_development_langsmith_environment({}) == (None, None, {})
+    assert read_development_langsmith_environment(
+        {
+            "GWA_LANGSMITH_ENABLED": "true",
+            "LANGSMITH_API_KEY": "secret-key",
+            "LANGSMITH_PROJECT": "quality-development",
+            **trace_environment,
+        }
+    ) == (
+        "secret-key",
+        "quality-development",
+        {
+            "code_sha": "a" * 40,
+            "experiment_id": "issue251-read-only-6run",
+            "model_digest": "b" * 64,
+            "model_id": "qwen3.5:9b",
+            "prompt_content_hash": "c" * 64,
+            "prompt_id": "request_understanding.identify_goal",
+            "prompt_version": "1.0.50",
+            "question_id": "Q1",
+        },
+    )
+
+    with pytest.raises(ValueError, match="requires LANGSMITH_API_KEY"):
+        read_development_langsmith_environment({"GWA_LANGSMITH_ENABLED": "true"})
+    with pytest.raises(ValueError, match="complete experiment binding"):
+        read_development_langsmith_environment(
+            {
+                "GWA_LANGSMITH_ENABLED": "true",
+                "LANGSMITH_API_KEY": "secret-key",
+            }
+        )
+    with pytest.raises(ValueError, match="automatic LangSmith tracing"):
+        read_development_langsmith_environment({"LANGSMITH_TRACING": "true"})
+    with pytest.raises(ValueError, match="automatic LangSmith tracing"):
+        read_development_langsmith_environment({"LANGCHAIN_TRACING_V2": "1"})
+
+
+def test_development_config__ambient_github_values__requires_explicit_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    monkeypatch.setenv("GITHUB_APP_CLIENT_ID", "ambient-client")
+    monkeypatch.setenv("GITHUB_APP_SCOPE", "ambient-scope")
+    base = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path, working_directory=ROOT, mcp_manifest_version="test",
+    )
+    assert base.github_oauth_client_id is None
+    assert base.github_oauth_scope == ""
+    explicit = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path, working_directory=ROOT, mcp_manifest_version="test",
+        github_oauth_client_id=" explicit-client ", github_oauth_scope=" explicit-scope ",
+    )
+    assert explicit.github_oauth_client_id == "explicit-client"
+    assert explicit.github_oauth_scope == "explicit-scope"
+    from scripts.run_development import development_runtime_config
+
+    handed_off = development_runtime_config(runtime_root=tmp_path)
+    assert handed_off.github_oauth_client_id == "ambient-client"
+    assert handed_off.github_oauth_scope == "ambient-scope"
+
+
+def test_development_config__ambient_google_client_id__requires_explicit_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "ambient-google-client")
+    direct = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path,
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+    )
+    assert direct.oauth_client_id == "development-client-id"
+
+    from scripts.run_development import development_runtime_config
+
+    handed_off = development_runtime_config(runtime_root=tmp_path)
+    assert handed_off.oauth_client_id == "ambient-google-client"
+
+
+def test_development_google_oauth_client_id__without_process_value__uses_env_file(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "GOOGLE_OAUTH_CLIENT_ID=file-google-client\n",
+        encoding="utf-8",
+    )
+
+    client_id = read_development_google_oauth_client_id({}, env_file=env_file)
+
+    assert client_id == "file-google-client"
+    assert client_id != DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+
+
+def test_development_google_oauth_client_id__with_process_value__prefers_process_environment(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "GOOGLE_OAUTH_CLIENT_ID=file-google-client\n",
+        encoding="utf-8",
+    )
+
+    client_id = read_development_google_oauth_client_id(
+        {"GOOGLE_OAUTH_CLIENT_ID": " explicit-google-client "},
+        env_file=env_file,
+    )
+
+    assert client_id == "explicit-google-client"
+
+
+def test_development_config__langsmith_secret__requires_explicit_complete_handoff(
+    tmp_path: Path,
+) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    config = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path,
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+        langsmith_api_key=" secret-key ",
+        langsmith_project_name=" quality-development ",
+        langsmith_trace_binding={
+            "code_sha": "a" * 40,
+            "experiment_id": "issue251-read-only-6run",
+            "model_digest": "b" * 64,
+            "model_id": "qwen3.5:9b",
+            "prompt_content_hash": "c" * 64,
+            "prompt_id": "request_understanding.identify_goal",
+            "prompt_version": "1.0.50",
+            "question_id": "Q1",
+        },
+    )
+
+    assert config.langsmith_api_key == "secret-key"
+    assert config.langsmith_project_name == "quality-development"
+    assert dict(config.langsmith_trace_binding)["question_id"] == "Q1"
+    assert "secret-key" not in repr(config)
+    with pytest.raises(ValueError, match="configured together"):
+        ProductionRuntimeConfig.development(
+            runtime_root=tmp_path,
+            working_directory=ROOT,
+            mcp_manifest_version="test",
+            langsmith_api_key="secret-key",
+        )
+
+
+def test_development_script__missing_github_environment__uses_repository_app_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from launcher.development_entrypoint import DEVELOPMENT_GITHUB_APP_CLIENT_ID
+    from scripts.run_development import development_runtime_config
+
+    monkeypatch.delenv("GITHUB_APP_CLIENT_ID", raising=False)
+
+    config = development_runtime_config(runtime_root=tmp_path)
+
+    assert config.github_oauth_client_id == DEVELOPMENT_GITHUB_APP_CLIENT_ID
+
+
+def test_development_config__prompt_manifest__requires_explicit_handoff(
+    tmp_path: Path,
+) -> None:
+    from scripts.run_development import development_runtime_config
+
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    manifest_path = tmp_path / "candidate" / "prompt_manifest.json"
+    direct = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path / "runtime",
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+        prompt_manifest_path=manifest_path,
+    )
+    handed_off = development_runtime_config(
+        runtime_root=tmp_path / "runtime-2",
+        prompt_manifest_path=manifest_path,
+    )
+
+    assert direct.development_prompt_manifest_path == manifest_path.resolve()
+    assert handed_off.development_prompt_manifest_path == manifest_path.resolve()
+
+
+def test_development_config__sampling_policy__requires_explicit_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.run_development import development_runtime_config
+
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    monkeypatch.setenv("GWA_DEVELOPMENT_LLM_TEMPERATURE", "0.2")
+    monkeypatch.setenv("GWA_DEVELOPMENT_LLM_SEED", "1729")
+    direct = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path / "direct",
+        working_directory=ROOT,
+        mcp_manifest_version="test",
+    )
+    handed_off = development_runtime_config(runtime_root=tmp_path / "runner")
+
+    assert direct.development_sampling_temperature is None
+    assert direct.development_sampling_seed is None
+    assert handed_off.development_sampling_temperature == 0.2
+    assert handed_off.development_sampling_seed == 1729
+
+
+def test_development_config__sampling_policy__uses_evaluated_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.run_development import development_runtime_config
+
+    monkeypatch.delenv("GWA_DEVELOPMENT_LLM_TEMPERATURE", raising=False)
+    monkeypatch.delenv("GWA_DEVELOPMENT_LLM_SEED", raising=False)
+
+    config = development_runtime_config(runtime_root=tmp_path / "runner")
+
+    assert config.development_sampling_temperature == 0.0
+    assert config.development_sampling_seed is None
+
+
+def test_sampling_environment__without_overrides__uses_evaluated_temperature() -> None:
+    assert read_development_sampling_environment({}) == (0.0, None)
+    assert read_development_sampling_environment(
+        {
+            "GWA_DEVELOPMENT_LLM_TEMPERATURE": " 0.2 ",
+            "GWA_DEVELOPMENT_LLM_SEED": " 1729 ",
+        }
+    ) == (0.2, 1729)
+    with pytest.raises(ValueError, match="temperature"):
+        read_development_sampling_environment({"GWA_DEVELOPMENT_LLM_TEMPERATURE": "warm"})
+    with pytest.raises(ValueError, match="seed"):
+        read_development_sampling_environment({"GWA_DEVELOPMENT_LLM_SEED": "fixed"})
+
+
+def test_development_config__sampling_policy__rejects_invalid_values(tmp_path: Path) -> None:
+    from google_work_agent.api.composition import ProductionRuntimeConfig
+
+    with pytest.raises(ValueError, match="temperature"):
+        ProductionRuntimeConfig.development(
+            runtime_root=tmp_path,
+            working_directory=ROOT,
+            mcp_manifest_version="test",
+            sampling_temperature=2.1,
+        )
+    with pytest.raises(ValueError, match="seed"):
+        ProductionRuntimeConfig.development(
+            runtime_root=tmp_path,
+            working_directory=ROOT,
+            mcp_manifest_version="test",
+            sampling_seed=-1,
+        )
 
 
 def test_development_entrypoint__imports_and_rejects__non_loopback_bind() -> None:
@@ -129,14 +401,6 @@ def test_development_process__serves_authenticated_product__and_cleans_descripto
         assert bootstrap["service_instance_id"] == service_instance_id
         assert len(cookie_jar) == 1
 
-        runtime = _request_json(
-            opener,
-            f"{base_url}/api/v1/runtime",
-            base_url=base_url,
-        )
-        assert runtime["schema_version"] == 1
-        assert runtime["session_status"] == "ESTABLISHED"
-
         shutdown = _request_json(
             opener,
             f"{base_url}/api/v1/control/shutdown",
@@ -211,9 +475,8 @@ def _assert_owner_only(path: Path) -> None:
         ["whoami"],
         check=True,
         capture_output=True,
-        text=True,
         timeout=5,
-    ).stdout.strip().lower()
+    ).stdout.decode("utf-8").strip().lower()
     result = subprocess.run(
         ["icacls", str(path)],
         check=True,

@@ -14,6 +14,7 @@ from google_work_agent.adapters.connectors.google.calendar.freebusy.query_freebu
 from google_work_agent.adapters.connectors.google.gmail.messages.get_message import (
     GetMessageOperation,
 )
+from google_work_agent.adapters.connectors.google.gmail.threads import search_threads
 from google_work_agent.adapters.connectors.google.gmail.threads.get_thread import (
     GetThreadOperation,
 )
@@ -28,9 +29,76 @@ from google_work_agent.adapters.connectors.google.workspace.mcp_server.credentia
 )
 
 
+def _use_individual_gmail_hydration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        search_threads,
+        "GMAIL_METADATA_HYDRATION_CONFIG",
+        search_threads.GmailMetadataHydrationConfig(
+            transport="INDIVIDUAL",
+            batch_size=None,
+            http_concurrency_limit=server.GMAIL_METADATA_HYDRATION_MAX_WORKERS,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "resource_type,key,path",
+    [
+        ("task", "task_list_id", "/lists/allowed/tasks"),
+        ("calendar_event", "calendar_id", "/calendars/allowed/events"),
+    ],
+)
+def test_recovery_read__scopes_provider_request__to_approved_container(
+    monkeypatch: pytest.MonkeyPatch,
+    resource_type: str,
+    key: str,
+    path: str,
+) -> None:
+    from google_work_agent.adapters.connectors.google.workspace.mcp_server.dispatch_tool import (
+        dispatch_internal_tool,
+    )
+
+    calls: list[str] = []
+
+    def google_api(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str | list[str]] | None = None,
+    ) -> dict[str, object]:
+        del params
+        calls.append(url)
+        return {"items": []}
+
+    monkeypatch.setattr(server, "_google_api", google_api)
+    result = dispatch_internal_tool(
+        _state(),
+        "search_by_recovery_fingerprint",
+        {
+            "resource_type": resource_type,
+            "recovery_fingerprint": "fingerprint",
+            key: "allowed",
+        },
+    )
+    assert result == {"items": []}
+    assert len(calls) == 1 and calls[0].endswith(path)
+
+
+@pytest.mark.parametrize(
+    "snippet,expected",
+    [
+        ("Preview", "Preview"),
+        ("김철수 <b>대리</b> &amp; <b>박람회</b> 참석", "김철수 대리 & 박람회 참석"),
+        ("동문 안내 데스크<br>오후 1시 50분", "동문 안내 데스크\n오후 1시 50분"),
+        ("<script>hidden()</script>확정 일정", "확정 일정"),
+        (None, "Detail preview"),
+    ],
+)
 def test_gmail_list__enriches_current__page_thread_metadata(
     monkeypatch: pytest.MonkeyPatch,
+    snippet: str | None,
+    expected: str,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
     calls: list[tuple[str, dict[str, str | list[str]] | None]] = []
 
     def google_api(
@@ -58,7 +126,7 @@ def test_gmail_list__enriches_current__page_thread_metadata(
                 ],
             }
         return {
-            "threads": [{"id": "thread-1", "historyId": "7", "snippet": "Preview"}],
+            "threads": [{"id": "thread-1", "historyId": "7", "snippet": snippet}],
             "nextPageToken": "next-1",
         }
 
@@ -85,7 +153,7 @@ def test_gmail_list__enriches_current__page_thread_metadata(
                 "sender_email": "kim.daeri@example.com",
                 "subject": "Q2 campaign follow-up",
                 "received_at": "Sat, 24 May 2025 09:15:00 +0900",
-                "snippet": "Preview",
+                "snippet": expected,
             },
         }
     ]
@@ -105,9 +173,121 @@ def test_gmail_list__enriches_current__page_thread_metadata(
     ]
 
 
-def test_gmail_metadata_hydration__uses_three_workers__and_preserves_provider_order(
+def test_gmail_search_mcp__with_variable_page__uses_b20_chunks_and_preserves_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    thread_ids = [f"thread-{index}" for index in range(37)]
+    list_params: list[dict[str, str | list[str]] | None] = []
+    batch_sizes: list[int] = []
+
+    def google_api(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str | list[str]] | None = None,
+    ) -> dict[str, object]:
+        assert url.endswith("/threads")
+        list_params.append(params)
+        return {"threads": [{"id": thread_id} for thread_id in thread_ids]}
+
+    def batch_get(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        targets: tuple[str, ...],
+    ) -> tuple[server._GoogleBatchGetResult, ...]:
+        offset = sum(batch_sizes)
+        batch_sizes.append(len(targets))
+        return tuple(
+            server._GoogleBatchGetResult(
+                ordinal=ordinal,
+                status_code=200,
+                response_body_bytes=100,
+                payload={
+                    "messages": [
+                        {
+                            "internalDate": "1780000000000",
+                            "payload": {
+                                "headers": [
+                                    {"name": "Subject", "value": f"Subject {offset + ordinal}"}
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
+            for ordinal in range(len(targets))
+        )
+
+    monkeypatch.setattr(server, "_google_api", google_api)
+    monkeypatch.setattr(server, "_google_batch_get", batch_get)
+
+    payload = verified_server._tool_call(
+        _state(),
+        tool_name="gmail_search_threads",
+        arguments={"query": "label:inbox fixed", "page_size": 100, "page_token": None},
+    )
+
+    assert list_params == [{"maxResults": "100", "q": "label:inbox fixed"}]
+    assert batch_sizes == [20, 17]
+    assert [
+        item["resource_id"] for item in cast(list[dict[str, object]], payload["items"])
+    ] == thread_ids
+
+
+def test_gmail_draft_search__with_listing_result__hydrates_provider_identity_and_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, str | list[str]] | None]] = []
+
+    def google_api(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str | list[str]] | None = None,
+    ) -> dict[str, object]:
+        calls.append((url, params))
+        if url.endswith("/drafts/draft-1"):
+            return {
+                "id": "draft-1",
+                "message": {
+                    "id": "message-1",
+                    "threadId": "thread-1",
+                    "historyId": "8",
+                    "payload": {
+                        "headers": [
+                            {"name": "To", "value": "recipient@example.com"},
+                            {"name": "Subject", "value": "Quartz 납품 회신 검토"},
+                        ]
+                    },
+                },
+            }
+        return {"drafts": [{"id": "draft-1"}], "nextPageToken": "next-1"}
+
+    monkeypatch.setattr(server, "_google_api", google_api)
+
+    payload = verified_server._tool_call(
+        _state(),
+        tool_name="gmail_search_drafts",
+        arguments={"query": 'subject:"Quartz 납품 회신 검토"', "page_size": 20},
+    )
+
+    item = cast(dict[str, object], cast(list[object], payload["items"])[0])
+    assert item["resource_type"] == "gmail_draft"
+    assert item["resource_id"] == "draft-1"
+    source = cast(dict[str, object], item["payload"])
+    assert source["to"] == ["recipient@example.com"]
+    assert source["body"] is None
+    assert source["in_reply_to"] is None
+    assert source["references"] is None
+    assert source["attachments"] == []
+    assert payload["next_page_token"] == "next-1"
+    assert calls[0] == (
+        "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        {"maxResults": "20", "q": 'subject:"Quartz 납품 회신 검토"'},
+    )
+
+
+def test_individual_gmail_hydration__uses_three_workers__and_preserves_provider_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
     thread_ids = [f"thread-{index}" for index in range(20)]
 
     def google_api(
@@ -148,6 +328,8 @@ def test_gmail_metadata_hydration__uses_three_workers__and_preserves_provider_or
 def test_gmail_metadata__hydration_failure_fails__the_whole_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
+
     def google_api(
         _state: server.GoogleWorkspaceCredentialProvider,
         _url: str,
@@ -177,6 +359,8 @@ def test_gmail_metadata__hydration_failure_fails__the_whole_page(
 def test_gmail_list_does__not_use_thread__id_as_subject_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_individual_gmail_hydration(monkeypatch)
+
     def google_api(
         _state: server.GoogleWorkspaceCredentialProvider,
         url: str,
@@ -238,7 +422,7 @@ def test_gmail_count__traversal_skips_per__thread_metadata_hydration(
     assert cast(dict[str, object], cast(list[object], payload["items"])[0])["payload"] == {}
 
 
-def test_gmail_thread__detail_tool__contract_is_unchanged(
+def test_gmail_thread__detail_tool__includes_full_thread_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def google_api(
@@ -246,22 +430,12 @@ def test_gmail_thread__detail_tool__contract_is_unchanged(
         _url: str,
         params: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        assert params == {"format": "metadata"}
+        assert params == {"format": "full"}
+        message = _gmail_message("message-1", "2000", "Please reply with an available date.")
         return {
             "historyId": "9",
             "snippet": "Thread preview",
-            "messages": [
-                {
-                    "id": "message-1",
-                    "payload": {
-                        "headers": [
-                            {"name": "From", "value": "pm@example.com"},
-                            {"name": "To", "value": "user@example.com"},
-                            {"name": "Subject", "value": "Project sync"},
-                        ]
-                    },
-                }
-            ],
+            "messages": [message],
         }
 
     monkeypatch.setattr(server, "_google_api", google_api)
@@ -269,11 +443,68 @@ def test_gmail_thread__detail_tool__contract_is_unchanged(
     thread = GetThreadOperation().execute(_state(), {"thread_id": "thread-1"})
 
     assert cast(dict[str, object], cast(dict[str, object], thread["item"])["payload"]) == {
-        "subject": "Project sync",
+        "subject": "Project update",
         "snippet": "Thread preview",
-        "participants": ["pm@example.com", "user@example.com"],
+        "participants": [
+            "Kim Daeri <kim.daeri@example.com>",
+            "User <user@example.com>",
+            "team@example.com",
+        ],
         "message_ids": ["message-1"],
+        "message_count": 1,
+        "messages": [
+            {
+                "message_id": "message-1",
+                "thread_id": "thread-1",
+                "sender_name": "Kim Daeri",
+                "sender_email": "kim.daeri@example.com",
+                "recipients": ["User <user@example.com>", "team@example.com"],
+                "received_at": "1970-01-01T00:00:02+00:00",
+                "subject": "Project update",
+                "body": "Please reply with an available date.",
+                "body_truncated": False,
+                "rfc822_message_id": "<msg-id@example.com>",
+                "references": None,
+            }
+        ],
+        "body": (
+            "From: Kim Daeri <kim.daeri@example.com>\n"
+            "To: User <user@example.com>\n"
+            "Date: Mon, 10 Aug 2026 09:15:00 +0900\n"
+            "Subject: Project update\n"
+            "Message-ID: <msg-id@example.com>\n"
+            "Cc: team@example.com\n"
+            "Please reply with an available date."
+        ),
     }
+
+
+@pytest.mark.parametrize("empty_body", [False, True])
+def test_gmail_message_detail__decodes_subject__and_preserves_absent_reply_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    empty_body: bool,
+) -> None:
+    message: dict[str, object] = {
+        "id": "message-1",
+        "threadId": "thread-1",
+        "labelIds": ["SENT"],
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "Subject", "value": "=?utf-8?b?7ZqM7Iug?="},
+                {"name": "To", "value": "to@example.com"},
+            ],
+            "body": {"size": 0, "data": ""} if empty_body else {"data": _gmail_b64("본문")},
+        },
+    }
+    monkeypatch.setattr(server, "_google_api", lambda *_args, **_kwargs: message)
+    result = GetMessageOperation().execute(_state(), {"message_id": "message-1"})
+    payload = cast(dict[str, object], cast(dict[str, object], result["item"])["payload"])
+    assert payload["subject"] == "회신"
+    assert payload["body"] == ("" if empty_body else "본문")
+    assert payload["sent"] is True
+    assert payload["cc"] == payload["bcc"] == payload["attachments"] == []
+    assert "in_reply_to" not in payload and "references" not in payload
 
 
 def test_gmail_message_detail__fetches_full_format__and_includes_body(
@@ -314,7 +545,12 @@ def test_gmail_message_detail__fetches_full_format__and_includes_body(
         "subject": "Project update",
         "snippet": "Message preview",
         "from": "Kim Daeri <kim.daeri@example.com>",
-        "to": "User <user@example.com>",
+        "to": ["User <user@example.com>"],
+        "cc": ["team@example.com"],
+        "bcc": [],
+        "sent": False,
+        "thread_id": "thread-1",
+        "rfc822_message_id": "<msg-id@example.com>",
         "received_at": "Mon, 10 Aug 2026 09:15:00 +0900",
         "body": "Actual message body",
         "attachments": [
@@ -361,7 +597,11 @@ def test_gmail_message_detail__omits_body_and__attachments_when_absent(
         "subject": "Project sync",
         "snippet": "Message preview",
         "from": "pm@example.com",
-        "to": "user@example.com",
+        "to": ["user@example.com"],
+        "cc": [],
+        "bcc": [],
+        "sent": False,
+        "thread_id": "thread-1",
         "received_at": "Sat, 24 May 2025 09:15:00 +0900",
         "attachments": [],
     }
@@ -461,6 +701,27 @@ def test_gmail_ui_detail__converts_nested_html__when_plain_is_missing(
     assert detail["body"] == "Hello team.\nNext line"
     assert "hidden" not in str(detail["body"])
     assert "bad" not in str(detail["body"])
+
+
+def test_gmail_ui_detail__with_plain_body__removes_conditional_html_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = (
+        "<!--[if !mso]><!--><div>첫 번째 원문</div><!--<![endif]-->\n"
+        "<!--[if false]><!--><p>두 번째 원문</p><!--<![endif]-->"
+    )
+    message = _gmail_message("message-1", "2000", body)
+    monkeypatch.setattr(server, "_google_api", lambda *_args, **_kwargs: {"messages": [message]})
+
+    detail = verified_server._tool_call(
+        _state(),
+        tool_name="gmail_get_ui_thread_detail",
+        arguments={"thread_id": "thread-1"},
+    )
+
+    assert detail["body"] == "첫 번째 원문\n두 번째 원문"
+    assert "<!--[if" not in str(detail["body"])
+    assert "<![endif]" not in str(detail["body"])
 
 
 def test_gmail_ui__detail_allows_missing__or_malformed_body(
@@ -631,6 +892,7 @@ def test_calendar_event_list__expands_recurring_events_and__preserves_all_day_da
         _state(),
         {
             "calendar_id": "work@example.com",
+            "query": "Atlas 인쇄소",
             "time_min": "2026-08-10T00:00:00Z",
             "time_max": "2026-11-08T00:00:00Z",
             "single_events": True,
@@ -645,6 +907,7 @@ def test_calendar_event_list__expands_recurring_events_and__preserves_all_day_da
         "params": {
             "maxResults": "10",
             "pageToken": "events-page-1",
+            "q": "Atlas 인쇄소",
             "timeMin": "2026-08-10T00:00:00Z",
             "timeMax": "2026-11-08T00:00:00Z",
             "singleEvents": "true",

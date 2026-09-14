@@ -8,6 +8,7 @@ from functools import partial
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import StateNode
 
 from google_work_agent.adapters.langgraph.checkpoint_secret_boundary import (
     SecretBoundaryCheckpointer,
@@ -106,19 +107,19 @@ from google_work_agent.adapters.langgraph.profiles.profile_registry import Graph
 
 @dataclass(frozen=True, slots=True)
 class GraphNodeBindings:
-    request_understanding: Any
-    tool_route: Any
-    context_retriever: Any
-    work_analysis: Any
-    planning: Any
-    review: Any
-    single_workflow: Any
-    waiting_approval: Any
-    stage_one: Any
-    stage_two: Any
-    stage_three: Any
+    request_understanding: StateNode[GraphState]
+    tool_route: StateNode[GraphState]
+    context_retriever: StateNode[GraphState]
+    work_analysis: StateNode[GraphState]
+    planning: StateNode[GraphState]
+    review: StateNode[GraphState]
+    single_workflow: StateNode[GraphState]
+    waiting_approval: StateNode[GraphState]
+    stage_one: StateNode[GraphState]
+    stage_two: StateNode[GraphState]
+    stage_three: StateNode[GraphState]
 
-    def for_name(self, name: str) -> Any:
+    def for_name(self, name: str) -> StateNode[GraphState]:
         return {
             "request_understanding": self.request_understanding,
             "tool_route": self.tool_route,
@@ -133,7 +134,7 @@ class GraphNodeBindings:
             "stage_three": self.stage_three,
         }[name]
 
-    def native_for_profile(self, profile: GraphProfile) -> dict[str, Any]:
+    def native_for_profile(self, profile: GraphProfile) -> dict[str, StateNode[GraphState]]:
         names: tuple[str, ...]
         if profile is GraphProfile.SIX_ROLE_BASELINE:
             names = (
@@ -155,22 +156,22 @@ class GraphNodeBindings:
 class MainControlNodeBindings:
     """Exact bindings for canonical deterministic Main controls."""
 
-    initialize: Any
-    retrieval_entry: Any
-    planning_entry: Any
-    review_entry: Any
-    domain_validation: Any
-    preflight: Any
-    domain_reconcile: Any
-    action_execution: Any
-    verification: Any
-    recovery: Any
-    cancel_resolution: Any
-    response_synthesis: Any
-    terminal_commit: Any
-    finalize: Any
+    initialize: StateNode[GraphState]
+    retrieval_entry: StateNode[GraphState]
+    planning_entry: StateNode[GraphState]
+    review_entry: StateNode[GraphState]
+    domain_validation: StateNode[GraphState]
+    preflight: StateNode[GraphState]
+    domain_reconcile: StateNode[GraphState]
+    action_execution: StateNode[GraphState]
+    verification: StateNode[GraphState]
+    recovery: StateNode[GraphState]
+    cancel_resolution: StateNode[GraphState]
+    response_synthesis: StateNode[GraphState]
+    terminal_commit: StateNode[GraphState]
+    finalize: StateNode[GraphState]
 
-    def for_name(self, name: str) -> Any:
+    def for_name(self, name: str) -> StateNode[GraphState]:
         return {
             "initialize": self.initialize,
             "retrieval_entry": self.retrieval_entry,
@@ -362,7 +363,7 @@ class WorkflowGraphComposition:
             edges[name] = name
         return edges
 
-    def node_handler(self, name: str) -> Any:
+    def node_handler(self, name: str) -> StateNode[GraphState]:
         if name in {
             "initialize",
             "retrieval_entry",
@@ -382,5 +383,5 @@ class WorkflowGraphComposition:
             return self._control_bindings.for_name(name)
         return self._bindings.for_name(name)
 
-    def native_subgraphs(self) -> dict[str, Any]:
+    def native_subgraphs(self) -> dict[str, StateNode[GraphState]]:
         return self._bindings.native_for_profile(self._profile)

@@ -37,7 +37,7 @@ def test_contract_catalog__matches_public_and__internal_callable_surface() -> No
 
     assert public_names.isdisjoint(internal_names)
     assert contract_names == public_names | internal_names
-    assert len(contract_names) == 23
+    assert len(contract_names) == 24
 
 
 def test_internal_capability__schema_hash_is__actual_contract_hash() -> None:
@@ -90,6 +90,7 @@ def test_representative_valid__inputs_are__accepted() -> None:
         "calendar_list_events",
         {
             "calendar_id": "primary",
+            "query": "Atlas",
             "page_token": None,
             "page_size": 20,
             "time_min": "2026-08-20T00:00:00Z",
@@ -110,7 +111,7 @@ def test_representative_valid__inputs_are__accepted() -> None:
         "gmail_send",
         {
             "draft_id": "draft-1",
-            "recovery_fingerprint": "fp",
+            "payload": {"recovery_fingerprint": "fp"},
             "claim_context": {"claim_version": 2},
         },
     )

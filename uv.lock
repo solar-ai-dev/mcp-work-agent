@@ -242,47 +242,6 @@ wheels = [
 ]
 
 [[package]]
-name = "google-work-agent"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "keyring" },
-    { name = "langgraph" },
-    { name = "langgraph-checkpoint-sqlite" },
-    { name = "python-multipart" },
-    { name = "tzdata" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cryptography", specifier = ">=44,<47" },
-    { name = "fastapi", specifier = ">=0.141,<0.142" },
-    { name = "keyring", specifier = ">=25.7,<26" },
-    { name = "langgraph", specifier = ">=1.2.9,<1.3" },
-    { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1,<4" },
-    { name = "python-multipart", specifier = ">=0.0.20,<0.1" },
-    { name = "tzdata", specifier = ">=2025.2" },
-    { name = "uvicorn", specifier = ">=0.52,<0.53" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=2.3,<2.4" },
-    { name = "pytest", specifier = ">=9.1,<10" },
-    { name = "ruff", specifier = ">=0.16.5,<0.17" },
-]
-
-[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -569,6 +528,49 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/47/6d/9ac7cbec46189a7625af4b5acbd25f10d827f4141b2002181848c8418923/librt-0.15.0-cp312-cp312-win32.whl", hash = "sha256:a5207ec414d1c4a2a7231b2086970dc036f94293cdf338190984958a013a42f1", size = 106138, upload-time = "2026-08-07T10:47:15.973Z" },
     { url = "https://files.pythonhosted.org/packages/38/d0/2ae99c83be86ce23f925ac1aeeedc777e97f427c4a8d190c70d0a16e9a87/librt-0.15.0-cp312-cp312-win_amd64.whl", hash = "sha256:73b30cfa976659b3917c8f6153bdb0591c6a9ec6583599fd24a689b690622022", size = 126974, upload-time = "2026-08-07T10:47:17.049Z" },
     { url = "https://files.pythonhosted.org/packages/5d/ef/dd24f9635c730b86b87587967dda7516b1845e8b17684603d31607fed598/librt-0.15.0-cp312-cp312-win_arm64.whl", hash = "sha256:a54cf9e0ef47b96af580849db5471142200568ce1e02cbf416addab551369570", size = 112292, upload-time = "2026-08-07T10:47:18.222Z" },
+]
+
+[[package]]
+name = "mcp-work-agent"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "keyring" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
+    { name = "langsmith" },
+    { name = "python-multipart" },
+    { name = "tzdata" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=44,<47" },
+    { name = "fastapi", specifier = ">=0.141,<0.142" },
+    { name = "keyring", specifier = ">=25.7,<26" },
+    { name = "langgraph", specifier = ">=1.2.9,<1.3" },
+    { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1,<4" },
+    { name = "langsmith", specifier = ">=0.11,<0.12" },
+    { name = "python-multipart", specifier = ">=0.0.20,<0.1" },
+    { name = "tzdata", specifier = ">=2025.2" },
+    { name = "uvicorn", specifier = ">=0.52,<0.53" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=2.3,<2.4" },
+    { name = "pytest", specifier = ">=9.1,<10" },
+    { name = "ruff", specifier = ">=0.16.5,<0.17" },
 ]
 
 [[package]]

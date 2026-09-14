@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Mapping
+import logging
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from copy import deepcopy
 from functools import partial
 from hashlib import sha256
@@ -13,13 +14,20 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from langgraph.types import interrupt
 
+from google_work_agent.adapters.langgraph.activity_callback import RunActivityCallback
 from google_work_agent.adapters.langgraph.invocation import WorkflowInvocationCoordinator
-from google_work_agent.adapters.langgraph.main.application_services import (
-    WorkflowApplicationServices,
-    WorkflowRuntimeHooks,
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    project_current_action_evidence,
+    project_persisted_plan_evidence_for_review,
+)
+from google_work_agent.adapters.langgraph.main.application_handler_bindings import (
+    WorkflowApplicationHandlerBindings,
 )
 from google_work_agent.adapters.langgraph.main.artifact_freshness import (
     ArtifactFreshnessMixin,
+)
+from google_work_agent.adapters.langgraph.main.cancel_resolution_runtime_callbacks import (
+    CancelResolutionRuntimeCallbacks,
 )
 from google_work_agent.adapters.langgraph.main.confirmation_controller import (
     ConfirmationControllerMixin,
@@ -63,8 +71,8 @@ from google_work_agent.adapters.langgraph.main.plan_persistence import (
     PlanPersistenceMixin,
     _connector_id_for_evidence_handle,
 )
-from google_work_agent.adapters.langgraph.main.response_synthesis import (
-    ResponseSynthesisMixin,
+from google_work_agent.adapters.langgraph.main.preview_modification_projection import (
+    project_user_action_modification,
 )
 from google_work_agent.adapters.langgraph.main.resume_checkpoint import (
     ResumeCheckpointMixin,
@@ -84,13 +92,17 @@ from google_work_agent.adapters.langgraph.main.state import (
     initial_graph_state,
     request_from_state,
 )
-from google_work_agent.adapters.langgraph.main.supervisor import (
+from google_work_agent.adapters.langgraph.main.supervisor import route_supervisor
+from google_work_agent.adapters.langgraph.main.supervisor_control_adapter import (
+    lifecycle_state_update,
+    project_lifecycle_control,
+)
+from google_work_agent.adapters.langgraph.main.supervisor_decision import (
     SupervisorDecisionV1,
     SupervisorTarget,
-    route_supervisor,
 )
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    CurrentRunResourceIdentityV1,
+from google_work_agent.adapters.langgraph.main.supervisor_state_projection import (
+    project_supervisor_state,
 )
 from google_work_agent.adapters.langgraph.pre_analysis_composition import (
     build_pre_analysis_subgraphs,
@@ -139,6 +151,19 @@ from google_work_agent.application.agents.planning.contracts.action_plan_draft i
 from google_work_agent.application.agents.planning.contracts.domain_validation import (
     DomainValidationResult,
 )
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema,
+)
+from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
+    RequestAmbiguityValidationError,
+)
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    RetrievalV2ValidationError,
+)
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    EvidenceDraftV1,
+    RetrievalResultV1,
+)
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
     PlanReviewResultV2,
 )
@@ -163,6 +188,9 @@ from google_work_agent.application.use_cases.action.read_contracts import (
     FailReadActionCommand,
     FinalizeReadActionCommand,
 )
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
+)
 from google_work_agent.application.use_cases.execution_attempt.abort_claimed_execution import (
     AbortClaimedExecutionCommandV1,
 )
@@ -183,11 +211,22 @@ from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultCommandV1,
     ReviewDispositionV1,
 )
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    CurrentRunResourceIdentityV1,
+    ValidatePlanForPublicationQueryV1,
+)
 from google_work_agent.application.use_cases.recovery.resolve_recovery import (
     ResolveRecoveryCommandV1,
 )
 from google_work_agent.application.use_cases.resource.connector_read_projection import (
     ConnectorReadProjection,
+)
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
+from google_work_agent.application.use_cases.resource_ref.resource_ref_projection import (
+    is_durable_resource_type,
+    resource_ref_from_snapshot,
 )
 from google_work_agent.application.use_cases.run.begin_planning import (
     BeginPlanningCommand,
@@ -220,6 +259,10 @@ from google_work_agent.application.use_cases.run.finalize_cancel import (
 from google_work_agent.application.use_cases.run.get_run_snapshot import (
     GetRunSnapshotQuery,
 )
+from google_work_agent.application.use_cases.run.get_supervisor_observation import (
+    GetSupervisorObservationQuery,
+    SupervisorObservationV1,
+)
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     BudgetDecision,
     approve_planning_revision,
@@ -236,6 +279,9 @@ from google_work_agent.application.use_cases.sse_event.project_run_event import 
 from google_work_agent.application.use_cases.trace_event.emit_trace_event import (
     EmitTraceEventCommand,
 )
+from google_work_agent.application.use_cases.trace_event.record_run_activity import (
+    RecordRunActivityHandler,
+)
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
@@ -248,7 +294,13 @@ from google_work_agent.domain.plan.model import PlanReviewStatus
 from google_work_agent.domain.recovery.model import RecoveryResolution
 from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceRefRecord
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.contracts.google_workspace import GoogleWorkspaceGatewayError
+from google_work_agent.ports.connector.contracts.google_workspace import (
+    GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
+    ResourceSnapshot,
+    ResourceType,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMErrorCode,
     LLMInvocationError,
@@ -274,6 +326,8 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowStartRequest,
 )
 from google_work_agent.ports.system.sse_event_buffer_port import SseEventBufferPort
+
+LOGGER = logging.getLogger(__name__)
 
 JsonObject = dict[str, object]
 
@@ -347,8 +401,8 @@ class _WorkflowRuntimeComposition:
         signing_secret: str,
         service_instance_id: str,
         checkpoint_port: CheckpointPort,
-        application_services: WorkflowApplicationServices,
-        runtime_hooks: WorkflowRuntimeHooks,
+        application_handlers: WorkflowApplicationHandlerBindings,
+        cancel_resolution_callbacks: CancelResolutionRuntimeCallbacks,
         retrieval_cache: InMemoryRunRetrievalCache | None = None,
         claim_context_signer: Callable[[str, dict[str, object]], str] | None = None,
         mcp_process_instance_id: Callable[[str], str] | None = None,
@@ -359,11 +413,16 @@ class _WorkflowRuntimeComposition:
         work_hours_provider: Callable[[], CalendarWorkHours] | None = None,
         default_tasklist_id_provider: Callable[[], str | None] | None = None,
         default_calendar_id_provider: Callable[[], str | None] | None = None,
+        authorized_tasklist_ids_provider: Callable[[], Sequence[str]] | None = None,
+        authorized_calendar_ids_provider: Callable[[], Sequence[str]] | None = None,
         attachment_verifier: Any | None = None,
         resume_target_registry: ResumeTargetRegistry | None = None,
         sse_event_buffer: SseEventBufferPort | None = None,
         environment: str = "TEST",
         release_version: str = "test",
+        repository_access: GetRepositoryAccessHandler | None = None,
+        connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
+        observability_callbacks: tuple[Any, ...] = (),
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._tool_catalog = tool_catalog
@@ -382,59 +441,73 @@ class _WorkflowRuntimeComposition:
         self._work_hours_provider = work_hours_provider or (
             lambda: CalendarWorkHours(timezone=(timezone_provider or (lambda: "Asia/Seoul"))())
         )
+        self._timezone_provider = timezone_provider or (lambda: "Asia/Seoul")
         self._default_tasklist_id_provider = default_tasklist_id_provider
         self._default_calendar_id_provider = default_calendar_id_provider
+        self._authorized_tasklist_ids_provider = authorized_tasklist_ids_provider
+        self._authorized_calendar_ids_provider = authorized_calendar_ids_provider
         self._cancel_signal_lock = Lock()
         self._cancel_signals: set[str] = set()
         self._checkpointer = self._checkpoint_port
-        runtime_hooks.bind(self)
-        services = application_services
-        self._start_analysis_handler = services.start_analysis
-        self._get_run_snapshot_handler = services.get_run_snapshot
-        self._build_terminal_message = services.build_terminal_message
-        self._emit_terminal_trace = services.emit_terminal_trace
-        self._project_terminal_event = services.project_terminal_event
-        self._begin_retrieval_handler = services.begin_retrieval
-        self._begin_planning_handler = services.begin_planning
-        self._request_confirmation_handler = services.request_confirmation
+        cancel_resolution_callbacks.bind(
+            settle_pending_action=self._settle_pending_cancel_action,
+            reconcile_inflight_action=self._reconcile_cancelling_action,
+            verify_executed_action=self._verify_cancelling_action,
+            resolve_unknown_action=self._resolve_cancelling_unknown_action,
+        )
+        run_handlers = application_handlers.run_lifecycle
+        read_handlers = application_handlers.read_execution
+        write_handlers = application_handlers.write_execution
+        recovery_handlers = application_handlers.verification_recovery
+        control_handlers = application_handlers.workflow_control
+        self._start_analysis_handler = run_handlers.start_analysis
+        self._get_run_snapshot_handler = run_handlers.get_run_snapshot
+        self._get_supervisor_observation_handler = run_handlers.get_supervisor_observation
+        self._build_terminal_message = run_handlers.build_terminal_message
+        self._emit_terminal_trace = run_handlers.emit_terminal_trace
+        self._project_terminal_event = run_handlers.project_terminal_event
+        self._begin_retrieval_handler = run_handlers.begin_retrieval
+        self._begin_planning_handler = run_handlers.begin_planning
+        self._request_confirmation_handler = run_handlers.request_confirmation
         self._read_result_cache = retrieval_cache or InMemoryRunRetrievalCache()
         self._evidence_store = RunScopedEvidenceStore()
-        self._canonical_domain_validation = services.domain_validation
-        self._complete_answer_only = services.complete_answer_only
-        self._complete_read_only_run = services.complete_read_only_run
-        self._complete_write_run = services.complete_write_run
-        self._block_run = services.block_run
-        self._publish_read_plan = services.publish_read_plan
+        self._canonical_domain_validation = read_handlers.domain_validation
+        self._persist_resource_ref = read_handlers.persist_resource_ref
+        self._complete_answer_only = run_handlers.complete_answer_only
+        self._complete_read_only_run = run_handlers.complete_read_only_run
+        self._complete_write_run = run_handlers.complete_write_run
+        self._block_run = run_handlers.block_run
+        self._publish_read_plan = read_handlers.publish_read_plan
         self._save_read_plan = self._publish_read_plan.save
-        self._claim_read = services.claim_read
-        self._complete_read = services.complete_read
+        self._claim_read = read_handlers.claim_read
+        self._complete_read = read_handlers.complete_read
         self._execute_read = self._complete_read.execute
-        self._finalize_read = services.finalize_read
-        self._fail_read = services.fail_read
-        self._publish_write_plan = services.publish_write_plan
+        self._finalize_read = read_handlers.finalize_read
+        self._fail_read = read_handlers.fail_read
+        self._publish_write_plan = write_handlers.publish_write_plan
         self._save_write_plan = self._publish_write_plan.save
-        self._build_claim_context = services.build_claim_context
-        self._begin_execution_attempt = services.begin_execution_attempt
-        self._abort_claimed_execution = services.abort_claimed_execution
-        self._classify_dispatch_result = services.classify_dispatch_result
-        self._expire_approval = services.expire_approval
-        self._refresh_expired_action = services.refresh_expired_action
-        self._claim_execution = services.claim_execution
+        self._build_claim_context = write_handlers.build_claim_context
+        self._begin_execution_attempt = write_handlers.begin_execution_attempt
+        self._abort_claimed_execution = write_handlers.abort_claimed_execution
+        self._classify_dispatch_result = write_handlers.classify_dispatch_result
+        self._expire_approval = write_handlers.expire_approval
+        self._refresh_expired_action = write_handlers.refresh_expired_action
+        self._claim_execution = write_handlers.claim_execution
         self._preflight_write = self._claim_execution.preflight
-        self._store_write_success = services.store_write_success
-        self._mark_write_failed = services.mark_write_failed
-        self._mark_write_unknown = services.mark_write_unknown
-        self._verify_effect = services.verify_effect
-        self._store_verification = services.store_verification
-        self._require_recovery = services.require_recovery
-        self._resolve_recovery = services.resolve_recovery
-        self._require_write_reauth = services.require_write_reauth
-        self._lookup_unknown_result = services.lookup_unknown_result
-        self._recover_existing_result = services.recover_existing_result
-        self._resolve_as_failed = services.resolve_as_failed
-        self._begin_write_verification = services.begin_write_verification
-        self._record_review_result = services.record_review_result
-        self._validate_action_arguments = services.validate_action_arguments
+        self._store_write_success = write_handlers.store_write_success
+        self._mark_write_failed = write_handlers.mark_write_failed
+        self._mark_write_unknown = write_handlers.mark_write_unknown
+        self._verify_effect = recovery_handlers.verify_effect
+        self._store_verification = recovery_handlers.store_verification
+        self._require_recovery = recovery_handlers.require_recovery
+        self._resolve_recovery = recovery_handlers.resolve_recovery
+        self._require_write_reauth = recovery_handlers.require_write_reauth
+        self._lookup_unknown_result = recovery_handlers.lookup_unknown_result
+        self._recover_existing_result = recovery_handlers.recover_existing_result
+        self._resolve_as_failed = recovery_handlers.resolve_as_failed
+        self._begin_write_verification = recovery_handlers.begin_write_verification
+        self._record_review_result = control_handlers.record_review_result
+        self._validate_action_arguments = control_handlers.validate_action_arguments
         self._write_execution_phase = WriteExecutionStructuralDriver(
             id_factory=id_factory,
             request_hash=self._request_hash,
@@ -500,10 +573,13 @@ class _WorkflowRuntimeComposition:
             ),
             latest_attempt_id=self._latest_attempt_id,
         )
-        self._cancel_pending_action = services.cancel_pending_action
-        self._finalize_cancel = services.finalize_cancel
-        self._continue_cancel_resolution = services.continue_cancel_resolution
+        self._cancel_pending_action = control_handlers.cancel_pending_action
+        self._finalize_cancel = control_handlers.finalize_cancel
+        self._continue_cancel_resolution = control_handlers.continue_cancel_resolution
         entry_subgraphs = build_pre_analysis_subgraphs(
+            connector_prerequisites=connector_prerequisites,
+            repository_access=repository_access,
+            should_stop_for_cancel=self._should_stop_for_cancel,
             llm_runtime=self._llm_runtime,
             prompt_manifest_path=prompt_manifest_path,
             prompt_execution_scope=prompt_execution_scope,
@@ -518,8 +594,14 @@ class _WorkflowRuntimeComposition:
             confirm_context_retrieval_inline=self._confirm_context_retrieval_inline,
             evidence_store=self._evidence_store,
             read_result_cache=self._read_result_cache,
+            now_ms=now_ms,
+            timezone_provider=self._timezone_provider,
             default_tasklist_id_provider=self._default_tasklist_id_provider,
             default_calendar_id_provider=self._default_calendar_id_provider,
+            authorized_tasklist_ids_provider=self._authorized_tasklist_ids_provider,
+            authorized_calendar_ids_provider=self._authorized_calendar_ids_provider,
+            load_retrieval_head=self._checkpoint_port.load_retrieval_head,
+            update_run_budget=self._checkpoint_port.update_run_budget,
         )
         self._request_subgraph = entry_subgraphs.request_understanding
         self._tool_route_subgraph = entry_subgraphs.tool_route
@@ -555,6 +637,7 @@ class _WorkflowRuntimeComposition:
             graph_profile=self._graph_profile,
             merge_decision=self._merge_decision,
             evidence_store=self._evidence_store,
+            load_persisted_evidence=self._load_persisted_modify_review_evidence,
             confirm_inline=cast(Any, self._confirm_review_inline),
             resume_target_registry=self._resume_target_registry,
         ).build()
@@ -616,22 +699,52 @@ class _WorkflowRuntimeComposition:
             latest_unknown_action=self._latest_unknown_action,
             recovery_node=partial(
                 recovery_node,
-                recover_from_durable_facts=self._write_recovery.recover_unknown,
+                recover_from_durable_facts=lambda state: self._supervise_lifecycle_result(
+                    state,
+                    self._write_recovery.recover_unknown(state),
+                    WorkflowPhase.RECOVERY,
+                ),
             ),
             has_executed_action=self._has_executed_action,
-            recover_executed_actions=self._write_recovery.recover_executed,
+            recover_executed_actions=lambda state, run_id: self._supervise_lifecycle_result(
+                state,
+                self._write_recovery.recover_executed(state, run_id),
+                WorkflowPhase.VERIFICATION,
+            ),
             mark_stalled_claims_as_unknown=self._mark_stalled_claims_as_unknown,
             cancel_signal_lock=self._cancel_signal_lock,
             cancel_signals=self._cancel_signals,
             now_ms=now_ms,
             retrieval_node=self._physical_agent_node("context_retriever"),
+            callbacks=(
+                RunActivityCallback(
+                    RecordRunActivityHandler(
+                        emit_trace=self._emit_terminal_trace,
+                        now_ms=now_ms,
+                        service_instance_id=self._service_instance_id,
+                    )
+                ),
+                *observability_callbacks,
+            ),
+            update_run_budget=self._checkpoint_port.update_run_budget,
         )
 
     def start(self, request: WorkflowStartRequest) -> WorkflowInvocationResult:
         try:
             return self._invocation.start(request)
         except LLMInvocationError as error:
-            return self._settle_llm_budget_exhaustion(
+            return self._settle_llm_invocation_failure(
+                error=error,
+                run_id=request.run_id,
+                workflow_key=request.workflow_key,
+                initial_start=True,
+            )
+        except (
+            request_goal_candidate_schema.RequestGoalSemanticValidationError,
+            RequestAmbiguityValidationError,
+            RetrievalV2ValidationError,
+        ) as error:
+            return self._settle_semantic_validation_failure(
                 error=error,
                 run_id=request.run_id,
                 workflow_key=request.workflow_key,
@@ -681,37 +794,104 @@ class _WorkflowRuntimeComposition:
         try:
             return self._invocation.resume(request)
         except LLMInvocationError as error:
-            return self._settle_llm_budget_exhaustion(
+            return self._settle_llm_invocation_failure(
+                error=error,
+                run_id=request.run_id,
+                workflow_key=request.workflow_key,
+            )
+        except (
+            request_goal_candidate_schema.RequestGoalSemanticValidationError,
+            RequestAmbiguityValidationError,
+            RetrievalV2ValidationError,
+        ) as error:
+            return self._settle_semantic_validation_failure(
                 error=error,
                 run_id=request.run_id,
                 workflow_key=request.workflow_key,
             )
 
-    def _settle_llm_budget_exhaustion(
+    def _settle_llm_invocation_failure(
         self,
         *,
         error: LLMInvocationError,
         run_id: str,
         workflow_key: str,
+        initial_start: bool = False,
     ) -> WorkflowInvocationResult:
-        """Fail closed when the canonical per-Run provider budget is exhausted."""
+        """Route initial admission failure or exhausted budget to existing terminal commit."""
 
-        if error.code is not LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED:
+        config = self._config_for_thread(workflow_key)
+        snapshot = self._graph.get_state(config)
+        if error.code is LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED:
+            reason_code = (
+                "ABSOLUTE_LLM_LIMIT_EXHAUSTED"
+                if "ABSOLUTE_LLM_LIMIT_EXHAUSTED" in str(error)
+                else "PROFILE_LLM_LIMIT_EXHAUSTED"
+            )
+        elif (
+            initial_start
+            and error.runtime_prerequisite
+            and error.code
+            in {
+                LLMErrorCode.LOCAL_UNAVAILABLE,
+                LLMErrorCode.MODEL_NOT_APPROVED,
+                LLMErrorCode.API_KEY_MISSING,
+                LLMErrorCode.CONSENT_REQUIRED,
+                LLMErrorCode.RUNTIME_MODE_BLOCKED,
+            }
+        ):
+            facts = self._read_terminal_facts(run_id)
+            if (
+                facts["status"] not in {"CREATED", "ANALYZING"}
+                or facts["action_statuses"]
+                or snapshot.values.get("request_intent") is not None
+                or snapshot.values.get("retry_budget", {}).get("llm_calls_used", 0) != 0
+            ):
+                raise error
+            reason_code = error.code.value
+        elif error.code is LLMErrorCode.OUTPUT_SCHEMA_INVALID:
+            reason_code = error.code.value
+        else:
             raise error
-        message = str(error)
-        reason_code = (
-            "ABSOLUTE_LLM_LIMIT_EXHAUSTED"
-            if "ABSOLUTE_LLM_LIMIT_EXHAUSTED" in message
-            else "PROFILE_LLM_LIMIT_EXHAUSTED"
+        return self._settle_pre_execution_failure(
+            reason_code=reason_code,
+            run_id=run_id,
+            workflow_key=workflow_key,
         )
+
+    def _settle_semantic_validation_failure(
+        self,
+        *,
+        error: request_goal_candidate_schema.RequestGoalSemanticValidationError
+        | RequestAmbiguityValidationError
+        | RetrievalV2ValidationError,
+        run_id: str,
+        workflow_key: str,
+    ) -> WorkflowInvocationResult:
+        return self._settle_pre_execution_failure(
+            reason_code=error.reason_code,
+            run_id=run_id,
+            workflow_key=workflow_key,
+        )
+
+    def _settle_pre_execution_failure(
+        self,
+        *,
+        reason_code: str,
+        run_id: str,
+        workflow_key: str,
+    ) -> WorkflowInvocationResult:
         config = self._config_for_thread(workflow_key)
         snapshot = self._graph.get_state(config)
         pending_owner = next(
             (node for node in snapshot.next if isinstance(node, str) and node != "__start__"),
             None,
         )
+        facts = self._read_terminal_facts(run_id)
+        if facts["action_statuses"]:
+            raise RuntimeError("pre-execution validation failure cannot close an action Run")
         if pending_owner is None:
-            raise RuntimeError("LLM budget exhaustion has no resumable graph owner")
+            raise RuntimeError("LLM terminal failure has no resumable graph owner")
         self._graph.update_state(
             config,
             {
@@ -750,7 +930,6 @@ class _WorkflowRuntimeComposition:
         cast(_CloseableCheckpoint, self._checkpoint_port).close()
 
     def _main_control_bindings(self) -> MainControlNodeBindings:
-        request_node = self._physical_agent_node("request_understanding")
         retrieval_node = self._physical_agent_node("context_retriever")
         planning_node = self._physical_agent_node("planning")
         review_node = self._physical_agent_node("review")
@@ -758,8 +937,9 @@ class _WorkflowRuntimeComposition:
             initialize=partial(
                 initialize_node,
                 start_analysis=self._start_analysis_for_main,
-                request_node=request_node,
-                request_logical_node="request_understanding",
+                project_decision=lambda state, update, decision: self._merge_decision(
+                    cast(GraphState, state), cast(GraphStateUpdateV1, update), decision
+                ),
             ),
             retrieval_entry=partial(
                 retrieval_entry_node,
@@ -788,29 +968,49 @@ class _WorkflowRuntimeComposition:
             ),
             preflight=partial(
                 preflight_node,
-                check_freshness_and_claim=self._write_execution_node.preflight,
+                check_freshness_and_claim=lambda state: self._supervise_preflight_result(
+                    cast(GraphState, state), self._write_execution_node.preflight(state)
+                ),
             ),
             domain_reconcile=partial(
                 domain_reconcile_node,
-                read_durable_run=self._read_durable_run,
+                read_durable_facts=self._read_durable_supervisor_facts,
+                project_decision=lambda state, update, decision: self._merge_decision(
+                    cast(GraphState, state), cast(GraphStateUpdateV1, update), decision
+                ),
             ),
             action_execution=partial(
                 action_execution_node,
-                execute_claimed_action=self._write_execution_node,
+                execute_claimed_action=lambda state: self._supervise_lifecycle_result(
+                    state,
+                    self._write_execution_node(state),
+                    WorkflowPhase.ACTION_EXECUTION,
+                ),
             ),
             verification=partial(
                 verification_node,
-                verify_durable_effects=lambda state: self._write_recovery.recover_executed(
-                    cast(GraphState, state), cast(str, state["run_id"])
+                verify_durable_effects=lambda state: self._supervise_lifecycle_result(
+                    cast(GraphState, state),
+                    self._write_recovery.recover_executed(
+                        cast(GraphState, state), cast(str, state["run_id"])
+                    ),
+                    WorkflowPhase.VERIFICATION,
                 ),
             ),
             recovery=partial(
                 recovery_node,
-                recover_from_durable_facts=self._write_recovery.recover_unknown,
+                recover_from_durable_facts=lambda state: self._supervise_lifecycle_result(
+                    state,
+                    self._write_recovery.recover_unknown(state),
+                    WorkflowPhase.RECOVERY,
+                ),
             ),
             cancel_resolution=partial(
                 cancel_resolution_node,
                 continue_cancel_resolution=self._continue_cancel_resolution_for_main,
+                supervise_result=lambda state, result: self._supervise_lifecycle_result(
+                    cast(GraphState, state), result, WorkflowPhase.RECOVERY
+                ),
             ),
             response_synthesis=partial(
                 response_synthesis_node,
@@ -865,9 +1065,20 @@ class _WorkflowRuntimeComposition:
         snapshot = self._get_run_snapshot_handler(GetRunSnapshotQuery(run_id))
         if snapshot is None:
             raise LookupError(f"run not found: {run_id}")
+        with self._unit_of_work_factory() as unit_of_work:
+            evidence_by_action = {
+                action.action_id: [
+                    evidence.excerpt
+                    for evidence in unit_of_work.evidence.list_for_action(action.action_id)
+                ]
+                for action in snapshot.actions
+            }
         return {
             "run_id": run_id,
             "conversation_id": snapshot.run.conversation_id,
+            "cancel_intent_active": (
+                self._read_durable_supervisor_facts(run_id).cancel_intent_active
+            ),
             "status": snapshot.run.status,
             "version": snapshot.run.version,
             "terminal_result_kind": (
@@ -881,6 +1092,16 @@ class _WorkflowRuntimeComposition:
             ),
             "action_statuses": [action.status for action in snapshot.actions],
             "action_effect_types": [action.effect_type for action in snapshot.actions],
+            "actions": [
+                {
+                    "tool_name": action.tool_name,
+                    "effect_type": action.effect_type,
+                    "status": action.status,
+                    "arguments": action.arguments,
+                    "evidence_excerpts": evidence_by_action[action.action_id],
+                }
+                for action in snapshot.actions
+            ],
         }
 
     def _terminal_complete_answer_only(
@@ -888,6 +1109,23 @@ class _WorkflowRuntimeComposition:
     ) -> object:
         run_id = cast(str, state["run_id"])
         payload = self._terminal_command_payload(run_id, intent)
+        retrieval_result = state.get("retrieval_result")
+        evidence_drafts: tuple[EvidenceDraftV1, ...] = ()
+        retrieval_artifact_id = None
+        if isinstance(retrieval_result, Mapping) and retrieval_result.get("evidence_refs"):
+            typed_retrieval_result = cast(RetrievalResultV1, retrieval_result)
+            evidence_drafts = tuple(
+                resolve_evidence_projection(
+                    store=self._evidence_store,
+                    run_id=run_id,
+                    retrieval_result=typed_retrieval_result,
+                )
+            )
+            retrieval_artifact_id = typed_retrieval_result["meta"]["artifact_id"]
+        resource_ref_drafts = self._answer_context_resource_refs(
+            state=state,
+            evidence_drafts=evidence_drafts,
+        )
         return self._complete_answer_only(
             CompleteAnswerOnlyRunCommand(
                 command_id=self._terminal_command_id(payload),
@@ -900,8 +1138,70 @@ class _WorkflowRuntimeComposition:
                     Literal["SUCCESS", "PARTIAL"],
                     intent["terminal_message"].result_kind,
                 ),
+                retrieval_artifact_id=retrieval_artifact_id,
+                evidence_drafts=evidence_drafts,
+                resource_ref_drafts=resource_ref_drafts,
             )
         )
+
+    def _answer_context_resource_refs(
+        self,
+        *,
+        state: Mapping[str, object],
+        evidence_drafts: tuple[EvidenceDraftV1, ...],
+    ) -> tuple[ResourceRefRecord, ...]:
+        if not evidence_drafts:
+            return ()
+        run_id = self._required_string(state.get("run_id"), "run_id")
+        with self._unit_of_work_factory() as unit_of_work:
+            existing_handles = {
+                _resource_handle_for_ref(item)
+                for item in unit_of_work.resource_refs.list_for_run_bounded(run_id, limit=1000)
+            }
+        acquisition_result = state.get("acquisition_result")
+        if not isinstance(acquisition_result, Mapping):
+            raise LookupError("answer evidence has no acquisition result")
+
+        resource_refs: list[ResourceRefRecord] = []
+        for draft in evidence_drafts:
+            handle = draft["resource_handle"]
+            if handle in existing_handles:
+                continue
+            acquired = _acquired_resource_by_handle(
+                acquisition_result=cast(Any, acquisition_result),
+                resource_handle=handle,
+            )
+            if acquired is None:
+                raise LookupError(f"answer evidence resource was not acquired: {handle}")
+            payload = cast(dict[str, Any], acquired["payload"])
+            resource_type = ResourceType(str(acquired["resource_type"]))
+            if not is_durable_resource_type(resource_type):
+                continue
+            snapshot = ResourceSnapshot(
+                fixture_snapshot_id=str(acquired.get("fixture_snapshot_id") or "runtime"),
+                resource_type=resource_type,
+                resource_id=str(acquired["resource_id"]),
+                parent_id=cast(str | None, acquired.get("parent_id")),
+                related_resource_ids=tuple(
+                    str(item)
+                    for item in cast(list[object], acquired.get("related_resource_ids", []))
+                ),
+                version=str(acquired.get("version") or ""),
+                recovery_fingerprint=cast(str | None, acquired.get("recovery_fingerprint")),
+                payload=payload,
+            )
+            resource_refs.append(
+                resource_ref_from_snapshot(
+                    run_id=run_id,
+                    connector_id=_connector_id_for_evidence_handle(
+                        state=cast(GraphState, state),
+                        resource_handle=handle,
+                    ),
+                    snapshot=snapshot,
+                    captured_at_ms=self._now_ms(),
+                )
+            )
+        return tuple(resource_refs)
 
     def _terminal_complete_read_only(
         self, state: Mapping[str, object], intent: TerminalCommitIntentV1
@@ -917,6 +1217,7 @@ class _WorkflowRuntimeComposition:
                 run_id=run_id,
                 plan_id=plan_id,
                 expected_version=intent["expected_run_version"],
+                terminal_message=intent["terminal_message"],
             )
         )
 
@@ -931,6 +1232,7 @@ class _WorkflowRuntimeComposition:
                 request_hash=calculate_canonical_json_hash(payload),
                 run_id=run_id,
                 expected_version=intent["expected_run_version"],
+                terminal_message=intent["terminal_message"],
             )
         )
 
@@ -946,6 +1248,7 @@ class _WorkflowRuntimeComposition:
                 run_id=run_id,
                 expected_version=intent["expected_run_version"],
                 reason_code=intent["reason_codes"][0] if intent["reason_codes"] else "BLOCKED",
+                terminal_message=intent["terminal_message"],
             )
         )
 
@@ -960,6 +1263,7 @@ class _WorkflowRuntimeComposition:
                 request_hash=calculate_canonical_json_hash(payload),
                 run_id=run_id,
                 expected_run_version=intent["expected_run_version"],
+                terminal_message=intent["terminal_message"],
             )
         )
 
@@ -990,6 +1294,7 @@ class _WorkflowRuntimeComposition:
                 resolution=resolution,
                 target_kind=cast(Literal["RUN", "ACTION"], context["scope"]),
                 target_action_id=None if action_id is None else str(action_id),
+                terminal_message=intent["terminal_message"],
             )
         )
 
@@ -1097,16 +1402,25 @@ class _WorkflowRuntimeComposition:
             and isinstance(planning_result.get("meta"), Mapping)
         ):
             run_id = self._required_string(typed_state.get("run_id"), "run_id")
-            retrieval_result = _require_state_value(
-                typed_state.get("retrieval_result"), "retrieval_result"
-            )
-            evidence_drafts = list(
-                resolve_evidence_projection(
-                    store=self._evidence_store,
-                    run_id=run_id,
-                    retrieval_result=retrieval_result,
+            routes = typed_state.get("tool_route_plan")
+            if routes is not None and routes["input_plan"]["input_routes"]:
+                _require_state_value(typed_state.get("retrieval_result"), "retrieval_result")
+            persisted_review_evidence = typed_state.get("__modify_review_evidence__")
+            if isinstance(typed_state.get("__modify_review_plan_id__"), str):
+                if persisted_review_evidence is None:
+                    persisted_review_evidence = self._load_persisted_modify_review_evidence(
+                        typed_state
+                    )
+                if not isinstance(persisted_review_evidence, list) or not all(
+                    isinstance(item, Mapping) for item in persisted_review_evidence
+                ):
+                    raise ValueError("Modify Review requires persisted Plan evidence")
+                evidence_drafts = [dict(item) for item in persisted_review_evidence]
+            else:
+                evidence_drafts = project_current_action_evidence(
+                    state=typed_state,
+                    evidence_store=self._evidence_store,
                 )
-            )
             with self._unit_of_work_factory() as unit_of_work:
                 resource_refs = {
                     _resource_handle_for_ref(item): item
@@ -1177,13 +1491,18 @@ class _WorkflowRuntimeComposition:
             plan_review = _require_state_value(typed_state.get("plan_review"), "plan_review")
             resource_identity_reader = _ResourceIdentityProjection(resource_refs)
             result = self._canonical_domain_validation(
-                run_id=run_id,
-                planning_result=cast(Any, planning_result),
-                plan_review=cast(PlanReviewResultV2, plan_review),
-                work_analysis_result=typed_state.get("work_analysis_result"),
-                evidence_drafts=evidence_drafts,
-                policy_confirmation_receipts=typed_state.get("policy_confirmation_receipts", []),
-                resource_identity_reader=resource_identity_reader,
+                ValidatePlanForPublicationQueryV1(
+                    run_id=run_id,
+                    planning_result=cast(Any, planning_result),
+                    plan_review=cast(PlanReviewResultV2, plan_review),
+                    work_analysis_result=typed_state.get("work_analysis_result"),
+                    evidence_drafts=evidence_drafts,
+                    policy_confirmation_receipts=typed_state.get(
+                        "policy_confirmation_receipts", []
+                    ),
+                    resource_identity_reader=resource_identity_reader,
+                    selected_resources=request_from_state(typed_state).selected_resources,
+                )
             )
         else:
             raise ValueError(
@@ -1213,7 +1532,6 @@ class _WorkflowRuntimeComposition:
                     "__workflow_control__": _workflow_control("STALE_MODIFY_REVIEW"),
                 }
             if review_status is PlanReviewStatus.PASSED:
-                decision["target"] = SupervisorTarget.WAITING_APPROVAL.value
                 decision["state_update"] = {
                     **decision["state_update"],
                     "approved_plan_id": typed_state["__modify_review_plan_id__"],
@@ -1224,7 +1542,6 @@ class _WorkflowRuntimeComposition:
                 cast(ActionPlanDraftV2, planning_result),
                 resource_identity_reader,
             )
-            decision["target"] = SupervisorTarget.WAITING_APPROVAL.value
             decision["state_update"] = {
                 **decision["state_update"],
                 "approved_plan_id": plan_id,
@@ -1251,10 +1568,14 @@ class _WorkflowRuntimeComposition:
             isinstance(resume_payload, dict)
             and resume_payload.get("resume_kind") == "MODIFY_REVIEW"
         ):
-            return self._prepare_modify_review_state(
+            return self._supervise_lifecycle_result(
                 state,
-                plan_id=self._required_string(resume_payload.get("plan_id"), "plan_id"),
-                review_version=int(resume_payload.get("review_version", -1)),
+                self._prepare_modify_review_state(
+                    state,
+                    plan_id=self._required_string(resume_payload.get("plan_id"), "plan_id"),
+                    review_version=int(resume_payload.get("review_version", -1)),
+                ),
+                WorkflowPhase.WAITING_APPROVAL,
             )
         if self._current_run_status(cast(str, state["run_id"])) in {
             RunStatusV1.COMPLETED.value,
@@ -1262,16 +1583,24 @@ class _WorkflowRuntimeComposition:
             RunStatusV1.FAILED.value,
             RunStatusV1.CANCELLED.value,
         }:
-            return {
+            return self._supervise_lifecycle_result(
+                state,
+                {
+                    **state,
+                    "__target__": "response_synthesis",
+                    "__logical_target__": "response_synthesis",
+                },
+                WorkflowPhase.WAITING_APPROVAL,
+            )
+        return self._supervise_lifecycle_result(
+            state,
+            {
                 **state,
-                "__target__": "response_synthesis",
-                "__logical_target__": "response_synthesis",
-            }
-        return {
-            **state,
-            "__target__": "preflight",
-            "workflow_phase": WorkflowPhase.PREFLIGHT.value,
-        }
+                "__target__": "preflight",
+                "workflow_phase": WorkflowPhase.PREFLIGHT.value,
+            },
+            WorkflowPhase.WAITING_APPROVAL,
+        )
 
     def _prepare_modify_review_state(
         self,
@@ -1327,12 +1656,31 @@ class _WorkflowRuntimeComposition:
         ordered_actions = sorted(actions, key=lambda item: item.position)
         if not isinstance(draft_actions, list) or len(draft_actions) != len(ordered_actions):
             raise ValueError("persisted Plan no longer matches the Planning artifact")
+        user_action_modifications: list[dict[str, object]] = []
         for action_draft, action in zip(draft_actions, ordered_actions, strict=True):
             if action_draft.get("tool_id") != action.tool_name:
                 raise ValueError("persisted Action tool no longer matches Planning")
+            previous_arguments = action_draft.get("arguments")
+            if not isinstance(previous_arguments, Mapping):
+                raise ValueError("Planning Action arguments must be an object")
+            current_arguments = cast(dict[str, object], loads(action.arguments_json))
+            modification = project_user_action_modification(
+                action_id=action.id,
+                previous_arguments=previous_arguments,
+                current_arguments=current_arguments,
+            )
+            if modification is not None:
+                user_action_modifications.append(cast(dict[str, object], modification))
             action_draft["action_id"] = action.id
-            action_draft["arguments"] = cast(dict[str, object], loads(action.arguments_json))
+            action_draft["arguments"] = current_arguments
             action_draft["depends_on_action_ids"] = list(dependencies[action.id])
+        persisted_review_evidence = self._load_persisted_modify_review_evidence(
+            {
+                **state,
+                "planning_result": draft,
+                "__modify_review_plan_id__": plan_id,
+            }
+        )
 
         return {
             **state,
@@ -1342,11 +1690,58 @@ class _WorkflowRuntimeComposition:
             "__modify_review_plan_id__": plan_id,
             "__modify_review_version__": review_version,
             "__modify_review_risks__": {action.id: action.risk for action in actions},
+            "__modify_review_changes__": user_action_modifications,
+            "__modify_review_evidence__": persisted_review_evidence,
             "__target__": "review_entry",
             "__logical_target__": "review_entry",
             "workflow_phase": WorkflowPhase.PLAN_REVIEW.value,
             "retry_budget": budget["run_budget"],
         }
+
+    def _load_persisted_modify_review_evidence(
+        self,
+        state: Mapping[str, object],
+    ) -> list[dict[str, object]]:
+        plan_id = self._required_string(
+            state.get("__modify_review_plan_id__") or state.get("approved_plan_id"),
+            "modify review plan_id",
+        )
+        planning_result = state.get("planning_result")
+        if not isinstance(planning_result, Mapping):
+            raise ValueError("Modify Review requires the Planning artifact")
+        draft_actions = planning_result.get("actions")
+        if not isinstance(draft_actions, list):
+            raise ValueError("Modify Review Planning actions must be an array")
+        with self._unit_of_work_factory() as unit_of_work:
+            bundle = unit_of_work.plans.load_bundle(plan_id)
+            if bundle is None:
+                raise LookupError(f"plan not found: {plan_id}")
+            ordered_actions = sorted(bundle.actions, key=lambda item: item.position)
+            if len(draft_actions) != len(ordered_actions):
+                raise ValueError("persisted Plan no longer matches the Planning artifact")
+            logical_evidence_refs_by_action: dict[str, tuple[str, ...]] = {}
+            for action_draft, action in zip(draft_actions, ordered_actions, strict=True):
+                if not isinstance(action_draft, Mapping):
+                    raise ValueError("Modify Review Planning Action must be an object")
+                raw_evidence_refs = action_draft.get("evidence_refs")
+                if not isinstance(raw_evidence_refs, list) or not all(
+                    isinstance(item, str) and item for item in raw_evidence_refs
+                ):
+                    raise ValueError("Planning Action evidence_refs must be non-empty strings")
+                logical_evidence_refs_by_action[action.id] = tuple(raw_evidence_refs)
+            resource_refs_by_id = {
+                item.id: item
+                for item in unit_of_work.resource_refs.list_for_run_bounded(
+                    bundle.plan.run_id, limit=1000
+                )
+            }
+        return project_persisted_plan_evidence_for_review(
+            run_id=bundle.plan.run_id,
+            evidence_by_id={item.id: item for item in bundle.evidence},
+            action_evidence=bundle.action_evidence,
+            logical_evidence_refs_by_action=logical_evidence_refs_by_action,
+            resource_refs_by_id=resource_refs_by_id,
+        )
 
     def _settle_persisted_review(self, state: Mapping[str, object]) -> GraphState:
         reviewed = cast(GraphState, state)
@@ -1445,6 +1840,12 @@ class _WorkflowRuntimeComposition:
             reviewed["__modify_review_plan_id__"] = None
             reviewed["__modify_review_version__"] = None
             reviewed["__modify_review_risks__"] = None
+            decision = route_supervisor(
+                phase=WorkflowPhase.PLAN_REVIEW,
+                state=reviewed,
+                result=review,
+            )
+            return self._merge_decision(reviewed, {}, decision)
         return reviewed
 
     @staticmethod
@@ -1473,13 +1874,32 @@ class _WorkflowRuntimeComposition:
             action_versions = {
                 action.id: action.version for action in unit_of_work.actions.list_for_plan(plan_id)
             }
+        review = state.get("plan_review")
+        review_meta = review.get("meta") if isinstance(review, Mapping) else None
+        review_artifact_id = (
+            review_meta.get("artifact_id") if isinstance(review_meta, Mapping) else None
+        )
+        review_artifact_revision = (
+            review_meta.get("revision") if isinstance(review_meta, Mapping) else None
+        )
+        if not isinstance(review_artifact_id, str) or not review_artifact_id:
+            review_artifact_id = f"{plan.id}:review:{review_version}"
+        if not isinstance(review_artifact_revision, int) or review_artifact_revision < 1:
+            review_artifact_revision = review_version
+        command_operation = "record_review"
+        if plan.review_disposition is not None:
+            command_operation = f"record_review:{plan.id}:{review_artifact_id}"
         result = self._record_review_result(
             RecordReviewResultCommandV1(
-                command_id=self._phase_command_id(plan.run_id, "record_review", review_version),
+                command_id=self._phase_command_id(
+                    plan.run_id,
+                    command_operation,
+                    review_artifact_revision,
+                ),
                 plan_id=plan.id,
                 expected_plan_version=plan.revision_no,
                 expected_review_version=review_version,
-                review_artifact_id=f"{plan.id}:review:{review_version}",
+                review_artifact_id=review_artifact_id,
                 review_version=review_version,
                 disposition=review_disposition,
                 based_on_action_versions=action_versions,
@@ -1526,18 +1946,25 @@ class _WorkflowRuntimeComposition:
         update: GraphStateUpdateV1,
         decision: SupervisorDecisionV1,
     ) -> GraphState:
-        decision_state = decision["state_update"]
-        merged: GraphState = {**state, **update, **decision_state}
-        merged["prompt_context"] = {
-            **state.get("prompt_context", {}),
-            **update.get("prompt_context", {}),
-            **decision_state.get("prompt_context", {}),
-        }
-        merged["trace_context"] = {
-            **state.get("trace_context", {}),
-            **update.get("trace_context", {}),
-            **decision_state.get("trace_context", {}),
-        }
+        durable_facts = self._read_durable_supervisor_facts(cast(str, state["run_id"]))
+        projection = project_supervisor_state(
+            state=state,
+            stage_update=update,
+            candidate=decision,
+            durable_facts=durable_facts,
+        )
+        merged = projection.state
+        decision = projection.decision
+        LOGGER.info(
+            "supervisor_decision run_id=%s source_phase=%s target=%s "
+            "transition_kind=%s reason_code=%s invalidated_fields=%s",
+            state.get("run_id"),
+            projection.source_phase,
+            decision["target"],
+            projection.transition_kind,
+            decision["reason_code"],
+            ",".join(projection.invalidated_fields),
+        )
         try:
             translation = self._route_translator.translate(cast(str, decision["target"]))
         except UnroutableSupervisorTargetError:
@@ -1555,6 +1982,47 @@ class _WorkflowRuntimeComposition:
         merged["__logical_target__"] = translation.logical_target
         merged["__target__"] = translation.node
         return merged
+
+    def _supervise_lifecycle_result(
+        self,
+        state: GraphState,
+        result: Mapping[str, object],
+        source_phase: WorkflowPhase,
+    ) -> GraphState:
+        lifecycle_update, candidate = project_lifecycle_control(
+            source_phase=source_phase,
+            prior_state=state,
+            control_result=result,
+        )
+        return self._merge_decision(
+            state,
+            cast(GraphStateUpdateV1, lifecycle_update),
+            candidate,
+        )
+
+    def _supervise_preflight_result(
+        self,
+        state: GraphState,
+        result: Mapping[str, object],
+    ) -> GraphState:
+        decision = route_supervisor(
+            phase=WorkflowPhase.PREFLIGHT,
+            state=state,
+            result=result,
+        )
+        return self._merge_decision(
+            state,
+            cast(GraphStateUpdateV1, lifecycle_state_update(result)),
+            decision,
+        )
+
+    def _read_durable_supervisor_facts(self, run_id: str) -> SupervisorObservationV1:
+        observation = self._get_supervisor_observation_handler(
+            GetSupervisorObservationQuery(run_id)
+        )
+        if observation is None:
+            raise LookupError(f"run not found: {run_id}")
+        return cast(SupervisorObservationV1, observation)
 
     def _request_from_state(self, state: GraphState) -> WorkflowStartRequest:
         return request_from_state(state)
@@ -2169,6 +2637,8 @@ class _WorkflowRuntimeComposition:
             run_budget=dict(request.run_budget),
             correlation=request.correlation,
             selected_resources=request.selected_resources,
+            default_github_repository=request.default_github_repository,
+            user_message_id=request.user_message_id,
         )
 
     def _required_string(self, value: object, field_name: str) -> str:
@@ -2194,7 +2664,6 @@ def _workflow_control(reason: str, **details: object) -> dict[str, object]:
 class LangGraphWorkflowRuntime(
     ResumeCheckpointMixin,
     ArtifactFreshnessMixin,
-    ResponseSynthesisMixin,
     PlanPersistenceMixin,
     ConfirmationControllerMixin,
     _WorkflowRuntimeComposition,

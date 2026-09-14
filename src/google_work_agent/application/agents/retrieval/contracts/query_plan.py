@@ -7,6 +7,7 @@ Retrieval planner.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import Literal, Required, TypedDict, cast
@@ -20,13 +21,38 @@ RetrievalConstraintKindV1 = Literal[
     "TEMPORAL_RANGE",
     "PARTICIPANT",
     "KEYWORD",
+    "CONCEPT",
     "RESOURCE_REF",
     "CONTAINER_REF",
     "STATUS_SCOPE",
 ]
 RetrievalOperationV2 = Literal["SEARCH", "NEXT_PAGE", "DETAIL_FETCH", "FREEBUSY"]
+RetrievalValidationReasonCodeV1 = Literal[
+    "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
+    "QUERY_OPERATION_FIELD_MISMATCH",
+    "QUERY_OPERATION_UNAVAILABLE",
+    "RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+    "QUERY_USER_CONSTRAINT_MISSING",
+    "QUERY_LITERAL_UNSUPPORTED",
+]
+RetrievalValidationStageV1 = Literal[
+    "QUERY_PLAN_VALIDATOR",
+    "ROUND_VALIDATOR",
+    "BUILD_QUERY",
+]
 TemporalAxisV1 = Literal["MESSAGE_TIME", "TASK_SCHEDULED_DATE", "EVENT_TIME", "AVAILABILITY_WINDOW"]
 ParticipantRoleV1 = Literal["ANY", "SENDER", "RECIPIENT", "ATTENDEE"]
+PARTICIPANT_EMAIL_PATTERN = r'^[^\s<>:@"{}()\\]+@[^\s<>:@"{}()\\]+\.[^\s<>:@"{}()\\]+$'
+GMAIL_KEYWORD_LITERAL_PATTERN = r'^[^\r\n"\\]+$'
+
+
+def validate_participant_identity(value: object) -> str:
+    """Hard participant constraints require a bare email, never an unresolved name."""
+    if not isinstance(value, str) or re.fullmatch(PARTICIPANT_EMAIL_PATTERN, value) is None:
+        raise RetrievalV2ValidationError("participant identity requires an exact email address")
+    return value
+
+
 StatusScopeValueV1 = Literal[
     "ANY",
     "INCOMPLETE",
@@ -66,6 +92,14 @@ class KeywordConstraintV1(TypedDict):
     match_mode: Required[Literal["ANY", "ALL", "PHRASE"]]
 
 
+class ConceptConstraintV1(TypedDict):
+    """Bounded discovery alternatives, never claims about acquired resources."""
+
+    kind: Required[Literal["CONCEPT"]]
+    concept: Required[str]
+    manifestations: Required[list[str]]
+
+
 class ResourceRefConstraintV1(TypedDict):
     kind: Required[Literal["RESOURCE_REF"]]
     resource_refs: Required[list[str]]
@@ -85,10 +119,24 @@ SemanticRetrievalConstraintV1 = (
     TemporalRangeConstraintV1
     | ParticipantConstraintV1
     | KeywordConstraintV1
+    | ConceptConstraintV1
     | ResourceRefConstraintV1
     | ContainerRefConstraintV1
     | StatusScopeConstraintV1
 )
+
+
+def validate_gmail_keyword_literal(value: object) -> str:
+    """Validate one literal that can be lowered without changing Gmail query meaning."""
+    if not isinstance(value, str) or re.fullmatch(GMAIL_KEYWORD_LITERAL_PATTERN, value) is None:
+        raise RetrievalV2ValidationError(
+            "Gmail keyword literal contains unsupported query delimiters",
+            reason_code="QUERY_LITERAL_UNSUPPORTED",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraints[?(@.kind=='KEYWORD')].terms[]",
+            ),
+        )
+    return value
 
 
 class ConstraintDeltaV2(TypedDict):
@@ -120,8 +168,6 @@ class RouteQueryIntentV2(TypedDict):
 class RetrievalQueryPlanV2(TypedDict):
     schema_version: Required[Literal[2]]
     route_queries: Required[list[RouteQueryIntentV2]]
-    required_information: Required[list[str]]
-    retrieval_order: Required[list[str]]
 
 
 class SourceFetchPlanV1(TypedDict):
@@ -139,10 +185,89 @@ class SourceFetchPlanV1(TypedDict):
 class RetrievalV2ValidationError(ValueError):
     """A Retrieval V2 semantic plan violates its typed authority boundary."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: RetrievalValidationReasonCodeV1 = "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
+        affected_field_paths: tuple[str, ...] = (),
+        validation_stage: RetrievalValidationStageV1 | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.affected_field_paths = affected_field_paths
+        self.validation_stage = validation_stage
+
 
 _KINDS = frozenset(
-    {"TEMPORAL_RANGE", "PARTICIPANT", "KEYWORD", "RESOURCE_REF", "CONTAINER_REF", "STATUS_SCOPE"}
+    {
+        "TEMPORAL_RANGE",
+        "PARTICIPANT",
+        "KEYWORD",
+        "CONCEPT",
+        "RESOURCE_REF",
+        "CONTAINER_REF",
+        "STATUS_SCOPE",
+    }
 )
+CONCEPT_MANIFESTATION_LIMIT = 12
+PLANNER_CONCEPT_MANIFESTATION_LIMIT = 3
+_STATUS_SCOPE_BY_RESOURCE = {
+    "GMAIL_THREAD": ("ANY", "DRAFT", "SENT"),
+    "GMAIL_MESSAGE": ("ANY", "DRAFT", "SENT"),
+    "GMAIL_DRAFT": ("ANY", "DRAFT"),
+    "EMAIL": ("ANY", "DRAFT", "SENT"),
+    "TASK": ("ANY", "INCOMPLETE", "COMPLETED"),
+    "CALENDAR_EVENT": ("ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"),
+    "CALENDAR": ("ANY", "CANCELLED", "CONFIRMED", "TENTATIVE"),
+    "GITHUB_ISSUE": ("ANY", "OPEN", "CLOSED"),
+}
+
+_SEARCH_TOOL_BY_RESOURCE_TYPE = {
+    "EMAIL": "gmail_search_threads",
+    "GMAIL_THREAD": "gmail_search_threads",
+    "GMAIL_MESSAGE": "gmail_search_threads",
+    "GMAIL_DRAFT": "gmail_search_drafts",
+    "TASK_LIST": "tasks_list_tasklists",
+    "TASK": "tasks_list_tasks",
+    "CALENDAR": "calendar_list_calendars",
+    "CALENDAR_EVENT": "calendar_list_events",
+    "GITHUB_ISSUE": "github_list_issues",
+}
+_DETAIL_TOOL_BY_RESOURCE_TYPE = {
+    "EMAIL": "gmail_get_thread",
+    "GMAIL_THREAD": "gmail_get_thread",
+    "GMAIL_MESSAGE": "gmail_get_message",
+    "GMAIL_DRAFT": "gmail_get_draft",
+    "GMAIL_ATTACHMENT": "gmail_get_attachment",
+    "TASK": "tasks_get_task",
+    "CALENDAR_EVENT": "calendar_get_event",
+    "GITHUB_ISSUE": "github_get_issue",
+}
+
+
+def route_operation_tool_id(route: InputToolRouteV1, operation: RetrievalOperationV2) -> str | None:
+    """Resolve one semantic READ operation against the frozen route capability."""
+
+    resource_type = route["resource_type"]
+    if operation in {"SEARCH", "NEXT_PAGE"}:
+        tool_id = _SEARCH_TOOL_BY_RESOURCE_TYPE.get(resource_type)
+    elif operation == "DETAIL_FETCH":
+        tool_id = _DETAIL_TOOL_BY_RESOURCE_TYPE.get(resource_type)
+    else:
+        tool_id = "calendar_query_freebusy" if resource_type == "CALENDAR_FREEBUSY" else None
+    return tool_id if tool_id in route["allowed_read_tool_ids"] else None
+
+
+def status_scope_values(route: InputToolRouteV1) -> tuple[str, ...]:
+    resource_type = route["resource_type"].upper()
+    connector = "github" if resource_type == "GITHUB_ISSUE" else "google_workspace"
+    if route["connector_id"] != connector:
+        return ()
+    return _STATUS_SCOPE_BY_RESOURCE.get(resource_type, ())
+
+
+CONCEPT_LITERAL_PATTERN = r'^[^\r\n:"{}()\\]+$'
 _FORBIDDEN_AUTHORITY_FIELDS = frozenset(
     {
         "provider_query",
@@ -168,26 +293,13 @@ def validate_retrieval_query_plan_v2(
 ) -> RetrievalQueryPlanV2:
     """Validate a V2 plan without translating it to provider syntax."""
     root = _mapping(value, "plan")
-    _exact_keys(
-        root, {"schema_version", "route_queries", "required_information", "retrieval_order"}, "plan"
-    )
+    _exact_keys(root, {"schema_version", "route_queries"}, "plan")
     if root["schema_version"] != 2:
         raise RetrievalV2ValidationError("plan.schema_version must be 2")
     routes = _route_map(frozen_routes)
     route_queries = root["route_queries"]
-    required_information = root["required_information"]
-    retrieval_order = root["retrieval_order"]
     if not isinstance(route_queries, list) or not route_queries:
         raise RetrievalV2ValidationError("plan.route_queries must be non-empty")
-    if not _non_empty_strings(required_information):
-        raise RetrievalV2ValidationError("plan.required_information must be non-empty strings")
-    if not _non_empty_strings(retrieval_order):
-        raise RetrievalV2ValidationError("plan.retrieval_order must contain unique route ids")
-    retrieval_order_values = cast(list[str], retrieval_order)
-    if len(set(retrieval_order_values)) != len(retrieval_order_values):
-        raise RetrievalV2ValidationError("plan.retrieval_order must contain unique route ids")
-    if not set(retrieval_order_values).issubset(routes):
-        raise RetrievalV2ValidationError("plan.retrieval_order contains an unknown route")
 
     validated_queries = [
         validate_route_query_intent_v2(
@@ -200,13 +312,12 @@ def validate_retrieval_query_plan_v2(
         )
         for item in route_queries
     ]
-    if set(retrieval_order_values) != {query["route_id"] for query in validated_queries}:
-        raise RetrievalV2ValidationError("plan.retrieval_order must cover route_queries exactly")
+    query_route_ids = [query["route_id"] for query in validated_queries]
+    if len(query_route_ids) != len(set(query_route_ids)):
+        raise RetrievalV2ValidationError("plan.route_queries must contain unique route ids")
     return {
         "schema_version": 2,
         "route_queries": validated_queries,
-        "required_information": cast(list[str], required_information),
-        "retrieval_order": retrieval_order_values,
     }
 
 
@@ -231,35 +342,85 @@ def validate_route_query_intent_v2(
     if not isinstance(route_id, str) or route_id not in frozen_routes:
         raise RetrievalV2ValidationError("route_query.route_id is not frozen")
     if operation not in {"SEARCH", "NEXT_PAGE", "DETAIL_FETCH", "FREEBUSY"}:
-        raise RetrievalV2ValidationError("route_query.operation is invalid")
+        raise RetrievalV2ValidationError(
+            "route_query.operation is invalid",
+            reason_code="QUERY_OPERATION_FIELD_MISMATCH",
+            affected_field_paths=("$.route_queries[].operation",),
+        )
+    route = frozen_routes[route_id]
+    if route_operation_tool_id(route, cast(RetrievalOperationV2, operation)) is None:
+        raise RetrievalV2ValidationError(
+            "route_query.operation is not supported by the frozen route tools",
+            reason_code="QUERY_OPERATION_FIELD_MISMATCH",
+            affected_field_paths=("$.route_queries[].operation",),
+        )
     if not _non_empty_strings(intent["reason_codes"]):
         raise RetrievalV2ValidationError("route_query.reason_codes must be non-empty strings")
     search_spec = intent["search_spec"]
     detail_candidate_ref = intent["detail_candidate_ref"]
     if operation in {"SEARCH", "FREEBUSY"}:
         if detail_candidate_ref is not None:
-            raise RetrievalV2ValidationError("search operation cannot include detail_candidate_ref")
+            raise RetrievalV2ValidationError(
+                "search operation cannot include detail_candidate_ref",
+                reason_code="QUERY_OPERATION_FIELD_MISMATCH",
+                affected_field_paths=("$.route_queries[].detail_candidate_ref",),
+            )
         validated_spec = validate_search_spec_v1(
             search_spec,
             route_id=route_id,
             supported_kinds=supported_constraint_kinds.get(route_id),
             validated_resource_refs=(validated_resource_refs or {}).get(route_id),
             validated_container_refs=(validated_container_refs or {}).get(route_id),
+            keyword_literal_pattern=(
+                GMAIL_KEYWORD_LITERAL_PATTERN
+                if route["resource_type"]
+                in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                else None
+            ),
         )
+        constraints = (
+            validated_spec["constraints"]
+            if validated_spec["mode"] == "INITIAL"
+            else validated_spec["constraint_delta"]["upsert_constraints"]
+        )
+        for constraint in constraints:
+            if constraint["kind"] == "STATUS_SCOPE" and not set(constraint["values"]).issubset(
+                status_scope_values(frozen_routes[route_id])
+            ):
+                raise RetrievalV2ValidationError("status scope is not allowed for the frozen route")
     elif operation == "DETAIL_FETCH":
         if search_spec is not None:
-            raise RetrievalV2ValidationError("DETAIL_FETCH cannot include search_spec")
-        if (
-            not isinstance(detail_candidate_ref, str)
-            or detail_candidate_ref not in detail_candidate_refs
-        ):
             raise RetrievalV2ValidationError(
-                "DETAIL_FETCH requires a validated detail_candidate_ref"
+                "DETAIL_FETCH cannot include search_spec",
+                reason_code="QUERY_OPERATION_FIELD_MISMATCH",
+                affected_field_paths=("$.route_queries[].search_spec",),
+            )
+        route_resource_refs = (validated_resource_refs or {}).get(route_id, ())
+        route_candidate_refs = {
+            ref
+            for ref in detail_candidate_refs
+            if ref.startswith(f"{route['resource_type'].lower()}:")
+        }
+        if not isinstance(detail_candidate_ref, str) or detail_candidate_ref not in {
+            *route_candidate_refs,
+            *route_resource_refs,
+        }:
+            raise RetrievalV2ValidationError(
+                "DETAIL_FETCH requires a validated candidate or exact-resource ref",
+                reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+                affected_field_paths=("$.route_queries[].detail_candidate_ref",),
             )
         validated_spec = None
     else:
         if search_spec is not None or detail_candidate_ref is not None:
-            raise RetrievalV2ValidationError("NEXT_PAGE cannot contain semantic payload")
+            raise RetrievalV2ValidationError(
+                "NEXT_PAGE cannot contain semantic payload",
+                reason_code="QUERY_OPERATION_FIELD_MISMATCH",
+                affected_field_paths=(
+                    "$.route_queries[].search_spec",
+                    "$.route_queries[].detail_candidate_ref",
+                ),
+            )
         validated_spec = None
     return {
         "route_id": route_id,
@@ -277,6 +438,7 @@ def validate_search_spec_v1(
     supported_kinds: Collection[RetrievalConstraintKindV1] | None,
     validated_resource_refs: Collection[str] | None,
     validated_container_refs: Collection[str] | None,
+    keyword_literal_pattern: str | None = None,
 ) -> SearchConstraintSpecV1:
     """Validate INITIAL values or CHANGED typed delta for one frozen route."""
     if supported_kinds is None:
@@ -290,6 +452,8 @@ def validate_search_spec_v1(
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            allow_empty=keyword_literal_pattern is not None,
+            keyword_literal_pattern=keyword_literal_pattern,
         )
         return {"mode": "INITIAL", "constraints": constraints}
     if mode == "CHANGED":
@@ -302,6 +466,7 @@ def validate_search_spec_v1(
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
             allow_empty=True,
+            keyword_literal_pattern=keyword_literal_pattern,
         )
         removals = delta["remove_constraint_kinds"]
         if not isinstance(removals, list) or not all(item in _KINDS for item in removals):
@@ -314,6 +479,8 @@ def validate_search_spec_v1(
             raise RetrievalV2ValidationError("constraint_delta removes an unsupported kind")
         if {constraint["kind"] for constraint in upserts}.intersection(removals):
             raise RetrievalV2ValidationError("constraint_delta upserts and removes the same kind")
+        if not upserts and not removals:
+            raise RetrievalV2ValidationError("constraint_delta must change at least one constraint")
         return {
             "mode": "CHANGED",
             "constraint_delta": {
@@ -331,6 +498,7 @@ def _validate_constraints(
     validated_resource_refs: Collection[str] | None,
     validated_container_refs: Collection[str] | None,
     allow_empty: bool = False,
+    keyword_literal_pattern: str | None = None,
 ) -> list[SemanticRetrievalConstraintV1]:
     if not isinstance(value, list) or (not value and not allow_empty):
         raise RetrievalV2ValidationError("constraints must be non-empty")
@@ -340,11 +508,15 @@ def _validate_constraints(
             supported_kinds=supported_kinds,
             validated_resource_refs=validated_resource_refs,
             validated_container_refs=validated_container_refs,
+            keyword_literal_pattern=keyword_literal_pattern,
         )
         for item in value
     ]
     if len({constraint["kind"] for constraint in constraints}) != len(constraints):
-        raise RetrievalV2ValidationError("effective constraints cannot duplicate a kind")
+        raise RetrievalV2ValidationError(
+            "effective constraints cannot duplicate a kind",
+            affected_field_paths=("$.route_queries[].search_spec.constraints",),
+        )
     return constraints
 
 
@@ -354,6 +526,7 @@ def _validate_constraint(
     supported_kinds: Collection[RetrievalConstraintKindV1],
     validated_resource_refs: Collection[str] | None,
     validated_container_refs: Collection[str] | None,
+    keyword_literal_pattern: str | None,
 ) -> SemanticRetrievalConstraintV1:
     constraint = _mapping(value, "constraint")
     if _FORBIDDEN_AUTHORITY_FIELDS.intersection(constraint):
@@ -365,7 +538,7 @@ def _validate_constraint(
         _exact_keys(
             constraint, {"kind", "axis", "start_local", "end_local", "timezone"}, "constraint"
         )
-        return _validate_temporal(constraint)
+        return validate_temporal_range_constraint(constraint)
     if kind == "PARTICIPANT":
         _exact_keys(constraint, {"kind", "participants", "match_mode"}, "constraint")
         participants = constraint["participants"]
@@ -379,6 +552,7 @@ def _validate_constraint(
                 item["identity"]
             ):
                 raise RetrievalV2ValidationError("participant is invalid")
+            validate_participant_identity(item["identity"])
             validated.append(cast(ParticipantMatchV1, item))
         if constraint["match_mode"] not in {"ANY", "ALL"}:
             raise RetrievalV2ValidationError("participant match_mode is invalid")
@@ -395,10 +569,40 @@ def _validate_constraint(
             "PHRASE",
         }:
             raise RetrievalV2ValidationError("keyword constraint is invalid")
+        if keyword_literal_pattern is not None and any(
+            re.fullmatch(keyword_literal_pattern, term) is None
+            for term in cast(list[str], constraint["terms"])
+        ):
+            raise RetrievalV2ValidationError(
+                "Gmail keyword literal contains unsupported query delimiters",
+                reason_code="QUERY_LITERAL_UNSUPPORTED",
+                affected_field_paths=(
+                    "$.route_queries[].search_spec.constraints[?(@.kind=='KEYWORD')].terms[]",
+                ),
+            )
         return {
             "kind": "KEYWORD",
             "terms": cast(list[str], constraint["terms"]),
             "match_mode": cast(Literal["ANY", "ALL", "PHRASE"], constraint["match_mode"]),
+        }
+    if kind == "CONCEPT":
+        _exact_keys(constraint, {"kind", "concept", "manifestations"}, "constraint")
+        manifestations = constraint["manifestations"]
+        if (
+            not _string(constraint["concept"])
+            or not _non_empty_strings(manifestations)
+            or not isinstance(manifestations, list)
+            or len(manifestations) > CONCEPT_MANIFESTATION_LIMIT
+            or len(set(manifestations)) != len(manifestations)
+            or any(not re.fullmatch(CONCEPT_LITERAL_PATTERN, term) for term in manifestations)
+        ):
+            raise RetrievalV2ValidationError(
+                "concept requires bounded unique literal manifestations"
+            )
+        return {
+            "kind": "CONCEPT",
+            "concept": cast(str, constraint["concept"]),
+            "manifestations": cast(list[str], manifestations),
         }
     if kind == "RESOURCE_REF":
         _exact_keys(constraint, {"kind", "resource_refs"}, "constraint")
@@ -409,7 +613,11 @@ def _validate_constraint(
             or validated_resource_refs is None
             or not set(ref_values).issubset(validated_resource_refs)
         ):
-            raise RetrievalV2ValidationError("resource refs must be validated for route")
+            raise RetrievalV2ValidationError(
+                "resource refs must be validated for route",
+                reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+                affected_field_paths=("$.route_queries[].search_spec.constraints[].resource_refs",),
+            )
         return {"kind": "RESOURCE_REF", "resource_refs": ref_values}
     if kind == "CONTAINER_REF":
         _exact_keys(constraint, {"kind", "container_refs"}, "constraint")
@@ -420,7 +628,13 @@ def _validate_constraint(
             or validated_container_refs is None
             or not set(ref_values).issubset(validated_container_refs)
         ):
-            raise RetrievalV2ValidationError("container refs must be validated for route")
+            raise RetrievalV2ValidationError(
+                "container refs must be validated for route",
+                reason_code="RETRIEVAL_ROUTE_SCOPE_VIOLATION",
+                affected_field_paths=(
+                    "$.route_queries[].search_spec.constraints[].container_refs",
+                ),
+            )
         return {"kind": "CONTAINER_REF", "container_refs": ref_values}
     _exact_keys(constraint, {"kind", "values"}, "constraint")
     values = constraint["values"]
@@ -444,7 +658,10 @@ def _validate_constraint(
     return {"kind": "STATUS_SCOPE", "values": cast(list[StatusScopeValueV1], status_values)}
 
 
-def _validate_temporal(value: Mapping[str, object]) -> TemporalRangeConstraintV1:
+def validate_temporal_range_constraint(value: Mapping[str, object]) -> TemporalRangeConstraintV1:
+    _exact_keys(value, {"kind", "axis", "start_local", "end_local", "timezone"}, "temporal range")
+    if value["kind"] != "TEMPORAL_RANGE":
+        raise RetrievalV2ValidationError("temporal constraint kind is invalid")
     axis = value["axis"]
     start = value["start_local"]
     end = value["end_local"]

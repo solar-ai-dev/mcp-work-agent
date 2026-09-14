@@ -7,19 +7,41 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 EVALUATION = ROOT / "evaluation"
 PRODUCT_ROOTS = (ROOT / "src" / "google_work_agent", ROOT / "launcher")
+SHADOW_EVALUATION_RESULT_ROOTS = (
+    ROOT / ".runtime" / "reports",
+    ROOT / ".runtime" / "results",
+    ROOT / "runtime" / "reports",
+    ROOT / "runtime" / "results",
+    ROOT / "evaluation" / "reports",
+)
 
 EXPECTED_EVALUATION_CODE = {
     "evaluation/__init__.py",
+    "evaluation/check_workspace.py",
+    "evaluation/export_materials.py",
+    "evaluation/harness/__init__.py",
+    "evaluation/harness/fault_profiles.py",
+    "evaluation/harness/temporal_bindings.py",
+    "evaluation/prompt_candidate.py",
+    "evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py",
+    "evaluation/tests/test_canonical_dataset.py",
+    "evaluation/tests/test_fault_profiles.py",
+    "evaluation/tests/test_temporal_bindings.py",
+    "evaluation/tests/test_workspace_tools.py",
+}
+
+RETIRED_EVALUATION_AUTHORITIES = {
     "evaluation/client/__init__.py",
     "evaluation/client/http.py",
     "evaluation/dataset.py",
     "evaluation/grader.py",
     "evaluation/runner.py",
-    "evaluation/prompt_candidate.py",
     "evaluation/experiment_plan.py",
     "evaluation/run_experiment.py",
     "evaluation/compare_experiment_results.py",
-    "evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py",
+    "evaluation/scoring-contract-v1.1.json",
+    "evaluation/configs/experiments/prompt-baseline-smoke.template.json",
+    "evaluation/configs/experiments/prompt-mcp-research-smoke.template.json",
 }
 
 
@@ -72,34 +94,55 @@ def test_evaluation_assets_are__repository_only_and_results__are_local_by_defaul
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "/evaluation/results/" in gitignore
     tracked = _tracked_files()
-    assert not any(path.startswith("evaluation/results/") for path in tracked)
     required = {
         "evaluation/README.md",
-        "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
-        "evaluation/datasets/e2e/product_episodes_v1.jsonl",
-        "evaluation/datasets/agent/node_evaluation_items_v1.jsonl",
-        "evaluation/scoring-contract-v1.1.json",
+        "evaluation/check_workspace.py",
+        "evaluation/export_materials.py",
+        "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+        "evaluation/datasets/e2e/dataset-manifest-v8.json",
+        "evaluation/datasets/e2e/fixtures/google_workspace/provider-snapshot-v8.json",
         "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.json",
-        "evaluation/configs/experiments/prompt-baseline-smoke.template.json",
-        "evaluation/configs/experiments/prompt-mcp-research-smoke.template.json",
+        "evaluation/prompt_candidates/planning-review-sllm-decomposition-v0.9.2/"
+        "prompt-manifest-v0.9.2-candidate.json",
     }
     assert required <= tracked
+    assert RETIRED_EVALUATION_AUTHORITIES.isdisjoint(tracked)
 
 
-def test_evaluation_assets__do_not_reference__retired_experiments_tree() -> None:
-    checked_suffixes = {".json", ".jsonl", ".md"}
-    for owner in (EVALUATION / "configs", EVALUATION / "datasets"):
-        for path in owner.rglob("*"):
-            if path.is_file() and path.suffix in checked_suffixes:
-                assert "experiments/" not in path.read_text(encoding="utf-8"), path
+def test_evaluation_results__when_scanned__have_no_shadow_output_root() -> None:
+    assert not any(path.exists() for path in SHADOW_EVALUATION_RESULT_ROOTS)
+
+
+def test_evaluation_assets__do_not_reference__retired_json_authorities() -> None:
+    retired_names = {
+        Path(path).name
+        for path in RETIRED_EVALUATION_AUTHORITIES
+        if Path(path).name != "__init__.py"
+    }
+    checked_suffixes = {".json", ".jsonl", ".md", ".py"}
+    stale: list[str] = []
+    for path in EVALUATION.rglob("*"):
+        if not path.is_file() or path.suffix not in checked_suffixes:
+            continue
+        content = path.read_text(encoding="utf-8")
+        for name in retired_names:
+            if name in content:
+                stale.append(f"{path.relative_to(ROOT)}:{name}")
+    assert stale == []
 
 
 def _tracked_files() -> set[str]:
-    return set(
-        subprocess.run(
-            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
-        ).stdout.splitlines()
-    )
+    output = subprocess.run(
+        ["git", "-c", "core.quotepath=false", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.decode("utf-8")
+    return {
+        path
+        for path in output.split("\0")
+        if path and (ROOT / Path(path)).is_file()
+    }
 
 
 def _imports(path: Path) -> list[tuple[str, int]]:

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from google_work_agent.adapters.system.filesystem_operational_command_replay import (
     FilesystemOperationalCommandReplayAdapter,
 )
@@ -43,4 +45,19 @@ def test_runtime_mode_update_is__blocked_before_reservation_when__a_run_is_activ
     else:
         raise AssertionError("active Run must block a runtime-mode mutation")
 
+    assert list((tmp_path / "replay").glob("*.json")) == []
+
+
+def test_runtime_mode_update__for_a_new_selection__rejects_legacy_auto(tmp_path: Path) -> None:
+    adapter = ProcessRuntimeModeAdapter("AUTO")
+    handler = UpdateRuntimeModeHandler(
+        runtime_mode=adapter,
+        replay=FilesystemOperationalCommandReplayAdapter(tmp_path / "replay"),
+        has_active_run=lambda: False,
+    )
+
+    with pytest.raises(ValueError, match="unsupported requested runtime mode"):
+        handler(UpdateRuntimeModeCommand("command-1", "AUTO"))  # type: ignore[arg-type]
+
+    assert adapter.get_requested_mode() == "AUTO"
     assert list((tmp_path / "replay").glob("*.json")) == []

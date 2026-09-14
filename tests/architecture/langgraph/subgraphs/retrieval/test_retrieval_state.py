@@ -20,8 +20,10 @@ def test_retrieval_state__v2_declares__exact_semantic_fields() -> None:
         "exclusion_obligation_segment_ids",
         "pending_user_retrieval_need",
         "evidence_selection",
+        "evidence_reassessment_issues",
         "sufficiency",
         "final_result",
+        "task_review_candidates",
     }
     annotations = __import__(
         "google_work_agent.adapters.langgraph.subgraphs.retrieval.state",

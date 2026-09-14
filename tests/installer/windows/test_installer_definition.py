@@ -18,6 +18,10 @@ def test_installer_is_per__user_x64_signed__and_rollback_capable(tmp_path: Path)
         deployment_profile="API_ONLY",
     )
     assert "PrivilegesRequired=lowest" in script
+    assert definition.app_name == "mcp-work-agent"
+    assert "AppName=mcp-work-agent" in script
+    assert "OutputBaseFilename=mcp-work-agent-1.2.3-API_ONLY-Setup" in script
+    assert r'Name: "{autoprograms}\mcp-work-agent"' in script
     assert "ArchitecturesInstallIn64BitMode=x64compatible" in script
     assert r"{localappdata}\Programs\GoogleWorkAgent" in script
     assert "GoogleWorkAgentCredentialCleanup.exe" in script

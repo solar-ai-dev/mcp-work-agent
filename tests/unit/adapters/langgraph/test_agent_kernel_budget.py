@@ -3,8 +3,8 @@
 These are the shared helpers every native SIX_ROLE_BASELINE subgraph node
 calls immediately before/after its one real Provider LLM call (see
 adapters/langgraph/agent_kernel.py). The deterministic policy itself
-(profile caps, absolute cap, accounting) is already exhaustively unit-tested
-in isolation by tests/unit/application/workflows/test_run_budget.py; this
+(profile observations, absolute cap, accounting) is already exhaustively unit-tested
+in isolation by tests/unit/application/use_cases/run/test_guard_run_budget_policy.py; this
 file proves the *wiring* -- that these helpers read/write
 state["retry_budget"] correctly and that denial raises before any Provider
 call can happen.
@@ -66,41 +66,32 @@ def test_ensure_allows__calls_under__the_normal_cap() -> None:
     ensure_llm_call_budget(state)  # must not raise
 
 
-def test_ensure_blocks_the__call_that_would__exceed_the_normal_cap() -> None:
+def test_ensure_allows_the__call_that_exceeds__the_normal_observation_value() -> None:
     state = _state(llm_calls_used=NORMAL_MAX_LLM_CALLS)
 
-    with pytest.raises(LLMInvocationError) as excinfo:
-        ensure_llm_call_budget(state)
-    assert excinfo.value.code is LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED
+    ensure_llm_call_budget(state)
 
 
-def test_ensure_blocks_the__call_that_would_exceed__the_revision_heavy_cap() -> None:
+def test_ensure_allows_the__call_that_exceeds__the_revision_heavy_observation_value() -> None:
     state = _state(
         llm_calls_used=REVISION_HEAVY_MAX_LLM_CALLS,
         profile=BudgetProfile.REVISION_HEAVY.value,
     )
 
-    with pytest.raises(LLMInvocationError) as excinfo:
-        ensure_llm_call_budget(state)
-    assert excinfo.value.code is LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED
+    ensure_llm_call_budget(state)
 
 
-def test_ensure_blocks_the__call_that_would_exceed__the_retrieval_heavy_cap() -> None:
+def test_ensure_allows_the__call_that_exceeds__the_retrieval_heavy_observation_value() -> None:
     state = _state(
         llm_calls_used=RETRIEVAL_HEAVY_MAX_LLM_CALLS,
         profile=BudgetProfile.RETRIEVAL_HEAVY.value,
     )
 
-    with pytest.raises(LLMInvocationError) as excinfo:
-        ensure_llm_call_budget(state)
-    assert excinfo.value.code is LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED
+    ensure_llm_call_budget(state)
 
 
 def test_ensure_blocks_at__the_absolute_cap__regardless_of_profile() -> None:
-    # RETRIEVAL_HEAVY's own cap (14) is already below ABSOLUTE (16); this
-    # state is only reachable by chained consumption across profiles, but it
-    # proves the ABSOLUTE ceiling itself -- not just the profile ceiling --
-    # is enforced no matter what profile the run is in.
+    # The absolute ceiling is enforced independently of the observational profile.
     state = _state(
         llm_calls_used=ABSOLUTE_MAX_LLM_CALLS,
         profile=BudgetProfile.RETRIEVAL_HEAVY.value,
@@ -130,7 +121,7 @@ def test_budget_state_is_carried__entirely_by_the_caller__not_by_any_runtime_ins
     (a brand new Python object, no shared reference to the original state)
     reproduces the exact same decision -- there is no hidden counter
     anywhere else that could reset on process/runtime recreation."""
-    state = _state(llm_calls_used=13)
+    state = _state(llm_calls_used=NORMAL_MAX_LLM_CALLS - 1)
 
     ensure_llm_call_budget(state)
     account_provider_dispatch()
@@ -141,6 +132,5 @@ def test_budget_state_is_carried__entirely_by_the_caller__not_by_any_runtime_ins
     # a wholly new dict built only from the plain (JSON-serializable) value.
     restored_state = {"retry_budget": {**consumed}}
 
-    with pytest.raises(LLMInvocationError) as excinfo:
-        ensure_llm_call_budget(restored_state)
-    assert excinfo.value.code is LLMErrorCode.LLM_CALL_BUDGET_EXHAUSTED
+    ensure_llm_call_budget(restored_state)
+    assert restored_state["retry_budget"]["llm_calls_used"] == NORMAL_MAX_LLM_CALLS

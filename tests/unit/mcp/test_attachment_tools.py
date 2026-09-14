@@ -22,7 +22,7 @@ from google_work_agent.adapters.system.filesystem_attachment_staging import (
     FilesystemAttachmentStagingAdapter,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.system.attachment_staging_port import (
     StagedAttachmentDescriptorV1,
 )
@@ -66,6 +66,7 @@ def _build_claim(
         "approval_id": "approval-1",
         "execution_attempt_id": "attempt-1",
         "tool_name": tool_name,
+        "connector_id": "google_workspace",
         "approval_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "execution_arguments_hash": calculate_canonical_json_hash(execution_arguments),
         "service_instance_id": state.service_instance_id,

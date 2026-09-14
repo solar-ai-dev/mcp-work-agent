@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import asdict, replace
 from pathlib import Path
 from threading import RLock
@@ -15,6 +16,8 @@ from google_work_agent.ports.system.contracts.operational_command_replay import 
     OperationalReconcileResultV1,
 )
 from google_work_agent.ports.system.settings_port import (
+    MAX_SOURCE_PAGE_CALLS_PER_RUN,
+    GitHubRepositoryDefaultV1,
     PanelPreferencesV1,
     SettingsPatchV1,
     SettingsPort,
@@ -23,7 +26,39 @@ from google_work_agent.ports.system.settings_port import (
 
 _MAX_SETTINGS_BYTES = 32 * 1024
 _SETTINGS_FIELDS = frozenset(SettingsViewV1.__dataclass_fields__)
-_PATCH_FIELDS = frozenset(SettingsPatchV1.__dataclass_fields__) - {"schema_version"}
+_ADDITIVE_FIELDS = {
+    "preferred_local_model_id",
+    "default_github_repository",
+    "selected_calendar_ids",
+    "selected_tasklist_ids",
+    "selected_github_repositories",
+    "google_resource_account_id",
+}
+_PATCH_FIELDS = frozenset(SettingsPatchV1.__dataclass_fields__) - {
+    "schema_version",
+    "github_repository_supplied",
+    "default_github_repository",
+    "clear_default_calendar",
+    "clear_default_tasklist",
+}
+_LEGACY_FLAT_SETTINGS_FIELDS = frozenset(
+    {
+        "approval_ttl_minutes",
+        "approved_model_id",
+        "config_schema_version",
+        "default_calendar_id",
+        "default_tasklist_id",
+        "deployment_profile",
+        "external_llm_consent",
+        "log_level",
+        "ollama_endpoint",
+        "requested_runtime_mode",
+        "run_retention_days",
+        "timezone",
+        "work_hours",
+    }
+)
+_LEGACY_WORK_HOURS_FIELDS = frozenset({"days", "end", "start"})
 
 
 def _default_settings() -> SettingsViewV1:
@@ -43,7 +78,7 @@ def _default_settings() -> SettingsViewV1:
         calendar_buffer_minutes=0,
         max_run_execution_ms=900_000,
         max_connector_calls_per_run=50,
-        max_source_page_calls_per_run=8,
+        max_source_page_calls_per_run=MAX_SOURCE_PAGE_CALLS_PER_RUN,
         max_detail_fetches_per_run=12,
         max_context_tokens_per_run=16_000,
         max_retry_attempts_per_run=2,
@@ -67,6 +102,13 @@ class FileSettingsStore:
         if len(raw) > _MAX_SETTINGS_BYTES:
             raise ValueError("settings file exceeds size limit")
         payload = json.loads(raw.decode("utf-8"))
+        if isinstance(payload, dict) and set(payload) == _LEGACY_FLAT_SETTINGS_FIELDS:
+            settings = replace(
+                _migrate_legacy_flat_settings(cast(dict[str, object], payload)),
+                timezone="Asia/Seoul",
+            )
+            self.save(settings, marker=None)
+            return settings, None
         if not isinstance(payload, dict) or set(payload) - {
             "schema_version",
             "settings",
@@ -76,18 +118,26 @@ class FileSettingsStore:
         if payload.get("schema_version") != 1:
             raise ValueError("unsupported settings schema_version")
         settings_payload = payload.get("settings")
-        if not isinstance(settings_payload, dict) or set(settings_payload) != _SETTINGS_FIELDS:
+        if not isinstance(settings_payload, dict):
+            raise ValueError("settings field set mismatch")
+        if _SETTINGS_FIELDS - _ADDITIVE_FIELDS <= set(settings_payload) < _SETTINGS_FIELDS:
+            settings_payload = {
+                **dict.fromkeys(_ADDITIVE_FIELDS),
+                **settings_payload,
+            }
+            settings = replace(
+                _view_from_payload(cast(dict[str, object], settings_payload)), timezone="Asia/Seoul"
+            )
+            marker = _operation_marker(payload.get("last_operation"))
+            self.save(settings, marker=marker)
+            return settings, marker
+        if set(settings_payload) != _SETTINGS_FIELDS:
             raise ValueError("settings field set mismatch")
         settings = _view_from_payload(cast(dict[str, object], settings_payload))
-        marker_payload = payload.get("last_operation")
-        marker = None
-        if marker_payload is not None:
-            if not isinstance(marker_payload, dict) or set(marker_payload) != {
-                "operation_ref",
-                "patch_hash",
-            }:
-                raise ValueError("settings operation marker is invalid")
-            marker = {key: str(value) for key, value in marker_payload.items()}
+        marker = _operation_marker(payload.get("last_operation"))
+        if settings.timezone != "Asia/Seoul":
+            settings = replace(settings, timezone="Asia/Seoul")
+            self.save(settings, marker=marker)
         return settings, marker
 
     def save(self, settings: SettingsViewV1, marker: dict[str, str] | None) -> None:
@@ -130,6 +180,8 @@ class JsonSettingsAdapter(SettingsPort):
     ) -> SettingsViewV1:
         if settings_patch.schema_version != 1 or not operation_ref.strip():
             raise ValueError("valid settings patch and operation_ref are required")
+        if settings_patch.timezone not in (None, "Asia/Seoul"):
+            raise ValueError("timezone must be Asia/Seoul")
         with self._lock:
             current, marker = self._store.load()
             patch_hash = _patch_hash(settings_patch)
@@ -142,6 +194,23 @@ class JsonSettingsAdapter(SettingsPort):
                 for name in _PATCH_FIELDS
                 if (value := getattr(settings_patch, name)) is not None
             }
+            if settings_patch.github_repository_supplied:
+                changes["default_github_repository"] = settings_patch.default_github_repository
+            if settings_patch.clear_default_calendar:
+                if settings_patch.default_calendar_id is not None:
+                    raise ValueError("cannot set and clear default calendar together")
+                changes["default_calendar_id"] = None
+            if settings_patch.clear_default_tasklist:
+                if settings_patch.default_tasklist_id is not None:
+                    raise ValueError("cannot set and clear default task list together")
+                changes["default_tasklist_id"] = None
+            for selected, default in (
+                (settings_patch.selected_calendar_ids, "default_calendar_id"),
+                (settings_patch.selected_tasklist_ids, "default_tasklist_id"),
+                (settings_patch.selected_github_repositories, "default_github_repository"),
+            ):
+                if selected is not None:
+                    changes[default] = selected[0] if len(selected) == 1 else None
             updated = replace(current, **changes)
             _validate_settings(updated)
             self._store.save(
@@ -164,7 +233,7 @@ class JsonSettingsAdapter(SettingsPort):
         return OperationalReconcileResultV1(
             status="COMPLETED" if completed else "SAFE_TO_RETRY",
             result_ref=operation_ref if completed else None,
-            bounded_result={"settings_hash": _settings_hash(settings)} if completed else None,
+            bounded_result=asdict(settings) if completed else None,
         )
 
 
@@ -212,7 +281,65 @@ def _view_from_payload(payload: dict[str, object]) -> SettingsViewV1:
         max_retry_attempts_per_run=_required_int(payload, "max_retry_attempts_per_run"),
         circuit_failure_threshold=_required_int(payload, "circuit_failure_threshold"),
         circuit_open_duration_ms=_required_int(payload, "circuit_open_duration_ms"),
+        preferred_local_model_id=_optional_string(payload["preferred_local_model_id"]),
+        selected_calendar_ids=_selection_ids(payload.get("selected_calendar_ids")),
+        selected_tasklist_ids=_selection_ids(payload.get("selected_tasklist_ids")),
+        google_resource_account_id=_optional_string(payload.get("google_resource_account_id")),
+        selected_github_repositories=(
+            None
+            if payload.get("selected_github_repositories") is None
+            else tuple(
+                GitHubRepositoryDefaultV1.from_payload(item)
+                for item in cast(list[object], payload["selected_github_repositories"])
+            )
+        ),
+        default_github_repository=(
+            None
+            if payload["default_github_repository"] is None
+            else GitHubRepositoryDefaultV1.from_payload(payload["default_github_repository"])
+        ),
     )
+
+
+def _migrate_legacy_flat_settings(payload: dict[str, object]) -> SettingsViewV1:
+    """Atomically cut over the exact retired flat settings envelope."""
+
+    if _required_int(payload, "config_schema_version") != 1:
+        raise ValueError("unsupported legacy settings schema_version")
+    work_hours_value = payload["work_hours"]
+    if not isinstance(work_hours_value, dict) or set(work_hours_value) != _LEGACY_WORK_HOURS_FIELDS:
+        raise ValueError("legacy work_hours field set mismatch")
+    work_hours = cast(dict[str, object], work_hours_value)
+    days = work_hours["days"]
+    if not isinstance(days, list) or any(
+        not isinstance(day, int) or isinstance(day, bool) for day in days
+    ):
+        raise ValueError("legacy work_hours days are invalid")
+    ordered_days = tuple(cast(list[int], days))
+    if ordered_days == (0, 1, 2, 3, 4):
+        include_weekends = False
+    elif ordered_days == (0, 1, 2, 3, 4, 5, 6):
+        include_weekends = True
+    else:
+        raise ValueError("legacy work_hours days cannot be represented")
+
+    preferred_llm_mode = _required_string(payload, "requested_runtime_mode")
+    if preferred_llm_mode not in {"AUTO", "LOCAL_GPU", "API_LLM"}:
+        raise ValueError("legacy requested_runtime_mode is invalid")
+    settings = replace(
+        _default_settings(),
+        timezone=_required_string(payload, "timezone"),
+        default_tasklist_id=_optional_string(payload["default_tasklist_id"]),
+        default_calendar_id=_optional_string(payload["default_calendar_id"]),
+        preferred_llm_mode=cast(Literal["AUTO", "LOCAL_GPU", "API_LLM"], preferred_llm_mode),
+        external_llm_consent=_required_bool(payload, "external_llm_consent"),
+        retention_days=_required_int(payload, "run_retention_days"),
+        working_day_start_local=_required_string(work_hours, "start"),
+        working_day_end_local=_required_string(work_hours, "end"),
+        include_weekends=include_weekends,
+    )
+    _validate_settings(settings)
+    return settings
 
 
 def _required_string(payload: dict[str, object], key: str) -> str:
@@ -251,6 +378,21 @@ def _validate_settings(settings: SettingsViewV1) -> None:
         raise ValueError("retention_days must be in 1..30")
     if settings.calendar_buffer_minutes < 0:
         raise ValueError("calendar_buffer_minutes must be non-negative")
+    for selected in (settings.selected_calendar_ids, settings.selected_tasklist_ids):
+        _selection_ids(selected)
+    repositories = settings.selected_github_repositories
+    if repositories is not None and (
+        len(repositories) > 100
+        or len({item.repository.casefold() for item in repositories}) != len(repositories)
+        or len({item.account_id for item in repositories}) > 1
+    ):
+        raise ValueError("invalid repository selection")
+    if settings.preferred_local_model_id is not None and (
+        not settings.preferred_local_model_id.strip()
+        or len(settings.preferred_local_model_id) > 200
+        or re.search(r"[\x00-\x1f\x7f]", settings.preferred_local_model_id)
+    ):
+        raise ValueError("preferred_local_model_id is invalid")
     positive = (
         settings.max_run_execution_ms,
         settings.max_connector_calls_per_run,
@@ -262,6 +404,8 @@ def _validate_settings(settings: SettingsViewV1) -> None:
     )
     if any(value <= 0 for value in positive) or settings.max_retry_attempts_per_run < 0:
         raise ValueError("runtime budgets and circuit settings are invalid")
+    if settings.max_source_page_calls_per_run > MAX_SOURCE_PAGE_CALLS_PER_RUN:
+        raise ValueError("max_source_page_calls_per_run exceeds the product limit")
 
 
 def _validate_hhmm(value: str) -> None:
@@ -272,19 +416,56 @@ def _validate_hhmm(value: str) -> None:
 
 
 def _patch_hash(settings_patch: SettingsPatchV1) -> str:
+    payload = asdict(settings_patch)
+    for field in (
+        "selected_calendar_ids",
+        "selected_tasklist_ids",
+        "selected_github_repositories",
+        "google_resource_account_id",
+        "preferred_local_model_id",
+    ):
+        if payload[field] is None:
+            payload.pop(field)
+    for field in ("clear_default_calendar", "clear_default_tasklist"):
+        if not payload[field]:
+            payload.pop(field)
+    if not settings_patch.github_repository_supplied:
+        payload.pop("default_github_repository")
+        payload.pop("github_repository_supplied")
     return hashlib.sha256(
-        json.dumps(asdict(settings_patch), separators=(",", ":"), sort_keys=True).encode()
-    ).hexdigest()
-
-
-def _settings_hash(settings: SettingsViewV1) -> str:
-    return hashlib.sha256(
-        json.dumps(asdict(settings), separators=(",", ":"), sort_keys=True).encode()
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     ).hexdigest()
 
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _selection_ids(value: object) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) > 100
+        or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item) > 512
+            or re.search(r"[\x00-\x1f\x7f]", item)
+            for item in value
+        )
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError("invalid resource selection")
+    return tuple(value)
+
+
+def _operation_marker(value: object) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"operation_ref", "patch_hash"}:
+        raise ValueError("settings operation marker is invalid")
+    return {key: str(item) for key, item in value.items()}
 
 
 __all__ = ["FileSettingsStore", "JsonSettingsAdapter"]

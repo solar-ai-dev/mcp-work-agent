@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from google_work_agent.adapters.langgraph.subgraphs.retrieval.routing import route_after_plan_query
+
 
 def test_plan_query__exact_node__projection_and_router() -> None:
     owner = (
@@ -8,4 +10,6 @@ def test_plan_query__exact_node__projection_and_router() -> None:
     )
     assert "project_plan_query_input" in (owner / "nodes/plan_query_node.py").read_text()
     assert (owner / "projections/plan_query_projection.py").exists()
-    assert 'return "build_query"' in (owner / "routing/route_after_plan_query.py").read_text()
+    route = route_after_plan_query.route_after_plan_query
+    assert route({"__context_followup_operation__": "FINALIZE"}) == "finalize"
+    assert route({}) == "build_query"

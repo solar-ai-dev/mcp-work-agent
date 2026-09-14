@@ -1,0 +1,117 @@
+"""Round-accounting scenarios owned by retrieval.finalize_retrieval."""
+
+from typing import cast
+
+import pytest
+
+from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
+    RetrievalResultV1,
+)
+from google_work_agent.application.agents.retrieval.finalize_retrieval import (
+    RetrievalRoundLimitExceeded,
+    advance_current_round_no,
+    followup_fits_retrieval_round_budget,
+    initialize_current_round_no,
+    retrieval_round_count,
+)
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    ToolRoutePlanV2,
+)
+
+
+def test_initial_round_is__zero_and_projects__one_completed_round() -> None:
+    assert initialize_current_round_no(prior_result=None, tool_route_plan=_route_plan(1)) == 0
+    assert retrieval_round_count(current_round_no=0) == 1
+
+
+def test_followup_attempt__next_round__advances_before_recording() -> None:
+    assert advance_current_round_no(current_round_no=0, is_followup=False) == 0
+    assert advance_current_round_no(current_round_no=0, is_followup=True) == 1
+    assert advance_current_round_no(current_round_no=1, is_followup=True) == 2
+
+
+def test_fourth_attempt__round_limit_reached__blocks_before_connector_read() -> None:
+    with pytest.raises(RetrievalRoundLimitExceeded):
+        advance_current_round_no(current_round_no=2, is_followup=True)
+
+
+def test_fourth_semantic_followup__against_round_budget__does_not_fit() -> None:
+    assert not followup_fits_retrieval_round_budget(
+        current_round_no=2, operation_kinds={"NEXT_PAGE"}
+    )
+
+
+def test_detail_hydration__after_third_semantic_round__still_fits_budget() -> None:
+    assert followup_fits_retrieval_round_budget(
+        current_round_no=2, operation_kinds={"DETAIL_FETCH"}
+    )
+
+
+@pytest.mark.parametrize(
+    ("prior_rounds", "expected_round_no", "expected_count"),
+    [(1, 1, 2), (2, 2, 3)],
+)
+def test_same_route__continues_from__prior_completed_count(
+    prior_rounds: int, expected_round_no: int, expected_count: int
+) -> None:
+    current_round_no = initialize_current_round_no(
+        prior_result=_result(prior_rounds, route_revision=1), tool_route_plan=_route_plan(1)
+    )
+    assert current_round_no == expected_round_no
+    assert retrieval_round_count(current_round_no=current_round_no) == expected_count
+
+
+def test_same_route_additional__retrieval_is_blocked__after_three_rounds() -> None:
+    with pytest.raises(RetrievalRoundLimitExceeded):
+        initialize_current_round_no(
+            prior_result=_result(3, route_revision=1), tool_route_plan=_route_plan(1)
+        )
+
+
+def test_new_input_route__revision_starts_a__new_round_chain() -> None:
+    assert (
+        initialize_current_round_no(
+            prior_result=_result(2, route_revision=1), tool_route_plan=_route_plan(2)
+        )
+        == 0
+    )
+
+
+def _route_plan(revision: int) -> ToolRoutePlanV2:
+    return cast(
+        ToolRoutePlanV2,
+        {
+            "schema_version": 2,
+            "input_plan": {
+                "schema_version": 1,
+                "meta": {"artifact_id": "input-route", "revision": revision, "based_on": []},
+                "input_routes": [],
+            },
+            "output_plan": {
+                "schema_version": 1,
+                "meta": {"artifact_id": "output-route", "revision": 1, "based_on": []},
+                "output_mode": "ANSWER",
+            },
+        },
+    )
+
+
+def _result(rounds: int, *, route_revision: int) -> RetrievalResultV1:
+    return {
+        "schema_version": 1,
+        "meta": {
+            "artifact_id": "retrieval-result",
+            "revision": 1,
+            "based_on": [{"artifact_id": "input-route", "revision": route_revision}],
+        },
+        "coverage": "PARTIAL",
+        "context_bundle_ref": None,
+        "evidence_refs": [],
+        "selected_segment_ids": [],
+        "excluded_segment_ids": [],
+        "source_resource_refs": [],
+        "source_statuses": [],
+        "availability_results": [],
+        "missing_information": [],
+        "retrieval_rounds": rounds,
+    }

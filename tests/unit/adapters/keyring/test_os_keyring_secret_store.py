@@ -41,8 +41,13 @@ def test_keyring_namespace_is__closed_by_environment__and_credential_type() -> N
         keyring_service_name(environment="STAGING", credential_type="llm-api-key")
         == "GoogleWorkAgent/staging/llm-api-key"
     )
-    assert keyring_service_name(environment="DEVELOPMENT", credential_type="github-oauth") == "GoogleWorkAgent/development/github-oauth"
-    assert keyring_service_name(environment="PRODUCTION", credential_type="github-oauth") != keyring_service_name(environment="DEVELOPMENT", credential_type="github-oauth")
+    assert (
+        keyring_service_name(environment="DEVELOPMENT", credential_type="github-oauth")
+        == "GoogleWorkAgent/development/github-oauth"
+    )
+    assert keyring_service_name(
+        environment="PRODUCTION", credential_type="github-oauth"
+    ) != keyring_service_name(environment="DEVELOPMENT", credential_type="github-oauth")
     with pytest.raises(ValueError, match="unsupported keyring environment"):
         keyring_service_name(environment="personal", credential_type="llm-api-key")
 

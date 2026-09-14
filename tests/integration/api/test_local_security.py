@@ -1,3 +1,8 @@
+from dataclasses import replace
+from pathlib import Path
+from typing import cast
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.fakes import DeterministicUUID, FakeClockPort
 from tests.support.fakes.llm import DisabledLlmRuntimeStatusPort
@@ -6,6 +11,9 @@ from tests.support.readiness import (
     StaticReadinessAggregator,
 )
 
+from google_work_agent.adapters.persistence.connection import connect_sqlite
+from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
 from google_work_agent.adapters.system.process_component_circuit_state import (
     ProcessComponentCircuitStateAdapter,
 )
@@ -16,6 +24,12 @@ from google_work_agent.api.security.access_guard import LocalApiAccessGuard
 from google_work_agent.api.security.bootstrap import InMemoryBootstrapGrantStore
 from google_work_agent.api.security.cookies import local_session_cookie_name
 from google_work_agent.api.security.sessions import InMemoryLocalSessionManager
+from google_work_agent.application.use_cases.conversation.create_conversation import (
+    CreateConversationHandler,
+)
+from google_work_agent.application.use_cases.conversation.list_conversations import (
+    ListConversationsHandler,
+)
 from google_work_agent.application.use_cases.runtime_status.get_runtime_status import (
     GetRuntimeStatusHandler,
 )
@@ -185,6 +199,60 @@ def test_bootstrap_sets__cookie_and__runtime_requires_session() -> None:
     assert f"{local_session_cookie_name('svc-test')}=" in bootstrap.headers["set-cookie"]
     assert "CANARY_BOOTSTRAP_SECRET" not in bootstrap.text
     assert authorized.status_code == 200
+
+
+def test_local_session__creates_and_lists_conversations__without_google(tmp_path: Path) -> None:
+    path = tmp_path / "local-conversation.db"
+    with connect_sqlite(path) as connection:
+        apply_migrations(connection)
+    factory = sqlite_unit_of_work_factory(path)
+    headers = {
+        "Origin": "http://127.0.0.1:8765",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty",
+    }
+    with _build_client() as client:
+        app = cast(FastAPI, client.app)
+        container = app.state.container
+        app.state.container = replace(
+            container,
+            current_account_id_provider=lambda: None,
+            create_conversation_handler=CreateConversationHandler(
+                unit_of_work_factory=factory,
+                now_ms=lambda: 100,
+            ),
+            list_conversations_handler=ListConversationsHandler(unit_of_work_factory=factory),
+        )
+        response = client.post(
+            "/api/v1/session/bootstrap",
+            headers=headers,
+            json={
+                "schema_version": 1,
+                "bootstrap_secret": "CANARY_BOOTSTRAP_SECRET",
+                "frontend_api_contract_version": "1",
+            },
+        )
+        assert response.status_code == 200
+        created = client.post(
+            "/api/v1/conversations",
+            headers=headers,
+            json={
+                "schema_version": 1,
+                "command_id": "local-conversation-command",
+                "title": "local",
+            },
+        )
+        assert created.status_code == 201
+        listed = client.get("/api/v1/conversations", headers=headers)
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["conversation_id"] == created.json()["conversation_id"]
+    with connect_sqlite(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM google_accounts").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT account_id FROM conversations").fetchone()[0]
+            == "local-workspace"
+        )
 
 
 def test_incompatible_session__blocks_mutation__and_sse() -> None:

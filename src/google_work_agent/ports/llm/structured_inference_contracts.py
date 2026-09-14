@@ -98,13 +98,10 @@ class RuntimePolicy:
     local_timeout_seconds: int = 180
     structured_output_repair_budget: int = 1
     max_fallback_count: int = 1
-    # docs/15 section 9.5 (Runtime Prompt Activation Gate): fixed sampling
-    # conditions for the Node Prompt Gate only -- never set by production
-    # callers (see api/composition.py, which constructs RuntimePolicy()
-    # with no args). None means "use the provider's own default", which is
-    # what every production dispatch path does today. Fixing these values
-    # narrows sampling variance on a best-effort basis; it does not
-    # guarantee bit-identical, fully deterministic output.
+    # None means "use the provider's own default". Explicit values are
+    # accepted only through the development runtime configuration so finite
+    # local-model measurements can be reproduced without changing user
+    # Settings or the signed product configuration.
     sampling_temperature: float | None = None
     sampling_seed: int | None = None
 
@@ -239,11 +236,17 @@ class LLMInvocationError(RuntimeError):
         *,
         retryable: bool = False,
         fallback_reason: str | None = None,
+        runtime_prerequisite: bool = False,
+        affected_field_paths: tuple[str, ...] = (),
+        provider_dispatch_occurred: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.fallback_reason = fallback_reason
+        self.runtime_prerequisite = runtime_prerequisite
+        self.affected_field_paths = affected_field_paths
+        self.provider_dispatch_occurred = provider_dispatch_occurred
 
 
 class StructuredLLMProvider(Protocol):
@@ -294,11 +297,10 @@ class ToolCallingLLMProvider(Protocol):
 class SchemaRepairer(Protocol):
     """Optional repair boundary for one invalid structured payload.
 
-    Covers both JSON-schema-shape failures and semantic/contract-validator
-    failures -- both are routed through the same one-attempt-per-node-call
-    budget (``RuntimePolicy.structured_output_repair_budget``). A real
-    implementation must re-invoke the same routed ``provider`` so the
-    repair call uses the same runtime/model that produced ``failed_output``.
+    Covers JSON-schema-shape failures only. Semantic/contract failures use
+    their owning Agent's bounded semantic-revision path. A real implementation
+    must re-invoke the same routed ``provider`` so the repair call uses the
+    same runtime/model that produced ``failed_output``.
     """
 
     def repair(
@@ -315,8 +317,8 @@ class SchemaRepairer(Protocol):
         max_attempts: int,
         failure_reason_code: str,
         validator_errors: tuple[str, ...],
-    ) -> object:
-        """Return one repaired candidate output."""
+    ) -> ProviderResponsePayload:
+        """Return the repaired candidate with its provider usage metadata."""
 
 
 class OllamaRuntimeProbe(Protocol):

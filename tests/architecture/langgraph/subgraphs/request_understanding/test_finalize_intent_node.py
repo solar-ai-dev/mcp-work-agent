@@ -37,6 +37,7 @@ def test_request_understanding__graph_and__state_are_exact() -> None:
     assert "RequestUnderstandingStateV2" in graph
     assert re.findall(r'graph\.add_node\("([^"]+)"', graph) == [
         "identify_goal",
+        "identify_temporal_scope",
         "detect_ambiguity",
         "finalize_intent",
     ]

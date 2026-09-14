@@ -87,7 +87,7 @@ def _command(*, command_id: str, request_hash: str, request_text: str) -> StartR
         conversation_id="conversation-1",
         request_text=request_text,
         entry_mode="AGENT_SEARCH",
-        requested_mode="AUTO",
+        requested_mode="LOCAL_GPU",
         api_contract_version="1",
     )
 

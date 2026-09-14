@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getCurrentGoogleAccount,
+  getGitHubConnection,
   getGoogleConnection,
   getSettings,
   type CurrentGoogleAccount,
   type GoogleConnection,
+  type GitHubConnection,
   type SettingsView,
 } from "../features/settings";
 import { getRuntime, StartupCheckScreen, type RuntimeSummary, type StartupCheckState } from "../features/diagnostics";
@@ -20,10 +22,10 @@ import { SafeModeRecovery } from "./safe_mode_recovery";
 export type StartupFlowContext = {
   runtime: RuntimeSummary;
   google: GoogleConnection;
+  github: GitHubConnection | null;
   currentAccount: CurrentGoogleAccount["account"];
   settings: SettingsView;
   calendarTimezone: string;
-  setupCompleted: boolean;
 };
 
 type Props = {
@@ -35,6 +37,7 @@ const INITIAL_STATE: StartupCheckState = {
   status: "idle",
   message: "시작 검사를 준비하고 있습니다.",
   checks: [],
+  retryable: false,
 };
 
 export function StartupFlow({ children }: Props): JSX.Element {
@@ -53,6 +56,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
       status: "loading",
       message: "로컬 서비스 상태를 확인하고 있습니다.",
       checks: [],
+      retryable: false,
     });
     try {
       const live = await getLive();
@@ -65,6 +69,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
           message: "Frontend와 Local API 버전이 호환되지 않습니다.",
           checks: [],
           error: "앱을 업데이트한 뒤 다시 시작해 주세요.",
+          retryable: false,
         });
         return;
       }
@@ -89,6 +94,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
             message: "Local API 호환성 확인에 실패했습니다.",
             checks: [],
             error: "호환되는 앱 버전으로 다시 시작해 주세요.",
+            retryable: false,
           });
           return;
         }
@@ -104,6 +110,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
           message: "Frontend와 Local API 준비 계약이 호환되지 않습니다.",
           checks: ready.checks,
           error: "앱을 업데이트한 뒤 다시 시작해 주세요.",
+          retryable: false,
         });
         return;
       }
@@ -117,6 +124,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
             : "Local Service가 아직 준비되지 않았습니다.",
           checks: ready.checks,
           error: "검사 상세를 확인하고 다시 시도해 주세요.",
+          retryable: true,
         });
         return;
       }
@@ -127,42 +135,61 @@ export function StartupFlow({ children }: Props): JSX.Element {
         phase: "runtime",
         message: "보호된 실행 상태를 불러오고 있습니다.",
       }));
-      const [runtime, google, settings, firstAccount] = await Promise.all([
+      const [runtimeResult, googleResult, githubResult, settingsResult, accountResult] = await Promise.allSettled([
         getRuntime(),
         getGoogleConnection(),
+        getGitHubConnection().catch(() => null),
         getSettings(),
         getCurrentGoogleAccount(),
       ]);
-      const account = google.connection_status === "CONNECTED" && firstAccount.account === null
+      if (settingsResult.status === "rejected") throw settingsResult.reason;
+      const settings = settingsResult.value;
+      const runtime: RuntimeSummary = runtimeResult.status === "fulfilled" ? runtimeResult.value : {
+        schema_version: 1, service_instance_id: "", connectors: [], llm_providers: [], local_models: [],
+        component_circuits: [], active_run_budget: null, recovery_required: false,
+        release_version: "", frontend_build_version: "", api_contract_version: API_CONTRACT_VERSION,
+        deployment_profile: "", runtime_mode: { schema_version: 1, requested_mode: settings.preferred_llm_mode, actual_runtime: null, fallback_reason: "RUNTIME_STATUS_UNAVAILABLE" },
+        database_status: "UNAVAILABLE", migration_status: "PENDING", sse_status: "UNAVAILABLE",
+        recent_sanitized_error_code: "RUNTIME_STATUS_UNAVAILABLE", launcher_status: "UNAVAILABLE",
+        manifest_status: "UNAVAILABLE", session_status: "ESTABLISHED", safe_mode: false,
+        last_backup_status: null, last_migration_status: null,
+      };
+      const google: GoogleConnection = googleResult.status === "fulfilled" ? googleResult.value : {
+        schema_version: 1, connector_id: "google_workspace", connection_status: "UNAVAILABLE",
+        account_id: null, display_email: null, granted_scopes: [], missing_required_scopes: [],
+      };
+      const github = githubResult.status === "fulfilled" ? githubResult.value : null;
+      const firstAccount = accountResult.status === "fulfilled" ? accountResult.value.account : null;
+      const account = google.connection_status === "CONNECTED" && firstAccount === null
         ? (await getCurrentGoogleAccount()).account
-        : firstAccount.account;
-      const setupCompleted = Boolean(
-        settings.default_calendar_id
-        && settings.default_tasklist_id
-        && settings.timezone,
-      );
+        : firstAccount;
       setContext({
         runtime,
         google,
+        github,
         currentAccount: account,
         settings,
-        calendarTimezone: settings.timezone,
-        setupCompleted,
+        calendarTimezone: "Asia/Seoul",
       });
       setState({
         phase: "ready",
         status: "ready",
         message: "UI를 준비했습니다.",
         checks: ready.checks,
+        retryable: false,
       });
     } catch (error) {
+      const retryable = !(error instanceof ApiClientError) || error.envelope?.retryable === true;
       setCompatibility((current) => current === "INCOMPATIBLE" ? current : "UNAVAILABLE");
       setState({
         phase: "failed",
         status: "error",
         message: "시작 검사를 완료하지 못했습니다.",
         checks: [],
-        error: error instanceof ApiClientError ? error.message : "앱을 다시 열어 주세요.",
+        error: retryable
+          ? error instanceof ApiClientError ? error.message : "앱을 다시 열어 주세요."
+          : "안전한 실행 조건을 확인하지 못해 작업을 중단했습니다.",
+        retryable,
       });
     }
   }, []);
@@ -174,7 +201,7 @@ export function StartupFlow({ children }: Props): JSX.Element {
   }, [runStartup]);
 
   const fallback = state.phase === "safe-mode"
-    ? <SafeModeRecovery reason={state.checks.map((check) => check.detail).filter(Boolean).join(", ") || "복구가 필요합니다."} onRetry={() => void runStartup()} />
+    ? <SafeModeRecovery reason={Array.from(new Set(state.checks.map((check) => check.detail).filter(Boolean))).join(", ") || "CORE_INITIALIZATION_FAILED"} />
     : <StartupCheckScreen state={state} onRetry={() => void runStartup()} />;
   return (
     <ApiCompatibilityGate

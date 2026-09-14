@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from json import JSONDecodeError, loads
 
-from google_work_agent.application.agents.request_understanding.validate_intent import (
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     is_fully_qualified_repository,
 )
 from google_work_agent.domain.action.model import Action as ActionRecord
 from google_work_agent.domain.action.model import EffectType, PolicyViolationError
 from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceRefRecord
-from google_work_agent.ports.connector.contracts.google_workspace import ResourceType
+from google_work_agent.ports.connector.contracts.resource_snapshot import ResourceType
 
 _RESOURCE_AUTHORITY_FIELDS = frozenset(
     {"resource_type", "resource_id", "parent_id", "version", "payload"}
@@ -145,10 +145,7 @@ def build_approval_source_snapshot(
     if resource_ref.resource_id != expected_resource_id:
         raise PolicyViolationError("UPDATE approval resource id does not match action arguments")
 
-    if (
-        expected_parent_id is not None
-        and resource_ref.parent_resource_id != expected_parent_id
-    ):
+    if expected_parent_id is not None and resource_ref.parent_resource_id != expected_parent_id:
         raise PolicyViolationError(
             "UPDATE approval parent resource does not match action arguments"
         )

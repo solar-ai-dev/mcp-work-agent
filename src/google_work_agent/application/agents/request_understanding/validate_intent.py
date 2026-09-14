@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Literal, cast, overload
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    SOURCE_STATUS_VALUES_BY_RESOURCE,
+    WRITE_EFFECT_RESOURCE_TYPES,
     AmbiguityV1,
     ConstraintKindValue,
     ConstraintProvenanceSource,
@@ -11,17 +14,37 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     ConstraintV1,
     RequestIntentCandidateV1,
     RequestIntentV2,
+    RequestUnderstandingValidationError,
+    ResourceResponsibilitiesV1,
+    is_fully_qualified_repository,
+    is_gmail_draft_constraint,
+    is_repository_constraint,
+    is_source_status_constraint,
+    is_valid_gmail_draft_id,
+    repository_from_constraints,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
-
-
-class RequestUnderstandingValidationError(ValueError):
-    """Raised when a Request Understanding artifact violates its owner contract."""
-
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 _CONSTRAINT_KINDS = {"PERSON", "EMAIL", "DATE", "TIME", "RESOURCE", "SCOPE", "USER_REQUIREMENT"}
 _EFFECTS = {"READ", "CREATE", "UPDATE", "SEND", "DELETE"}
 _PROVENANCE_SOURCES = {"USER_REQUEST", "CONFIRMATION_RESPONSE"}
+_SOURCE_LITERAL_FIELDS = frozenset(
+    {
+        "search_terms",
+        "subject",
+        "search_criteria_subject",
+        "sender",
+        "sender_email",
+        "from",
+        "search_criteria_sender",
+        "recipient",
+        "recipient_email",
+        "to",
+        "search_criteria_recipient",
+        "person",
+    }
+)
 
 
 @overload
@@ -59,8 +82,12 @@ def validate_intent(
         "analysis_requirement",
         "ambiguity",
     }
+    if "resource_responsibilities" in root:
+        expected.add("resource_responsibilities")
     if require_meta:
         expected.add("meta")
+        if "repository_default" in root:
+            expected.add("repository_default")
     if set(root) != expected:
         raise RequestUnderstandingValidationError("RequestIntentV2 fields are invalid")
     if root.get("schema_version") != 2:
@@ -73,13 +100,6 @@ def validate_intent(
         _constraint(item, f"$.constraints[{index}]")
         for index, item in enumerate(_list(root.get("constraints"), "$.constraints"))
     ]
-    if provenance_sources is not None:
-        for index, constraint in enumerate(constraints):
-            _validate_provenance_binding(
-                constraint,
-                f"$.constraints[{index}]",
-                provenance_sources=provenance_sources,
-            )
     effects = _string_list(root.get("requested_effect_hints"), "$.requested_effect_hints")
     if any(effect not in _EFFECTS for effect in effects):
         raise RequestUnderstandingValidationError(
@@ -88,6 +108,25 @@ def validate_intent(
     resource_hints = _string_list(
         root.get("requested_resource_hints"), "$.requested_resource_hints"
     )
+    responsibilities = validate_resource_responsibilities(
+        root.get("resource_responsibilities"),
+        effects=effects,
+        resource_hints=resource_hints,
+        constraints=constraints,
+        required=requires_resource_responsibilities(
+            effects=effects,
+            resource_hints=resource_hints,
+        ),
+    )
+    if provenance_sources is not None:
+        for index, constraint in enumerate(constraints):
+            _validate_provenance_binding(
+                constraint,
+                f"$.constraints[{index}]",
+                provenance_sources=provenance_sources,
+                effects=effects,
+                resource_hints=resource_hints,
+            )
     analysis_requirement = root.get("analysis_requirement")
     if analysis_requirement not in {"NONE", "REQUIRED"}:
         raise RequestUnderstandingValidationError("$.analysis_requirement is invalid")
@@ -104,6 +143,8 @@ def validate_intent(
         "analysis_requirement": cast(Literal["NONE", "REQUIRED"], analysis_requirement),
         "ambiguity": ambiguity,
     }
+    if responsibilities is not None:
+        candidate["resource_responsibilities"] = responsibilities
     if not require_meta:
         return candidate
     meta = _mapping(root.get("meta"), "$.meta")
@@ -119,6 +160,15 @@ def validate_intent(
         {
             **candidate,
             "meta": {"artifact_id": artifact_id, "revision": revision, "based_on": list(based_on)},
+            **(
+                {
+                    "repository_default": asdict(
+                        GitHubRepositoryDefaultV1.from_payload(root["repository_default"])
+                    )
+                }
+                if "repository_default" in root
+                else {}
+            ),
         },
     )
 
@@ -141,12 +191,17 @@ def _ambiguity(value: object) -> AmbiguityV1:
 
 def _constraint(value: object, path: str) -> ConstraintV1:
     root = _mapping(value, path)
-    if not {"kind", "field", "value"} <= set(root) <= {
-        "kind",
-        "field",
-        "value",
-        "provenance",
-    }:
+    if (
+        not {"kind", "field", "value"}
+        <= set(root)
+        <= {
+            "kind",
+            "field",
+            "value",
+            "provenance",
+            "source_resource_type",
+        }
+    ):
         raise RequestUnderstandingValidationError(f"{path} fields are invalid")
     kind = root.get("kind")
     if kind not in _CONSTRAINT_KINDS:
@@ -163,6 +218,12 @@ def _constraint(value: object, path: str) -> ConstraintV1:
     }
     if "provenance" in root:
         constraint["provenance"] = _provenance(root.get("provenance"), f"{path}.provenance")
+    if "source_resource_type" in root:
+        constraint["source_resource_type"] = _string(root, "source_resource_type", path)
+    if not is_source_status_constraint(constraint) and "source_resource_type" in constraint:
+        raise RequestUnderstandingValidationError(
+            f"{path}.source_resource_type is only valid for a source status"
+        )
     return constraint
 
 
@@ -172,32 +233,80 @@ def materialize_validated_constraint_provenance(
     user_request: str,
     confirmation_response_text: str | None,
 ) -> list[ConstraintV1]:
-    """Bind identity constraints to exact current-Run source text."""
-    sources: list[tuple[ConstraintProvenanceSource, str]] = [
-        ("USER_REQUEST", user_request)
-    ]
+    """Bind source-owned literal, identity, and status constraints to current-Run text."""
+    sources: list[tuple[ConstraintProvenanceSource, str]] = [("USER_REQUEST", user_request)]
     if confirmation_response_text is not None:
         sources.insert(0, ("CONFIRMATION_RESPONSE", confirmation_response_text))
     materialized: list[ConstraintV1] = []
     for index, constraint in enumerate(constraints):
         copied = cast(ConstraintV1, dict(constraint))
-        copied.pop("provenance", None)
-        if not _is_repository_constraint(copied):
+        supplied_provenance = copied.pop("provenance", None)
+        if is_source_status_constraint(copied):
+            if supplied_provenance is None or not isinstance(
+                supplied_provenance.get("source_text"), str
+            ):
+                raise RequestUnderstandingValidationError(
+                    f"$.constraints[{index}].provenance.source_text is required"
+                )
+            source = supplied_provenance["source"]
+            source_text = supplied_provenance["source_text"]
+            source_value = dict(sources).get(source)
+            start = -1 if source_value is None else source_value.find(source_text)
+            if start < 0:
+                raise RequestUnderstandingValidationError(
+                    f"$.constraints[{index}].provenance has no current-Run source binding"
+                )
+            copied["provenance"] = {
+                "source": source,
+                "start_offset": start,
+                "end_offset": start + len(source_text),
+                "source_text": source_text,
+            }
             materialized.append(copied)
             continue
-        value = copied["value"]
-        if not isinstance(value, str) or not is_fully_qualified_repository(value):
+        is_repository = is_repository_constraint(copied)
+        is_gmail_draft = is_gmail_draft_constraint(copied)
+        if not is_repository and not is_gmail_draft:
+            if copied["field"] not in _SOURCE_LITERAL_FIELDS:
+                materialized.append(copied)
+                continue
+            values = copied["value"]
+            literal_values = [values] if isinstance(values, str) else values
+            for literal_value in literal_values:
+                literal = cast(ConstraintV1, {**copied, "value": literal_value})
+                for source, source_text in sources:
+                    start = source_text.find(literal_value)
+                    if start < 0:
+                        continue
+                    literal["provenance"] = {
+                        "source": source,
+                        "start_offset": start,
+                        "end_offset": start + len(literal_value),
+                    }
+                    break
+                materialized.append(literal)
+            continue
+        identity_value = copied["value"]
+        if not isinstance(identity_value, str):
+            raise RequestUnderstandingValidationError(
+                f"$.constraints[{index}].value must be a scalar identity"
+            )
+        if is_repository and not is_fully_qualified_repository(identity_value):
             raise RequestUnderstandingValidationError(
                 f"$.constraints[{index}].value must be a fully-qualified repository"
             )
+        if is_gmail_draft and not is_valid_gmail_draft_id(identity_value):
+            raise RequestUnderstandingValidationError(
+                f"$.constraints[{index}].value must be a valid Gmail Draft identifier"
+            )
         for source, source_text in sources:
-            start = source_text.find(value)
+            start = source_text.find(identity_value)
             if start < 0:
                 continue
             copied["provenance"] = {
                 "source": source,
                 "start_offset": start,
-                "end_offset": start + len(value),
+                "end_offset": start + len(identity_value),
             }
             materialized.append(copied)
             break
@@ -214,101 +323,36 @@ def repository_authority_requires_confirmation(
     user_request: str,
     confirmation_response_text: str | None,
     selected_resources: Sequence[SelectedResourceRef],
+    repository_required: bool = False,
+    repository_default: GitHubRepositoryDefaultV1 | None = None,
 ) -> bool:
-    repository_constraints = [item for item in constraints if _is_repository_constraint(item)]
+    if not repository_required:
+        return False
+    repository_constraints = [item for item in constraints if is_repository_constraint(item)]
     try:
         materialized = materialize_validated_constraint_provenance(
             repository_constraints,
             user_request=user_request,
             confirmation_response_text=confirmation_response_text,
         )
-        _repository_authority(materialized, selected_resources=selected_resources)
+        repository = repository_from_constraints(
+            materialized, selected_resources=selected_resources,
+        )
     except RequestUnderstandingValidationError:
         return True
-    return False
+    return repository_required and repository is None and repository_default is None
 
 
-def validated_repository_authority(
-    request_intent: RequestIntentV2,
-    *,
-    selected_resources: Sequence[SelectedResourceRef],
-) -> str | None:
-    """Resolve the sole repository value already authorized for this Run."""
-    if request_intent["ambiguity"]["requires_confirmation"]:
-        raise RequestUnderstandingValidationError(
-            "repository authority cannot be consumed from an ambiguous intent"
-        )
-    return _repository_authority(
-        request_intent["constraints"],
-        selected_resources=selected_resources,
-    )
-
-
-def _repository_authority(
-    constraints: Sequence[ConstraintV1],
-    *,
-    selected_resources: Sequence[SelectedResourceRef],
-) -> str | None:
-    repository_constraints = [item for item in constraints if _is_repository_constraint(item)]
-    explicit_repositories: set[str] = set()
-    for constraint in repository_constraints:
-        value = constraint["value"]
-        if (
-            not isinstance(value, str)
-            or not is_fully_qualified_repository(value)
-            or constraint.get("provenance") is None
-        ):
-            raise RequestUnderstandingValidationError(
-                "repository authority requires validated provenance"
-            )
-        explicit_repositories.add(value)
-    if len(explicit_repositories) != len(repository_constraints) or len(explicit_repositories) > 1:
-        raise RequestUnderstandingValidationError("repository authority is ambiguous")
-
-    selected_repositories: set[str] = set()
-    for resource in selected_resources:
-        if resource.connector_id != "github" or resource.resource_type != "github_issue":
-            continue
-        parent = resource.parent_resource_id
-        if parent is None or not is_fully_qualified_repository(parent):
-            raise RequestUnderstandingValidationError(
-                "selected GitHub Issue repository authority is invalid"
-            )
-        prefix, separator, issue_number = resource.resource_id.rpartition("#")
-        if (
-            prefix != parent
-            or separator != "#"
-            or not issue_number.isdigit()
-            or int(issue_number) < 1
-        ):
-            raise RequestUnderstandingValidationError("selected GitHub Issue identity is invalid")
-        selected_repositories.add(parent)
-    if len(selected_repositories) > 1:
-        raise RequestUnderstandingValidationError("selected repository authority is ambiguous")
-
-    repositories = explicit_repositories | selected_repositories
-    if len(repositories) > 1:
-        raise RequestUnderstandingValidationError("repository authorities conflict")
-    return next(iter(repositories), None)
-
-
-def is_fully_qualified_repository(value: str) -> bool:
-    parts = value.split("/")
-    return (
-        value == value.strip()
-        and len(parts) == 2
-        and bool(parts[0])
-        and bool(parts[1])
-    )
-
-
-def _is_repository_constraint(constraint: ConstraintV1) -> bool:
-    return constraint["kind"] == "RESOURCE" and constraint["field"] == "repository"
 
 
 def _provenance(value: object, path: str) -> ConstraintProvenanceV1:
     root = _mapping(value, path)
-    if set(root) != {"source", "start_offset", "end_offset"}:
+    if not {"source", "start_offset", "end_offset"} <= set(root) <= {
+        "source",
+        "start_offset",
+        "end_offset",
+        "source_text",
+    }:
         raise RequestUnderstandingValidationError(f"{path} fields are invalid")
     source = root.get("source")
     start_offset = root.get("start_offset")
@@ -319,11 +363,17 @@ def _provenance(value: object, path: str) -> ConstraintProvenanceV1:
         raise RequestUnderstandingValidationError(f"{path} offsets must be integers")
     if start_offset < 0 or end_offset <= start_offset:
         raise RequestUnderstandingValidationError(f"{path} offsets are invalid")
-    return {
+    result: ConstraintProvenanceV1 = {
         "source": cast(ConstraintProvenanceSource, source),
         "start_offset": start_offset,
         "end_offset": end_offset,
     }
+    if "source_text" in root:
+        source_text = root["source_text"]
+        if not isinstance(source_text, str) or not source_text.strip():
+            raise RequestUnderstandingValidationError(f"{path}.source_text must be non-empty")
+        result["source_text"] = source_text
+    return result
 
 
 def _validate_provenance_binding(
@@ -331,9 +381,17 @@ def _validate_provenance_binding(
     path: str,
     *,
     provenance_sources: Mapping[ConstraintProvenanceSource, str],
+    effects: Sequence[str],
+    resource_hints: Sequence[str],
 ) -> None:
     provenance = constraint.get("provenance")
-    if _is_repository_constraint(constraint) and provenance is None:
+    is_source_status = is_source_status_constraint(constraint)
+    requires_provenance = (
+        is_repository_constraint(constraint)
+        or is_gmail_draft_constraint(constraint)
+        or is_source_status
+    )
+    if requires_provenance and provenance is None:
         raise RequestUnderstandingValidationError(f"{path}.provenance is required")
     if provenance is None:
         return
@@ -347,12 +405,156 @@ def _validate_provenance_binding(
     end_offset = provenance["end_offset"]
     if source_text is None or end_offset > len(source_text):
         raise RequestUnderstandingValidationError(f"{path}.provenance source is unavailable")
-    if source_text[start_offset:end_offset] != value:
+    bound_text = provenance.get("source_text", value)
+    if source_text[start_offset:end_offset] != bound_text:
         raise RequestUnderstandingValidationError(f"{path}.provenance does not match source")
-    if _is_repository_constraint(constraint) and not is_fully_qualified_repository(value):
+    if is_source_status:
+        resource_type = constraint.get("source_resource_type")
+        if not isinstance(resource_type, str):
+            raise RequestUnderstandingValidationError(
+                f"{path}.source_resource_type is required"
+            )
+        if resource_type not in resource_hints:
+            raise RequestUnderstandingValidationError(
+                f"{path}.source_resource_type is not a requested resource"
+            )
+        if "READ" not in effects:
+            raise RequestUnderstandingValidationError(f"{path} requires a READ effect")
+        if value not in SOURCE_STATUS_VALUES_BY_RESOURCE.get(resource_type, frozenset()):
+            raise RequestUnderstandingValidationError(
+                f"{path}.value is invalid for its source resource"
+            )
+        if provenance.get("source_text") is None:
+            raise RequestUnderstandingValidationError(
+                f"{path}.provenance.source_text is required"
+            )
+    elif provenance.get("source_text") is not None:
+        raise RequestUnderstandingValidationError(
+            f"{path}.provenance.source_text is only valid for normalized source status"
+        )
+    if is_repository_constraint(constraint) and not is_fully_qualified_repository(value):
         raise RequestUnderstandingValidationError(
             f"{path}.value must be a fully-qualified repository"
         )
+    if is_gmail_draft_constraint(constraint) and not is_valid_gmail_draft_id(value):
+        raise RequestUnderstandingValidationError(
+            f"{path}.value must be a valid Gmail Draft identifier"
+        )
+
+
+def validate_resource_responsibilities(
+    value: object,
+    *,
+    effects: Sequence[str],
+    resource_hints: Sequence[str],
+    constraints: Sequence[ConstraintV1],
+    required: bool,
+) -> ResourceResponsibilitiesV1 | None:
+    """Validate source/output responsibility without reclassifying natural language."""
+
+    if value is None:
+        if required:
+            raise RequestUnderstandingValidationError(
+                "$.resource_responsibilities is required"
+            )
+        return None
+    root = _mapping(value, "$.resource_responsibilities")
+    if set(root) != {"source_reads", "outputs"}:
+        raise RequestUnderstandingValidationError(
+            "$.resource_responsibilities fields are invalid"
+        )
+    source_reads = _list(root.get("source_reads"), "$.resource_responsibilities.source_reads")
+    outputs = _list(root.get("outputs"), "$.resource_responsibilities.outputs")
+    normalized_sources = []
+    source_information: list[str] = []
+    source_resources: set[str] = set()
+    for index, item in enumerate(source_reads):
+        path = f"$.resource_responsibilities.source_reads[{index}]"
+        source = _mapping(item, path)
+        if set(source) != {"resource_type", "required_information"}:
+            raise RequestUnderstandingValidationError(f"{path} fields are invalid")
+        resource_type = _string(source, "resource_type", path)
+        information = _string_list(
+            source.get("required_information"), f"{path}.required_information"
+        )
+        if resource_type in source_resources:
+            raise RequestUnderstandingValidationError(
+                "$.resource_responsibilities contains a duplicate source read"
+            )
+        source_resources.add(resource_type)
+        source_information.extend(information)
+        normalized_sources.append(
+            {"resource_type": resource_type, "required_information": information}
+        )
+    normalized_outputs = []
+    output_resources: set[str] = set()
+    output_identities: set[tuple[str, str]] = set()
+    output_effects: set[str] = set()
+    for index, item in enumerate(outputs):
+        path = f"$.resource_responsibilities.outputs[{index}]"
+        output = _mapping(item, path)
+        if set(output) != {"resource_type", "effect"}:
+            raise RequestUnderstandingValidationError(f"{path} fields are invalid")
+        resource_type = _string(output, "resource_type", path)
+        effect = _string(output, "effect", path)
+        if effect not in WRITE_EFFECT_RESOURCE_TYPES:
+            raise RequestUnderstandingValidationError(f"{path}.effect is invalid")
+        if resource_type not in WRITE_EFFECT_RESOURCE_TYPES[effect]:
+            raise RequestUnderstandingValidationError(
+                f"{path}.resource_type is incompatible with its output effect"
+            )
+        identity = (resource_type, effect)
+        if identity in output_identities:
+            raise RequestUnderstandingValidationError(
+                "$.resource_responsibilities contains a duplicate output"
+            )
+        output_identities.add(identity)
+        output_resources.add(resource_type)
+        output_effects.add(effect)
+        normalized_outputs.append(
+            {
+                "resource_type": resource_type,
+                "effect": cast(Literal["CREATE", "UPDATE", "SEND", "DELETE"], effect),
+            }
+        )
+    derived_effects = ({"READ"} if normalized_sources else set()) | output_effects
+    if derived_effects != set(effects) or (
+        source_resources | output_resources
+    ) != set(resource_hints):
+        raise RequestUnderstandingValidationError(
+            "$.resource_responsibilities does not match requested hints"
+        )
+    constraint_information = [
+        information
+        for constraint in constraints
+        if constraint["field"] == "required_information"
+        for information in (
+            [constraint["value"]]
+            if isinstance(constraint["value"], str)
+            else constraint["value"]
+        )
+    ]
+    if set(source_information) != set(constraint_information):
+        raise RequestUnderstandingValidationError(
+            "$.resource_responsibilities source information does not match constraints"
+        )
+    return cast(
+        ResourceResponsibilitiesV1,
+        {
+            "source_reads": normalized_sources,
+            "outputs": normalized_outputs,
+        },
+    )
+
+
+def requires_resource_responsibilities(
+    *, effects: Sequence[str], resource_hints: Sequence[str]
+) -> bool:
+    return (
+        "READ" in effects
+        and any(effect in WRITE_EFFECT_RESOURCE_TYPES for effect in effects)
+        and len(set(resource_hints)) > 1
+    )
 
 
 def _mapping(value: object, path: str) -> Mapping[str, object]:

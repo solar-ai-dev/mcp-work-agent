@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     WorkAmbiguityV1,
+    WorkRelationV1,
     WorkRiskV1,
+)
+from google_work_agent.ports.system.contracts.confirmation import (
+    ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
@@ -19,15 +24,15 @@ class WorkAnalysisSemanticInputV1(TypedDict):
     evidence: list[dict[str, object]]
     availability_results: NotRequired[list[dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
+    task_duplicate_review_required: NotRequired[bool]
 
 
-class CurrentSourceRelationV1(TypedDict):
-    """Deterministically validated current-Source relation truth."""
-
-    relation_id: str
-    kind: Literal["DUPLICATES", "CONFLICTS_WITH"]
-    source_fact_id: str
-    target_fact_id: str
+class DuplicateConflictAssessmentV1(TypedDict):
+    relation_candidates: list[WorkRelationV1]
+    requested_work_status: Literal["NOT_APPLICABLE", "SATISFIED", "NOT_SATISFIED", "UNDETERMINED"]
+    requested_work_reason: str | None
+    matched_fact_ids: list[str]
+    matched_candidate_refs: list[str]
     evidence_refs: list[str]
 
 
@@ -36,6 +41,7 @@ class InformationGapAssessmentV1(TypedDict):
         "COMPLETE",
         "NEEDS_MORE_DATA",
         "NEEDS_CONFIRMATION",
+        "REQUEST_RECONSIDERATION_REQUIRED",
         "ROUTE_RECONSIDERATION_REQUIRED",
         "BLOCKED",
     ]
@@ -47,8 +53,19 @@ class InformationGapAssessmentV1(TypedDict):
     reason_codes: NotRequired[list[str]]
 
 
+class InformationGapConfirmationResolutionV1(TypedDict):
+    schema_version: Required[Literal[1]]
+    reason_code: str
+    question: str
+    affected_field_paths: list[str]
+    response: ConfirmationResponseProjectionV1
+    prior_ambiguities: list[WorkAmbiguityV1]
+
+
 class OperationalRiskAssessmentV1(TypedDict):
     risks: list[WorkRiskV1]
-    action_necessity_candidate: Literal["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]
-    action_necessity_reason: str | None
     evidence_refs: list[str]
+
+
+class ActionNecessityAssessmentV1(TypedDict):
+    route_assessments: list[RouteActionNecessityV1]

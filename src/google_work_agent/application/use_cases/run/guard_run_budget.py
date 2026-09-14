@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Required, TypedDict, cast
+
+from google_work_agent.ports.system.settings_port import MAX_SOURCE_PAGE_CALLS_PER_RUN
 
 
 class BudgetProfile(StrEnum):
@@ -35,7 +38,16 @@ MAX_ADDITIONAL_ACQUISITIONS = 2
 NORMAL_MAX_LLM_CALLS = 14
 REVISION_HEAVY_MAX_LLM_CALLS = 18
 RETRIEVAL_HEAVY_MAX_LLM_CALLS = 20
-ABSOLUTE_MAX_LLM_CALLS = 24
+LEGACY_ABSOLUTE_MAX_LLM_CALLS = 36
+PREVIOUS_ABSOLUTE_MAX_LLM_CALLS = 24
+ABSOLUTE_MAX_LLM_CALLS = 100
+_SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS = frozenset(
+    {
+        ABSOLUTE_MAX_LLM_CALLS,
+        PREVIOUS_ABSOLUTE_MAX_LLM_CALLS,
+        LEGACY_ABSOLUTE_MAX_LLM_CALLS,
+    }
+)
 
 _PROFILE_LIMITS = {
     BudgetProfile.NORMAL: NORMAL_MAX_LLM_CALLS,
@@ -72,7 +84,7 @@ class RunBudgetV2(TypedDict):
     max_context_tokens: int
     retry_attempts_used: int
     max_retry_attempts: int
-    absolute_llm_call_limit: Literal[24]
+    absolute_llm_call_limit: Literal[100]
     schema_repairs_used_by_node: dict[str, int]
     semantic_revisions_used_by_failure: dict[str, int]
     planning_revisions_used: int
@@ -142,7 +154,7 @@ class GuardRunBudgetResultV1:
 
 
 _DIMENSIONS: dict[RunBudgetOperationKindV1, tuple[str, str, str]] = {
-    "LLM_CALL": ("llm_calls_used", "llm_call_limit", "LLM_LIMIT"),
+    "LLM_CALL": ("llm_calls_used", "absolute_llm_call_limit", "LLM_LIMIT"),
     "CONNECTOR_CALL": ("connector_calls_used", "max_connector_calls", "CONNECTOR_LIMIT"),
     "SOURCE_PAGE": ("source_page_calls_used", "max_source_page_calls", "SOURCE_PAGE_LIMIT"),
     "DETAIL_FETCH": ("detail_fetches_used", "max_detail_fetches", "DETAIL_FETCH_LIMIT"),
@@ -170,8 +182,6 @@ class GuardRunBudgetHandler:
         budget_values = cast(dict[str, object], budget)
         used = int(cast(int, budget_values[used_name]))
         limit = int(cast(int, budget_values[limit_name]))
-        if query.requested_delta.operation_kind == "LLM_CALL":
-            limit = min(limit, budget["absolute_llm_call_limit"])
         remaining = max(0, limit - used)
         if query.requested_delta.units > remaining:
             return GuardRunBudgetResultV1(
@@ -201,7 +211,7 @@ def build_default_run_budget(
     started_at_ms: int = 0,
     max_execution_ms: int = 900_000,
     max_connector_calls: int = 50,
-    max_source_page_calls: int = 8,
+    max_source_page_calls: int = MAX_SOURCE_PAGE_CALLS_PER_RUN,
     max_detail_fetches: int = 12,
     max_context_tokens: int = 16_000,
     max_retry_attempts: int = 2,
@@ -217,7 +227,9 @@ def build_default_run_budget(
             "connector_calls_used": 0,
             "max_connector_calls": max_connector_calls,
             "source_page_calls_used": 0,
-            "max_source_page_calls": min(max_source_page_calls, 8),
+            "max_source_page_calls": min(
+                max_source_page_calls, MAX_SOURCE_PAGE_CALLS_PER_RUN
+            ),
             "detail_fetches_used": 0,
             "max_detail_fetches": min(max_detail_fetches, 12),
             "context_tokens_used": 0,
@@ -271,9 +283,10 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         _require_int(value[field], field, minimum=1)
     for field in non_negative:
         _require_int(value[field], field, minimum=0)
-    if value["absolute_llm_call_limit"] != ABSOLUTE_MAX_LLM_CALLS:
-        raise ValueError("run budget absolute_llm_call_limit must be 24")
-    if int(value["max_source_page_calls"]) > 8:
+    supplied_absolute_limit = value["absolute_llm_call_limit"]
+    if supplied_absolute_limit not in _SUPPORTED_ABSOLUTE_LLM_CALL_LIMITS:
+        raise ValueError("run budget absolute_llm_call_limit must be 24, 36, or 100")
+    if int(value["max_source_page_calls"]) > MAX_SOURCE_PAGE_CALLS_PER_RUN:
         raise ValueError("run budget max_source_page_calls exceeds retrieval hard bound")
     if int(value["max_detail_fetches"]) > 12:
         raise ValueError("run budget max_detail_fetches exceeds retrieval hard bound")
@@ -284,7 +297,14 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
     if int(value["additional_retrieval_rounds_used"]) > MAX_ADDITIONAL_ACQUISITIONS:
         raise ValueError("run budget additional_retrieval_rounds_used exceeds the frozen limit")
     expected_limit = _effective_profile_limit(profile, value)
-    if int(value["llm_call_limit"]) != expected_limit:
+    supplied_profile_limit = int(value["llm_call_limit"])
+    legacy_combined_limit = (
+        supplied_absolute_limit
+        in {PREVIOUS_ABSOLUTE_MAX_LLM_CALLS, LEGACY_ABSOLUTE_MAX_LLM_CALLS}
+        and supplied_profile_limit == supplied_absolute_limit
+        and _combined_profile_limit_applies(profile, value)
+    )
+    if supplied_profile_limit != expected_limit and not legacy_combined_limit:
         raise ValueError("run budget llm_call_limit does not match the active profile")
     repairs = _validated_counter_map(value["schema_repairs_used_by_node"], "schema repairs")
     revisions = _validated_counter_map(
@@ -295,6 +315,8 @@ def validate_run_budget_v2(value: object) -> RunBudgetV2:
         {
             **value,
             "profile": profile.value,
+            "llm_call_limit": expected_limit,
+            "absolute_llm_call_limit": ABSOLUTE_MAX_LLM_CALLS,
             "schema_repairs_used_by_node": repairs,
             "semantic_revisions_used_by_failure": revisions,
         },
@@ -349,8 +371,6 @@ def check_llm_call_budget(
     prospective = budget["llm_calls_used"] + requested
     if prospective > budget["absolute_llm_call_limit"]:
         return _deny(budget, BudgetReasonCode.ABSOLUTE_LLM_LIMIT_EXHAUSTED)
-    if prospective > budget["llm_call_limit"]:
-        return _deny(budget, BudgetReasonCode.PROFILE_LLM_LIMIT_EXHAUSTED)
     return _allow(budget)
 
 
@@ -415,6 +435,45 @@ def promote_run_budget_profile(run_budget: object, requested_profile: object) ->
     return _promote(validate_run_budget_v2(run_budget), _require_profile(requested_profile))
 
 
+def merge_run_budget_progress(current_budget: object, observed_budget: object) -> RunBudgetV2:
+    """Merge monotonic progress and recalculate the active profile's effective limit."""
+
+    current = validate_run_budget_v2(current_budget)
+    observed = validate_run_budget_v2(observed_budget)
+    current_values: Mapping[str, object] = current
+    observed_values: Mapping[str, object] = observed
+    updated: dict[str, object] = dict(current)
+    for field in (
+        "llm_calls_used",
+        "connector_calls_used",
+        "source_page_calls_used",
+        "detail_fetches_used",
+        "context_tokens_used",
+        "retry_attempts_used",
+        "planning_revisions_used",
+        "review_rechecks_used",
+        "additional_retrieval_rounds_used",
+    ):
+        updated[field] = max(
+            cast(int, current_values[field]),
+            cast(int, observed_values[field]),
+        )
+    for field in (
+        "schema_repairs_used_by_node",
+        "semantic_revisions_used_by_failure",
+    ):
+        current_counts = cast(dict[str, int], current_values[field])
+        observed_counts = cast(dict[str, int], observed_values[field])
+        updated[field] = {
+            key: max(current_counts.get(key, 0), observed_counts.get(key, 0))
+            for key in current_counts.keys() | observed_counts.keys()
+        }
+    profile = promote_budget_profile(current["profile"], observed["profile"])
+    updated["profile"] = profile.value
+    updated["llm_call_limit"] = _effective_profile_limit(profile, updated)
+    return validate_run_budget_v2(updated)
+
+
 def _promote(budget: RunBudgetV2, requested: BudgetProfile) -> RunBudgetV2:
     updated = dict(budget)
     profile = promote_budget_profile(budget["profile"], requested)
@@ -424,16 +483,19 @@ def _promote(budget: RunBudgetV2, requested: BudgetProfile) -> RunBudgetV2:
 
 
 def _effective_profile_limit(profile: BudgetProfile, budget: object) -> int:
-    if (
+    del budget
+    return _PROFILE_LIMITS[profile]
+
+
+def _combined_profile_limit_applies(profile: BudgetProfile, budget: object) -> bool:
+    return bool(
         isinstance(budget, dict)
         and int(budget.get("planning_revisions_used", 0)) > 0
         and (
             int(budget.get("additional_retrieval_rounds_used", 0)) > 0
             or profile is BudgetProfile.RETRIEVAL_HEAVY
         )
-    ):
-        return ABSOLUTE_MAX_LLM_CALLS
-    return _PROFILE_LIMITS[profile]
+    )
 
 
 def _allow(run_budget: RunBudgetV2) -> BudgetDecisionV1:
@@ -507,6 +569,7 @@ __all__ = [
     "build_semantic_failure_signature_v1",
     "check_llm_call_budget",
     "consume_llm_provider_calls",
+    "merge_run_budget_progress",
     "promote_budget_profile",
     "promote_run_budget_profile",
     "validate_run_budget_v2",

@@ -37,7 +37,7 @@ def load_prompt_input_contract(
     manifest_slot_ids: frozenset[str] | None = None,
     source_slot_ids: frozenset[str] | None = None,
 ) -> PromptRuntimeInputContractV1:
-    """Load and fail-close the exact Canonical 21-slot input contract."""
+    """Load and fail-close the exact Canonical Product Prompt input contract."""
 
     contract = _load_prompt_input_contract((path or _DEFAULT_CONTRACT_PATH).resolve())
     expected = REQUIRED_PROMPT_SLOT_IDS

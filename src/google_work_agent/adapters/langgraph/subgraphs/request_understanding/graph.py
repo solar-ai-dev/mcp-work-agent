@@ -18,9 +18,10 @@ from google_work_agent.adapters.langgraph.main.state import (
     WorkflowPhase,
     request_from_run_input_state,
 )
-from google_work_agent.adapters.langgraph.main.supervisor import (
-    SupervisorDecisionV1,
-    route_supervisor,
+from google_work_agent.adapters.langgraph.main.supervisor import route_supervisor
+from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorDecisionV1
+from google_work_agent.adapters.langgraph.main.supervisor_terminal_projection import (
+    finalize_supervisor_result,
 )
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state import (
@@ -28,14 +29,24 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state 
     RequestUnderstandingParentOutputState,
     RequestUnderstandingStateV2,
 )
-from google_work_agent.application.agents.request_understanding.contracts import (
-    request_understanding_output,
+from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_responsibilities,
+)
+from google_work_agent.application.agents.request_understanding import (
+    identify_source_dependencies as source_dependencies,
+)
+from google_work_agent.application.agents.request_understanding.identify_temporal_scope import (
+    needs_temporal_scope,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
     PromptExecutionScope,
     default_prompt_manifest_path,
     load_prompt_reference,
+)
+from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
@@ -52,6 +63,10 @@ from .nodes.finalize_intent_node import (
 from .nodes.identify_goal_node import (
     identify_goal_node,
 )
+from .nodes.identify_temporal_scope_node import identify_temporal_scope_node
+from .projections.request_confirmation_projection import (
+    build_request_clarification_question,
+)
 from .routing.route_after_detect_ambiguity import (
     route_after_detect_ambiguity,
 )
@@ -60,6 +75,9 @@ from .routing.route_after_finalize_intent import (
 )
 from .routing.route_after_identify_goal import (
     route_after_identify_goal,
+)
+from .routing.route_after_identify_temporal_scope import (
+    route_after_identify_temporal_scope,
 )
 
 MergeDecision = Callable[[Any, GraphStateUpdateV1, SupervisorDecisionV1], Any]
@@ -71,12 +89,13 @@ ConfirmInline = Callable[
 
 
 class RequestUnderstandingSubgraph:
-    """Compile the exact three runtime nodes for four canonical operations."""
+    """Compile the owner-local Request Understanding operations."""
 
     def __init__(
         self,
         *,
         llm_runtime: StructuredInferencePort,
+        tool_catalog: SignedToolRegistry,
         prompt_manifest_path: Path | None,
         prompt_execution_scope: PromptExecutionScope = PRODUCT_RELEASE,
         id_factory: Callable[[], str],
@@ -84,11 +103,43 @@ class RequestUnderstandingSubgraph:
         transition_run: TransitionRun,
         merge_decision: MergeDecision,
         confirm_inline: ConfirmInline,
+        connector_prerequisites: CheckConnectorPrerequisitesHandler | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
+        self._source_dependency_candidates = source_dependencies.build_source_dependency_candidates(
+            tool_catalog
+        )
+        self._output_responsibility_candidates = (
+            output_responsibilities.build_output_responsibility_candidates(tool_catalog)
+        )
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
         self._identify_goal_prompt_ref = load_prompt_reference(
             "request_understanding.identify_goal",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_source_dependencies_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_source_dependencies",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_output_responsibilities_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_output_responsibilities",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_effect_prohibitions_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_effect_prohibitions",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_source_status_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_source_status",
+            manifest_path,
+            execution_scope=prompt_execution_scope,
+        )
+        self._identify_temporal_scope_prompt_ref = load_prompt_reference(
+            "request_understanding.identify_temporal_scope",
             manifest_path,
             execution_scope=prompt_execution_scope,
         )
@@ -102,6 +153,7 @@ class RequestUnderstandingSubgraph:
         self._transition_run = transition_run
         self._merge_decision = merge_decision
         self._confirm_inline = confirm_inline
+        self._connector_prerequisites = connector_prerequisites
 
     def build(self) -> Any:
         graph = StateGraph(
@@ -110,12 +162,18 @@ class RequestUnderstandingSubgraph:
             output_schema=RequestUnderstandingParentOutputState,
         )
         graph.add_node("identify_goal", self._identify_goal_node)
+        graph.add_node("identify_temporal_scope", self._identify_temporal_scope_node)
         graph.add_node("detect_ambiguity", self._detect_ambiguity_node)
         graph.add_node("finalize_intent", self._finalize_intent_node)
         graph.add_edge(START, "identify_goal")
         graph.add_conditional_edges(
             "identify_goal",
             route_after_identify_goal,
+            {"identify_temporal_scope": "identify_temporal_scope"},
+        )
+        graph.add_conditional_edges(
+            "identify_temporal_scope",
+            route_after_identify_temporal_scope,
             {"detect_ambiguity": "detect_ambiguity"},
         )
         graph.add_conditional_edges(
@@ -154,6 +212,16 @@ class RequestUnderstandingSubgraph:
             working_state,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_goal_prompt_ref,
+            effect_prohibition_prompt_ref=self._identify_effect_prohibitions_prompt_ref,
+            source_dependency_prompt_ref=self._identify_source_dependencies_prompt_ref,
+            output_responsibility_prompt_ref=self._identify_output_responsibilities_prompt_ref,
+            source_status_prompt_ref=self._identify_source_status_prompt_ref,
+            source_dependency_candidates=self._source_dependency_candidates,
+            output_responsibility_candidates=self._output_responsibility_candidates,
+        )
+        calls_used = max(
+            0,
+            patch["retry_budget"]["llm_calls_used"] - state["retry_budget"]["llm_calls_used"],
         )
         return {
             **current_run_fields,
@@ -164,9 +232,44 @@ class RequestUnderstandingSubgraph:
                 node_name="identify_goal",
                 llm_call_id=f"{request.run_id}:request.identify_goal",
                 prompt_ref=self._identify_goal_prompt_ref,
-                llm_call_increment=1,
+                additional_prompt_refs=(
+                    self._identify_effect_prohibitions_prompt_ref,
+                    self._identify_source_dependencies_prompt_ref,
+                    self._identify_output_responsibilities_prompt_ref,
+                    self._identify_source_status_prompt_ref,
+                ),
+                llm_call_increment=calls_used,
                 invocation_id=invocation_id,
                 agent_invocation_increment=1 if is_first_node else 0,
+            ),
+        }
+
+    def _identify_temporal_scope_node(
+        self, state: RequestUnderstandingStateV2
+    ) -> RequestUnderstandingStateV2:
+        candidate = state.get("goal_candidate")
+        if candidate is None:
+            raise ValueError("request-understanding goal candidate is required")
+        invokes_llm = needs_temporal_scope(candidate)
+        patch = identify_temporal_scope_node(
+            state,
+            llm_runtime=self._llm_runtime,
+            prompt_ref=self._identify_temporal_scope_prompt_ref,
+        )
+        return {
+            **patch,
+            "trace_context": self._trace(
+                state,
+                node_name="identify_temporal_scope",
+                llm_call_id=(
+                    f"{request_from_run_input_state(cast(Any, state)).run_id}:"
+                    "request.identify_temporal_scope"
+                    if invokes_llm
+                    else None
+                ),
+                prompt_ref=self._identify_temporal_scope_prompt_ref if invokes_llm else None,
+                llm_call_increment=int(invokes_llm),
+                invocation_id=self._invocation_id(state),
             ),
         }
 
@@ -176,6 +279,7 @@ class RequestUnderstandingSubgraph:
         request = request_from_run_input_state(cast(Any, state))
         patch = detect_ambiguity_node(
             state,
+            connector_prerequisites=self._connector_prerequisites,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._detect_ambiguity_prompt_ref,
         )
@@ -185,13 +289,21 @@ class RequestUnderstandingSubgraph:
             "trace_context": self._trace(
                 state,
                 node_name="detect_ambiguity",
-                llm_call_id=f"{request.run_id}:request.detect_ambiguity",
-                prompt_ref=self._detect_ambiguity_prompt_ref,
-                llm_call_increment=1,
+                llm_call_id=None
+                if patch.get("prerequisite_message")
+                else f"{request.run_id}:request.detect_ambiguity",
+                prompt_ref=None
+                if patch.get("prerequisite_message")
+                else self._detect_ambiguity_prompt_ref,
+                llm_call_increment=0 if patch.get("prerequisite_message") else 1,
             ),
         }
         ambiguity = working_state.get("ambiguity_candidate")
-        if ambiguity is not None and ambiguity["requires_confirmation"]:
+        if (
+            not patch.get("prerequisite_message")
+            and ambiguity is not None
+            and ambiguity["requires_confirmation"]
+        ):
             result.update(self._confirmation_signal(working_state))
         return result
 
@@ -202,24 +314,12 @@ class RequestUnderstandingSubgraph:
         candidate = state.get("goal_candidate")
         if ambiguity is None or candidate is None:
             raise ValueError("request-understanding ambiguity is required")
-        missing = ", ".join(ambiguity["missing_fields"])
-        question: request_understanding_output.ClarificationQuestionV1 = {
-            "schema_version": 1,
-            "origin_target": "request.detect_ambiguity",
-            "question": (
-                f"Please clarify the following request fields: {missing}"
-                if missing
-                else "Please clarify the request."
-            ),
-            "affected_field_paths": list(ambiguity["missing_fields"]),
-            "reason_code": (
-                ambiguity["reason_codes"][0]
-                if ambiguity["reason_codes"]
-                else "REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"
-            ),
-            "known_context_summary": candidate["goal"],
-            "options": [],
-        }
+        request = request_from_run_input_state(cast(Any, state))
+        question = build_request_clarification_question(
+            request_text=request.request_text,
+            ambiguity=ambiguity,
+            goal_candidate=candidate,
+        )
         interrupt_id = self._id_factory()
         prompt_context = dict(cast(dict[str, object], state.get("prompt_context", {})))
         prompt_context.pop("confirmation_response", None)
@@ -244,6 +344,22 @@ class RequestUnderstandingSubgraph:
     def _finalize_intent_node(
         self, state: RequestUnderstandingStateV2
     ) -> RequestUnderstandingStateV2:
+        if state.get("prerequisite_message"):
+            decision = finalize_supervisor_result(
+                state=cast(GraphState, state),
+                intent="COMPLETED",
+                result_kind="PARTIAL",
+                reason_code="CONNECTOR_PREREQUISITE_UNMET",
+                prerequisite_message=state["prerequisite_message"],
+            )
+            return cast(
+                RequestUnderstandingStateV2,
+                self._merge_decision(
+                    state,
+                    {},
+                    decision,
+                ),
+            )
         ambiguity = state.get("ambiguity_candidate")
         if ambiguity is None:
             raise ValueError("request-understanding ambiguity result is required")
@@ -266,7 +382,6 @@ class RequestUnderstandingSubgraph:
             prompt_context.pop("confirmation_interrupt", None)
             return {
                 "final_intent": None,
-                "request_intent": None,
                 "user_interrupt": None,
                 "prompt_context": prompt_context,
                 "trace_context": trace_context,
@@ -319,6 +434,7 @@ class RequestUnderstandingSubgraph:
         node_name: str,
         llm_call_id: str | None = None,
         prompt_ref: Any = None,
+        additional_prompt_refs: tuple[Any, ...] = (),
         llm_call_increment: int = 0,
         invocation_id: str | None = None,
         agent_invocation_increment: int = 0,
@@ -336,6 +452,7 @@ class RequestUnderstandingSubgraph:
             node_name=node_name,
             llm_call_id=llm_call_id,
             prompt_ref=prompt_ref,
+            additional_prompt_refs=additional_prompt_refs,
             agent_invocation_increment=agent_invocation_increment,
             llm_call_increment=llm_call_increment,
         )

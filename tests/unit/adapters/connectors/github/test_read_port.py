@@ -51,9 +51,7 @@ class _Runtime:
     def list_tools(self) -> list[MCPToolDescriptorV1]:
         return []
 
-    def call_tool(
-        self, tool_id: str, arguments: Any, timeout_ms: int
-    ) -> MCPToolCallResultV1:
+    def call_tool(self, tool_id: str, arguments: Any, timeout_ms: int) -> MCPToolCallResultV1:
         raise AssertionError((tool_id, arguments, timeout_ms))
 
     def restart_once(self) -> MCPRestartResultV1:
@@ -115,7 +113,12 @@ def test_list_and_get_issue__cross_signed_binding__read_port_and_github_mcp() ->
     )
 
     assert client.calls == ["github_list_issues", "github_get_issue"]
-    assert listed.output["items"][0]["resource_id"] == "acme/repo#7"
-    assert fetched.output["item"]["parent_id"] == "acme/repo"
+    listed_items = listed.output["items"]
+    fetched_item = fetched.output["item"]
+    assert isinstance(listed_items, list)
+    assert isinstance(listed_items[0], dict)
+    assert isinstance(fetched_item, dict)
+    assert listed_items[0]["resource_id"] == "acme/repo#7"
+    assert fetched_item["parent_id"] == "acme/repo"
     assert api.urls[0].startswith("https://api.github.com/repos/acme/repo/issues?")
     assert api.urls[1].endswith("/repos/acme/repo/issues/7")

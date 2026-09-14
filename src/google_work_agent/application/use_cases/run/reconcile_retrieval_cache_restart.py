@@ -10,7 +10,7 @@ from google_work_agent.application.use_cases.run.schedule_run_execution import (
     ScheduleRunExecutionHandler,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
-from google_work_agent.domain.run.model import is_preempting_run_status
+from google_work_agent.domain.run.model import RunStatusV1, is_preempting_run_status
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 from google_work_agent.ports.system.contracts.workflow_handoff import (
@@ -19,6 +19,10 @@ from google_work_agent.ports.system.contracts.workflow_handoff import (
     WorkflowHandoffStageV1,
 )
 from google_work_agent.ports.system.run_retrieval_cache_port import RunRetrievalCachePort
+
+_DURABLE_PLAN_STAGES = frozenset({
+    RunStatusV1.WAITING_APPROVAL, RunStatusV1.EXECUTING, RunStatusV1.VERIFYING,
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +95,10 @@ class ReconcileRetrievalCacheRestartHandler:
         )
         with self._unit_of_work_factory() as unit_of_work:
             run = unit_of_work.runs.get(command.run_id)
-            if run is None or is_preempting_run_status(run.status):
+            if (
+                run is None or is_preempting_run_status(run.status)
+                or run.status in _DURABLE_PLAN_STAGES
+            ):
                 return ReconcileRetrievalCacheRestartResultV1(
                     1, "NO_RESTART_REQUIRED", checkpoint.checkpoint_generation, None
                 )
@@ -146,7 +153,10 @@ class ReconcileRetrievalCacheRestartHandler:
     def _is_preempted(self, run_id: str) -> bool:
         with self._unit_of_work_factory() as unit_of_work:
             run = unit_of_work.runs.get(run_id)
-        return run is None or is_preempting_run_status(run.status)
+        return (
+            run is None or is_preempting_run_status(run.status)
+            or run.status in _DURABLE_PLAN_STAGES
+        )
 
 
 __all__ = [

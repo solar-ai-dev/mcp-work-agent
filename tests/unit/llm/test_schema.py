@@ -11,6 +11,61 @@ from __future__ import annotations
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
+def test_contains_cardinality__untyped_fragments__supports_zero_and_exactly_one() -> None:
+    matching = {"properties": {"segment_id": {"const": "mail"}}}
+    one = {"contains": matching, "minContains": 1, "maxContains": 1}
+    zero = {"contains": matching, "minContains": 0, "maxContains": 0}
+    mail = {"segment_id": "mail", "role": "SUPPORTS"}
+    other = {"segment_id": "other", "role": "CONTEXT"}
+    assert validate_output_schema([other, mail], one) == []
+    assert validate_output_schema([other], one)
+    assert validate_output_schema([mail, {**mail, "role": "CONTEXT"}], one)
+    assert validate_output_schema([], zero) == []
+    assert validate_output_schema([other], zero) == []
+    assert validate_output_schema([mail], zero)
+    assert "'segment_id': {'const': 'mail'}" in validate_output_schema([other], one)[0]
+
+
+def test_discriminated_union__selected_variant__reports_only_its_fields() -> None:
+    schema = {"oneOf": [
+        {"type": "object", "required": ["kind", "start"],
+         "properties": {"kind": {"const": "TIME"}, "start": {"type": "string"}}},
+        {"type": "object", "required": ["kind", "identity"],
+         "properties": {"kind": {"const": "PERSON"}, "identity": {"type": "string"}}},
+    ]}
+    assert validate_output_schema({"kind": "TIME", "start": 42}, schema) == [
+        "$ must match exactly one schema in oneOf (matched 0)",
+        "$.start must be string",
+    ]
+    assert validate_output_schema({"kind": "TIME", "start": "2026-09-01"}, schema) == []
+    assert validate_output_schema({"kind": "UNKNOWN"}, schema) == [
+        "$ must match exactly one schema in oneOf (matched 0)",
+    ]
+
+
+def test_overlapping_union__ambiguous_variant__remains_invalid() -> None:
+    branch = {"properties": {"kind": {"const": "TIME"}}}
+    assert validate_output_schema({"kind": "TIME"}, {"oneOf": [branch, branch]}) == [
+        "$ must match exactly one schema in oneOf (matched 2)",
+    ]
+
+
+def test_contains__requires_a_matching_item__including_untyped_fragments() -> None:
+    for schema in ({"contains": {"const": "CREATE"}},
+                   {"type": "array", "contains": {"const": "CREATE"}}):
+        assert validate_output_schema(["READ", "CREATE"], schema) == []
+        assert validate_output_schema(["CREATE", "READ"], schema) == []
+        assert validate_output_schema([], schema)
+        assert validate_output_schema(["READ"], schema)
+
+
+def test_contains__conditional_effect_rule__only_applies_to_matching_branch() -> None:
+    schema = {"if": {"properties": {"write_requested": {"const": True}}},
+              "then": {"properties": {"effects": {"contains": {"const": "CREATE"}}}}}
+    assert validate_output_schema({"write_requested": True, "effects": ["READ"]}, schema)
+    assert validate_output_schema({"write_requested": False, "effects": ["READ"]}, schema) == []
+
+
 def test_type_union__accepts_either__listed_type() -> None:
     schema = {
         "type": "object",
@@ -129,6 +184,30 @@ def test_if_then__applies_then_only__when_if_matches() -> None:
         validate_output_schema({"source": "CALENDAR", "calendar_read_mode": "EVENTS_ONLY"}, schema)
         == []
     )
+
+
+def test_if_else__applies_array_bounds__without_repeated_type() -> None:
+    schema = {
+        "type": "object",
+        "required": ["requires_confirmation", "missing_fields"],
+        "properties": {
+            "requires_confirmation": {"type": "boolean"},
+            "missing_fields": {"type": "array", "items": {"type": "string"}},
+        },
+        "if": {
+            "properties": {"requires_confirmation": {"const": False}},
+            "required": ["requires_confirmation"],
+        },
+        "then": {"properties": {"missing_fields": {"maxItems": 0}}},
+        "else": {"properties": {"missing_fields": {"minItems": 1}}},
+    }
+
+    assert validate_output_schema(
+        {"requires_confirmation": False, "missing_fields": []}, schema
+    ) == []
+    assert validate_output_schema(
+        {"requires_confirmation": True, "missing_fields": []}, schema
+    ) == ["$.missing_fields must contain at least 1 items"]
 
 
 def test_min_length__rejects_short__strings() -> None:

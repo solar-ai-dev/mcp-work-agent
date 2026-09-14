@@ -26,6 +26,7 @@ def inspect_goal_and_evidence_node(
             work_analysis=projected.get("work_analysis"),
             evidence=projected["evidence"],
             confirmation_response=projected.get("confirmation_response"),
+            user_action_modifications=projected.get("user_action_modifications", ()),
             invoke=invoke,
         )
     }

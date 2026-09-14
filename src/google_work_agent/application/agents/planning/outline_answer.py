@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from typing import cast
 
+from google_work_agent.application.agents.planning.complete_analysis_answer_outline import (
+    complete_analysis_answer_outline,
+)
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     AnswerOutlineV1,
     PlanningAnswerConfirmationV1,
     PlanningSemanticInvoker,
+)
+from google_work_agent.application.agents.planning.project_retrieval_collections import (
+    project_retrieval_collections,
+    retrieval_collections_are_answer_target,
+)
+from google_work_agent.application.agents.planning.project_task_read_answer import (
+    project_task_read_answer,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
 
@@ -53,6 +65,48 @@ ANSWER_OUTLINE_OUTPUT_SCHEMA = OutputSchemaDefinition(
 )
 
 
+def answer_outline_output_schema(
+    allowed_evidence_refs: Sequence[str],
+    *,
+    confirmation_allowed: bool,
+) -> OutputSchemaDefinition:
+    """Bind citations and confirmation eligibility to the current typed intent."""
+
+    json_schema = cast(dict[str, object], deepcopy(ANSWER_OUTLINE_OUTPUT_SCHEMA.json_schema))
+    branches = cast(list[object], json_schema["oneOf"])
+    answer_schema = cast(dict[str, object], branches[0])
+    properties = cast(dict[str, object], answer_schema["properties"])
+    properties["evidence_refs"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "items": {"type": "string", "enum": sorted(set(allowed_evidence_refs))},
+    }
+    if not confirmation_allowed:
+        json_schema["oneOf"] = [answer_schema]
+    return OutputSchemaDefinition(
+        schema_version=ANSWER_OUTLINE_OUTPUT_SCHEMA.schema_version,
+        json_schema=json_schema,
+    )
+
+
+def answer_confirmation_allowed(
+    request_intent: Mapping[str, object],
+    work_analysis: Mapping[str, object] | None,
+) -> bool:
+    """Return whether a current typed ambiguity still requires a user choice."""
+
+    ambiguity = request_intent.get("ambiguity")
+    if isinstance(ambiguity, Mapping) and ambiguity.get("requires_confirmation") is True:
+        return True
+    if work_analysis is None:
+        return False
+    ambiguities = work_analysis.get("ambiguities")
+    return isinstance(ambiguities, list) and any(
+        isinstance(item, Mapping) and item.get("requires_confirmation") is True
+        for item in ambiguities
+    )
+
+
 def outline_answer(
     *,
     user_request: str,
@@ -61,6 +115,7 @@ def outline_answer(
     evidence: Sequence[Mapping[str, object]],
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
+    retrieval_result: Mapping[str, object] | None = None,
 ) -> AnswerOutlineV1 | PlanningAnswerConfirmationV1:
     """Return an evidence-bounded outline without assuming policy or action authority."""
     if not user_request.strip():
@@ -72,15 +127,36 @@ def outline_answer(
             allowed_refs.add(ref)
     prompt_input: dict[str, object] = {
         "user_request": user_request,
-        "request_intent": dict(request_intent),
+        "request_intent": {
+            key: value for key, value in request_intent.items() if key != "repository_default"
+        },
         "evidence": [dict(item) for item in evidence],
     }
     if work_analysis is not None:
         prompt_input["work_analysis"] = dict(work_analysis)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if retrieval_result is not None:
+        for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
+            if key in retrieval_result:
+                prompt_input[key] = deepcopy(retrieval_result[key])
+        if "collection_results" in retrieval_result and retrieval_collections_are_answer_target(
+            request_intent=request_intent,
+            evidence=evidence,
+            retrieval_result=retrieval_result,
+        ):
+            prompt_input["collection_results"] = project_retrieval_collections(retrieval_result)
+    task_projection = project_task_read_answer(
+        user_request=user_request,
+        request_intent=request_intent,
+        evidence=evidence,
+    )
+    if task_projection is not None:
+        return task_projection.outline
     candidate = invoke(PROMPT_ID, prompt_input)
     if candidate.get("disposition") == "NEEDS_CONFIRMATION":
+        if not answer_confirmation_allowed(request_intent, work_analysis):
+            raise ValueError("outline_answer confirmation is not permitted for actionable intent")
         question = candidate.get("question")
         options = candidate.get("options")
         reason_codes = candidate.get("reason_codes")
@@ -112,7 +188,19 @@ def outline_answer(
         raise ValueError("outline_answer output requires evidence_refs")
     if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
         raise ValueError("outline_answer referenced evidence outside its projection")
-    return {"sections": list(sections), "evidence_refs": list(refs)}
+    return complete_analysis_answer_outline(
+        user_request=user_request,
+        request_intent=request_intent,
+        work_analysis=work_analysis,
+        sections=sections,
+        evidence_refs=refs,
+        allowed_evidence_refs=allowed_refs,
+    )
 
 
-__all__ = ["ANSWER_OUTLINE_OUTPUT_SCHEMA", "outline_answer"]
+__all__ = [
+    "ANSWER_OUTLINE_OUTPUT_SCHEMA",
+    "answer_confirmation_allowed",
+    "answer_outline_output_schema",
+    "outline_answer",
+]

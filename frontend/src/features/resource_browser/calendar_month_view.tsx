@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ResourceItem } from "../../api/contract";
 
 export type CalendarMonthRange = {
@@ -17,6 +18,10 @@ type Props = {
   onNextMonth: () => void;
   onSelectDate: (date: string) => void;
   onSelectEvent: (item: ResourceItem) => void;
+  onToggleEvent: (item: ResourceItem) => void;
+  selectedSelectionHandles: string[];
+  focusedResourceId: string | null;
+  renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -63,6 +68,10 @@ export function CalendarMonthView({
   onNextMonth,
   onSelectDate,
   onSelectEvent,
+  onToggleEvent,
+  selectedSelectionHandles,
+  focusedResourceId,
+  renderExpandedResource,
 }: Props): JSX.Element {
   const range = calendarMonthRange(monthAnchor);
   const eventDays = new Map(range.days.map((day) => [day, [] as ResourceItem[]]));
@@ -109,14 +118,27 @@ export function CalendarMonthView({
           <h3>{formatSelectedDate(selectedDate, timezone)}</h3>
           {selectedItems.length ? (
             <ul>
-              {selectedItems.map((item) => (
-                <li key={item.resource_id}>
-                  <button type="button" onClick={() => onSelectEvent(item)}>
-                    <time>{eventTimeLabel(item, selectedDate, timezone)}</time>
-                    <span>{item.title || "제목 정보 없음"}</span>
-                  </button>
-                </li>
-              ))}
+              {selectedItems.map((item) => {
+                const selected = selectedSelectionHandles.includes(item.selection_handle);
+                const focused = focusedResourceId === item.resource_id;
+                return (
+                  <li key={item.resource_id} className={`resource-item calendar-resource-item ${selected ? "selected" : ""} ${focused ? "focused" : ""}`}>
+                    <label className="resource-select-control" title="선택 요청에 포함">
+                      <input
+                        type="checkbox"
+                        aria-label={`${item.title || "제목 정보 없음"} 선택`}
+                        checked={selected}
+                        onChange={() => onToggleEvent(item)}
+                      />
+                    </label>
+                    <button className="calendar-event-summary" type="button" aria-expanded={focused} onClick={() => onSelectEvent(item)}>
+                      <time>{eventTimeLabel(item, selectedDate, timezone)}</time>
+                      <span>{item.title || "제목 정보 없음"}</span>
+                    </button>
+                    {focused ? renderExpandedResource(item) : null}
+                  </li>
+                );
+              })}
             </ul>
           ) : <p className="muted">선택한 날짜에 일정이 없습니다.</p>}
         </section>

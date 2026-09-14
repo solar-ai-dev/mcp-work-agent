@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from re import fullmatch
 
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_ISSUE_LIST_PAGE_SIZE = "100"
@@ -93,14 +94,17 @@ class GitHubIssueMutationRequest:
 
 
 def validate_repository(repository: str) -> str:
-    parts = repository.split("/")
-    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+    if (
+        fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repository) is None
+        or repository.split("/")[-1] in {".", ".."}
+        or len(repository) > 200
+    ):
         raise GitHubIssueQueryError("REPOSITORY_INVALID")
     return repository
 
 
 def validate_issue_number(issue_number: int) -> None:
-    if issue_number < 1:
+    if type(issue_number) is not int or issue_number < 1:
         raise GitHubIssueQueryError("ISSUE_NUMBER_INVALID")
 
 

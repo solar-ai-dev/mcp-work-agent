@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from google_work_agent.application.prompt_runtime.contracts.failure_record import (
@@ -20,6 +20,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMInvocationError,
     OutputSchemaDefinition,
     PromptReference,
+    ProviderResponsePayload,
     RuntimePolicy,
     StructuredLLMProvider,
 )
@@ -49,7 +50,7 @@ class PromptRepairSchemaRepairer:
         max_attempts: int,
         failure_reason_code: str,
         validator_errors: tuple[str, ...],
-    ) -> object:
+    ) -> ProviderResponsePayload:
         from google_work_agent.application.prompt_runtime.prompt_registry import (
             InactivePromptArtifactError,
             default_prompt_manifest_path,
@@ -90,7 +91,16 @@ class PromptRepairSchemaRepairer:
             runtime_policy=runtime_policy,
             api_key=api_key,
         )
-        return json.loads(payload.content) if isinstance(payload.content, str) else payload.content
+        if not isinstance(payload.content, str):
+            return payload
+        try:
+            repaired_output = json.loads(payload.content)
+        except json.JSONDecodeError as error:
+            raise LLMInvocationError(
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "schema repair returned invalid JSON",
+            ) from error
+        return replace(payload, content=repaired_output)
 
 
 def _build_repair_input(
@@ -104,6 +114,15 @@ def _build_repair_input(
     validator_errors: tuple[str, ...],
 ) -> dict[str, object]:
     del max_attempts
+    base_projection = prompt_input
+    if set(prompt_input) == {"base_projection", "candidate_output", "failure_record"}:
+        revision_base = prompt_input["base_projection"]
+        if not isinstance(revision_base, Mapping):
+            raise LLMInvocationError(
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "revision base_projection must be an object before schema repair",
+            )
+        base_projection = revision_base
     affected_field_paths = sorted(
         {
             match.group(0)
@@ -112,7 +131,7 @@ def _build_repair_input(
         }
     )
     return {
-        "base_projection": dict(prompt_input),
+        "base_projection": dict(base_projection),
         "candidate_output": failed_output,
         "failure_record": build_failure_record_v1(
             failure_id=f"{prompt_ref.prompt_id}:{attempt_no}",

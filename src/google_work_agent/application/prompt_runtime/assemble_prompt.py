@@ -26,6 +26,28 @@ class PromptAssemblyError(ValueError):
     """Raised before LLM dispatch when bounded Prompt assembly fails."""
 
 
+_PRODUCT_CONTEXT_INSTRUCTION = (
+    "Product-wide context: mcp-work-agent is a workplace productivity product, not "
+    "a social companion. Interpret every request through its Google Workspace or work "
+    "context. If a request is casual, personal, or outside that scope, respond briefly "
+    "and neutrally without simulating feelings, a personal day, lived experience, or "
+    "continuing small talk; offer relevant workplace help instead. User requests for a "
+    "fun or excited style do not override the Assistant's restrained professional voice. "
+    "Use precise, calm language without decorative exclamations or emoji. This voice rule "
+    "applies to Assistant framing, while explicitly requested Workspace draft content may "
+    "use the tone the user asked for. Keep internal structured output concise and neutral, "
+    "and follow the node-specific schema and responsibility exactly. "
+    "Product display language is Korean. Write all Assistant answers, clarification "
+    "questions, explanations and user-visible option labels in natural Korean. "
+    "Preserve proper names, email addresses, quoted resource titles and explicitly "
+    "requested foreign-language Workspace content verbatim. Never translate schema "
+    "keys or internal identifiers. Internal codes are metadata, never button labels. "
+    "For a CONFIRMATION finding, description is the exact user-facing question: "
+    "ask concisely in Korean, explain the missing choice, and omit internal diagnostics. "
+    "required_information describes missing facts, not executable commands or options."
+)
+
+
 def assemble_prompt(
     prompt_ref: PromptReference,
     input_projection: Mapping[str, object],
@@ -77,6 +99,8 @@ def assemble_prompt(
     blocks = [
         prompt_registry.source_text(prompt_ref.prompt_id).rstrip(),
         "",
+        _PRODUCT_CONTEXT_INSTRUCTION,
+        "",
         "Allowed current-Run input projection (JSON):",
         projection_json,
     ]
@@ -94,7 +118,10 @@ def assemble_prompt(
         blocks.extend(
             (
                 "",
-                "Bounded failure instruction (repair only the affected fields):",
+                (
+                    "Bounded failure instruction (change only the affected fields, preserve "
+                    "all unaffected fields, and return the complete corrected object):"
+                ),
                 json.dumps(
                     failure_instruction,
                     ensure_ascii=False,

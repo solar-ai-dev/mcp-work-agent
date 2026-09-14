@@ -1,0 +1,507 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from inspect import Parameter, signature
+from typing import Any, cast
+
+import pytest
+
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
+from google_work_agent.application.use_cases.action.validate_action_arguments import (
+    ValidateActionArgumentsHandler,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    PolicyOverrideProvenanceDependency,
+    ValidatePlanForPublicationHandler,
+    ValidatePlanForPublicationQueryV1,
+    build_domain_validation_output_from_v2,
+)
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
+
+
+class _ResourceReader:
+    def __init__(self, resources: dict[str, dict[str, object]]) -> None:
+        self._resources = dict(resources)
+
+    def resolve_resource_identity(
+        self, *, run_id: str, resource_handle: str
+    ) -> dict[str, object] | None:
+        assert run_id == "run-1"
+        return self._resources.get(resource_handle)
+
+
+def _plan_meta() -> dict[str, Any]:
+    return {
+        "artifact_id": "plan-1",
+        "revision": 1,
+        "based_on": [{"artifact_id": "analysis-1", "revision": 1}],
+    }
+
+
+def _review(*, plan_revision: int = 1) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "meta": {
+            "artifact_id": "review-1",
+            "revision": 1,
+            "based_on": [{"artifact_id": "plan-1", "revision": plan_revision}],
+        },
+        "status": "PASS",
+        "summary": "ok",
+    }
+
+
+def _evidence(resource_handle: str = "task:t1") -> list[dict[str, Any]]:
+    return [
+        {
+            "schema_version": 1,
+            "evidence_id": "ev-1",
+            "resource_handle": resource_handle,
+            "segment_id": "seg-1",
+            "kind": "CONTEXT",
+            "excerpt": "submit report",
+            "locator": None,
+            "reason_codes": ["SUPPORTS"],
+        }
+    ]
+
+
+def _reader() -> _ResourceReader:
+    return _ResourceReader(
+        {
+            "task:t1": {
+                "resource_handle": "task:t1",
+                "resource_type": "task",
+                "resource_id": "t1",
+                "parent_id": "list-1",
+            }
+        }
+    )
+
+
+def _task_update_plan() -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "meta": _plan_meta(),
+        "actions": [
+            {
+                "action_id": "a1",
+                "route_id": "r1",
+                "tool_id": "tasks_update_task",
+                "effect": "UPDATE",
+                "arguments": {
+                    "task_list_id": "list-1",
+                    "task_id": "t1",
+                    "payload": {"status": "completed"},
+                },
+                "evidence_refs": ["ev-1"],
+                "depends_on_action_ids": [],
+            }
+        ],
+    }
+
+
+def _task_create_plan() -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "meta": _plan_meta(),
+        "actions": [
+            {
+                "action_id": "a1",
+                "route_id": "r1",
+                "tool_id": "tasks_create_task",
+                "effect": "CREATE",
+                "arguments": {
+                    "task_list_id": "list-1",
+                    "payload": {"title": "new task"},
+                },
+                "evidence_refs": ["ev-1"],
+                "depends_on_action_ids": [],
+            }
+        ],
+    }
+
+
+def _analysis(
+    *,
+    action_necessity: str = "REQUIRED",
+    receipt_refs: Sequence[object] = (),
+) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "meta": {
+            "artifact_id": "analysis-1",
+            "revision": 1,
+            "based_on": [{"artifact_id": "retrieval-1", "revision": 1}],
+        },
+        "work_facts": [],
+        "relations": [],
+        "ambiguities": [],
+        "risks": [],
+        "evidence_refs": ["ev-1"],
+        "policy_confirmation_receipt_refs": list(receipt_refs),
+        "action_necessity": action_necessity,
+        "action_necessity_reason": "requested write" if action_necessity == "REQUIRED" else None,
+    }
+
+
+def _receipt(*, decision: str = "APPROVED") -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "meta": {
+            "artifact_id": "receipt-artifact-1",
+            "revision": 1,
+            "based_on": [],
+        },
+        "interrupt_id": "interrupt-1",
+        "confirmation_kind": "DUPLICATE_OVERRIDE",
+        "decision": decision,
+        "semantic_owner_id": "WORK_ANALYSIS",
+        "decision_context_hash": "hash",
+        "affected_route_ids": ["r1"],
+        "affected_resource_refs": [],
+    }
+
+
+def _call(
+    plan: Any,
+    *,
+    review: Any = None,
+    evidence: Any = None,
+    reader: Any = None,
+    analysis: Any = None,
+    receipts: Any = (),
+    selected_resources: Sequence[SelectedResourceRef] = (),
+) -> Any:
+    return ValidatePlanForPublicationHandler(
+        tool_registry=load_signed_tool_registry(),
+        validate_action_arguments=ValidateActionArgumentsHandler(),
+    )(
+        ValidatePlanForPublicationQueryV1(
+            run_id="run-1",
+            planning_result=plan,
+            plan_review=cast(Any, review or _review()),
+            work_analysis_result=analysis,
+            evidence_drafts=cast(Any, evidence or _evidence()),
+            policy_confirmation_receipts=receipts,
+            resource_identity_reader=cast(Any, reader or _reader()),
+            selected_resources=selected_resources,
+        )
+    )
+
+
+def test_valid_task__update_requires__approval() -> None:
+    result = _call(_task_update_plan())
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+def test_update_blocks_when_evidence__is_not_tied_to__exact_current_run_target() -> None:
+    result = _call(
+        _task_update_plan(),
+        evidence=_evidence("task:other"),
+        reader=_ResourceReader({}),
+    )
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_validate_plan_for_publication__with_one_of_multiple_llm_targets__blocks_update() -> None:
+    result = _call(
+        _task_update_plan(),
+        evidence=[
+            *_evidence("task:t1"),
+            {
+                **_evidence("task:t2")[0],
+                "evidence_id": "ev-2",
+                "segment_id": "seg-2",
+            },
+        ],
+        reader=_ResourceReader(
+            {
+                "task:t1": {
+                    "resource_handle": "task:t1",
+                    "resource_type": "task",
+                    "resource_id": "t1",
+                    "parent_id": "list-1",
+                },
+                "task:t2": {
+                    "resource_handle": "task:t2",
+                    "resource_type": "task",
+                    "resource_id": "t2",
+                    "parent_id": "list-1",
+                },
+            }
+        ),
+    )
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_validate_plan_for_publication__with_selected_stable_target__accepts_update() -> None:
+    result = _call(
+        _task_update_plan(),
+        evidence=[
+            *_evidence("task:t1"),
+            {
+                **_evidence("task:t2")[0],
+                "evidence_id": "ev-2",
+                "segment_id": "seg-2",
+            },
+        ],
+        reader=_ResourceReader(
+            {
+                "task:t1": {
+                    "resource_handle": "task:t1",
+                    "resource_type": "task",
+                    "resource_id": "t1",
+                    "parent_id": "list-1",
+                },
+                "task:t2": {
+                    "resource_handle": "task:t2",
+                    "resource_type": "task",
+                    "resource_id": "t2",
+                    "parent_id": "list-1",
+                },
+            }
+        ),
+        selected_resources=(
+            SelectedResourceRef(
+                resource_ref_id="ref-t1",
+                connector_id="google_workspace",
+                resource_type="task",
+                resource_id="t1",
+                parent_resource_id="list-1",
+            ),
+        ),
+    )
+
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+def test_create_requires__evidence_but__not_existing_target() -> None:
+    result = _call(_task_create_plan(), reader=_ResourceReader({}))
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+def test_create_accepts__current_run_user_message__as_evidence() -> None:
+    plan = _task_create_plan()
+    plan["actions"][0]["evidence_refs"] = ["message-1"]
+    result = _call(
+        plan,
+        reader=_ResourceReader({}),
+        evidence=[
+            {
+                "schema_version": 1,
+                "evidence_id": "message-1",
+                "origin_type": "USER_MESSAGE",
+                "message_id": "message-1",
+                "kind": "USER_REQUEST",
+                "excerpt": "Create a new task.",
+            }
+        ],
+    )
+
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+@pytest.mark.parametrize("tool_name", ["gmail_create_draft", "gmail_send"])
+@pytest.mark.parametrize("matched", [True, False])
+def test_gmail_reply__requires_current_run_thread_evidence__before_approval(
+    tool_name: str,
+    matched: bool,
+) -> None:
+    plan = _task_create_plan()
+    plan["actions"][0].update(
+        tool_id=tool_name,
+        effect="SEND" if tool_name == "gmail_send" else "CREATE",
+        arguments={
+            "payload": {
+                "to": ["to@example.com"],
+                "subject": "회신",
+                "body": "본문",
+                "thread_id": "thread-1",
+                "in_reply_to": "<source@example.com>",
+                "references": "<source@example.com>",
+            }
+        },
+    )
+    result = _call(
+        plan,
+        evidence=_evidence("thread-handle"),
+        reader=_ResourceReader(
+            {
+                "thread-handle": {
+                    "resource_handle": "thread-handle",
+                    "resource_type": "gmail_thread",
+                    "resource_id": "thread-1" if matched else "other-thread",
+                    "parent_id": None,
+                }
+            }
+        ),
+    )
+    assert result["result"] == ("REQUIRE_APPROVAL" if matched else "BLOCK")
+
+
+def test_invalid_tool__effect_pair__blocks() -> None:
+    plan = _task_create_plan()
+    plan["actions"][0]["effect"] = "DELETE"
+
+    result = _call(plan)
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_stale_review__cannot_authorize__current_plan() -> None:
+    result = _call(_task_create_plan(), review=_review(plan_revision=2))
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_REVIEW_INVALID"]
+
+
+def test_work_analysis_receipt__ref_must_resolve__to_approved_receipt() -> None:
+    analysis = _analysis(receipt_refs=[{"artifact_id": "receipt-artifact-1", "revision": 1}])
+
+    result = _call(
+        _task_create_plan(),
+        analysis=analysis,
+        receipts=[_receipt(decision="DECLINED")],
+    )
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["WORK_ANALYSIS_INVALID"]
+
+
+def test_current_work_analysis__route_necessity__is_accepted_by_publication() -> None:
+    analysis = _analysis()
+    analysis["route_action_necessities"] = [
+        {
+            "route_id": "r1",
+            "status": "REQUIRED",
+            "reason": "REQUESTED_EXTERNAL_EFFECT_IS_NOT_SATISFIED",
+            "evidence_refs": [],
+            "candidate_refs": [],
+        }
+    ]
+
+    result = _call(_task_create_plan(), analysis=analysis)
+
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+def test_not_required_analysis__with_action_fails_closed__on_override_provenance_dependency() -> (
+    None
+):
+    analysis = _analysis(
+        action_necessity="NOT_REQUIRED",
+        receipt_refs=[{"artifact_id": "receipt-artifact-1", "revision": 1}],
+    )
+
+    with pytest.raises(
+        PolicyOverrideProvenanceDependency,
+        match="POLICY_OVERRIDE_PROVENANCE_DEPENDENCY",
+    ):
+        _call(
+            _task_create_plan(),
+            analysis=analysis,
+            receipts=[_receipt(decision="APPROVED")],
+        )
+
+
+def test_registry_authority__must_be__explicitly_injected() -> None:
+    service_parameter = signature(ValidatePlanForPublicationHandler).parameters["tool_registry"]
+    helper_parameter = signature(build_domain_validation_output_from_v2).parameters["tool_registry"]
+
+    assert service_parameter.default is Parameter.empty
+    assert helper_parameter.default is Parameter.empty
+
+
+def _github_plan(tool_name: str, *, repository: str = "acme/repo") -> dict[str, Any]:
+    arguments: dict[str, object] = {"repository": repository, "issue_number": 7}
+    if tool_name == "github_update_issue":
+        arguments["title"] = "updated"
+    elif tool_name == "github_create_issue":
+        arguments = {"repository": repository, "title": "new issue"}
+    return {
+        "schema_version": 2,
+        "meta": _plan_meta(),
+        "actions": [
+            {
+                "action_id": "a1",
+                "route_id": "r1",
+                "tool_id": tool_name,
+                "effect": "CREATE" if tool_name == "github_create_issue" else "UPDATE",
+                "arguments": arguments,
+                "evidence_refs": ["ev-1"],
+                "depends_on_action_ids": [],
+            }
+        ],
+    }
+
+
+def _github_evidence() -> list[dict[str, Any]]:
+    return _evidence("github_issue:acme/repo#7")
+
+
+def _github_reader(**changes: object) -> _ResourceReader:
+    identity: dict[str, object] = {
+        "resource_handle": "github_issue:acme/repo#7",
+        "resource_type": "github_issue",
+        "resource_id": "acme/repo#7",
+        "parent_id": "acme/repo",
+    }
+    identity.update(changes)
+    return _ResourceReader({"github_issue:acme/repo#7": identity})
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ("github_update_issue", "github_close_issue", "github_reopen_issue"),
+)
+def test_github_existing_target__requires_exact__current_run_composite_identity(
+    tool_name: str,
+) -> None:
+    result = _call(
+        _github_plan(tool_name),
+        evidence=_github_evidence(),
+        reader=_github_reader(),
+    )
+
+    assert result["result"] == "REQUIRE_APPROVAL"
+
+
+@pytest.mark.parametrize(
+    ("plan", "reader"),
+    (
+        (_github_plan("github_update_issue", repository="other/repo"), _github_reader()),
+        (
+            _github_plan("github_close_issue"),
+            _github_reader(parent_id="other/repo"),
+        ),
+        (
+            _github_plan("github_reopen_issue"),
+            _github_reader(resource_id="acme/repo#abc"),
+        ),
+    ),
+)
+def test_github_existing_target__mismatch__blocks_domain_validation(
+    plan: dict[str, Any],
+    reader: _ResourceReader,
+) -> None:
+    result = _call(plan, evidence=_github_evidence(), reader=reader)
+
+    assert result["result"] == "BLOCK"
+    assert result["reason_codes"] == ["PLAN_DRAFT_INVALID"]
+
+
+def test_github_create__target_consistency__does_not_block() -> None:
+    result = _call(
+        _github_plan("github_create_issue"),
+        evidence=_github_evidence(),
+        reader=_ResourceReader({}),
+    )
+
+    assert result["result"] == "REQUIRE_APPROVAL"

@@ -27,7 +27,9 @@ from google_work_agent.api.schemas.runs.start_run import StartRunRequest
 from google_work_agent.api.schemas.runtime_summaries.get_runtime_summary import (
     RuntimeDetailResponseV1,
 )
-from google_work_agent.api.schemas.settings.update_settings import PatchSettingsRequest
+from google_work_agent.api.schemas.settings.update_settings import (
+    PatchSettingsRequest,
+)
 
 
 def test_action_transport__contracts_live__in_operation_modules() -> None:
@@ -68,6 +70,7 @@ def test_runtime_detail__uses_exact__canonical_wire_vocabulary() -> None:
         "service_instance_id",
         "connectors",
         "llm_providers",
+        "local_models",
         "component_circuits",
         "active_run_budget",
         "recovery_required",

@@ -23,6 +23,9 @@ from google_work_agent.ports.connector.contracts.validated_connector_tool_bindin
 
 
 class _CalendarRead:
+    def __init__(self, extra_fields: dict[str, JsonValue] | None = None) -> None:
+        self._extra_fields = extra_fields or {}
+
     def execute_read(
         self,
         binding: ValidatedConnectorToolBindingV1,
@@ -40,8 +43,9 @@ class _CalendarRead:
                     "resource_id": "event-1",
                     "parent_id": "calendar-1",
                     "title": "Focus",
-                    "start": "2026-08-20T00:00:00.900Z",
+                    "start": "2026-08-20T00:00:00Z",
                     "end": "2026-08-20T01:00:00Z",
+                    **self._extra_fields,
                 }
             },
             None,
@@ -67,6 +71,8 @@ def test_task_create_expected__maps_scheduled_date__to_provider_due() -> None:
             "title": "Prepare report",
             "notes": "Use Q3 numbers",
             "due": "2026-08-20",
+            "parent_id": "list-1",
+            "status": "needsAction",
         }
     }
 
@@ -102,10 +108,13 @@ def test_expected_never__contains_provider__generated_identity() -> None:
 
 
 def test_gmail_send_expected__matches_fresh_sent__message_lookup_surface() -> None:
-    assert build_expected_verification_projection(
+    expected = build_expected_verification_projection(
         tool_name="gmail_send",
-        arguments={"draft_id": "draft-1"},
-    ) == {"resource_type": "gmail_message"}
+        arguments={"payload": {"to": ["a@example.com"], "subject": "Hi", "body": "Body"}},
+    )["payload"]
+    assert expected == {"to": ["a@example.com"], "cc": [], "bcc": [], "subject": "Hi",
+                        "body": "Body", "in_reply_to": None, "references": None,
+                        "attachments": [], "sent": True}
 
 
 def test_gmail_draft_actual__normalizes_recipient_list__to_metadata_header() -> None:
@@ -114,10 +123,10 @@ def test_gmail_draft_actual__normalizes_recipient_list__to_metadata_header() -> 
         actual={"payload": {"to": ["a@example.com", "b@example.com"]}},
     )
 
-    assert actual == {"payload": {"to": "a@example.com, b@example.com"}}
+    assert actual == {"payload": {"to": ["a@example.com", "b@example.com"]}}
 
 
-def test_calendar_expected_omits__fields_current_verification__snapshot_cannot_observe() -> None:
+def test_calendar_expected_preserves__approved_description__and_attendees() -> None:
     expected = build_expected_verification_projection(
         tool_name="calendar_create_event",
         arguments={
@@ -135,10 +144,77 @@ def test_calendar_expected_omits__fields_current_verification__snapshot_cannot_o
     assert expected == {
         "payload": {
             "title": "Focus",
+            "parent_id": "calendar-1",
+            "status": "confirmed",
             "start": "2026-08-20T09:00:00+09:00",
             "end": "2026-08-20T10:00:00+09:00",
+            "description": "Deep work",
+            "location": "",
+            "attendees": ["a@example.com"],
         }
     }
+
+
+def test_calendar_verification__missing_approved_attendee__is_mismatch() -> None:
+    expected = build_expected_verification_projection(
+        tool_name="calendar_create_event",
+        arguments={
+            "calendar_id": "calendar-1",
+            "payload": {
+                "title": "Focus",
+                "start": "2026-08-20T09:00:00+09:00",
+                "end": "2026-08-20T10:00:00+09:00",
+                "description": "Deep work",
+                "attendees": ["a@example.com"],
+            },
+        },
+    )
+    result = VerifyEffectHandler(
+        connector_read=_CalendarRead(),
+        tool_registry=load_signed_tool_registry(),
+    )(
+        VerifyEffectQueryV1(
+            "run-1", "action-1", "attempt-1", "CREATE", expected,
+            SelectedResourceRefV1(
+                1, "resource-ref-1", "google_workspace", "calendar_event",
+                "event-1", "calendar-1",
+            ),
+        )
+    )
+
+    assert result.status == "MISMATCH"
+    assert result.expected_normalized["attendees"] == ["a@example.com"]
+    assert result.expected_normalized["description"] == "Deep work"
+
+
+def test_calendar_verification__preserves_description_and_attendees__with_provider_metadata() -> (
+    None
+):
+    result = VerifyEffectHandler(
+        connector_read=_CalendarRead({
+            "description": "Deep work\n\n\u200bgwa-recovery-fingerprint:abc123",
+            "attendees": ["b@example.com", "a@example.com"],
+        }),
+        tool_registry=load_signed_tool_registry(),
+    )(VerifyEffectQueryV1(
+        "run-1", "action-1", "attempt-1", "CREATE",
+        {"payload": {
+            "title": "Focus",
+            "start": "2026-08-20T09:00:00+09:00",
+            "end": "2026-08-20T10:00:00+09:00",
+            "description": "Deep work",
+            "attendees": ["a@example.com", "b@example.com"],
+        }},
+        SelectedResourceRefV1(
+            1, "resource-ref-1", "google_workspace", "calendar_event",
+            "event-1", "calendar-1",
+        ),
+    ))
+
+    assert result.status == "VERIFIED"
+    assert result.actual_normalized is not None
+    assert result.actual_normalized["description"] == "Deep work"
+    assert result.actual_normalized["attendees"] == ["a@example.com", "b@example.com"]
 
 
 def test_calendar_verification__with_equal_timezone_instants__is_verified() -> None:
@@ -171,6 +247,46 @@ def test_calendar_verification__with_equal_timezone_instants__is_verified() -> N
     assert result.expected_normalized["start"] == "2026-08-20T00:00:00Z"
     assert result.actual_normalized is not None
     assert result.actual_normalized["start"] == "2026-08-20T00:00:00Z"
+
+
+def test_calendar_verification__with_absent_optional_fields__normalizes_empty_values() -> None:
+    expected = build_expected_verification_projection(
+        tool_name="calendar_create_event",
+        arguments={
+            "calendar_id": "calendar-1",
+            "payload": {
+                "title": "Focus",
+                "start": "2026-08-20T09:00:00+09:00",
+                "end": "2026-08-20T10:00:00+09:00",
+            },
+        },
+    )
+    result = VerifyEffectHandler(
+        connector_read=_CalendarRead({"status": "confirmed"}),
+        tool_registry=load_signed_tool_registry(),
+    )(
+        VerifyEffectQueryV1(
+            "run-1",
+            "action-1",
+            "attempt-1",
+            "CREATE",
+            expected,
+            SelectedResourceRefV1(
+                1,
+                "resource-ref-1",
+                "google_workspace",
+                "calendar_event",
+                "event-1",
+                "calendar-1",
+            ),
+        )
+    )
+
+    assert result.status == "VERIFIED"
+    assert result.actual_normalized is not None
+    assert result.actual_normalized["description"] == ""
+    assert result.actual_normalized["location"] == ""
+    assert result.actual_normalized["attendees"] == []
 
 
 def test_delete_expected__is_absence__only() -> None:

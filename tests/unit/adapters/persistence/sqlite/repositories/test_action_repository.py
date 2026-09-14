@@ -64,8 +64,15 @@ def test_action_repository__owns_dependency__storage_and_readiness() -> None:
         "action-1",
         0,
         frozenset({ActionStatusV1.APPROVED}),
-        {"status": ActionStatusV1.VERIFIED, "version": 1},
+        {
+            "status": ActionStatusV1.VERIFIED,
+            "expected_json": '{"payload":{"title":"updated"}}',
+            "version": 1,
+        },
     )
+    updated = repository.get("action-1")
+    assert updated is not None
+    assert updated.expected_json == '{"payload":{"title":"updated"}}'
     assert repository.is_dependency_ready("action-2")
     assert [item.id for item in repository.list_for_plan("plan-1")] == [
         "action-1",

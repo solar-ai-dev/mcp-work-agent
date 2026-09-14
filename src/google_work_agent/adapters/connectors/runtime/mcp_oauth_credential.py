@@ -6,6 +6,10 @@ from typing import Literal, cast
 from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
     ConnectorRuntimeRegistry,
 )
+from google_work_agent.ports.connector.connector_failure import (
+    ConnectorFailureCode,
+    ConnectorOperationFailure,
+)
 from google_work_agent.ports.connector.mcp_client_port import JsonValue, MCPClientPort
 from google_work_agent.ports.connector.oauth_credential_port import (
     OAuthAuthorizationStart,
@@ -141,7 +145,26 @@ class McpOAuthCredentialAdapter:
             self._timeout_ms,
         )
         if response.transport_status != "OK" or not isinstance(response.payload, dict):
-            raise RuntimeError(response.error_code or "OAUTH_MCP_CALL_FAILED")
+            code = {
+                "AUTH_REQUIRED": ConnectorFailureCode.AUTH_REQUIRED,
+                "PERMISSION_DENIED": ConnectorFailureCode.PERMISSION_DENIED,
+                "NOT_FOUND": ConnectorFailureCode.NOT_FOUND,
+                "TIMEOUT": ConnectorFailureCode.TIMEOUT,
+                "PROCESS_UNAVAILABLE": ConnectorFailureCode.CONNECTION_UNAVAILABLE,
+                "CONNECTION_CLOSED": ConnectorFailureCode.CONNECTION_UNAVAILABLE,
+                "MALFORMED_RESPONSE": ConnectorFailureCode.MALFORMED_RESPONSE,
+                "CONFIGURATION_ERROR": ConnectorFailureCode.CONFIGURATION_ERROR,
+            }.get(response.error_code or "", ConnectorFailureCode.UPSTREAM_UNAVAILABLE)
+            raise ConnectorOperationFailure(
+                code=code,
+                detail_code=response.error_code or "OAUTH_MCP_CALL_FAILED",
+                retryable=code
+                in {
+                    ConnectorFailureCode.TIMEOUT,
+                    ConnectorFailureCode.CONNECTION_UNAVAILABLE,
+                    ConnectorFailureCode.UPSTREAM_UNAVAILABLE,
+                },
+            )
         return cast(dict[str, JsonValue], response.payload)
 
     @staticmethod
@@ -150,7 +173,9 @@ class McpOAuthCredentialAdapter:
         status: Literal[
             "CONNECTING", "CONNECTED", "DISCONNECTED", "REAUTH_REQUIRED", "UNAVAILABLE"
         ] = (
-            "CONNECTED"
+            "CONNECTING"
+            if raw_state == "CONNECTING"
+            else "CONNECTED"
             if bool(payload["connected"])
             else "REAUTH_REQUIRED"
             if bool(payload["reauth_required"])
@@ -170,9 +195,17 @@ class McpOAuthCredentialAdapter:
                 str(item) for item in cast(list[object], payload.get("granted_scopes", []))
             ),
             missing_required_scopes=tuple(
-                str(item)
-                for item in cast(list[object], payload.get("missing_scopes", []))
+                str(item) for item in cast(list[object], payload.get("missing_scopes", []))
             ),
+            authorization_status=cast(
+                Literal["PENDING", "SLOW_DOWN", "APPROVED", "EXPIRED", "DENIED"] | None,
+                payload.get("authorization_status")
+                if isinstance(payload.get("authorization_status"), str)
+                and payload.get("authorization_status")
+                in {"PENDING", "SLOW_DOWN", "APPROVED", "EXPIRED", "DENIED"}
+                else None,
+            ),
+            detail_code=_optional_string(payload.get("detail_code")),
         )
 
     def _reconcile(

@@ -170,6 +170,9 @@ def test_signed_connector_composition_uses__verified_installed_registry_when__em
     installed_registry_payload = json.loads(json.dumps(embedded_payload))
     installed_registry_payload["contract_version"] = "2026-08-06.drift-proof"
     installed_registry_payload["entries"][0]["input_schema_ref"] = "drift-proof-v2"
+    installed_registry_payload["entries"].sort(
+        key=lambda entry: (entry["connector_id"], entry["tool_id"])
+    )
     installed_registry_payload["entries_hash"] = hashlib.sha256(
         json.dumps(
             installed_registry_payload["entries"], separators=(",", ":"), sort_keys=True

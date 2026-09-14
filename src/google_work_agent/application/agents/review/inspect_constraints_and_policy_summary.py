@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from google_work_agent.application.agents.review.contracts.exact_calendar_create_plan import (
+    is_exact_calendar_create_plan,
+)
+from google_work_agent.application.agents.review.contracts.exact_task_create_plan import (
+    is_exact_task_create_plan,
+)
 from google_work_agent.application.agents.review.contracts.review_findings import (
     ReviewDimensionIdV1,
     ReviewInspectorResultV1,
@@ -28,8 +34,25 @@ def inspect_constraints_and_policy_summary(
     work_analysis: Mapping[str, object] | None = None,
     evidence: Sequence[Mapping[str, object]] = (),
     confirmation_response: Mapping[str, object] | None = None,
+    user_action_modifications: Sequence[Mapping[str, object]] = (),
 ) -> ReviewInspectorResultV1:
     constraints = request_intent.get("constraints")
+    if (
+        confirmation_response is None
+        and not policy_summary
+        and (
+            is_exact_calendar_create_plan(
+                request_intent=request_intent,
+                planning_result=planning_result,
+            )
+            or is_exact_task_create_plan(
+                request_intent=request_intent,
+                planning_result=planning_result,
+                work_analysis=work_analysis,
+            )
+        )
+    ):
+        return {"schema_version": 1, "dimension": DIMENSION, "findings": []}
     if constraints == [] and not policy_summary and confirmation_response is None:
         # This inspector may report only supplied user-constraint or policy
         # contradictions. With both bounded inputs explicitly empty there is
@@ -50,6 +73,10 @@ def inspect_constraints_and_policy_summary(
         prompt_input["evidence"] = [dict(item) for item in evidence]
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if user_action_modifications:
+        prompt_input["user_action_modifications"] = [
+            dict(item) for item in user_action_modifications
+        ]
     return validate_review_inspector_result(
         invoke(PROMPT_ID, prompt_input), expected_dimension=DIMENSION
     )

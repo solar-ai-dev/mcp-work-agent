@@ -9,7 +9,7 @@ from google_work_agent.api.schemas.runtime_summaries.get_runtime_summary import 
 class UpdateRuntimeModeRequest(ApiModel):
     schema_version: Literal[1]
     command_id: str
-    requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    requested_mode: Literal["LOCAL_GPU", "API_LLM"]
 
 
 __all__ = ["RuntimeModeStatusV1", "UpdateRuntimeModeRequest"]

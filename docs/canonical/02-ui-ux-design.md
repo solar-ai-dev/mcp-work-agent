@@ -1,11 +1,13 @@
 # 02. UI · UX 설계서
 
 > **Authority:** 사용자 화면·상호작용과 UX 상태 표현. Domain/Workflow/API semantics는 해당 전문 owner를 따른다.  
-> **상태:** Draft v2.16 · **기준일:** 2026-08-26 · **대상:** P0 MVP
+> **수정일:** 2026-09-07 · **상태:** 제품 UX 요구사항 — 구현·E2E 완료 여부는 별도 작업 현황에서 관리
 
 ## 1. 문서 목적
 
-이 문서는 Google Work Agent의 화면 구조, 사용자 흐름, 상태 표현, 채팅 내부 Action UI, 오류 복구 UX를 정의한다. 제품은 사용자 PC의 FastAPI Local Agent Service가 제공하는 React UI로 동작한다. 최초 설정을 제외한 핵심 업무 흐름은 메인 화면과 채팅 안에서 끝나야 한다.
+이 문서는 mcp-work-agent의 화면·상호작용·표시 상태를 정의한다. 연결과 설정, 자료 탐색, 채팅, 확인·승인·수정, 누적 작업 내역, 실행 결과와 복구를 사용자가 어떻게 보며 조작하는지에 집중한다.
+
+동일 기능의 별도 설명본을 만들지 않고 이 페이지에서 개요와 상세를 함께 제공한다. Policy의 허용 규칙, Domain 전이, API field와 저장 구조를 UI가 재정의하지 않는다. 화면은 기존 Backend가 제공한 상태·허용 동작을 소비한다. 새 요구사항은 승인된 구현·계약 연결과 E2E 검증을 거쳐야 하며 문서만으로 기능 완료를 선언하지 않는다.
 
 ## 2. UX 성공 기준
 
@@ -15,12 +17,12 @@
 - 사용자는 기본적으로 자연어 요청 한 번으로 Context 조회와 Action Plan 생성까지 진행할 수 있다.
 - 추가 정보가 필요할 때만 한 번의 선택 또는 짧은 입력을 요청한다.
 - 여러 Action은 기본적으로 하나의 계획으로 묶어 승인할 수 있고, 필요한 경우에만 Action별로 펼쳐 수정·취소한다.
-- 사용자가 Gmail·Task·Event를 보고 있는 위치에서 바로 Agent 행동을 시작할 수 있어야 한다.
+- 사용자가 지원되는 업무 자료를 보고 있는 위치에서 바로 Agent 행동을 시작할 수 있어야 한다.
 
 ### 2.2 화면 이동 최소화
 
 - 승인, 수정, 취소, 재검증, 실행 결과, Recovery는 모두 중앙 채팅 안에서 처리한다.
-- Gmail·Tasks·Calendar는 왼쪽 패널에서 탐색하고 현재 채팅 Context로 바로 연결한다.
+- Gmail·Tasks·Calendar·GitHub Issue는 왼쪽 Resource 패널에서 탐색하고 현재 채팅 Context로 바로 연결한다.
 - 과거 대화는 오른쪽 패널에서 열고 이어서 작업한다.
 - 설정과 진단은 상단 버튼에서 Drawer 또는 Dialog로 연다.
 
@@ -29,7 +31,8 @@
 - 읽기·검색·분석은 사용자 요청 범위 안에서 자동 진행한다.
 - 쓰기 Action만 사용자 승인을 요구한다.
 - 앱이 자동으로 판단할 수 있는 값은 먼저 제안하고, 불명확하거나 정책상 필요한 경우에만 질문한다.
-- 기술 로그 대신 현재 진행 상황을 이해할 수 있는 한 문장으로 표시한다.
+- 인증 갱신과 상태 점검은 시스템이 조정한다. Settings allowlist와 현재 요청의 명시 대상을 존중한다. OAuth 계정 동의, 외부 전송 동의, Secret 입력, Write 승인처럼 사용자 권한이 필요한 값만 입력받는다.
+- 진행 중인 한 문장을 교체하지 않고 실제 작업 행을 누적하며, 각 행에서 필요한 상세를 펼친다. 기술 로그 전체를 그대로 노출하지 않는다.
 
 ## 3. 실행·화면 구조
 
@@ -50,29 +53,20 @@ Launcher 실행
 제품의 독립 화면은 최소화한다.
 
 1. 시작 검사 화면
-2. 최초 설정 온보딩 화면
-3. 메인 화면
-4. 설정·진단 Drawer 또는 Dialog
+2. 메인 화면
+3. 설정·진단 Drawer 또는 Dialog
 
 Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 아니라 메인 화면의 채팅 메시지와 Inline Card로 표시한다.
 
 ## 4. 전체 사용자 흐름
 
-```
-앱 실행
-→ 시작 검사
-→ Google 로그인 상태 확인
-→ 최초 설정 또는 저장 설정 검증
-→ 메인 화면
-→ 자연어 요청 또는 Google 항목에서 Agent 행동 시작
-→ 자동 Context 조회
-→ 필요할 때만 확인 질문
-→ Action Plan 제안
-→ 승인·수정·취소
-→ 실행
-→ Google 재조회 검증
-→ 결과 또는 Recovery
-```
+Core가 정상 시작되면 업무 Connector와 Model Provider가 미연결이어도 메인 화면에 진입한다. 외부 LLM 전송 동의도 진입 조건이 아니다. 연결과 AI 준비는 해당 기능의 사용 가능 상태로 안내한다. 사용자는 자연어 요청을 하거나 탐색 중인 Resource를 명시적으로 선택한다.
+
+이후 경로는 실제 상태에 따라 달라진다. 바로 답할 수 있으면 답변하고, 필요한 자료가 있으면 검색·확인한다. 판단에 필수인 선택만 질문하고, 외부 변경이 필요하면 계획·승인·실행·검증으로 이어진다. 모든 요청에 동일한 단계나 승인 카드를 강제하지 않는다.
+
+Google·GitHub 어느 쪽도 앱 진입의 필수 로그인으로 표시하지 않는다. 필요한 Connector가 처음부터 미연결·미설치·접근 불가이면 현재 요청에 조치 안내를 남기고 종료한다. Settings에서 연결한 뒤 사용자가 다시 요청하도록 안내하며 실행 중 인증 만료의 재개 화면과 구분한다.
+
+최초 추론 전에 Local 모델·API Key·외부 전송 동의 등 선택한 LLM의 필수 조건이 없으면 기존 `BLOCKED` 종료와 설정 안내를 사용한다. 이 경우 복구 대기나 자동 재개를 만들지 않는다. Provider 통신 실패·Action 실행·재인증 및 resume 실패는 이 초기 차단으로 재분류하지 않는다.
 
 ## 5. UI-001 시작 검사 화면
 
@@ -90,23 +84,13 @@ Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 �
 
 ### 5.3 검사 순서
 
-1. Launcher·Frontend Build·Local API Contract Version 확인
-2. Local Session 수립과 Host·Origin 확인
-3. 앱 설정과 버전 확인
-4. SQLite 연결과 Migration 확인
-5. OS Keyring 접근 확인
-6. Google Workspace MCP Server 프로세스 확인
-7. Google Credential 존재 여부 확인
-8. Google Token 갱신과 Gmail·Tasks·Calendar 최소 조회 확인
-9. API LLM Key와 연결 확인
-10. Ollama와 Local 모델 확인
-11. 중단된 Conversation·Run 확인
-12. SSE 연결과 메인 화면 상태 복원
+화면은 Backend가 제공하는 검사 상태와 필요한 다음 행동을 표시한다. Frontend가 프로세스나 credential을 직접 검사하지 않는다.
 
-검사 단계는 다음 두 범주로 구분한다.
+- Core Readiness: 앱/자산/API 호환성, Local Session, DB/migration, 핵심 실행 경계.
+- Runtime Availability: 현재 요청에 사용할 Google/GitHub 연결·권한, Gemini API 설정/동의, Local AI 준비 상태.
+- Continuation: 저장된 대화와 중단 Run의 복원 가능 상태.
 
-- **Core Readiness:** Launcher·Asset·API Contract·SQLite·Migration·Domain·Keyring Adapter·MCP 실행 계약. 실패 시 Safe Mode 또는 진단 UI로 진입한다.
-- **Runtime Availability:** Google Credential·필수 Scope·API Key·Ollama·승인 Model. 누락은 Core Service 실패가 아니며 온보딩·설정 Action으로 해결한다.
+전체 필수 순서는 startup owner가 결정한다. 연결 하나의 미설정을 Core 장애로 묶거나 모든 외부 서비스를 무조건 필수로 만들지 않는다.
 
 ### 5.4 상태 문장 예시
 
@@ -119,56 +103,42 @@ Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 �
 
 ### 5.5 이동 규칙
 
-- 모든 필수 검사 성공: 메인 화면 자동 이동
-- Google 로그인 없음 또는 무효: Google 로그인 요청을 최우선 표시
-- 최초 설정 미완료: 최초 설정 온보딩으로 이동
-- API LLM만 문제이고 Local 사용 가능: 메인 화면 진입 후 API 경고 표시
-- Local만 문제이고 API 사용 가능: 메인 화면 진입 후 API_LLM으로 사용 가능
-- 사용 가능한 LLM이 없음: 연결 설정 Action을 표시하고 실행 차단
-- 중단 Run 존재: 메인 화면 진입 후 `이전 작업 계속하기` 카드 표시
+Core가 준비되면 메인 화면에 진입하고 저장된 이력·Settings를 사용할 수 있다. 사용할 연결이 없거나 선택 AI가 준비되지 않았으면 해당 설정 행동을 강조하되 진입 버튼을 잠그지 않는다. Local-only 사용에 외부 전송 동의를 강제하지 않는다. 새 추론 요청을 실행할 모델이 없으면 그 요청에 연결·준비 안내를 표시하고 종료한다. Google/GitHub/API/Local 문제를 각각 분리하고 다른 정상 기능까지 차단 표시하지 않는다.
 
-## 6. UI-002 최초 설정 온보딩
+명시적 Local 모드의 실패를 동의 없는 API 전환으로 숨기지 않는다. 중단 Run은 이전 작업 안내와 서버가 허용한 재개·복구 행동을 표시한다. 마지막 저장 상태를 현재 실행 성공으로 추측하지 않는다.
+
+## 6. UI-002 최초 Settings 안내
 
 ### 6.1 형태
 
-여러 페이지를 넘기는 Wizard가 아니라 하나의 온보딩 화면에서 체크리스트가 순서대로 진행된다. 현재 필요한 행동 하나만 강조하고 완료된 단계는 자동으로 접는다.
+첫 실행도 독립 온보딩 화면을 만들지 않고 일반 Settings와 같은 compact Drawer/Dialog를 사용한다. 큰 카드나 순차 체크리스트를 메인 구조로 만들지 않고 현재 상태와 필요한 다음 행동만 보여준다.
 
 ### 6.2 진행 순서
 
-1. Google 로그인과 Scope 동의
-2. 개인정보·외부 LLM 전송 동의
-3. PC와 GPU 환경 자동 진단
-4. API LLM 연결
-5. Local 사용 가능 환경이면 Ollama·승인 Local Model 상태 확인 및 설치 안내
-6. 기본 Calendar·Task List·Timezone 확인
-7. 메인 화면 진입
+업무 Connector와 AI 연결은 나중에 설정할 수 있고 메인 화면 진입을 막지 않는다. AI 방식과 외부 전송 동의·준비 상태는 업무 연결과 구분한다. Calendar·Task List·GitHub Repository allowlist는 접근 가능한 목록에서 체크하며 빈 선택은 해당 종류를 사용하지 않는다는 뜻이다.
 
 ### 6.3 Google 로그인
 
-- 기본 CTA: `Google로 로그인`
-- 사용자는 OAuth Client JSON이나 Google Cloud 설정을 입력하지 않는다.
-- 로그인 완료 후 계정 이메일과 Gmail·Tasks·Calendar 권한 상태를 표시한다. P0 필수 Scope 하나라도 거절되면 연결 미완료로 표시하고 Agent Run을 차단한다.
-- Refresh Token은 OS Keyring에 저장해 다음 실행에서 자동 로그인 검증에 사용한다.
+Google 연결 카드의 CTA는 `Google로 로그인`이며 앱 전체의 필수 다음 버튼이 아니다. `나중에 연결`을 함께 제공하고 Settings에서도 연결할 수 있다. 개발팀 Client 설정은 일반 사용자의 입력 항목이 아니다. 완료 후 실제 표시용 계정과 필요한 권한 상태를 보여준다. 필수 권한이 거절되면 Google 연결 미완료로 안내하되 무관한 GitHub 요청을 같은 오류로 처리하지 않는다. 재실행에서는 기존 연결을 검증하고 재로그인이 필요한 경우만 안내한다.
 
-### 6.4 API LLM 연결
+### 6.4 LLM 연결 방식 선택
 
-- 제품에서 지원하는 Provider와 고정 모델을 표시한다.
-- API Key 입력과 `PC에 안전하게 저장` 선택을 제공한다.
-- 기본 저장 위치는 OS Keyring이며, `이번 실행에서만 사용`을 선택할 수 있다.
-- 연결 검사는 입력 후 자동 실행한다.
+- 사용자는 `Gemini | Local AI` 중 실행 방식을 고른다. Local AI 안에서는 설치된 지원 모델 9B/4B를 단일 선택한다.
+- API LLM은 제품에서 지원하는 Provider·고정 Model과 API Key 입력을 표시한다. API Key 기본 저장 위치는 OS Keyring이며 Secret 원문과 저장 세부는 화면 전환 후 다시 노출하지 않는다.
+- Local LLM은 실제 Ollama와 설치된 지원 모델을 검사한다. 사용자가 endpoint·임의 model tag·설치 명령을 입력하지 않는다.
+- Resource allowlist와 Working hours는 최초 진입 조건이 아니며 timezone은 `Asia/Seoul`로 고정한다.
 
-### 6.5 Ollama·Local Model 확인과 설치 안내
+### 6.5 Local AI 검사
 
-- GPU 기준을 충족한 `LOCAL_CAPABLE` 환경에서만 표시한다.
-- Ollama 존재 여부, Loopback 실행 상태, 지원 Version, 디스크 공간, 승인 Model 존재 여부를 자동 검사한다.
-- 앱은 Ollama·Model을 설치·시작·종료·업데이트하지 않는다.
-- 누락 시 `설치 안내 열기`, `승인 Model 정보 보기`, `다시 검사`를 제공한다.
-- 사용자가 외부 설치를 완료하기 전까지 `LOCAL_GPU`를 비활성화하며 API 사용 가능 여부를 함께 표시한다.
-- GPU가 없거나 기준 미달이면 Local 설정·진단 UI와 Local 옵션을 표시하지 않는다.
+- 앱 시작 시 Ollama 상태와 `qwen3.5:9b`, `qwen3.5:4b` 설치 여부를 검사하고 Settings에서 재검사할 수 있다.
+- 지원 모델 하나만 있으면 그 모델을 자동 사용한다. 두 모델이 있고 유효한 기존 선택이 없을 때만 단일 선택을 요구한다.
+- 이전 선택이 없어져 다른 지원 모델 하나만 남으면 별도 확인 없이 전환하고 현재 선택과 실제 사용 모델을 함께 갱신한다.
+- 검사 실패와 모델 미설치를 다른 상태로 표시한다. 모델이 없으면 간단한 안내와 재검사만 제공한다.
+- 설치 Wizard, 다운로드/pull CTA, arbitrary endpoint/model 입력, Local→Gemini 자동 전환을 제공하지 않는다.
 
 ### 6.6 두 번째 이후 실행
 
-최초 설정 항목을 다시 입력받지 않는다. 시작 검사에서 Credential, API Key, Ollama, 모델, 기본 Resource를 자동 검증하고 문제가 있는 항목만 메인 화면에서 수정 요청한다.
+최초 설정 항목을 다시 입력받지 않는다. 시작 검사에서 Core, credential, Ollama, 지원 모델을 확인하고 문제가 있는 capability만 Settings에서 조치하도록 안내한다.
 
 ## 7. UI-003 메인 화면
 
@@ -178,31 +148,33 @@ Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 �
 ┌──────────────────────────────────────────────────────────┐
 │ 상단 Bar                                                  │
 ├──────────────┬────────────────────────────┬───────────────┤
-│ Google 패널  │ Agent 채팅                 │ 대화 내역     │
-│ Calendar     │ 진행 문장                  │ Conversation 목록 │
+│ 업무 자료    │ Agent 채팅                 │ 대화 내역     │
+│ Calendar     │ 누적 작업 내역             │ Conversation 목록 │
 │ Tasks        │ 메시지·Inline Action Card  │ 상태·검색     │
-│ Gmail        │ 입력창·AI 모드             │               │
+│ Gmail/GitHub │ 입력창                     │               │
 └──────────────┴────────────────────────────┴───────────────┘
 ```
+
+중앙은 자료 Preview → Conversation·누적 Activity → Inline Card → Composer를 주 작업 흐름으로 둔다.
 
 ### 7.2 패널 동작
 
 - 왼쪽과 오른쪽 패널은 상단의 간단한 Icon Button으로 각각 열고 닫는다.
 - 닫힌 패널은 중앙 채팅 영역을 확장한다.
 - 사용자가 선택한 패널 상태와 너비는 로컬에 저장한다.
+- App shell과 Composer는 고정하고 좌·우 패널과 중앙 이력은 독립적으로 scroll한다.
 - 창 폭이 좁아지면 오른쪽 패널부터 자동으로 닫고, 왼쪽 패널은 Overlay 방식으로 연다.
 
 ## 8. UI-004 상단 Bar
 
 ### 8.1 항상 표시할 항목
 
-- 왼쪽 Google 패널 Toggle
-- 제품명
-- 연결 상태 요약
+- 왼쪽 Resource 패널 Toggle
+- 제품명 `mcp-work-agent`
 - 오른쪽 대화 내역 Toggle
+- 도움말
 - 설정
 - 밝은 모드·야간 모드
-- 현재 Google 계정
 
 ### 8.2 연결 상태
 
@@ -210,24 +182,27 @@ Context 검토, 계획, 승인, 실행, 검증, 복구는 별도 페이지가 �
 
 - Local Agent API
 - Event Stream
-- Google
-- MCP
-- API LLM
+- Google Workspace
+- GitHub
+- Connector MCP
+- Gemini
 - Ollama
 - Local 모델
 - 마지막 검사 시간
 
-정상 Google 연결은 Header 정중앙의 비대화형 compact chip으로 표시한다. chip은 green status dot과 `Google 연결됨` 문구, 충분한 padding과 높이를 가지며 button semantics를 사용하지 않는다. 경고나 오류가 있을 때만 Badge와 해결 Action을 보여준다.
+Google 연결 상태와 현재 계정 이메일은 설정의 Google 영역에서 확인한다. Header에는 정상 연결 chip과 계정 이메일을 중복 표시하지 않는다. 미연결 시 연결 Action과 업무 진행을 막는 오류의 기존 복구 안내는 유지한다.
 
-## 9. UI-005 왼쪽 Google 서비스 패널
+## 9. UI-005 왼쪽 Resource 패널
+
+왼쪽 패널은 연결된 Connector의 Resource를 한 경로에서 탐색한다. Google 미연결 상태는 Gmail·Tasks·Calendar에, GitHub 미연결 또는 허용 Repository 미선택 상태는 GitHub Issue에 각각 Settings CTA를 표시하며 정상 0건과 구분한다. 한 Connector의 미연결이 다른 Connector 탭을 막지 않는다. GitHub 연결·Repository 설정을 위해 별도의 두 번째 Resource 탐색 화면을 만들지 않는다.
 
 ### 9.1 목적
 
-Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agent 행동을 시작한다.
+Gmail·Tasks·Calendar·GitHub Issue를 확인하는 동시에 현재 항목에서 바로 Agent 행동을 시작한다.
 
 ### 9.2 공통 구성
 
-- `Calendar`, `Tasks`, `Gmail` 탭
+- 연결된 Connector 범위의 `Calendar`, `Tasks`, `Gmail`, `GitHub Issues` 탭
 - 검색·필터
 - 마지막 갱신 시간
 - 수동 새로고침
@@ -265,8 +240,17 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 이 Action들은 즉시 Google 쓰기를 수행하지 않는다. 선택한 Resource와 의도를 중앙 채팅에 전달해 Agent 분석을 시작하며, 쓰기 결과는 채팅 안에서 승인받는다.
 
+#### GitHub Issue 상호작용
+
+- `OPEN | CLOSED | ALL` 상태 목록 선택
+- Issue focus·상세 확인·`GitHub에서 열기`
+- checkbox로 현재 요청 Context에 포함
+
+Sidebar는 GitHub Write를 직접 수행하지 않는다. 선택한 Issue identity를 Agent 요청에 전달하며 CREATE/UPDATE/CLOSE/REOPEN은 공통 Preview·Approval·Write·Verification 경계를 따른다.
+
 ### 9.4 목록 조회와 Pagination
 
+- Tasks Sidebar는 allowlist 안의 Task List 선택·새로고침·추가 페이지 조회를 제공한다. allowlist가 비었거나 목록이 미결정이면 Provider 첫 목록을 임의 선택하지 않는다. 다른 허용 목록을 선택하면 그 목록의 미래 예정일을 포함한 미완료 Task를 조회한다. Browse 선택은 Settings allowlist나 WRITE target을 변경하지 않는다. 계정·목록 전환 시 완료 항목과 preload까지 이전 조회 상태를 폐기한다.
 - Gmail·Tasks Sidebar의 visible page size는 configured `SIDEBAR_PAGE_SIZE`이며 Agent Retrieval의 configured `RETRIEVAL_PAGE_SIZE`와는 별도 계약이다. Local API continuation은 opaque 값으로 취급하고 Frontend가 Provider token이나 page number로 해석하지 않는다.
 - Gmail은 아직 방문하지 않은 intermediate page에서 metadata hydration을 생략해 다음 continuation만 확보하고 visible target page만 metadata를 hydrate한다. token-known과 metadata-loaded 상태를 React Client Session Cache에서 구분하며 이미 받은 page 재방문은 API를 호출하지 않는다.
 - Tasks는 Provider가 허용하는 metadata batch를 받고 UI에서 configured `SIDEBAR_PAGE_SIZE`로 slice한다. continuation이 있으면 현재 materialized batch에서 계산되는 page 범위만 표시하고 알려진 마지막 page에서만 다음 batch를 가져온다. terminal batch 뒤 누적 수로 exact total과 마지막 page를 확정한다.
@@ -277,22 +261,23 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 ### 9.5 Source별 기본 정렬
 
 - Gmail: 최근 수신 Thread부터 표시한다.
-- Tasks: configured/default Task List의 미완료 Task를 Google Tasks Provider 반환 순으로 표시한다. 정렬 옵션은 `기본 순서`와 `날짜순`만 제공하며, 날짜순을 명시한 경우에만 전체 결과를 materialize해 `scheduled_date` 오름차순·날짜 없는 Task 후순위로 정렬한다.
+- Tasks: 사용자가 선택한 허용 Task List의 미완료 Task를 Google Tasks Provider 반환 순으로 표시한다. 정렬 옵션은 `기본 순서`와 `날짜순`만 제공하며, 날짜순을 명시한 경우에만 전체 결과를 materialize해 `scheduled_date` 오름차순·날짜 없는 Task 후순위로 정렬한다.
 - Calendar의 Sidebar Month View와 별도 generic Upcoming Browse 범위는 §30.1이 단일 UI authority다.
 - 과거 Calendar 조회에서는 사용자가 지정한 기간을 우선한다.
 
 ### 9.6 React Client Session Cache
 
-- Cache identity는 Google 계정, Source/container, 검색·필터·정렬·scope와 opaque continuation/batch generation으로 구성한다.
-- 목록 Metadata, opaque Local API continuation과 Calendar Month cache는 React Client Session Cache에만 유지한다. Provider raw continuation을 저장·해석하지 않는다.
-- UI 세션 종료, Google 계정 변경, 해당 Source 수동 새로고침 시 관련 Cache를 삭제한다.
+- Cache identity는 Connector 계정, Source/container, 검색·필터·정렬·scope와 opaque continuation/batch generation으로 구성한다.
+- 목록 Metadata, opaque Local API continuation, Calendar Month cache와 GitHub Issue 목록은 React Client Session Cache에만 유지한다. Provider raw continuation을 저장·해석하지 않는다.
+- UI 세션 종료, 해당 Connector 계정·container 변경, 접근 상실, 해당 Source 수동 새로고침 시 관련 Cache를 삭제한다.
 - 사이드바 목록과 사용되지 않은 검색 결과를 SQLite에 영구 저장하지 않는다.
 - 수동 새로고침을 누르면 해당 Source Cache를 비우고 첫 페이지를 최신 데이터로 다시 조회한다.
 
 ### 9.7 Resource 선택
 
-- 사용자는 하나 또는 여러 개의 Gmail·Task·Event를 선택할 수 있다.
+- 사용자는 하나 또는 여러 개의 Gmail·Task·Event·GitHub Issue를 선택할 수 있다.
 - 한 개를 클릭하면 Preview와 해당 Resource에서 수행할 수 있는 빠른 Agent Action을 표시한다.
+- Preview는 compact하게 보여주고 전체 내용은 bounded 펼침·scroll로 접근한다. 제공되지 않은 제목·Metadata를 추정하지 않는다.
 - Row click은 Focus Resource와 Preview만 갱신하고, checkbox는 별도의 다중 선택 Context 집합만 변경한다. Focus 변경은 기존 선택 집합을 변경하지 않는다.
 - 선택 Resource가 하나 이상이면 Composer 가까이에 선택 수와 사용자 의미 label을 compact하게 표시한다. 별도의 `선택 항목으로 요청`, `채팅에 추가`, `선택 해제` Action Bar는 표시하지 않는다.
 - Resource List 응답의 각 Row는 Server가 발급한 opaque `selection_handle`을 가진다. Composer 전송은 선택 집합이 있으면 중복 없는 `selection_handle` 전체를 `RESOURCE_SELECTED` Context로 전달하고, 선택 집합이 없으면 `AGENT_SEARCH`로 시작한다. Browser는 `connector_id`, `resource_type`, parent/container, version token을 만들어 보내지 않는다.
@@ -307,7 +292,7 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 #### Agent 검색형
 
-사용자가 Query, 날짜·기간, 사람·이메일, Keyword 또는 복합 요구사항을 채팅에 입력하면 Agent가 Source와 검색 조건을 구조화하고 Google Source-native 검색을 수행한다. 목록 후보를 축소한 뒤 필요한 후보만 상세 조회한다.
+사용자가 Query, 날짜·기간, 사람·이메일, 프로젝트·Repository, Keyword 또는 복합 요구사항을 채팅에 입력하면 Agent가 허용된 Connector Source와 검색 조건을 구조화하고 Source-native 검색을 수행한다. 목록 후보를 축소한 뒤 필요한 후보만 상세 조회한다.
 
 ## 10. UI-006 중앙 Agent 채팅
 
@@ -318,25 +303,19 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 ### 10.2 채팅 Header
 
 - 대화 제목
-- 현재 Google 계정
-- 현재 선택 AI 모드
-- 실제 실행 Runtime
 - 새 대화
 
-### 10.3 AI 모드 설정
+계정 이메일·정상 연결 chip은 Settings에 둔다. 실제 model/runtime 기술 정보는 진단 상세에 두고, 실행 방식이 바뀌거나 사용자 조치가 필요한 경우만 채팅에 알린다.
 
-입력창 가까이에 Compact Selector로 표시한다.
+### 10.3 AI 실행 방식 표시
 
-- API_ONLY 환경: `API_LLM`만 표시
-- LOCAL_CAPABLE 환경: `AUTO`, `LOCAL_GPU`, `API_LLM`
-- Active Run 중에는 모드 변경을 잠근다.
-- AUTO가 API로 전환되면 전환 이유를 채팅 상태 문장으로 표시한다.
+AI 실행 방식 선택은 Settings의 단일 설정에서만 변경한다. Composer나 채팅 Header에 별도 Selector를 두지 않는다. 사용자 조치가 필요할 때는 현재 `Local AI | Gemini` 선택과 준비 상태만 안내하고, 선택한 runtime 미준비를 다른 runtime 자동 전환으로 숨기지 않는다. 진행 중 Run의 binding은 Settings 변경으로 바꾸지 않는다.
 
 ### 10.4 입력창
 
 - 자연어 입력
 - 전송
-- 현재 첨부된 Gmail·Task·Event 수
+- 현재 첨부된 Gmail·Task·Event·GitHub Issue 수
 - 실행 중일 때 중단
 - Enter 전송, Shift+Enter 줄바꿈
 - 기본 상태는 1줄 높이의 compact 입력창이며 입력 내용에 따라 높이가 자동으로 늘어난다. 최대 높이에 도달하면 Composer 전체가 계속 커지지 않고 입력창 내부 scroll로 전환한다. 전송 후 입력값이 비워지면 다시 1줄 높이로 돌아온다.
@@ -349,26 +328,69 @@ Gmail·Tasks·Calendar를 확인하는 동시에 현재 항목에서 바로 Agen
 
 ## 11. 진행 상태 UX
 
-### 11.1 기본 표현
+### 11.1 Agent 실행과 하위 작업 사실
 
-기술적인 Node 이름이나 로그 대신 사용자가 이해할 수 있는 현재 작업 문장 하나를 표시한다.
+Activity는 Agent 실행별 상위 행과 해당 실행에서 발생한 작업 사실 목록으로 구성한다. 실행 중 의미 있는 결과가 생기면 하위 문장을 추가한다. 마지막 State의 필드 목록이나 한 줄 progress를 교체하는 방식으로 끝내지 않는다.
 
-예시:
+상위 행은 `요청 이해 에이전트 — 요청을 분석했습니다.`처럼 책임과 실제 상태를 표시한다. 실행 중에는 진행형, 완료 확인 뒤에는 완료형을 사용한다. 하위에는 실제로 무엇을 이해·찾기·작성·검증·복구했는지 짧은 문장으로 표시한다.
 
-- `요청의 목표를 확인하고 있습니다.`
-- `관련 Gmail 메일을 찾고 있습니다.`
-- `기존 Task와 중복되는지 확인하고 있습니다.`
-- `Calendar에서 가능한 시간을 확인하고 있습니다.`
-- `실행 계획을 정리하고 있습니다.`
-- `사용자 승인을 기다리고 있습니다.`
-- `승인된 작업을 실행하고 있습니다.`
-- `Google에서 실행 결과를 다시 확인하고 있습니다.`
+같은 실행의 상태 갱신은 상위 행을 갱신하고, 서로 다른 작업 사실은 누적한다. 동일 사실의 재전달은 중복 표시하지 않는다. 같은 책임이 다시 실행되는 경우는 새 실행 회차로 표시하며 동일 실행의 질문·재인증·재개와 구분한다. 다음 Agent가 시작되거나 부모가 완료돼도 이전 하위 기록은 남는다. 실행되지 않은 단계와 가짜 진행률은 만들지 않는다.
 
-### 11.2 상세 정보
+사용자용 역할 label은 `요청 분석`, `자료 검색`, `업무 분석`, `계획 생성`, `검토`, `작업 실행`, `결과 확인`, `사용자 확인`, `연결`, `복구`처럼 이해 가능한 책임 이름을 사용하되 내부 node/tool/profile 식별자를 그대로 노출하지 않는다. 표시용 label은 내부 Runtime topology나 새로운 책임 owner를 뜻하지 않으며, 하나의 실제 실행 안의 여러 모델 호출을 모두 별도 Agent 행으로 늘리지 않는다.
 
-Source 수, 검색 Query, Tool 이름, Latency 등은 `자세히 보기`에서만 표시한다. 일반 사용자는 상세 정보를 보지 않아도 현재 단계와 다음 행동을 이해할 수 있어야 한다.
+### 11.2 사용자가 펼쳐 보는 내용
 
-## 11-A. Local API와 Event Stream UX
+| 표시 단위 | 상위 행 예시 | 하위에 표시할 작업 사실 예시 |
+| --- | --- | --- |
+| 요청 이해 | `요청 이해 에이전트 — 요청을 분석했습니다.` | 회의 후속 업무 요청이라는 목표, 찾을 사람 `김대리`, 아직 확인 중인 인물 구분 |
+| 자료 경로 선택 | `자료 경로 선택 — 필요한 조회 기능을 선택했습니다.` | 관련 Gmail 조회, Task 생성 전 기존 미완료 작업 확인 예정 |
+| 자료 검색 | `자료 검색 에이전트 — 관련 근거를 확인했습니다.` | 인물 확인 근거, 최신 일정 변경 메일, 이전 제안과 변경된 내용 구분 |
+| 계획 생성 | `계획 생성 에이전트 — Task 생성안을 작성했습니다.` | 제목 등 핵심 업무 값, 필수 필드·출력 형식 검증 결과 |
+| 검토 | `검토 에이전트 — 생성안과 근거를 대조했습니다.` | 생성안과 선택 근거의 일치 여부, 승인 단계로 넘긴 결과 |
+
+위 문장·이름·업무는 화면 형식의 예시이며 고정 답안이 아니다. 실제 해당 결과가 발생했을 때만 해당 실행의 값을 표시한다. 자료 경로 선택의 예정 행동과 실제 완료한 조회를 구분한다. 아직 선택하지 않은 Tool이나 미해결 인물을 확정한 것으로 표시하지 않는다.
+
+업무 분석은 실제 최신 결정·담당·관계·중복/충돌·부족 정보를, Planning은 실제 Task/Event/Mail/Issue의 핵심 업무 값을 보여준다. 실행·Verification·Recovery는 승인 대상, 실제 효과, 재조회 결과, 불확실성 및 후속 처리의 차이를 표시한다. 내부 상태 이름을 그대로 노출하는 대신 그 값과 행위의 의미를 표현한다.
+
+`출력 형식을 검증했습니다`, `업무 내용과 근거를 대조했습니다`, `실제 생성 결과를 다시 확인했습니다`는 각각 schema 검사, 의미 대조, Provider 재조회의 다른 사실이다. 실제 검사 결과 또는 보장된 검증 성공 경계가 있을 때만 검증 완료라고 쓴다. 단순 내부 단계 종료나 값 존재를 그 근거로 사용하지 않는다. 저장된 진행 상태 복원도 외부 효과 복구 완료와 구분한다.
+
+내부 revision·재개 metadata·관계/사실/반환 수를 기본 상세의 중심으로 표시하지 않는다. 수량은 필요한 보조 정보로만 사용한다. 불필요한 빈 값과 0 항목은 생략하지만 정상 검색 0건, 실제 실패·미확인 상태까지 숨기지는 않는다.
+
+`이 실행 시점의 기록이며 현재 계획과 다를 수 있습니다` 같은 문구를 모든 행에 반복하지 않는다. 실제로 대체된 결과만 `수정 전 계획`처럼 짧게 구분한다. 이후의 최신 Plan·Evidence를 과거 행에 소급 표시하지 않는다.
+
+### 11.3 상태 기반 표시와 상호작용
+
+문장은 기존 typed State/result, 검사 결과, committed Domain fact를 결정적으로 선택·형식화한다. 실행 당시 결과와 출처를 대조할 수 있어야 하며, Agent 종료 후 전체 State로 있었을 법한 중간 작업과 순서를 만들어내지 않는다. 모든 함수 호출·State key 변경을 사용자 작업 행으로 늘리지 않는다.
+
+추가 LLM 호출·새 Prompt·요약 Agent는 없다. raw Prompt/Completion·hidden reasoning·전체 Provider payload·secret을 기록·노출하지 않는다. 행 클릭·펼침·복원 때문에 외부 Tool을 다시 호출하지 않는다. 저장된 기록의 Local API 조회는 가능하다. Activity 실패 때문에 업무 명령·Write가 재실행되지 않아야 한다.
+
+최종 Assistant Message는 사용자 요청의 결과이며 Activity를 대신하지 않는다. 반대로 진행 상태나 generic 완료 문장도 최종 답변을 대신하지 않는다. 최종 답변은 요청 언어를 존중한 읽기 쉬운 Markdown으로 표시하고 raw HTML을 실행하지 않는다. Snapshot과 Conversation History에 같은 저장 메시지가 있으면 동일 identity로 한 번만 표시한다.
+
+Answer-only 결과에는 불필요한 승인·실행 Card를 만들지 않는다. Legacy READ Plan을 새 표준 경로처럼 제시하지 않으며, 과거 Run의 답변·Activity를 새 Run의 숨은 Context나 승인으로 사용하지 않는다.
+
+진행 중인 Agent는 하위 작업 내역이 추가되는 모습을 볼 수 있게 기본 펼침으로 제공하고 사용자가 접을 수 있다. 완료된 행도 접기·펼치기가 가능하며 사용자가 선택한 상태를 후속 이벤트나 다음 Agent 시작이 임의 초기화하지 않는다. 현재 작업·사용자 대기를 강조하고 과거 완료 행은 덜 강조한다. 키보드 조작과 focus를 지원하며 상세를 읽는 중 자동 scroll로 위치를 빼앗지 않는다.
+
+### 11.4 Conversation의 여러 Run과 복원
+
+같은 Conversation에서 새 요청이 시작돼도 이전 Run의 Agent 행과 하위 작업 사실은 해당 메시지 사이에 남는다.
+
+```text
+사용자 요청 A
+  Run A의 Agent 행과 하위 작업 내역
+최종 답변 A
+
+사용자 요청 B
+  Run B의 Agent 행과 하위 작업 내역
+최종 답변 B
+```
+
+현재 runSnapshot 하나를 바꿔 끼우며 과거 Activity를 숨기지 않는다. 과거 Run은 읽기 전용으로 표시하고 이전 승인·복구 조작을 다시 활성화하지 않는다. 새 Conversation과 이전 Conversation의 기록을 섞지 않는다. 과거 기록을 표시하는 것은 새 요청의 Prompt에 숨은 기억을 전달하는 것과 다르다.
+
+SSE는 실시간 갱신 수단이며 단독 이력 저장소가 아니다. 새로고침·재접속·앱/서버 재실행·다른 대화 이동 후 복귀에서는 기존 저장 이력과 결과·Snapshot으로 각 Run을 복원한다. 최신 phase만으로 과거 실행을 추측하지 않는다. 중복·역순·replay 및 Snapshot/SSE 전환에도 Run·실행 회차별 상위 행과 하위 사실이 중복되거나 과거 상태로 되돌아가지 않아야 한다.
+
+보존은 기존 retention 범위 안에서 제공한다. 긴 이력은 bounded 조회·접기·스크롤·필요한 Local 상세 조회로 제공하고 최근 N행만 남긴 사실을 숨기지 않는다. 기록되지 않았거나 보존 만료된 이력은 한계를 표시하고 새 설명으로 복원하지 않는다.
+
+## 11-A. 연결·Event Stream UX
 
 ### Command 처리
 
@@ -393,7 +415,7 @@ Local Agent Service가 응답하지 않으면 화면 전체를 초기화하지 �
 - Launcher 상태 확인
 - 진단 정보 보기
 - 마지막 저장 상태 표시
-- 앱 안전 종료
+- 시스템 재연결·복구 진행 상태
 
 ## 12. UI-007 오른쪽 대화 내역 패널
 
@@ -411,6 +433,8 @@ Local Agent Service가 응답하지 않으면 화면 전체를 초기화하지 �
 - 실패
 - 완료
 
+Recent Execution 영역을 제공하는 경우 실제 저장 이력이 있을 때만 표시한다.
+
 ### 12.3 대화 항목
 
 - 자동 생성 대화 제목
@@ -422,76 +446,35 @@ Local Agent Service가 응답하지 않으면 화면 전체를 초기화하지 �
 
 `Conversation.title`은 최초 USER 요청을 기반으로 대화 생성 시 한 번 생성되는 안정적인 식별 제목이다. 같은 Conversation에 후속 요청이나 업무적으로 무관한 새 요청이 여러 Run으로 추가되어도 title을 자동 재생성하거나 최신 USER 메시지로 덮어쓰지 않는다. "마지막 활동 시각"은 `Conversation.updated_at_ms`이며 개별 Message 내용과는 다른 값이다. 최근 USER 메시지 preview 표시는 P0 요구사항이 아니다.
 
-대화를 선택하면 중앙 채팅에는 해당 Conversation의 저장된 Message·Run Timeline을 복원한다. 비Terminal Open Run이 있으면 그 Run의 `langgraph_thread_id`와 Checkpoint를 복원해 이어갈 수 있지만, Terminal인 과거 Run의 `langgraph_thread_id`/Checkpoint를 새 USER 요청에 재사용하지 않는다. 새 USER 요청은 새 Run·새 `langgraph_thread_id`로 시작하며 과거 승인도 다시 실행에 사용하지 않는다.
+대화를 선택하면 중앙 채팅에는 해당 Conversation의 저장된 Message·Run Timeline을 복원한다. 비Terminal Open Run이 있으면 저장된 진행 상태에서 이어갈 수 있다. Terminal인 과거 Run의 재개 상태와 승인은 새 USER 요청에 재사용하지 않으며, 새 USER 요청은 새 Run으로 시작한다.
 
 ## 13. 채팅 내부 UI 유형
 
-채팅에는 다음 메시지와 Inline Card 유형이 필요하다.
-
-1. 사용자 메시지
-2. Agent 일반 응답
-3. 진행 상태 문장
-4. Context 요약 Card
-5. 확인 질문 Card
-6. Action Plan Card
-7. 승인 요청 Card
-8. 수정 Form Card
-9. 실행 상태 Card
-10. 검증 결과 Card
-11. 오류·Recovery Card
-12. 완료 요약 Card
+중앙 Conversation은 사용자 메시지, 최종 Assistant 답변, Run별 누적 Activity, Context, 확인 질문, Plan/Approval, 수정, 실행·검증·오류/Recovery Card를 같은 흐름에서 표시한다. 별도 설명용 메시지를 반복 INSERT하여 Activity 이력을 만들지 않는다.
 
 ### 13.1 사용자 메시지와 Timeline 표시
 
-- 사용자 메시지는 중앙 Conversation에서 우측 정렬 Message Bubble로 표시하며, 메시지마다 역할 이름을 반복 표시하지 않는다. Bubble 배경은 오른쪽 선택된 Conversation row와 같은 계열의 연한 accent 색을 사용한다.
-- 각 메시지에는 저장된 `created_at_ms`를 사용자 Local Timezone으로 변환한 짧은 시간만 표시한다. 현재 시각으로 대체하지 않는다.
-- Timeline은 사용자 Local Calendar Date 기준으로 메시지를 묶고, 날짜가 바뀌는 지점에만 Date Separator를 표시한다. 같은 날짜 안에서는 반복하지 않는다.
-- Date Separator 문구는 오늘 `오늘`, 어제 `어제`, 올해의 다른 날짜는 `8월 13일` 형태이며 연도가 다르면 연도를 포함한다.
-- 오래된 Conversation을 다시 사용하면 이전 날짜 그룹은 유지되고 새 활동 날짜에 새 Date Separator가 추가된다. Timeline 전체가 Conversation의 최초 날짜에 고정되지 않는다.
-- Conversation을 선택·복원하면 Timeline은 최신 메시지가 보이는 위치를 기본 viewport로 사용한다. 같은 Conversation에 새 USER 메시지가 추가되면 Timeline은 다시 최신 메시지가 보이도록 이동한다. 이 범위를 넘는 unread-scroll 상태 관리는 P0 요구사항이 아니다.
+사용자 메시지는 우측 Bubble로 표시하고 역할 이름을 반복하지 않는다. 저장된 메시지 시각을 제품 timezone `Asia/Seoul`로 변환하며 현재 시각으로 대체하지 않는다.
 
-모든 Card는 같은 대화 흐름 안에서 상태가 갱신되고, 결정 완료 후 기존 Button은 비활성화된다.
+Local Calendar Date가 달라질 때만 날짜 구분선을 둔다. 오늘·어제·올해의 다른 날짜·다른 연도를 구분한다. 오래된 대화를 다시 사용해도 과거 날짜 그룹을 유지한다.
+
+대화 복원 시 최신 메시지를 기본 위치로 표시하되, 과거 Activity의 상세를 읽는 중에 새 progress 이벤트마다 화면을 강제로 끌어내리지 않는다. 새 USER 전송 시 최신 흐름을 보여준다. 결정이 끝난 Card의 이전 버튼은 비활성화한다.
 
 ## 14. Context 요약과 확인 질문
 
 ### 14.1 Context 요약
 
-기본적으로 Source 수와 핵심 근거만 보여준다.
+기본 표시는 실제 Source별 사용 근거 수와 핵심 발췌다. Gmail·Tasks·Calendar·GitHub를 구별하고, 조회 후보 전체 수와 사용 Evidence 수를 같은 숫자로 표현하지 않는다. 원문 전체를 기본 노출하지 않고 필요하면 해당 서비스에서 여는 안전한 링크를 제공한다.
 
-```
-관련 정보를 찾았습니다.
-Gmail 2개 · Tasks 1개 · Calendar 3개
-
-[내용 보기]
-```
-
-전체 메일 원문은 기본 접힘으로 유지하며 원본 Google Resource 링크를 제공한다.
-
-Context Preview의 기본 표시는 읽기 전용이다. 서버가 `ContextPreviewResponseV1.adjustment_allowed=true`와 `allowed_adjustments`를 제공한 경우에만 다음 Control을 추가로 렌더링한다.
-
-```text
-[일부 제외] [추가 검색]
-```
-
-- `일부 제외`는 현재 Preview에 포함된 `segment_id`만 선택할 수 있고 `EXCLUDE_EVIDENCE`로 전송한다.
-- `추가 검색`은 사용자가 찾고 싶은 정보를 bounded text로 입력하고 `RETRIEVE_MORE`로 전송한다.
-- Browser는 status/Plan/Approval을 보고 조정 가능 여부를 자체 계산하지 않으며 `allowed_adjustments`만 따른다.
-- 조정 요청이 수락되면 기존 Plan은 그대로 유지되지 않고 같은 Run에서 Retrieval → Analysis/Planning/Review를 다시 계산한다.
-- Action 승인·실행이 시작된 뒤에는 조정 Control을 렌더링하지 않고 Preview/원본 링크만 제공한다.
+Context 조정은 서버가 허용한 경우에만 `일부 제외` 또는 `추가 검색`으로 표시한다. 현재 Preview에 있는 근거만 제외할 수 있고 새 정보 요청은 현재 Run의 허용된 범위로 전달한다. Frontend가 Approval/Plan 상태를 보고 자체적으로 조정 권한을 만들지 않는다. 수정 후 재계산 상태와 새 Preview를 보여주며 승인·실행 이후의 임의 조정은 제공하지 않는다.
 
 ### 14.2 확인 질문
 
-앱이 확정할 수 없는 정보만 한 질문으로 요청한다.
+검색으로 해소할 수 있는 모호성은 일반 조회를 먼저 진행한다. 유효 후보가 여러 개 남거나 현재 요청을 안전하게 결정할 수 없을 때 한 번에 필요한 최소 선택을 받는다.
 
-- 동명이인
-- 불명확한 기간
-- Event 예상 소요시간 누락
-- Calendar 또는 Task List 후보
-- 복수의 관련 메일
-- 외부 이메일 주소 확인
-- 충돌 Override 여부
+사람·기간·관련 Resource·저장소 충돌·외부 수신자·duplicate/conflict override를 그 이유에 맞게 표현한다. 후보에는 제공된 이름·직급·소속·최근 관련 업무처럼 실제 확인한 차이만 표시하고 없는 정보를 만들지 않는다. 자유입력은 허용할 수 있지만 사용자가 이미 준 날짜·시간·대상을 반복 입력하게 하지 않는다.
 
-후보가 있으면 직접 입력보다 후보 선택을 우선한다. 질문에 답하면 같은 Run을 이어서 진행한다.
+일반 검색으로 해결 가능한 모호성을 최초 입력 Form으로 전환하지 않는다. 반대로 저장소 identity 충돌이나 안전한 Write에 필수인 사용자 선택을 기본값으로 숨기지 않는다. 응답 후 같은 Run의 필요한 지점에서 이어가고 이전 Activity를 보존한다.
 
 ## 15. Action Plan과 승인 UX
 
@@ -510,15 +493,11 @@ Context Preview의 기본 표시는 읽기 전용이다. 서버가 `ContextPrevi
 
 ### 15.2 상세 펼치기
 
-각 Action을 펼치면 다음을 확인할 수 있다.
+기본 Card에는 대상 서비스·작업 종류와 사용자가 승인해야 할 핵심 값을 보여주고, 근거·변경 전후·위험·종속 관계는 필요한 상세로 펼친다. 알려진 필드 Form을 기본으로 전부 노출하지 않는다.
 
-- Action 유형과 대상 시스템
-- 생성 또는 수정할 필드
-- 변경 전·후 값
-- Evidence
-- 중복·충돌·위험
-- 선행·종속 Action
-- 예상 실행 결과
+Task 생성 Preview는 제목, 실제 Task List, **예정일**, 메모, 필요한 근거·경고와 `만들기 / 수정 / 건너뛰기`로 구성한다. 미지정 예정일이나 메모는 ‘없음/미지정’처럼 명확히 표시하고 가짜 기본값을 만들지 않는다. 완료된 Task로 오해할 문구를 사용하지 않는다.
+
+Calendar는 시작/종료·timezone·참석자, Gmail은 실제 수신 범위·제목·본문·Reply 대상, GitHub는 owner/repository와 Issue 대상·변경 내용을 분명히 보여준다. 서비스별로 승인에 중요한 필드를 일반 formatter에서 지워버리지 않는다.
 
 ### 15.3 승인
 
@@ -536,69 +515,41 @@ Context Preview의 기본 표시는 읽기 전용이다. 서버가 `ContextPrevi
 
 ### 15.5 수정
 
-- `내용 수정`을 선택하면 Card 자체가 편집 Form으로 전환된다.
-- 사용자는 현재 화면에서 허용 필드만 수정한다.
-- 수정 완료 후 Schema·Policy·중복·충돌을 자동 재검증한다.
-- 재검증을 통과하면 같은 위치에서 다시 승인받는다.
+Task는 자연어 수정을 우선한다. `예정일을 9월 8일로 바꾸고 메모는 빼줘`처럼 입력하면 기존 Backend modify·Planning/Review 경로의 처리 상태를 보여주고, 결과를 새 compact Preview로 제시하여 재승인받는다.
 
-수정 가능한 필드:
+언급하지 않은 값의 유지와 명시적 제거를 구분한다. 수정 전·후 값을 비교할 수 있어야 하며, 수정 실패 시 기존 유효 Preview를 성공 수정처럼 덮어쓰지 않는다. 이전 revision의 승인 버튼은 재사용하지 않는다.
 
-- Gmail Draft: 수신자, CC, 제목, 본문
-- Task: 제목, 메모, 예정일, Task List
-- Calendar Event: 제목, 시작, 종료, 설명, Calendar
+정밀 직접 편집은 `직접 편집` 같은 secondary control로 제공할 수 있다. Gmail·Calendar·GitHub는 현재 계약이 허용하는 필드만 편집한다. Frontend가 자연어를 해석해 업무 patch를 독립 생성하거나 별도 승인 경로를 만들지 않는다.
 
 ## 16. 실행과 검증 UX
 
 ### 16.1 실행 상태
 
-Action별로 다음 상태를 표시한다.
-
-- 대기
-- 실행 중
-- 성공
-- 검증 중
-- 검증 성공
-- 실패
-- 차단
-- 검증 불일치
+실제 상태에 따라 대기, 승인됨, 실행 중, 실행 결과 수신/검증 대기, 검증 중, 검증 완료, 실패, 차단, 결과 불확실, 검증 불일치를 구별한다. Provider 요청을 보냈다는 사실을 검증된 완료로 표시하지 않는다. 여러 Action은 각각의 결과를 유지한다.
 
 ### 16.2 부분 성공
 
-성공한 Action을 유지하고 실패 또는 종속 차단 상태를 구분한다.
-
-```
-Task 생성       성공
-Event 생성      실패
-Gmail Draft     선행 Action 실패로 차단
-```
+이미 성공한 외부 결과, 실패·미확인 결과, 종속 차단, 사용자가 거절한 항목을 구분한다. READ의 예산 소진은 ‘확인한 범위까지만 정리했습니다’, 일부 조회 실패는 ‘확인하지 못한 자료가 있습니다’처럼 원인에 맞게 표시한다. 모든 PARTIAL을 ‘나머지는 취소되었습니다’로 고정하지 않는다.
 
 ### 16.3 검증 성공
 
-Google에서 재조회한 값이 승인 내용과 일치하면 핵심 필드와 원본 Resource 링크를 표시한다.
+해당 Connector에서 재조회한 값이 승인 내용과 일치하면 핵심 필드와 원본 Resource 링크를 표시한다.
 
 ### 16.4 검증 불일치
 
-승인 값과 실제 값을 필드별로 비교한다.
+승인한 값과 실제 값의 차이를 보여주고, 기존 Recovery projection이 허용한 행동만 렌더링한다. `수정 제안 만들기`는 새 계획 작성, `현재 결과 유지`는 추가 Write 없는 부분 수용, `원본 서비스에서 열기`는 탐색이라는 서로 다른 의미다. 단순 화면 닫기를 복구 결정으로 기록하지 않는다.
 
-이 화면은 persisted `RecoveryContextV1.reason=VERIFICATION_MISMATCH`의 Local API projection에서만 표시한다. Browser는 Recovery reason/허용 resolution을 자체 추론하지 않고 `RecoveryUiProjectionV1.allowed_resolution_kinds`가 허용한 버튼만 표시한다.
-
-선택 가능한 행동의 canonical mapping:
-
-- **수정 제안 만들기** → `CREATE_CORRECTIVE_PLAN`이 허용된 경우에만 표시 → `POST /api/v1/runs/{run_id}/resolve-recovery` + `resolution_kind=CREATE_CORRECTIVE_PLAN`. 기존 MISMATCH Action을 수정·재실행하지 않고 새 Plan Revision을 만든다.
-- **현재 결과 유지** → `ACCEPT_PARTIAL`이 허용된 경우에만 표시 → 같은 Endpoint + `resolution_kind=ACCEPT_PARTIAL`. 단순 dismiss/no-op이 아니며 Domain `ResolveRecovery(ACCEPT_PARTIAL)`을 적용한다.
-- **Google에서 열기** → 해당 Resource의 `canonical_url`로 이동하는 navigation only. Domain mutation / Recovery resolution / resume = 0.
-
-`RECHECK | CANCEL | FAIL` 등 다른 resolution은 current RecoveryContext가 허용하고 별도 UX surface가 정의한 경우에만 노출한다. 자동으로 다시 수정하지 않는다.
+자동 수정·재실행은 하지 않는다. 허용된 복구 선택·취소·재확인의 상세 상태 전이는 Backend 계약을 따른다.
 
 ## 17. 중단·오류·Recovery UX
 
 ### 17.1 분석 중 중단
 
-Google 데이터 변경이 없음을 표시하고 현재 Checkpoint를 저장한다.
+중단 요청의 수락과 실제 종료를 구분한다. 외부 변경이 아직 없다고 확인된 경우에만 변경 없음으로 표시하며, 중단 전 Activity와 확보된 결과를 보존 정책 안에서 유지한다.
 
 ### 17.2 쓰기 실행 중 중단
 
-이미 Google API에 전달된 요청이 있을 수 있으므로 즉시 취소 완료로 표시하지 않는다.
+이미 외부 서비스에 전달된 요청이 있을 수 있으므로 즉시 취소 완료로 표시하지 않는다.
 
 ```
 중단 요청을 받았습니다.
@@ -609,100 +560,86 @@ Google 데이터 변경이 없음을 표시하고 현재 Checkpoint를 저장한
 
 ### 17.3 오류 Card
 
-- 사용자용 오류 설명
-- 현재까지 완료된 작업
-- 실패한 단계
-- 데이터 변경 여부
-- 서버가 허용한 다음 행동
+원인, 현재까지 확인·완료한 것, 실제 데이터 변경 여부, 필요한 다음 행동을 함께 표시한다. 서버가 제공한 error/recovery action만 사용한다.
 
-오류 Card의 Button은 `RunSnapshotResponseV1.error: ErrorUiProjectionV1`가 제공한 `actions[]`만 렌더링한다. Browser는 `Run.status`, `Action.status`, Error 문자열을 보고 Retry/Resume/Replan 가능 여부를 자체 계산하지 않는다.
+- 재시도 가능으로 확정된 실패만 해당 준비/재승인 경로를 제공한다.
+- 결과 불확실에는 blind retry 버튼 대신 결과 확인·복구 안내를 제공한다.
+- Google와 GitHub 재인증은 실제로 필요한 Connector로 연결한다.
+- 안전 재개·Settings·Diagnostics는 각 action 의미를 구분한다.
 
-- `PREPARE_RETRY` → 해당 `action_id`의 `/prepare-retry`. 서버가 `FAILED + NOT_SENT`로 projection한 경우에만 표시한다.
-- `UNKNOWN_RESULT` 또는 전달 여부 불명확 상태 → Retry Button 0. `RecoveryUiProjectionV1`만 사용한다.
-- `REAUTHENTICATE_GOOGLE` → Google 재로그인 flow.
-- `RESUME_SAFE_CHECKPOINT` → 서버가 State Contract startup gate를 통과시킨 경우에만 `/resume + SAFE_CHECKPOINT_RESUME`.
-- `OPEN_SETTINGS`, `OPEN_DIAGNOSTICS` → navigation only.
+인증 성공과 특정 Run 재개는 다른 상태다. 연결 완료만으로 다른 대화의 Run을 자동 재개한 것처럼 표시하지 않는다. raw reason code·SQL·stack trace를 일반 본문으로 노출하지 않는다.
 
-generic `다시 시도`, `계획 다시 생성`, unrestricted `Run 재개`, active Run 도중 임의 runtime-mode 전환 Button은 P0 Error Card에 두지 않는다.
+### 17.4 요청 시작 시 연결·접근 불가
+
+처음부터 필요한 Connector가 미연결이거나 GitHub App 미설치·repository 접근 불가·필수 permission 부족이면 현재 요청을 종료하고 필요한 조치를 안내한다. 진행 spinner·승인 카드·재인증 대기 Run·`이 작업 재개` 버튼을 남기지 않는다.
+
+Google 예: `메일을 확인하려면 Google Workspace 연결이 필요합니다. 설정에서 연결한 뒤 요청을 다시 보내 주세요.`
+
+GitHub 예: `이 저장소의 Issue를 확인하려면 GitHub 연결과 저장소 접근 설정이 필요합니다. 설정 후 요청을 다시 보내 주세요.`
+
+`설정 열기`로 필요한 연결 영역에 안내한다. 요청 입력 보조가 있더라도 재전송은 사용자의 명시적인 행동으로 새 Run을 시작한다. 연결 완료 직후 기존 요청을 자동 전송하지 않는다.
+
+### 17.5 실행 중 인증 만료
+
+이미 정상 실행 중이던 Run의 Credential이 만료된 경우에는 기존 재인증·안전 재개 UI를 유지한다. 이전 작업 이력·실행 사실을 보존하고 재인증 완료 후 해당 Run의 명시적 재개를 제공한다. 초기 미연결 안내와 같은 화면·문구로 혼동하지 않는다. in-flight 결과가 있으면 기존 Recovery 표시를 우선한다.
 
 ## 18. UI-008 설정·진단 Drawer
 
-설정 때문에 메인 작업 화면을 떠나지 않는다. 상단 버튼에서 Drawer 또는 Dialog로 연다.
+Drawer 안에서 Google, GitHub, Gemini, Local AI, 일반 설정, 진단을 구분한다. 캘린더·할일 목록·GitHub 저장소는 앱에서 사용할 접근 가능 항목을 다중 선택한다. 빈 선택은 해당 종류의 자료를 사용하지 않는다는 뜻이다. 외부 권한을 변경하지 않는다. 목록 로딩/빈 결과/실패를 구분하고 선택 저장 후 재진입·새로고침에도 복원한다.
+
+Local AI는 `qwen3.5:9b`, `qwen3.5:4b`를 검사하고 준비된 모델 하나를 선택한다. 두 모델 동시 설치를 요구하지 않고 설치 안내/다운로드 CTA를 제공하지 않는다. 배포 manifest/digest 검증은 유지한다. 시간대는 한국 `Asia/Seoul`로 고정하며 업무 시간·AI 동의는 작은 설정 행/체크박스로 제공한다. 진단은 접힌 보조 영역이다.
+
+설정은 메인 화면에서 Drawer/Dialog로 연다. 사용자는 한 설정 진입점에서 Google Workspace·GitHub·Gemini API의 상태와 해당 관리 동작에 접근한다. 같은 설정의 서로 다른 화면에서 값이나 상태가 모순되지 않아야 한다.
 
 ### 18.1 일반
 
-- Theme (`LIGHT | DARK`)
-- 시작 시 오른쪽 패널 열림 여부
-- 시작 시 오른쪽 패널 기본 Tab (`CONVERSATIONS | RESOURCES`)
+Theme과 시작 시 패널 선호 등 기존 표시 설정을 유지한다. 화면의 일시적 펼침/탭 상태와 저장된 사용자 기본값을 구분한다. 별도 persisted language 설정은 P0에서 추가하지 않는다.
 
-P0 표시 언어는 OS/Browser locale을 따르며 별도 persisted language setting을 만들지 않는다. 위 Panel 값은 `PanelPreferencesV1`로 저장하고 일시적 Drawer/tab interaction state와 분리한다.
+### 18.2 Google Workspace
 
-### 18.2 Google
+미연결이면 Google 연결 CTA를 제공하되 메인 화면을 잠그지 않는다. 연결 시 현재 표시용 계정, 필요한 권한 상태, 재연결·계정 변경·연결 해제를 제공한다. Calendar와 Task List는 실제 반환된 container에서 여러 항목을 체크한다. 항목이 비어 있는 container도 정상 목록으로 보여준다. 계정 ID를 이메일처럼 표시하지 않는다.
 
-- 현재 계정
-- 권한 상태
-- 재로그인
-- 계정 변경
-- 연결 해제
-- 기본 Calendar
-- 기본 Task List
+### 18.3 GitHub
 
-Transport/projection 규칙:
+연결 전에는 `GitHub 연결`과 Issue 조회·관리 용도를 설명한다. Device Flow 시작 후에는 GitHub가 반환한 실제 user code, `코드 복사`, `인증 페이지 열기`, 대기·거절·만료·재시도를 표시한다. 앱에서 인증 코드를 임의 생성하지 않는다.
 
-- Default Task List selector → `GET /api/v1/resources/task-lists`; Default Calendar selector → `GET /api/v1/resources/calendars`. Empty containers remain selectable. React→MCP direct call 0.
-- 현재 Google 계정 표시는 `ConnectionMetadataV1.display_email`을 사용하며 opaque `account_id`를 email로 렌더링하지 않는다.
+Client ID는 제품 구성이다. 일반 사용자 Settings에 Client ID·PAT·client secret 입력을 추가하지 않는다. 제품 설정 누락과 사용자 인증 실패를 구분해 안내한다.
 
-### 18.3 AI
+연결 후에는 표시용 GitHub 계정, App/권한 상태, 접근 가능한 owner/repository 목록, 목록 새로고침, 복수 Repository 체크·해제, `저장소 접근 관리`를 제공한다. 접근 관리는 GitHub의 해당 App 설치/접근 화면으로 이동하는 안내이며 앱 안의 선택만으로 GitHub 권한을 바꾼다고 표시하지 않는다.
 
-- 기본 AI 모드
-- API Key 상태와 저장 방식
-- API 연결 검사
-- Ollama 상태
-- Local 모델 상태
-- 테스트 추론
+목록 로딩, 정상 빈 목록, 접근 실패를 구분한다. 권한 변경 후 다시 조회할 수 있어야 한다. allowlist는 Settings 재진입·새로고침·재실행 후 복원하며 계정 변경이나 접근 상실 시 유효성을 다시 확인한다.
 
-Transport/projection 규칙:
+allowlist와 현재 요청의 명시 저장소를 구분하고, selected Issue와 명시 저장소가 충돌하면 어느 쪽을 의미하는지 확인한다. 목록의 첫 항목으로 충돌을 덮지 않는다. 설정 변경이 진행 중인 Run의 대상을 바꿨다고 표시하지 않는다.
 
-- External LLM prior-consent checkbox reads/writes `SettingsViewV1/SettingsPatchV1.external_llm_consent`; API Key configured 상태는 consent가 아니다. Run이 external LLM을 사용할 수 있으면 `RunSnapshotResponseV1.external_llm_transfer_scope`의 bounded Source/data-class 범위를 표시한다. Server는 해당 scope revision을 Run projection/SSE에 publish하기 전 external provider call을 시작하지 않는다. P0 UI는 별도 per-call ACK 버튼을 요구하지 않으며 실제 paint timing을 security fact로 저장하지 않는다; scope가 바뀌면 최신 published revision을 갱신 표시한다.
-- API Key 상태/저장 방식은 `GET /api/v1/credentials/llm/{provider}`로 Settings 재진입/refresh 후 다시 읽는다.
+### 18.4 Gemini API
 
-### 18.4 업무 환경
+Google Workspace 로그인과 구분되는 외부 AI credential 영역이다. 기존 provider-neutral 계약의 Gemini 설정을 표시하며 별도 credential authority를 만들지 않는다.
 
-- Timezone → `timezone`
-- 업무 시작·종료 시간 → `working_day_start_local / working_day_end_local`
-- 주말 포함 여부 → `include_weekends`
-- 일정 Buffer → `calendar_buffer_minutes`
+설정 상태, API Key 입력·변경·삭제, Keyring/세션 전용 저장 선택, 연결 테스트를 제공한다. 저장된 Key 원문은 다시 표시하지 않는다. 연결 테스트는 최소 진단이며 업무 원문을 임의 전송하지 않는다.
 
-위 값은 `GET/PUT /api/v1/settings`의 canonical Settings schema를 그대로 사용하며 Browser-local Calendar policy table을 만들지 않는다.
+API Key 설정과 외부 업무 Context 전송 동의는 별개 control이다. 외부 AI를 사용하는 Run에는 Backend가 제공한 전송 범위를 보여주고, scope 갱신에 맞춰 표시한다. 매 호출마다 새로운 UI ACK를 요구하지 않는다.
 
-### 18.5 데이터
+### 18.5 로컬 AI와 업무 범위
 
-- 채팅·Terminal Run 보존 기간 → `retention_days` — P0 기본 30일, 선택 가능 범위 1..30일. Audit 90일·Secret·Session Cache에는 적용하지 않는다.
+로컬 AI는 Google/GitHub/Gemini 연결과 별도 영역으로 둔다. Ollama 검사 상태, 설치된 두 지원 모델, 현재 단일 선택, 재검사를 표시한다. 지원 모델 하나만 있으면 자동 선택 결과를 정확히 반영한다.
 
-P0 Settings Drawer는 **로그 삭제나 전체 앱 초기화 Command를 제공하지 않는다.** Credential 제거는 18.2 Google `disconnect` 또는 18.3 LLM credential `DELETE`의 기존 전용 Control을 사용한다. 사용자 데이터의 완전 삭제는 09/14의 canonical Uninstall/완전 삭제 절차에서만 수행하며 Local API에 임의 reset/purge endpoint를 추가하지 않는다.
+Timezone은 `Asia/Seoul` 고정값으로 compact하게 표시하고 Working hours·주말·Buffer와 구분한다. Resource allowlist는 Backend 계약으로 저장하며 Frontend에 별도 target 결정 정책을 만들지 않는다.
 
-### 18.6 Restore·Diagnostics·compatibility
+### 18.6 데이터·진단·복구
 
-- Safe Mode Restore 대상은 `GET /api/v1/backups`의 opaque `backup_ref` 목록에서 사용자가 선택한다. raw path/latest 자동 선택 금지.
-- 진단 Drawer는 protected `GET /api/v1/runtime`의 bounded diagnostics projection만 사용하고 Launcher-only `/health/ready`를 Browser가 직접 호출하지 않는다.
-- bootstrap 응답이 `compatibility=COMPATIBLE`인 뒤에만 mutation/SSE를 활성화한다.
+채팅/terminal Run 보존 기간은 기존 허용 범위를 사용하며 기본30일·선택1~30일이다. Audit90일·secret·session cache에 같은 값을 일괄 적용하지 않는다. P0 Settings에 임의 전체 초기화·raw DB 조작 기능을 추가하지 않는다.
+
+Safe Mode의 실제 자동 복구 결과와 가능한 조치만 표시한다. 사용자 raw path 입력, 데이터 삭제·새 DB 생성으로 실패를 숨기지 않는다. 기존 복구 방식·backup 선정·rollback 알고리즘을 UI가 소유하지 않는다.
+
+Diagnostics는 로그인된 Local API의 제한된 상태를 사용한다. Local Session과 API 호환성이 성립하기 전에는 일반 mutation을 활성화하지 않는다. 정확한 transport endpoint와 secret 저장 구현은 Interface/보안 owner가 소유한다.
 
 ## 19. 상태 소유권과 저장
 
-| 상태 | 소유 위치 | 규칙 |
-| --- | --- | --- |
-| 패널·Drawer·현재 탭·입력 중 Text | React Client State | 화면 상태이며 실행 사실이 아님 |
-| Sidebar page/batch·opaque Local API continuation·Calendar Month cache | React Client Session Cache | 세션 종료·계정/container/scope 변경·새로고침 정책에 따라 폐기 |
-| Conversation·Message·Run·Action | SQLite Domain Store | 대화와 업무 사실의 기준점 |
-| Graph State·Interrupt | LangGraph Checkpointer | Workflow 재개 위치의 기준점 |
-| Google Refresh Token | OS Keyring | Frontend·SQLite·Event·일반 Local Agent session memory에 원문 노출 금지 |
-| Google Access Token | Connector MCP Credential Provider Process Memory | persistent storage 금지 |
-| LLM API Key | `KEYRING` 또는 사용자가 선택한 `SESSION_ONLY` Local Agent Process Memory | Frontend·SQLite·Event에 원문 노출 금지 |
-| 비밀이 아닌 사용자 설정 | Local Settings | 테마·패널·기본 Resource 등을 저장 |
+React는 펼침·입력·focus·표시용 cache를 소유한다. 업무 상태·승인·실행·검증 사실은 Backend에서 받고, 재개를 위한 Workflow 정보와 실제 실행 사실을 혼동하지 않는다.
 
-브라우저 새로고침, 탭 복제, REST Retry, SSE 재연결로 동일 Write Action이 반복되지 않도록 승인 결정, Action 상태, Aggregate Version, Idempotency Key는 Domain Store에서 확인한다.
+Activity는 기존 저장된 실행 이력·결과의 표시다. Frontend-only 배열이나 최신 상태 하나를 완전한 이력으로 취급하지 않는다. Snapshot과 SSE의 의미를 맞추되 실행 성공·복구 방향을 Frontend가 추론하지 않는다.
 
-Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `claim_token`, canonical hash 등), Gmail 전체 원문, 실행 사실을 저장하지 않는다. Frontend는 화면 복원 시 Local API에서 최신 Snapshot을 조회한다.
+Secret, 승인/Claim 권위 값, 전체 Provider 원문을 Browser Storage에 저장하지 않는다. 계정·scope·container가 바뀌면 해당 탐색 cache를 분리/무효화하고, 새로고침 시 현재 server snapshot을 조회한다. 저장소별 보존 구현은 Domain·보안·환경 계약이 소유한다.
 
 ## 20. API_ONLY와 LOCAL_CAPABLE 차이
 
@@ -710,17 +647,22 @@ Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `cla
 
 - API_LLM만 표시
 - Ollama·Local 모델 설정·진단 UI 숨김
-- API Key 연결 실패 시 Agent 실행 차단
-- GPU가 없는 팀원과 CPU-only 사용자 기본 경로
+- API Key 미설정·연결 실패는 추론이 필요한 요청에 안내하며 메인 화면·저장 이력·Settings 진입은 유지
+- Ollama 없이 API LLM만 사용하는 사용자 경로
 
 ### LOCAL_CAPABLE
 
-- `AUTO`, `LOCAL_GPU`, `API_LLM` 제공
-- Ollama와 제품 모델 상태 표시
-- 명시적 LOCAL_GPU 실패 시 자동 전환하지 않고 API 전환 Action 제공
-- AUTO fallback 발생 시 이유와 실제 Runtime 표시
+- `Local AI`, `Gemini` 선택만 제공
+- Ollama/지원 모델 검사 상태와 선택된 실제 모델 표시
+- Local 실패 시 Gemini로 자동 전환하지 않고 현재 요청 종료와 설정 안내
 
-공통 UI, Agent 흐름, 승인 정책, Tool Schema는 두 프로필에서 동일하다.
+공통 UI와 사용자 승인 의미는 두 프로필에서 동일하다.
+
+### 20.1 Local 검사 오류 UX
+
+- 검사 실패, Ollama 미실행, 지원 모델 미설치를 구분한다.
+- `재검사`, `진단 열기`와 간단한 준비 안내만 제공하고 설치·pull·download를 수행하지 않는다.
+- 지원 외 모델은 목록에 표시하거나 실행 대상으로 선택하지 않는다.
 
 ## 21. P0 반응형 기준
 
@@ -737,7 +679,8 @@ Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `cla
 - 위험 Action은 결과를 함께 표시한다.
 - 기술 용어보다 사용자 행동과 결과를 우선 표시한다.
 - 오류 메시지는 원인, 현재 상태, 다음 행동을 포함한다.
-- Keyboard로 채팅 입력, 후보 선택, 승인·취소가 가능해야 한다.
+- Keyboard로 채팅 입력, 후보 선택, 승인·취소, Activity 펼침이 가능해야 하며 focus가 보여야 한다.
+- Loading, Empty, Error, Selected, Focus, Disabled, Submitting, 사용자 대기와 완료를 색상 외 문구·Icon으로 구분한다.
 
 ## 23. 금지 UX
 
@@ -752,46 +695,17 @@ Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `cla
 - 사용자가 한 번 결정한 승인 Button을 다시 실행 가능하게 유지
 - Local Agent API·SSE 연결 오류를 Google Write 실패로 단정
 - Browser Local Storage를 승인·실행 사실의 기준점으로 사용
-- React Frontend에서 Google API·Keyring·SQLite를 직접 호출
+- React Frontend에서 Provider API·Keyring·SQLite를 직접 호출
 - 실행 중인 쓰기를 결과 확인 없이 취소 완료로 표시
+- Browser 제품에 가짜 Window 최소화·최대화·닫기 Control을 추가
 
 ## 24. P0 UX 완료 조건
 
-- 두 번째 이후 정상 실행에서 사용자 입력 없이 메인 화면까지 도달한다.
-- 자연어 요청 한 번으로 Context 조회와 Plan 생성이 가능하다.
-- Gmail·Task·Event Card에서 한 번의 Action으로 Agent 작업을 시작할 수 있다.
-- 사용자는 Source별 최신 기본 목록을 페이지 단위로 탐색할 수 있다.
-- 동일 세션에서 이미 조회한 페이지로 돌아가면 추가 API 호출 없이 즉시 표시된다.
-- 하나 또는 여러 Resource를 선택해 채팅 Context로 전달하고 그 위치에서 Agent 요청을 시작할 수 있다.
-- Agent 검색형과 사용자 선택형 요청이 동일한 승인·실행·검증 흐름으로 연결된다.
-- 승인·수정·취소·실행·검증·복구가 채팅을 벗어나지 않고 완료된다.
-- 승인 Button 중복 클릭, REST Retry, 브라우저 새로고침이나 SSE 재연결로 중복 쓰기가 발생하지 않는다.
-- API_ONLY와 LOCAL_CAPABLE 환경에서 같은 핵심 사용자 흐름을 제공한다.
-- 연결 오류가 발생하면 사용자가 설정 위치를 찾지 않아도 현재 화면에서 해결 Action을 실행할 수 있다.
+업무 Connector·Model Provider가 모두 미연결이고 외부 전송에 동의하지 않아도 Core가 정상이면 메인 화면 진입을 제공한다. 실제 요청에 필요한 연결·AI 준비와 값만 안내한다. 초기 연결 부족은 요청 종료 후 재전송으로, 실행 중 인증 만료는 기존 안전 재개로 구분한다. 실제 자료 탐색·선택, compact Task 승인·자연어 수정·재승인, 서비스별 Write·검증·복구가 채팅 안에서 연결돼야 한다.
 
-## 25. Multi-Agent 진행 표시
+누적 Activity는 Agent 실행 중 작업 사실 추가, 종료 후 하위 내역 보존, schema/의미/외부 결과 검증의 구분, 같은 Conversation의 요청 A/B 이력 유지와 복원을 충족해야 한다. 화면을 보기 위한 추가 모델/Connector 호출이 없어야 하며, unknown·partial·cancel을 사실에 맞게 설명해야 한다.
 
-- UI는 내부 Agent 대화를 노출하지 않고 `요청 이해 → 도구 경로 결정 → 자료 검색·근거 선택 → 업무 분석 → 실행 내용 작성 → 계획 검토 → 승인 대기 → 실행 → 검증` 단계를 표시한다.
-- `agent_role`, `subgraph_name`, 내부 Prompt와 비공개 추론은 기본 화면에 표시하지 않는다.
-- 계획 검토 결과 `REVISE`, `RETRIEVE_MORE`, `CONFIRM`, `BLOCK`은 각각 계획 수정, 추가 검색, 사용자 확인, 실행 불가 상태로 투영한다.
-- 다중 LLM 호출은 하나의 Run 진행으로 묶고, 브라우저 새로고침 후 Run Snapshot과 Domain Store를 재조회한다.
-- React Client State와 SSE Event는 Agent Handoff·Checkpoint·승인·실행 사실의 기준점이 아니다.
-
-## 26. Agent 진행·결과 UX
-
-사용자 단계:
-
-```
-요청 이해 → IN/OUT 경로 결정 → 자료 검색·RAG 근거 선택 → 필요한 경우 업무 분석
-→ 실행 내용 작성 → 계획 검토 → 승인 대기 → 실행 → 결과 확인
-```
-
-- Tool Route와 Retrieval은 서로 다른 진행 단계로 표시한다. Retrieval 내부의 Query·Read·RAG·Evidence 세부 Node는 사용자에게 Agent 대화처럼 노출하지 않고 하나의 자료 검색·근거 선택 단계로 요약한다.
-- Agent Prompt·비공개 추론·자유 Handoff는 표시하지 않는다.
-- 같은 IN Route의 추가 Retrieval은 같은 Run에서 최대 2회 진행하며, 새 Resource/Connector가 필요하면 Tool Route 재검토로 표시한다.
-- Answer-only 결과에는 승인·실행 Card를 표시하지 않는다.
-- **Legacy/호환 READ-only Plan**에는 실행 상태 Card만 표시하고 승인 Button은 표시하지 않는다. 새 Release Planning의 primary path로 표시하지 않는다.
-- Write 실패 후 기존 Approval을 재사용하는 즉시 재실행 Button을 제공하지 않는다.
+실제 앱에서 UI부터 Backend log/저장 상태/외부 결과까지 대조한다. fake UI, 자동 테스트 통과, Run COMPLETED만으로 UX 완료를 선언하지 않는다. 이 절은 검증 기준이며 현재 완료 보고가 아니다.
 
 ## 27. UX 실행 계약
 
@@ -802,9 +716,7 @@ Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `cla
 
 ### OAuth 연결
 
-- UI는 OAuth 시작 Command와 시스템 Browser 이동만 요청한다.
-- Browser authorization을 연 뒤 UI는 기존 `GET /api/v1/connections/google/status`를 bounded polling/refresh하여 `CONNECTING → CONNECTED | DISCONNECTED | REAUTH_REQUIRED | UNAVAILABLE`을 관측한다. OAuth code/state/token이나 MCP callback payload를 받지 않으며 별도 reverse-event channel을 기대하지 않는다.
-- Callback·Token 교환·Keyring 저장은 MCP Credential Provider가 처리하며 UI에는 Token을 노출하지 않는다.
+UI는 기존 연결 시작과 상태 조회를 사용한다. Google 로그인과 GitHub Device Flow의 사용자 상호작용은 구분하되 callback/token 처리 채널을 Frontend에 추가하지 않는다. Device Flow의 인증 대기는 Settings 연결 절차이고 업무 Run의 durable 인증 대기가 아니다. 연결 때문에 종료된 요청을 자동 resume하지 않는다. 실행 중 만료된 Run에 대해서만 기존 명시적 same-Run resume 결과를 구분해 표시한다. 인증 상태 변화 때문에 다른 Connector의 설정을 초기화하지 않는다.
 
 ### 중복 Command
 
@@ -817,82 +729,16 @@ Local Storage에는 Secret, Approval/Claim 실행 권위 값(`approval_id`, `cla
 - P0: 새 대화, 대화 목록·검색·선택·재개.
 - P1: 대화 이름 변경·대화 삭제.
 
-## 28. Clarification 선택 UX
-
-- 후보가 존재하면 자유입력만 요구하지 않고 후보 선택을 우선 표시한다.
-- 후보에는 번호/라벨/회사·팀·업무 등 의미 있는 차이/최근 관련 Resource를 표시한다.
-- 후보 선택 후에도 `처리/진행/시작`의 동작 의미가 불명확하면 필요한 최소 질문만 이어서 한다.
-- 문맥으로 의미가 확정되면 추가 질문하지 않는다.
-- 확인 응답 후 새 Run을 만들지 않고 같은 Run·LangGraph Thread를 Resume한다.
-
-예시:
-
-```
-'김 대리' 후보가 여러 개 있습니다.
-1. 한빛건설 김 대리 — 최근 견적 회신
-2. 세진중공업 김 대리 — 납품 일정
-3. 디자인팀 김 대리 — 시안 검토
-어느 김 대리 건인가요?
-```
-
-## 29. Main UI 구현 계약
-
-### 29.1 Desktop 정보 구조
-
-```
-Header: Google Work Agent | Google 연결 상태 | 현재 계정 | 설정
-Left:   Google 업무 자료 (메일·Tasks 목록/페이지 · Calendar Month View · 검색/필터)
-Center: 선택 Resource Detail Viewer → Agent Conversation → Inline Status/Approval → Chat Input
-Right:  Conversation (새 대화·검색·목록) → Recent Execution
-```
-
-- Center가 주 작업 공간이며 Dashboard나 개발자 Runtime 상태를 우선하지 않는다.
-- Header는 제품명, 사용자 이해가 가능한 Google 연결 상태, 현재 계정, Settings만 기본 노출한다. `WAITING_APPROVAL`, node 이름, profile(`SINGLE/THREE/SIX`), `API_LLM`, `LOCAL_GPU`, `MCP READY`, `SSE CONNECTED` 같은 개발·Runtime 문자열은 Main에서 숨기고 Settings/Diagnostics로 옮긴다.
-- Browser P0에서 창 최소화·최대화·닫기 표식은 시각 장식이나 제품 Window Control 기능으로 정의하지 않는다.
-- App shell(상단 Bar·3 Panel)은 고정되고 페이지 단위로 스크롤되지 않는다. 좌·우 Panel과 Center Conversation Timeline은 각자 영역 안에서 독립적으로 scroll하며, Composer는 Center 하단에서 항상 접근 가능하다.
-
-### 29.2 Left Resource Panel
-
-- 탭은 메일, Tasks, Calendar이며 검색/필터와 수동 새로고침을 제공한다. 목록은 compact row, selected/hover/focus/disabled 상태와 키보드 탐색을 제공한다.
-- Gmail·Tasks의 visible UI page size는 configured `SIDEBAR_PAGE_SIZE`를 사용한다. Local API의 opaque continuation을 React Session Memory에서 이미 materialize한 page/batch와 연결하며, Provider raw token을 직접 해석하지 않는다. Calendar는 Month View visible grid를 사용하고 숫자 pagination을 사용하지 않는다. Agent Retrieval은 configured `RETRIEVAL_PAGE_SIZE`를 사용하며 값이 우연히 같더라도 독립 계약이다.
-- Tasks 기본 목록은 **미완료 Task 전체**를 대상으로 한다. Calendar Sidebar는 §30.1의 selected-month Month View를 사용한다.
-- Count/Badge는 Source별 계약을 따른다. Gmail은 기본 `INBOX + PRIMARY` scope의 exact count만 badge로 표시하고 추정값을 exact로 표시하지 않는다. Tasks는 incomplete browse batch의 terminal/continuation 상태에서 확정 가능한 범위만 숫자로 표시하며 terminal materialization 뒤 exact total을 확정한다. Calendar tab에는 numeric badge를 표시하지 않고 startup·Calendar refresh에서 별도 Calendar Count Read를 호출하지 않는다. Frontend가 count를 만들기 위해 전체 페이지를 임의 순회하거나 hard code하는 것을 금지한다.
-- 행을 선택하면 Center 상단 Viewer에 제공 가능한 Resource 상세를 표시한다. Gmail sender/recipient/subject/received time/body/attachment metadata, Task title/task_status/scheduled_date/list/notes, Calendar title/start/end/attendees/location/description/calendar는 제공된 필드만 표시한다. 누락값의 추정·생성은 금지한다.
-- 선택 Resource는 Center 상단의 독립 Card/Box로 표시해 아래 Conversation Timeline과의 시각적 경계를 명확히 한다.
-- Resource Detail Viewer 기본 상태는 compact preview다. 제목·주요 Metadata와 제한된 길이의 본문 preview를 표시하고 `...`로 자르며 원문 접근을 막지 않는다. 전체 내용은 `펼치기`로 확인한다.
-- 펼친 상태는 `접기`로 되돌릴 수 있고 bounded 영역 안에서 내부 scroll을 사용한다. Resource Detail이 Center 높이의 상당 부분을 항상 차지하지 않게 하여, 일반 상태에서는 Conversation Timeline이 남은 공간을 사용하고 Composer 접근성을 우선한다.
-- Focus Resource와 다중 선택 Resource 집합을 분리한다. Focus는 Viewer용이며 다중 선택은 기존 Agent Context 기능을 보존한다.
-
-### 29.3 Center Conversation과 Approval
-
-- Chat은 `Viewer → Conversation → Inline 상태/Action/Approval → Input` 순서다. 사용자에게는 업무 단계와 다음 행동을 보이고 Agent node/profile/prompt는 표시하지 않는다.
-- Quick Action은 Agent 요청의 Entry Point다. 직접 Google Write를 실행하지 않는다.
-- Write Approval은 compact inline card다. `확인`, `수정`, `건너뛰기` 버튼은 기존 `approve`, `modify`, `reject` Command에 연결한다. Action/Tool, Target, 변경 요약, Evidence, Risk, Expected Result는 실제 Projection이 존재하는 값만 Summary + detail expand에 표시한다.
-- pending/submitting/completed 상태에서는 중복 클릭을 막고, timeout 또는 SSE 단절은 Write 실패로 단정하지 않는다. Snapshot 재조회 또는 cursor 재구독으로 복구한다.
-
-### 29.4 Right Panel, Settings, 반응형
-
-- Conversation은 새 대화, 검색, 목록을 제공하고 선택 시 Center를 복원한다. Resource type은 Conversation의 분류 기준이 아니다.
-- Recent Execution은 실제 Projection이 있을 때만 표시하며, 없으면 숨기거나 Empty State를 표시한다. Fake history는 금지한다.
-- Settings/Diagnostics는 Drawer/Dialog다. 기존 사용자 설정과 Runtime/Model 진단을 구분해 보존한다.
-- Desktop은 3 panel이다. 폭이 줄면 Right를 먼저 collapse하고, 이후 Left는 collapse 또는 overlay로 전환한다. Center와 Chat Input, Approval action은 항상 접근 가능해야 한다.
-
-### 29.5 공통 상태와 접근성
-
-- 모든 주요 영역은 Loading, Empty, Error, Selected, Hover, Focus, Disabled, Submitting, Approval pending, Completed 상태를 사용자 행동과 함께 명시적으로 표현한다.
-- 색만으로 상태를 구분하지 않고 icon/문구를 함께 사용한다. 키보드로 탭, 목록, 대화, 승인, 취소, 입력을 사용할 수 있어야 하며 focus가 명확해야 한다.
-- 오류는 원인, 현재 상태, 다음 행동을 제시한다. 민감 정보·secret·개발 Runtime 상세를 Main에 노출하지 않는다.
-
 ## 30. Calendar·Tasks Sidebar 및 Viewer Empty State
 
 ### 30.1 Calendar Sidebar
 
-- Calendar Sidebar는 Month View만 제공한다. 월력은 일요일 시작이며 실제 필요한 5/6주 grid를 계산하고 configured user timezone의 `[gridStart, gridEnd)`를 사용한다. `gridStart`는 월 1일 이전/당일의 가장 가까운 일요일 00:00, `gridEnd`는 마지막 렌더 주 다음 일요일 00:00이다.
+- Calendar Sidebar는 Month View만 제공한다. 월력은 일요일 시작이며 실제 필요한 5/6주 grid를 계산하고 제품 고정 `Asia/Seoul` timezone의 `[gridStart, gridEnd)`를 사용한다. `gridStart`는 월 1일 이전/당일의 가장 가까운 일요일 00:00, `gridEnd`는 마지막 렌더 주 다음 일요일 00:00이다.
 - visible grid 범위의 Event instance는 `singleEvents=true`, Provider page size 최대 100으로 terminal까지 materialize하며 UI pagination을 만들지 않는다. 현재 월 complete 뒤 이전/다음 월 background prefetch는 한 단계까지만 허용하고 chain prefetch하지 않는다.
 - 날짜 cell은 Event 0개면 marker 없음, 1개면 dot 하나, 2개 이상이면 dot+count를 표시한다. 날짜 클릭은 API 호출 없이 selected-date 목록만 변경한다. Month 검색은 완전히 materialize한 cache를 client-side filter하며 marker/count와 selected-date 목록에 함께 적용한다.
-- All-day Event는 `[start.date, end.date)`, timed Event는 configured timezone에서 `[start, end)`와 실제로 겹치는 날짜 cell에 표시한다. 정확히 다음 날 00:00에 끝나는 Event는 다음 날 cell에 표시하지 않는다. 반복 Event는 occurrence 단위다.
+- All-day Event는 `[start.date, end.date)`, timed Event는 제품 고정 `Asia/Seoul` timezone에서 `[start, end)`와 실제로 겹치는 날짜 cell에 표시한다. 정확히 다음 날 00:00에 끝나는 Event는 다음 날 cell에 표시하지 않는다. 반복 Event는 occurrence 단위다.
 - Event row는 제목 아래에 시간 범위를 표시한다. 같은 날 시간 Event는 `YYYY년 M월 D일 (요일) 오전/오후 h:mm - 오전/오후 h:mm`, All-day Event는 `YYYY년 M월 D일 (요일) · 하루 종일`로 표시한다. Sidebar에는 `시작`, `종료` label을 표시하지 않고 중앙 Resource Viewer의 상세 필드는 유지한다.
-- Calendar tab에는 numeric badge를 표시하지 않는다. 일반 Upcoming Browse는 사용자 Timezone 기준 현재부터 **향후 90일** 기본 범위를 유지하지만 Month View range와 혼용하지 않는다.
+- Calendar tab에는 numeric badge를 표시하지 않는다. 일반 Upcoming Browse는 `Asia/Seoul` 기준 현재부터 **향후 90일** 기본 범위를 유지하지만 Month View range와 혼용하지 않는다.
 - Refresh는 현재 monthAnchor·selected date를 유지하고 현재 visible grid cache만 fresh materialize한다.
 
 ### 30.2 Tasks Sidebar
@@ -901,14 +747,14 @@ Right:  Conversation (새 대화·검색·목록) → Recent Execution
 - 기본 미완료 Browse는 Provider 반환 순을 유지한다. 별도 정렬 row를 두지 않고 `⋮` 메뉴의 `기본 순서 | 날짜순`만 제공하며 날짜순은 전체 materialization 후 `scheduled_date` 오름차순·날짜 없는 Task 후순위로 정렬한다.
 - 목록은 `tasks.list` metadata를 사용하고 `tasks.get`은 focus/선택 상세 조회에만 사용한다. Provider metadata batch를 Session Cache에 받고 UI는 configured `SIDEBAR_PAGE_SIZE`로 표시한다.
 - 미완료 목록 하단의 `완료됨(N)` section은 기본 접힘이다. completed scope를 background terminal materialization해 실제 `task_status=completed`만 `resource_id`로 dedupe하고 exact `N`과 row cache를 함께 만든다. section 펼침과 `더 보기`는 cache를 configured `SIDEBAR_PAGE_SIZE` 단위로 보여주는 presentation이며 Provider 추가 호출을 만들지 않는다.
-- Provider raw `completed` RFC3339은 `completed_at`으로 보존한 경우에만 configured `SettingsViewV1.timezone` 기준 `완료일: M월 D일 (요일)` 보조 텍스트로 표시한다. 값이 없거나 유효하지 않으면 완료일 줄을 생략하고 `scheduled_date`·`due`·`updated`·현재 시각을 fallback으로 사용하지 않는다.
+- Provider raw `completed` RFC3339은 `completed_at`으로 보존한 경우에만 `SettingsViewV1.timezone=Asia/Seoul` 기준 `완료일: M월 D일 (요일)` 보조 텍스트로 표시한다. 값이 없거나 유효하지 않으면 완료일 줄을 생략하고 `scheduled_date`·`due`·`updated`·현재 시각을 fallback으로 사용하지 않는다.
 - Refresh는 incomplete와 completed cache를 모두 fresh generation으로 갱신하며 completed 결과는 terminal 성공 시 atomic replace한다.
 - Local API Projection은 Provider `needsAction`을 `미완료`, `completed`를 `완료`로 정규화한다. Google `due`는 UI에서 `예정일`로만 표시하고 예정일 경과는 상태 전이가 아니라 `예정일 지남` 보조 문구만 허용한다.
 - Task List는 실제 반환 값일 때만 보조 표시하고 priority, 가짜 category·Task List 이름·색상 dot·raw Provider enum/token은 표시하지 않는다.
 
 ### 30.3 Resource Viewer Empty State
 
-- 중앙 Viewer 제목은 `자료 상세`로 Source 공통이다. Focus가 없을 때 메일은 `왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다.`, Tasks는 `왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다.`, Calendar는 `왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다.`를 표시한다.
+- 중앙 Viewer 제목은 `자료 상세`로 Source 공통이다. Focus가 없을 때 메일은 `왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다.`, Tasks는 `왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다.`, Calendar는 `왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다.`, GitHub는 `왼쪽 목록에서 GitHub Issue를 선택하면 상세 내용을 확인할 수 있습니다.`를 표시한다.
 - Source 전환 시 이전 Source의 Focus 및 상세 정보는 남지 않는다. 새 Source의 Empty State를 먼저 표시하고, 행 Focus 후 해당 Source의 실제 Projection 상세만 표시한다.
 
 ## 31. Gmail 첨부파일 UX
@@ -918,4 +764,3 @@ Right:  Conversation (새 대화·검색·목록) → Recent Execution
 - Draft/Send Action에서는 첨부 예정 파일명·유형·크기를 승인 카드에 함께 표시한다.
 - 파일이 Staging 만료·Hash mismatch로 무효화되면 기술 오류 대신 “파일을 다시 선택해야 합니다”를 표시하고 기존 승인 버튼을 재사용하지 않는다.
 - 첨부파일은 별도 화면을 만들지 않고 기존 Message 상세·Action 승인 흐름 안에서 처리한다.
-

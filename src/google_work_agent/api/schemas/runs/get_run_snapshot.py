@@ -2,9 +2,12 @@
 
 from typing import Literal
 
+from pydantic import Field
+
 from google_work_agent.api.schemas.model import ApiModel
 from google_work_agent.api.schemas.runs.confirm_run import PendingInterruptResponseV1
 from google_work_agent.api.schemas.runs.recovery import RecoveryUiProjectionV1
+from google_work_agent.application.use_cases.run.project_run_activity import RunActivityV1
 
 
 class RunSnapshotRunResponseV1(ApiModel):
@@ -32,6 +35,8 @@ class RunSnapshotMessageResponseV1(ApiModel):
 class RunSnapshotActionResponseV1(ApiModel):
     action_id: str
     tool_name: str
+    arguments: dict[str, object]
+    target_display: dict[str, str] = Field(default_factory=dict)
     status: str
     version: int
     effect_type: str
@@ -67,6 +72,7 @@ class ErrorUiProjectionResponseV1(ApiModel):
 
 
 class RunSnapshotResponseV1(ApiModel):
+    activity: RunActivityV1 | None = None
     run: RunSnapshotRunResponseV1
     messages: list[RunSnapshotMessageResponseV1]
     current_plan: dict[str, object] | None

@@ -164,6 +164,13 @@ class StartRunHandler:
                 requested_mode=command.requested_mode,
                 actual_runtime=None,
                 budget_json=dumps(run_budget, sort_keys=True),
+                default_github_repository_json=(
+                    None
+                    if self._settings_provider is None
+                    or (repository_default := self._settings_provider().default_github_repository)
+                    is None
+                    else dumps(asdict(repository_default), sort_keys=True)
+                ),
                 version=0,
                 started_at_ms=now_ms,
                 finished_at_ms=None,
@@ -219,7 +226,6 @@ class StartRunHandler:
             unit_of_work=unit_of_work,
             command=command,
             run_id=run_id,
-            account_id=conversation.account_id,
             now_ms=now_ms,
         )
         unit_of_work.workflow_handoffs.stage_pending(
@@ -326,7 +332,6 @@ class StartRunHandler:
         unit_of_work: UnitOfWork,
         command: StartRunCommand,
         run_id: str,
-        account_id: str,
         now_ms: int,
     ) -> tuple[SelectedResourceRef, ...]:
         if command.entry_mode == "AGENT_SEARCH":
@@ -341,8 +346,6 @@ class StartRunHandler:
         selected: list[SelectedResourceRef] = []
         seen: set[tuple[str, str, str]] = set()
         for identity in command.resolved_resource_selections:
-            if identity.account_id != account_id:
-                raise ValueError("resolved resource account does not own the conversation")
             key = (identity.connector_id, identity.resource_type, identity.resource_id)
             if key in seen:
                 raise ValueError("resolved resource selections must be unique")
@@ -384,7 +387,7 @@ class StartRunHandler:
             raise ValueError("request_text must contain 1..65536 UTF-8 bytes")
         if command.entry_mode not in {"AGENT_SEARCH", "RESOURCE_SELECTED"}:
             raise ValueError("unsupported entry_mode")
-        if command.requested_mode not in {"AUTO", "LOCAL_GPU", "API_LLM"}:
+        if command.requested_mode not in {"LOCAL_GPU", "API_LLM"}:
             raise ValueError("unsupported requested_mode")
         if command.entry_mode == "AGENT_SEARCH" and command.resolved_resource_selections:
             raise ValueError("AGENT_SEARCH cannot include resolved resource selections")

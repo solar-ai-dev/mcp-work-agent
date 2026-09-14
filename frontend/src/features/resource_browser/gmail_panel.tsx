@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ResourceItem } from "../../api/contract";
 
 type GmailPanelController = {
@@ -31,9 +32,10 @@ type GmailPanelProps = {
     onGoToPage: (pageIndex: number) => void;
   };
   presentResource: (item: ResourceItem) => ResourcePresentation;
+  renderExpandedResource: (item: ResourceItem) => ReactNode;
 };
 
-export function GmailPanel({ gmail, selection, pagination, presentResource }: GmailPanelProps): JSX.Element {
+export function GmailPanel({ gmail, selection, pagination, presentResource, renderExpandedResource }: GmailPanelProps): JSX.Element {
   const visiblePageIndex = gmail.loading ? gmail.lastLoadedPageIndex : gmail.pageIndex;
   const items = gmail.pages[visiblePageIndex]?.items ?? [];
   const loadingMessage = gmail.loading && gmail.pageIndex !== gmail.lastLoadedPageIndex
@@ -79,7 +81,7 @@ export function GmailPanel({ gmail, selection, pagination, presentResource }: Gm
                     onChange={() => selection.onToggleResource(item.resource_id)}
                   />
                 </label>
-                <button className="resource-summary" type="button" aria-pressed={focused} onClick={() => selection.onFocusResource(item)}>
+                <button className="resource-summary" type="button" aria-expanded={focused} onClick={() => selection.onFocusResource(item)}>
                   {(presentation.secondary || presentation.time) ? (
                     <span className="row-mail-meta">
                       {presentation.secondary ? <span className="row-sender">{presentation.secondary}</span> : null}
@@ -89,6 +91,7 @@ export function GmailPanel({ gmail, selection, pagination, presentResource }: Gm
                   <strong className="row-title">{presentation.title ?? "제목 없음"}</strong>
                   {presentation.snippet ? <span className="row-snippet">{presentation.snippet}</span> : null}
                 </button>
+                {focused ? renderExpandedResource(item) : null}
               </li>
             );
           })}

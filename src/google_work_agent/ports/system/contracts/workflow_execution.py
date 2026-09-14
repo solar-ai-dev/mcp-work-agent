@@ -10,6 +10,7 @@ from typing import Any, Literal
 from google_work_agent.ports.system.contracts.workflow_handoff import (
     WorkflowControlEnvelopeV1,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 type JsonValue = Any
 
@@ -22,7 +23,11 @@ class WorkflowOutcome(StrEnum):
     COMPLETED = "COMPLETED"
     CHECKPOINT_MISSING = "CHECKPOINT_MISSING"
     DOMAIN_CHECKPOINT_CONFLICT = "DOMAIN_CHECKPOINT_CONFLICT"
+    CONTRACT_VIOLATION = "CONTRACT_VIOLATION"
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+    # Legacy/unclassified failures are retained only so the projection boundary can
+    # diagnose the missing classification as a contract defect. New producers must
+    # return a specific typed outcome instead.
     FAILED = "FAILED"
 
 
@@ -60,6 +65,8 @@ class WorkflowStartRequest:
     correlation: WorkflowCorrelationContext
     run_budget: Mapping[str, JsonValue] = field(default_factory=dict)
     selected_resources: tuple[SelectedResourceRef, ...] = ()
+    user_message_id: str | None = None
+    default_github_repository: GitHubRepositoryDefaultV1 | None = None
 
 
 @dataclass(frozen=True, slots=True)

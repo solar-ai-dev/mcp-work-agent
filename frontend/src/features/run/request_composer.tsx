@@ -9,7 +9,7 @@ export type SubmitNewRunInput = {
   selectionHandles: string[];
   conversationCommandId: string;
   runCommandId: string;
-  requestedMode: "AUTO" | "LOCAL_GPU" | "API_LLM";
+  requestedMode: "LOCAL_GPU" | "API_LLM";
   createConversation: (payload: { command_id: string; title: string | null }) => Promise<ConversationItem>;
 };
 
@@ -37,21 +37,20 @@ export async function submitNewRun(input: SubmitNewRunInput): Promise<SubmitNewR
 }
 
 type RequestComposerControllerOptions = {
-  currentAccountId: string | null;
   selectedConversationId: string | null;
   selectedResourceHandles: string[];
   busyCommand: string | null;
   setBusyCommand: Dispatch<SetStateAction<string | null>>;
   getProjectionGeneration: () => number;
   beginConversationProjection: (conversationId: string) => number;
-  reloadConversationHistory: (conversationId: string, generation: number) => Promise<void>;
+  reloadConversationHistory: (conversationId: string, generation: number) => Promise<unknown>;
   refreshConversations: () => Promise<unknown>;
   selectRun: (runId: string, conversationId: string, generation: number) => Promise<void>;
   onStatusLine: (message: string) => void;
   commandIdFor: (operation: string) => string;
   completeCommand: (operation: string) => void;
   createConversation: SubmitNewRunInput["createConversation"];
-  requestedMode: SubmitNewRunInput["requestedMode"];
+  requestedMode: "AUTO" | SubmitNewRunInput["requestedMode"];
 };
 
 export function useRequestComposerController(options: RequestComposerControllerOptions) {
@@ -61,14 +60,14 @@ export function useRequestComposerController(options: RequestComposerControllerO
   useEffect(() => setComposerError(null), [options.selectedConversationId]);
 
   const handleStartRun = useCallback(async (quickPrompt?: string): Promise<void> => {
-    if (!options.currentAccountId) {
-      const message = "현재 연결된 계정 정보를 찾지 못했습니다.";
+    const requestText = quickPrompt ?? composerText;
+    if (!requestText.trim() || options.busyCommand) return;
+    if (options.requestedMode === "AUTO") {
+      const message = "설정에서 Local AI 또는 Gemini 실행 방식을 먼저 선택해 주세요.";
       options.onStatusLine(message);
       setComposerError(message);
       return;
     }
-    const requestText = quickPrompt ?? composerText;
-    if (!requestText.trim() || options.busyCommand) return;
     options.setBusyCommand("start-run");
     setComposerError(null);
     const normalizedHandles = [...new Set(options.selectedResourceHandles.map((handle) => handle.trim()).filter(Boolean))];
@@ -115,14 +114,17 @@ type Props = {
   text: string;
   error: string | null;
   busy: boolean;
+  cancelAllowed: boolean;
+  cancelling: boolean;
   prompt: string;
   selectedResourceLabels: string[];
   setText: Dispatch<SetStateAction<string>>;
   setError: Dispatch<SetStateAction<string | null>>;
   onSubmit: (quickPrompt?: string) => Promise<void>;
+  onCancel: () => Promise<void>;
 };
 
-export function RequestComposer({ text, error, busy, prompt, selectedResourceLabels, setText, setError, onSubmit }: Props): JSX.Element {
+export function RequestComposer({ text, error, busy, cancelAllowed, cancelling, prompt, selectedResourceLabels, setText, setError, onSubmit, onCancel }: Props): JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     const node = textareaRef.current;
@@ -136,8 +138,12 @@ export function RequestComposer({ text, error, busy, prompt, selectedResourceLab
       <div className="composer-surface">
         {selectedResourceLabels.length > 0 ? <div className="composer-context" aria-live="polite"><strong>요청에 사용할 자료 {selectedResourceLabels.length}개</strong><span>{selectedResourceLabels.join(" · ")}</span></div> : null}
         <div className="composer-input-row">
-          <textarea ref={textareaRef} className="composer composer--main" aria-label={prompt} placeholder={prompt} rows={1} value={text} onChange={(event) => { setText(event.target.value); setError(null); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void onSubmit(); } }} />
-          <button className="icon-button composer-send" type="button" aria-label="보내기" title="보내기" disabled={busy} onClick={() => void onSubmit()}><svg className="composer-send-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16l16-8z" /></svg></button>
+          <textarea ref={textareaRef} className="composer composer--main" aria-label={prompt} placeholder={prompt} rows={1} value={text} onChange={(event) => { setText(event.target.value); setError(null); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (!cancelAllowed) void onSubmit(); } }} />
+          {cancelAllowed ? (
+            <button className="icon-button composer-send composer-stop" type="button" aria-label="중지" title="중지" disabled={!cancelAllowed || cancelling} onClick={() => void onCancel()}><svg className="composer-stop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="7" y="7" width="10" height="10" rx="1" /></svg></button>
+          ) : (
+            <button className="icon-button composer-send" type="button" aria-label="보내기" title="보내기" disabled={busy} onClick={() => void onSubmit()}><svg className="composer-send-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16l16-8z" /></svg></button>
+          )}
         </div>
       </div>
       {error ? <p className="status-bad" role="alert">{error}</p> : null}

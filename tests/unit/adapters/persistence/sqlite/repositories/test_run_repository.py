@@ -14,7 +14,7 @@ def test_run_repository__exact_query_create__and_cas_surface() -> None:
             id TEXT PRIMARY KEY, conversation_id TEXT, entry_mode TEXT, status TEXT,
             langgraph_thread_id TEXT, requested_mode TEXT, actual_runtime TEXT,
             budget_json TEXT, version INTEGER, started_at_ms INTEGER,
-            finished_at_ms INTEGER, terminal_result_kind TEXT
+            finished_at_ms INTEGER, terminal_result_kind TEXT, default_github_repository_json TEXT
         )"""
     )
     repository = SqliteRunRepository(connection)

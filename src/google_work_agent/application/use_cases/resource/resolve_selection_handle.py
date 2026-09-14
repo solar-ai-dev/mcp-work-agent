@@ -30,6 +30,7 @@ class ResolveSelectionHandleQuery:
     expected_resource_id: str | None = None
     expected_parent_resource_id: str | None = None
     require_parent_match: bool = False
+    account_id_for_connector: Callable[[str], str | None] | None = None
 
 
 class ResolveSelectionHandle:
@@ -93,7 +94,6 @@ class ResolveSelectionHandle:
             payload.schema_version == 1,
             hmac.compare_digest(payload.service_instance_id, self._service_instance_id),
             hmac.compare_digest(payload.session_digest, query.session_digest),
-            hmac.compare_digest(payload.account_id, query.account_id),
             payload.issued_at_ms >= 0,
             payload.expires_at_ms > payload.issued_at_ms,
             payload.issued_at_ms <= now_ms < payload.expires_at_ms,
@@ -113,6 +113,13 @@ class ResolveSelectionHandle:
             and query.expected_parent_resource_id != payload.parent_resource_id
         ):
             raise SelectionHandleValidationError("selection handle parent mismatch")
+        account_id = (
+            query.account_id
+            if query.account_id_for_connector is None
+            else query.account_id_for_connector(payload.connector_id)
+        )
+        if account_id is None or not hmac.compare_digest(payload.account_id, account_id):
+            raise SelectionHandleValidationError("selection handle account binding mismatch")
 
 
 def _decode_base64url(value: str) -> bytes:

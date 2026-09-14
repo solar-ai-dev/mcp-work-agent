@@ -20,11 +20,13 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ToolRoutePlanV2,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
-    CurrentSourceRelationV1,
+    DuplicateConflictAssessmentV1,
     InformationGapAssessmentV1,
+    InformationGapConfirmationResolutionV1,
     OperationalRiskAssessmentV1,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     WorkAmbiguityV1,
     WorkAnalysisResultV2,
     WorkFactV1,
@@ -34,6 +36,7 @@ from google_work_agent.application.agents.work_analysis.contracts.work_analysis_
 from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
     PolicyConfirmationReceiptV1,
 )
+from google_work_agent.ports.system.contracts.confirmation import UserInterruptV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
 )
@@ -45,6 +48,7 @@ class WorkAnalysisInputState(AgentSubgraphInputEnvelope, total=False):
     request_intent: RequestIntentV2 | None
     tool_route_plan: ToolRoutePlanV2 | None
     retrieval_result: RetrievalResultV1 | None
+    user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
 
 
@@ -56,16 +60,20 @@ class WorkAnalysisLocalState(GraphState):
     evidence_refs: NotRequired[list[str]]
     availability_results: NotRequired[list[dict[str, object]]]
     confirmation_response: NotRequired[dict[str, object]]
-    current_source_relations: NotRequired[list[CurrentSourceRelationV1]]
+    information_gap_confirmation_resolution: NotRequired[
+        InformationGapConfirmationResolutionV1 | None
+    ]
     fact_candidates: NotRequired[list[WorkFactV1]]
     entity_relation_candidates: NotRequired[list[WorkRelationV1]]
     temporal_dependency_candidates: NotRequired[list[WorkRelationV1]]
     duplicate_conflict_candidates: NotRequired[list[WorkRelationV1]]
+    duplicate_conflict_assessment: NotRequired[DuplicateConflictAssessmentV1]
     validated_relations: NotRequired[list[WorkRelationV1]]
     relation_validation_ambiguities: NotRequired[list[WorkAmbiguityV1]]
     ambiguity_candidates: NotRequired[list[WorkAmbiguityV1]]
     retrieval_needs: NotRequired[list[RetrievalNeedV1]]
     operational_risk_candidates: NotRequired[list[WorkRiskV1]]
+    route_action_necessities: NotRequired[list[RouteActionNecessityV1]]
     final_analysis: NotRequired[WorkAnalysisResultV2 | None]
     __analysis_information_gap_assessment__: NotRequired[InformationGapAssessmentV1]
     __analysis_operational_risk_assessment__: NotRequired[OperationalRiskAssessmentV1]
@@ -75,7 +83,7 @@ class WorkAnalysisLocalState(GraphState):
 
 
 class WorkAnalysisStateV2(TypedDict, total=False):
-    """The exact thirteen owner-local fields defined by Workflow 06."""
+    """The exact owner-local semantic fields for the Work Analysis capability."""
 
     user_request: str
     request_intent: RequestIntentV2
@@ -84,16 +92,19 @@ class WorkAnalysisStateV2(TypedDict, total=False):
     entity_relation_candidates: list[WorkRelationV1]
     temporal_dependency_candidates: list[WorkRelationV1]
     duplicate_conflict_candidates: list[WorkRelationV1]
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1
     validated_relations: list[WorkRelationV1]
     relation_validation_ambiguities: list[WorkAmbiguityV1]
     ambiguity_candidates: list[WorkAmbiguityV1]
     retrieval_needs: list[RetrievalNeedV1]
     operational_risk_candidates: list[WorkRiskV1]
+    route_action_necessities: list[RouteActionNecessityV1]
     final_analysis: WorkAnalysisResultV2 | None
 
 
 __all__ = [
     "WorkAnalysisInputState",
+    "InformationGapConfirmationResolutionV1",
     "WorkAnalysisLocalState",
     "WorkAnalysisStateV2",
 ]

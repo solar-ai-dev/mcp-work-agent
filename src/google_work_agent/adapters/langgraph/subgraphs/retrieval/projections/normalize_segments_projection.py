@@ -10,6 +10,7 @@ from google_work_agent.application.agents.retrieval.normalize_segments import Co
 class NormalizeSegmentsInput(TypedDict):
     acquisition_result: AcquisitionResultV1
     context_budget: NotRequired[ContextBudget]
+    preferred_segment_ids: NotRequired[list[str]]
 
 
 def project_normalize_segments_input(state: Mapping[str, object]) -> NormalizeSegmentsInput:

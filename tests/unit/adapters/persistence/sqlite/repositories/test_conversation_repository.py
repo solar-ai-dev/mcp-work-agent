@@ -5,6 +5,7 @@ import sqlite3
 from google_work_agent.adapters.persistence.sqlite.repositories.conversation_repository import (
     SqliteConversationRepository,
 )
+from google_work_agent.domain.conversation.model import LOCAL_WORKSPACE_ACCOUNT_ID
 from google_work_agent.domain.conversation.model import Conversation as ConversationRecord
 
 
@@ -26,6 +27,20 @@ def _repository() -> SqliteConversationRepository:
         )"""
     )
     return SqliteConversationRepository(connection)
+
+
+def test_local_conversation__survives_connection_change__without_merging_other_accounts() -> None:
+    repository = _repository()
+    for index, account_id in enumerate((LOCAL_WORKSPACE_ACCOUNT_ID, "account-1", "account-2")):
+        repository.create(ConversationRecord(str(index), account_id, "title", 1, index + 1))
+    anonymous, _ = repository.list_keyset(
+        account_id=LOCAL_WORKSPACE_ACCOUNT_ID,
+        cursor=None,
+        page_size=50,
+    )
+    connected, _ = repository.list_keyset(account_id="account-1", cursor=None, page_size=50)
+    assert [item.conversation.id for item in anonymous] == ["0"]
+    assert [item.conversation.id for item in connected] == ["1", "0"]
 
 
 def test_conversation_repository__implements_exact__keyset_surface() -> None:

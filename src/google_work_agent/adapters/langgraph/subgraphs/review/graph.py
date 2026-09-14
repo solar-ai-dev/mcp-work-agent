@@ -14,6 +14,10 @@ from google_work_agent.adapters.langgraph.agent_kernel import (
     ensure_llm_call_budget,
     merge_trace_context,
 )
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    ActionEvidenceDraftV1,
+    project_current_action_evidence,
+)
 from google_work_agent.adapters.langgraph.main.confirmation_projection import (
     build_user_interrupt_v1,
 )
@@ -26,10 +30,8 @@ from google_work_agent.adapters.langgraph.main.state import (
     WorkflowPhase,
     request_from_state,
 )
-from google_work_agent.adapters.langgraph.main.supervisor import (
-    SupervisorDecisionV1,
-    route_supervisor,
-)
+from google_work_agent.adapters.langgraph.main.supervisor import route_supervisor
+from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorDecisionV1
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.registry.resume_target_registry import (
     ResumeTargetRegistry,
@@ -155,6 +157,10 @@ class ReviewSubgraph:
         graph_profile: GraphProfile | None = None,
         merge_decision: MergeDecision | None = None,
         evidence_store: RunScopedEvidenceStore | None = None,
+        load_persisted_evidence: Callable[
+            [Mapping[str, object]], list[ActionEvidenceDraftV1]
+        ]
+        | None = None,
         confirm_inline: ConfirmInline | None = None,
         resume_target_registry: ResumeTargetRegistry | None = None,
     ) -> None:
@@ -166,6 +172,7 @@ class ReviewSubgraph:
         self._graph_profile = graph_profile
         self._merge_decision = merge_decision
         self._evidence_store = evidence_store
+        self._load_persisted_evidence = load_persisted_evidence
         self._confirm_inline = confirm_inline
         self._resume_target_registry = resume_target_registry
         self._prompt_manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -182,6 +189,7 @@ class ReviewSubgraph:
                 self._graph_profile,
                 self._merge_decision,
                 self._evidence_store,
+                self._load_persisted_evidence,
                 self._confirm_inline,
                 self._resume_target_registry,
             )
@@ -248,6 +256,9 @@ class ReviewSubgraph:
     def _route_at_entry(self, state: ReviewState) -> str:
         prior = state.get("plan_review")
         context = state.get("prompt_context")
+        stored_findings = (
+            context.get("review_prior_findings") if isinstance(context, Mapping) else None
+        )
         is_recheck = isinstance(prior, Mapping) and (
             prior.get("status") == "REVISE"
             or (
@@ -260,6 +271,9 @@ class ReviewSubgraph:
                     )
                 )
             )
+        )
+        is_recheck = is_recheck or (
+            prior is None and isinstance(stored_findings, list) and bool(stored_findings)
         )
         phase = "RECHECK" if is_recheck else state.get("review_phase", "INITIAL")
         return route_after_entry({"review_phase": phase})
@@ -410,6 +424,15 @@ class ReviewSubgraph:
                 ConfirmationResponseProjectionV1, dict(raw_response)
             )
         working["prompt_context"] = context
+        raw_modifications = state.get("__modify_review_changes__")
+        if raw_modifications is not None:
+            if not isinstance(raw_modifications, list) or not all(
+                isinstance(item, Mapping) for item in raw_modifications
+            ):
+                raise ValueError("Modify Review changes must be an array of objects")
+            working["user_action_modifications"] = [
+                dict(item) for item in raw_modifications
+            ]
         raw_planning_result: object = state.get("planning_result")
         if not isinstance(raw_planning_result, Mapping):
             raise ValueError("Review requires a validated Planning artifact")
@@ -426,8 +449,12 @@ class ReviewSubgraph:
         if not isinstance(working.get("policy_summary"), Mapping):
             working["policy_summary"] = {}
         prior_meta = prior.get("meta") if isinstance(prior, Mapping) else None
+        stored_findings = context.get("review_prior_findings")
         is_recheck = isinstance(prior, Mapping) and (
             prior.get("status") == "REVISE" or isinstance(raw_response, Mapping)
+        )
+        is_recheck = is_recheck or (
+            prior is None and isinstance(stored_findings, list) and bool(stored_findings)
         )
         working["review_phase"] = "RECHECK" if is_recheck else "INITIAL"
         if isinstance(prior_meta, Mapping):
@@ -439,7 +466,9 @@ class ReviewSubgraph:
             working["review_revision"] = 1
         working["review_based_on"] = self._based_on(planning_result)
         if is_recheck:
-            findings = self._findings_from_result(cast(PlanReviewResultV2, prior))
+            findings = self._findings_from_result(
+                cast(PlanReviewResultV2, prior) if isinstance(prior, Mapping) else None
+            )
             stored_findings = context.get("review_prior_findings")
             if not findings and isinstance(stored_findings, list):
                 findings = [
@@ -449,16 +478,32 @@ class ReviewSubgraph:
                 ]
             working["prior_review_findings"] = findings
             working["affected_dimensions"] = self._affected_dimensions_from_result(
-                cast(PlanReviewResultV2, prior), context
+                cast(PlanReviewResultV2, prior) if isinstance(prior, Mapping) else None,
+                context,
             )
             working["affected_action_ids"] = self._affected_ids(findings, "affected_action_ids")
             working["affected_route_ids"] = self._affected_ids(findings, "affected_route_ids")
         return working
 
     def _evidence(self, state: ReviewState) -> list[Any]:
+        persisted = state.get("__modify_review_evidence__")
+        if persisted is None and isinstance(state.get("__modify_review_plan_id__"), str):
+            if self._load_persisted_evidence is None:
+                raise ValueError("Modify Review persisted evidence loader is unavailable")
+            persisted = self._load_persisted_evidence(state)
+        if persisted is not None:
+            if not isinstance(persisted, list) or not all(
+                isinstance(item, Mapping) for item in persisted
+            ):
+                raise ValueError("Modify Review evidence must be an array of objects")
+            return [dict(item) for item in persisted]
         direct = state.get("evidence")
         if isinstance(direct, list):
             return list(direct)
+        planning = state.get("planning_result")
+        if isinstance(planning, Mapping) and "actions" in planning:
+            assert self._evidence_store is not None
+            return project_current_action_evidence(state=state, evidence_store=self._evidence_store)
         retrieval = state.get("retrieval_result")
         if retrieval is None:
             return []
@@ -529,9 +574,11 @@ class ReviewSubgraph:
 
     @classmethod
     def _affected_dimensions_from_result(
-        cls, result: PlanReviewResultV2, context: Mapping[str, object]
+        cls,
+        result: PlanReviewResultV2 | None,
+        context: Mapping[str, object],
     ) -> list[ReviewDimensionIdV1]:
-        if result["status"] == "REVISE":
+        if result is not None and result["status"] == "REVISE":
             requested = {
                 dimension
                 for issue in result["issues"]
@@ -548,8 +595,10 @@ class ReviewSubgraph:
         raise ValueError("Review recheck requires persisted affected dimensions")
 
     @staticmethod
-    def _findings_from_result(result: PlanReviewResultV2) -> list[ReviewInspectorFindingV1]:
-        if result["status"] != "REVISE":
+    def _findings_from_result(
+        result: PlanReviewResultV2 | None,
+    ) -> list[ReviewInspectorFindingV1]:
+        if result is None or result["status"] != "REVISE":
             return []
         return [
             ReviewInspectorFindingV1(

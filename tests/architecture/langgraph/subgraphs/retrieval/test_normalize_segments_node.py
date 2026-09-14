@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -21,7 +22,7 @@ def test_production_retrieval__uses_exact__eight_node_boundaries() -> None:
     root = Path(__file__).resolve().parents[5]
     source = (
         root / "src/google_work_agent/adapters/langgraph/subgraphs/retrieval/graph.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     expected = {
         "plan_query",
         "build_query",
@@ -58,6 +59,9 @@ def test_production_retrieval__uses_exact__eight_node_boundaries() -> None:
         assert f"nodes.{node_symbol.removesuffix('_node')}_node import" in source
         assert f"{node_symbol}(" in source
 
+    build = next(node for node in ast.walk(ast.parse(source))
+                 if isinstance(node, ast.FunctionDef) and node.name == "build")
+    bound_router_names = {node.id for node in ast.walk(build) if isinstance(node, ast.Name)}
     for router_symbol in (
         "route_after_plan_query",
         "route_after_build_query",
@@ -68,8 +72,7 @@ def test_production_retrieval__uses_exact__eight_node_boundaries() -> None:
         "route_after_assess_sufficiency",
         "route_after_finalize_retrieval",
     ):
-        assert f"{router_symbol}," in source
-        assert f"{router_symbol}(" in source or f"            {router_symbol}," in source
+        assert router_symbol in bound_router_names
 
     for operation in (
         "plan_query",

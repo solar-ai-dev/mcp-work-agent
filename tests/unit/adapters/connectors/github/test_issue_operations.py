@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from google_work_agent.adapters.connectors.github.github.mcp_server.credential_provider import (
+    GitHubCredentialProvider,
+)
 from google_work_agent.adapters.connectors.github.github.mcp_server.github_api import (
     GitHubApiClient,
     GitHubProviderError,
@@ -24,6 +29,7 @@ from google_work_agent.adapters.connectors.github.issues.issues.issue_contract i
     GitHubIssueCreateInput,
     GitHubIssueFilterState,
     GitHubIssueListQuery,
+    GitHubIssueQueryError,
     GitHubIssueStateChangeInput,
 )
 from google_work_agent.adapters.connectors.github.issues.issues.list_issues import (
@@ -33,16 +39,16 @@ from google_work_agent.adapters.connectors.github.issues.issues.list_issues impo
 from google_work_agent.adapters.connectors.github.issues.issues.reopen_issue import (
     ReopenIssueOperation,
 )
-from google_work_agent.adapters.connectors.github.issues.issues.search_by_recovery_fingerprint import (
+from google_work_agent.adapters.connectors.github.issues.issues.search_by_recovery_fingerprint import (  # noqa: E501
     SearchByRecoveryFingerprintOperation,
 )
 from google_work_agent.adapters.connectors.github.issues.issues.update_issue import (
     UpdateIssueOperation,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 
-class _Credentials:
+class _Credentials(GitHubCredentialProvider):
     def __init__(self) -> None:
         self.invalidations = 0
 
@@ -104,11 +110,69 @@ def test_list_request__is_typed__and_deterministic() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "repository", ["acme/repo?x=1", "acme/..", "acme/a#b", "acme/r%2fo", " acme/repo"]
+)
+@pytest.mark.parametrize(
+    "operation",
+    [
+        ListIssuesOperation,
+        GetIssueOperation,
+        CreateIssueOperation,
+        UpdateIssueOperation,
+        CloseIssueOperation,
+        ReopenIssueOperation,
+    ],
+)
+def test_issue_operations__invalid_repository__prevents_all_provider_io(
+    repository: str,
+    operation: type,
+) -> None:
+    api, transport = _api()
+    with pytest.raises(GitHubIssueQueryError, match="REPOSITORY_INVALID"):
+        operation(api).execute({"repository": repository, "issue_number": 7, "title": "Title"})
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"html_url": "https://github.com/other/repo/issues/7"},
+        {"number": 8},
+        {"number": True},
+        {"state": "unknown"},
+    ],
+)
+def test_issue_precheck__wrong_provider_identity__prevents_mutation(
+    changes: dict[str, object],
+) -> None:
+    api, transport = _api(GitHubRestResponse(200, {**_issue(), **changes}))
+    with pytest.raises(GitHubProviderError):
+        CloseIssueOperation(api).execute({"repository": "acme/repo", "issue_number": 7})
+    assert [call[0] for call in transport.calls] == ["GET"]
+
+
+def test_issue_create__wrong_response_identity__preserves_unknown_delivery() -> None:
+    api, transport = _api(
+        GitHubRestResponse(
+            201,
+            {
+                **_issue(),
+                "html_url": "https://github.com/other/repo/issues/7",
+            },
+        )
+    )
+    with pytest.raises(GitHubProviderError) as error:
+        CreateIssueOperation(api).execute({"repository": "acme/repo", "title": "Title"})
+    assert error.value.delivery_certainty is DeliveryCertainty.SENT_RESPONSE_LOST
+    assert [call[0] for call in transport.calls] == ["POST"]
+
+
 def test_list__excludes_pull_requests__and_projects_github_issue_identity() -> None:
     pull_request = {**_issue(8), "pull_request": {"url": "pr"}}
     api, _ = _api(GitHubRestResponse(200, [_issue(), pull_request]))
 
-    result = ListIssuesOperation(api).execute({"repository": "acme/repo"})
+    result: Any = ListIssuesOperation(api).execute({"repository": "acme/repo"})
 
     assert len(result["items"]) == 1
     item = result["items"][0]
@@ -130,7 +194,7 @@ def test_create__preserves_post_body__without_pr_precheck() -> None:
     )
     api, transport = _api(GitHubRestResponse(201, _issue()))
 
-    result = CreateIssueOperation(api).execute(
+    result: Any = CreateIssueOperation(api).execute(
         {"repository": "acme/repo", "title": "title", "body": "body"}
     )
 
@@ -180,7 +244,7 @@ def test_recovery_search__is_repo_bounded_and_exact__and_excludes_pull_requests(
         )
     )
 
-    result = SearchByRecoveryFingerprintOperation(api).execute(
+    result: Any = SearchByRecoveryFingerprintOperation(api).execute(
         {"repository": "acme/repo", "recovery_fingerprint": "fingerprint-1"}
     )
 
@@ -206,9 +270,7 @@ def test_mutation__rejects_pull_request__before_patch(
     | type[ReopenIssueOperation],
     arguments: dict[str, object],
 ) -> None:
-    api, transport = _api(
-        GitHubRestResponse(200, {**_issue(), "pull_request": {"url": "pr"}})
-    )
+    api, transport = _api(GitHubRestResponse(200, {**_issue(), "pull_request": {"url": "pr"}}))
 
     with pytest.raises(GitHubProviderError) as raised:
         operation_type(api).execute(arguments)
@@ -221,7 +283,7 @@ def test_update__prechecks_then_dispatches__typed_patch() -> None:
     changed = {**_issue(), "title": "changed"}
     api, transport = _api(GitHubRestResponse(200, _issue()), GitHubRestResponse(200, changed))
 
-    result = UpdateIssueOperation(api).execute(
+    result: Any = UpdateIssueOperation(api).execute(
         {"repository": "acme/repo", "issue_number": 7, "title": "changed"}
     )
 
@@ -234,16 +296,14 @@ def test_close__prechecks_then_dispatches__exactly_one_patch() -> None:
     closed = _issue(state="closed")
     api, transport = _api(GitHubRestResponse(200, _issue()), GitHubRestResponse(200, closed))
 
-    result = CloseIssueOperation(api).execute(
-        {"repository": "acme/repo", "issue_number": 7}
-    )
+    result: Any = CloseIssueOperation(api).execute({"repository": "acme/repo", "issue_number": 7})
 
     assert [call[0] for call in transport.calls] == ["GET", "PATCH"]
     assert transport.calls[1][2] == {"state": "closed"}
     assert result["item"]["payload"]["state"] == "CLOSED"
-    assert build_issue_close_request(
-        GitHubIssueStateChangeInput("acme/repo", 7)
-    ).body == {"state": "closed"}
+    assert build_issue_close_request(GitHubIssueStateChangeInput("acme/repo", 7)).body == {
+        "state": "closed"
+    }
 
 
 def test_reopen__prechecks_then_dispatches__open_patch() -> None:
@@ -252,9 +312,7 @@ def test_reopen__prechecks_then_dispatches__open_patch() -> None:
         GitHubRestResponse(200, _issue(state="open")),
     )
 
-    result = ReopenIssueOperation(api).execute(
-        {"repository": "acme/repo", "issue_number": 7}
-    )
+    result: Any = ReopenIssueOperation(api).execute({"repository": "acme/repo", "issue_number": 7})
 
     assert [call[0] for call in transport.calls] == ["GET", "PATCH"]
     assert transport.calls[1][2] == {"state": "open"}
@@ -283,7 +341,4 @@ def test_mutation_http_failures__use_canonical__delivery_certainty() -> None:
         ambiguous.mutate(request)
 
     assert rejected_error.value.delivery_certainty is DeliveryCertainty.NOT_SENT
-    assert (
-        ambiguous_error.value.delivery_certainty
-        is DeliveryCertainty.MAY_HAVE_BEEN_SENT
-    )
+    assert ambiguous_error.value.delivery_certainty is DeliveryCertainty.MAY_HAVE_BEEN_SENT

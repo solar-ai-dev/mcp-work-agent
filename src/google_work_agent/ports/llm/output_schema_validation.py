@@ -5,7 +5,8 @@ Prompt Output Schemas actually declare (``type`` incl. type unions,
 ``enum``, ``const``, ``oneOf``, ``allOf``, ``if``/``then``/``else``,
 object ``properties``/``required``/``additionalProperties``/
 ``minProperties``, array ``items``/``minItems``/``maxItems``/
-``uniqueItems``, string ``minLength``/``pattern``/``format: date``, and
+``uniqueItems``/``contains``/``minContains``/``maxContains``,
+string ``minLength``/``pattern``/``format: date``, and
 numeric ``minimum``) -- not the full JSON Schema standard. Extending this
 should be usage-driven: add a keyword only once an active schema in this
 repository actually declares it.
@@ -60,6 +61,14 @@ def _validate(
         or "minProperties" in schema
     ):
         _validate_object(value=value, schema=schema, path=path, errors=errors)
+    # Conditional and composed JSON Schema fragments commonly refine an
+    # already-declared array with only minItems/maxItems/uniqueItems. Those
+    # constraints still apply even when the fragment does not repeat type.
+    if isinstance(value, list) and expected_type != "array" and any(
+        keyword in schema
+        for keyword in ("items", "minItems", "maxItems", "uniqueItems", "contains")
+    ):
+        _validate_array_constraints(value=value, schema=schema, path=path, errors=errors)
 
     one_of = schema.get("oneOf")
     if isinstance(one_of, list):
@@ -92,14 +101,39 @@ def _errors_for(*, value: object, schema: Mapping[str, object], path: str) -> li
 def _validate_one_of(
     *, value: object, subschemas: list[object], path: str, errors: list[str]
 ) -> None:
-    matches = sum(
-        1
+    branch_errors = [
+        (subschema, _errors_for(value=value, schema=subschema, path=path))
         for subschema in subschemas
         if isinstance(subschema, Mapping)
-        and not _errors_for(value=value, schema=subschema, path=path)
-    )
+    ]
+    matches = sum(not failures for _, failures in branch_errors)
     if matches != 1:
         errors.append(f"{path} must match exactly one schema in oneOf (matched {matches})")
+    if matches == 0:
+        # Preserve the declared variant's field errors for the single repair
+        # attempt. Other variants' required fields would suggest changing the
+        # operation rather than correcting its invalid payload.
+        selected = [
+            failures
+            for subschema, failures in branch_errors
+            if _matches_declared_variant(value, subschema)
+        ]
+        if len(selected) == 1:
+            errors.extend(selected[0])
+
+
+def _matches_declared_variant(value: object, schema: Mapping[str, object]) -> bool:
+    properties = schema.get("properties")
+    if not isinstance(value, Mapping) or not isinstance(properties, Mapping):
+        return False
+    constants = {
+        name: field["const"]
+        for name, field in properties.items()
+        if isinstance(field, Mapping) and "const" in field
+    }
+    return bool(constants) and all(
+        name in value and value[name] == expected for name, expected in constants.items()
+    )
 
 
 def _validate_if_then(
@@ -221,6 +255,22 @@ def _validate_array_constraints(
         for index, item in enumerate(value):
             _validate(value=item, schema=item_schema, path=f"{path}[{index}]", errors=errors)
     min_items = schema.get("minItems")
+    contains = schema.get("contains")
+    if isinstance(contains, Mapping):
+        matches = sum(
+            not _errors_for(value=item, schema=contains, path=f"{path}[{index}]")
+            for index, item in enumerate(value)
+        )
+        min_contains = schema.get("minContains", 1)
+        max_contains = schema.get("maxContains")
+        if isinstance(min_contains, int) and matches < min_contains:
+            errors.append(
+                f"{path} must contain at least {min_contains} items matching {dict(contains)!r}"
+            )
+        if isinstance(max_contains, int) and matches > max_contains:
+            errors.append(
+                f"{path} must contain at most {max_contains} items matching {dict(contains)!r}"
+            )
     if isinstance(min_items, int) and len(value) < min_items:
         errors.append(f"{path} must contain at least {min_items} items")
     max_items = schema.get("maxItems")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from google_work_agent.domain.conversation.model import LOCAL_WORKSPACE_ACCOUNT_ID
 from google_work_agent.domain.conversation.model import Conversation as ConversationRecord
 from google_work_agent.ports.persistence.conversation_repository import ConversationListRecord
 
@@ -48,8 +49,8 @@ class SqliteConversationRepository:
         page_size: int,
         search: str | None = None,
     ) -> tuple[tuple[ConversationListRecord, ...], str | None]:
-        predicate = "WHERE account_id = ?"
-        params: list[object] = [account_id]
+        predicate = "WHERE account_id IN (?, ?)"
+        params: list[object] = [account_id, LOCAL_WORKSPACE_ACCOUNT_ID]
         if search is not None:
             pattern = f"%{_escape_like(search)}%"
             predicate += (

@@ -1,11 +1,12 @@
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 
 from google_work_agent.adapters.persistence.connection import connect_sqlite
-from google_work_agent.adapters.persistence.migration import apply_migrations
+from google_work_agent.adapters.persistence.migration import apply_migrations, discover_migrations
 
 HASH = "a" * 64
 
@@ -23,6 +24,56 @@ def migrated_connection(tmp_path: Path) -> Iterator[sqlite3.Connection]:
 def test_schema_integrity__checks__pass(migrated_connection: sqlite3.Connection) -> None:
     assert migrated_connection.execute("PRAGMA quick_check;").fetchone()[0] == "ok"
     assert migrated_connection.execute("PRAGMA foreign_key_check;").fetchall() == []
+
+
+def test_local_actor_migration__preserves_inflight_rows__and_all_safety_triggers(
+    tmp_path: Path,
+) -> None:
+    previous = tmp_path / "previous"
+    previous.mkdir()
+    for migration in discover_migrations():
+        if migration.version < 22:
+            copyfile(migration.path, previous / migration.path.name)
+    with connect_sqlite(tmp_path / "upgrade.db") as connection:
+        apply_migrations(connection, migrations_dir=previous)
+        _insert_plan(connection)
+        _insert_action(
+            connection,
+            action_id="write",
+            effect_type="UPDATE",
+            approval_requirement="REQUIRED",
+            verification_policy="GET_COMPARE",
+            recovery_policy="GET_TARGET",
+        )
+        _claim_write_action(
+            connection, action_id="write", approval_id="approval", attempt_id="attempt"
+        )
+        connection.commit()
+        tables = ("conversations", "runs", "plans", "actions", "approvals", "execution_attempts")
+        before = {
+            table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables
+        }
+        triggers = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='trigger' ORDER BY name"
+        ).fetchall()
+        apply_migrations(connection)
+        assert {
+            table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables
+        } == before
+        assert (
+            connection.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='trigger' ORDER BY name"
+            ).fetchall()
+            == triggers
+        )
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        connection.execute("UPDATE conversations SET account_id='local-workspace'")
+        connection.execute("UPDATE approvals SET approved_by_account_id='local-workspace'")
+        connection.execute("DELETE FROM google_accounts")
+        with pytest.raises(sqlite3.IntegrityError, match="APPROVAL"):
+            connection.execute("UPDATE approvals SET action_version=2")
+        assert connection.execute("SELECT COUNT(*) FROM execution_attempts").fetchone()[0] == 1
 
 
 def test_conversation_allows__only_one__open_run(

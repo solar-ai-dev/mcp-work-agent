@@ -41,6 +41,14 @@ _NONEMPTY_STRING: JsonSchema = {"type": "string", "minLength": 1}
 _NULLABLE_STRING: JsonSchema = {"type": ["string", "null"]}
 
 
+_QUERY_STRING: JsonSchema = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 2048,
+    "pattern": r"^[^\x00-\x1f]*$",
+}
+
+
 _BOOLEAN: JsonSchema = {"type": "boolean"}
 
 
@@ -264,8 +272,28 @@ def _contract(
 ) -> GoogleWorkspaceToolContract:
     return GoogleWorkspaceToolContract(
         tool_name=tool_name,
-        input_schema_version="v1",
-        output_schema_version="v1",
+        input_schema_version=(
+            "v2"
+            if tool_name
+            in {
+                "gmail_create_draft",
+                "gmail_update_draft",
+                "gmail_send",
+            }
+            else "v1"
+        ),
+        output_schema_version=(
+            "v2"
+            if tool_name
+            in {
+                "gmail_create_draft",
+                "gmail_update_draft",
+                "gmail_send",
+                "gmail_get_draft",
+                "gmail_get_message",
+            }
+            else "v1"
+        ),
         input_schema=input_schema,
         output_schema=output_schema,
     )
@@ -319,6 +347,7 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
         _page_input(
             "calendar_id",
             extra={
+                "query": _QUERY_STRING,
                 "time_min": _NULLABLE_STRING,
                 "time_max": _NULLABLE_STRING,
                 "single_events": _BOOLEAN,
@@ -351,6 +380,18 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
     )
     add("gmail_create_draft", _write_input(payload_required=True), _SNAPSHOT_ENVELOPE)
     add("gmail_get_draft", _id_input("draft_id"), _SNAPSHOT_ENVELOPE)
+    add(
+        "gmail_search_drafts",
+        _object_schema(
+            {
+                "query": _STRING,
+                "page_token": _NULLABLE_STRING,
+                "page_size": _PAGE_SIZE,
+            },
+            required=("query",),
+        ),
+        _PAGE_ENVELOPE,
+    )
     add("gmail_get_message", _id_input("message_id"), _SNAPSHOT_ENVELOPE)
     add("gmail_get_thread", _id_input("thread_id"), _SNAPSHOT_ENVELOPE)
     add(
@@ -368,12 +409,13 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
     )
     add(
         "gmail_send",
-        _id_input(
-            "draft_id",
-            optional={
-                "recovery_fingerprint": _NULLABLE_STRING,
+        _object_schema(
+            {
+                "draft_id": _NONEMPTY_STRING,
+                "payload": {"type": "object"},
                 "claim_context": _NULLABLE_OBJECT,
             },
+            required=("payload",),
         ),
         _SNAPSHOT_ENVELOPE,
     )
@@ -435,6 +477,8 @@ def _build_contracts() -> dict[str, GoogleWorkspaceToolContract]:
                     ],
                 },
                 "recovery_fingerprint": _NONEMPTY_STRING,
+                "task_list_id": _NONEMPTY_STRING,
+                "calendar_id": _NONEMPTY_STRING,
             },
             required=("resource_type", "recovery_fingerprint"),
         ),

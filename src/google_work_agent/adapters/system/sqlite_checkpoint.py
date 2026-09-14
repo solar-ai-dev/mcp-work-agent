@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver, get_checkpoint_metadata
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from google_work_agent.domain.run.model import RunStatusV1
@@ -55,6 +56,29 @@ class _WriteContext:
 
 _WRITE_CONTEXT: ContextVar[_WriteContext | None] = ContextVar(
     "workflow_checkpoint_write_context", default=None
+)
+
+# Exact stored value types; this is not a graph/resume target registry.
+_CHECKPOINT_VALUE_TYPES = (
+    ("google_work_agent.ports.system.contracts.workflow_execution", "WorkflowStartRequest"),
+    ("google_work_agent.ports.system.contracts.workflow_execution", "WorkflowCorrelationContext"),
+    ("google_work_agent.ports.system.contracts.workflow_execution", "SelectedResourceRef"),
+    ("google_work_agent.ports.system.contracts.workflow_handoff", "AgentNodeResumeTargetV2"),
+    ("google_work_agent.ports.system.contracts.workflow_handoff", "MainControlResumeTargetV2"),
+    ("google_work_agent.ports.system.settings_port", "GitHubRepositoryDefaultV1"),
+    ("google_work_agent.domain.action.model", "EffectType"),
+    (
+        "google_work_agent.application.agents.tool_routing.contracts.semantic_route_candidate",
+        "SemanticRouteCandidate",
+    ),
+    (
+        "google_work_agent.application.agents.tool_routing.contracts.route_binding_candidate",
+        "BoundOutputRouteCandidateV1",
+    ),
+    (
+        "google_work_agent.application.use_cases.run.build_terminal_message",
+        "TerminalAssistantMessageInputV1",
+    ),
 )
 
 
@@ -109,7 +133,14 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
     ) -> None:
         self._connection = connection
         self._connection.row_factory = sqlite3.Row
-        self._delegate = SqliteSaver(self._connection)
+        self._delegate = SqliteSaver(
+            self._connection,
+            serde=JsonPlusSerializer(
+                allowed_json_modules=_CHECKPOINT_VALUE_TYPES,
+                allowed_msgpack_modules=_CHECKPOINT_VALUE_TYPES,
+                pickle_fallback=False,
+            ),
+        )
         super().__init__(serde=self._delegate.serde)
         self._now_ms = now_ms
         self._owns_connection = owns_connection
@@ -321,8 +352,7 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
             latest = self.load_same_run_checkpoint(*key)
             if latest is not None and (
                 pending_update is not None
-                or latest.retrieval_cache_requirements
-                != final_context.retrieval_requirements
+                or latest.retrieval_cache_requirements != final_context.retrieval_requirements
             ):
                 self.store_same_run_checkpoint(
                     replace(
@@ -353,6 +383,95 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
 
     def get_tuple(self, config: Any) -> Any:
         return self._delegate.get_tuple(config)
+
+    def update_run_budget(
+        self, run_id: str, update: Callable[[Mapping[str, object]], Mapping[str, object]]
+    ) -> Mapping[str, object]:
+        """Commit one root budget update before active or paused provider I/O."""
+        with self._delegate.lock:
+            if self._connection.in_transaction:
+                raise ValueError("interactive budget update requires its own transaction")
+            try:
+                self._connection.execute("BEGIN IMMEDIATE;")
+                run = self._connection.execute(
+                    "SELECT status, budget_json FROM runs WHERE id=?;", (run_id,)
+                ).fetchone()
+                active_admission = self._connection.execute(
+                    """SELECT 1 FROM workflow_handoffs WHERE run_id=?
+                    AND execution_admission_json IS NOT NULL LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                consumed_execution = self._connection.execute(
+                    """SELECT 1 FROM workflow_handoffs WHERE run_id=?
+                    AND status='CONSUMED' AND applied_checkpoint_id IS NOT NULL
+                    AND applied_checkpoint_generation IS NOT NULL LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                unsettled_handoff = self._connection.execute(
+                    """SELECT 1 FROM workflow_handoffs WHERE run_id=?
+                    AND status IN ('PENDING', 'MATERIALIZED') LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                admitted_execution = active_admission is not None or (
+                    consumed_execution is not None and unsettled_handoff is None
+                )
+                settled_approval_wait = (
+                    run is not None
+                    and run["status"] == "WAITING_APPROVAL"
+                    and unsettled_handoff is None
+                )
+                preempting_status = run is not None and run["status"] in {
+                    "COMPLETED",
+                    "CANCEL_REQUESTED",
+                    "CANCELLED",
+                    "REAUTH_REQUIRED",
+                    "RECOVERY_REQUIRED",
+                    "FAILED",
+                    "BLOCKED",
+                }
+                if (
+                    run is None
+                    or preempting_status
+                    or not (admitted_execution or settled_approval_wait)
+                ):
+                    raise ValueError(
+                        "provider inference requires an active admission or settled approval wait"
+                    )
+                row = self._connection.execute(
+                    """SELECT c.thread_id, c.checkpoint_id, c.type, c.checkpoint
+                    FROM checkpoints c JOIN workflow_checkpoint_envelopes e
+                      ON c.thread_id=e.langgraph_thread_id
+                     AND c.checkpoint_ns=e.checkpoint_ns AND c.checkpoint_id=e.checkpoint_id
+                    WHERE e.run_id=? AND e.checkpoint_ns=''
+                    ORDER BY e.checkpoint_generation DESC LIMIT 1;""",
+                    (run_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("provider inference requires a root checkpoint")
+                checkpoint = self.serde.loads_typed((row["type"], bytes(row["checkpoint"])))
+                try:
+                    budget = json.loads(str(run["budget_json"]))
+                except (TypeError, ValueError) as error:
+                    raise ValueError("provider inference requires a persisted RunBudget") from error
+                if not isinstance(budget, dict):
+                    raise ValueError("provider inference requires a persisted RunBudget")
+                updated_budget = dict(update(budget))
+                checkpoint["channel_values"]["retry_budget"] = updated_budget
+                kind, blob = self.serde.dumps_typed(checkpoint)
+                self._connection.execute(
+                    """UPDATE checkpoints SET type=?, checkpoint=?
+                    WHERE thread_id=? AND checkpoint_ns='' AND checkpoint_id=?;""",
+                    (kind, blob, row["thread_id"], row["checkpoint_id"]),
+                )
+                self._connection.execute(
+                    "UPDATE runs SET budget_json=? WHERE id=?;",
+                    (json.dumps(updated_budget, sort_keys=True), run_id),
+                )
+                self._connection.commit()
+                return updated_budget
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def list(
         self,
@@ -587,9 +706,31 @@ class SqliteCheckpointAdapter(BaseCheckpointSaver[Any]):
                 ORDER BY e.checkpoint_generation DESC LIMIT 1;""",
                 (run_id, thread_id),
             ).fetchone()
+            latest_projection = connection.execute(
+                """SELECT checkpoint_generation, retrieval_cache_requirements_json
+                FROM workflow_checkpoint_envelopes
+                WHERE run_id=? AND langgraph_thread_id=?
+                ORDER BY checkpoint_generation DESC LIMIT 1;""",
+                (run_id, thread_id),
+            ).fetchone()
         if row is None:
             return None
         checkpoint = _to_checkpoint(row)
+        if (
+            latest_projection is not None
+            and int(latest_projection["checkpoint_generation"]) > checkpoint.checkpoint_generation
+        ):
+            # A nested Retrieval checkpoint can commit after the latest root
+            # checkpoint and before the subgraph returns.  Keep the root
+            # identity used for resume, but surface the newest bounded cache
+            # dependencies so startup reconciliation never resumes stale
+            # memory-only handles after process loss.
+            checkpoint = replace(
+                checkpoint,
+                retrieval_cache_requirements=_requirements_from_json(
+                    latest_projection["retrieval_cache_requirements_json"]
+                ),
+            )
         with self._projection_update_lock:
             pending_update = self._projection_updates.get((run_id, thread_id))
         if pending_update is None:
@@ -991,9 +1132,6 @@ def _requirements_json(requirements: tuple[RetrievalCacheRequirementV1, ...]) ->
 
 
 def _to_checkpoint(row: sqlite3.Row) -> GraphCheckpointEnvelopeV1:
-    requirements = cast(
-        list[dict[str, object]], json.loads(str(row["retrieval_cache_requirements_json"]))
-    )
     return GraphCheckpointEnvelopeV1(
         schema_version=1,
         checkpoint_id=str(row["checkpoint_id"]),
@@ -1010,20 +1148,27 @@ def _to_checkpoint(row: sqlite3.Row) -> GraphCheckpointEnvelopeV1:
         active_handoff_run_sequence=None
         if row["active_handoff_run_sequence"] is None
         else int(row["active_handoff_run_sequence"]),
-        retrieval_cache_requirements=tuple(
-            RetrievalCacheRequirementV1(
-                schema_version=1,
-                read_result_handle=str(item["read_result_handle"]),
-                route_id=str(item["route_id"]),
-                query_identity_hash=str(item["query_identity_hash"]),
-            )
-            for item in requirements
+        retrieval_cache_requirements=_requirements_from_json(
+            row["retrieval_cache_requirements_json"]
         ),
         created_at_ms=int(row["created_at_ms"]),
         checkpoint_blob=bytes(row["checkpoint_blob"]),
         pre_reauth_status=(
             None if row["pre_reauth_status"] is None else RunStatusV1(str(row["pre_reauth_status"]))
         ),
+    )
+
+
+def _requirements_from_json(value: object) -> tuple[RetrievalCacheRequirementV1, ...]:
+    requirements = cast(list[dict[str, object]], json.loads(str(value)))
+    return tuple(
+        RetrievalCacheRequirementV1(
+            schema_version=1,
+            read_result_handle=str(item["read_result_handle"]),
+            route_id=str(item["route_id"]),
+            query_identity_hash=str(item["query_identity_hash"]),
+        )
+        for item in requirements
     )
 
 

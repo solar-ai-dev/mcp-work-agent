@@ -1,0 +1,189 @@
+{
+  "benchmark_ready": "YES",
+  "canonical_case_schema": "CanonicalCaseSemanticV1",
+  "canonical_counts": {
+    "CORE": 60,
+    "HOLDOUT": 12,
+    "STRESS": 20,
+    "TOTAL": 92
+  },
+  "dataset_path": "canonical_cases_v8.jsonl",
+  "dataset_sha256": "170de919d9eac09e75d6e1bc1c2bc94736f075ee06c798fd130a0350607fff43",
+  "dataset_version": "canonical-92-v8-provider-bound-gold-corrected",
+  "full_pytest_runs": 0,
+  "holdout_blind": false,
+  "inputs_changed": [
+    {
+      "case_id": "CASE-CORE-011",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-012",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-013",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-014",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-015",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-016",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-017",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-018",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-020",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-046",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-048",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-049",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-050",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-CORE-054",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-STRESS-013",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-STRESS-019",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    },
+    {
+      "case_id": "CASE-STRESS-020",
+      "field": "canonical_user_prompt",
+      "reason": "VIRTUAL_TO_ACTUAL_ADDRESS_BINDING"
+    }
+  ],
+  "manifest_id": "CANONICAL-92-V8-PROVIDER-BOUND-GOLD-CORRECTED",
+  "model_runs": 0,
+  "product_prompt_changes": 0,
+  "product_source_changes": 0,
+  "provider_changes": {
+    "delta_message": {
+      "independent_reread_verified": true,
+      "new_resource_id": "1a09e0e0fda9ed25",
+      "new_thread_id": "1a09e0e0fda9ed25",
+      "operation": "REPLACE",
+      "retired_thread_id": "1a09db0d32ed4383",
+      "retired_thread_trashed_verified": true,
+      "standalone_thread_verified": true
+    },
+    "juniper_review_event": {
+      "distinct_identity_verified": true,
+      "independent_reread_verified": true,
+      "new_resource_id": "apvloa2go3hvs4ib86fvjos3jo",
+      "operation": "ADD",
+      "overlap_verified": true,
+      "parent_id": "1ffbfb5494c5b68d8157430cd565a53798fd083f3a736e19afc6dceb9dd68cbc@group.calendar.google.com"
+    },
+    "kestrel_task": {
+      "independent_reread_verified": true,
+      "new_resource_id": "OVY2NGN5VTVNV3I4TmV5Sw",
+      "old_resource_deleted_verified": true,
+      "old_resource_id": "cTkxR21FX1FSTnU0XzlWWg",
+      "operation": "REPLACE",
+      "parent_id": "V0JUdGxoNUJGN01rSTZhag"
+    },
+    "quartz_attachment": {
+      "attachment_count": 1,
+      "independent_reread_verified": true,
+      "message_id": "1a079aeb254e0b1b",
+      "operation": "KEEP_AND_BIND_ATTACHMENT"
+    },
+    "room_conflict": {
+      "independent_event_reread_verified": true,
+      "operation": "KEEP",
+      "owner_binding_verified": true,
+      "yuna_owner_email": "qhdrbdhkdwks2@gmail.com"
+    }
+  },
+  "provider_pack_counts": {
+    "ADD": 1,
+    "KEEP": 23,
+    "PENDING": 0,
+    "REPLACE": 2
+  },
+  "provider_snapshot_path": "fixtures/google_workspace/provider-snapshot-v8.json",
+  "provider_snapshot_sha256": "59438f4fdd10d1037907f99d3445aac585857320774f89843b578b47c78fb37f",
+  "provider_unresolved_packs": [],
+  "schema_version": 1,
+  "smoke_runs": 0,
+  "source": {
+    "branch": "codex/issue-251-connected-contract",
+    "commit": "0b6817705b1c32d45e61f5a0822010b1debccb93",
+    "dataset": "canonical_cases_v7.jsonl",
+    "dataset_blob_sha": "97a03902da28e43777f94f2d0581c729778205c5",
+    "design_sha256": "8bcbbb4c96334600fa7f0c6211f5f04e4c15a2a133c26365c858d373ca3265ea",
+    "repository": "solar-ai-dev/google-work-agent",
+    "semantic_decisions_sha256": "993446952fe202f6b74b9276cc2c46c9cb468a4ccf1dd7c91bc015018990b279"
+  },
+  "source_of_truth_rules": [
+    "canonical_cases_v8.jsonl is the only active evaluation case and Gold dataset.",
+    "provider-snapshot-v8.json is the only active local fixture/provider binding.",
+    "Input identity, semantic Gold, provider readiness, and temporal readiness are separate fields.",
+    "HOLDOUT labels are retained for identity only and are not blind evaluation data.",
+    "Gold/evaluator data never enters Product Prompt."
+  ],
+  "status": "BENCHMARK_READY",
+  "stress_harness": {
+    "configuration": "evaluation/harness/canonical_v8_fault_profiles.json",
+    "profile_count": 20,
+    "ready": true,
+    "resolver": "evaluation/harness/fault_profiles.py",
+    "validation": "DRY_VALIDATED_20_OF_20"
+  },
+  "stress_harness_ready": true,
+  "temporal_binding": {
+    "bound_case_count": 48,
+    "policy": "CANONICAL_V8_SCENARIO_FIXED_TIME",
+    "provider_timestamps_mutated": false,
+    "runtime_requirement": "START_EVALUATION_RUN_AT_CASE_RUN_REFERENCE_TIME",
+    "time_zone": "Asia/Seoul"
+  },
+  "temporal_pending_case_ids": []
+}

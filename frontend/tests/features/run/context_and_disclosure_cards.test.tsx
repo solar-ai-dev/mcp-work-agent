@@ -12,7 +12,7 @@ test("renders the canonical context preview and invokes an exclusion adjustment"
     schema_version: 1,
     run_id: "run-1",
     retrieval_revision: 3,
-    items: [{ segment_id: "segment-1", role: "SUPPORTS", source: "gmail", resource_type: "gmail_message", resource_id: "message-1", display_label: "프로젝트 메일", excerpt: "마감은 금요일입니다." }],
+    items: [{ resource_identity: "ref-1", category: "mail", title: "프로젝트 메일", preview: "마감은 금요일입니다.", content: "마감은 금요일입니다.", segment_ids: ["segment-1"] }],
     gmail_count: 1,
     tasks_count: 0,
     calendar_count: 0,

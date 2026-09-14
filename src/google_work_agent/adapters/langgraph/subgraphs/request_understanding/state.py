@@ -21,12 +21,16 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
 from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
     PolicyConfirmationReceiptV1,
 )
+from google_work_agent.application.use_cases.run.terminal_contract import FinalizeIntentV1
 from google_work_agent.ports.system.contracts.confirmation import (
     UserInterruptV1,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import (
     SelectedResourceRef,
     WorkflowStartRequest,
+)
+from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationRequiredV1,
 )
 
 _TYPE_HINT_NAMESPACE = (RunBudgetV2, WorkflowStartRequest)
@@ -36,8 +40,11 @@ class RequestUnderstandingInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Request Understanding."""
 
     run_input: RunInputV1
+    admitted_connector_ids: list[str]
     user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
+    request_intent: RequestIntentV2 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
 
 
 class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
@@ -49,14 +56,20 @@ class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
     goal_candidate: RequestGoalCandidateV1 | None
     ambiguity_candidate: AmbiguityV1 | None
     final_intent: RequestIntentV2 | None
+    prerequisite_message: str | None
+    finalize_intent: FinalizeIntentV1 | None
 
     request_intent: RequestIntentV2 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
 
 
 class RequestUnderstandingParentOutputState(AgentSubgraphInputEnvelope, total=False):
     """Only fields that Request Understanding may project back to Main."""
 
     request_intent: RequestIntentV2 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
+    admitted_connector_ids: list[str]
+    finalize_intent: FinalizeIntentV1 | None
     user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
 

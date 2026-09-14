@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -43,6 +43,7 @@ type SnapshotShape = {
   actions: Array<{
     action_id: string;
     tool_name: string;
+    arguments?: Record<string, unknown>;
     status: string;
     version: number;
     effect_type: string;
@@ -64,6 +65,13 @@ type SnapshotShape = {
   execution_status: { action_count: number; terminal_action_count: number };
   verification_summary: { verified_count: number; mismatch_count: number };
   recovery_summary: { unknown_result_action_count: number };
+  messages?: Array<{
+    id: string;
+    run_id: string | null;
+    role: string;
+    content: string;
+    created_at_ms: number;
+  }>;
   pending_interrupt?: {
     schema_version: 1;
     interrupt_id: string;
@@ -178,10 +186,30 @@ test("captures the bootstrap fragment before asynchronous startup checks", async
 
   render(<App />);
 
-  await screen.findByText(/Google/);
+  await screen.findByRole("heading", { name: "mcp-work-agent", exact: true });
   expect(window.location.hash).toBe("");
   expect(bootstrapRequested).toBe(true);
   expect(document.body.textContent).not.toContain("secret-1");
+});
+
+test("stops without retrying when the local session security boundary cannot be restored", async () => {
+  installFetch((path) => {
+    if (path === "/health/live") return jsonResponse(liveResponse());
+    if (path === "/health/ready") return jsonResponse({
+      error_code: "LOCAL_SESSION_INVALID",
+      user_message: "Request rejected by local API security policy.",
+      retryable: false,
+      request_id: "request-1",
+      api_contract_version: "1",
+    }, 401);
+    throw new Error(`Unhandled path ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("안전한 실행 조건을 확인하지 못해 작업을 중단했습니다.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "다시 확인" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Request rejected by local API security policy.")).not.toBeInTheDocument();
 });
 
 test("keeps the fragment until one StrictMode bootstrap request succeeds", async () => {
@@ -317,7 +345,18 @@ test("starts a run in RESOURCE_SELECTED mode", async () => {
       });
     }
     if (path === "/api/v1/runs/run-1") {
-      return jsonResponse(snapshotPayload({ conversation_id: createdConversationId, status: "FAILED", entry_mode: "RESOURCE_SELECTED" }));
+      return jsonResponse(snapshotPayload({
+        conversation_id: createdConversationId,
+        status: "FAILED",
+        entry_mode: "RESOURCE_SELECTED",
+        messages: [{
+          id: "message-final-1",
+          run_id: "run-1",
+          role: "ASSISTANT",
+          content: "선택한 메일을 요약하지 못했습니다. 완료되지 않은 상태입니다.",
+          created_at_ms: 2,
+        }],
+      }));
     }
     if (path === "/api/v1/runs/run-1/context") {
       return jsonResponse({
@@ -361,16 +400,23 @@ test("starts a run in RESOURCE_SELECTED mode", async () => {
   };
   expect(body.entry_mode).toBe("RESOURCE_SELECTED");
   expect(body.selected_resource_handles).toEqual(["handle-resource-1"]);
-  expect(await screen.findByText("메인 에이전트 · 작업을 완료하지 못했습니다.")).toBeInTheDocument();
+  expect(
+    await screen.findByText("선택한 메일을 요약하지 못했습니다. 완료되지 않은 상태입니다."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "에이전트 진행" })).toBeInTheDocument();
   expect(screen.getByText("작업을 완료하지 못했습니다.")).toBeInTheDocument();
 });
 
 test("clears the previous conversation projection when starting a new conversation", async () => {
-  installUiContractFetch({ conversations: true, status: "FAILED" });
+  installUiContractFetch({
+    conversations: true,
+    status: "FAILED",
+    terminalMessage: "요청한 작업을 완료하지 못했습니다.",
+  });
   const user = userEvent.setup();
   render(<App />);
 
-  expect(await screen.findByRole("region", { name: "에이전트 진행" })).toHaveTextContent("작업을 완료하지 못했습니다.");
+  expect(await screen.findByText("요청한 작업을 완료하지 못했습니다.")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "새 대화" }));
 
@@ -626,7 +672,7 @@ test("continues an existing conversation with a new run and keeps the earlier hi
       storedMessages = [...storedMessages, { id: "message-3", run_id: "run-b", role: "USER", content: "새 요청", created_at_ms: 3 }];
       return jsonResponse({ applied: true, result_code: "ACCEPTED", run_id: "run-b", conversation_id: "conversation-a", run_status: "PLANNING", run_version: 1, user_message_id: "message-3", workflow_key: "workflow-b", enqueued: true, request_replayed: false });
     }
-    if (path === "/api/v1/runs/run-a") return jsonResponse(snapshotPayload({ run_id: "run-a", conversation_id: "conversation-a", status: "COMPLETED", finished_at_ms: 2 }));
+    if (path === "/api/v1/runs/run-a") return jsonResponse(snapshotPayload({ run_id: "run-a", conversation_id: "conversation-a", status: "COMPLETED", finished_at_ms: 2, next_allowed_commands: [] }));
     if (path === "/api/v1/runs/run-b") return jsonResponse(snapshotPayload({ run_id: "run-b", conversation_id: "conversation-a", status: "PLANNING" }));
     if (path === "/api/v1/runs/run-a/context" || path === "/api/v1/runs/run-b/context") {
       return jsonResponse({ context: null, api_contract_version: "1" });
@@ -745,7 +791,7 @@ test("shows approve button for write actions and posts approve command", async (
               effect_type: "CREATE",
               approval_required: true,
               verification_policy: "GET_COMPARE",
-              next_allowed_commands: approved ? [] : ["APPROVE", "MODIFY", "REJECT"],
+              next_allowed_commands: approved ? [] : ["APPROVE_ACTION", "MODIFY_ACTION", "REJECT_ACTION"],
             },
           ],
         }),
@@ -784,7 +830,7 @@ test("shows approve button for write actions and posts approve command", async (
   const user = userEvent.setup();
   render(<App />);
 
-  const approveButton = await screen.findByRole("button", { name: "네, 실행해 주세요" });
+  const approveButton = await screen.findByRole("button", { name: "확인" });
   await user.click(approveButton);
 
   await waitFor(() =>
@@ -960,11 +1006,11 @@ test("confirms an interrupt and explicitly resolves a mismatch", async () => {
   render(<App />);
 
   await screen.findByText("Which task should be updated?");
-  expect(screen.getByLabelText("확인 응답")).toBeEnabled();
+  expect(screen.getByLabelText("답변")).toBeEnabled();
   FakeEventSource.instances[0].emit("confirmation_required", {
     interrupt_id: "interrupt-1", question: "Which task should be updated?", options: [],
   });
-  await user.type(screen.getByLabelText("확인 응답"), "Use the follow-up task");
+  await user.type(screen.getByLabelText("답변"), "Use the follow-up task");
   await user.click(screen.getByRole("button", { name: "응답 보내기" }));
   await user.click(await screen.findByRole("button", { name: "현재 결과 수용" }));
 
@@ -978,7 +1024,7 @@ test("confirms an interrupt and explicitly resolves a mismatch", async () => {
   );
 });
 
-test("starts Google OAuth from the disconnected status action", async () => {
+test("starts Google OAuth from Connector settings without promoting Google in the header", async () => {
   installFetch((path, init) => {
     if (path === "/health/live") {
       return jsonResponse(liveResponse());
@@ -992,11 +1038,9 @@ test("starts Google OAuth from the disconnected status action", async () => {
     if (path === "/api/v1/google/connection") {
       return jsonResponse({
         ...googleConnection(),
-        connected: false,
-        credential_state: "DISCONNECTED",
-        account_email: null,
-        safe_error_code: "TOKEN_EXCHANGE_INVALID_REQUEST",
-        safe_error_description: "Google rejected a required token request field.",
+        account_id: null,
+        display_email: null,
+        connection_status: "DISCONNECTED",
       });
     }
     if (path === "/api/v1/settings") {
@@ -1031,9 +1075,9 @@ test("starts Google OAuth from the disconnected status action", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await waitFor(() => expect(document.querySelector(".topbar-actions")).not.toBeNull());
-  await user.click(screen.getByRole("button", { name: "설정" }));
-  await user.click(screen.getByRole("button", { name: "Google 연결" }));
+  await user.click(await screen.findByRole("button", { name: "Connector 설정 열기" }));
+  const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
+  await user.click(await googleSettings.findByRole("button", { name: "연결", exact: true }));
 
   expect(window.open).toHaveBeenCalledOnce();
   const [openedUrl, target, features] = vi.mocked(window.open).mock.calls[0];
@@ -1058,7 +1102,10 @@ test("does not open an unexpected authorization URL returned by the API", async 
       return jsonResponse({ summary: runtimeSummary([]), api_contract_version: "1" });
     }
     if (path === "/api/v1/google/connection") {
-      return jsonResponse({ ...googleConnection(), connected: false, credential_state: "DISCONNECTED", account_email: null });
+      return jsonResponse({ ...googleConnection(), account_id: null, display_email: null, connection_status: "DISCONNECTED" });
+    }
+    if (path === "/api/v1/llm/connection") {
+      return jsonResponse({ llm: llmConnectionPayload(), api_contract_version: "1" });
     }
     if (path === "/api/v1/identity/google-account") {
       return jsonResponse({ account: currentAccount(), api_contract_version: "1" });
@@ -1086,10 +1133,9 @@ test("does not open an unexpected authorization URL returned by the API", async 
   const user = userEvent.setup();
   render(<App />);
 
-  await waitFor(() => expect(document.querySelector(".topbar-connection .connection-disconnected")).not.toBeNull());
-  expect(screen.getByRole("button", { name: "Google 연결" })).toBeInTheDocument();
-
-  await user.click(await screen.findByRole("button", { name: "Google 연결" }));
+  await user.click(await screen.findByRole("button", { name: "Connector 설정 열기" }));
+  const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
+  await user.click(await googleSettings.findByRole("button", { name: "연결", exact: true }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/v1/connections/google/start",
@@ -1097,7 +1143,7 @@ test("does not open an unexpected authorization URL returned by the API", async 
     ),
   );
   expect(window.open).not.toHaveBeenCalled();
-  expect(screen.getByText("Google 연결을 시작하지 못했습니다.")).toBeInTheDocument();
+  expect(screen.getByText("작업을 완료하지 못했습니다.")).toBeInTheDocument();
 });
 
 test("disconnects Google and refreshes the runtime summary", async () => {
@@ -1169,7 +1215,7 @@ test("disconnects Google and refreshes the runtime summary", async () => {
   await user.click(screen.getByRole("button", { name: "설정" }));
   await user.click(screen.getByRole("button", { name: "연결 해제" }));
 
-  await screen.findByText("Google 미연결");
+  await within(screen.getByRole("region", { name: "Google 연결", exact: true })).findByText("연결되지 않음");
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: /Project sync follow-up 선택/ })).not.toBeInTheDocument());
 });
 
@@ -1206,7 +1252,7 @@ test("submits cancel, resume, and retry actions while showing unknown-result rec
     if (path === "/api/v1/runs/run-1") {
       return jsonResponse(
         snapshotPayload({
-          status: resumed ? "EXECUTING" : cancelled ? "CANCEL_REQUESTED" : "RECOVERY_REQUIRED",
+          status: cancelled ? "CANCEL_REQUESTED" : resumed ? "EXECUTING" : "RECOVERY_REQUIRED",
           actions: [
             {
               action_id: "action-failed",
@@ -1241,7 +1287,7 @@ test("submits cancel, resume, and retry actions while showing unknown-result rec
           workflow_key: "workflow-run-1",
           entry_mode: "AGENT_SEARCH",
           requested_mode: "AUTO",
-          status: resumed ? "EXECUTING" : cancelled ? "CANCEL_REQUESTED" : "RECOVERY_REQUIRED",
+          status: cancelled ? "CANCEL_REQUESTED" : resumed ? "EXECUTING" : "RECOVERY_REQUIRED",
           version: 1,
           request_text: "Recover the failed write",
           selected_resource_ids: [],
@@ -1287,8 +1333,14 @@ test("submits cancel, resume, and retry actions while showing unknown-result rec
   render(<App />);
 
   await screen.findByText("결과 불명 작업 1건을 확인하고 있습니다.");
-  await user.click(screen.getByRole("button", { name: "취소" }));
   await user.click(screen.getByRole("button", { name: "재개" }));
+  await waitFor(() =>
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/v1/runs/run-1/resume",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
+  await user.click(await screen.findByRole("button", { name: "중지" }));
   await user.click(screen.getByRole("button", { name: "다시 준비해 주세요" }));
 
   await waitFor(() =>
@@ -1343,7 +1395,7 @@ test("opens only safe Google links from resource items", async () => {
 
 test("saves llm settings and stores, tests, then deletes the api key", async () => {
   let requestedRuntimeMode = "API_LLM";
-  let externalLLMConsent = false;
+  let externalLLMConsent = true;
   let credentialState = "MISSING";
   installFetch((path, init) => {
     if (path === "/health/live") {
@@ -1439,10 +1491,11 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
 
   await waitFor(() => expect(document.querySelector(".topbar-actions")).not.toBeNull());
   await user.click(screen.getByRole("button", { name: "설정" }));
-  await screen.findByText("Requested mode");
-  await user.selectOptions(screen.getByDisplayValue("API_LLM"), "AUTO");
-  await user.click(screen.getByRole("checkbox", { name: "외부 LLM 사용 동의" }));
-  await user.click(screen.getByRole("button", { name: "LLM 설정 저장" }));
+  await user.click(screen.getByRole("tab", { name: "AI" }));
+  await screen.findByRole("region", { name: "AI 실행 설정" });
+  await user.selectOptions(screen.getByLabelText("사용할 모델 실행 방식"), "LOCAL_GPU");
+  await user.click(screen.getByRole("checkbox", { name: "외부 AI에 업무 내용 전송 허용" }));
+  await user.click(screen.getByRole("button", { name: "AI 설정 저장" }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/v1/settings",
@@ -1450,8 +1503,8 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
     ),
   );
 
-  await user.selectOptions(screen.getByDisplayValue("KEYRING"), "SESSION_ONLY");
-  await user.type(screen.getByPlaceholderText("sk-..."), "sk-phase-m");
+  await user.selectOptions(screen.getByLabelText("저장 방식"), "SESSION_ONLY");
+  await user.type(screen.getByLabelText("API 키", { exact: true }), "sk-phase-m");
   await user.click(screen.getByRole("button", { name: "API 키 저장" }));
   await waitFor(() =>
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -1477,18 +1530,23 @@ test("saves llm settings and stores, tests, then deletes the api key", async () 
   );
 });
 
-test("TST-UI-201 header shows product, connection, account, help, settings, and safe status", async () => {
+test("TST-UI-201 header keeps account details in settings and shows product controls", async () => {
   installUiContractFetch();
   render(<App />);
 
-  await waitFor(() => expect(document.querySelector(".topbar-connection .connection-connected")).not.toBeNull());
+  const header = within(await screen.findByRole("banner"));
 
-  await screen.findByText("메인 에이전트 · 실행 전 승인을 기다리고 있습니다.");
-  expect(screen.getByText("user@example.com")).toBeInTheDocument();
+  await screen.findByRole("button", { name: "설정" });
+  expect(header.queryByText("user@example.com")).not.toBeInTheDocument();
+  expect(header.queryByText("Google 연결됨")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "도움말" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "설정" })).toBeInTheDocument();
-  expect(screen.getByText("메인 에이전트 · 실행 전 승인을 기다리고 있습니다.")).toBeInTheDocument();
+  expect(header.queryByText(/메인 에이전트/)).not.toBeInTheDocument();
   expect(screen.queryByText("WAITING_APPROVAL")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "설정" }));
+  const googleSettings = within(await screen.findByRole("region", { name: "Google 연결", exact: true }));
+  expect(await googleSettings.findByText("user@example.com")).toBeInTheDocument();
+  expect(googleSettings.getByRole("button", { name: "연결 해제" })).toBeInTheDocument();
 });
 
 test("TST-UI-202 renders the left, center, and right workspace panels", async () => {
@@ -1496,9 +1554,46 @@ test("TST-UI-202 renders the left, center, and right workspace panels", async ()
   render(<App />);
 
   await screen.findByRole("list", { name: "Google 업무 자료" });
-  expect(screen.getByRole("region", { name: "선택 자료 상세" })).toBeInTheDocument();
+  expect(screen.getByRole("complementary", { name: "자료 탐색" })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "자료 상세 창" })).not.toBeInTheDocument();
   expect(screen.getByText("대화")).toBeInTheDocument();
   expect(screen.getByText("최근 실행")).toBeInTheDocument();
+});
+
+test("Google과 GitHub가 모두 미연결이어도 메인 화면에 진입하고 Resource 탭을 숨긴다", async () => {
+  installUiContractFetch({ googleConnectionStates: ["DISCONNECTED"], githubConnectionStates: ["DISCONNECTED"], accountAbsent: true });
+  render(<App />);
+
+  expect(await screen.findByText("연결된 Connector의 자료가 여기에 표시됩니다.")).toBeInTheDocument();
+  expect(screen.getByText("mcp-work-agent")).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /메일|캘린더|태스크|GitHub Issues/ })).not.toBeInTheDocument();
+});
+
+test("GitHub만 연결되면 GitHub Issues를 기존 Resource Browser에서 탐색한다", async () => {
+  const user = userEvent.setup();
+  installUiContractFetch({ googleConnectionStates: ["DISCONNECTED"], githubConnectionStates: ["CONNECTED"], accountAbsent: true, githubRepositories: ["bonggyulim/search-save", "solar-ai-dev/google-work-agent"] });
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: /GitHub Issues/ })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /메일|캘린더|태스크/ })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("조회할 GitHub Repository")).toHaveValue("");
+  await user.selectOptions(screen.getByLabelText("조회할 GitHub Repository"), "solar-ai-dev/google-work-agent");
+  expect(await screen.findByText("Runtime closure")).toBeInTheDocument();
+});
+
+test("현재 GitHub 계정에 묶이지 않은 Repository 선택은 Resource Browser에 노출하지 않는다", async () => {
+  installUiContractFetch({
+    googleConnectionStates: ["DISCONNECTED"],
+    githubConnectionStates: ["CONNECTED"],
+    accountAbsent: true,
+    githubRepositories: ["previous-account/private-repo"],
+    githubRepositoryAccountId: "github:previous",
+  });
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: /GitHub Issues/ })).toBeInTheDocument();
+  expect(screen.queryByLabelText("조회할 GitHub Repository")).not.toBeInTheDocument();
+  expect(screen.getByText("탐색할 GitHub Repository를 설정해 주세요.")).toBeInTheDocument();
 });
 
 test("TST-UI-203 resource row supports focus, selection, and keyboard-accessible controls", async () => {
@@ -1508,11 +1603,19 @@ test("TST-UI-203 resource row supports focus, selection, and keyboard-accessible
 
   const row = await screen.findByRole("button", { name: /첫 번째 자료/ });
   await user.click(row);
-  expect(row).toHaveAttribute("aria-pressed", "true");
+  expect(row).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByRole("checkbox", { name: "첫 번째 자료 선택" })).not.toBeChecked();
-  expect(screen.getByText("GMAIL")).toBeInTheDocument();
-  expect(screen.getByText("TASKS")).toBeInTheDocument();
-  expect(screen.getByText("CALENDAR")).toBeInTheDocument();
+  const resourceSidebar = screen.getByRole("complementary", { name: "자료 탐색" });
+  expect(within(resourceSidebar).getByRole("region", { name: "첫 번째 자료 상세" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "에이전트 대화" })).queryByRole("region", { name: "첫 번째 자료 상세" })).not.toBeInTheDocument();
+  expect(screen.queryByText("요청에서 제외")).not.toBeInTheDocument();
+  expect(screen.queryByText("요청에 포함")).not.toBeInTheDocument();
+  await user.click(row);
+  expect(screen.queryByRole("region", { name: "첫 번째 자료 상세" })).not.toBeInTheDocument();
+  expect(row).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("tab", { name: /^메일/ })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /^태스크/ })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "캘린더" })).toBeInTheDocument();
 });
 
 test("TST-UI-204 requests a 100-item batch and keeps the provider token separate from UI pages", async () => {
@@ -2075,6 +2178,75 @@ test("uses list-only Gmail requests for unvisited intermediate pages and hydrate
     .toBe(callsBeforeSelectingIntermediate + 1);
 });
 
+test("loads Gmail page 3 when page 2 is uncached and keeps one opaque pagination chain", async () => {
+  const user = userEvent.setup();
+  const pageTwoPrefetch = deferred<Response>();
+  const pageResponses: Record<string, Promise<Response>> = { "page-2": pageTwoPrefetch.promise };
+  const requests = installUiContractFetch({
+    gmailBatch: true,
+    gmailCount: 80,
+    gmailPageResponses: pageResponses,
+  });
+  render(<App />);
+
+  await screen.findByText("자료 1");
+  await waitFor(() => expect(requests.filter((request) => request.path.includes("page_token=page-2"))).toHaveLength(1));
+  pageTwoPrefetch.resolve(jsonFetchResponse({
+    error_code: "UPSTREAM_UNAVAILABLE",
+    user_message: "prefetch unavailable",
+    retryable: true,
+    request_id: "request-1",
+    api_contract_version: "1",
+  }, 502));
+  await pageTwoPrefetch.promise;
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  pageResponses["page-2"] = Promise.resolve(gmailPageResponse(2, 80));
+
+  await user.click(screen.getByRole("button", { name: "3" }));
+  expect(await screen.findByText("자료 41")).toBeInTheDocument();
+
+  const pageTwoRequests = requests.filter((request) => request.path.includes("page_token=page-2"));
+  expect(pageTwoRequests).toHaveLength(2);
+  expect(pageTwoRequests[1]?.path).toContain("include_thread_metadata=false");
+  expect(requests.find((request) => request.path.includes("page_token=page-3"))?.path)
+    .not.toContain("include_thread_metadata=false");
+});
+
+test("loads Gmail page 3 from page 1 when page 2 is cached", async () => {
+  const user = userEvent.setup();
+  const requests = installUiContractFetch({ gmailBatch: true, gmailCount: 80 });
+  render(<App />);
+
+  await screen.findByText("자료 1");
+  await user.click(await screen.findByRole("button", { name: "2" }));
+  expect(await screen.findByText("자료 21")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "1" }));
+  expect(await screen.findByText("자료 1")).toBeInTheDocument();
+  const requestsBeforeJump = requests.length;
+
+  await user.click(screen.getByRole("button", { name: "3" }));
+  expect(await screen.findByText("자료 41")).toBeInTheDocument();
+  expect(requests.filter((request) => request.path.includes("page_token=page-2"))).toHaveLength(1);
+  expect(requests.length).toBeGreaterThan(requestsBeforeJump);
+});
+
+test("returns from Gmail page 3 through cached pages 2 and 1 without new reads", async () => {
+  const user = userEvent.setup();
+  const requests = installUiContractFetch({ gmailBatch: true, gmailCount: 80 });
+  render(<App />);
+
+  await screen.findByText("자료 1");
+  await user.click(await screen.findByRole("button", { name: "3" }));
+  expect(await screen.findByText("자료 41")).toBeInTheDocument();
+  const requestsBeforeReturn = requests.length;
+
+  await user.click(screen.getByRole("button", { name: "2" }));
+  expect(await screen.findByText("자료 21")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "1" }));
+  expect(await screen.findByText("자료 1")).toBeInTheDocument();
+  expect(requests).toHaveLength(requestsBeforeReturn);
+});
+
 test("selects the requested Gmail page during loading and restores the last loaded page on failure", async () => {
   const user = userEvent.setup();
   const pageFive = deferred<Response>();
@@ -2374,17 +2546,21 @@ test("Tasks date-sort refresh invalidates its cached result and rebuilds it from
   expect(requests.some((request) => request.path === "/api/v1/resources/tasks/count")).toBe(false);
 });
 
-test("resource viewer empty state follows the active source and clears the previous focus", async () => {
+test("resource detail expands inside its source row and does not retain previous focus", async () => {
   const user = userEvent.setup();
   installUiContractFetch();
   render(<App />);
 
-  expect(await screen.findByText("왼쪽 목록에서 메일을 선택하면 상세 내용을 확인할 수 있습니다.")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: /첫 번째 자료/ }));
+  const firstResource = await screen.findByRole("button", { name: /첫 번째 자료/ });
+  expect(firstResource).toHaveAttribute("aria-expanded", "false");
+  await user.click(firstResource);
   expect(await screen.findByText("실제 메일 본문입니다.")).toBeInTheDocument();
+  expect(firstResource).toHaveAttribute("aria-expanded", "true");
+  await user.click(firstResource);
+  expect(screen.queryByText("실제 메일 본문입니다.")).not.toBeInTheDocument();
+  expect(firstResource).toHaveAttribute("aria-expanded", "false");
 
   await user.click(screen.getByRole("tab", { name: /캘린더/ }));
-  expect(await screen.findByText("왼쪽 목록에서 일정을 선택하면 상세 내용을 확인할 수 있습니다.")).toBeInTheDocument();
   expect(screen.queryByText("실제 메일 본문입니다.")).not.toBeInTheDocument();
 
   await selectCalendarDate(user, "2026-08-10");
@@ -2393,9 +2569,10 @@ test("resource viewer empty state follows the active source and clears the previ
   expect(screen.getByText("시작 시간")).toBeInTheDocument();
   expect(screen.getByText("종료 시간")).toBeInTheDocument();
   expect(screen.queryByText("2026-08-10T09:00:00+09:00")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /프로젝트 검토/ }));
 
   await user.click(screen.getByRole("tab", { name: /태스크/ }));
-  expect(await screen.findByText("왼쪽 목록에서 태스크를 선택하면 상세 내용을 확인할 수 있습니다.")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "프로젝트 검토 상세" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "프로젝트 검토" })).not.toBeInTheDocument();
 });
 
@@ -2519,6 +2696,30 @@ test("Calendar Month View materializes provider pages, keeps date selection clie
   await user.click(screen.getByRole("button", { name: "이전 달" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "다음 달" })).toBeInTheDocument());
   expect(requests.filter((request) => request.path.startsWith("/api/v1/resources/calendar?")).length).toBe(callsBeforeSelection + 1);
+});
+
+test("Calendar Event selection adds its opaque handle to the Agent request context", async () => {
+  const user = userEvent.setup();
+  const requests = installUiContractFetch({
+    run: false,
+    calendarEvents: [calendarEventItem({ selection_handle: "handle-calendar-event" })],
+  });
+  render(<App />);
+
+  await user.click(await screen.findByRole("tab", { name: /캘린더/ }));
+  await selectCalendarDate(user, "2026-08-10");
+  await user.click(await screen.findByRole("checkbox", { name: "프로젝트 검토 선택" }));
+  expect(screen.getByText("요청에 사용할 자료 1개")).toBeInTheDocument();
+  expect(screen.getByText("프로젝트 검토", { selector: ".composer-context span" })).toBeInTheDocument();
+
+  await user.type(screen.getByRole("textbox", { name: "선택한 일정에 대해 질문하거나 업무를 요청하세요..." }), "이 일정 준비해줘");
+  await user.click(screen.getByRole("button", { name: "보내기" }));
+
+  const start = requests.find((request) => request.path === "/api/v1/runs");
+  expect(JSON.parse(String(start?.init?.body))).toMatchObject({
+    entry_mode: "RESOURCE_SELECTED",
+    selected_resource_handles: ["handle-calendar-event"],
+  });
 });
 
 test("Calendar Month View keeps only the latest month response and reuses adjacent prefetch", async () => {
@@ -2646,7 +2847,7 @@ test("uses the Gmail subject instead of a generic resource fallback title", asyn
 
 test("TST-UI-206 keeps focus separate and sends opaque selection handles", async () => {
   const user = userEvent.setup();
-  const requests = installUiContractFetch({ twoItems: true });
+  const requests = installUiContractFetch({ twoItems: true, run: false });
   render(<App />);
 
   await screen.findByText("첫 번째 자료");
@@ -2670,7 +2871,7 @@ test("TST-UI-206 keeps focus separate and sends opaque selection handles", async
 
 test("TST-UI-207 uses AGENT_SEARCH without selection and quick action does not write directly", async () => {
   const user = userEvent.setup();
-  const requests = installUiContractFetch();
+  const requests = installUiContractFetch({ run: false });
   render(<App />);
 
   await screen.findByText("첫 번째 자료");
@@ -2691,7 +2892,7 @@ test("TST-UI-208 Gmail viewer and approval use only available projection fields"
   expect(await screen.findByText("실제 메일 본문입니다.")).toBeInTheDocument();
   expect(screen.getByText("김대리 <kim@example.com>")).toBeInTheDocument();
   expect(screen.getByText(/받는 사람 user@example.com/)).toBeInTheDocument();
-  expect(screen.getByText("무엇을 실행하나요?")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "초안을 만들까요?" })).toBeInTheDocument();
   expect(screen.queryByText("Evidence")).not.toBeInTheDocument();
 });
 
@@ -2703,7 +2904,7 @@ test("Action risk follows the SSE-refreshed snapshot without rendering raw JSON"
   installUiContractFetch(options);
   render(<App />);
 
-  await screen.findByText("무엇을 실행하나요?");
+  await screen.findByRole("heading", { name: "초안을 만들까요?" });
   expect(screen.queryByText(/서버 검증에서 확인된 위험 정보/)).not.toBeInTheDocument();
 
   options.actionRisk = {
@@ -2742,7 +2943,7 @@ test.each([
   expect(document.body.textContent).not.toContain("private-deadline");
   expect(document.body.textContent).not.toContain("PRIVATE_REASON");
   if (decision === "INFEASIBLE") {
-    expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
   }
 });
 
@@ -2784,7 +2985,7 @@ test("clear Task duplicate is blocked by default and offers an explicit override
   render(<App />);
 
   expect(await screen.findByText(/동일한 작업이 이미 있습니다/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("checkbox", { name: "중복 가능성을 확인했습니다." }));
   await user.click(screen.getByRole("button", { name: "그래도 새로 만들어 주세요" }));
 
@@ -2808,7 +3009,7 @@ test("NOT_DUPLICATE shows no warning and uses ordinary approval", async () => {
   });
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "네, 실행해 주세요" }));
+  await user.click(await screen.findByRole("button", { name: "확인" }));
   expect(screen.queryByText(/기존 작업이 있습니다/)).not.toBeInTheDocument();
   const approve = requests.find((request) => request.path.endsWith("/actions/action-1/approve"));
   expect(JSON.parse(String(approve?.init?.body))).toMatchObject({
@@ -2857,7 +3058,7 @@ test("Calendar HARD_CONFLICT offers an explicit override", async () => {
   render(<App />);
 
   expect(await screen.findByText("해당 시간에 기존 일정이 있습니다.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("checkbox", { name: "일정 충돌 가능성을 확인했습니다." }));
   await user.click(screen.getByRole("button", { name: "충돌을 알고도 실행해 주세요" }));
   const approve = requests.find((request) => request.path.endsWith("/actions/action-1/approve"));
@@ -2877,7 +3078,7 @@ test("Calendar NO_CONFLICT shows ordinary approval", async () => {
   });
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "네, 실행해 주세요" }));
+  await user.click(await screen.findByRole("button", { name: "확인" }));
   expect(screen.queryByText(/기존 일정/)).not.toBeInTheDocument();
   const approve = requests.find((request) => request.path.endsWith("/actions/action-1/approve"));
   expect(JSON.parse(String(approve?.init?.body))).toMatchObject({
@@ -2951,19 +3152,20 @@ test("downloads an incoming Gmail attachment through the authenticated API", asy
   expect(click).toHaveBeenCalledOnce();
 });
 
-test("routes an incomplete first-run configuration to the onboarding checklist", async () => {
+test("opens the workspace without LLM configuration or external consent", async () => {
   installUiContractFetch({ setupCompleted: false, run: false });
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Google Work Agent 시작하기" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "설정 완료하고 시작" })).toBeInTheDocument();
-  expect(document.querySelector("textarea.composer")).not.toBeInTheDocument();
+  await waitFor(() => expect(document.querySelector("textarea.composer")).toBeInTheDocument());
+  expect(screen.queryByRole("heading", { name: "mcp-work-agent 시작하기" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "설정 완료하고 시작" })).not.toBeInTheDocument();
 });
 
 test("stages an outbound file and modifies the Gmail draft with descriptors only", async () => {
   const requests = installUiContractFetch({ action: true, actionToolName: "gmail_create_draft" });
   render(<App />);
 
+  await userEvent.setup().click(await screen.findByRole("button", { name: "수정" }));
   const input = await screen.findByLabelText("첨부파일 선택");
   await userEvent.setup().upload(input, new File(["report"], "report.txt", { type: "text/plain" }));
 
@@ -2988,13 +3190,13 @@ test("TST-UI-209 renders independent approval commands with versions and disable
   const requests = installUiContractFetch({ action: true });
   render(<App />);
 
-  await screen.findByRole("button", { name: "네, 실행해 주세요" });
-  await user.click(screen.getByRole("button", { name: "네, 실행해 주세요" }));
+  await screen.findByRole("button", { name: "확인" });
+  await user.click(screen.getByRole("button", { name: "확인" }));
   const approve = requests.find((request) => request.path.endsWith("/approve"));
   expect(JSON.parse(String(approve?.init?.body))).toMatchObject({ expected_version: 7 });
-  expect(screen.getByText("무엇을 실행하나요?")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "이 내용으로 바꿀게요" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "이번에는 실행하지 않을게요" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "초안을 만들까요?" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "수정" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "건너뛰기" })).toBeInTheDocument();
 });
 
 test("approved Action can be rejected and refreshes to a non-executable rejected state", async () => {
@@ -3002,15 +3204,15 @@ test("approved Action can be rejected and refreshes to a non-executable rejected
   const requests = installUiContractFetch({ action: true, actionStatus: "APPROVED" });
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: "이번에는 실행하지 않을게요" }));
+  await user.click(await screen.findByRole("button", { name: "건너뛰기" }));
   const reject = requests.find((request) => request.path.endsWith("/reject"));
   expect(JSON.parse(String(reject?.init?.body))).toMatchObject({
     expected_version: 7,
     reason_code: null,
   });
   expect(await screen.findByText(/사용자 선택에 따라 실행하지 않았습니다/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "네, 실행해 주세요" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "이번에는 실행하지 않을게요" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "확인" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "건너뛰기" })).not.toBeInTheDocument();
 });
 
 test("TST-UI-210 filters conversations and shows recent execution fallback", async () => {
@@ -3034,7 +3236,7 @@ test("TST-UI-211 shows loading, empty, error, focus, and disabled pagination sta
 });
 
 test("composer exposes one prompt, has no clear button, and retains the send control", async () => {
-  installUiContractFetch();
+  installUiContractFetch({ run: false });
   render(<App />);
 
   const composer = await screen.findByRole("textbox", { name: "선택한 메일에 대해 질문하거나 업무를 요청하세요..." });
@@ -3061,22 +3263,26 @@ test("TST-UI-213 hides raw runtime status and has no native window controls", as
   installUiContractFetch({ status: "SINGLE" });
   render(<App />);
 
-  await screen.findByText("메인 에이전트 · 작업을 처리하고 있습니다.");
+  await screen.findByText("저장된 단계 이력이 없습니다. 현재 상태와 최종 답변을 확인해 주세요.");
   expect(screen.queryByText("SINGLE")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /최소화|최대화|닫기/ })).not.toBeInTheDocument();
 });
 
 test("shows a partial-result notice after a run is cancelled", async () => {
-  installUiContractFetch({ status: "CANCELLED", resultKind: "PARTIAL" });
+  installUiContractFetch({
+    status: "CANCELLED",
+    resultKind: "PARTIAL",
+    terminalMessage: "요청하신 작업 중 일부만 완료한 뒤 나머지는 취소했습니다.",
+  });
   render(<App />);
 
   expect(
-    await screen.findByText("일부 작업은 완료되었고 나머지는 취소되었습니다."),
+    await screen.findByText("요청하신 작업 중 일부만 완료한 뒤 나머지는 취소했습니다."),
   ).toBeInTheDocument();
 });
 
 test("loads the account after Google connection provisioning and retries one initial identity miss", async () => {
-  const requests = installUiContractFetch({ accountResponses: [null, currentAccount()] });
+  const requests = installUiContractFetch({ accountResponses: [null, currentAccount()], run: false });
   const user = userEvent.setup();
   render(<App />);
 
@@ -3099,8 +3305,8 @@ test("loads the account after Google connection provisioning and retries one ini
   );
 });
 
-test("shows a visible error and does not start a run when no current account is available", async () => {
-  const requests = installUiContractFetch({ accountResponses: [null, null] });
+test("starts a local request without a Google account", async () => {
+  const requests = installUiContractFetch({ accountResponses: [null, null], run: false });
   const user = userEvent.setup();
   render(<App />);
 
@@ -3108,9 +3314,8 @@ test("shows a visible error and does not start a run when no current account is 
   await user.type(document.querySelector("textarea.composer") as HTMLTextAreaElement, "계정 없는 실행");
   await user.click(screen.getByRole("button", { name: "보내기" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("현재 연결된 계정 정보를 찾지 못했습니다.");
-  expect(requests.some((request) => request.path === "/api/v1/conversations" && request.init?.method === "POST")).toBe(false);
-  expect(requests.some((request) => request.path === "/api/v1/runs" && request.init?.method === "POST")).toBe(false);
+  await waitFor(() => expect(requests.some((request) => request.path === "/api/v1/runs" && request.init?.method === "POST")).toBe(true));
+  expect(requests.some((request) => request.path === "/api/v1/conversations" && request.init?.method === "POST")).toBe(true);
 });
 
 test("shows a visible error and releases the composer when conversation creation fails", async () => {
@@ -3145,7 +3350,7 @@ test("renders snapshot context/disclosure and sends a context adjustment command
       schema_version: 1,
       run_id: "run-1",
       retrieval_revision: 4,
-      items: [{ segment_id: "segment-1", role: "SUPPORTS", source: "gmail", resource_type: "gmail_message", resource_id: "message-1", display_label: "마감 메일", excerpt: "금요일 마감" }],
+      items: [{ resource_identity: "ref-1", category: "mail", title: "마감 메일", preview: "금요일 마감", content: "금요일 마감", segment_ids: ["segment-1"] }],
       gmail_count: 1,
       tasks_count: 0,
       calendar_count: 0,
@@ -3183,6 +3388,23 @@ test("resumes a REAUTH_REQUIRED run after the Google connection is restored", as
   expect(
     requests.filter((request) => request.path === "/api/v1/connections/google/status"),
   ).toHaveLength(2);
+  const request = requests.find((item) => item.path === "/api/v1/runs/run-1/resume");
+  expect(JSON.parse(String(request?.init?.body))).toMatchObject({ resume_kind: "REAUTH_COMPLETED" });
+});
+
+test("keeps checking Google reauthentication until the same Run can resume", async () => {
+  const requests = installUiContractFetch({
+    googleConnectionStates: ["REAUTH_REQUIRED", "REAUTH_REQUIRED", "CONNECTED"],
+    status: "REAUTH_REQUIRED",
+  });
+  render(<App />);
+
+  await waitFor(() => expect(
+    requests.filter((request) => request.path === "/api/v1/connections/google/status"),
+  ).toHaveLength(3), { timeout: 3_000 });
+  await waitFor(() => expect(
+    requests.filter((request) => request.path === "/api/v1/runs/run-1/resume"),
+  ).toHaveLength(1));
   const request = requests.find((item) => item.path === "/api/v1/runs/run-1/resume");
   expect(JSON.parse(String(request?.init?.body))).toMatchObject({ resume_kind: "REAUTH_COMPLETED" });
 });
@@ -3245,6 +3467,8 @@ function installUiContractFetch(options: {
   gmailCountResponse?: Promise<Response>;
   googleConnectionStates?: Array<GoogleConnection["connection_status"]>;
   githubConnectionStates?: Array<GoogleConnection["connection_status"]>;
+  githubRepositories?: string[];
+  githubRepositoryAccountId?: string;
   historyMessages?: Array<{ id: string; run_id: string | null; role: string; content: string; created_at_ms: number }>;
   historyRuns?: Array<{ run_id: string; status: string; started_at_ms: number; finished_at_ms: number | null }>;
   run?: boolean;
@@ -3271,6 +3495,7 @@ function installUiContractFetch(options: {
   twoItems?: boolean;
   contextPreview?: Record<string, unknown>;
   externalLlmScope?: Record<string, unknown>;
+  terminalMessage?: string;
   snapshotError?: Record<string, unknown>;
 } = {}): Array<{ path: string; init?: RequestInit }> {
   conversationOpenRunEnabled = options.run !== false;
@@ -3288,7 +3513,27 @@ function installUiContractFetch(options: {
     requests.push({ path, init });
     if (path === "/health/live") return jsonFetchResponse(liveResponse());
     if (path === "/health/ready") return jsonFetchResponse(readyResponse());
-    if (path === "/api/v1/runtime") return jsonFetchResponse({ summary: runtimeSummary(options.run === false ? [] : ["run-1"], { llm: {} }), api_contract_version: "1" });
+    if (path === "/api/v1/runtime") return jsonFetchResponse({
+      summary: runtimeSummary(options.run === false ? [] : ["run-1"], {
+        deployment_profile: "LOCAL_CAPABLE",
+        local_models: [{
+          schema_version: 1,
+          model_id: "qwen2.5:7b",
+          installed: true,
+          approved: true,
+          selected: false,
+        }],
+        llm_providers: [{
+          schema_version: 1,
+          provider: "API_LLM",
+          configured: options.setupCompleted !== false,
+          availability: options.setupCompleted === false ? "DISABLED" : "READY",
+          model_id: "gemini-flash-latest",
+          error_code: null,
+        }],
+      }),
+      api_contract_version: "1",
+    });
     if (path === "/api/v1/connections/google/status") {
       const states = options.googleConnectionStates;
       const state = states?.[
@@ -3320,14 +3565,17 @@ function installUiContractFetch(options: {
       return jsonFetchResponse({ account, api_contract_version: "1" });
     }
     if (path === "/api/v1/settings") return jsonFetchResponse({
-      settings: settingsPayload(options.setupCompleted === false ? { default_calendar_id: null } : {}),
+      settings: settingsPayload({
+        ...(options.setupCompleted === false ? { external_llm_consent: false } : {}),
+        selected_github_repositories: options.githubRepositories?.map((repository, index) => ({ repository, repository_id: index + 1, account_id: options.githubRepositoryAccountId ?? "github:42" })) ?? [],
+      }),
       api_contract_version: "1",
     });
     if (path === "/api/v1/credentials/llm/gemini") return jsonFetchResponse({
       llm: llmConnectionPayload({
         api_provider: {
-          credential_state: "CONFIGURED",
-          availability: "AVAILABLE",
+          credential_state: options.setupCompleted === false ? "MISSING" : "CONFIGURED",
+          availability: options.setupCompleted === false ? "NOT_CONFIGURED" : "AVAILABLE",
           last_probe: 1,
           safe_error_code: null,
         },
@@ -3544,6 +3792,9 @@ function installUiContractFetch(options: {
         api_contract_version: "1",
       });
     }
+    if (path.startsWith("/api/v1/resources/calendars?")) {
+      return jsonFetchResponse({ schema_version: 1, items: [{ schema_version: 1, calendar_id: "primary", title: "테스트 캘린더", primary: true }], next_page_token: null });
+    }
     if (path.startsWith("/api/v1/resources/calendar")) {
       if (options.calendarListResponse) return options.calendarListResponse;
       if (options.calendarResponseForPath) return options.calendarResponseForPath(path);
@@ -3551,6 +3802,15 @@ function installUiContractFetch(options: {
       calendarResponseIndex += 1;
       if (calendarPageResponse) return calendarPageResponse;
       return jsonFetchResponse(calendarEventResponse(options.calendarEvents));
+    }
+    if (path.startsWith("/api/v1/resources/github")) {
+      return jsonFetchResponse({
+        schema_version: 1,
+        items: [{ schema_version: 1, selection_handle: "github-handle", resource_id: "solar-ai-dev/google-work-agent#181", repository: "solar-ai-dev/google-work-agent", issue_number: 181, title: "Runtime closure", description: "Connector Sidebar", issue_state: "OPEN", url: "https://github.com/solar-ai-dev/google-work-agent/issues/181", labels: ["product"], assignees: [] }],
+        next_page_token: null,
+        total_count: 1,
+        projection_version: "1",
+      });
     }
     if (path === "/api/v1/conversations" && init?.method === "POST") {
       if (options.conversationError) {
@@ -3565,7 +3825,7 @@ function installUiContractFetch(options: {
       return jsonFetchResponse({ applied: true, result_code: "ACCEPTED", run_id: "run-1", conversation_id: "conversation-1", run_status: "WAITING_APPROVAL", run_version: 1, user_message_id: "message-1", workflow_key: "workflow-1", enqueued: true, request_replayed: false });
     }
     if (path === "/api/v1/runs/run-1") return jsonFetchResponse({
-      ...snapshotPayload({ status: options.status ?? "WAITING_APPROVAL", result_kind: options.resultKind, error: options.snapshotError, actions: options.action ? [{ action_id: "action-1", tool_name: options.actionToolName ?? "gmail_draft", status: actionStatus, version: 7, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: options.actionRisk ?? {}, next_allowed_commands: actionStatus === "APPROVED" ? ["MODIFY", "REJECT"] : actionStatus === "PROPOSED" || actionStatus === "MODIFIED" ? ["APPROVE", "MODIFY", "REJECT"] : [] }] : [] }),
+      ...snapshotPayload({ status: options.status ?? "WAITING_APPROVAL", result_kind: options.resultKind, error: options.snapshotError, messages: options.terminalMessage ? [{ id: "message-final-1", run_id: "run-1", role: "ASSISTANT", content: options.terminalMessage, created_at_ms: 2 }] : [], actions: options.action ? [{ action_id: "action-1", tool_name: options.actionToolName ?? "gmail_draft", status: actionStatus, version: 7, effect_type: "CREATE", approval_required: true, verification_policy: "GET_COMPARE", risk: options.actionRisk ?? {}, next_allowed_commands: actionStatus === "APPROVED" ? ["MODIFY", "REJECT"] : actionStatus === "PROPOSED" || actionStatus === "MODIFIED" ? ["APPROVE", "MODIFY", "REJECT"] : [] }] : [] }),
       context_preview: options.contextPreview ?? null,
       external_llm_transfer_scope: options.externalLlmScope ?? null,
     });
@@ -3808,7 +4068,15 @@ function runtimeSummary(openRunIds: string[], overrides: Record<string, unknown>
       scope_status: "READY",
       retry_at_ms: null,
     }],
-    llm_providers: [],
+    llm_providers: [{
+      schema_version: 1,
+      provider: "API_LLM",
+      configured: true,
+      availability: "READY",
+      model_id: "gemini-flash-latest",
+      error_code: null,
+    }],
+    local_models: [],
     component_circuits: [],
     active_run_budget: null,
     recovery_required: openRunIds.length > 0,
@@ -3838,6 +4106,7 @@ function settingsPayload(overrides: Record<string, unknown> = {}) {
     default_calendar_id: "primary",
     default_tasklist_id: "default",
     preferred_llm_mode: "API_LLM",
+    preferred_local_model_id: null,
     external_llm_consent: true,
     retention_days: 30,
     theme: "LIGHT",
@@ -3968,7 +4237,10 @@ function snapshotPayload(overrides: Partial<SnapshotShape>) {
       finished_at_ms: snapshot.finished_at_ms,
       next_allowed_commands: snapshot.next_allowed_commands,
     },
-    messages: [],
+    messages: (snapshot.messages ?? []).map((message) => ({
+      schema_version: 1,
+      ...message,
+    })),
     current_plan: snapshot.active_plan,
     actions: snapshot.actions.map((action) => {
       const risk = action.risk ?? {};
@@ -3981,6 +4253,7 @@ function snapshotPayload(overrides: Partial<SnapshotShape>) {
       const defaultFields = action.tool_name.startsWith("gmail_") ? ["subject", "body", "attachments"] : action.tool_name.startsWith("tasks_") ? ["title", "notes", "due"] : action.tool_name.startsWith("calendar_") ? ["title", "start", "end", "description"] : [];
       return {
         ...action,
+        arguments: action.arguments ?? {},
         risk,
         next_allowed_commands: action.next_allowed_commands.map((command) => ({ APPROVE: "APPROVE_ACTION", MODIFY: "MODIFY_ACTION", REJECT: "REJECT_ACTION", PREPARE_RETRY: "PREPARE_WRITE_RETRY" }[command] ?? command)).filter((command) => !(command === "APPROVE_ACTION" && (risk.feasibility as { decision?: string } | undefined)?.decision === "INFEASIBLE")),
         required_acknowledgements: action.required_acknowledgements ?? required,
@@ -3994,7 +4267,7 @@ function snapshotPayload(overrides: Partial<SnapshotShape>) {
     recovery_summary: snapshot.recovery_summary,
     context_preview: null,
     pending_interrupt: snapshot.pending_interrupt ?? null,
-    recovery: snapshot.recovery ?? (snapshot.status === "RECOVERY_REQUIRED" && snapshot.actions.some((action) => action.status === "MISMATCH") ? { reason_code: "VERIFICATION_MISMATCH", target: { target_kind: "ACTION", action_id: snapshot.actions.find((action) => action.status === "MISMATCH")!.action_id }, allowed_resolution_kinds: ["ACCEPT_PARTIAL", "CREATE_CORRECTIVE_PLAN"] } : null),
+    recovery: snapshot.recovery ?? (snapshot.status === "RECOVERY_REQUIRED" && snapshot.actions.some((action) => action.status === "MISMATCH") ? { reason_code: "VERIFICATION_MISMATCH", message: "Google에서 확인한 결과가 요청과 다릅니다.", target: { target_kind: "ACTION", action_id: snapshot.actions.find((action) => action.status === "MISMATCH")!.action_id }, allowed_resolution_kinds: ["ACCEPT_PARTIAL", "CREATE_CORRECTIVE_PLAN"] } : null),
     error: snapshot.error ?? (() => {
       const actions: Array<Record<string, unknown>> = snapshot.actions.filter((action) => action.next_allowed_commands.includes("PREPARE_RETRY")).map((action) => ({ kind: "PREPARE_RETRY", action_id: action.action_id }));
       if (snapshot.next_allowed_commands.includes("RESUME")) actions.push({ kind: "RESUME_SAFE_CHECKPOINT", resume_kind: "SAFE_CHECKPOINT_RESUME" });

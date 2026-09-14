@@ -14,7 +14,9 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from datetime import date
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
@@ -24,7 +26,7 @@ from enum import StrEnum
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -42,7 +44,7 @@ from google_work_agent.adapters.system.filesystem_attachment_staging import (
     FilesystemAttachmentStagingAdapter,
     StagedAttachmentDescriptorV1,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 from google_work_agent.ports.keyring.secret_store_port import SecretStorePort
 
@@ -124,6 +126,10 @@ OAUTH_FLOW_TTL_MS = 60_000
 DEFAULT_ACCESS_TOKEN_TTL_MS = 3_600_000
 GOOGLE_API_TIMEOUT_SECONDS = 30
 GMAIL_METADATA_HYDRATION_MAX_WORKERS = 3
+GMAIL_BATCH_ENDPOINT = "https://gmail.googleapis.com/batch"
+GMAIL_BATCH_MAX_REQUESTS = 50
+GMAIL_BATCH_RESPONSE_MAX_BYTES = 16 * 1024 * 1024
+GOOGLE_ERROR_RESPONSE_MAX_BYTES = 64 * 1024
 
 CLAIM_CONTEXT_VERSION = 2
 CLAIM_CONTEXT_REQUIRED_FIELDS = (
@@ -209,8 +215,51 @@ class _WorkspaceToolError(RuntimeError):
         self.delivery_certainty = delivery_certainty
 
 
+class _ProviderReadObserver(Protocol):
+    def on_http_started(self, *, kind: str, method: str, inner_count: int | None) -> None: ...
+
+    def on_http_finished(
+        self,
+        *,
+        kind: str,
+        method: str,
+        inner_count: int | None,
+        status_code: int | None,
+        response_body_bytes: int,
+        duration_ms: float,
+        safe_error_code: str | None,
+    ) -> None: ...
+
+    def on_batch_part(
+        self,
+        *,
+        ordinal: int,
+        status_code: int | None,
+        response_body_bytes: int,
+        result_seen: bool,
+        safe_error_code: str | None,
+    ) -> None: ...
+
+    def on_provider_payload(self, *, kind: str, message_count: int | None) -> None: ...
+
+    def on_phase_finished(self, *, phase: str, duration_ms: float, status: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _GoogleBatchGetResult:
+    ordinal: int
+    status_code: int
+    response_body_bytes: int
+    payload: dict[str, object]
+
+
 class GoogleWorkspaceCredentialProvider:
-    def __init__(self, *, keyring: SecretStorePort | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        keyring: SecretStorePort | None = None,
+        provider_read_observer: _ProviderReadObserver | None = None,
+    ) -> None:
         self.process_instance_id = f"mcp-{secrets.token_hex(8)}"
         self.service_instance_id: str | None = None
         self.session_key: str | None = None
@@ -232,6 +281,7 @@ class GoogleWorkspaceCredentialProvider:
         self.last_oauth_error_description: str | None = None
         self.active_flow: _OAuthFlow | None = None
         self.operational_results: dict[str, dict[str, object]] = {}
+        self.provider_read_observer = provider_read_observer
         raw_environment = os.environ.get("GOOGLE_OAUTH_ENV", "")
         if not raw_environment and keyring is not None:
             raw_environment = OAuthEnvironment.DEVELOPMENT.value
@@ -368,82 +418,131 @@ def _gmail_thread_list_metadata(
             "fields": "messages(internalDate,payload/headers),snippet",
         },
     )
+    return _gmail_thread_list_metadata_from_payload(payload, list_snippet=list_snippet)
+
+
+def _gmail_thread_list_metadata_from_payload(
+    payload: dict[str, object],
+    *,
+    list_snippet: str | None,
+) -> dict[str, object]:
     messages = _object_list(payload.get("messages"))
     headers = _headers(messages[0]) if messages else {}
     sender_name, sender_email = _email_identity(headers.get("from"))
+    snippet = list_snippet or _optional_text(payload.get("snippet"))
+    if snippet is not None:
+        # Gmail search snippets contain provider highlight markup, not plain body text.
+        parser = _ReadableHtmlParser()
+        parser.feed(snippet)
+        parser.close()
+        snippet = parser.readable_text()
     return {
         "sender_name": sender_name,
         "sender_email": sender_email,
         "subject": _optional_text(headers.get("subject")),
         "received_at": _optional_text(headers.get("date"))
         or _first_message_internal_date(messages),
-        "snippet": list_snippet or _optional_text(payload.get("snippet")),
+        "snippet": snippet,
     }
 
 
 def _gmail_draft_snapshot(payload: dict[str, object]) -> dict[str, object]:
     draft_id = _required_response_text(payload, "id")
     message = cast(dict[str, object], payload.get("message") or {})
-    headers = _headers(message)
-    return _snapshot(
+    content = {
+        **_gmail_message_content(message),
+        "message_id": _optional_text(message.get("id")),
+    }
+    snapshot = _snapshot(
         "gmail_draft",
         draft_id,
         _optional_text(message.get("threadId")),
         (),
         message.get("historyId"),
-        {
-            "subject": headers.get("subject", draft_id),
-            "to": headers.get("to"),
-            "message_id": _optional_text(message.get("id")),
-            "thread_id": _optional_text(message.get("threadId")),
-        },
+        content,
     )
+    # Draft UPDATE must distinguish an observed nullable value from an
+    # unobserved field.  The generic snapshot projector omits nulls, so keep
+    # the exact Draft source payload at this provider-owned boundary.
+    snapshot["payload"] = content
+    return snapshot
 
 
-def _embed_send_recovery_marker(
-    state: GoogleWorkspaceCredentialProvider, *, draft_id: str, recovery_fingerprint: str
+def _gmail_message_content(message: dict[str, object]) -> dict[str, object]:
+    headers = _headers(message)
+    body = _gmail_message_body(message)
+    mime_payload = message.get("payload")
+    mime_body = mime_payload.get("body") if isinstance(mime_payload, dict) else None
+    if (
+        body is None
+        and isinstance(mime_payload, dict)
+        and mime_payload.get("mimeType") == "text/plain"
+        and isinstance(mime_body, dict)
+        and mime_body.get("size") == 0
+        and mime_body.get("data") in (None, "")
+    ):
+        body = ""
+    return {
+        "subject": (
+            (_decoded_header(headers.get("subject")) or "") if "subject" in headers else None
+        ),
+        "to": list(_email_addresses(headers.get("to"))),
+        "cc": list(_email_addresses(headers.get("cc"))),
+        "bcc": list(_email_addresses(headers.get("bcc"))),
+        "body": body,
+        "thread_id": _optional_text(message.get("threadId")),
+        "in_reply_to": headers.get("in-reply-to"),
+        "references": headers.get("references"),
+        "rfc822_message_id": headers.get("message-id"),
+        "sent": "SENT" in cast(list[str], message.get("labelIds") or []),
+        "attachments": _gmail_attachment_metadata(message),
+    }
+
+
+def _validate_gmail_reply(
+    state: GoogleWorkspaceCredentialProvider,
+    payload: dict[str, object],
+    *,
+    existing_draft_id: str | None = None,
 ) -> None:
-    """Append a SEND-time recovery marker to the draft body before sending.
-
-    A SEND's own recovery fingerprint differs from the CREATE draft's, and
-    Gmail's send call cannot carry extra metadata, so the only way to make
-    an uncertain SEND recoverable by content search is to fold the marker
-    into the draft immediately before send -- an operational, server-generated
-    edit ClaimContextV2's execution_arguments_hash already accounts for, not
-    a change to any approved business content.
-    """
-
-    existing = _google_api(
-        state,
-        f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{quote(draft_id, safe='')}",
-        {"format": "raw"},
-    )
-    raw_message = cast(dict[str, object], existing.get("message") or {})
-    raw_value = _optional_text(raw_message.get("raw"))
-    if raw_value is None:
-        raise _WorkspaceToolError(
-            "INVALID_MCP_OUTPUT",
-            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+    thread_id = _optional_text(payload.get("thread_id"))
+    reply_id = _optional_text(payload.get("in_reply_to"))
+    references = _optional_text(payload.get("references"))
+    if not thread_id:
+        if reply_id or references:
+            raise _WorkspaceToolError("INVALID_ARGUMENT")
+        return
+    if existing_draft_id and not reply_id and not references:
+        draft_path = quote(existing_draft_id, safe="")
+        draft = _google_api(
+            state,
+            f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_path}",
+            {"format": "metadata"},
         )
-    parsed = BytesParser(policy=policy.default).parsebytes(_b64url_decode(raw_value))
-    body_text = ""
-    if not parsed.is_multipart():
-        content = parsed.get_content()
-        if isinstance(content, str):
-            body_text = content
-    rebuilt = EmailMessage()
-    for header in ("To", "Cc", "Bcc", "Subject"):
-        value = parsed.get(header)
-        if value is not None:
-            rebuilt[header] = str(value)
-    marker = _recovery_marker(recovery_fingerprint)
-    rebuilt.set_content(f"{body_text}\n\n{marker}" if body_text else marker)
-    _google_api_call(
+        message = draft.get("message")
+        if (
+            draft.get("id") == existing_draft_id
+            and isinstance(message, dict)
+            and message.get("threadId") == thread_id
+        ):
+            return
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    if not reply_id or not references or reply_id not in references.split():
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    thread = _google_api(
         state,
-        "PUT",
-        f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{quote(draft_id, safe='')}",
-        body={"message": {"raw": _b64url_encode(rebuilt.as_bytes())}},
+        f"https://gmail.googleapis.com/gmail/v1/users/me/threads/{quote(thread_id, safe='')}",
+        {"format": "metadata"},
     )
+    matching = [
+        _headers(message)
+        for message in _object_list(thread.get("messages"))
+        if _headers(message).get("message-id") == reply_id
+    ]
+    if thread.get("id") != thread_id or len(matching) != 1:
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    if _decoded_header(matching[0].get("subject")) != payload.get("subject"):
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
 
 
 def _gmail_recipients(payload: dict[str, object], name: str, *, required: bool) -> list[str]:
@@ -452,9 +551,14 @@ def _gmail_recipients(payload: dict[str, object], name: str, *, required: bool) 
         if required:
             raise _WorkspaceToolError("INVALID_ARGUMENT")
         return []
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list) or (required and not value):
         raise _WorkspaceToolError("INVALID_ARGUMENT")
-    return [_text_value(item, maximum=320) for item in cast(list[object], value)]
+    recipients = [_text_value(item, maximum=320) for item in cast(list[object], value)]
+    for recipient in recipients:
+        addresses = _email_addresses(recipient)
+        if len(addresses) != 1 or "@" not in addresses[0] or any(c in recipient for c in "\r\n"):
+            raise _WorkspaceToolError("INVALID_ARGUMENT")
+    return recipients
 
 
 def _build_gmail_mime(payload: dict[str, object]) -> bytes:
@@ -464,7 +568,7 @@ def _build_gmail_mime(payload: dict[str, object]) -> bytes:
     if len(to) + len(cc) + len(bcc) > 50:
         raise _WorkspaceToolError("INVALID_ARGUMENT")
     subject = _text_argument(payload, "subject", maximum=998, allow_empty=True)
-    body = _text_argument(payload, "body", maximum=65536, allow_empty=True)
+    body = _gmail_body_argument(payload)
     message = EmailMessage()
     message["To"] = ", ".join(to)
     if cc:
@@ -472,7 +576,10 @@ def _build_gmail_mime(payload: dict[str, object]) -> bytes:
     if bcc:
         message["Bcc"] = ", ".join(bcc)
     message["Subject"] = subject
-    # Only CREATE dispatch injects recovery_fingerprint into the payload
+    for field_name, header in (("in_reply_to", "In-Reply-To"), ("references", "References")):
+        if payload.get(field_name) is not None:
+            message[header] = _text_argument(payload, field_name, maximum=2048)
+    # CREATE/SEND dispatch injects recovery_fingerprint into the payload
     # (see _build_final_dispatch_arguments); gmail_update_draft payloads
     # never carry it, so updates never gain or lose the marker.
     recovery_fingerprint = _optional_text(payload.get("recovery_fingerprint"))
@@ -506,6 +613,8 @@ def _attach_staged_files(message: EmailMessage, payload: dict[str, object]) -> N
     attachments = payload.get("attachments")
     if not isinstance(attachments, list) or len(attachments) > 10:
         raise _WorkspaceToolError("INVALID_ARGUMENT")
+    if not attachments:
+        return
     staging = _attachment_staging()
     for item in cast(list[object], attachments):
         if not isinstance(item, dict):
@@ -592,16 +701,25 @@ def _task_write_body(payload: dict[str, object], *, title_required: bool) -> dic
     # (see _build_final_dispatch_arguments); tasks_update_task never carries it.
     recovery_fingerprint = _optional_text(payload.get("recovery_fingerprint"))
     if "notes" in payload or recovery_fingerprint:
-        notes = _optional_text(payload.get("notes"))
+        notes = payload.get("notes", "")
+        if not isinstance(notes, str):
+            raise _WorkspaceToolError("INVALID_ARGUMENT")
         if recovery_fingerprint:
             marker = _recovery_marker(recovery_fingerprint)
             notes = f"{notes}\n\n{marker}" if notes else marker
-        if notes:
-            body["notes"] = notes
+        # Approved notes are business text: preserve whitespace and explicit
+        # empty values; only the server-owned recovery marker may be appended.
+        body["notes"] = notes
     if "scheduled_date" in payload:
         scheduled_date = _optional_text(payload.get("scheduled_date"))
         if scheduled_date:
-            body["due"] = scheduled_date
+            try:
+                parsed_date = date.fromisoformat(scheduled_date)
+            except ValueError as error:
+                raise _WorkspaceToolError("INVALID_ARGUMENT") from error
+            if parsed_date.isoformat() != scheduled_date:
+                raise _WorkspaceToolError("INVALID_ARGUMENT")
+            body["due"] = f"{scheduled_date}T00:00:00Z"
         elif not title_required:
             # An approved update may intentionally remove a prior scheduled date.
             body["due"] = None
@@ -631,8 +749,8 @@ def _task_snapshot(item: dict[str, object], task_list_id: str) -> dict[str, obje
         (task_list_id,),
         item.get("updated"),
         {
-            "title": _optional_text(item.get("title")) or task_id,
-            "notes": _optional_text(item.get("notes")),
+            "title": item.get("title") if isinstance(item.get("title"), str) else task_id,
+            "notes": item.get("notes") if isinstance(item.get("notes"), str) else None,
             "due": _optional_text(item.get("due")),
             "status": _optional_text(item.get("status")),
             "completed": _optional_text(item.get("completed")),
@@ -676,7 +794,9 @@ def _event_snapshot(item: dict[str, object], calendar_id: str) -> dict[str, obje
             or "UTC",
             "attendees": attendees,
             "location": _optional_text(item.get("location")),
-            "description": _optional_text(item.get("description")),
+            "description": (
+                item.get("description") if isinstance(item.get("description"), str) else None
+            ),
         },
     )
 
@@ -723,6 +843,17 @@ def _text_argument(
     return value
 
 
+def _gmail_body_argument(payload: dict[str, object]) -> str:
+    value = payload.get("body")
+    if (
+        not isinstance(value, str)
+        or len(value) > 65536
+        or any(ord(char) < 32 and char not in "\r\n\t" for char in value)
+    ):
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    return value
+
+
 def _text_value(value: object, *, maximum: int) -> str:
     if not isinstance(value, str) or len(value) > maximum or any(ord(char) < 32 for char in value):
         raise _WorkspaceToolError("INVALID_ARGUMENT")
@@ -758,33 +889,76 @@ def _google_api_call(
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     request = Request(request_url, data=data, headers=headers, method=method)
+    kind = _google_http_kind(method, url)
+    started = time.perf_counter_ns()
+    status_code: int | None = None
+    raw = b""
+    _notify_http_started(state, kind=kind, method=method, inner_count=None)
     try:
         with urlopen(request, timeout=GOOGLE_API_TIMEOUT_SECONDS) as response:  # nosec B310: fixed Google API endpoints
             raw = response.read()
-            if not raw:
-                return {}
-            return cast(dict[str, object], json.loads(raw.decode("utf-8")))
+            status_code = int(getattr(response, "status", response.getcode()))
+        payload = {} if not raw else json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise json.JSONDecodeError("Google response must be an object", "", 0)
+        _notify_http_finished(
+            state,
+            kind=kind,
+            method=method,
+            inner_count=None,
+            status_code=status_code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=None,
+        )
+        _notify_provider_payload(
+            state,
+            kind=kind,
+            message_count=(
+                len(messages)
+                if kind == "GMAIL_THREAD_GET"
+                and isinstance((messages := payload.get("messages")), list)
+                else None
+            ),
+        )
+        return cast(dict[str, object], payload)
     except HTTPError as error:
-        codes = {
-            401: "REAUTH_REQUIRED",
-            403: "PERMISSION_DENIED",
-            404: "NOT_FOUND",
-            409: "CONFLICT",
-            412: "CONFLICT",
-            429: "RATE_LIMITED",
-        }
+        raw = error.read(GOOGLE_ERROR_RESPONSE_MAX_BYTES + 1)
+        status_code = error.code
+        safe_code = _google_http_error_code(error.code, raw)
         if error.code == 401:
             state.connection_state = CredentialState.REAUTH_REQUIRED
             state.access_token = None
             state.access_token_expires_at_ms = 0
+        _notify_http_finished(
+            state,
+            kind=kind,
+            method=method,
+            inner_count=None,
+            status_code=error.code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=safe_code,
+        )
         # A response (even an error one) proves the request reached Google.
         raise _WorkspaceToolError(
-            codes.get(error.code, "UPSTREAM_5XX" if error.code >= 500 else "GOOGLE_REQUEST_FAILED"),
+            safe_code,
             delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
         ) from error
     except (URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        safe_code = "TIMEOUT" if isinstance(error, TimeoutError) else "MCP_UNAVAILABLE"
+        _notify_http_finished(
+            state,
+            kind=kind,
+            method=method,
+            inner_count=None,
+            status_code=status_code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=safe_code,
+        )
         raise _WorkspaceToolError(
-            "TIMEOUT" if isinstance(error, TimeoutError) else "MCP_UNAVAILABLE",
+            safe_code,
             delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
         ) from error
 
@@ -801,6 +975,379 @@ def _google_api_post(
     state: GoogleWorkspaceCredentialProvider, url: str, body: dict[str, object]
 ) -> dict[str, object]:
     return _google_api_call(state, "POST", url, body=body)
+
+
+def _google_batch_get(
+    state: GoogleWorkspaceCredentialProvider,
+    request_targets: tuple[str, ...],
+) -> tuple[_GoogleBatchGetResult, ...]:
+    if not 1 <= len(request_targets) <= GMAIL_BATCH_MAX_REQUESTS or any(
+        not target.startswith("/gmail/v1/users/me/threads/") or "\r" in target or "\n" in target
+        for target in request_targets
+    ):
+        raise _WorkspaceToolError("INVALID_ARGUMENT")
+    try:
+        state.ensure_access_token()
+    except _OAuthReauthenticationRequired as error:
+        state.connection_state = CredentialState.REAUTH_REQUIRED
+        raise _WorkspaceToolError("REAUTH_REQUIRED") from error
+    if state.access_token is None:
+        raise _WorkspaceToolError("OAUTH_NOT_CONNECTED")
+
+    boundary = f"gwa_batch_{secrets.token_hex(16)}"
+    request = Request(
+        GMAIL_BATCH_ENDPOINT,
+        data=_build_google_batch_body(request_targets, boundary=boundary),
+        headers={
+            "Authorization": f"Bearer {state.access_token}",
+            "Accept": "multipart/mixed",
+            "Content-Type": f"multipart/mixed; boundary={boundary}",
+        },
+        method="POST",
+    )
+    started = time.perf_counter_ns()
+    raw = b""
+    status_code: int | None = None
+    content_type: str | None = None
+    _notify_http_started(
+        state,
+        kind="GMAIL_BATCH",
+        method="POST",
+        inner_count=len(request_targets),
+    )
+    try:
+        with urlopen(request, timeout=GOOGLE_API_TIMEOUT_SECONDS) as response:  # nosec B310: fixed Google API endpoint
+            raw = response.read(GMAIL_BATCH_RESPONSE_MAX_BYTES + 1)
+            status_code = int(getattr(response, "status", response.getcode()))
+            content_type = response.headers.get("Content-Type")
+        if len(raw) > GMAIL_BATCH_RESPONSE_MAX_BYTES:
+            raise _WorkspaceToolError(
+                "INVALID_MCP_OUTPUT",
+                delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+            )
+        parts = _parse_google_batch_response(
+            content_type=content_type,
+            body=raw,
+            expected_count=len(request_targets),
+        )
+        results: list[_GoogleBatchGetResult] = []
+        first_error: str | None = None
+        for ordinal, part_status, part_body in parts:
+            safe_error_code = (
+                None
+                if 200 <= part_status < 300
+                else _google_http_error_code(part_status, part_body)
+            )
+            payload: object = {}
+            result_seen = False
+            if safe_error_code is None:
+                try:
+                    payload = {} if not part_body else json.loads(part_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    safe_error_code = "INVALID_MCP_OUTPUT"
+                if not isinstance(payload, dict):
+                    safe_error_code = "INVALID_MCP_OUTPUT"
+                else:
+                    result_seen = True
+            if part_status == 401:
+                state.connection_state = CredentialState.REAUTH_REQUIRED
+                state.access_token = None
+                state.access_token_expires_at_ms = 0
+            _notify_batch_part(
+                state,
+                ordinal=ordinal,
+                status_code=part_status,
+                response_body_bytes=len(part_body),
+                result_seen=result_seen,
+                safe_error_code=safe_error_code,
+            )
+            if safe_error_code is not None:
+                first_error = first_error or safe_error_code
+                continue
+            results.append(
+                _GoogleBatchGetResult(
+                    ordinal=ordinal,
+                    status_code=part_status,
+                    response_body_bytes=len(part_body),
+                    payload=cast(dict[str, object], payload),
+                )
+            )
+        if first_error is not None:
+            raise _WorkspaceToolError(
+                first_error,
+                delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+            )
+        _notify_http_finished(
+            state,
+            kind="GMAIL_BATCH",
+            method="POST",
+            inner_count=len(request_targets),
+            status_code=status_code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=None,
+        )
+        return tuple(sorted(results, key=lambda item: item.ordinal))
+    except HTTPError as error:
+        raw = error.read(GOOGLE_ERROR_RESPONSE_MAX_BYTES + 1)
+        status_code = error.code
+        safe_code = _google_http_error_code(error.code, raw)
+        if error.code == 401:
+            state.connection_state = CredentialState.REAUTH_REQUIRED
+            state.access_token = None
+            state.access_token_expires_at_ms = 0
+        _notify_http_finished(
+            state,
+            kind="GMAIL_BATCH",
+            method="POST",
+            inner_count=len(request_targets),
+            status_code=error.code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=safe_code,
+        )
+        raise _WorkspaceToolError(
+            safe_code,
+            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+        ) from error
+    except _WorkspaceToolError as error:
+        _notify_http_finished(
+            state,
+            kind="GMAIL_BATCH",
+            method="POST",
+            inner_count=len(request_targets),
+            status_code=status_code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=error.safe_code,
+        )
+        raise
+    except (URLError, TimeoutError) as error:
+        safe_code = "TIMEOUT" if isinstance(error, TimeoutError) else "MCP_UNAVAILABLE"
+        _notify_http_finished(
+            state,
+            kind="GMAIL_BATCH",
+            method="POST",
+            inner_count=len(request_targets),
+            status_code=status_code,
+            response_body_bytes=len(raw),
+            started=started,
+            safe_error_code=safe_code,
+        )
+        raise _WorkspaceToolError(
+            safe_code,
+            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+        ) from error
+
+
+def _build_google_batch_body(request_targets: tuple[str, ...], *, boundary: str) -> bytes:
+    chunks: list[bytes] = []
+    for ordinal, target in enumerate(request_targets):
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                "Content-Type: application/http\r\n"
+                f"Content-ID: <item-{ordinal}>\r\n\r\n"
+                f"GET {target} HTTP/1.1\r\n"
+                "Accept: application/json\r\n\r\n"
+            ).encode("ascii")
+        )
+    chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+    return b"".join(chunks)
+
+
+def _parse_google_batch_response(
+    *,
+    content_type: str | None,
+    body: bytes,
+    expected_count: int,
+) -> tuple[tuple[int, int, bytes], ...]:
+    if content_type is None or "multipart/mixed" not in content_type.lower():
+        raise _WorkspaceToolError(
+            "INVALID_MCP_OUTPUT",
+            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+        )
+    message = BytesParser(policy=policy.default).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("ascii") + body
+    )
+    if not message.is_multipart():
+        raise _WorkspaceToolError(
+            "INVALID_MCP_OUTPUT",
+            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+        )
+    parsed: dict[int, tuple[int, bytes]] = {}
+    for part in message.iter_parts():
+        if part.get_content_type() != "application/http":
+            raise _WorkspaceToolError(
+                "INVALID_MCP_OUTPUT",
+                delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+            )
+        content_id = str(part.get("Content-ID", "")).strip().strip("<>")
+        match = re.fullmatch(r"response-item-(\d+)", content_id)
+        raw_part = part.get_payload(decode=True)
+        if match is None or not isinstance(raw_part, bytes):
+            raise _WorkspaceToolError(
+                "INVALID_MCP_OUTPUT",
+                delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+            )
+        ordinal = int(match.group(1))
+        if ordinal in parsed or not 0 <= ordinal < expected_count:
+            raise _WorkspaceToolError(
+                "INVALID_MCP_OUTPUT",
+                delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+            )
+        normalized = raw_part.lstrip(b"\r\n")
+        separator = b"\r\n\r\n" if b"\r\n\r\n" in normalized else b"\n\n"
+        header_block, found, response_body = normalized.partition(separator)
+        first_line = header_block.splitlines()[0] if header_block.splitlines() else b""
+        status_match = re.fullmatch(rb"HTTP/\d(?:\.\d)?\s+(\d{3})(?:\s+.*)?", first_line)
+        if not found or status_match is None:
+            raise _WorkspaceToolError(
+                "INVALID_MCP_OUTPUT",
+                delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+            )
+        parsed[ordinal] = (int(status_match.group(1)), response_body)
+    if set(parsed) != set(range(expected_count)):
+        raise _WorkspaceToolError(
+            "INVALID_MCP_OUTPUT",
+            delivery_certainty=DeliveryCertainty.MAY_HAVE_BEEN_SENT,
+        )
+    return tuple((ordinal, *parsed[ordinal]) for ordinal in range(expected_count))
+
+
+def _google_http_error_code(status_code: int, body: bytes) -> str:
+    if status_code == 401:
+        return "REAUTH_REQUIRED"
+    if status_code == 403:
+        return "RATE_LIMITED" if _google_error_is_rate_limited(body) else "PERMISSION_DENIED"
+    if status_code == 404:
+        return "NOT_FOUND"
+    if status_code in {409, 412}:
+        return "CONFLICT"
+    if status_code == 429:
+        return "RATE_LIMITED"
+    if status_code >= 500:
+        return "UPSTREAM_5XX"
+    return "GOOGLE_REQUEST_FAILED"
+
+
+def _google_error_is_rate_limited(body: bytes) -> bool:
+    try:
+        payload = json.loads(body[:GOOGLE_ERROR_RESPONSE_MAX_BYTES].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    errors = error.get("errors") if isinstance(error, dict) else None
+    reasons = (
+        {str(item.get("reason", "")) for item in errors if isinstance(item, dict)}
+        if isinstance(errors, list)
+        else set()
+    )
+    return bool(
+        reasons
+        & {
+            "dailyLimitExceeded",
+            "rateLimitExceeded",
+            "userRateLimitExceeded",
+            "quotaExceeded",
+        }
+    )
+
+
+def _google_http_kind(method: str, url: str) -> str:
+    if method == "GET" and url.endswith("/gmail/v1/users/me/threads"):
+        return "GMAIL_THREADS_LIST"
+    if method == "GET" and "/gmail/v1/users/me/threads/" in url:
+        return "GMAIL_THREAD_GET"
+    return "GOOGLE_API_READ" if method == "GET" else "GOOGLE_API_WRITE"
+
+
+def _notify_http_started(
+    state: GoogleWorkspaceCredentialProvider,
+    *,
+    kind: str,
+    method: str,
+    inner_count: int | None,
+) -> None:
+    observer = state.provider_read_observer
+    if observer is not None:
+        with suppress(Exception):
+            observer.on_http_started(kind=kind, method=method, inner_count=inner_count)
+
+
+def _notify_http_finished(
+    state: GoogleWorkspaceCredentialProvider,
+    *,
+    kind: str,
+    method: str,
+    inner_count: int | None,
+    status_code: int | None,
+    response_body_bytes: int,
+    started: int,
+    safe_error_code: str | None,
+) -> None:
+    observer = state.provider_read_observer
+    if observer is not None:
+        with suppress(Exception):
+            observer.on_http_finished(
+                kind=kind,
+                method=method,
+                inner_count=inner_count,
+                status_code=status_code,
+                response_body_bytes=response_body_bytes,
+                duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
+                safe_error_code=safe_error_code,
+            )
+
+
+def _notify_batch_part(
+    state: GoogleWorkspaceCredentialProvider,
+    *,
+    ordinal: int,
+    status_code: int | None,
+    response_body_bytes: int,
+    result_seen: bool,
+    safe_error_code: str | None,
+) -> None:
+    observer = state.provider_read_observer
+    if observer is not None:
+        with suppress(Exception):
+            observer.on_batch_part(
+                ordinal=ordinal,
+                status_code=status_code,
+                response_body_bytes=response_body_bytes,
+                result_seen=result_seen,
+                safe_error_code=safe_error_code,
+            )
+
+
+def _notify_provider_payload(
+    state: GoogleWorkspaceCredentialProvider,
+    *,
+    kind: str,
+    message_count: int | None,
+) -> None:
+    observer = state.provider_read_observer
+    if observer is not None:
+        with suppress(Exception):
+            observer.on_provider_payload(kind=kind, message_count=message_count)
+
+
+def _notify_provider_phase(
+    state: GoogleWorkspaceCredentialProvider,
+    *,
+    phase: str,
+    started: int,
+    status: str,
+) -> None:
+    observer = state.provider_read_observer
+    if observer is not None:
+        with suppress(Exception):
+            observer.on_phase_finished(
+                phase=phase,
+                duration_ms=(time.perf_counter_ns() - started) / 1_000_000,
+                status=status,
+            )
 
 
 def _object_list(value: object) -> list[dict[str, object]]:
@@ -827,7 +1374,7 @@ def _headers(message: dict[str, object]) -> dict[str, str]:
     return {
         str(item.get("name", "")).lower(): str(item.get("value", ""))
         for item in _object_list(payload.get("headers"))
-        if item.get("name") and item.get("value")
+        if item.get("name") and item.get("value") is not None
     }
 
 
@@ -870,7 +1417,7 @@ def _gmail_message_body(message: dict[str, object]) -> str | None:
     html_parts: list[str] = []
     _collect_gmail_body_parts(payload, plain_parts=plain_parts, html_parts=html_parts)
     if plain_parts:
-        return _optional_text("\n\n".join(plain_parts))
+        return _readable_gmail_plain_text("\n\n".join(plain_parts))
     if html_parts:
         parser = _ReadableHtmlParser()
         parser.feed("\n".join(html_parts))
@@ -971,6 +1518,21 @@ class _ReadableHtmlParser(HTMLParser):
     def readable_text(self) -> str | None:
         lines = [" ".join(line.split()) for line in "".join(self._chunks).splitlines()]
         return _optional_text("\n".join(line for line in lines if line))
+
+
+_CONDITIONAL_HTML_MARKER = re.compile(
+    r"(?:<!--\s*\[if\b|<!--\s*<!\s*\[endif\]|<!\s*\[endif\]\s*-->)",
+    flags=re.IGNORECASE,
+)
+
+
+def _readable_gmail_plain_text(value: str) -> str | None:
+    if not _CONDITIONAL_HTML_MARKER.search(value):
+        return _optional_text(value)
+    parser = _ReadableHtmlParser()
+    parser.feed(value)
+    parser.close()
+    return parser.readable_text()
 
 
 def _email_identity(value: str | None) -> tuple[str | None, str | None]:

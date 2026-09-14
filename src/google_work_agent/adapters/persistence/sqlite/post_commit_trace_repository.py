@@ -18,13 +18,21 @@ _LOGGER = logging.getLogger(__name__)
 class PostCommitTraceEventRepository:
     """Buffer traces until the owning Domain transaction commits."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self, connection: sqlite3.Connection, *,
+        environment: str = "test", release_version: str = "dev",
+    ) -> None:
         self._connection = connection
-        self._repository = SqliteTraceEventRepository(connection)
+        self._repository = SqliteTraceEventRepository(
+            connection, environment=environment, release_version=release_version,
+        )
         self._pending: list[TraceEvent] = []
 
     def append(self, event: TraceEvent) -> None:
         self._pending.append(event)
+
+    def list_observed_runtimes(self, run_id: str) -> tuple[str, ...]:
+        return self._repository.list_observed_runtimes(run_id)
 
     def list_page(
         self, cursor: TraceEventCursor | None, limit: int

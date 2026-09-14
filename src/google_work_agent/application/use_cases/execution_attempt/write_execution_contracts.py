@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from google_work_agent.ports.connector.contracts.google_workspace import ResourceSnapshot
+from google_work_agent.ports.connector.contracts.resource_snapshot import ResourceSnapshot
 
 
 @dataclass(frozen=True, slots=True)

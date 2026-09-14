@@ -1,17 +1,21 @@
 from copy import deepcopy
+from dataclasses import asdict
 from typing import cast
 
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
-)
-from google_work_agent.application.agents.request_understanding.validate_intent import (
     RequestUnderstandingValidationError,
-    validate_intent,
+    validated_gmail_draft_anchor,
     validated_repository_authority,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    repository_authority_requires_confirmation,
+    validate_intent,
+)
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 
 def _candidate() -> dict[str, object]:
@@ -31,11 +35,99 @@ def test_validate_intent__canonical_candidate__preserves_contract() -> None:
     assert validate_intent(_candidate())["goal"] == "김대리 관련 메일에서 할 일 정리"
 
 
+def test_validate_intent__canonical_duplicate_source_read__remains_rejected() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": ["기존 본문", "기존 수신자"],
+        }
+    ]
+    candidate["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 본문"]},
+            {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 수신자"]},
+        ],
+        "outputs": [],
+    }
+
+    with pytest.raises(RequestUnderstandingValidationError, match="duplicate source read"):
+        validate_intent(candidate)
+
+
 def test_validate_intent__unknown_schema__fails_closed() -> None:
     invalid = deepcopy(_candidate())
     invalid["schema_version"] = 99
     with pytest.raises(RequestUnderstandingValidationError, match="schema_version"):
         validate_intent(invalid)
+
+
+def test_repository_default__settings_provenance__yields_to_explicit_and_selected() -> None:
+    candidate = _candidate()
+    candidate.update(
+        {
+            "constraints": [],
+            "requested_resource_hints": ["GITHUB_ISSUE"],
+            "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},
+            "repository_default": asdict(
+                GitHubRepositoryDefaultV1("default/project", 1, "github:2")
+            ),
+        }
+    )
+    intent = validate_intent(candidate, require_meta=True)
+    assert validated_repository_authority(intent, selected_resources=[]) == "default/project"
+    assert intent["constraints"] == []
+    selected = SelectedResourceRef(
+        "ref", "github", "github_issue", "selected/project#1", "selected/project"
+    )
+    assert (
+        validated_repository_authority(intent, selected_resources=[selected]) == "selected/project"
+    )
+    candidate["constraints"] = [
+        {
+            "kind": "RESOURCE",
+            "field": "repository",
+            "value": "explicit/project",
+            "provenance": {"source": "USER_REQUEST", "start_offset": 0, "end_offset": 16},
+        }
+    ]
+    intent = validate_intent(
+        candidate, require_meta=True, provenance_sources={"USER_REQUEST": "explicit/project 이슈"}
+    )
+    assert validated_repository_authority(intent, selected_resources=[]) == "explicit/project"
+    with pytest.raises(RequestUnderstandingValidationError, match="conflict"):
+        validated_repository_authority(intent, selected_resources=[selected])
+
+
+def test_repository_default__bare_explicit_name__still_requires_confirmation() -> None:
+    default = GitHubRepositoryDefaultV1("default/project", 1, "github:2")
+    assert repository_authority_requires_confirmation(
+        [{"kind": "RESOURCE", "field": "repository", "value": "project"}],
+        user_request="project 이슈",
+        confirmation_response_text=None,
+        selected_resources=[],
+        repository_required=True,
+        repository_default=default,
+    )
+    assert not repository_authority_requires_confirmation(
+        [],
+        user_request="열린 이슈",
+        confirmation_response_text=None,
+        selected_resources=[],
+        repository_required=True,
+        repository_default=default,
+    )
+
+
+def test_repository_confirmation__for_non_github_target__does_not_apply() -> None:
+    assert not repository_authority_requires_confirmation(
+        [{"kind": "RESOURCE", "field": "repository", "value": "invented-name"}],
+        user_request="선택한 할 일을 수정해줘",
+        confirmation_response_text=None,
+        selected_resources=[],
+        repository_required=False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -87,6 +179,58 @@ def test_validate_intent__rejects_forged_repository_value__against_exact_span() 
             candidate,
             provenance_sources={"USER_REQUEST": "acme/repo"},
         )
+
+
+def test_validate_intent__forged_gmail_draft_provenance__is_rejected() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "RESOURCE",
+            "field": "draft_id",
+            "value": "draft-123",
+            "provenance": {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": len("other-123"),
+            },
+        }
+    ]
+
+    with pytest.raises(RequestUnderstandingValidationError, match="does not match source"):
+        validate_intent(
+            candidate,
+            provenance_sources={"USER_REQUEST": "other-123"},
+        )
+
+
+def test_validated_gmail_draft_anchor__validated_source_identity__is_used() -> None:
+    request_text = "Gmail 초안 ID draft-123를 수정해줘"
+    start_offset = request_text.index("draft-123")
+    candidate = _candidate()
+    candidate.update(
+        {
+            "constraints": [
+                {
+                    "kind": "RESOURCE",
+                    "field": "draft_id",
+                    "value": "draft-123",
+                    "provenance": {
+                        "source": "USER_REQUEST",
+                        "start_offset": start_offset,
+                        "end_offset": start_offset + len("draft-123"),
+                    },
+                }
+            ],
+            "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},
+        }
+    )
+    intent = validate_intent(
+        candidate,
+        require_meta=True,
+        provenance_sources={"USER_REQUEST": request_text},
+    )
+
+    assert validated_gmail_draft_anchor(intent) == "draft-123"
 
 
 def test_validated_repository_authority__explicit_selected_match__normalizes_once() -> None:

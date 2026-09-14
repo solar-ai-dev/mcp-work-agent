@@ -3,22 +3,42 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from datetime import date, datetime
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from google_work_agent.application.agents.planning.bind_gmail_draft_update_identity import (
+    bind_gmail_draft_update_identity,
+    project_gmail_draft_editable_source,
+)
+from google_work_agent.application.agents.planning.bind_gmail_thread_reply_identity import (
+    bind_gmail_thread_reply_identity,
+)
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     ActionObjectiveCandidateV1,
     PlanningSemanticInvoker,
     ToolArgumentCandidateV1,
 )
+from google_work_agent.application.agents.planning.materialize_task_calendar_draft_payload import (
+    materialize_task_calendar_draft_payload,
+)
+from google_work_agent.application.agents.planning.materialize_task_create_payload import (
+    materialize_task_create_payload,
+)
 from google_work_agent.application.agents.planning.resolve_default_container import (
     BoundSelectedToolSchemaV1,
     PlanningArgumentBindingError,
+)
+from google_work_agent.application.agents.preserve_exact_user_literals import (
+    restore_exact_user_literals,
 )
 from google_work_agent.application.use_cases.action.validate_action_arguments import (
     ValidateActionArgumentsHandler,
     ValidateActionArgumentsQueryV1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import OutputSchemaDefinition
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 PROMPT_ID = "planning.compose_arguments_per_output_route"
 
@@ -34,7 +54,6 @@ TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
             "arguments": {"type": "object"},
             "evidence_refs": {
                 "type": "array",
-                "minItems": 1,
                 "items": {"type": "string", "minLength": 1},
             },
         },
@@ -42,15 +61,93 @@ TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA = OutputSchemaDefinition(
 )
 
 
+def tool_argument_candidate_output_schema(
+    prompt_input: Mapping[str, object],
+) -> OutputSchemaDefinition:
+    """Bind inference and its repair to the same frozen Tool and evidence scope."""
+    route = prompt_input.get("output_route")
+    schema = prompt_input.get("tool_schema")
+    evidence = prompt_input.get("evidence")
+    if not isinstance(route, Mapping) or not isinstance(route.get("route_id"), str):
+        raise ValueError("argument composition requires a frozen output route")
+    if not isinstance(schema, Mapping) or schema.get("type") != "object":
+        raise ValueError("argument composition requires a bound Tool schema")
+    if not isinstance(evidence, list):
+        raise ValueError("argument composition requires current evidence")
+    refs = sorted(
+        {
+            ref
+            for item in evidence
+            if isinstance(item, Mapping)
+            for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+            if isinstance(ref, str) and ref
+        }
+    )
+    output = deepcopy(TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], output["properties"])
+    properties["route_id"] = {"const": route["route_id"]}
+    model_schema = _model_owned_argument_schema(route=route, schema=schema)
+    argument_variants = [model_schema]
+    for name, field in cast(Mapping[str, object], schema.get("properties", {})).items():
+        if not isinstance(field, Mapping) or "const" not in field:
+            continue
+        # The assembler supplies immutable bindings omitted by the model.
+        for variant in tuple(argument_variants):
+            omitted = deepcopy(variant)
+            cast(dict[str, object], omitted["properties"]).pop(name)
+            omitted["required"] = [
+                item for item in cast(list[str], omitted.get("required", [])) if item != name
+            ]
+            minimum = omitted.get("minProperties")
+            if isinstance(minimum, int):
+                omitted["minProperties"] = max(0, minimum - 1)
+            argument_variants.append(omitted)
+    properties["arguments"] = (
+        argument_variants[0] if len(argument_variants) == 1 else {"oneOf": argument_variants}
+    )
+    properties["evidence_refs"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "items": {"type": "string", "enum": refs} if refs else {"type": "string"},
+        **({} if refs else {"maxItems": 0}),
+    }
+    return OutputSchemaDefinition(
+        schema_version=TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA.schema_version,
+        json_schema=output,
+    )
+
+
+def _model_owned_argument_schema(
+    *, route: Mapping[str, object], schema: Mapping[str, object]
+) -> dict[str, object]:
+    projected = deepcopy(dict(schema))
+    if route.get("selected_tool_id") != "gmail_update_draft":
+        return projected
+    properties = cast(dict[str, object], projected.get("properties", {}))
+    properties.pop("draft_id", None)
+    projected["required"] = ["payload"]
+    payload = properties.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("Gmail Draft UPDATE requires a payload schema")
+    payload["required"] = []
+    payload["minProperties"] = 1
+    return projected
+
+
 def compose_arguments_per_output_route(
     output_routes: Sequence[Mapping[str, object]],
     *,
     objectives: Sequence[ActionObjectiveCandidateV1],
     bound_tool_schemas: Sequence[BoundSelectedToolSchemaV1],
+    request_intent: Mapping[str, object] | None = None,
     work_analysis: Mapping[str, object] | None = None,
     evidence: Sequence[Mapping[str, object]] = (),
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
+    selected_resources: Sequence[SelectedResourceRef] = (),
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
+    run_reference_time: Mapping[str, object] | None = None,
+    modification: Mapping[str, object] | None = None,
 ) -> tuple[ToolArgumentCandidateV1, ...]:
     """Execute exactly one canonical semantic path for every frozen output route."""
     if not output_routes:
@@ -85,27 +182,61 @@ def compose_arguments_per_output_route(
             or bound_schema["effect"] != route.get("effect")
         ):
             raise ValueError("bound Tool schema escaped frozen route identity")
-        prompt_input: dict[str, object] = {
-            "output_route": dict(route),
-            "action_objective": dict(objective),
-            "tool_schema": dict(bound_schema["argument_schema"]),
-            "evidence": [dict(item) for item in evidence],
-        }
-        if work_analysis is not None:
-            prompt_input["work_analysis"] = dict(work_analysis)
-        if confirmation_response is not None:
-            prompt_input["confirmation_response"] = dict(confirmation_response)
-        candidate = invoke(
-            PROMPT_ID,
-            prompt_input,
+        candidate: Mapping[str, object] | None = (
+            None
+            if modification is not None
+            else _deterministic_argument_candidate(
+                route=route,
+                request_intent=request_intent,
+                allowed_refs=allowed_refs,
+                objective=objective,
+                evidence=evidence,
+            )
         )
+        if candidate is None:
+            prompt_input: dict[str, object] = {
+                "output_route": dict(route),
+                "action_objective": dict(objective),
+                "tool_schema": dict(bound_schema["argument_schema"]),
+                "evidence": [dict(item) for item in evidence],
+            }
+            if request_intent is not None:
+                prompt_input["request_intent"] = dict(request_intent)
+            if work_analysis is not None:
+                prompt_input["work_analysis"] = dict(work_analysis)
+            if confirmation_response is not None:
+                prompt_input["confirmation_response"] = dict(confirmation_response)
+            if run_reference_time is not None:
+                prompt_input["run_reference_time"] = dict(run_reference_time)
+            if modification is not None:
+                prompt_input["modification"] = dict(modification)
+            editable_source = project_gmail_draft_editable_source(
+                route=route,
+                evidence=evidence,
+                source_snapshots=source_snapshots or {},
+                preferred_evidence_refs=objective.get("evidence_refs", []),
+                selected_resources=selected_resources,
+            )
+            if editable_source is not None:
+                prompt_input["editable_source"] = editable_source
+            candidate = invoke(PROMPT_ID, prompt_input)
         if candidate.get("schema_version") != 1 or candidate.get("route_id") != route_id:
             raise ValueError("argument candidate escaped its frozen output route")
         arguments = candidate.get("arguments")
         refs = candidate.get("evidence_refs", [])
         if not isinstance(arguments, dict):
             raise ValueError("argument candidate requires business arguments")
-        arguments = dict(arguments)
+        if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
+            raise ValueError("argument candidate evidence_refs must be strings")
+        if len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
+            raise PlanningArgumentBindingError("argument candidate references unavailable evidence")
+        arguments = cast(
+            dict[str, object],
+            _restore_exact_argument_literals(
+                dict(arguments),
+                source_texts=_original_request_texts(request_intent),
+            ),
+        )
         for name, expected in bound_schema["immutable_arguments"].items():
             actual = arguments.get(name)
             if actual is not None and actual != expected:
@@ -113,6 +244,22 @@ def compose_arguments_per_output_route(
                     f"argument candidate attempts to override immutable {name}"
                 )
             arguments[name] = expected
+        arguments, gmail_reply_evidence_refs = bind_gmail_thread_reply_identity(
+            route=route,
+            action_objective=objective,
+            arguments=arguments,
+            evidence=evidence,
+        )
+        arguments, gmail_draft_evidence_refs = bind_gmail_draft_update_identity(
+            route=route,
+            action_objective=objective,
+            arguments=arguments,
+            evidence=evidence,
+            source_snapshots=source_snapshots or {},
+            selected_evidence_refs=refs,
+            selected_resources=selected_resources,
+            request_intent=request_intent,
+        )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])
         )
@@ -121,10 +268,33 @@ def compose_arguments_per_output_route(
                 "argument candidate does not satisfy selected Tool schema: "
                 + "; ".join(validation.error_paths[:8])
             )
-        if not isinstance(refs, list) or not all(isinstance(item, str) for item in refs):
-            raise ValueError("argument candidate evidence_refs must be strings")
-        if not refs or len(refs) != len(set(refs)) or not set(refs).issubset(allowed_refs):
-            raise PlanningArgumentBindingError("argument candidate references unavailable evidence")
+        if modification is not None:
+            patch_payload = arguments.get("payload")
+            due = patch_payload.get("due") if isinstance(patch_payload, dict) else None
+            if due is not None:
+                try:
+                    if not isinstance(due, str) or date.fromisoformat(due).isoformat() != due:
+                        raise ValueError("non-canonical date")
+                except ValueError as error:
+                    raise PlanningArgumentBindingError(
+                        "modification requires a valid planned date"
+                    ) from error
+        refs = list(
+            dict.fromkeys(
+                [
+                    *refs,
+                    *_selected_github_target_evidence_refs(
+                        route,
+                        request_intent,
+                        bound_schema,
+                        arguments,
+                        evidence,
+                    ),
+                    *gmail_reply_evidence_refs,
+                    *gmail_draft_evidence_refs,
+                ]
+            )
+        )
         candidates.append(
             {
                 "schema_version": 1,
@@ -136,4 +306,210 @@ def compose_arguments_per_output_route(
     return tuple(candidates)
 
 
-__all__ = ["TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA", "compose_arguments_per_output_route"]
+def _original_request_texts(request_intent: Mapping[str, object] | None) -> list[str]:
+    if not isinstance(request_intent, Mapping):
+        return []
+    constraints = request_intent.get("constraints")
+    if not isinstance(constraints, list):
+        return []
+    values: list[str] = []
+    for item in constraints:
+        if not isinstance(item, Mapping) or item.get("field") != "original_search_request":
+            continue
+        raw_value = item.get("value")
+        candidates = raw_value if isinstance(raw_value, list) else [raw_value]
+        values.extend(value for value in candidates if isinstance(value, str))
+    return values
+
+
+def _restore_exact_argument_literals(value: object, *, source_texts: Sequence[str]) -> object:
+    if isinstance(value, str):
+        return restore_exact_user_literals(value, source_texts=source_texts)
+    if isinstance(value, list):
+        return [_restore_exact_argument_literals(item, source_texts=source_texts) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _restore_exact_argument_literals(item, source_texts=source_texts)
+            for key, item in value.items()
+        }
+    return value
+
+
+def requires_argument_inference(
+    route: Mapping[str, object],
+    *,
+    request_intent: Mapping[str, object] | None,
+    evidence: Sequence[Mapping[str, object]] = (),
+) -> bool:
+    return (
+        materialize_task_calendar_draft_payload(
+            route=route,
+            request_intent=request_intent,
+            evidence=evidence,
+        )
+        or _deterministic_create_payload(route=route, request_intent=request_intent)
+    ) is None
+
+
+def _selected_github_target_evidence_refs(
+    route: Mapping[str, object],
+    intent: Mapping[str, object] | None,
+    bound_schema: BoundSelectedToolSchemaV1,
+    arguments: Mapping[str, object],
+    evidence: Sequence[Mapping[str, object]],
+) -> list[str]:
+    if (
+        intent is None
+        or route.get("connector_id") != "github"
+        or route.get("resource_type") != "GITHUB_ISSUE"
+        or route.get("effect") != "UPDATE"
+        or route.get("selected_tool_id")
+        not in {
+            "github_update_issue",
+            "github_close_issue",
+            "github_reopen_issue",
+        }
+    ):
+        return []
+    repository, number = arguments.get("repository"), arguments.get("issue_number")
+    if (
+        not isinstance(repository, str)
+        or type(number) is not int
+        or number < 1
+        or bound_schema["immutable_arguments"].get("repository") != repository
+    ):
+        return []
+    constraints = intent.get("constraints")
+    if not isinstance(constraints, list):
+        return []
+    selected = [
+        item.get("value")
+        for item in constraints
+        if isinstance(item, Mapping) and item.get("field") == "selected_resource_id"
+    ]
+    identity = f"{repository}#{number}"
+    if selected != [[identity]]:
+        return []
+    return [
+        ref
+        for item in evidence
+        if item.get("resource_handle") == f"github_issue:{identity}"
+        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+        if isinstance(ref, str) and ref
+    ]
+
+
+def _deterministic_argument_candidate(
+    *,
+    route: Mapping[str, object],
+    request_intent: Mapping[str, object] | None,
+    allowed_refs: set[str],
+    objective: ActionObjectiveCandidateV1,
+    evidence: Sequence[Mapping[str, object]],
+) -> ToolArgumentCandidateV1 | None:
+    payload = materialize_task_calendar_draft_payload(
+        route=route,
+        request_intent=request_intent,
+        evidence=evidence,
+    ) or _deterministic_create_payload(route=route, request_intent=request_intent)
+    route_id = route.get("route_id")
+    if payload is None or not isinstance(route_id, str):
+        return None
+    return {
+        "schema_version": 1,
+        "route_id": route_id,
+        "arguments": {"payload": payload},
+        "evidence_refs": [ref for ref in objective.get("evidence_refs", []) if ref in allowed_refs],
+    }
+
+
+def _deterministic_create_payload(
+    *, route: Mapping[str, object], request_intent: Mapping[str, object] | None
+) -> dict[str, object] | None:
+    return _calendar_create_payload(
+        route=route,
+        request_intent=request_intent,
+    ) or _task_create_payload(
+        route=route,
+        request_intent=request_intent,
+    )
+
+
+def _calendar_create_payload(
+    *, route: Mapping[str, object], request_intent: Mapping[str, object] | None
+) -> dict[str, object] | None:
+    if (
+        route.get("selected_tool_id") != "calendar_create_event"
+        or route.get("effect") != "CREATE"
+        or not isinstance(request_intent, Mapping)
+    ):
+        return None
+    ambiguity = request_intent.get("ambiguity")
+    if isinstance(ambiguity, Mapping) and ambiguity.get("requires_confirmation") is True:
+        return None
+    constraints = request_intent.get("constraints")
+    if not isinstance(constraints, Sequence) or isinstance(constraints, (str, bytes)):
+        return None
+    values: dict[str, str] = {}
+    for item in constraints:
+        if not isinstance(item, Mapping):
+            return None
+        kind, field, value = item.get("kind"), item.get("field"), item.get("value")
+        if kind in {"PERSON", "EMAIL"}:
+            return None
+        if (
+            not isinstance(field, str)
+            or field not in {"title", "date", "start_time", "end_time", "timezone"}
+            or not isinstance(value, str)
+        ):
+            return None
+        if field in values and values[field] != value:
+            return None
+        values[field] = value
+    required = {"title", "date", "start_time", "end_time", "timezone"}
+    if not required.issubset(values):
+        return None
+    start = _aware_calendar_datetime(values["date"], values["start_time"], values["timezone"])
+    end = _aware_calendar_datetime(values["date"], values["end_time"], values["timezone"])
+    if start is None or end is None or end <= start:
+        return None
+    return {
+        "title": values["title"],
+        "start": start.isoformat(timespec="seconds"),
+        "end": end.isoformat(timespec="seconds"),
+    }
+
+
+def _task_create_payload(
+    *, route: Mapping[str, object], request_intent: Mapping[str, object] | None
+) -> dict[str, object] | None:
+    if (
+        route.get("resource_type") != "TASK"
+        or route.get("selected_tool_id") != "tasks_create_task"
+        or route.get("effect") != "CREATE"
+        or not isinstance(request_intent, Mapping)
+    ):
+        return None
+    return materialize_task_create_payload(request_intent)
+
+
+def _aware_calendar_datetime(
+    calendar_date: str, local_time: str, timezone_name: str
+) -> datetime | None:
+    try:
+        timezone = ZoneInfo(timezone_name)
+        value = local_time if "T" in local_time else f"{calendar_date}T{local_time}"
+        parsed = datetime.fromisoformat(value)
+    except (ValueError, ZoneInfoNotFoundError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone)
+    return parsed.astimezone(timezone)
+
+
+__all__ = [
+    "TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA",
+    "compose_arguments_per_output_route",
+    "requires_argument_inference",
+    "tool_argument_candidate_output_schema",
+]

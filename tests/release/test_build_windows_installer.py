@@ -39,7 +39,7 @@ class _InstallerBackend:
         script = definition_path.read_text(encoding="utf-8")
         assert "PrivilegesRequired=lowest" in script
         assert "API_ONLY" in script
-        artifact = output_dir / "GoogleWorkAgent-1.2.3-API_ONLY-Setup.exe"
+        artifact = output_dir / "mcp-work-agent-1.2.3-API_ONLY-Setup.exe"
         artifact.write_bytes(b"installer")
         return artifact
 

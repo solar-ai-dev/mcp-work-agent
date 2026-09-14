@@ -8,6 +8,9 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
+from google_work_agent.adapters.connectors.github.github.repositories.list_repositories import (
+    ListRepositoriesOperation,
+)
 from google_work_agent.adapters.connectors.github.issues.issues.close_issue import (
     CloseIssueOperation,
 )
@@ -23,7 +26,7 @@ from google_work_agent.adapters.connectors.github.issues.issues.list_issues impo
 from google_work_agent.adapters.connectors.github.issues.issues.reopen_issue import (
     ReopenIssueOperation,
 )
-from google_work_agent.adapters.connectors.github.issues.issues.search_by_recovery_fingerprint import (
+from google_work_agent.adapters.connectors.github.issues.issues.search_by_recovery_fingerprint import (  # noqa: E501
     SearchByRecoveryFingerprintOperation,
 )
 from google_work_agent.adapters.connectors.github.issues.issues.update_issue import (
@@ -64,6 +67,7 @@ class GitHubMcpServerState:
         self.active_device_authorization: GitHubDeviceAuthorization | None = None
         self.active_device_operation_ref: str | None = None
         self.next_device_poll_at_ms: int | None = None
+        self.device_authorization_status: str | None = None
         self.operational_results: dict[str, dict[str, object]] = {}
         self.used_nonces: set[str] = set()
         self.now_ms = now_ms
@@ -98,15 +102,15 @@ class GitHubMcpServerState:
             keyring=keyring,
             device_flow=device_flow,
             now_ms=self.now_ms,
-            requested_scopes=tuple(dict.fromkeys(item for item in scope.replace(",", " ").split() if item)),
+            requested_scopes=tuple(
+                dict.fromkeys(item for item in scope.replace(",", " ").split() if item)
+            ),
         )
         return self._credential_provider
 
     def api_client(self) -> GitHubApiClient:
         if self._api_client is None:
-            self._api_client = GitHubApiClient(
-                credential_provider=self.credential_provider()
-            )
+            self._api_client = GitHubApiClient(credential_provider=self.credential_provider())
         return self._api_client
 
     def operations(self) -> dict[str, GitHubToolOperation]:
@@ -129,6 +133,9 @@ class GitHubMcpServerState:
                 cast(GitHubApiClient, _LazyGitHubApiClient(self))
             )
         return self._recovery_search
+
+    def repository_listing(self) -> ListRepositoriesOperation:
+        return ListRepositoriesOperation(self.api_client())
 
 
 class _LazyGitHubApiClient:

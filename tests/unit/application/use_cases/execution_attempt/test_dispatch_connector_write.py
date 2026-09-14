@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
 from json import dumps
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -63,9 +64,7 @@ class _Receipt:
 
 
 class _UnitOfWork:
-    def __init__(
-        self, *, run_status: RunStatusV1, begin_receipt_applied: bool = True
-    ) -> None:
+    def __init__(self, *, run_status: RunStatusV1, begin_receipt_applied: bool = True) -> None:
         action = SimpleNamespace(
             id="action-1",
             plan_id="plan-1",
@@ -285,3 +284,36 @@ def test_missing_begin_execution_receipt__prevents_connector__io() -> None:
         handler(_command())
 
     assert port.calls == 0
+
+
+def test_revoked_scope__preserves_approved_arguments__and_blocks_external_effect(
+    tmp_path: Path,
+) -> None:
+    from google_work_agent.adapters.system.json_settings import (
+        FileSettingsStore,
+        JsonSettingsAdapter,
+    )
+    from google_work_agent.application.use_cases.resource.require_resource_selection import (
+        RequireResourceSelectionHandler,
+    )
+
+    settings = replace(
+        JsonSettingsAdapter(store=FileSettingsStore(tmp_path / "settings.json")).get_settings(),
+        selected_tasklist_ids=(),
+        google_resource_account_id="account",
+    )
+    port = _ConnectorWritePort()
+    command = _command()
+    original = dumps(command.tool_arguments, sort_keys=True)
+    handler = DispatchConnectorWriteHandler(
+        unit_of_work_factory=cast(
+            Any, lambda: _UnitOfWork(run_status=RunStatusV1.WAITING_APPROVAL)
+        ),
+        tool_registry=cast(Any, _ToolRegistry()),
+        connector_write_port=cast(Any, port),
+        resource_selection=RequireResourceSelectionHandler(lambda: settings, lambda _: "account"),
+    )
+    result = handler(command).connector_result
+    assert not result.success and result.delivery_certainty == "NOT_SENT"
+    assert result.error_code == "RESOURCE_NOT_SELECTED" and port.calls == 0
+    assert dumps(command.tool_arguments, sort_keys=True) == original

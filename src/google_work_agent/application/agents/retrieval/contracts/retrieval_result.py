@@ -1,8 +1,11 @@
 """Retrieval planning, local evidence, and parent-result contracts."""
 
 from enum import StrEnum
-from typing import Literal, Required, TypedDict
+from typing import Literal, NotRequired, Required, TypedDict
 
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    TemporalRangeConstraintV1,
+)
 from google_work_agent.application.agents.state_artifact import StateArtifactMetaV1
 
 
@@ -38,11 +41,20 @@ MissingInformationRequiredForValue = Literal[
 ]
 
 
+AcquisitionStatusValue = Literal[
+    "COMPLETE",
+    "PARTIAL",
+    "NOT_ATTEMPTED",
+    "AUTH_REQUIRED",
+    "RATE_LIMITED",
+    "BUDGET_EXHAUSTED",
+    "FAILED",
+]
+
+
 class AcquisitionResultV1(TypedDict):
     schema_version: Required[Literal[1]]
-    status: Literal[
-        "COMPLETE", "PARTIAL", "AUTH_REQUIRED", "RATE_LIMITED", "BUDGET_EXHAUSTED", "FAILED"
-    ]
+    status: AcquisitionStatusValue
     resource_handles: list[str]
     source_summaries: list[dict[str, object]]
     missing_slots: list[str]
@@ -58,6 +70,18 @@ class EvidenceDraftV1(TypedDict):
     excerpt: str
     locator: dict[str, object] | None
     reason_codes: list[str]
+
+
+class PersonCandidateV1(TypedDict):
+    mention: str
+    identity: str
+    display_names: list[str]
+    source_segment_ids: list[str]
+
+
+class UnresolvedEventDateV1(TypedDict):
+    evidence_id: str
+    source_text: str
 
 
 class ContextBundleV1(TypedDict):
@@ -85,7 +109,11 @@ class EvidenceRoleDraftV2(TypedDict):
 
 class EvidenceSelectionResultV2(TypedDict):
     """docs/05-context-retrieval.md SS5.6 -- retrieval.select_evidence output,
-    Retrieval Local State only (RetrievalStateV1.evidence_selection)."""
+    Retrieval Local State only (RetrievalStateV1.evidence_selection).
+
+    The inference-only V3 candidate assessments are projected here by
+    select_evidence. Persisted V2 producers and consumers remain unchanged.
+    """
 
     schema_version: Required[Literal[2]]
     evidence_drafts: list[EvidenceRoleDraftV2]
@@ -106,6 +134,8 @@ class SufficiencyIssueV2(TypedDict):
     weakening Canonical to match the mistaken Candidate."""
 
     slot: str
+    # Absent on older checkpoints and global USER/POLICY issues; never guesses a route.
+    route_id: NotRequired[str]
     issue_type: SufficiencyIssueTypeValue
     required: bool
     resolution_source: SufficiencyResolutionSourceValue
@@ -134,6 +164,10 @@ class MissingInformationV1(TypedDict):
     code: str
     description: str
     required_for: MissingInformationRequiredForValue
+    # Added without invalidating persisted V1 checkpoints. Current producers
+    # always project the structured sufficiency reasons; older checkpoints may
+    # legitimately omit them.
+    reason_codes: NotRequired[list[str]]
 
 
 class RetrievalSourceStatusV1(TypedDict):
@@ -141,12 +175,51 @@ class RetrievalSourceStatusV1(TypedDict):
     resource_type: str
     status: Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_ATTEMPTED"]
     evidence_refs: list[str]
+    # Current producers include the actual provider result cardinality. Older
+    # persisted checkpoints may omit it and remain readable.
+    observed_resource_count: NotRequired[int]
+    # Bounded coverage counters are optional for checkpoints written before
+    # read-scope accounting was projected into the parent result.
+    checked_read_count: NotRequired[int]
+    known_scope_count: NotRequired[int]
+    scope_complete: NotRequired[bool]
+    continuation_status: NotRequired[Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]]
     failure_kind: (
         Literal[
             "AUTH", "SCOPE", "RATE_LIMIT", "TIMEOUT", "PROVIDER", "NOT_FOUND", "BUDGET", "OTHER"
         ]
         | None
     )
+
+
+class RetrievalCollectionItemV1(TypedDict):
+    """Source-owned metadata for one distinct item observed by a collection READ."""
+
+    resource_ref: str
+    resource_type: str
+    title: str | None
+
+
+class RetrievalCollectionResultV1(TypedDict):
+    """Observed collection items kept independently from bounded detailed Evidence."""
+
+    route_id: str
+    resource_type: str
+    continuation_status: Literal["EXHAUSTED", "HAS_MORE", "UNKNOWN"]
+    items: list[RetrievalCollectionItemV1]
+
+
+class TaskReviewCandidateV1(TypedDict):
+    candidate_ref: str
+    route_id: str
+    resource_id: str
+    task_list_id: str | None
+    title: str | None
+    status: str | None
+    due: str | None
+    notes: NotRequired[str | None]
+    notes_truncated: NotRequired[bool]
+    source_version_ref: str | None
 
 
 class RetrievalResultV1(TypedDict):
@@ -161,6 +234,15 @@ class RetrievalResultV1(TypedDict):
     excluded_segment_ids: list[str]
     source_resource_refs: list[str]
     source_statuses: list[RetrievalSourceStatusV1]
+    # Older checkpoints predate collection metadata preservation. Current
+    # producers include the exact observed identities and pagination state.
+    collection_results: NotRequired[list[RetrievalCollectionResultV1]]
     availability_results: list[dict[str, object]]
     missing_information: list[MissingInformationV1]
     retrieval_rounds: int
+    # Absent only in pre-temporal-projection checkpoints; consumers must not infer bounds.
+    temporal_constraints: NotRequired[list[TemporalRangeConstraintV1]]
+    person_candidates: NotRequired[list[PersonCandidateV1]]
+    selected_person_identities: NotRequired[dict[str, str]]
+    unresolved_event_dates: NotRequired[list[UnresolvedEventDateV1]]
+    task_review_candidates: NotRequired[list[TaskReviewCandidateV1]]

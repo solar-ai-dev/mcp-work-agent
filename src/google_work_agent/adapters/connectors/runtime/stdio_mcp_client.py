@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
+import re
 import secrets
 import subprocess
 import threading
@@ -19,7 +21,7 @@ from typing import Any, Literal, cast
 from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
     ConnectorRuntimeRegistry,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 from google_work_agent.ports.connector.mcp_client_port import (
     JsonValue,
     MCPClientPortError,
@@ -37,8 +39,9 @@ from google_work_agent.ports.system.artifact_signature_verifier import (
 JsonObject = dict[str, object]
 PROTOCOL_VERSION = "2026-08-07.p0"
 MANIFEST_MESSAGE_LIMIT_BYTES = 64 * 1024
+MCP_RESPONSE_MESSAGE_LIMIT_BYTES = 8 * 1024 * 1024
 SESSION_KEY_BYTES = 32
-_CONTROL_OPERATION_SEGMENTS = frozenset({"oauth", "connection", "device_flow"})
+_CONTROL_OPERATION_SEGMENTS = frozenset({"oauth", "connection", "device_flow", "repositories"})
 
 
 class MCPProcessStatus(StrEnum):
@@ -315,6 +318,7 @@ class StdioMCPClientAdapter:
                     "delivery_certainty": error.delivery_certainty.value,
                 },
                 error_code=error.code.value,
+                safe_error_code=_safe_error_code(str(error)),
             )
         return MCPToolCallResultV1(
             schema_version=1,
@@ -634,6 +638,11 @@ class StdioMCPClientAdapter:
             except Empty as error:
                 process = self._process
                 if process is None or process.poll() is not None:
+                    logging.getLogger(__name__).error(
+                        "MCP child exited before response: request_id=%s returncode=%s",
+                        request_id,
+                        None if process is None else process.returncode,
+                    )
                     raise MCPClientPortError(
                         code=MCPClientPortErrorCode.CONNECTION_CLOSED,
                         message="mcp child exited before responding",
@@ -684,7 +693,7 @@ class StdioMCPClientAdapter:
         if process is None or process.stdout is None:
             return
         for line in process.stdout:
-            if len(line.encode("utf-8")) > MANIFEST_MESSAGE_LIMIT_BYTES:
+            if len(line.encode("utf-8")) > MCP_RESPONSE_MESSAGE_LIMIT_BYTES:
                 self._last_safe_error_code = MCPClientPortErrorCode.MALFORMED_RESPONSE.value
                 continue
             try:
@@ -703,6 +712,12 @@ class StdioMCPClientAdapter:
             return
         for line in process.stderr:
             self._stderr_lines.append(line.rstrip())
+            error_type = re.match(r"^([A-Za-z_][\w.]*(?:Error|Exception)):", line)
+            if error_type is not None:
+                logging.getLogger(__name__).error(
+                    "MCP child exception: type=%s",
+                    error_type.group(1),
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -740,3 +755,9 @@ def is_control_operation_id(operation_id: str) -> bool:
     return len(segments) >= 3 and any(
         segment in _CONTROL_OPERATION_SEGMENTS for segment in segments[1:-1]
     )
+
+
+def _safe_error_code(value: str) -> str | None:
+    """Keep only the MCP server's bounded, non-sensitive validation code."""
+
+    return value if re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", value) is not None else None

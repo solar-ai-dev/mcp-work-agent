@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Literal, cast
 
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
+)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     StateArtifactMetaV1,
     StateArtifactRefV1,
     WorkAmbiguityV1,
@@ -54,9 +58,9 @@ def assemble_work_analysis(
     ambiguities: Iterable[WorkAmbiguityV1],
     risks: Iterable[WorkRiskV1],
     evidence_refs: Iterable[str],
-    action_necessity_candidate: ActionNecessityV1,
-    action_necessity_reason: str | None,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1],
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1 | None = None,
 ) -> WorkAnalysisResultV2:
     """Assemble validated inputs; guarded relation truth overrides LLM necessity."""
 
@@ -66,12 +70,19 @@ def assemble_work_analysis(
     relations = [cast(WorkRelationV1, dict(item)) for item in validated_relations]
     base_refs = _unique_refs(based_on)
     valid_receipts = _current_receipts(policy_confirmation_receipts, based_on=base_refs)
-    necessity, reason, used_receipts = _resolve_action_necessity(
+    resolved_route_necessities, used_receipts = _apply_policy_receipts_to_routes(
         relations=relations,
-        candidate=action_necessity_candidate,
-        candidate_reason=action_necessity_reason,
+        route_action_necessities=route_action_necessities,
         receipts=valid_receipts,
+        duplicate_conflict_assessment=duplicate_conflict_assessment,
     )
+    necessity, reason, summary_receipts = _resolve_action_necessity(
+        relations=relations,
+        route_action_necessities=resolved_route_necessities,
+        receipts=valid_receipts,
+        duplicate_conflict_assessment=duplicate_conflict_assessment,
+    )
+    used_receipts = _unique_receipts([*used_receipts, *summary_receipts])
     receipt_refs: list[StateArtifactRefV1] = [
         {
             "artifact_id": receipt["meta"]["artifact_id"],
@@ -93,6 +104,9 @@ def assemble_work_analysis(
         "risks": [cast(WorkRiskV1, dict(item)) for item in risks],
         "action_necessity": necessity,
         "action_necessity_reason": reason,
+        "route_action_necessities": [
+            cast(RouteActionNecessityV1, dict(item)) for item in resolved_route_necessities
+        ],
         "policy_confirmation_receipt_refs": receipt_refs,
         "evidence_refs": _unique_strings(evidence_refs),
     }
@@ -101,53 +115,131 @@ def assemble_work_analysis(
 def required_override_confirmation_kind(
     *,
     validated_relations: Sequence[WorkRelationV1],
-    action_necessity_candidate: ActionNecessityV1,
+    action_execution_required: bool,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1],
     based_on: Sequence[StateArtifactRefV1],
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1 | None = None,
 ) -> Literal["DUPLICATE_OVERRIDE", "CONFLICT_OVERRIDE"] | None:
     """Return the missing override receipt kind before final assembly."""
 
-    if action_necessity_candidate != "REQUIRED":
+    if not action_execution_required:
         return None
     receipts = _current_receipts(policy_confirmation_receipts, based_on=based_on)
     kinds = {relation["kind"] for relation in validated_relations}
     if "CONFLICTS_WITH" in kinds and not _has_decision(receipts, "CONFLICT_OVERRIDE"):
         return "CONFLICT_OVERRIDE"
-    if "DUPLICATES" in kinds and not _has_decision(receipts, "DUPLICATE_OVERRIDE"):
+    if (
+        "DUPLICATES" in kinds
+        or _duplicate_observation_requires_override(
+            duplicate_conflict_assessment,
+            route_action_necessities=route_action_necessities,
+        )
+    ) and not _has_decision(receipts, "DUPLICATE_OVERRIDE"):
         return "DUPLICATE_OVERRIDE"
     return None
+
+
+def _apply_policy_receipts_to_routes(
+    *,
+    relations: Sequence[WorkRelationV1],
+    route_action_necessities: Sequence[RouteActionNecessityV1],
+    receipts: Sequence[PolicyConfirmationReceiptV1],
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1 | None,
+) -> tuple[list[RouteActionNecessityV1], list[PolicyConfirmationReceiptV1]]:
+    routes = [cast(RouteActionNecessityV1, dict(item)) for item in route_action_necessities]
+    kinds = {relation["kind"] for relation in relations}
+    if _duplicate_observation_requires_override(
+        duplicate_conflict_assessment,
+        route_action_necessities=routes,
+    ):
+        kinds.add("DUPLICATES")
+    used: list[PolicyConfirmationReceiptV1] = []
+    for relation_kind, receipt_kind in (
+        ("CONFLICTS_WITH", "CONFLICT_OVERRIDE"),
+        ("DUPLICATES", "DUPLICATE_OVERRIDE"),
+    ):
+        if relation_kind not in kinds:
+            continue
+        receipt = _decision_receipt(receipts, receipt_kind)
+        if receipt is None:
+            continue
+        used.append(receipt)
+        if receipt["decision"] == "DECLINED":
+            for route in routes:
+                if route["status"] == "REQUIRED" and (
+                    relation_kind == "CONFLICTS_WITH" or route["candidate_refs"]
+                ):
+                    route["status"] = "NOT_REQUIRED"
+                    route["reason"] = f"{receipt_kind}_DECLINED"
+    return routes, used
 
 
 def _resolve_action_necessity(
     *,
     relations: Sequence[WorkRelationV1],
-    candidate: ActionNecessityV1,
-    candidate_reason: str | None,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
     receipts: Sequence[PolicyConfirmationReceiptV1],
+    duplicate_conflict_assessment: DuplicateConflictAssessmentV1 | None,
 ) -> tuple[ActionNecessityV1, str | None, list[PolicyConfirmationReceiptV1]]:
     kinds = {relation["kind"] for relation in relations}
+    if _duplicate_observation_requires_override(
+        duplicate_conflict_assessment,
+        route_action_necessities=route_action_necessities,
+    ):
+        kinds.add("DUPLICATES")
     used: list[PolicyConfirmationReceiptV1] = []
-    if "CONFLICTS_WITH" in kinds:
-        receipt = _decision_receipt(receipts, "CONFLICT_OVERRIDE")
+    for relation_kind, receipt_kind in (
+        ("CONFLICTS_WITH", "CONFLICT_OVERRIDE"),
+        ("DUPLICATES", "DUPLICATE_OVERRIDE"),
+    ):
+        if relation_kind not in kinds:
+            continue
+        receipt = _decision_receipt(receipts, receipt_kind)
         if receipt is not None:
             used.append(receipt)
-            if receipt["decision"] == "APPROVED":
-                return "REQUIRED", "CONFLICT_OVERRIDE_APPROVED", used
-            return "NOT_REQUIRED", "CONFLICT_OVERRIDE_DECLINED", used
-        return "UNDETERMINED", "CONFLICT_OVERRIDE_REQUIRED", used
-    if "DUPLICATES" in kinds:
-        receipt = _decision_receipt(receipts, "DUPLICATE_OVERRIDE")
-        if receipt is not None:
-            used.append(receipt)
-            if receipt["decision"] == "APPROVED":
-                return "REQUIRED", "DUPLICATE_OVERRIDE_APPROVED", used
-            return "NOT_REQUIRED", "DUPLICATE_OVERRIDE_DECLINED", used
-        if candidate == "REQUIRED":
-            return "UNDETERMINED", "DUPLICATE_OVERRIDE_REQUIRED", used
-        return "NOT_REQUIRED", "EXACT_DUPLICATE_ALREADY_SATISFIES_REQUEST", used
-    if candidate == "NOT_REQUIRED":
-        return "UNDETERMINED", "NO_ACTION_DECISION_REQUIRES_DETERMINISTIC_GROUNDING", used
-    return candidate, _normalized_reason(candidate_reason), used
+            if receipt["decision"] == "DECLINED":
+                return "NOT_REQUIRED", f"{receipt_kind}_DECLINED", used
+        elif any(item["status"] == "REQUIRED" for item in route_action_necessities):
+            return "UNDETERMINED", f"{receipt_kind}_REQUIRED", used
+    if not route_action_necessities:
+        return "NOT_REQUIRED", "NO_ACTION_REQUESTED", used
+    undetermined = next(
+        (item for item in route_action_necessities if item["status"] == "UNDETERMINED"), None
+    )
+    if undetermined is not None:
+        return "UNDETERMINED", undetermined["reason"], used
+    required = next(
+        (item for item in route_action_necessities if item["status"] == "REQUIRED"), None
+    )
+    if required is not None:
+        approved_kind = next(
+            (receipt["confirmation_kind"] for receipt in used if receipt["decision"] == "APPROVED"),
+            None,
+        )
+        return (
+            "REQUIRED",
+            f"{approved_kind}_APPROVED" if approved_kind is not None else required["reason"],
+            used,
+        )
+    return "NOT_REQUIRED", route_action_necessities[0]["reason"], used
+
+
+def _duplicate_observation_requires_override(
+    assessment: DuplicateConflictAssessmentV1 | None,
+    *,
+    route_action_necessities: Sequence[RouteActionNecessityV1],
+) -> bool:
+    if assessment is None or assessment["requested_work_status"] != "SATISFIED":
+        return False
+    matched = set(assessment["matched_candidate_refs"])
+    return bool(
+        matched
+        and any(
+            route["status"] == "REQUIRED" and matched.intersection(route["candidate_refs"])
+            for route in route_action_necessities
+        )
+    )
 
 
 def _current_receipts(
@@ -195,12 +287,17 @@ def _decision_receipt(
     return next((item for item in reversed(receipts) if item["confirmation_kind"] == kind), None)
 
 
-def _normalized_reason(value: str | None) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("action_necessity_reason must be non-empty or null")
-    return value.strip()
+def _unique_receipts(
+    receipts: Sequence[PolicyConfirmationReceiptV1],
+) -> list[PolicyConfirmationReceiptV1]:
+    result: list[PolicyConfirmationReceiptV1] = []
+    seen: set[tuple[str, int]] = set()
+    for receipt in receipts:
+        identity = (receipt["meta"]["artifact_id"], receipt["meta"]["revision"])
+        if identity not in seen:
+            seen.add(identity)
+            result.append(receipt)
+    return result
 
 
 def _unique_strings(values: Iterable[str]) -> list[str]:

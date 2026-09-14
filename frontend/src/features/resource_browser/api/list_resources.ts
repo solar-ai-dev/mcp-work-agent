@@ -3,6 +3,7 @@ import type {
   CalendarListItemWire,
   CalendarContainer,
   GmailListItemWire,
+  GitHubIssueListItemWire,
   ResourceCountResponse,
   ResourceItem,
   ResourceListResponse,
@@ -11,18 +12,25 @@ import type {
   TaskListContainer,
 } from "../../../api/contract";
 
-export function listTaskLists(): Promise<{ schema_version: 1; items: TaskListContainer[]; next_page_token: string | null }> {
-  return requestJson("/api/v1/resources/task-lists?page_size=100");
+export function listTaskLists(continuation: string | null = null, includeUnselected = false): Promise<{ schema_version: 1; items: TaskListContainer[]; next_page_token: string | null }> {
+  const search = new URLSearchParams({ page_size: "100" });
+  if (continuation) search.set("page_token", continuation);
+  if (includeUnselected) search.set("include_unselected", "true");
+  return requestJson(`/api/v1/resources/task-lists?${search.toString()}`);
 }
 
-export function listCalendars(): Promise<{ schema_version: 1; items: CalendarContainer[]; next_page_token: string | null }> {
-  return requestJson("/api/v1/resources/calendars?page_size=100");
+export function listCalendars(continuation: string | null = null, includeUnselected = false): Promise<{ schema_version: 1; items: CalendarContainer[]; next_page_token: string | null }> {
+  const search = new URLSearchParams({ page_size: "100" });
+  if (continuation) search.set("page_token", continuation);
+  if (includeUnselected) search.set("include_unselected", "true");
+  return requestJson(`/api/v1/resources/calendars?${search.toString()}`);
 }
 
 export type ListResourcesRequest =
   | { source: "gmail"; query: string; continuation?: string | null; pageSize?: number; includeThreadMetadata?: boolean }
   | { source: "tasks"; taskListId?: string | null; continuation?: string | null; pageSize?: number; statusScope?: "incomplete" | "completed" }
-  | { source: "calendar"; calendarId?: string | null; continuation?: string | null; pageSize?: number; timeMin: string; timeMax: string };
+  | { source: "calendar"; calendarId?: string | null; continuation?: string | null; pageSize?: number; timeMin: string; timeMax: string }
+  | { source: "github"; repository: string; issueState?: "OPEN" | "CLOSED" | "ALL" };
 
 export function listResources(request: ListResourcesRequest): Promise<ResourceListResponse> {
   const search = new URLSearchParams();
@@ -36,12 +44,15 @@ export function listResources(request: ListResourcesRequest): Promise<ResourceLi
     if (request.taskListId) search.set("task_list_id", request.taskListId);
     if (request.continuation) search.set("page_token", request.continuation);
     if (request.statusScope === "completed") search.set("status_scope", "completed");
-  } else {
+  } else if (request.source === "calendar") {
     search.set("page_size", String(boundedPageSize(request.pageSize, 100)));
     if (request.calendarId) search.set("calendar_id", request.calendarId);
     if (request.continuation) search.set("page_token", request.continuation);
     search.set("time_min", request.timeMin);
     search.set("time_max", request.timeMax);
+  } else {
+    search.set("repository", request.repository);
+    search.set("state", request.issueState ?? "OPEN");
   }
   return requestJson<ResourceListWireResponse>(`/api/v1/resources/${request.source}?${search.toString()}`).then((response) => ({
     ...response,
@@ -116,6 +127,28 @@ function projectResourceItem(
         scheduled_date: item.scheduled_date,
         completed_at: item.completed_at,
         tasklist_id: item.tasklist_id,
+      },
+    };
+  }
+  if (source === "github") {
+    const item = value as GitHubIssueListItemWire;
+    return {
+      ...item,
+      source,
+      resource_type: "github_issue",
+      parent_id: item.repository,
+      subtitle: `#${item.issue_number}`,
+      link_url: item.url,
+      version: projectionVersion,
+      related_resource_ids: [item.repository],
+      metadata: {
+        repository: item.repository,
+        issue_number: item.issue_number,
+        description: item.description,
+        issue_state: item.issue_state,
+        url: item.url,
+        labels: item.labels,
+        assignees: item.assignees,
       },
     };
   }

@@ -40,6 +40,10 @@ class OAuthConnectionMetadata:
     ]
     granted_scopes: tuple[str, ...]
     missing_required_scopes: tuple[str, ...]
+    authorization_status: (
+        Literal["PENDING", "SLOW_DOWN", "APPROVED", "EXPIRED", "DENIED"] | None
+    ) = None
+    detail_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

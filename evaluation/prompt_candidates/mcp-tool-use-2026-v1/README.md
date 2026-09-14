@@ -1,121 +1,85 @@
-# MCP tool-use research prompt candidate v1
+# 내부 Agent Prompt — 적용 전 후보
 
-This directory is an **offline DRAFT candidate bundle** for the Google Work Agent's existing
-21-slot Prompt Runtime contract. It does not replace the current Product prompt bundle and must
-not be loaded by installed or production runtime before the normal activation gates pass.
+이 디렉터리는 **제품 내부 LLM 호출에 사용할 Prompt 수정 후보**다. 시험용 사용자 질문은 `../../datasets/`에 있다. 이 파일들과 `sources/`를 Google·GitHub 업무 자료로 올리지 않는다.
 
-## Why this is a candidate, not an active bundle
+## 본문 수정 범위
 
-The Product is still before Prompt/Model experimentation. The current Product baseline remains
-the runtime-compatible control; it is not described here as release-activated evidence. This
-candidate incorporates research-informed hypotheses
-about MCP tool discovery, state threading, long-horizon reliability, grounding, and adversarial
-tool metadata/output. Those hypotheses must be measured against the existing baseline; they are
-not evidence of improvement by themselves.
+원본의 21개 역할과 경로를 유지하고 각 본문을 Responsibility / Input boundary / Decision procedure / Boundaries / Output and repair로 정리했다. 일반적인 규칙의 반복은 줄이고 각 호출이 실제로 결정할 것과 결정하지 않을 것을 구분했다.
 
-Every slot is therefore:
+- Request Understanding: 부정·인용·일반 역할과 실제 사람, 시간 표현의 여러 역할, 원래 사용자 제약을 보존한다. 독립 시간축 owner의 결과를 다시 덮어쓰지 않는다.
+- Retrieval: 사용자 제약과 검색 가설을 구분하고 실제 관측으로 다음 search/page/detail을 선택한다. Evidence의 관련성·모든 segment의 선택/제외·취소와 정정·연도 불확실성을 보존한다. Sufficiency가 보지 못한 candidate/coverage를 있다고 가정하지 않는다.
+- Work Analysis: 사실·관계·의존·중복·누락·위험의 책임을 분리하고 원본의 necessity/empty-result 조건과 ID namespace를 유지한다.
+- Planning: 본문 제안·Draft 저장·SEND·Reply를 구분하고 부분 수정의 미언급 필드를 보존한다. 외부 결과를 미리 성공으로 쓰지 않는다.
+- Review: 담당 dimension의 실제 결함만 반환한다. 정상 finding을 만들거나 해결된 옛 결함을 반복하지 않고 영향을 받지 않은 dimension은 재검토하지 않는다.
 
-```text
-status = DRAFT
-node_dev_pass = false
-node_holdout_pass = false
-safety_gate_pass = false
-manifest_approved = false
-```
+이들은 **오프라인 수정 후보**이지 실제 9B/4B 개선 결과가 아니다. 원본처럼 내부 지시 언어는 영어이며, 생성 답변은 사용자가 요청한 언어를 따른다. 시험 질문/Gold/Case ID를 내부 Prompt에 넣지 않았다.
 
-The committed source of this candidate is `candidate.json` plus `sources/`. The materializer
-derives a normal `PromptRegistry` directory by overlaying the candidate onto the current Product
-21-slot manifest and copying the current input contract. This avoids duplicating Product-owned
-slot metadata or turning Evaluation into a second Prompt Runtime authority.
+## 원래 경로와 연결 유지
 
-Multiple DRAFT candidates may coexist beside this directory on the same branch. An
-`ExperimentPlanV1` selects exactly one bundle for a run; unused candidates remain available for
-later controlled experiments. Candidate branches are not required, and candidate cleanup happens
-only after a separately approved final winner exists.
+`evaluation/prompt_candidates/mcp-tool-use-2026-v1/`와 각 `sources/<slot_id>.md`를 유지한다. `candidate.json`의 candidate ID, slot ID, source 경로, Product manifest/input-contract 경로는 그대로다. 본문 개정에 해당하는 candidate/Prompt 버전과 hash만 갱신하고 DRAFT 및 activation evidence의 false를 유지한다. `base_product_sha`는 첨부 원본의 출처이지 최신 로컬 실행을 검증했다는 표시가 아니다.
 
-## Materialize for an experiment
+이전 `planning-review-sllm-decomposition-v0.9.2`의 source/assembled/입력 계약은 비활성 비교자료다. 이 묶음의 옛 7-slot 또는 fragment 구성을 현재 제품에 병합하지 않는다. 21개도 현재 로컬 제품의 전체 slot 수를 강제하는 숫자가 아니다.
 
-From the repository root:
+## 후보 사본 만들기
 
-```powershell
-python evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py `
-  --output <temporary-output-directory>
-```
-
-The temporary output contains:
+원래 materializer 경로와 함수 진입점을 유지한다. 저장소 루트에서 다음을 실행한다. 현재 Product manifest·input contract가 실제로 있어야 한다.
 
 ```text
-prompt_manifest.json
-prompt_runtime_input_contract_v1.json
-sources/<21 exact prompt-slot files>.md
+python -m evaluation.prompt_candidates.mcp-tool-use-2026-v1.materialize_prompt_candidate --repository-root <repository-root> --output <empty-temporary-directory>
 ```
 
-`PromptRegistry.lookup_for_evaluation()` may load the resulting manifest.
-`PromptRegistry.lookup_for_product_release()` must reject it because every generated slot remains
-`DRAFT`.
-
-Do not materialize over:
+기본값은 후보·Product manifest·input-contract의 slot 집합이 모두 일치해야 한다. 현재 제품에 추가 slot이 있다면 먼저 그 책임과 schema를 대조하고, 변경하지 않을 추가 source를 보존하는 경우에만 명시적으로 사용한다.
 
 ```text
-src/google_work_agent/application/prompt_runtime/
+python -m evaluation.prompt_candidates.mcp-tool-use-2026-v1.materialize_prompt_candidate --repository-root <repository-root> --output <empty-temporary-directory> --keep-extra-product-slots
 ```
 
-## Contract preservation
+추가 slot의 source bytes·prompt_version·content_hash·runtime/schema binding은 유지한다. 입력 계약은 바이트 그대로 복사한다. 새로 조합한 후보 묶음은 모든 slot을 DRAFT/미검증으로 만들므로 과거 activation evidence를 새 묶음의 PASS로 재사용하지 않는다. 추가 source 누락/변조, 후보에만 있는 unknown slot, manifest/input-contract 불일치, version 불일치는 거부한다. 없는 시간축 Prompt를 생성하거나 22를 또 고정값으로 넣지 않는다.
 
-This bundle deliberately preserves:
+출력은 별도의 비어 있는 임시 경로에만 만들고 기존 Product/후보 source와 겹치거나 기존 파일을 덮어쓰는 경로는 거부한다. 검증을 먼저 완료한 뒤 사본을 만들며 실패한 binding 뒤 부분 사본을 남기지 않는다. 이 명령은 제품을 실행하거나 Prompt를 활성화하지 않는다.
 
-- the exact 21 prompt-slot IDs;
-- the current runtime-node mapping;
-- the current input/output schema versions;
-- the current prompt input allowlist/forbidden-field contract;
-- the one-responsibility-per-node boundary;
-- deterministic ownership of routing, policy, approval, execution, verification, and recovery.
-
-It changes instruction text only. It does not add a new agent, tool-selection authority, policy
-authority, state field, output field, or external-effect path.
-
-## Research hypotheses encoded
-
-The candidate tests whether explicit instructions improve:
-
-1. exact selection from registered tool candidates rather than name similarity, list order, or
-   persuasive descriptions;
-2. preservation of opaque IDs/handles across calls without parsing, guessing, or cross-run reuse;
-3. resistance to tool-description, tool-output, resource-content, error-message, and
-   user-impersonation injections;
-4. minimal-scope arguments and suppression of out-of-scope recipients, permissions, resources,
-   and effects;
-5. discovery-before-detail retrieval, high-signal context, and avoidance of redundant retries;
-6. grounding in typed state and observed outcomes rather than an agent's or tool's success claim;
-7. long-horizon consistency through bounded, delta-oriented retrieval/review behavior.
-
-## Required evaluation before activation
-
-Compare this bundle with the current Product baseline using the same Product SHA, model candidate,
-graph profile, dataset bytes, tool registry, fixtures, and graders.
-
-Required gates:
-
-- all 21 node DEV suites;
-- all applicable node HOLDOUT suites;
-- balanced should/should-not-call and should/should-not-confirm cases;
-- MCP Security Bench-inspired attack cases covering name collision, preference manipulation,
-  tool-description injection, out-of-scope parameters, user impersonation, false-error
-  escalation, tool transfer, and retrieval injection;
-- schema-valid-first-pass and repair-rate comparisons;
-- tool-selection, argument, grounding, and review false-positive/false-negative metrics;
-- Product-episode outcome verification rather than final-message claims;
-- repeated trials with both pass@k and pass^k;
-- the existing deterministic Product safety and real production-composition regression suites.
-
-Only an immutable Product Decision/Prompt activation artifact may promote winning content to
-`RUNTIME_ACTIVE`.
-
-## Files
+생성된 DRAFT 묶음은 기존 Product composition의 명시적 개발 입력으로만 선택한다. 새 Registry나
+별도 Graph를 만들지 않으며, `<materialized-directory>/prompt_manifest.json`을 다음 경로에 전달한다.
 
 ```text
-candidate.json
-materialize_prompt_candidate.py
-research-basis.md
-sources/<21 exact prompt-slot files>.md
+python -m launcher.development_entrypoint --prompt-manifest <materialized-directory>/prompt_manifest.json
+python scripts/measure_local_runtime.py --prompt-manifest <materialized-directory>/prompt_manifest.json
 ```
+
+두 명령 모두 같은 Product `PromptRegistry`와 production Graph/Node caller를 사용한다. 인자를
+생략하면 기존 baseline manifest를 사용하고, signed release는 이 개발 후보 경로를 허용하지 않는다.
+개발 앱 기동이나 Graph 로딩 성공은 Prompt 품질 또는 activation PASS가 아니다.
+
+## 실제 적용 전 확인
+
+현재 로컬의 최종 caller·입출력 schema·새 시간축 Prompt는 첨부본에 없다. 따라서 필드/enum/책임 일치와 실제 모델의 구조화 출력은 로컬에서 확인해야 한다. manifest metadata가 일치한다는 사실만으로 의미 호환을 보증하지 않는다.
+
+특히 이 후보의 ambiguity/necessity/empty-result 지침이 참조하는 필드는 원본 계약을 유지한 것이다. 현재 계약이 다르면 Prompt와 해당 caller를 함께 대조한다. Prompt 안에서 "구버전이면 이 필드를 새로 만들라"는 방식으로 해결하지 않는다. 없는 입력을 발명하거나 기존 구조·안전 검증을 약화하지 않는다.
+
+같은 업무 자료와 질문에서 현재 Prompt와 후보를 비교한다. 실제 사용 모델·커밋·변경·결과는 [실험 기록](../../experiments/README.md)에만 간단히 남긴다. source review/구조 검사/임시 사본 생성은 제품·모델 품질 PASS가 아니다.
+
+## 책임별 원문
+
+| 책임 | 후보 |
+| --- | --- |
+| request_understanding | [identify_goal](sources/request_understanding.identify_goal.md) — Identify the current request |
+| request_understanding | [detect_ambiguity](sources/request_understanding.detect_ambiguity.md) — Locate genuine unresolved user choices |
+| tool_routing | [determine_io_resources](sources/tool_routing.determine_io_resources.md) — Determine the semantic input and output needs |
+| tool_routing | [select_tool_if_needed](sources/tool_routing.select_tool_if_needed.md) — Select within the supplied Tool candidates |
+| retrieval | [plan_query](sources/retrieval.plan_query.md) — Plan the next useful information acquisition |
+| retrieval | [select_evidence](sources/retrieval.select_evidence.md) — Select material evidence, not merely matching text |
+| retrieval | [assess_sufficiency](sources/retrieval.assess_sufficiency.md) — Decide whether the collected evidence meets the request |
+| work_analysis | [extract_work_facts](sources/work_analysis.extract_work_facts.md) — Extract business facts from admitted evidence |
+| work_analysis | [resolve_entity_relations](sources/work_analysis.resolve_entity_relations.md) — Resolve supported entity relationships |
+| work_analysis | [resolve_temporal_dependencies](sources/work_analysis.resolve_temporal_dependencies.md) — Interpret evidenced temporal and work dependencies |
+| work_analysis | [detect_duplicate_conflict_candidates](sources/work_analysis.detect_duplicate_conflict_candidates.md) — Identify meaningful duplicate and conflict candidates |
+| work_analysis | [assess_information_gaps](sources/work_analysis.assess_information_gaps.md) — Identify the information needed for the requested result |
+| work_analysis | [assess_operational_risks](sources/work_analysis.assess_operational_risks.md) — Assess evidence-grounded operational risks |
+| planning | [outline_answer](sources/planning.outline_answer.md) — Outline a grounded answer |
+| planning | [compose_answer](sources/planning.compose_answer.md) — Compose the answer supported by the outline and evidence |
+| planning | [draft_action_objective_per_output_route](sources/planning.draft_action_objective_per_output_route.md) — Draft the objective for one frozen output route |
+| planning | [compose_arguments_per_output_route](sources/planning.compose_arguments_per_output_route.md) — Compose supported business arguments for one action |
+| review | [inspect_goal_and_evidence](sources/review.inspect_goal_and_evidence.md) — Inspect goal satisfaction and evidence grounding |
+| review | [inspect_action_scope_and_route](sources/review.inspect_action_scope_and_route.md) — Inspect action necessity, scope, and frozen route consistency |
+| review | [inspect_constraints_and_policy_summary](sources/review.inspect_constraints_and_policy_summary.md) — Inspect the plan against supplied constraints and policy summary |
+| review | [recheck_affected_dimensions](sources/review.recheck_affected_dimensions.md) — Recheck the specific dimensions affected by a revision |

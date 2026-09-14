@@ -62,15 +62,10 @@ def test_retired_one_time_and_parallel_authority_paths__are_absent__without_stal
             assert retired not in content, f"{path.relative_to(ROOT)} still references {retired}"
 
 
-def test_product_closure__contains_exactly__three_artifacts() -> None:
+def test_historical_document_snapshots__are_not__live_authorities() -> None:
     tracked = _tracked_files()
-    closure = sorted(path for path in tracked if path.startswith("docs/artifacts/product-closure/"))
-
-    assert closure == [
-        "docs/artifacts/product-closure/01-canonical-implementation-traceability.csv",
-        "docs/artifacts/product-closure/02-cross-layer-runtime-traceability.csv",
-        "docs/artifacts/product-closure/03-product-closure-report.md",
-    ]
+    assert not any(path.startswith("docs/artifacts/product-closure/") for path in tracked)
+    assert not any(path.startswith("docs/product-decisions/") for path in tracked)
 
 
 def test_top_level_config__is_retained_by__current_install_consumers() -> None:
@@ -88,23 +83,37 @@ def test_top_level_config__is_retained_by__current_install_consumers() -> None:
 def test_byte_hashed_prompt_artifacts__pin_checkout_bytes__across_platforms() -> None:
     attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     manifest = ROOT / "src/google_work_agent/application/prompt_runtime/prompt_manifest.json"
-    plans = [
-        json.loads(path.read_text(encoding="utf-8"))
-        for path in sorted((ROOT / "evaluation/configs/experiments").glob("prompt-*.json"))
-    ]
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    candidate_path = (
+        ROOT / "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.json"
+    )
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
 
     assert "src/google_work_agent/application/prompt_runtime/*.json text eol=lf" in attributes
     assert "src/google_work_agent/application/prompt_runtime/sources/*.md text eol=lf" in attributes
     assert "evaluation/prompt_candidates/** text eol=lf" in attributes
-    assert len(plans) == 2
-    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == plans[0]["prompt_candidate"][
-        "bundle_hash"
-    ]
-    for plan in plans:
-        for field in ("dataset", "candidate_config", "grader"):
-            artifact = plan[field]
-            path = ROOT / artifact["path"]
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"]
+    for slot in manifest_payload["slots"]:
+        source = manifest.parent / slot["source"]
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == slot["content_hash"]
+    for slot_id, source_entry in candidate["sources"].items():
+        source = candidate_path.parent / source_entry["source"]
+        assert source.name == f"{slot_id}.md"
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == source_entry["content_hash"]
+    research_basis = candidate_path.parent / candidate["research_basis"]
+    assert (
+        hashlib.sha256(research_basis.read_bytes()).hexdigest()
+        == candidate["research_basis_sha256"]
+    )
+    bundle_material = {
+        key: value for key, value in candidate.items() if key != "candidate_bundle_hash"
+    }
+    bundle_bytes = json.dumps(
+        bundle_material,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    assert hashlib.sha256(bundle_bytes).hexdigest() == candidate["candidate_bundle_hash"]
 
 
 def test_production_packages__are_nonempty_and_have__no_alias_only_modules() -> None:
@@ -163,11 +172,12 @@ def _is_alias_statement(node: ast.stmt) -> bool:
 
 
 def _tracked_files() -> set[str]:
-    return set(
+    candidates = set(
         subprocess.run(
             ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
         ).stdout.splitlines()
     )
+    return {path for path in candidates if (ROOT / path).is_file()}
 
 
 def _text_files(tracked: set[str]) -> list[Path]:

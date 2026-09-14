@@ -9,6 +9,7 @@ ensure_llm_call_budget-before / consume_llm_call_budget-after pattern).
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 import pytest
@@ -17,12 +18,20 @@ from google_work_agent.adapters.langgraph.profiles.profile_registry import Graph
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.graph import (
     RequestUnderstandingSubgraph,
 )
+from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_responsibilities,
+)
+from google_work_agent.application.agents.request_understanding import (
+    identify_source_dependencies as source_dependencies,
+)
+from google_work_agent.application.tool_registry.load_signed_tool_registry import (
+    load_signed_tool_registry,
+)
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     account_provider_dispatch,
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
-    NORMAL_MAX_LLM_CALLS,
     build_default_run_budget,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -51,6 +60,26 @@ PROMPT_REF = PromptReference(
     purpose="test",
     input_schema_version="v1",
     output_schema_version="v1",
+)
+SOURCE_DEPENDENCY_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_source_dependencies",
+    purpose="identify_source_dependencies",
+)
+OUTPUT_RESPONSIBILITY_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_output_responsibilities",
+    purpose="identify_output_responsibilities",
+)
+EFFECT_PROHIBITION_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_effect_prohibitions",
+    purpose="identify_effect_prohibitions",
+)
+SOURCE_STATUS_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_source_status",
+    purpose="identify_source_status",
 )
 
 
@@ -88,9 +117,23 @@ class _RepairingAgent:
         result.structured_output = {
             "goal": "test goal",
             "completion_conditions": ["done"],
-            "constraints": [],
-            "requested_effect_hints": ["READ"],
-            "requested_resource_hints": ["TASK"],
+            "constraints": {
+                "search_terms": [],
+                "business_concepts": [],
+                "person": [],
+                "sender": [],
+                "recipient": [],
+                "subject": [],
+                "period": [],
+                "coverage_requirement": "NOT_COLLECTION",
+                "additional_constraints": [],
+            },
+            "resource_responsibilities": {
+                "source_reads": [
+                    {"resource_type": "TASK", "required_information": ["task_identity"]}
+                ],
+                "outputs": [],
+            },
             "analysis_requirement": "REQUIRED",
         }
         return result
@@ -102,11 +145,65 @@ class _RepairingAgent:
         input_projection: Mapping[str, object],
         output_schema_ref: OutputSchemaDefinition,
     ) -> StructuredInferenceResultV1:
-        del requested_mode, prompt_ref, input_projection, output_schema_ref
+        del requested_mode, output_schema_ref
         result = self.invoke_structured()
+        output = result.structured_output
+        if prompt_ref.prompt_id == "request_understanding.identify_source_dependencies":
+            responsibilities = cast(Mapping[str, object], output["resource_responsibilities"])
+            task_source = cast(list[Mapping[str, object]], responsibilities["source_reads"])[0]
+            base = cast(
+                Mapping[str, object],
+                input_projection.get("base_projection", input_projection),
+            )
+            candidates = cast(list[Mapping[str, object]], base["source_candidates"])
+            output = {
+                "source_dependencies": [
+                    (
+                        {
+                            "resource_type": candidate["resource_type"],
+                            "dependency": "SOURCE_REQUIRED",
+                            "required_information": task_source["required_information"],
+                        }
+                        if candidate["resource_type"] == "TASK"
+                        else {
+                            "resource_type": candidate["resource_type"],
+                            "dependency": "SOURCE_NOT_REQUIRED",
+                        }
+                    )
+                    for candidate in candidates
+                ]
+            }
+        elif prompt_ref.prompt_id == "request_understanding.identify_output_responsibilities":
+            base = cast(
+                Mapping[str, object],
+                input_projection.get("base_projection", input_projection),
+            )
+            output = {
+                "output_responsibilities": []
+            }
+        elif prompt_ref.prompt_id == "request_understanding.identify_effect_prohibitions":
+            base = cast(
+                Mapping[str, object],
+                input_projection.get("base_projection", input_projection),
+            )
+            output = {
+                "effect_prohibitions": [
+                    {
+                        "effect": candidate["effect"],
+                        "prohibition": "NOT_FORBIDDEN",
+                    }
+                    for candidate in cast(list[Mapping[str, object]], base["effect_candidates"])
+                ]
+            }
+        elif prompt_ref.prompt_id == "request_understanding.identify_source_status":
+            output = {"statuses": []}
+        else:
+            output = {
+                key: value for key, value in output.items() if key != "resource_responsibilities"
+            }
         return StructuredInferenceResultV1(
             schema_version=1,
-            structured_output=result.structured_output,
+            structured_output=output,
             provider="test-provider",
             model="test-model",
             actual_runtime="LOCAL_GPU",
@@ -127,6 +224,16 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph = object.__new__(RequestUnderstandingSubgraph)
     subgraph._llm_runtime = agent if agent is not None else cast(Any, _NeverCalledAgent())
     subgraph._identify_goal_prompt_ref = PROMPT_REF
+    subgraph._identify_effect_prohibitions_prompt_ref = EFFECT_PROHIBITION_PROMPT_REF
+    subgraph._identify_source_dependencies_prompt_ref = SOURCE_DEPENDENCY_PROMPT_REF
+    subgraph._identify_output_responsibilities_prompt_ref = OUTPUT_RESPONSIBILITY_PROMPT_REF
+    subgraph._identify_source_status_prompt_ref = SOURCE_STATUS_PROMPT_REF
+    subgraph._source_dependency_candidates = source_dependencies.build_source_dependency_candidates(
+        load_signed_tool_registry()
+    )
+    subgraph._output_responsibility_candidates = (
+        output_responsibilities.build_output_responsibility_candidates(load_signed_tool_registry())
+    )
     subgraph._graph_profile = GraphProfile.SIX_ROLE_BASELINE
     return subgraph
 
@@ -169,7 +276,7 @@ def _state(*, llm_calls_used: int) -> dict[str, object]:
 
 def test_exhausted_budget_blocks__the_call_before_the__agent_is_ever_invoked() -> None:
     subgraph = _subgraph()
-    state = _state(llm_calls_used=NORMAL_MAX_LLM_CALLS)
+    state = _state(llm_calls_used=build_default_run_budget()["absolute_llm_call_limit"])
 
     with pytest.raises(LLMInvocationError) as excinfo:
         subgraph._identify_goal_node(cast(Any, state))
@@ -187,5 +294,5 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
 
     result = subgraph._identify_goal_node(cast(Any, state))
 
-    assert agent.calls == 1
-    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 5
+    assert agent.calls == 5
+    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 13

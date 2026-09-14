@@ -40,13 +40,14 @@ class FinalizeIntentV1(TypedDict):
     intent: Literal["COMPLETED", "BLOCKED", "FAILED"]
     reason_code: str
     result_kind: NotRequired[Literal["PARTIAL"] | None]
+    prerequisite_message: NotRequired[str]
 
 
 def validate_finalize_intent_v1(value: object) -> FinalizeIntentV1:
     if not isinstance(value, dict):
         raise ValueError("finalize intent must be an object")
     required = {"schema_version", "intent", "reason_code"}
-    optional = {"result_kind"}
+    optional = {"result_kind", "prerequisite_message"}
     actual = set(value)
     missing = required - actual
     extra = actual - required - optional
@@ -64,12 +65,25 @@ def validate_finalize_intent_v1(value: object) -> FinalizeIntentV1:
     result_kind = value.get("result_kind")
     if result_kind is not None and result_kind != "PARTIAL":
         raise ValueError("finalize intent result_kind must be PARTIAL or null")
-    return {
+    result: FinalizeIntentV1 = {
         "schema_version": 1,
         "intent": cast(Literal["COMPLETED", "BLOCKED", "FAILED"], intent),
         "reason_code": reason_code,
         "result_kind": cast(Literal["PARTIAL"] | None, result_kind),
     }
+    if "prerequisite_message" in value:
+        message = value["prerequisite_message"]
+        if (
+            reason_code != "CONNECTOR_PREREQUISITE_UNMET"
+            or intent != "COMPLETED"
+            or result_kind != "PARTIAL"
+            or not isinstance(message, str)
+            or not message.strip()
+            or len(message.encode("utf-8")) > 4096
+        ):
+            raise ValueError("invalid connector prerequisite terminal message")
+        result["prerequisite_message"] = message
+    return result
 
 
 def _require_string(value: object, field_name: str) -> str:

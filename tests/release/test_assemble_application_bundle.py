@@ -18,6 +18,9 @@ from release.profiles import DeploymentProfile
 from tests.support.bundle_fixture import create_bundle_inputs
 from tests.support.canonical_prompt_runtime import deactivate_prompt_slot
 
+ROOT = Path(__file__).resolve().parents[2]
+LOCAL_MODEL_PROFILE = ROOT / "config/local-model-profile-v1.json"
+
 
 def test_api_only__bundle_materializes_exact__connector_tool_artifacts(tmp_path: Path) -> None:
     inputs = create_bundle_inputs(tmp_path / "inputs")
@@ -75,8 +78,12 @@ def test_local_capable_bundle__requires_and_includes__generated_model_manifest(
         minimum_ollama_version="0.6.0",
         approved_models=(
             ApprovedModelEntryV1(
-                "qwen2.5:7b-instruct-q4_K_M",
-                hashlib.sha256(b"approved-model").hexdigest(),
+                "qwen3.5:4b",
+                hashlib.sha256(b"worker-model").hexdigest(),
+            ),
+            ApprovedModelEntryV1(
+                "qwen3.5:9b",
+                hashlib.sha256(b"reasoning-model").hexdigest(),
             ),
         ),
         output_path=model_manifest,
@@ -88,7 +95,7 @@ def test_local_capable_bundle__requires_and_includes__generated_model_manifest(
             decision_status="APPROVED_FOR_LOCAL_PROFILE",
             release_version="test-release",
             deployment_profile="LOCAL_CAPABLE",
-            selected_model_id="qwen2.5:7b-instruct-q4_K_M",
+            selected_model_id="qwen3.5:9b",
             model_manifest_hash=hashlib.sha256(manifest.to_canonical_bytes()).hexdigest(),
             candidate_config_hash=hashlib.sha256(b"candidate-config").hexdigest(),
             minimum_cpu_logical_cores=4,
@@ -103,6 +110,7 @@ def test_local_capable_bundle__requires_and_includes__generated_model_manifest(
         tmp_path / "inputs",
         model_manifest=model_manifest,
         local_model_product_decision=decision_path,
+        local_model_profile=LOCAL_MODEL_PROFILE,
     )
 
     paths = assemble_application_bundle(
@@ -113,6 +121,7 @@ def test_local_capable_bundle__requires_and_includes__generated_model_manifest(
 
     assert "manifests/model-manifest-v1.json" in paths
     assert "manifests/local-model-product-decision-v1.json" in paths
+    assert "manifests/local-model-profile-v1.json" in paths
     assert not any("ollama.exe" in path.lower() for path in paths)
 
 
@@ -159,8 +168,28 @@ def test_signed_bundle__materializes_exact_validated__prompt_file_closure(
         inputs.prompt_manifest.read_bytes()
     )
     assert (prompt_root / "prompt_runtime_input_contract_v1.json").is_file()
-    assert len(tuple((prompt_root / "sources").glob("*.md"))) == 21
-    assert len(tuple((prompt_root / "activation-evidence").rglob("*.json"))) == 126
+    prompt_manifest = json.loads(inputs.prompt_manifest.read_text(encoding="utf-8"))
+    prompt_slots = prompt_manifest["slots"]
+    assert {path.name for path in (prompt_root / "sources").glob("*.md")} == {
+        Path(slot["source"]).name for slot in prompt_slots
+    }
+    evidence_keys = (
+        "dataset",
+        "grader",
+        "node_dev_result",
+        "node_holdout_result",
+        "safety_gate_result",
+        "manifest_approval",
+    )
+    expected_evidence_paths = {
+        Path(slot["activation_evidence"][key]["path"]).as_posix()
+        for slot in prompt_slots
+        for key in evidence_keys
+    }
+    assert {
+        path.relative_to(prompt_root).as_posix()
+        for path in (prompt_root / "activation-evidence").rglob("*.json")
+    } == expected_evidence_paths
     assert "manifests/prompt/unreferenced.txt" not in paths
 
 
@@ -177,6 +206,7 @@ def test_local_capable__rejects_noncanonical__model_manifest(tmp_path: Path) -> 
         tmp_path / "inputs",
         model_manifest=model_manifest,
         local_model_product_decision=decision_path,
+        local_model_profile=LOCAL_MODEL_PROFILE,
     )
 
     with pytest.raises(ValueError, match="concrete lowercase"):

@@ -23,9 +23,12 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     ContextBundleV1,
     EvidenceDraftV1,
     EvidenceSelectionResultV2,
+    PersonCandidateV1,
     RetrievalResultV1,
     RetrievalSourceStatusV1,
+    SufficiencyIssueV2,
     SufficiencyResultV2,
+    TaskReviewCandidateV1,
 )
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import RagCandidateV1
 from google_work_agent.application.agents.retrieval.resolve_availability import AvailableIntervalV1
@@ -34,11 +37,23 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ScopeExpansionRequiredV1,
     ToolRoutePlanV2,
 )
+from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
+    PolicyConfirmationReceiptV1,
+)
+from google_work_agent.ports.system.contracts.confirmation import UserInterruptV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
 )
+
+
+class ReadResultBindingV1(TypedDict):
+    """Checkpoint-safe identity of the exact plan that produced one cached READ."""
+
+    route_id: str
+    query_identity_hash: str
+    source_fetch_plan: NotRequired[SourceFetchPlanV1]
 
 
 class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
@@ -51,8 +66,17 @@ class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
     )
     acquisition_result: AcquisitionResultV1 | None
     retrieval_result: RetrievalResultV1 | None
+    user_interrupt: UserInterruptV1 | None
+    policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
     exclusion_obligation_segment_ids: list[str]
     pending_user_retrieval_need: RetrievalNeedV1 | None
+    __context_canonical_plans__: dict[str, SourceFetchPlanV1]
+    __context_query_attempts__: list[QueryAttemptV1]
+    __context_read_result_handles__: list[str]
+    __context_read_bindings__: dict[str, ReadResultBindingV1]
+    __context_segment_handles__: list[str]
+    __context_sufficiency_output__: SufficiencyResultV2 | None
+    __context_current_round_no__: int | None
 
 
 class ContextRetrievalLocalState(GraphState):
@@ -70,6 +94,8 @@ class ContextRetrievalLocalState(GraphState):
     final_result: NotRequired[RetrievalResultV1 | None]
     context_bundle: NotRequired[ContextBundleV1]
     evidence_drafts: NotRequired[list[EvidenceDraftV1]]
+    person_candidates: NotRequired[list[PersonCandidateV1]]
+    selected_person_identities: NotRequired[dict[str, str]]
     llm_provider_result: NotRequired[dict[str, object] | None]
     query_plan: NotRequired[RetrievalQueryPlanV2 | None]
     source_fetch_plans: NotRequired[list[SourceFetchPlanV1]]
@@ -79,18 +105,16 @@ class ContextRetrievalLocalState(GraphState):
     __context_agent_local__: NotRequired[AgentLocalStateV1]
     __context_rag_candidates__: NotRequired[list[RagCandidateV1]]
     __context_selection_output__: NotRequired[EvidenceSelectionResultV2]
-    __context_sufficiency_output__: NotRequired[SufficiencyResultV2]
-    __context_current_round_no__: NotRequired[int]
-    __context_read_result_handles__: NotRequired[list[str]]
-    __context_read_bindings__: NotRequired[dict[str, dict[str, str]]]
-    __context_segment_handles__: NotRequired[list[str]]
-    __context_query_attempts__: NotRequired[list[QueryAttemptV1]]
+    __context_sufficiency_output__: NotRequired[SufficiencyResultV2 | None]
+    __context_current_round_no__: NotRequired[int | None]
     __context_followup_planner_input__: NotRequired[dict[str, object]]
-    __context_canonical_plans__: NotRequired[dict[str, SourceFetchPlanV1]]
     __context_followup_operation__: NotRequired[str]
     __context_next_page_handles__: NotRequired[dict[str, str]]
     __context_detail_candidates__: NotRequired[dict[str, str]]
+    __context_round_preadvanced__: NotRequired[bool]
     __context_retrieval_retry_confirmation__: NotRequired[bool]
+    __context_evidence_reassessment_issues__: NotRequired[list[SufficiencyIssueV2] | None]
+    task_review_candidates: NotRequired[list[TaskReviewCandidateV1]]
 
 
 class RetrievalState(TypedDict, total=False):
@@ -109,12 +133,15 @@ class RetrievalState(TypedDict, total=False):
     exclusion_obligation_segment_ids: list[str]
     pending_user_retrieval_need: RetrievalNeedV1 | None
     evidence_selection: EvidenceSelectionResultV2 | None
+    evidence_reassessment_issues: list[SufficiencyIssueV2]
     sufficiency: SufficiencyResultV2 | None
     final_result: RetrievalResultV1 | None
+    task_review_candidates: list[TaskReviewCandidateV1]
 
 
 __all__ = [
     "ContextRetrievalInputState",
     "ContextRetrievalLocalState",
+    "ReadResultBindingV1",
     "RetrievalState",
 ]

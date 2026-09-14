@@ -8,6 +8,8 @@ export type ConnectorConnection = {
   connection_status: "CONNECTING" | "CONNECTED" | "DISCONNECTED" | "REAUTH_REQUIRED" | "UNAVAILABLE";
   granted_scopes: string[];
   missing_required_scopes: string[];
+  authorization_status?: "PENDING" | "SLOW_DOWN" | "APPROVED" | "EXPIRED" | "DENIED" | null;
+  detail_code?: string | null;
 };
 
 export type GoogleConnection = ConnectorConnection;

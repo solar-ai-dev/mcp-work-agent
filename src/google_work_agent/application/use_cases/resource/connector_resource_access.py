@@ -1,4 +1,4 @@
-"""Narrow Google connector/config/time access for canonical resource handlers."""
+"""Narrow connector/config/time access for canonical resource handlers."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from google_work_agent.application.use_cases.resource.list_resources import (
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GmailAttachmentMetadata,
     GmailThreadDetail,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
 )
 
@@ -196,6 +198,9 @@ class ConnectorResourceAccess:
             single_events=single_events,
             order_by=order_by,
         )
+
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage:
+        return self._gateway.list_github_issues(repository=repository, state=state)
 
     def count_gmail_page(
         self,

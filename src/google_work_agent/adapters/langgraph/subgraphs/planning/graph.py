@@ -16,11 +16,11 @@ from google_work_agent.adapters.langgraph.agent_kernel import (
     ensure_llm_call_budget,
     merge_trace_context,
 )
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    project_current_action_evidence,
+)
 from google_work_agent.adapters.langgraph.main.confirmation_projection import (
     build_user_interrupt_v1,
-)
-from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
-    RESPONSE_SYNTHESIS_TARGET,
 )
 from google_work_agent.adapters.langgraph.main.state import (
     PLANNING_AGENT_LOCAL_KEY,
@@ -30,8 +30,8 @@ from google_work_agent.adapters.langgraph.main.state import (
     request_from_state,
 )
 from google_work_agent.adapters.langgraph.main.supervisor import (
-    SupervisorDecisionV1,
-    SupervisorTarget,
+    PlanningRouteResultV1,
+    route_supervisor,
 )
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.subgraphs.planning.nodes import (
@@ -79,32 +79,43 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
     resolve_evidence_projection,
 )
 from google_work_agent.application.agents.planning.assemble_plan import materialize_action_seeds
+from google_work_agent.application.agents.planning.bind_gmail_draft_update_identity import (
+    GmailDraftUpdateAlreadySatisfiedError,
+)
 from google_work_agent.application.agents.planning.choose_answer_or_action_from_route import (
     choose_answer_or_action_from_route,
 )
 from google_work_agent.application.agents.planning.compose_answer import (
     ANSWER_DRAFT_CANDIDATE_OUTPUT_SCHEMA,
+    answer_draft_output_schema,
+    answer_semantic_repair_output_schema,
 )
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     TOOL_ARGUMENT_CANDIDATE_OUTPUT_SCHEMA,
+    requires_argument_inference,
+    tool_argument_candidate_output_schema,
 )
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     PlanningSemanticInvoker,
 )
 from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
     ACTION_OBJECTIVE_CANDIDATE_OUTPUT_SCHEMA,
+    action_objective_candidate_output_schema,
+    requires_objective_inference,
 )
 from google_work_agent.application.agents.planning.outline_answer import (
     ANSWER_OUTLINE_OUTPUT_SCHEMA,
+    answer_confirmation_allowed,
+    answer_outline_output_schema,
 )
 from google_work_agent.application.agents.planning.resolve_default_container import (
     RequiredContainerUnresolvedError,
 )
+from google_work_agent.application.agents.planning.select_required_output_routes import (
+    select_required_output_routes,
+)
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_understanding_output,
-)
-from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
-    EvidenceDraftV1,
 )
 from google_work_agent.application.agents.state_artifact import (
     StateArtifactRefV1,
@@ -150,7 +161,18 @@ def planning_answer_path_selected(state: Mapping[str, object]) -> bool:
     if disposition == "ANSWER":
         return True
     analysis = state.get("work_analysis", state.get("work_analysis_result"))
-    return isinstance(analysis, Mapping) and analysis.get("action_necessity") == "NOT_REQUIRED"
+    if not isinstance(analysis, Mapping):
+        return False
+    if "route_action_necessities" not in analysis:
+        return analysis.get("action_necessity") == "NOT_REQUIRED"
+    output_plan = raw_plan.get("output_plan")
+    if not isinstance(output_plan, Mapping):
+        raise ValueError("tool route output_plan is required")
+    selected = select_required_output_routes(output_plan, work_analysis=analysis)
+    routes = selected.get("output_routes")
+    if not isinstance(routes, list):
+        raise ValueError("selected output routes must be a list")
+    return not routes
 
 
 class PlanningSubgraph:
@@ -271,11 +293,19 @@ class PlanningSubgraph:
 
     def _outline_answer_node(self, state: PlanningLocalState) -> PlanningLocalState:
         working = self._project_runtime_inputs(state)
-        if self._llm_runtime is not None:
-            ensure_llm_call_budget(cast(Any, working))
+        semantic_invoke = self._semantic_invoker(state)
+        llm_invoked = False
+
+        def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+            nonlocal llm_invoked
+            if self._llm_runtime is not None:
+                ensure_llm_call_budget(cast(Any, working))
+                llm_invoked = True
+            return semantic_invoke(prompt_id, prompt_input)
+
         patch = outline_answer_node(
             cast(Mapping[str, object], working),
-            invoke=self._semantic_invoker(state),
+            invoke=invoke,
         )
         result = cast(
             PlanningLocalState,
@@ -290,7 +320,7 @@ class PlanningSubgraph:
                 ),
             },
         )
-        if self._llm_runtime is not None:
+        if self._llm_runtime is not None and llm_invoked:
             if not isinstance(state.get(PLANNING_AGENT_LOCAL_KEY), Mapping):
                 assert self._id_factory is not None
                 result[PLANNING_AGENT_LOCAL_KEY] = build_agent_local_state(
@@ -314,11 +344,19 @@ class PlanningSubgraph:
         if isinstance(state.get("planning_confirmation"), Mapping):
             return self._resolve_confirmation(state)
         working = self._project_runtime_inputs(state)
-        if self._llm_runtime is not None:
-            ensure_llm_call_budget(cast(Any, working))
+        semantic_invoke = self._semantic_invoker(state)
+        llm_invoked = False
+
+        def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+            nonlocal llm_invoked
+            if self._llm_runtime is not None:
+                ensure_llm_call_budget(cast(Any, working))
+                llm_invoked = True
+            return semantic_invoke(prompt_id, prompt_input)
+
         patch = compose_answer_node(
             cast(Mapping[str, object], working),
-            invoke=self._semantic_invoker(state),
+            invoke=invoke,
         )
         candidate = cast(dict[str, object], patch["answer_draft"])
         if not self._is_production_integration:
@@ -329,32 +367,24 @@ class PlanningSubgraph:
 
         answer = self._materialize_answer(state, candidate)
         assert self._merge_decision is not None
-        decision: SupervisorDecisionV1 = {
-            "target": RESPONSE_SYNTHESIS_TARGET,
-            "next_phase": WorkflowPhase.RESPONSE_SYNTHESIS.value,
-            "state_update": cast(
-                GraphStateUpdateV1,
+        decision = route_supervisor(
+            phase=WorkflowPhase.SOLUTION_PLANNING,
+            state=cast(GraphState, state),
+            result=cast(
+                PlanningRouteResultV1,
                 {
-                    "workflow_phase": WorkflowPhase.RESPONSE_SYNTHESIS.value,
-                    "planning_result": answer,
-                    "workflow_signal": None,
-                    "user_interrupt": None,
-                    "finalize_intent": None,
+                    "disposition": "ANSWER_ONLY",
+                    "typed_result": answer,
+                    "reason_codes": [],
                 },
             ),
-            "reason_code": "ANSWER_ONLY_RESPONSE_READY",
-            "budget_decision": None,
-        }
-        update = cast(
-            GraphStateUpdateV1,
-            {
-                "planning_result": answer,
-                "retry_budget": consume_llm_call_budget(cast(Any, state)),
-                "trace_context": self._trace(
-                    state, "compose_answer", self._prompt_refs["planning.compose_answer"]
-                ),
-            },
         )
+        update = cast(GraphStateUpdateV1, {"planning_result": answer})
+        if llm_invoked:
+            update["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            update["trace_context"] = self._trace(
+                state, "compose_answer", self._prompt_refs["planning.compose_answer"]
+            )
         merged = self._merge_decision(state, update, decision)
         merged.pop(PLANNING_AGENT_LOCAL_KEY, None)
         return cast(
@@ -371,11 +401,19 @@ class PlanningSubgraph:
             if isinstance(state.get("final_result"), Mapping):
                 return state
         working = self._project_runtime_inputs(state)
-        routes = cast(Mapping[str, object], working["output_plan"])["output_routes"]
-        if self._llm_runtime is not None:
-            ensure_llm_call_budget(
-                cast(Any, working), provider_calls_requested=len(cast(list[object], routes))
+        routes = cast(
+            list[object],
+            cast(Mapping[str, object], working["output_plan"])["output_routes"],
+        )
+        request_intent = cast(Mapping[str, object], working["request_intent"])
+        inference_count = sum(
+            requires_objective_inference(
+                cast(Mapping[str, object], route), request_intent=request_intent
             )
+            for route in cast(list[object], routes)
+        )
+        if self._llm_runtime is not None and inference_count:
+            ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
         patch = objective_node_module.draft_action_objective_per_output_route_node(
             cast(Mapping[str, object], working),
             invoke=self._semantic_invoker(state),
@@ -405,33 +443,114 @@ class PlanningSubgraph:
                     invocation_id=self._id_factory(),
                     node_state="ACTION_OBJECTIVE_COMPLETE",
                     input_projection={"route": "ACTION"},
-                    prompt_ref=self._prompt_refs[
+                    prompt_ref=self._prompt_refs.get(
                         "planning.draft_action_objective_per_output_route"
-                    ],
+                    ),
                 )
-            result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
             trace_state = cast(PlanningLocalState, {**state, **result})
+            if inference_count:
+                result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
             result["trace_context"] = self._trace(
                 trace_state,
                 "draft_action_objective_per_output_route",
-                self._prompt_refs["planning.draft_action_objective_per_output_route"],
+                (
+                    self._prompt_refs["planning.draft_action_objective_per_output_route"]
+                    if inference_count
+                    else None
+                ),
                 first=first,
+                llm_call_increment=inference_count,
             )
         return result
 
     def _compose_arguments_node(self, state: PlanningLocalState) -> PlanningLocalState:
         working = self._project_runtime_inputs(state)
         routes = cast(Mapping[str, object], working["output_plan"])["output_routes"]
-        if self._llm_runtime is not None:
-            ensure_llm_call_budget(
-                cast(Any, working), provider_calls_requested=len(cast(list[object], routes))
+        typed_routes = cast(list[object], routes)
+        request_intent = working.get("request_intent")
+        inference_count = sum(
+            requires_argument_inference(
+                cast(Mapping[str, object], route),
+                request_intent=(
+                    cast(Mapping[str, object], request_intent)
+                    if isinstance(request_intent, Mapping)
+                    else None
+                ),
+                evidence=cast(list[Mapping[str, object]], working.get("evidence", [])),
             )
+            for route in typed_routes
+        )
+        if self._llm_runtime is not None and inference_count:
+            ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
         try:
             patch = arguments_node_module.compose_arguments_per_output_route_node(
                 cast(Mapping[str, object], working),
                 invoke=self._semantic_invoker(state),
                 default_tasklist_id_provider=self._default_tasklist_id_provider,
                 default_calendar_id_provider=self._default_calendar_id_provider,
+            )
+        except GmailDraftUpdateAlreadySatisfiedError as exc:
+            if len(typed_routes) != 1 or cast(Mapping[str, object], typed_routes[0]).get(
+                "route_id"
+            ) != exc.route_id:
+                raise
+            user_request = working.get("user_request")
+            korean = isinstance(user_request, str) and any(
+                "\uac00" <= character <= "\ud7a3" for character in user_request
+            )
+            candidate = {
+                "schema_version": 2,
+                "answer": (
+                    "요청한 Gmail 임시보관함 초안 변경이 이미 반영되어 있어 "
+                    "추가 변경이 필요하지 않습니다."
+                    if korean
+                    else (
+                        "The requested Gmail Draft update is already present; "
+                        "no change is needed."
+                    )
+                ),
+                "evidence_refs": list(exc.evidence_refs),
+            }
+            if not self._is_production_integration:
+                return cast(
+                    PlanningLocalState,
+                    {
+                        "final_result": candidate,
+                        "planning_disposition": "ANSWER",
+                    },
+                )
+            answer = self._materialize_answer(state, candidate)
+            assert self._merge_decision is not None
+            decision = route_supervisor(
+                phase=WorkflowPhase.SOLUTION_PLANNING,
+                state=cast(GraphState, state),
+                result=cast(
+                    PlanningRouteResultV1,
+                    {
+                        "disposition": "ANSWER_ONLY",
+                        "typed_result": answer,
+                        "reason_codes": ["REQUESTED_UPDATE_ALREADY_SATISFIED"],
+                    },
+                ),
+            )
+            update = cast(GraphStateUpdateV1, {"planning_result": answer})
+            if self._llm_runtime is not None and inference_count:
+                update["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+                update["trace_context"] = self._trace(
+                    state,
+                    "compose_arguments_per_output_route",
+                    self._prompt_refs["planning.compose_arguments_per_output_route"],
+                    llm_call_increment=inference_count,
+                )
+            merged = self._merge_decision(state, update, decision)
+            merged.pop(PLANNING_AGENT_LOCAL_KEY, None)
+            return cast(
+                PlanningLocalState,
+                {
+                    **merged,
+                    "final_result": answer,
+                    "planning_disposition": "ANSWER",
+                },
             )
         except RequiredContainerUnresolvedError as exc:
             confirmation = {
@@ -477,12 +596,20 @@ class PlanningSubgraph:
         context.pop("confirmation_interrupt", None)
         context.pop("planning_missing_container", None)
         result["prompt_context"] = context
-        if self._llm_runtime is not None:
+        if self._llm_runtime is not None and inference_count:
             result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
             result["trace_context"] = self._trace(
                 state,
                 "compose_arguments_per_output_route",
                 self._prompt_refs["planning.compose_arguments_per_output_route"],
+                llm_call_increment=inference_count,
+            )
+        elif self._llm_runtime is not None:
+            result["trace_context"] = self._trace(
+                state,
+                "compose_arguments_per_output_route",
+                None,
+                llm_call_increment=0,
             )
         return result
 
@@ -506,22 +633,18 @@ class PlanningSubgraph:
                 {**patch, "planning_result": plan, "planning_disposition": "ACTION"},
             )
         assert self._merge_decision is not None
-        decision: SupervisorDecisionV1 = {
-            "target": SupervisorTarget.PLAN_REVIEW_INSPECT.value,
-            "next_phase": WorkflowPhase.PLAN_REVIEW.value,
-            "state_update": cast(
-                GraphStateUpdateV1,
+        decision = route_supervisor(
+            phase=WorkflowPhase.SOLUTION_PLANNING,
+            state=cast(GraphState, state),
+            result=cast(
+                PlanningRouteResultV1,
                 {
-                    "workflow_phase": WorkflowPhase.PLAN_REVIEW.value,
-                    "planning_result": plan,
-                    "workflow_signal": None,
-                    "user_interrupt": None,
-                    "finalize_intent": None,
+                    "disposition": "PLAN_READY",
+                    "typed_result": plan,
+                    "reason_codes": [],
                 },
             ),
-            "reason_code": "PLAN_READY",
-            "budget_decision": None,
-        }
+        )
         merged = self._merge_decision(
             state,
             cast(GraphStateUpdateV1, {"planning_result": plan}),
@@ -670,6 +793,61 @@ class PlanningSubgraph:
                 )
                 self._prompt_refs[prompt_id] = prompt_ref
             output_schema = schemas.get(prompt_id)
+            if prompt_id == "planning.draft_action_objective_per_output_route":
+                output_schema = action_objective_candidate_output_schema(prompt_input)
+            if prompt_id == "planning.compose_arguments_per_output_route":
+                output_schema = tool_argument_candidate_output_schema(prompt_input)
+            if prompt_id == "planning.outline_answer":
+                evidence = prompt_input.get("evidence")
+                if not isinstance(evidence, list):
+                    raise ValueError("outline_answer requires evidence")
+                request_intent = prompt_input.get("request_intent")
+                if not isinstance(request_intent, Mapping):
+                    raise ValueError("outline_answer requires request_intent")
+                work_analysis = prompt_input.get("work_analysis")
+                if work_analysis is not None and not isinstance(work_analysis, Mapping):
+                    raise ValueError("outline_answer work_analysis must be an object")
+                confirmation_allowed = answer_confirmation_allowed(
+                    request_intent,
+                    cast(Mapping[str, object] | None, work_analysis),
+                )
+                projected_refs = [
+                    ref
+                    for item in evidence
+                    if isinstance(item, Mapping)
+                    for ref in (
+                        item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),
+                    )
+                    if isinstance(ref, str) and ref
+                ]
+                output_schema = answer_outline_output_schema(
+                    projected_refs,
+                    confirmation_allowed=confirmation_allowed,
+                )
+            if prompt_id == "planning.compose_answer":
+                schema_projection = prompt_input
+                base_projection = prompt_input.get("base_projection")
+                if isinstance(base_projection, Mapping):
+                    schema_projection = base_projection
+                outline = schema_projection.get("answer_outline")
+                if not isinstance(outline, Mapping):
+                    raise ValueError("compose_answer requires answer_outline")
+                outline_refs = outline.get("evidence_refs")
+                if not isinstance(outline_refs, list) or not all(
+                    isinstance(ref, str) for ref in outline_refs
+                ):
+                    raise ValueError("compose_answer requires outline evidence_refs")
+                failure_record = prompt_input.get("failure_record")
+                if (
+                    isinstance(failure_record, Mapping)
+                    and failure_record.get("failure_reason_code")
+                    == "COMPOSE_ANSWER_PROSE_INVALID"
+                ):
+                    output_schema = answer_semantic_repair_output_schema(
+                        cast(list[str], outline_refs)
+                    )
+                else:
+                    output_schema = answer_draft_output_schema(cast(list[str], outline_refs))
             if prompt_ref is None or output_schema is None:
                 raise ValueError(f"unsupported Planning Prompt slot: {prompt_id}")
             result = llm_runtime.infer(
@@ -691,12 +869,26 @@ class PlanningSubgraph:
         if "work_analysis" not in working and state.get("work_analysis_result") is not None:
             working["work_analysis"] = cast(Any, state["work_analysis_result"])
         plan = state.get("tool_route_plan")
-        if "output_plan" not in working and isinstance(plan, Mapping):
-            output_plan = plan.get("output_plan")
-            if isinstance(output_plan, Mapping):
-                working["output_plan"] = dict(output_plan)
+        frozen_output_plan = plan.get("output_plan") if isinstance(plan, Mapping) else None
+        output_plan = (
+            frozen_output_plan
+            if isinstance(frozen_output_plan, Mapping)
+            else working.get("output_plan")
+        )
+        analysis = working.get("work_analysis")
+        if isinstance(output_plan, Mapping):
+            working["output_plan"] = select_required_output_routes(
+                output_plan,
+                work_analysis=analysis if isinstance(analysis, Mapping) else None,
+            )
         if "evidence" not in working:
             working["evidence"] = self._evidence(state)
+        evidence, source_snapshots = self._project_evidence_and_source_snapshots(
+            state,
+            cast(list[Mapping[str, object]], working.get("evidence", [])),
+        )
+        working["evidence"] = evidence
+        working["source_snapshots"] = source_snapshots
         working["evidence_refs"] = [
             ref
             for item in cast(list[Mapping[str, object]], working.get("evidence", []))
@@ -712,23 +904,89 @@ class PlanningSubgraph:
             )
         return working
 
-    def _evidence(self, state: PlanningLocalState) -> list[EvidenceDraftV1]:
+    def _project_evidence_and_source_snapshots(
+        self,
+        state: PlanningLocalState,
+        evidence: list[Mapping[str, object]],
+    ) -> tuple[list[dict[str, object]], dict[str, dict[str, object]]]:
+        """Keep editable source state out of the LLM-facing Evidence projection."""
+
+        projected: list[dict[str, object]] = []
+        snapshots: dict[str, dict[str, object]] = {}
+        for raw in evidence:
+            item = dict(raw)
+            handle = item.get("resource_handle")
+            evidence_ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
+            locator = item.get("locator")
+            if isinstance(locator, Mapping) and "draft_snapshot" in locator:
+                safe_locator = dict(locator)
+                legacy_snapshot = safe_locator.pop("draft_snapshot")
+                item["locator"] = safe_locator
+                if (
+                    isinstance(evidence_ref, str)
+                    and evidence_ref
+                    and isinstance(legacy_snapshot, Mapping)
+                ):
+                    snapshots[evidence_ref] = dict(legacy_snapshot)
+            if (
+                isinstance(handle, str)
+                and handle.startswith("gmail_draft:")
+                and isinstance(evidence_ref, str)
+                and evidence_ref
+                and evidence_ref not in snapshots
+                and self._evidence_store is not None
+            ):
+                source_version_ref = (
+                    locator.get("source_version_ref") if isinstance(locator, Mapping) else None
+                )
+                if source_version_ref is not None and not isinstance(source_version_ref, str):
+                    raise ValueError("Draft evidence source version is invalid")
+                snapshots[evidence_ref] = self._evidence_store.resolve_resource_snapshot(
+                    run_id=state["run_id"],
+                    resource_handle=handle,
+                    source_version_ref=source_version_ref,
+                )
+            projected.append(item)
+        return projected, snapshots
+
+    def _evidence(self, state: PlanningLocalState) -> list[dict[str, object]]:
+        if isinstance(state.get("__replan_from_plan_id__"), str):
+            persisted = state.get("__modify_review_evidence__")
+            if not isinstance(persisted, list) or not all(
+                isinstance(item, Mapping) for item in persisted
+            ):
+                raise ValueError("Modify replan requires persisted Plan evidence")
+            return [dict(item) for item in persisted]
         direct = state.get("evidence")
         if isinstance(direct, list):
-            return cast(list[EvidenceDraftV1], direct)
+            return [dict(item) for item in direct]
+        output_plan: Mapping[str, object] | None = state.get("output_plan")
+        if not isinstance(output_plan, Mapping):
+            route_plan = state.get("tool_route_plan")
+            if isinstance(route_plan, Mapping):
+                route_output_plan = route_plan.get("output_plan")
+                if isinstance(route_output_plan, dict):
+                    output_plan = route_output_plan
+        if isinstance(output_plan, Mapping) and output_plan.get("output_mode") == "ACTION":
+            if self._evidence_store is None:
+                raise ValueError("Planning evidence_store is required for Action evidence")
+            return project_current_action_evidence(
+                state=state,
+                evidence_store=self._evidence_store,
+            )
         retrieval = state.get("retrieval_result")
         if retrieval is None:
             return []
         if self._evidence_store is None:
             raise ValueError("Planning evidence_store is required for Retrieval evidence")
-        return cast(
-            list[EvidenceDraftV1],
-            resolve_evidence_projection(
+        return [
+            dict(item)
+            for item in resolve_evidence_projection(
                 store=self._evidence_store,
                 run_id=cast(str, state["run_id"]),
                 retrieval_result=cast(Any, retrieval),
-            ),
-        )
+            )
+        ]
 
     def _materialize_answer(
         self, state: PlanningLocalState, candidate: Mapping[str, object]
@@ -769,9 +1027,10 @@ class PlanningSubgraph:
         self,
         state: PlanningLocalState,
         node: str,
-        prompt_ref: PromptReference,
+        prompt_ref: PromptReference | None,
         *,
         first: bool = False,
+        llm_call_increment: int = 1,
     ) -> dict[str, object]:
         assert self._graph_profile is not None
         assert self._id_factory is not None
@@ -789,10 +1048,10 @@ class PlanningSubgraph:
                 agent_invocation_id=invocation_id,
                 subgraph_namespace="planning",
                 node_name=node,
-                llm_call_id=f"{state['run_id']}:planning.{node}",
+                llm_call_id=(f"{state['run_id']}:planning.{node}" if llm_call_increment else None),
                 prompt_ref=prompt_ref,
                 agent_invocation_increment=1 if first else 0,
-                llm_call_increment=1,
+                llm_call_increment=llm_call_increment,
             ),
         )
 

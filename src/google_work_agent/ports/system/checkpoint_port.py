@@ -1,5 +1,6 @@
 """Abstract same-Run checkpoint availability and persistence boundary."""
 
+from collections.abc import Callable, Mapping
 from typing import Protocol
 
 from google_work_agent.ports.system.contracts.checkpoint import GraphCheckpointEnvelopeV1
@@ -17,6 +18,10 @@ class InitialWorkflowBindingPort(Protocol):
 
 
 class CheckpointPort(Protocol):
+    def update_run_budget(
+        self, run_id: str, update: Callable[[Mapping[str, object]], Mapping[str, object]]
+    ) -> Mapping[str, object]: ...
+
     def create_workflow_binding(self, binding: WorkflowBindingV1) -> None: ...
 
     def load_workflow_binding(self, run_id: str) -> WorkflowBindingV1 | None: ...

@@ -128,6 +128,7 @@ def test_select_tool__uses_exact__canonical_prompt_projection() -> None:
     assert selected == "tasks_create_task"
     assert runtime.calls[0]["prompt_ref"] == _prompt_ref()
     assert runtime.calls[0]["prompt_input"] == {
+        "user_request": "create task",
         "route_candidate": {
             "route_id": "route-1",
             "connector_id": "google_workspace",
@@ -138,6 +139,12 @@ def test_select_tool__uses_exact__canonical_prompt_projection() -> None:
             {"tool_id": "tasks_create_task"},
             {"tool_id": "tasks_create_task_v2"},
         ],
+    }
+    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    properties = cast(Mapping[str, object], output_schema.json_schema["properties"])
+    assert properties["route_id"] == {"const": "route-1"}
+    assert properties["selected_tool_id"] == {
+        "enum": ["tasks_create_task", "tasks_create_task_v2"]
     }
 
 
@@ -173,8 +180,41 @@ def test_select_semantic__revision_reuses__base_slot() -> None:
     revision_input = cast(Mapping[str, object], runtime.calls[1]["prompt_input"])
     assert set(revision_input) == {"base_projection", "candidate_output", "failure_record"}
     assert set(cast(Mapping[str, object], revision_input["base_projection"])) == {
+        "user_request",
         "route_candidate",
         "registered_candidates",
     }
     failure_record = cast(Mapping[str, object], revision_input["failure_record"])
-    assert failure_record["affected_field_paths"] == ["$.selected_tool_id"]
+    assert failure_record["affected_field_paths"] == ["$.route_id", "$.selected_tool_id"]
+
+
+def test_select_semantic__with_mismatched_route__rejects_candidate() -> None:
+    runtime = RecordingLLMRuntime(
+        outputs=[
+            {
+                "schema_version": 1,
+                "route_id": "route-other",
+                "selected_tool_id": "tasks_create_task",
+            },
+            {
+                "schema_version": 1,
+                "route_id": "route-1",
+                "selected_tool_id": "tasks_create_task",
+            },
+        ]
+    )
+
+    selected, _ = select_tool_if_needed(
+        llm_runtime=runtime,
+        route_id="route-1",
+        connector_id="google_workspace",
+        resource_type="TASK",
+        effect="CREATE",
+        eligible_tool_ids=("tasks_create_task", "tasks_create_task_v2"),
+        request=_request(),
+        retry_budget=build_default_run_budget(),
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert selected == "tasks_create_task"
+    assert len(runtime.calls) == 2

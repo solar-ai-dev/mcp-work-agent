@@ -1,6 +1,8 @@
-# Google Work Agent
+# mcp-work-agent
 
-Google Work Agent는 로컬 PC에서 실행되는 단일 사용자 Google Workspace 업무 Agent입니다. FastAPI API, React UI, LangGraph workflow, SQLite Domain Store, 로컬 MCP Connector, API/Local LLM runtime을 하나의 제품 composition으로 연결합니다. 승인·Claim·Write·검증·복구는 결정적 Application/Domain 경계가 소유하며 Agent/LLM이 최종 판정하지 않습니다.
+제품 표시·배포 이름은 `mcp-work-agent`입니다. 기존 설치와 데이터의 호환성을 위해 내부 Python 패키지 `google_work_agent`, Windows 설치·데이터 경로와 credential namespace는 유지합니다. GitHub 저장소 주소는 별도 변경 전까지 기존 주소를 사용합니다.
+
+mcp-work-agent는 로컬 PC에서 실행되는 단일 사용자 Google Workspace 업무 Agent입니다. FastAPI API, React UI, LangGraph workflow, SQLite Domain Store, 로컬 MCP Connector, API/Local LLM runtime을 하나의 제품 composition으로 연결합니다. 승인·Claim·Write·검증·복구는 결정적 Application/Domain 경계가 소유하며 Agent/LLM이 최종 판정하지 않습니다.
 
 ## 요구 환경
 
@@ -56,8 +58,8 @@ Invoke-RestMethod "$($launch.base_url)/health/ready"
 
 첫 UI 진입 후 설정에서 Gemini API Key를 연결하고 API LLM 사용 및 외부 전송 동의를 설정합니다. Development launcher의 LLM credential은 process memory에만 보관되며 종료 후 사라집니다. Local Model은 signed Model Manifest와 Product Decision을 갖춘 `LOCAL_CAPABLE` release에서만 활성화됩니다.
 
-- 현재 요청만으로 답할 수 있는 answer-only 흐름은 Google OAuth 없이 실행할 수 있습니다.
-- Gmail·Calendar·Tasks 조회 또는 변경은 UI에서 Google OAuth 연결이 필요합니다.
+- 첫 실행 완료와 모든 Agent Run에는 Google OAuth 연결 및 필수 Scope 동의가 필요합니다.
+- Gmail·Calendar·Tasks 조회 또는 변경은 연결된 Google 계정 권한을 사용합니다.
 - 모든 Write는 Canonical Approval 이후 Claim/Execution Attempt/Connector Write/Verification 순서를 거칩니다.
 
 ## 검증
@@ -65,10 +67,9 @@ Invoke-RestMethod "$($launch.base_url)/health/ready"
 ```powershell
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 .\.venv\Scripts\python.exe -m pytest -q
-$env:GWA_ARCHITECTURE_FINAL_CUTOVER = "1"
 .\.venv\Scripts\python.exe -m pytest tests\architecture -q
 .\.venv\Scripts\ruff.exe check src tests launcher release scripts
-.\.venv\Scripts\mypy.exe src tests launcher release scripts
+.\.venv\Scripts\mypy.exe --explicit-package-bases src tests launcher release scripts
 .\.venv\Scripts\python.exe -m compileall -q src launcher release scripts tests
 
 npm --prefix frontend test -- --run
@@ -81,6 +82,6 @@ npm --prefix frontend run build
 
 ## Prompt/Model 현재 상태
 
-Canonical Prompt source 21개는 실험 전 baseline이며 manifest 상태는 모두 `DRAFT`입니다. `EXPLICIT_DEVELOPMENT`의 `DEVELOPMENT_SMOKE`에서만 실행할 수 있고, signed Release는 실제 DEV/HOLDOUT/Safety/승인 evidence artifact가 완전한 `RUNTIME_ACTIVE` Prompt만 패키징·실행합니다. 최종 Provider/Model/Prompt bundle 선택은 실험 완료 전까지 유보됩니다.
+Canonical Prompt source 22개는 실험 전 baseline이며 manifest 상태는 모두 `DRAFT`입니다. `EXPLICIT_DEVELOPMENT`의 `DEVELOPMENT_SMOKE`에서만 실행할 수 있고, signed Release는 실제 DEV/HOLDOUT/Safety/승인 evidence artifact가 완전한 `RUNTIME_ACTIVE` Prompt만 패키징·실행합니다. 최종 Provider/Model/Prompt bundle 선택은 실험 완료 전까지 유보됩니다.
 
 설계 Authority와 읽기 순서는 `docs/canonical/00-project-source-guide.md`에서 시작합니다.

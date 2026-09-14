@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -37,8 +38,6 @@ ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA = OutputSchemaDefinition(
         "type": "object",
         "required": [
             "risks",
-            "action_necessity_candidate",
-            "action_necessity_reason",
             "evidence_refs",
         ],
         "additionalProperties": False,
@@ -60,8 +59,6 @@ ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA = OutputSchemaDefinition(
                     },
                 },
             },
-            "action_necessity_candidate": {"enum": ["REQUIRED", "NOT_REQUIRED", "UNDETERMINED"]},
-            "action_necessity_reason": {"type": ["string", "null"]},
             "evidence_refs": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -83,6 +80,7 @@ def assess_operational_risks(
     requested_mode: RequestedModeV1,
     policy_summary: dict[str, object] | None = None,
     confirmation_response: dict[str, object] | None = None,
+    source_statuses: Sequence[Mapping[str, object]] = (),
 ) -> OperationalRiskAssessmentV1:
     """Propose risks/action necessity without assuming Policy or Approval authority."""
 
@@ -91,14 +89,16 @@ def assess_operational_risks(
         "work_facts": [dict(fact) for fact in work_facts],
         "validated_relations": [dict(relation) for relation in validated_relations],
         "evidence": list(evidence),
+        "source_statuses": [dict(item) for item in source_statuses],
     }
     if policy_summary is not None:
         prompt_input["policy_summary"] = dict(policy_summary)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    output_schema = _bound_output_schema(allowed_evidence_refs)
 
     def validate(value: object) -> object:
-        errors = validate_output_schema(value, ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA.json_schema)
+        errors = validate_output_schema(value, output_schema.json_schema)
         if errors:
             raise ValueError(f"invalid operational-risk schema: {'; '.join(errors)}")
         root = cast(Mapping[str, object], value)
@@ -111,19 +111,45 @@ def assess_operational_risks(
                 allowed_evidence_refs
             ):
                 raise ValueError("risk evidence is outside current RetrievalResultV1")
-        reason = root["action_necessity_reason"]
-        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-            raise ValueError("action_necessity_reason must be non-empty or null")
         return value
 
     result = llm_runtime.infer(
         requested_mode,
         prompt_ref,
         prompt_input,
-        ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA,
+        output_schema,
     )
     validated = cast(Mapping[str, object], validate(result.structured_output))
     return cast(OperationalRiskAssessmentV1, dict(validated))
+
+
+def _bound_output_schema(allowed_evidence_refs: set[str]) -> OutputSchemaDefinition:
+    """Bind every risk citation to the current durable Retrieval evidence."""
+
+    json_schema = deepcopy(ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], json_schema["properties"])
+    evidence_ref_schema = {
+        "type": "string",
+        "enum": sorted(allowed_evidence_refs),
+    }
+    properties["evidence_refs"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "items": evidence_ref_schema,
+    }
+    risks = cast(dict[str, object], properties["risks"])
+    risk_item = cast(dict[str, object], risks["items"])
+    risk_properties = cast(dict[str, object], risk_item["properties"])
+    risk_properties["evidence_refs"] = {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": True,
+        "items": dict(evidence_ref_schema),
+    }
+    return OutputSchemaDefinition(
+        schema_version=ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA.schema_version,
+        json_schema=json_schema,
+    )
 
 
 __all__ = ["ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA", "assess_operational_risks"]

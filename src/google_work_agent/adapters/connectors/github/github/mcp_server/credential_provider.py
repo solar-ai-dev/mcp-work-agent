@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -69,6 +70,10 @@ class GitHubCredentialProvider:
         result = self._device_flow.poll(authorization)
         if result.status is GitHubDeviceFlowStatus.APPROVED:
             assert result.access_token is not None
+            # A new authorization must not retain a different account's refresh
+            # credential when the provider issues only a session access token.
+            if result.refresh_token is None:
+                self._keyring.delete(self._keyring_account)
             self._adopt_tokens(
                 access_token=result.access_token,
                 access_token_expires_at_ms=result.access_token_expires_at_ms,
@@ -83,10 +88,8 @@ class GitHubCredentialProvider:
         return self._access_token
 
     def get_connection_status(self) -> GitHubConnectionStatus:
-        try:
+        with suppress(GitHubReauthenticationRequired):
             self._ensure_access_token()
-        except GitHubReauthenticationRequired:
-            pass
         self._last_checked_at_ms = self._now_ms()
         return GitHubConnectionStatus(
             connected=self._credential_state is GitHubCredentialState.CONNECTED,
@@ -94,7 +97,9 @@ class GitHubCredentialProvider:
             reauth_required=self._credential_state is GitHubCredentialState.REAUTH_REQUIRED,
             last_checked_at_ms=self._last_checked_at_ms,
             granted_scopes=self._granted_scopes,
-            missing_required_scopes=tuple(scope for scope in self._requested_scopes if scope not in self._granted_scopes),
+            missing_required_scopes=tuple(
+                scope for scope in self._requested_scopes if scope not in self._granted_scopes
+            ),
         )
 
     def invalidate_access_token(self) -> None:

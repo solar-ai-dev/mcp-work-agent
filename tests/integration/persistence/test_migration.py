@@ -39,6 +39,17 @@ GITHUB_RESOURCE_MIGRATION = (
 DOCUMENTATION_GITHUB_RESOURCE_MIGRATION = (
     ROOT / "docs/database/migrations/0020_github_resource_registration.sql"
 )
+RUN_REPOSITORY_DEFAULT_MIGRATION = (
+    ROOT / "src/google_work_agent/adapters/persistence/migrations/0021_run_repository_default.sql"
+)
+LOCAL_CONVERSATION_ACTOR_MIGRATION = (
+    ROOT / "src/google_work_agent/adapters/persistence/migrations/0022_local_conversation_actor.sql"
+)
+CONNECTOR_RESOURCE_EVIDENCE_MIGRATION = (
+    ROOT
+    / "src/google_work_agent/adapters/persistence/migrations"
+    / "0023_connector_resource_evidence_origin.sql"
+)
 
 LEGACY_V18_RECEIPTS = {
     1: ("initial", "77386baca1badadd6a79860823250836f7a6464e7f01bd865c3a84af094aa928"),
@@ -142,10 +153,18 @@ def test_runtime_and__documentation_expose__identical_forward_migrations() -> No
         b"\r\n", b"\n"
     ) == GITHUB_RESOURCE_MIGRATION.read_bytes().replace(b"\r\n", b"\n")
     migrations = discover_migrations()
+    for migration in migrations:
+        documented_path = ROOT / "docs/database/migrations" / migration.path.name
+        assert documented_path.read_bytes().replace(
+            b"\r\n", b"\n"
+        ) == migration.path.read_bytes().replace(b"\r\n", b"\n")
     assert [(item.version, item.name) for item in migrations] == [
         (1, "current_schema"),
         (19, "legacy_v18_adoption"),
         (20, "github_resource_registration"),
+        (21, "run_repository_default"),
+        (22, "local_conversation_actor"),
+        (23, "connector_resource_evidence_origin"),
     ]
     assert migrations[0].checksum == calculate_migration_checksum(runtime)
 
@@ -158,6 +177,9 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
             (1, "current_schema", True),
             (19, "legacy_v18_adoption", True),
             (20, "github_resource_registration", True),
+            (21, "run_repository_default", True),
+            (22, "local_conversation_actor", True),
+            (23, "connector_resource_evidence_origin", True),
         ]
         tables = {
             str(row[0])
@@ -182,7 +204,7 @@ def test_fresh_database_has__exact_current_tables__and_safety_objects(tmp_path: 
         assert connection.execute("PRAGMA foreign_key_check;").fetchall() == []
 
         replay = apply_migrations(connection, now_ms=lambda: 999)
-        assert len(replay) == 3
+        assert len(replay) == 6
         assert all(result.applied is False for result in replay)
         receipt = connection.execute(
             "SELECT version, name, applied_at_ms FROM schema_migrations;"
@@ -341,12 +363,129 @@ def test_github_resource_registration__extends_existing_fk__and_replays_idempote
         connection.close()
 
 
+def test_connector_resource_evidence_origin__with_historical_rows__upgrades_and_preserves_links(
+    tmp_path: Path,
+) -> None:
+    migration_dir = tmp_path / "migrations"
+    migration_dir.mkdir()
+    for migration in (
+        RUNTIME_MIGRATION,
+        LEGACY_ADOPTION_MIGRATION,
+        GITHUB_RESOURCE_MIGRATION,
+        RUN_REPOSITORY_DEFAULT_MIGRATION,
+        LOCAL_CONVERSATION_ACTOR_MIGRATION,
+    ):
+        copyfile(migration, migration_dir / migration.name)
+
+    connection = connect_sqlite(tmp_path / "connector-origin-upgrade.db")
+    try:
+        apply_migrations(connection, migrations_dir=migration_dir, now_ms=lambda: 1)
+        connection.execute(
+            "INSERT INTO conversations VALUES ('conversation-1', 'local-user', 'Test', 1, 1);"
+        )
+        connection.execute(
+            """INSERT INTO runs (
+                   id, conversation_id, entry_mode, status, langgraph_thread_id,
+                   requested_mode, budget_json, version, started_at_ms
+               ) VALUES ('run-1', 'conversation-1', 'AGENT_SEARCH', 'PLANNING',
+                         'thread-1', 'AUTO', '{}', 0, 1);"""
+        )
+        connection.execute(
+            """INSERT INTO messages (
+                   id, conversation_id, run_id, role, content, created_at_ms
+               ) VALUES ('message-1', 'conversation-1', 'run-1', 'USER', 'request', 1);"""
+        )
+        connection.execute(
+            """INSERT INTO resource_refs (
+                   id, run_id, connector_id, resource_type, resource_id,
+                   metadata_json, captured_at_ms
+               ) VALUES ('resource-1', 'run-1', 'google_workspace', 'gmail_message',
+                         'message-resource-1', '{}', 1);"""
+        )
+        connection.execute(
+            """INSERT INTO plans (
+                   id, run_id, revision_no, status, created_at_ms,
+                   review_status, review_disposition
+               ) VALUES ('plan-1', 'run-1', 1, 'DRAFT', 1, 'REQUIRED', NULL);"""
+        )
+        connection.execute(
+            """INSERT INTO actions (
+                   id, plan_id, position, tool_name, effect_type,
+                   approval_requirement, verification_policy, recovery_policy,
+                   status, arguments_json, arguments_hash, expected_json,
+                   created_at_ms, updated_at_ms
+               ) VALUES ('action-1', 'plan-1', 1, 'gmail_search_messages', 'READ',
+                         'NONE', 'NONE', 'NONE', 'PROPOSED', '{}', ?, '{}', 1, 1);""",
+            ("0" * 64,),
+        )
+        connection.executemany(
+            """INSERT INTO evidence (
+                   id, run_id, origin_type, resource_ref_id, message_id,
+                   kind, excerpt, locator_json, created_at_ms
+               ) VALUES (?, 'run-1', ?, ?, ?, 'FACT', ?, '{}', 1);""",
+            (
+                (
+                    "evidence-connector",
+                    "GOOGLE_RESOURCE",
+                    "resource-1",
+                    None,
+                    "connector fact",
+                ),
+                ("evidence-user", "USER_MESSAGE", None, "message-1", "user fact"),
+                ("evidence-derived", "DERIVED", None, None, "derived fact"),
+            ),
+        )
+        connection.execute("INSERT INTO action_evidence VALUES ('action-1', 'evidence-connector');")
+        connection.commit()
+
+        copyfile(
+            CONNECTOR_RESOURCE_EVIDENCE_MIGRATION,
+            migration_dir / CONNECTOR_RESOURCE_EVIDENCE_MIGRATION.name,
+        )
+        results = apply_migrations(connection, migrations_dir=migration_dir, now_ms=lambda: 2)
+
+        assert [(item.version, item.applied) for item in results] == [
+            (1, False),
+            (19, False),
+            (20, False),
+            (21, False),
+            (22, False),
+            (23, True),
+        ]
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT id, origin_type, resource_ref_id, message_id FROM evidence ORDER BY id;"
+            ).fetchall()
+        ] == [
+            ("evidence-connector", "CONNECTOR_RESOURCE", "resource-1", None),
+            ("evidence-derived", "DERIVED", None, None),
+            ("evidence-user", "USER_MESSAGE", None, "message-1"),
+        ]
+        assert tuple(
+            connection.execute("SELECT action_id, evidence_id FROM action_evidence;").fetchone()
+        ) == ("action-1", "evidence-connector")
+        assert connection.execute("PRAGMA foreign_key_check;").fetchall() == []
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """INSERT INTO evidence (
+                       id, run_id, origin_type, resource_ref_id, kind, excerpt, created_at_ms
+                   ) VALUES ('old-origin', 'run-1', 'GOOGLE_RESOURCE',
+                             'resource-1', 'FACT', 'old', 2);"""
+            )
+    finally:
+        connection.close()
+
+
 def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
     tmp_path: Path,
 ) -> None:
     connection = connect_sqlite(tmp_path / "legacy-v18.db")
     try:
-        apply_migrations(connection, now_ms=lambda: 1)
+        legacy_baseline = tmp_path / "legacy-baseline"
+        legacy_baseline.mkdir()
+        copyfile(RUNTIME_MIGRATION, legacy_baseline / RUNTIME_MIGRATION.name)
+        apply_migrations(connection, migrations_dir=legacy_baseline, now_ms=lambda: 1)
         connection.execute("DELETE FROM schema_migrations;")
         connection.executemany(
             "INSERT INTO schema_migrations (version, name, checksum, applied_at_ms) "
@@ -367,6 +506,9 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
             (1, False),
             (19, True),
             (20, True),
+            (21, True),
+            (22, True),
+            (23, True),
         ]
         assert (
             connection.execute(
@@ -377,7 +519,7 @@ def test_exact_legacy_v18__receipts_are_adopted__without_rewriting_history(
         receipts = connection.execute(
             "SELECT version, name, checksum FROM schema_migrations ORDER BY version;"
         ).fetchall()
-        assert [int(row[0]) for row in receipts] == [*range(1, 21)]
+        assert [int(row[0]) for row in receipts] == [*range(1, 24)]
     finally:
         connection.close()
 

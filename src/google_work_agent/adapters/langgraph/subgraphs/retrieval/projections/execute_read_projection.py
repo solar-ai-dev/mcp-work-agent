@@ -2,27 +2,46 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
 
-from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+    is_fully_qualified_repository,
+)
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
+from google_work_agent.application.agents.retrieval.contracts.query_plan import (
+    ParticipantConstraintV1,
+    RetrievalOperationV2,
+    RetrievalV2ValidationError,
+    SourceFetchPlanV1,
+    route_operation_tool_id,
+    validate_gmail_keyword_literal,
+    validate_participant_identity,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
+    AcquisitionStatusValue,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
+from google_work_agent.application.use_cases.run.guard_run_budget import RunBudgetV2
 from google_work_agent.ports.connector.connector_read_port import (
     ConnectorReadPort,
     ConnectorReadResultV1,
     JsonValue,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import ResourceType
+from google_work_agent.ports.connector.contracts.resource_snapshot import ResourceType
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 from google_work_agent.ports.system.run_retrieval_cache_port import RunRetrievalCachePort
 
 
@@ -34,6 +53,16 @@ class ExecuteReadInput(TypedDict):
     connector_reader: ConnectorReadPort
     read_result_cache: RunRetrievalCachePort
     read_result_handle: str
+    run_budget: RunBudgetV2
+    now_ms: int
+    prior_query_attempts: list[QueryAttemptV1]
+    repository_access: NotRequired[GetRepositoryAccessHandler | None]
+    request_intent: NotRequired[RequestIntentV2 | None]
+    selected_resources: NotRequired[Sequence[SelectedResourceRef]]
+    durable_budget_accountant: NotRequired[
+        Callable[[Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]]
+        | None
+    ]
 
 
 def project_execute_read_input(state: Mapping[str, object]) -> ExecuteReadInput:
@@ -52,27 +81,48 @@ def project_connector_call(
     detail_resource: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, JsonValue]]:
     """Lower one canonical plan without granting this projection route authority."""
+    if any(
+        plan.get(key) != route.get(key) for key in ("route_id", "connector_id", "resource_type")
+    ):
+        raise RetrievalV2ValidationError("read plan identity differs from frozen route")
     resource = plan["resource_type"]
     operation = plan["operation_kind"]
     has_resource_ref = any(
         constraint["kind"] == "RESOURCE_REF" for constraint in plan["effective_constraints"]
     )
+    effective_operation: RetrievalOperationV2 = "DETAIL_FETCH" if has_resource_ref else operation
+    tool_id = route_operation_tool_id(route, effective_operation)
+    if tool_id is None:
+        raise PermissionError("read operation is outside the frozen input route")
     if operation == "DETAIL_FETCH" or has_resource_ref:
         if detail_resource is None:
             raise ValueError("detail read requires a validated resource")
-        tool_id, arguments = _detail_call(resource, detail_resource)
+        detail_tool_id, arguments = _detail_call(resource, detail_resource)
+        if detail_tool_id != tool_id:
+            raise RetrievalV2ValidationError("detail tool differs from operation authority")
+        if (
+            resource == "GITHUB_ISSUE"
+            and any(
+                constraint["kind"] == "CONTAINER_REF"
+                for constraint in plan["effective_constraints"]
+            )
+            and arguments["repository"] != _single_container(plan)
+        ):
+            raise ValueError("GitHub Issue detail differs from validated repository")
+    elif resource == "GMAIL_DRAFT":
+        arguments = {
+            "query": _gmail_query(plan),
+            "page_size": page_size,
+        }
     elif resource.startswith("GMAIL_") or resource == "EMAIL":
-        tool_id = "gmail_search_threads"
         arguments = {
             "query": _gmail_query(plan),
             "page_size": page_size,
             "include_thread_metadata": True,
         }
     elif resource == "TASK_LIST":
-        tool_id = "tasks_list_tasklists"
         arguments = {"page_size": page_size}
     elif resource == "TASK":
-        tool_id = "tasks_list_tasks"
         arguments = {
             "task_list_id": _single_container(plan),
             "page_size": page_size,
@@ -85,13 +135,10 @@ def project_connector_call(
             "repository": _single_container(plan),
             "state": _github_issue_state(plan),
         }
-        tool_id = "github_list_issues"
     elif resource == "CALENDAR":
-        tool_id = "calendar_list_calendars"
         arguments = {"page_size": page_size}
     elif resource.startswith("CALENDAR"):
         if operation == "FREEBUSY" or resource == "CALENDAR_FREEBUSY":
-            tool_id = "calendar_query_freebusy"
             start, end = _temporal_bounds(plan)
             arguments = {
                 "calendar_ids": [_single_container(plan)],
@@ -99,7 +146,6 @@ def project_connector_call(
                 "time_max": end,
             }
         else:
-            tool_id = "calendar_list_events"
             arguments = {
                 "calendar_id": _single_container(plan),
                 "page_size": page_size,
@@ -109,10 +155,11 @@ def project_connector_call(
             temporal = _optional_temporal_bounds(plan)
             if temporal is not None:
                 arguments["time_min"], arguments["time_max"] = temporal
+            query = _calendar_event_query(plan)
+            if query is not None:
+                arguments["query"] = query
     else:
         raise ValueError(f"unsupported retrieval resource_type: {resource}")
-    if tool_id not in route["allowed_read_tool_ids"]:
-        raise PermissionError("read tool is outside the frozen input route")
     return tool_id, cast(dict[str, JsonValue], arguments)
 
 
@@ -120,8 +167,16 @@ def project_acquisition_result(
     results: list[tuple[SourceFetchPlanV1, ConnectorReadResultV1]],
     *,
     remaining_budget: dict[str, int],
+    failed_reads: Sequence[tuple[SourceFetchPlanV1, str, bool]] = (),
+    budget_stops: Sequence[tuple[SourceFetchPlanV1, int, str]] = (),
+    prior_result: AcquisitionResultV1 | None = None,
 ) -> AcquisitionResultV1:
-    summaries: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = [
+        dict(summary)
+        for summary in ([] if prior_result is None else prior_result["source_summaries"])
+        if summary.get("status") == "FAILED"
+        or summary.get("termination_kind") == "BUDGET_STOPPED"
+    ]
     handles: list[str] = []
     for plan, result in results:
         resources = _resources(plan, result)
@@ -131,6 +186,7 @@ def project_acquisition_result(
             {
                 "schema_version": 1,
                 "route_id": plan["route_id"],
+                "query_identity_hash": plan.get("query_identity_hash"),
                 "source": _source(plan["resource_type"]),
                 "connector_id": plan["connector_id"],
                 "status": "COMPLETE",
@@ -139,11 +195,78 @@ def project_acquisition_result(
                 "resource_count": len(resources),
                 "resource_handles": resource_handles,
                 "resources": resources,
+                "checked_read_count": 1,
+                "known_scope_count": 1,
+                "scope_complete": result.next_page_token is None,
+                "continuation_status": (
+                    "EXHAUSTED" if result.next_page_token is None else "HAS_MORE"
+                ),
             }
         )
+    for plan, failure_code, provider_called in failed_reads:
+        if failure_code not in {"NOT_FOUND", "PERMISSION_DENIED"}:
+            raise ValueError("unsupported terminal READ failure projection")
+        summaries.append(
+            {
+                "schema_version": 1,
+                "route_id": plan["route_id"],
+                "query_identity_hash": plan.get("query_identity_hash"),
+                "source": _source(plan["resource_type"]),
+                "connector_id": plan["connector_id"],
+                "status": "FAILED",
+                "required": True,
+                "error_code": failure_code,
+                "resource_count": 0,
+                "resource_handles": [],
+                "resources": [],
+                "checked_read_count": int(provider_called),
+                "known_scope_count": 1,
+                "scope_complete": False,
+                "continuation_status": "UNKNOWN",
+            }
+        )
+    for plan, remaining_read_count, reason_code in budget_stops:
+        if remaining_read_count < 1 or not reason_code:
+            raise ValueError("invalid bounded READ stop projection")
+        summaries.append(
+            {
+                "schema_version": 1,
+                "route_id": plan["route_id"],
+                "query_identity_hash": plan.get("query_identity_hash"),
+                "source": _source(plan["resource_type"]),
+                "connector_id": plan["connector_id"],
+                "status": "PARTIAL",
+                "required": True,
+                "error_code": None,
+                "termination_kind": "BUDGET_STOPPED",
+                "budget_reason_code": reason_code,
+                "resource_count": 0,
+                "resource_handles": [],
+                "resources": [],
+                "checked_read_count": 0,
+                "known_scope_count": remaining_read_count,
+                "scope_complete": False,
+                "continuation_status": "UNKNOWN",
+            }
+        )
+    failed = any(summary["status"] == "FAILED" for summary in summaries)
+    partial = any(summary["status"] == "PARTIAL" for summary in summaries)
+    complete = any(summary["status"] == "COMPLETE" for summary in summaries)
+    status = cast(
+        AcquisitionStatusValue,
+        (
+            "PARTIAL"
+            if partial or (failed and complete)
+            else "FAILED"
+            if failed
+            else "COMPLETE"
+            if complete
+            else "NOT_ATTEMPTED"
+        ),
+    )
     return {
         "schema_version": 1,
-        "status": "COMPLETE",
+        "status": status,
         "resource_handles": handles,
         "source_summaries": summaries,
         "missing_slots": [],
@@ -192,6 +315,28 @@ def _sanitize_source_summary(summary: Mapping[str, object]) -> dict[str, object]
 
 
 def _bounded_payload(resource_type: str, payload: Mapping[str, object]) -> dict[str, object]:
+    if resource_type == ResourceType.CALENDAR_EVENT.value:
+        calendar_payload: dict[str, object] = {
+            key: value
+            for key in (
+                "title",
+                "summary",
+                "start",
+                "end",
+                "timezone",
+                "status",
+                "event_kind",
+                "transparency",
+                "self_response_status",
+                "location",
+                "description",
+            )
+            if (value := payload.get(key)) is None or isinstance(value, (str, int, float, bool))
+        }
+        attendees = payload.get("attendees")
+        if isinstance(attendees, list):
+            calendar_payload["attendees"] = [value for value in attendees if isinstance(value, str)]
+        return calendar_payload
     scalar_fields: dict[str, tuple[str, ...]] = {
         ResourceType.GMAIL_THREAD.value: ("subject",),
         ResourceType.GMAIL_MESSAGE.value: ("subject",),
@@ -199,16 +344,6 @@ def _bounded_payload(resource_type: str, payload: Mapping[str, object]) -> dict[
         ResourceType.TASK_LIST.value: ("title",),
         ResourceType.TASK.value: ("title", "status", "due"),
         ResourceType.CALENDAR.value: ("title",),
-        ResourceType.CALENDAR_EVENT.value: (
-            "title",
-            "summary",
-            "start",
-            "end",
-            "status",
-            "event_kind",
-            "transparency",
-            "self_response_status",
-        ),
         "github_issue": (
             "repository",
             "issue_number",
@@ -286,7 +421,7 @@ def _resources(plan: SourceFetchPlanV1, result: ConnectorReadResultV1) -> list[d
                     ),
                     "resource_type": "calendar_freebusy",
                     "resource_id": calendar_id,
-                    "parent_id": None,
+                    "parent_id": calendar_id,
                     "version": plan["query_identity_hash"],
                     "related_resource_ids": [],
                     "connector_id": plan["connector_id"],
@@ -341,15 +476,27 @@ def _detail_call(
         return "tasks_get_task", {"task_list_id": parent_id, "task_id": resource_id}
     if resource_type == "GITHUB_ISSUE":
         payload = resource.get("payload")
-        if not isinstance(payload, Mapping):
-            raise ValueError("GitHub Issue detail requires a normalized payload")
-        repository = payload.get("repository")
-        issue_number = payload.get("issue_number")
+        repository = parent_id
+        try:
+            issue_number = int(resource_id.rsplit("#", 1)[1])
+        except (IndexError, ValueError) as error:
+            raise ValueError("GitHub Issue detail identity is invalid") from error
         if (
             not isinstance(repository, str)
-            or not repository
+            or not is_fully_qualified_repository(repository)
             or not isinstance(issue_number, int)
             or isinstance(issue_number, bool)
+            or issue_number < 1
+            or parent_id != repository
+            or resource_id != f"{repository}#{issue_number}"
+            or resource.get("connector_id", "github") != "github"
+            or (
+                isinstance(payload, Mapping)
+                and (
+                    payload.get("repository", repository) != repository
+                    or payload.get("issue_number", issue_number) != issue_number
+                )
+            )
         ):
             raise ValueError("GitHub Issue detail identity is invalid")
         return "github_get_issue", {
@@ -394,21 +541,27 @@ def _github_issue_state(plan: SourceFetchPlanV1) -> str:
 def _gmail_query(plan: SourceFetchPlanV1) -> str:
     terms: list[str] = []
     for constraint in plan["effective_constraints"]:
-        if constraint["kind"] == "KEYWORD":
-            value = " ".join(constraint["terms"])
-            terms.append(f'"{value}"' if constraint["match_mode"] == "PHRASE" else value)
+        if constraint["kind"] == "CONCEPT":
+            terms.append("{" + " ".join(f'"{term}"' for term in constraint["manifestations"]) + "}")
+        elif constraint["kind"] == "KEYWORD":
+            value = " ".join(_gmail_literal(term) for term in constraint["terms"])
+            if constraint["match_mode"] == "PHRASE":
+                terms.append(_gmail_literal(" ".join(constraint["terms"])))
+            elif constraint["match_mode"] == "ANY" and len(constraint["terms"]) > 1:
+                terms.append("{" + value + "}")
+            else:
+                terms.append(value)
         elif constraint["kind"] == "PARTICIPANT":
-            prefixes = {"SENDER": "from:", "RECIPIENT": "to:", "ATTENDEE": "", "ANY": ""}
-            values = [
-                prefixes[item["role"]] + item["identity"] for item in constraint["participants"]
-            ]
-            joined = " ".join(values)
-            terms.append("{" + joined + "}" if constraint["match_mode"] == "ANY" else joined)
-        elif constraint["kind"] == "TEMPORAL_RANGE":
-            if constraint["start_local"] is not None:
-                terms.append("after:" + constraint["start_local"][:10].replace("-", "/"))
-            if constraint["end_local"] is not None:
-                terms.append("before:" + constraint["end_local"][:10].replace("-", "/"))
+            terms.append(_gmail_participant_query(constraint))
+        elif constraint["kind"] == "TEMPORAL_RANGE" and constraint["axis"] == "MESSAGE_TIME":
+            zone = ZoneInfo(constraint["timezone"])
+            for boundary, prefix in (
+                (constraint["start_local"], "after:"),
+                (constraint["end_local"], "before:"),
+            ):
+                if boundary is not None:
+                    seconds = int(datetime.fromisoformat(boundary).replace(tzinfo=zone).timestamp())
+                    terms.append(prefix + str(seconds))
         elif constraint["kind"] == "RESOURCE_REF":
             terms.extend("rfc822msgid:" + item for item in constraint["resource_refs"])
         elif constraint["kind"] == "CONTAINER_REF":
@@ -416,9 +569,62 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
         elif constraint["kind"] == "STATUS_SCOPE":
             mapping = {"DRAFT": "in:drafts", "SENT": "in:sent"}
             terms.extend(mapping[item] for item in constraint["values"] if item in mapping)
-    if not terms:
-        raise ValueError("EMAIL retrieval requires a translatable constraint")
     return " ".join(terms)
+
+
+def _calendar_event_query(plan: SourceFetchPlanV1) -> str | None:
+    """Lower Calendar Event discovery terms without introducing provider DSL."""
+
+    terms: list[str] = []
+    for constraint in plan["effective_constraints"]:
+        if constraint["kind"] == "KEYWORD":
+            terms.extend(constraint["terms"])
+        elif constraint["kind"] == "CONCEPT":
+            terms.extend(constraint["manifestations"])
+    if not terms:
+        return None
+    query = " ".join(terms)
+    if len(query) > 2048 or any(ord(character) < 32 for character in query):
+        raise RetrievalV2ValidationError(
+            "Calendar Event query contains unsupported text",
+            reason_code="QUERY_LITERAL_UNSUPPORTED",
+            affected_field_paths=(
+                "$.source_fetch_plans[].effective_constraints[?(@.kind=='KEYWORD')].terms[]",
+                "$.source_fetch_plans[].effective_constraints[?(@.kind=='CONCEPT')].manifestations[]",
+            ),
+        )
+    return query
+
+
+def _gmail_literal(value: str) -> str:
+    return f'"{validate_gmail_keyword_literal(value)}"'
+
+
+def _gmail_participant_query(constraint: ParticipantConstraintV1) -> str:
+    groups: list[list[str]] = []
+    for person in constraint["participants"]:
+        identity = validate_participant_identity(person["identity"])
+        role = person["role"]
+        if role == "ATTENDEE":
+            raise RetrievalV2ValidationError(
+                "Gmail SEARCH cannot enforce Calendar attendee membership",
+                affected_field_paths=(
+                    "$.source_fetch_plans[].effective_constraints[?(@.kind=='PARTICIPANT')]",
+                ),
+            )
+        prefixes = (
+            ["from:", "to:"]
+            if role == "ANY"
+            else [
+                "from:" if role == "SENDER" else "to:",
+            ]
+        )
+        groups.append([prefix + identity for prefix in prefixes])
+    if constraint["match_mode"] == "ANY":
+        return "{" + " ".join(term for group in groups for term in group) + "}"
+    return " ".join(
+        group[0] if len(group) == 1 else "{" + " ".join(group) + "}" for group in groups
+    )
 
 
 def _optional_temporal_bounds(plan: SourceFetchPlanV1) -> tuple[str, str] | None:

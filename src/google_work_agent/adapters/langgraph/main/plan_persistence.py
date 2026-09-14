@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from json import dumps
 from typing import TYPE_CHECKING, Any, cast
 
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    project_current_action_evidence,
+)
 from google_work_agent.adapters.langgraph.main.state import (
     GraphState,
     _acquired_resource_by_handle,
     _require_state_value,
     _resource_handle_for_ref,
-)
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    RunScopedResourceIdentityReader,
-    resolve_exact_target_evidence_handle,
-)
-from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
-    resolve_evidence_projection,
+    request_from_state,
 )
 from google_work_agent.application.agents.planning.contracts.action_plan_draft import (
     ActionPlanDraftV2,
@@ -28,7 +25,6 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     EvidenceDraftV1,
     RetrievalResultV1,
 )
-from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.calendar_conflicts import (
     CALENDAR_CONFLICT_TOOLS,
 )
@@ -36,8 +32,14 @@ from google_work_agent.application.use_cases.action.task_duplicates import (
     TASK_CREATE_TOOL,
     evidence_duplicate_risk,
 )
+from google_work_agent.application.use_cases.plan.publish_plan import PublishPlanHandler
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultCommandV1,
+    RecordReviewResultHandler,
+)
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    RunScopedResourceIdentityReader,
+    resolve_exact_target_evidence_handle,
 )
 from google_work_agent.application.use_cases.plan.write_plan_contracts import (
     PublishWritePlanCommand,
@@ -46,19 +48,22 @@ from google_work_agent.application.use_cases.plan.write_plan_contracts import (
     WriteEvidenceDraft,
 )
 from google_work_agent.application.use_cases.resource_ref.persist_resource_ref import (
-    persist_registered_resource_ref,
+    PersistResourceRefCommand,
+    PersistResourceRefHandler,
 )
 from google_work_agent.application.use_cases.resource_ref.resource_ref_projection import (
+    is_durable_resource_type,
     resource_ref_from_snapshot,
 )
 from google_work_agent.application.use_cases.verification.write_verification_projection import (
     build_expected_verification_projection,
 )
 from google_work_agent.domain.evidence.model import EvidenceOriginType
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
+from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 if TYPE_CHECKING:
     from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
@@ -81,26 +86,49 @@ def connector_ids_from_frozen_routes(
     if not isinstance(raw_routes, list):
         raise ValueError("ACTION output_plan.output_routes must be a list")
 
-    actions = plan["actions"]
-    if len(actions) != len(raw_routes):
-        raise ValueError("write actions must align exactly with frozen output routes")
-
-    connector_ids: dict[str, str] = {}
-    for index, (action, raw_route) in enumerate(zip(actions, raw_routes, strict=True)):
+    routes_by_id: dict[str, tuple[int, Mapping[str, object]]] = {}
+    for index, raw_route in enumerate(raw_routes):
         if not isinstance(raw_route, Mapping):
             raise ValueError(f"output_routes[{index}] must be an object")
-        if action["route_id"] != raw_route.get("route_id"):
-            raise ValueError(f"write action route does not match frozen route at index {index}")
+        route_id = raw_route.get("route_id")
+        if not isinstance(route_id, str) or not route_id:
+            raise ValueError(f"output_routes[{index}].route_id is required")
+        if route_id in routes_by_id:
+            raise ValueError(f"duplicate frozen output route id: {route_id}")
+        routes_by_id[route_id] = (index, raw_route)
+
+    actions = plan["actions"]
+    connector_ids: dict[str, str] = {}
+    selected_route_ids: set[str] = set()
+    previous_route_index = -1
+    for action_index, action in enumerate(actions):
+        route_id = action["route_id"]
+        frozen_route = routes_by_id.get(route_id)
+        if frozen_route is None:
+            raise ValueError(
+                f"write action route does not match frozen route identity at index {action_index}"
+            )
+        if route_id in selected_route_ids:
+            raise ValueError(f"duplicate write action route id: {route_id}")
+        selected_route_ids.add(route_id)
+        route_index, raw_route = frozen_route
+        if route_index <= previous_route_index:
+            raise ValueError("write actions must preserve frozen output route order")
+        previous_route_index = route_index
         if action["tool_id"] != raw_route.get("selected_tool_id"):
-            raise ValueError(f"write action tool does not match frozen route at index {index}")
+            raise ValueError(
+                f"write action tool does not match frozen route at index {action_index}"
+            )
         if action["effect"] != raw_route.get("effect"):
-            raise ValueError(f"write action effect does not match frozen route at index {index}")
+            raise ValueError(
+                f"write action effect does not match frozen route at index {action_index}"
+            )
         connector_id = raw_route.get("connector_id")
         if not isinstance(connector_id, str) or not connector_id:
-            raise ValueError(f"output_routes[{index}].connector_id is required")
+            raise ValueError(f"output_routes[{route_index}].connector_id is required")
         action_id = action["action_id"]
         if not action_id:
-            raise ValueError(f"write action id is empty at index {index}")
+            raise ValueError(f"write action id is empty at index {action_index}")
         if action_id in connector_ids:
             raise ValueError(f"duplicate write action id: {action_id}")
         connector_ids[action_id] = connector_id
@@ -135,10 +163,13 @@ def target_handle_for_action(
     *,
     run_id: str,
     action: PlannedActionV2,
-    evidence_by_id: Mapping[str, EvidenceDraftV1],
+    evidence_by_id: Mapping[str, Mapping[str, object]],
     resource_identity_reader: RunScopedResourceIdentityReader,
+    selected_resources: Sequence[SelectedResourceRef] = (),
 ) -> str | None:
-    if action["effect"] == "CREATE":
+    if action["effect"] == "CREATE" or (
+        action["tool_id"] == "gmail_send" and "draft_id" not in action["arguments"]
+    ):
         return None
     return resolve_exact_target_evidence_handle(
         tool_id=action["tool_id"],
@@ -147,6 +178,7 @@ def target_handle_for_action(
         evidence_by_id=evidence_by_id,
         run_id=run_id,
         resource_identity_reader=resource_identity_reader,
+        selected_resources=selected_resources,
         path=f"ActionPlanDraftV2.actions[{action['action_id']!r}]",
     )
 
@@ -156,20 +188,12 @@ def _connector_id_for_evidence_handle(
     state: GraphState,
     resource_handle: str,
 ) -> str:
-    handle_kind = resource_handle.partition(":")[0]
-    if handle_kind.startswith("gmail_"):
-        category = "GMAIL"
-    elif handle_kind in {"task", "task_list"}:
-        category = "TASK"
-    elif handle_kind in {"calendar", "calendar_event", "calendar_freebusy"}:
-        category = "CALENDAR"
-    else:
-        raise ValueError(f"unsupported evidence resource handle: {resource_handle}")
+    resource_type = ResourceType(resource_handle.partition(":")[0])
     route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
     connector_ids = {
         str(route["connector_id"])
         for route in route_plan["input_plan"]["input_routes"]
-        if category in str(route["resource_type"]).upper()
+        if str(route["resource_type"]).lower() == resource_type.value
     }
     if len(connector_ids) != 1:
         raise ValueError(
@@ -203,14 +227,14 @@ class PlanPersistenceMixin:
     """Canonical runtime with deterministic Expected and explicit connector persistence."""
 
     if TYPE_CHECKING:
+        _persist_resource_ref: PersistResourceRefHandler
         _id_factory: Callable[[], str]
         _now_ms: Callable[[], int]
         _evidence_store: Any
         _unit_of_work_factory: Callable[[], UnitOfWork]
         _save_write_plan: Callable[[SaveWritePlanCommand], Any]
-        _publish_write_plan: Callable[[PublishWritePlanCommand], Any]
-        _record_review_result: Callable[[RecordReviewResultCommandV1], Any]
-        _tool_catalog: SignedToolRegistry
+        _publish_write_plan: PublishPlanHandler
+        _record_review_result: RecordReviewResultHandler
 
         def _current_run_version(self, run_id: str) -> int: ...
 
@@ -223,32 +247,6 @@ class PlanPersistenceMixin:
         ) -> dict[str, object]: ...
 
         def _request_hash(self, payload: dict[str, object]) -> str: ...
-
-    def __init__(
-        self,
-        *args: Any,
-        default_calendar_id_provider: Callable[[], str | None] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        llm_runtime = kwargs.get("llm_runtime")
-        if default_calendar_id_provider is None and llm_runtime is not None:
-            settings_service = getattr(llm_runtime, "settings_service", None)
-            if callable(settings_service):
-
-                def get_default_calendar_id() -> str | None:
-                    return getattr(settings_service(), "default_calendar_id", None)
-
-                default_calendar_id_provider = get_default_calendar_id
-
-        if kwargs.get("connector_execution") is None:
-            raise TypeError("connector_execution is required")
-
-        next_initializer = cast(Callable[..., None], super().__init__)
-        next_initializer(
-            *args,
-            default_calendar_id_provider=default_calendar_id_provider,
-            **kwargs,
-        )
 
     def _persist_write_plan(
         self,
@@ -264,11 +262,10 @@ class PlanPersistenceMixin:
         revision_no = next_plan_revision_no(plans)
         plan_id = self._required_string(plan["meta"].get("artifact_id"), "plan artifact_id")
         action_id_map = {action["action_id"]: action["action_id"] for action in plan["actions"]}
-        retrieval_result = _require_state_value(state["retrieval_result"], "retrieval_result")
+        retrieval_result = state.get("retrieval_result")
         evidence_ids = evidence_ids_from_plan(plan)
-        # Retrieval evidence ids are logical, run-scoped references. Persisted
-        # Evidence ids are repository-wide identities and must stay unique when
-        # a later Run selects the same external resource segment.
+        # Planning evidence ids are logical, run-scoped references. Persisted
+        # Evidence ids are repository-wide identities and must stay unique.
         evidence_id_map = {item: self._id_factory() for item in evidence_ids}
         if replan_from_plan_id is not None and not any(
             plan.id == replan_from_plan_id for plan in plans
@@ -282,37 +279,29 @@ class PlanPersistenceMixin:
             plan_id = self._id_factory()
             action_id_map = {action["action_id"]: self._id_factory() for action in plan["actions"]}
 
-        evidence_drafts = {
-            item["evidence_id"]: item
-            for item in resolve_evidence_projection(
-                store=self._evidence_store, run_id=run_id, retrieval_result=retrieval_result
-            )
-        }
+        evidence_drafts: dict[str, Mapping[str, object]] = {}
+        for item in project_current_action_evidence(
+            state=state,
+            evidence_store=self._evidence_store,
+        ):
+            evidence_id = item.get("evidence_id")
+            if not isinstance(evidence_id, str) or not evidence_id:
+                raise ValueError("Planning evidence projection requires evidence_id")
+            evidence_drafts[evidence_id] = item
         missing_evidence = set(evidence_ids) - set(evidence_drafts)
         if missing_evidence:
             raise LookupError(
                 "Planning evidence projection is unavailable: " + ",".join(sorted(missing_evidence))
             )
-        acquisition = _require_state_value(state["acquisition_result"], "acquisition_result")
+        acquisition = state.get("acquisition_result")
         mapped_evidence = tuple(
-            WriteEvidenceDraft(
-                evidence_id=evidence_id_map[evidence_id],
-                origin_type=EvidenceOriginType.GOOGLE_RESOURCE,
-                kind=evidence_drafts[evidence_id]["kind"],
-                excerpt=evidence_drafts[evidence_id]["excerpt"],
-                locator_json=_current_retrieval_locator(
-                    retrieval_result=retrieval_result,
-                    evidence=evidence_drafts[evidence_id],
-                ),
-                resource_ref_id=self._resolve_target_resource_ref_for_connector(
-                    run_id=run_id,
-                    connector_id=_connector_id_for_evidence_handle(
-                        state=state,
-                        resource_handle=evidence_drafts[evidence_id]["resource_handle"],
-                    ),
-                    resource_handle=evidence_drafts[evidence_id]["resource_handle"],
-                    acquisition_result=acquisition,
-                ),
+            self._materialize_write_evidence(
+                state=state,
+                retrieval_result=retrieval_result,
+                acquisition_result=acquisition,
+                logical_evidence_id=evidence_id,
+                persisted_evidence_id=evidence_id_map[evidence_id],
+                draft=evidence_drafts[evidence_id],
             )
             for evidence_id in evidence_ids
         )
@@ -324,6 +313,7 @@ class PlanPersistenceMixin:
                 action=action,
                 evidence_by_id=evidence_drafts,
                 resource_identity_reader=resource_identity_reader,
+                selected_resources=request_from_state(state).selected_resources,
             )
             target_ref_id = self._resolve_target_resource_ref_for_connector(
                 run_id=run_id,
@@ -347,7 +337,10 @@ class PlanPersistenceMixin:
                     risk=(
                         evidence_duplicate_risk(
                             arguments=action["arguments"],
-                            acquisition_result=acquisition,
+                            acquisition_result=_require_state_value(
+                                acquisition,
+                                "acquisition_result",
+                            ),
                             checked_at_ms=self._now_ms(),
                         )
                         if action["tool_id"] == TASK_CREATE_TOOL
@@ -395,6 +388,100 @@ class PlanPersistenceMixin:
         if not publish_response.applied:
             raise RuntimeError(f"publish_write_plan failed: {publish_response.result_code}")
         return plan_id
+
+    def _materialize_write_evidence(
+        self,
+        *,
+        state: GraphState,
+        retrieval_result: RetrievalResultV1 | None,
+        acquisition_result: AcquisitionResultV1 | None,
+        logical_evidence_id: str,
+        persisted_evidence_id: str,
+        draft: Mapping[str, object],
+    ) -> WriteEvidenceDraft:
+        if draft.get("origin_type") == EvidenceOriginType.USER_MESSAGE.value:
+            request = request_from_state(state)
+            message_id = draft.get("message_id")
+            excerpt = draft.get("excerpt")
+            if (
+                logical_evidence_id != request.user_message_id
+                or message_id != request.user_message_id
+                or excerpt != request.request_text
+                or draft.get("kind") != "USER_REQUEST"
+            ):
+                raise ValueError("USER_MESSAGE evidence does not match current Run request")
+            return WriteEvidenceDraft(
+                evidence_id=persisted_evidence_id,
+                origin_type=EvidenceOriginType.USER_MESSAGE,
+                kind="USER_REQUEST",
+                excerpt=request.request_text,
+                message_id=message_id,
+            )
+
+        if retrieval_result is None or acquisition_result is None:
+            raise ValueError("external evidence requires a Retrieval result")
+        kind = draft.get("kind")
+        excerpt = draft.get("excerpt")
+        resource_handle = draft.get("resource_handle")
+        if (
+            not isinstance(kind, str)
+            or not kind
+            or not isinstance(excerpt, str)
+            or not excerpt
+            or not isinstance(resource_handle, str)
+            or not resource_handle
+        ):
+            raise ValueError("Retrieval evidence projection is invalid")
+        resource_ref_id = self._resolve_evidence_resource_ref_for_connector(
+            run_id=state["run_id"],
+            connector_id=_connector_id_for_evidence_handle(
+                state=state,
+                resource_handle=resource_handle,
+            ),
+            resource_handle=resource_handle,
+            acquisition_result=acquisition_result,
+        )
+        return WriteEvidenceDraft(
+            evidence_id=persisted_evidence_id,
+            origin_type=(
+                EvidenceOriginType.CONNECTOR_RESOURCE
+                if resource_ref_id is not None
+                else EvidenceOriginType.DERIVED
+            ),
+            kind=kind,
+            excerpt=excerpt,
+            locator_json=_current_retrieval_locator(
+                retrieval_result=retrieval_result,
+                evidence=cast(EvidenceDraftV1, draft),
+            ),
+            resource_ref_id=resource_ref_id,
+        )
+
+    def _resolve_evidence_resource_ref_for_connector(
+        self,
+        *,
+        run_id: str,
+        connector_id: str,
+        resource_handle: str,
+        acquisition_result: AcquisitionResultV1,
+    ) -> str | None:
+        resource = _acquired_resource_by_handle(
+            acquisition_result=acquisition_result,
+            resource_handle=resource_handle,
+        )
+        if resource is None:
+            raise LookupError(
+                f"evidence resource handle was not acquired for this run: {resource_handle}"
+            )
+        resource_type = ResourceType(str(resource["resource_type"]))
+        if not is_durable_resource_type(resource_type):
+            return None
+        return self._resolve_target_resource_ref_for_connector(
+            run_id=run_id,
+            connector_id=connector_id,
+            resource_handle=resource_handle,
+            acquisition_result=acquisition_result,
+        )
 
     def _plan_summary(self, state: GraphState) -> str:
         request_intent = _require_state_value(state.get("request_intent"), "request_intent")
@@ -452,10 +539,12 @@ class PlanPersistenceMixin:
         run_id: str,
         connector_id: str,
         resource_handle: str | None,
-        acquisition_result: AcquisitionResultV1,
+        acquisition_result: AcquisitionResultV1 | None,
     ) -> str | None:
         if resource_handle is None:
             return None
+        if acquisition_result is None:
+            raise ValueError("existing target requires Acquisition evidence")
         with self._unit_of_work_factory() as unit_of_work:
             existing = unit_of_work.resource_refs.get(resource_handle)
             if existing is not None:
@@ -468,40 +557,33 @@ class PlanPersistenceMixin:
                     and resource_handle == _resource_handle_for_ref(resource_ref)
                 ):
                     return resource_ref.id
-            resource = _acquired_resource_by_handle(
-                acquisition_result=acquisition_result, resource_handle=resource_handle
+        resource = _acquired_resource_by_handle(
+            acquisition_result=acquisition_result, resource_handle=resource_handle
+        )
+        if resource is None:
+            raise LookupError(
+                f"target resource handle was not acquired for this run: {resource_handle}"
             )
-            if resource is None:
-                raise LookupError(
-                    f"target resource handle was not acquired for this run: {resource_handle}"
-                )
-            payload = cast(dict[str, object], resource["payload"])
-            snapshot = ResourceSnapshot(
-                fixture_snapshot_id=str(resource.get("fixture_snapshot_id") or "runtime"),
-                resource_type=ResourceType(str(resource["resource_type"])),
-                resource_id=str(resource["resource_id"]),
-                parent_id=cast(str | None, resource.get("parent_id")),
-                related_resource_ids=tuple(
-                    str(item)
-                    for item in cast(list[object], resource.get("related_resource_ids") or [])
-                ),
-                version=str(resource.get("version") or ""),
-                recovery_fingerprint=cast(str | None, resource.get("recovery_fingerprint")),
-                payload=payload,
-            )
-            resource_ref = resource_ref_from_snapshot(
-                run_id=run_id,
-                connector_id=connector_id,
-                snapshot=snapshot,
-                captured_at_ms=self._now_ms(),
-            )
-            persisted = persist_registered_resource_ref(
-                unit_of_work,
-                resource_ref,
-                catalog=self._tool_catalog,
-            )
-            unit_of_work.commit()
-            return persisted.id
+        payload = cast(dict[str, object], resource["payload"])
+        snapshot = ResourceSnapshot(
+            fixture_snapshot_id=str(resource.get("fixture_snapshot_id") or "runtime"),
+            resource_type=ResourceType(str(resource["resource_type"])),
+            resource_id=str(resource["resource_id"]),
+            parent_id=cast(str | None, resource.get("parent_id")),
+            related_resource_ids=tuple(
+                str(item) for item in cast(list[object], resource.get("related_resource_ids") or [])
+            ),
+            version=str(resource.get("version") or ""),
+            recovery_fingerprint=cast(str | None, resource.get("recovery_fingerprint")),
+            payload=payload,
+        )
+        resource_ref = resource_ref_from_snapshot(
+            run_id=run_id,
+            connector_id=connector_id,
+            snapshot=snapshot,
+            captured_at_ms=self._now_ms(),
+        )
+        return self._persist_resource_ref(PersistResourceRefCommand(resource_ref)).resource_ref.id
 
 
 __all__ = [

@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import Literal, NotRequired
 
+from google_work_agent.adapters.langgraph.main.action_evidence_projection import (
+    ActionEvidenceDraftV1,
+)
 from google_work_agent.adapters.langgraph.main.nodes.response_synthesis_node import (
     TerminalCommitIntentV1,
 )
@@ -24,7 +27,6 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
-    EvidenceDraftV1,
     RetrievalResultV1,
 )
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
@@ -81,18 +83,23 @@ class ReviewInputState(AgentSubgraphInputEnvelope, total=False):
     work_analysis_result: WorkAnalysisResultV2 | None
     planning_result: PlanningResultV2 | None
     plan_review: PlanReviewResultV2 | None
+    user_interrupt: UserInterruptV1 | None
+    policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
     __modify_review_plan_id__: str | None
     __modify_review_version__: int | None
     __modify_review_risks__: dict[str, dict[str, object]] | None
+    __modify_review_changes__: list[dict[str, object]] | None
+    __modify_review_evidence__: list[ActionEvidenceDraftV1] | None
 
 
 class ReviewState(GraphState, total=False):
     """Typed local state for the five canonical Review runtime nodes."""
 
     work_analysis: NotRequired[WorkAnalysisResultV2]
-    evidence: NotRequired[list[EvidenceDraftV1]]
+    evidence: NotRequired[list[ActionEvidenceDraftV1]]
     policy_summary: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[ConfirmationResponseProjectionV1]
+    user_action_modifications: NotRequired[list[dict[str, object]]]
     review_phase: NotRequired[Literal["INITIAL", "RECHECK"]]
     review_artifact_id: NotRequired[str]
     review_revision: NotRequired[int]

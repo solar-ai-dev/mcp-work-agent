@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
@@ -27,6 +28,7 @@ ENTITY_RELATIONS_OUTPUT_SCHEMA = OutputSchemaDefinition(
         "properties": {
             "relation_candidates": {
                 "type": "array",
+                "uniqueItems": True,
                 "items": {
                     "type": "object",
                     "required": [
@@ -73,9 +75,10 @@ def resolve_entity_relations(
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
     fact_ids = {fact["fact_id"] for fact in work_facts}
+    output_schema = _bound_output_schema(fact_ids, allowed_evidence_refs)
 
     def validate(value: object) -> object:
-        errors = validate_output_schema(value, ENTITY_RELATIONS_OUTPUT_SCHEMA.json_schema)
+        errors = validate_output_schema(value, output_schema.json_schema)
         if errors:
             raise ValueError(f"invalid entity relation candidate schema: {'; '.join(errors)}")
         seen: set[str] = set()
@@ -101,7 +104,7 @@ def resolve_entity_relations(
         requested_mode,
         prompt_ref,
         prompt_input,
-        ENTITY_RELATIONS_OUTPUT_SCHEMA,
+        output_schema,
     )
     root = cast(dict[str, object], validate(result.structured_output))
     return [
@@ -110,4 +113,53 @@ def resolve_entity_relations(
     ]
 
 
-__all__ = ["ENTITY_RELATIONS_OUTPUT_SCHEMA", "resolve_entity_relations"]
+def entity_relation_candidate_llm_required(work_facts: Sequence[WorkFactV1]) -> bool:
+    """An entity relation requires an entity/resource fact and a distinct operand."""
+
+    kinds = {fact.get("kind") for fact in work_facts}
+    return len(work_facts) >= 2 and bool(kinds.intersection({"PERSON", "RESOURCE"}))
+
+
+def _bound_output_schema(
+    fact_ids: set[str], allowed_evidence_refs: set[str]
+) -> OutputSchemaDefinition:
+    """Bind LLM-generated references to the current validated artifact identities."""
+
+    json_schema = deepcopy(ENTITY_RELATIONS_OUTPUT_SCHEMA.json_schema)
+    properties = cast(dict[str, object], json_schema["properties"])
+    candidates = cast(dict[str, object], properties["relation_candidates"])
+    item = cast(dict[str, object], candidates["items"])
+    item_properties = cast(dict[str, object], item["properties"])
+    fact_id_schema = {"type": "string", "enum": sorted(fact_ids)}
+    item_properties["source_fact_id"] = fact_id_schema
+    item_properties["target_fact_id"] = dict(fact_id_schema)
+    item_properties["evidence_refs"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "items": {"type": "string", "enum": sorted(allowed_evidence_refs)},
+    }
+    item["allOf"] = [
+        {
+            "if": {"properties": {"source_fact_id": {"const": source_fact_id}}},
+            "then": {
+                "properties": {
+                    "target_fact_id": {
+                        "type": "string",
+                        "enum": sorted(fact_ids - {source_fact_id}),
+                    }
+                }
+            },
+        }
+        for source_fact_id in sorted(fact_ids)
+    ]
+    return OutputSchemaDefinition(
+        schema_version=ENTITY_RELATIONS_OUTPUT_SCHEMA.schema_version,
+        json_schema=json_schema,
+    )
+
+
+__all__ = [
+    "ENTITY_RELATIONS_OUTPUT_SCHEMA",
+    "entity_relation_candidate_llm_required",
+    "resolve_entity_relations",
+]

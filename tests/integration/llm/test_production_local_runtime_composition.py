@@ -4,6 +4,7 @@ import hashlib
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from tests.support.canonical_prompt_runtime import (
@@ -23,14 +24,20 @@ from google_work_agent.api.composition import (
 )
 from google_work_agent.api.container import ApiContainer
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptRegistry
+from google_work_agent.application.use_cases.setting.update_settings import UpdateSettingsCommand
 from google_work_agent.ports.connector.oauth_credential_port import OAuthEnvironment
 from google_work_agent.ports.keyring.secret_store_port import SecretStorePort
 from google_work_agent.ports.llm.approved_model_manifest import (
     ApprovedModelEntryV1,
     ModelManifestV1,
 )
+from google_work_agent.ports.llm.local_model_catalog_port import InstalledLocalModelV1
 from google_work_agent.ports.llm.local_model_product_decision import (
     LocalModelProductDecisionV1,
+)
+from google_work_agent.ports.llm.local_model_profile import (
+    LocalInferenceClass,
+    LocalModelProfileV1,
 )
 from google_work_agent.ports.llm.runtime_selection import (
     LlmRuntimeSelectionV1,
@@ -44,9 +51,12 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     ProviderResponsePayload,
 )
 from google_work_agent.ports.system.hardware_probe_port import HardwareProfileV1
+from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
-MODEL_ID = "fixture-model:7b-q4"
-MODEL_HASH = hashlib.sha256(b"fixture-model-content").hexdigest()
+ALTERNATE_MODEL_ID: Literal["qwen3.5:4b"] = "qwen3.5:4b"
+ALTERNATE_MODEL_HASH = hashlib.sha256(b"fixture-4b-content").hexdigest()
+MODEL_ID: Literal["qwen3.5:9b"] = "qwen3.5:9b"
+MODEL_HASH = hashlib.sha256(b"fixture-9b-content").hexdigest()
 RELEASE_VERSION = "1.2.3-test"
 
 
@@ -85,11 +95,14 @@ class _EligibleHardwareProbe:
         )
 
 
-def _write_local_release_artifacts(install_root: Path) -> tuple[Path, Path]:
+def _write_local_release_artifacts(install_root: Path) -> tuple[Path, Path, Path]:
     manifest = ModelManifestV1(
         schema_version=1,
         minimum_ollama_version="0.6.0",
-        approved_models=(ApprovedModelEntryV1(MODEL_ID, MODEL_HASH),),
+        approved_models=(
+            ApprovedModelEntryV1(ALTERNATE_MODEL_ID, ALTERNATE_MODEL_HASH),
+            ApprovedModelEntryV1(MODEL_ID, MODEL_HASH),
+        ),
     )
     manifests = install_root / "manifests"
     manifests.mkdir(parents=True, exist_ok=True)
@@ -111,7 +124,18 @@ def _write_local_release_artifacts(install_root: Path) -> tuple[Path, Path]:
     )
     decision_path = manifests / "local-model-product-decision-v1.json"
     decision_path.write_bytes(decision.to_canonical_bytes() + b"\n")
-    return manifest_path, decision_path
+    profile = LocalModelProfileV1(
+        schema_version=1,
+        profile_id="fixture-profile",
+        runtime="OLLAMA",
+        worker_model_id=MODEL_ID,
+        reasoning_model_id=MODEL_ID,
+        default_inference_class=LocalInferenceClass.REASONING,
+        prompt_inference_classes=(),
+    )
+    profile_path = manifests / "local-model-profile-v1.json"
+    profile_path.write_bytes(profile.to_canonical_bytes() + b"\n")
+    return manifest_path, decision_path, profile_path
 
 
 def _release_file(install_root: Path, path: Path) -> _VerifiedReleaseFile:
@@ -176,7 +200,7 @@ def _build_signed_container(
         github_oauth_scope="repo",
         api_contract_version="1",
         policy_version="2026-08-06.p0",
-        database_migration_version="0019",
+        database_migration_version="0023",
         configuration_source="SIGNED_RELEASE_MANIFEST",
         service_instance_id="fixture-service",
         keyring_store=_MemorySecretStore(),
@@ -192,13 +216,17 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
     frontend = install_root / "frontend" / "index.html"
     frontend.parent.mkdir(parents=True)
     frontend.write_text("<!doctype html>", encoding="utf-8")
-    manifest_path, decision_path = _write_local_release_artifacts(install_root)
+    manifest_path, decision_path, profile_path = _write_local_release_artifacts(install_root)
     release_files = tuple(
         _release_file(install_root, path)
-        for path in (*prompt_files, frontend, manifest_path, decision_path)
+        for path in (*prompt_files, frontend, manifest_path, decision_path, profile_path)
     )
     monkeypatch.setattr(composition, "WindowsHardwareProbeAdapter", _EligibleHardwareProbe)
     local_transport = FakeOllamaTransport()
+    local_transport.installed_models = (
+        InstalledLocalModelV1(ALTERNATE_MODEL_ID, ALTERNATE_MODEL_HASH),
+        InstalledLocalModelV1(MODEL_ID, MODEL_HASH),
+    )
     local_transport.queued_payloads.append(
         ProviderResponsePayload(
             content={"answer": "local"},
@@ -221,6 +249,13 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
     try:
         assert container.structured_inference_port is not None
         assert container.llm_runtime_selection is not None
+        assert container.update_settings_handler is not None
+        container.update_settings_handler(
+            UpdateSettingsCommand(
+                "select-local-9b",
+                SettingsPatchV1(schema_version=1, preferred_local_model_id=MODEL_ID),
+            )
+        )
         prompt_ref = PromptRegistry(
             prompt_manifest,
             prompt_manifest.parent / "prompt_runtime_input_contract_v1.json",
@@ -233,6 +268,7 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
                 "request_intent": {},
                 "answer_outline": {},
                 "evidence": [],
+                "temporal_constraints": [],
             },
             OutputSchemaDefinition(
                 "1",
@@ -270,7 +306,6 @@ def test_signed_local_decision__production_composition__invokes_only_local_provi
             "OLLAMA_VERSION_UNSUPPORTED",
         ),
         (ProbeResult(AvailabilityState.AVAILABLE), {"ram_total_bytes": 1}, "INSUFFICIENT_RAM"),
-        (ProbeResult(AvailabilityState.AVAILABLE), {"vram_total_bytes": 1}, "INSUFFICIENT_VRAM"),
         (
             ProbeResult(AvailabilityState.AVAILABLE),
             {"operating_system": "LINUX"},
@@ -304,6 +339,35 @@ def test_local_eligibility__fails_closed__for_each_signed_requirement(
     assert expected_reason in decision.safe_reason_codes
 
 
+@pytest.mark.parametrize(
+    "gpu_overrides",
+    [
+        {"gpu_present": False, "vram_total_bytes": None},
+        {"gpu_present": True, "vram_total_bytes": 1},
+    ],
+)
+def test_local_eligibility__allows_cpu_profile__when_gpu_profile_fails(
+    gpu_overrides: dict[str, object],
+) -> None:
+    model = ApprovedModelInfo(MODEL_ID, "OLLAMA", "1", "1", digest=MODEL_HASH)
+    values: dict[str, object] = {
+        "runtime_selection": _active_selection(model),
+        "operating_system": "WINDOWS",
+        "architecture": "AMD64",
+        "cpu_logical_cores": 8,
+        "ram_total_bytes": 16 * 1024**3,
+        "gpu_present": True,
+        "vram_total_bytes": 8 * 1024**3,
+        "ollama_probe": ProbeResult(AvailabilityState.AVAILABLE),
+    }
+    values.update(gpu_overrides)
+
+    decision = evaluate_local_runtime_eligibility(**values)  # type: ignore[arg-type]
+
+    assert decision.eligible is True
+    assert decision.safe_reason_codes == ()
+
+
 def _active_selection(model: ApprovedModelInfo) -> LlmRuntimeSelectionV1:
     from tests.support.llm_runtime import runtime_selection
 
@@ -324,6 +388,7 @@ def _active_selection(model: ApprovedModelInfo) -> LlmRuntimeSelectionV1:
     [
         ("missing_manifest", "MODEL_MANIFEST_MISSING"),
         ("missing_decision", "PRODUCT_DECISION_MISSING"),
+        ("missing_profile", "LOCAL_MODEL_PROFILE_MISSING"),
         ("manifest_hash", "PRODUCT_DECISION_MANIFEST_MISMATCH"),
         ("stale_decision", "PRODUCT_DECISION_STALE"),
         ("unapproved_model", "PRODUCT_DECISION_MODEL_NOT_APPROVED"),
@@ -340,7 +405,7 @@ def test_signed_local_release_artifact_failures__stop_before_composition__with_e
     frontend = install_root / "frontend" / "index.html"
     frontend.parent.mkdir(parents=True)
     frontend.write_text("<!doctype html>", encoding="utf-8")
-    manifest_path, decision_path = _write_local_release_artifacts(install_root)
+    manifest_path, decision_path, profile_path = _write_local_release_artifacts(install_root)
     if mutation in {"manifest_hash", "stale_decision", "unapproved_model"}:
         decision = LocalModelProductDecisionV1.from_bytes(decision_path.read_bytes())
         payload = {field: getattr(decision, field) for field in decision.__dataclass_fields__}
@@ -353,11 +418,13 @@ def test_signed_local_release_artifact_failures__stop_before_composition__with_e
         decision_path.write_bytes(
             LocalModelProductDecisionV1(**payload).to_canonical_bytes() + b"\n"
         )
-    paths = [*prompt_files, frontend, manifest_path, decision_path]
+    paths = [*prompt_files, frontend, manifest_path, decision_path, profile_path]
     if mutation == "missing_manifest":
         paths.remove(manifest_path)
     if mutation == "missing_decision":
         paths.remove(decision_path)
+    if mutation == "missing_profile":
+        paths.remove(profile_path)
     with pytest.raises(CoreInitializationError) as raised:
         _build_signed_container(
             monkeypatch=monkeypatch,

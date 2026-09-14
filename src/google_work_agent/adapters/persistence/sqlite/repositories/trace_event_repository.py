@@ -21,8 +21,13 @@ from google_work_agent.ports.system.contracts.observability import (
 
 
 class SqliteTraceEventRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self, connection: sqlite3.Connection, *,
+        environment: str = "test", release_version: str = "dev",
+    ) -> None:
         self._connection = connection
+        self._environment = environment
+        self._release_version = release_version
 
     def append(self, event: TraceEventRecord) -> None:
         event = replace(event, payload_json=sanitize_persistent_event_json(event.payload_json))
@@ -46,8 +51,8 @@ class SqliteTraceEventRepository:
                     occurred_at_ms=event.created_at_ms,
                     severity=Severity.INFO,
                     component="trace_event_repository",
-                    environment="test",
-                    release_version="dev",
+                    environment=self._environment,
+                    release_version=self._release_version,
                     correlation=ObservabilityContext(
                         run_id=event.run_id, action_id=event.action_id
                     ),
@@ -98,6 +103,16 @@ class SqliteTraceEventRepository:
             (run_id, run_id, cursor_after, cursor_after, limit),
         ).fetchall()
         return tuple(self._record(r) for r in rows)
+
+    def list_observed_runtimes(self, run_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT json_extract(payload_json, '$.attributes.actual_runtime') AS runtime "
+            "FROM trace_events WHERE run_id=? AND event_type='LLM_CALL_COMPLETED' "
+            "AND json_valid(payload_json) AND "
+            "json_extract(payload_json, '$.attributes.actual_runtime') IN ('LOCAL_GPU','API_LLM') "
+            "ORDER BY runtime LIMIT 2;", (run_id,),
+        ).fetchall()
+        return tuple(str(row[0]) for row in rows)
 
     def purge_before(self, timestamp_ms: int) -> int:
         return int(

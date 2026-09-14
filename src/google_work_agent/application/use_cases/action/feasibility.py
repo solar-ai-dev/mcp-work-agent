@@ -30,9 +30,11 @@ from google_work_agent.application.use_cases.action.feasibility_policy import (
 from google_work_agent.domain.action.model import PolicyViolationError, normalize_action_risk
 from google_work_agent.ports.connector.contracts.google_workspace import (
     FreeBusyCalendar,
+    TimeRange,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceType,
-    TimeRange,
 )
 
 

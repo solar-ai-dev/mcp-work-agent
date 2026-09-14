@@ -16,7 +16,7 @@ from google_work_agent.application.use_cases.resource.connector_read_projection 
     ConnectorReadProjection,
 )
 from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
@@ -177,9 +177,12 @@ def _final_arguments(
     }:
         return dict(arguments)
     if tool_name == "gmail_send":
+        payload = arguments.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("SEND requires approved message content; reapproval is required")
         return {
-            "draft_id": _required(arguments, "draft_id"),
-            "recovery_fingerprint": recovery_fingerprint,
+            **({"draft_id": _required(arguments, "draft_id")} if "draft_id" in arguments else {}),
+            "payload": {**payload, "recovery_fingerprint": recovery_fingerprint},
         }
     if tool_name == "calendar_delete_event":
         return {

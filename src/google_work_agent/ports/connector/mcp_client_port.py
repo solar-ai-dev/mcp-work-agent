@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal, Protocol
 
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 type JsonValue = Any
 
@@ -28,6 +28,7 @@ class MCPToolCallResultV1:
     transport_status: Literal["OK", "ERROR", "TIMEOUT", "DISCONNECTED"]
     payload: JsonValue | None
     error_code: str | None
+    safe_error_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

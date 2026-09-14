@@ -7,6 +7,9 @@ from collections.abc import Callable
 from json import loads
 from typing import Literal, Protocol, cast
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    is_fully_qualified_repository,
+)
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.approval_source_snapshot import (
     build_approval_source_snapshot,
@@ -78,6 +81,8 @@ from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.resource_ref.model import ResourceRef as ResourceRefRecord
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
@@ -215,9 +220,7 @@ class _WritePreflight:
 
         if action.tool_name == "github_create_issue":
             repository = _required_argument_string(arguments, "repository")
-            if len(repository.split("/")) != 2 or any(
-                not part.strip() for part in repository.split("/")
-            ):
+            if not is_fully_qualified_repository(repository):
                 raise PolicyViolationError("GitHub repository identity is invalid")
             if not approval.recovery_fingerprint.strip():
                 raise PolicyViolationError("GitHub create recovery fingerprint is missing")
@@ -239,8 +242,7 @@ class _WritePreflight:
             )
             if (
                 approved_target_snapshot != approval_snapshot
-                or calculate_canonical_json_hash(approval_snapshot)
-                != approval.source_snapshot_hash
+                or calculate_canonical_json_hash(approval_snapshot) != approval.source_snapshot_hash
             ):
                 raise PolicyViolationError("GitHub preflight approval target binding is stale")
             repository = _required_argument_string(arguments, "repository")
@@ -531,13 +533,18 @@ class _WritePreflight:
             return update_source_snapshot
 
         if action.tool_name == "gmail_send":
+            _dict_argument(arguments.get("payload"))
+            if "draft_id" not in arguments:
+                return {}
             draft_id = _required_argument_string(arguments, "draft_id")
             draft = self._gateway.get_gmail_draft(draft_id=draft_id)
             validate_preflight_target(
                 snapshot=draft,
-                target_ref=None,
+                target_ref=target_ref,
                 expected_resource_type=ResourceType.GMAIL_DRAFT,
                 expected_parent_id=None,
+                require_target_ref=True,
+                require_version_token=True,
             )
             return {}
         if action.tool_name == "calendar_delete_event":

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    StateArtifactRefV1,
+)
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceDraftV1,
     RetrievalResultV1,
+    TaskReviewCandidateV1,
 )
 from google_work_agent.application.agents.retrieval.finalize_retrieval import finalize_retrieval
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -25,6 +31,9 @@ def finalize_retrieval_node(
     evidence_drafts: list[EvidenceDraftV1],
     current_round_no: int,
     prior_result: RetrievalResultV1 | None = None,
+    prior_artifact_ref: StateArtifactRefV1 | None = None,
+    task_review_candidates: list[TaskReviewCandidateV1] | None = None,
+    read_result_summaries: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     projection = project_finalize_retrieval_input(state)
     return {
@@ -35,6 +44,9 @@ def finalize_retrieval_node(
             evidence_drafts=evidence_drafts,
             current_round_no=current_round_no,
             prior_result=prior_result,
+            prior_artifact_ref=prior_artifact_ref,
+            task_review_candidates=task_review_candidates or [],
+            read_result_summaries=read_result_summaries,
             **projection,
         )
     }

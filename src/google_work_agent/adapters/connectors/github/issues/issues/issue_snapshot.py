@@ -9,7 +9,7 @@ from typing import cast
 from google_work_agent.adapters.connectors.github.github.mcp_server.github_api import (
     GitHubProviderError,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 from .issue_contract import RESOURCE_TYPE
 
@@ -42,29 +42,35 @@ class GitHubIssueSnapshot:
 
 
 def normalize_github_issue(
-    raw: dict[str, object], *, repository: str,
+    raw: dict[str, object],
+    *,
+    repository: str,
     delivery_certainty: DeliveryCertainty = DeliveryCertainty.NOT_SENT,
+    expected_issue_number: int | None = None,
 ) -> GitHubIssueSnapshot:
     if "pull_request" in raw:
         raise GitHubProviderError("NOT_FOUND", delivery_certainty=delivery_certainty)
     issue_number = raw.get("number")
     title = raw.get("title")
-    if not isinstance(issue_number, int) or not isinstance(title, str):
-        raise GitHubProviderError(
-            "MALFORMED_RESPONSE", delivery_certainty=delivery_certainty
-        )
+    if (
+        type(issue_number) is not int
+        or issue_number < 1
+        or not isinstance(title, str)
+        or raw.get("state") not in {"open", "closed"}
+        or (expected_issue_number is not None and issue_number != expected_issue_number)
+    ):
+        raise GitHubProviderError("MALFORMED_RESPONSE", delivery_certainty=delivery_certainty)
     body = raw.get("body")
     url = raw.get("html_url")
+    expected_url = f"https://github.com/{repository}/issues/{issue_number}"
+    if not isinstance(url, str) or url.casefold() != expected_url.casefold():
+        raise GitHubProviderError("IDENTITY_MISMATCH", delivery_certainty=delivery_certainty)
     updated_at = raw.get("updated_at")
     return GitHubIssueSnapshot(
         resource_identity=GitHubIssueResourceIdentity(repository, issue_number),
         title=title,
         description=body if isinstance(body, str) else "",
-        state=(
-            GitHubIssueState.CLOSED
-            if raw.get("state") == "closed"
-            else GitHubIssueState.OPEN
-        ),
+        state=(GitHubIssueState.CLOSED if raw.get("state") == "closed" else GitHubIssueState.OPEN),
         url=url if isinstance(url, str) else "",
         labels=_normalized_labels(raw),
         assignees=_normalized_assignees(raw),

@@ -97,13 +97,15 @@ from google_work_agent.domain.canonical import calculate_canonical_json_hash
 from google_work_agent.domain.recovery.model import RecoveryResolution
 from google_work_agent.domain.results import ResultCode
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
 )
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.connector_write_port import ConnectorWriteResultV1
+from google_work_agent.ports.connector.contracts.delivery_certainty import (
     DeliveryCertainty,
+)
+from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
 )
@@ -861,11 +863,11 @@ class WriteExecutionStructuralDriver:
         self,
         *,
         request: WriteExecutionPhaseRequest,
-        error: GoogleWorkspaceGatewayError,
+        error: GoogleWorkspaceGatewayError | ConnectorOperationFailure,
     ) -> WriteExecutionPhaseResult:
         """Apply only the canonical auth pause for a technical verification failure."""
 
-        return self._handle_verification_error(request=request, error=error)
+        return self._handle_verification_error(request=request, error=self._as_gateway_error(error))
 
     def _verify_and_store(
         self,
@@ -1130,10 +1132,11 @@ class WriteExecutionStructuralDriver:
             "INVALID_ARGUMENT": GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
             "NOT_FOUND": GoogleWorkspaceErrorCode.NOT_FOUND,
             "TIMEOUT": GoogleWorkspaceErrorCode.TIMEOUT,
+            "TOOL_REJECTED": GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
         }.get(result.error_code or "", GoogleWorkspaceErrorCode.CONNECTION_CLOSED)
         return GoogleWorkspaceGatewayError(
             code=code,
-            message=result.error_code or "CONNECTOR_WRITE_FAILED",
+            message=result.safe_error_code or result.error_code or "CONNECTOR_WRITE_FAILED",
             delivered=certainty is not DeliveryCertainty.NOT_SENT,
             mutated=certainty is DeliveryCertainty.SENT_RESPONSE_LOST,
             mcp_request_id=result.provider_request_id,
@@ -1145,6 +1148,15 @@ class WriteExecutionStructuralDriver:
     ) -> GoogleWorkspaceGatewayError:
         if isinstance(error, GoogleWorkspaceGatewayError):
             return error
+        if error.detail_code == "RESOURCE_NOT_SELECTED":
+            # A revoked product scope is not an expired provider credential.
+            return GoogleWorkspaceGatewayError(
+                code=GoogleWorkspaceErrorCode.INVALID_ARGUMENT,
+                message="접근 허용이 해제되어 결과를 확인할 수 없습니다. RESOURCE_NOT_SELECTED",
+                delivered=False,
+                mutated=False,
+                mcp_request_id=None,
+            )
         code = {
             ConnectorFailureCode.AUTH_REQUIRED: GoogleWorkspaceErrorCode.AUTH_EXPIRED,
             ConnectorFailureCode.PERMISSION_DENIED: GoogleWorkspaceErrorCode.PERMISSION_DENIED,
@@ -1156,12 +1168,8 @@ class WriteExecutionStructuralDriver:
             ConnectorFailureCode.CONNECTION_UNAVAILABLE: (
                 GoogleWorkspaceErrorCode.CONNECTION_CLOSED
             ),
-            ConnectorFailureCode.MALFORMED_RESPONSE: (
-                GoogleWorkspaceErrorCode.RESPONSE_MALFORMED
-            ),
-            ConnectorFailureCode.CONFIGURATION_ERROR: (
-                GoogleWorkspaceErrorCode.CONNECTION_CLOSED
-            ),
+            ConnectorFailureCode.MALFORMED_RESPONSE: (GoogleWorkspaceErrorCode.RESPONSE_MALFORMED),
+            ConnectorFailureCode.CONFIGURATION_ERROR: (GoogleWorkspaceErrorCode.CONNECTION_CLOSED),
         }.get(error.code, GoogleWorkspaceErrorCode.CONNECTION_CLOSED)
         return GoogleWorkspaceGatewayError(
             code=code,

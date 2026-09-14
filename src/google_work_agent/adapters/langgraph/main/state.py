@@ -10,6 +10,7 @@ typed parent boundary.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import asdict
 from enum import StrEnum
 from typing import Final, Literal, NotRequired, Required, TypedDict, cast
 
@@ -27,6 +28,8 @@ from google_work_agent.application.agents.request_understanding.contracts import
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
+from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
     EvidenceSelectionResultV2,
@@ -36,6 +39,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 from google_work_agent.application.agents.review.contracts.plan_review_result import (
     PlanReviewResultV2,
 )
+from google_work_agent.application.agents.state_artifact import StateArtifactRefV1
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ScopeExpansionRequiredV1,
     ToolRoutePlanV2,
@@ -59,11 +63,13 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowStartRequest,
 )
 from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationRequiredV1,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
     SubgraphReturnV2,
     WorkflowSignalV1,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 _TYPE_HINT_NAMESPACE = (
     request_understanding_output.RequestUnderstandingOutputV1,
@@ -71,16 +77,20 @@ _TYPE_HINT_NAMESPACE = (
     SufficiencyResultV2,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
+    RequestReconsiderationRequiredV1,
 )
 
 
 class GraphStateUpdateV1(TypedDict, total=False):
+    admitted_connector_ids: list[str]
     """Typed partial update returned by workflow agents and the supervisor."""
 
     workflow_phase: str
     request_intent: RequestIntentV2 | None
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: WorkflowSignalV1 | ScopeExpansionRequiredV1 | None
+    request_reconsideration: RequestReconsiderationRequiredV1 | None
+    input_plan_reuse: InputPlanReuseV1 | None
     acquisition_result: AcquisitionResultV1 | None
     retrieval_result: RetrievalResultV1 | None
     work_analysis_result: WorkAnalysisResultV2 | None
@@ -130,8 +140,19 @@ class RunInputV1(TypedDict):
 
     entry_mode: Literal["AGENT_SEARCH", "RESOURCE_SELECTED"]
     user_request: str
+    user_message_id: str | None
     selected_resource_refs: list[dict[str, str | None]]
     requested_mode: Literal["AUTO", "LOCAL_GPU", "API_LLM"]
+    default_github_repository: NotRequired[dict[str, object] | None]
+
+
+class InputPlanReuseV1(TypedDict):
+    """Proof that a frozen input plan still represents a revised Intent's IN semantics."""
+
+    schema_version: Required[Literal[1]]
+    input_plan_ref: StateArtifactRefV1
+    prior_request_intent_ref: StateArtifactRefV1
+    current_request_intent_ref: StateArtifactRefV1
 
 
 class ExecutionSummaryV1(TypedDict):
@@ -156,6 +177,7 @@ class VerificationSummaryV1(TypedDict):
 
 
 class GraphState(TypedDict, total=False):
+    admitted_connector_ids: list[str]
     """The single canonical Main graph/checkpoint state schema."""
 
     schema_version: Required[Literal[2]]
@@ -170,6 +192,8 @@ class GraphState(TypedDict, total=False):
     request_intent: Required[RequestIntentV2 | None]
     tool_route_plan: Required[ToolRoutePlanV2 | None]
     workflow_signal: Required[WorkflowSignalV1 | ScopeExpansionRequiredV1 | None]
+    request_reconsideration: NotRequired[RequestReconsiderationRequiredV1 | None]
+    input_plan_reuse: NotRequired[InputPlanReuseV1 | None]
     acquisition_result: Required[AcquisitionResultV1 | None]
     retrieval_result: Required[RetrievalResultV1 | None]
     work_analysis_result: Required[WorkAnalysisResultV2 | None]
@@ -195,9 +219,18 @@ class GraphState(TypedDict, total=False):
     __workflow_control__: NotRequired[dict[str, object] | None]
     exclusion_obligation_segment_ids: NotRequired[list[str]]
     pending_user_retrieval_need: NotRequired[dict[str, object] | None]
+    __context_canonical_plans__: NotRequired[dict[str, SourceFetchPlanV1]]
+    __context_query_attempts__: NotRequired[list[QueryAttemptV1]]
+    __context_read_result_handles__: NotRequired[list[str]]
+    __context_read_bindings__: NotRequired[dict[str, dict[str, object]]]
+    __context_segment_handles__: NotRequired[list[str]]
+    __context_sufficiency_output__: NotRequired[SufficiencyResultV2 | None]
+    __context_current_round_no__: NotRequired[int | None]
     __modify_review_plan_id__: NotRequired[str | None]
     __modify_review_version__: NotRequired[int | None]
     __modify_review_risks__: NotRequired[dict[str, dict[str, object]] | None]
+    __modify_review_changes__: NotRequired[list[dict[str, object]] | None]
+    __modify_review_evidence__: NotRequired[list[dict[str, object]] | None]
     __replan_from_plan_id__: NotRequired[str]
     __reserved_corrective_plan_id__: NotRequired[str | None]
 
@@ -216,6 +249,7 @@ CONTEXT_CANONICAL_PLANS_KEY: Final = "__context_canonical_plans__"
 CONTEXT_FOLLOWUP_OPERATION_KEY: Final = "__context_followup_operation__"
 CONTEXT_NEXT_PAGE_HANDLES_KEY: Final = "__context_next_page_handles__"
 CONTEXT_DETAIL_CANDIDATES_KEY: Final = "__context_detail_candidates__"
+CONTEXT_ROUND_PREADVANCED_KEY: Final = "__context_round_preadvanced__"
 ANALYSIS_AGENT_LOCAL_KEY: Final = "__analysis_agent_local__"
 PLANNING_AGENT_LOCAL_KEY: Final = "__planning_agent_local__"
 PLANNING_MODE_KEY: Final = "__planning_mode__"
@@ -240,6 +274,7 @@ def initial_graph_state(
         "run_input": {
             "entry_mode": cast(Literal["AGENT_SEARCH", "RESOURCE_SELECTED"], request.entry_mode),
             "user_request": request.request_text,
+            "user_message_id": request.user_message_id,
             "selected_resource_refs": [
                 {
                     "resource_ref_id": item.resource_ref_id,
@@ -251,11 +286,19 @@ def initial_graph_state(
                 for item in request.selected_resources
             ],
             "requested_mode": cast(Literal["AUTO", "LOCAL_GPU", "API_LLM"], request.requested_mode),
+            "default_github_repository": (
+                None
+                if request.default_github_repository is None
+                else asdict(request.default_github_repository)
+            ),
         },
         "workflow_phase": WorkflowPhase.INITIALIZE.value,
         "request_intent": None,
         "tool_route_plan": None,
+        "admitted_connector_ids": [],
         "workflow_signal": None,
+        "request_reconsideration": None,
+        "input_plan_reuse": None,
         "acquisition_result": None,
         "retrieval_result": None,
         "work_analysis_result": None,
@@ -349,12 +392,17 @@ def request_from_run_input_state(state: Mapping[str, object]) -> WorkflowStartRe
         raise TypeError("workflow state is missing RunInputV1")
     entry_mode = raw_input.get("entry_mode")
     user_request = raw_input.get("user_request")
+    user_message_id = raw_input.get("user_message_id")
     requested_mode = raw_input.get("requested_mode")
     raw_refs = raw_input.get("selected_resource_refs")
     if entry_mode not in {"AGENT_SEARCH", "RESOURCE_SELECTED"}:
         raise ValueError("run_input.entry_mode is invalid")
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("run_input.user_request is required")
+    if user_message_id is not None and (
+        not isinstance(user_message_id, str) or not user_message_id
+    ):
+        raise ValueError("run_input.user_message_id is invalid")
     if requested_mode not in {"AUTO", "LOCAL_GPU", "API_LLM"}:
         raise ValueError("run_input.requested_mode is invalid")
     if not isinstance(raw_refs, list):
@@ -403,4 +451,10 @@ def request_from_run_input_state(state: Mapping[str, object]) -> WorkflowStartRe
         correlation=envelope.correlation,
         run_budget=dict(run_budget),
         selected_resources=tuple(selected_resources),
+        user_message_id=cast(str | None, user_message_id),
+        default_github_repository=(
+            None
+            if raw_input.get("default_github_repository") is None
+            else GitHubRepositoryDefaultV1.from_payload(raw_input["default_github_repository"])
+        ),
     )

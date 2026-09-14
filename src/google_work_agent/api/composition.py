@@ -5,29 +5,28 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import secrets
 import sqlite3
 import sys
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
-from google_work_agent.adapters.connectors.google.workspace.composition import (
-    GOOGLE_WORKSPACE_CONNECTOR_ID,
-    GoogleWorkspaceConnector,
-    build_google_workspace_connector_descriptor,
-    google_workspace_internal_read_binding,
-)
 from google_work_agent.adapters.connectors.github.github.composition import (
     GITHUB_CONNECTOR_ID,
     GitHubConnector,
     build_github_connector_descriptor,
     github_internal_read_binding,
+)
+from google_work_agent.adapters.connectors.google.workspace.composition import (
+    GOOGLE_WORKSPACE_CONNECTOR_ID,
+    GoogleWorkspaceConnector,
+    build_google_workspace_connector_descriptor,
+    google_workspace_internal_read_binding,
 )
 from google_work_agent.adapters.connectors.runtime.connector_runtime_registry import (
     ConnectorRuntimeRegistry,
@@ -56,15 +55,23 @@ from google_work_agent.adapters.keyring.os_keyring_secret_store import (
 from google_work_agent.adapters.langgraph.checkpoint_control import (
     LangGraphCheckpointControlAdapter,
 )
-from google_work_agent.adapters.langgraph.main.application_services import (
-    WorkflowApplicationServices,
-    WorkflowRuntimeHooks,
+from google_work_agent.adapters.langgraph.langsmith_workflow_trace_callback import (
+    LangSmithWorkflowTraceCallback,
+    create_langsmith_workflow_trace_callback,
+)
+from google_work_agent.adapters.langgraph.main.application_handler_bindings import (
+    ReadExecutionHandlerBindings,
+    RunLifecycleHandlerBindings,
+    VerificationRecoveryHandlerBindings,
+    WorkflowApplicationHandlerBindings,
+    WorkflowControlHandlerBindings,
+    WriteExecutionHandlerBindings,
+)
+from google_work_agent.adapters.langgraph.main.cancel_resolution_runtime_callbacks import (
+    CancelResolutionRuntimeCallbacks,
 )
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
     RESUME_CONTRACT_VERSION,
-)
-from google_work_agent.adapters.langgraph.main.validate_planning_output import (
-    CanonicalDomainValidationService,
 )
 from google_work_agent.adapters.langgraph.main.workflow import LangGraphWorkflowRuntime
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
@@ -96,6 +103,9 @@ from google_work_agent.adapters.llm.runtime.llm_credential_router import (
     SessionMemorySecretStore,
 )
 from google_work_agent.adapters.llm.runtime.llm_runtime_status_router import LlmRuntimeStatusRouter
+from google_work_agent.adapters.llm.runtime.local_model_selection import (
+    LocalModelSelectionResolver,
+)
 from google_work_agent.adapters.llm.runtime.prompt_repair_schema_repairer import (
     PromptRepairSchemaRepairer,
 )
@@ -128,6 +138,9 @@ from google_work_agent.adapters.system.filesystem_operational_command_replay imp
     FilesystemOperationalCommandReplayAdapter,
 )
 from google_work_agent.adapters.system.json_settings import FileSettingsStore, JsonSettingsAdapter
+from google_work_agent.adapters.system.memory.resource_continuation import (
+    InMemoryResourceContinuationAdapter,
+)
 from google_work_agent.adapters.system.memory.run_retrieval_cache import InMemoryRunRetrievalCache
 from google_work_agent.adapters.system.memory.sse_event_buffer import InMemorySseEventBuffer
 from google_work_agent.adapters.system.process_component_circuit_state import (
@@ -162,6 +175,7 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     PromptRegistry,
     PromptRegistryError,
     default_prompt_manifest_path,
+    load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
@@ -205,7 +219,11 @@ from google_work_agent.application.use_cases.attachment.get_attachment import (
 )
 from google_work_agent.application.use_cases.backup.create_backup import CreateBackupHandler
 from google_work_agent.application.use_cases.backup.list_backups import ListBackupsHandler
-from google_work_agent.application.use_cases.backup.restore_backup import RestoreBackupHandler
+from google_work_agent.application.use_cases.backup.restore_backup import (
+    AutomaticallyRestoreBackupCommand,
+    AutomaticallyRestoreBackupHandler,
+    RestoreBackupHandler,
+)
 from google_work_agent.application.use_cases.claim.build_claim_context import (
     BuildClaimContextHandler,
 )
@@ -219,6 +237,9 @@ from google_work_agent.application.use_cases.component_circuit.check_component_c
 from google_work_agent.application.use_cases.component_circuit.record_component_call_result import (
     RecordComponentCallResultCommandV1,
     RecordComponentCallResultHandler,
+)
+from google_work_agent.application.use_cases.connection.check_connector_prerequisites import (
+    CheckConnectorPrerequisitesHandler,
 )
 from google_work_agent.application.use_cases.connection.get_connection_status import (
     GetConnectionStatusHandler,
@@ -291,6 +312,9 @@ from google_work_agent.application.use_cases.plan.publish_read_only_plan import 
 from google_work_agent.application.use_cases.plan.record_review_result import (
     RecordReviewResultHandler,
 )
+from google_work_agent.application.use_cases.plan.validate_plan_for_publication import (
+    ValidatePlanForPublicationHandler,
+)
 from google_work_agent.application.use_cases.recovery.lookup_unknown_result import (
     LookupUnknownResultHandler,
 )
@@ -312,6 +336,9 @@ from google_work_agent.application.use_cases.resource.connector_resource_access 
 from google_work_agent.application.use_cases.resource.get_calendar_resource_detail import (
     GetCalendarResourceDetailHandler,
 )
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.application.use_cases.resource.get_resource_count import (
     GetResourceCountHandler,
 )
@@ -322,17 +349,27 @@ from google_work_agent.application.use_cases.resource.get_task_resource_detail i
     GetTaskResourceDetailHandler,
 )
 from google_work_agent.application.use_cases.resource.issue_selection_handle import (
+    RESOURCE_SELECTION_HANDLE_TTL_MS,
     IssueSelectionHandle,
 )
 from google_work_agent.application.use_cases.resource.list_calendars import ListCalendarsHandler
+from google_work_agent.application.use_cases.resource.list_repositories import (
+    ListRepositoriesHandler,
+)
 from google_work_agent.application.use_cases.resource.list_resources import ListResourcesHandler
 from google_work_agent.application.use_cases.resource.list_task_lists import ListTaskListsHandler
 from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
     OpaqueConnectorResourceAccess,
+)
+from google_work_agent.application.use_cases.resource.require_resource_selection import (
+    RequireResourceSelectionHandler,
+    SelectedResourceReadPort,
 )
 from google_work_agent.application.use_cases.resource.resolve_selection_handle import (
     ResolveSelectionHandle,
+)
+from google_work_agent.application.use_cases.resource_ref.persist_resource_ref import (
+    PersistResourceRefHandler,
 )
 from google_work_agent.application.use_cases.resource_ref.resolve_resource_ref import (
     ResolveResourceRefHandler,
@@ -368,6 +405,9 @@ from google_work_agent.application.use_cases.run.finalize_cancel import Finalize
 from google_work_agent.application.use_cases.run.get_run_snapshot import (
     GetExecutionContextQuery,
     GetRunSnapshotHandler,
+)
+from google_work_agent.application.use_cases.run.get_supervisor_observation import (
+    GetSupervisorObservationHandler,
 )
 from google_work_agent.application.use_cases.run.project_context_preview import (
     ProjectContextPreviewHandler,
@@ -433,7 +473,13 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
 )
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort
 from google_work_agent.ports.connector.connector_write_port import ConnectorWritePort
-from google_work_agent.ports.connector.contracts.google_workspace import ResourceSnapshot
+from google_work_agent.ports.connector.contracts.google_workspace import (
+    DEFAULT_CALENDAR_ID,
+    DEFAULT_TASK_LIST_ID,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
+    ResourceSnapshot,
+)
 from google_work_agent.ports.connector.mcp_client_port import MCPClientPort, MCPClientPortError
 from google_work_agent.ports.connector.oauth_credential_port import (
     OAuthConnectionMetadata,
@@ -446,10 +492,12 @@ from google_work_agent.ports.llm.llm_credential_port import LlmCredentialPort
 from google_work_agent.ports.llm.llm_runtime_status_port import (
     LlmProviderRuntimeStatus,
     LlmRuntimeStatusPort,
+    LocalModelRuntimeOptionV1,
 )
 from google_work_agent.ports.llm.local_model_product_decision import (
     LocalModelProductDecisionV1,
 )
+from google_work_agent.ports.llm.local_model_profile import LocalModelProfileV1
 from google_work_agent.ports.llm.runtime_selection import (
     LlmRuntimeSelectionV1,
     LocalRuntimeActivationStatus,
@@ -575,10 +623,11 @@ def _build_require_recovery(
     )
 
 
-def _build_workflow_application_services(
+def _build_workflow_application_handler_bindings(
     *,
     unit_of_work_factory: Callable[[], UnitOfWork],
     get_run_snapshot: GetRunSnapshotHandler,
+    get_supervisor_observation: GetSupervisorObservationHandler,
     connector_reader: ConnectorReadProjection,
     tool_catalog: SignedToolRegistry,
     now_ms: Callable[[], int],
@@ -586,13 +635,13 @@ def _build_workflow_application_services(
     service_instance_id: str,
     checkpoint: CheckpointPort,
     resume_target_registry: ResumeTargetRegistry,
-    runtime_hooks: WorkflowRuntimeHooks,
+    cancel_resolution_callbacks: CancelResolutionRuntimeCallbacks,
     claim_context_signer: Callable[[str, dict[str, object]], str] | None,
     work_hours_provider: Callable[[], CalendarWorkHours],
     sse_event_buffer: SseEventBufferPort | None,
     environment: str,
     release_version: str,
-) -> WorkflowApplicationServices:
+) -> WorkflowApplicationHandlerBindings:
     start_analysis = StartAnalysisHandler(
         unit_of_work_factory=unit_of_work_factory,
         now_ms=now_ms,
@@ -627,6 +676,8 @@ def _build_workflow_application_services(
         unit_of_work_factory=unit_of_work_factory,
         now_ms=now_ms,
         message_id_factory=id_factory,
+        evidence_id_factory=id_factory,
+        tool_registry=tool_catalog,
     )
     complete_read_only_run = CompleteReadOnlyRunHandler(
         unit_of_work_factory=unit_of_work_factory,
@@ -726,118 +777,125 @@ def _build_workflow_application_services(
         now_ms=now_ms,
     )
     resolve_resource_ref = ResolveResourceRefHandler(unit_of_work_factory=unit_of_work_factory)
-    return WorkflowApplicationServices(
-        start_analysis=start_analysis,
-        get_run_snapshot=get_run_snapshot,
-        build_terminal_message=build_terminal_message,
-        emit_terminal_trace=emit_terminal_trace,
-        project_terminal_event=project_terminal_event,
-        begin_retrieval=begin_retrieval,
-        begin_planning=begin_planning,
-        request_confirmation=request_confirmation,
-        domain_validation=CanonicalDomainValidationService(
-            tool_registry=tool_catalog,
-            validate_action_arguments=ValidateActionArgumentsHandler(),
+    return WorkflowApplicationHandlerBindings(
+        run_lifecycle=RunLifecycleHandlerBindings(
+            start_analysis=start_analysis,
+            get_run_snapshot=get_run_snapshot,
+            get_supervisor_observation=get_supervisor_observation,
+            build_terminal_message=build_terminal_message,
+            emit_terminal_trace=emit_terminal_trace,
+            project_terminal_event=project_terminal_event,
+            begin_retrieval=begin_retrieval,
+            begin_planning=begin_planning,
+            request_confirmation=request_confirmation,
+            complete_answer_only=complete_answer_only,
+            complete_read_only_run=complete_read_only_run,
+            complete_write_run=complete_write_run,
+            block_run=block_run,
         ),
-        complete_answer_only=complete_answer_only,
-        complete_read_only_run=complete_read_only_run,
-        complete_write_run=complete_write_run,
-        block_run=block_run,
-        publish_read_plan=publish_read_plan,
-        claim_read=claim_read,
-        complete_read=complete_read,
-        finalize_read=finalize_read,
-        fail_read=fail_read,
-        publish_write_plan=publish_write_plan,
-        build_claim_context=build_claim_context,
-        begin_execution_attempt=begin_execution_attempt,
-        abort_claimed_execution=abort_claimed_execution,
-        classify_dispatch_result=ClassifyDispatchResultHandler(),
-        expire_approval=expire_approval,
-        refresh_expired_action=refresh_expired_action,
-        claim_execution=claim_execution,
-        store_write_success=StoreSuccessHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            now_ms=now_ms,
-            tool_registry=tool_catalog,
+        read_execution=ReadExecutionHandlerBindings(
+            domain_validation=ValidatePlanForPublicationHandler(
+                tool_registry=tool_catalog,
+                validate_action_arguments=ValidateActionArgumentsHandler(),
+            ),
+            persist_resource_ref=PersistResourceRefHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                tool_registry=tool_catalog,
+            ),
+            publish_read_plan=publish_read_plan,
+            claim_read=claim_read,
+            complete_read=complete_read,
+            finalize_read=finalize_read,
+            fail_read=fail_read,
         ),
-        mark_write_failed=MarkFailedHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+        write_execution=WriteExecutionHandlerBindings(
+            publish_write_plan=publish_write_plan,
+            build_claim_context=build_claim_context,
+            begin_execution_attempt=begin_execution_attempt,
+            abort_claimed_execution=abort_claimed_execution,
+            classify_dispatch_result=ClassifyDispatchResultHandler(),
+            expire_approval=expire_approval,
+            refresh_expired_action=refresh_expired_action,
+            claim_execution=claim_execution,
+            store_write_success=StoreSuccessHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                now_ms=now_ms,
+                tool_registry=tool_catalog,
+            ),
+            mark_write_failed=MarkFailedHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
+            mark_write_unknown=MarkUnknownResultHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
         ),
-        mark_write_unknown=MarkUnknownResultHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        verify_effect=VerifyEffectHandler(
-            connector_read=connector_reader.connector_reader,
-            tool_registry=tool_catalog,
-            unit_of_work_factory=unit_of_work_factory,
+        verification_recovery=VerificationRecoveryHandlerBindings(
+            verify_effect=VerifyEffectHandler(
+                connector_read=connector_reader.connector_reader,
+                tool_registry=tool_catalog,
+                unit_of_work_factory=unit_of_work_factory,
+                resolve_resource_ref=resolve_resource_ref,
+            ),
+            store_verification=StoreVerificationHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
+            require_recovery=require_recovery,
+            resolve_recovery=ResolveRecoveryHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                checkpoint_port=checkpoint,
+                now_ms=now_ms,
+                next_id=id_factory,
+                resume_target_registry=resume_target_registry,
+            ),
+            require_write_reauth=RequireReauthHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                checkpoint_port=checkpoint,
+                now_ms=now_ms,
+            ),
+            lookup_unknown_result=LookupUnknownResultHandler(
+                connector_read=connector_reader.connector_reader,
+                tool_registry=tool_catalog,
+                recovery_search_binding=google_workspace_internal_read_binding(
+                    "search_by_recovery_fingerprint"
+                ),
+                recovery_search_bindings={
+                    GITHUB_CONNECTOR_ID: github_internal_read_binding(
+                        "search_by_recovery_fingerprint"
+                    )
+                },
+                unit_of_work_factory=unit_of_work_factory,
+            ),
+            recover_existing_result=RecoverExistingResultHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                now_ms=now_ms,
+                tool_registry=tool_catalog,
+            ),
+            resolve_as_failed=ResolveAsFailedHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
+            ),
+            begin_write_verification=begin_write_verification,
             resolve_resource_ref=resolve_resource_ref,
         ),
-        store_verification=StoreVerificationHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        require_recovery=require_recovery,
-        resolve_recovery=ResolveRecoveryHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            checkpoint_port=checkpoint,
-            now_ms=now_ms,
-            next_id=id_factory,
-            resume_target_registry=resume_target_registry,
-        ),
-        require_write_reauth=RequireReauthHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            checkpoint_port=checkpoint,
-            now_ms=now_ms,
-        ),
-        lookup_unknown_result=LookupUnknownResultHandler(
-            connector_read=connector_reader.connector_reader,
-            tool_registry=tool_catalog,
-            recovery_search_binding=google_workspace_internal_read_binding(
-                "search_by_recovery_fingerprint"
+        workflow_control=WorkflowControlHandlerBindings(
+            cancel_pending_action=CancelPendingActionHandler(
+                unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
             ),
-            recovery_search_bindings={
-                GITHUB_CONNECTOR_ID: github_internal_read_binding(
-                    "search_by_recovery_fingerprint"
-                )
-            },
-            unit_of_work_factory=unit_of_work_factory,
-        ),
-        recover_existing_result=RecoverExistingResultHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            now_ms=now_ms,
-            tool_registry=tool_catalog,
-        ),
-        resolve_as_failed=ResolveAsFailedHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        begin_write_verification=begin_write_verification,
-        resolve_resource_ref=resolve_resource_ref,
-        cancel_pending_action=CancelPendingActionHandler(
-            unit_of_work_factory=unit_of_work_factory, now_ms=now_ms
-        ),
-        finalize_cancel=FinalizeCancelHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            checkpoint_port=checkpoint,
-            now_ms=now_ms,
-        ),
-        continue_cancel_resolution=ContinueCancelResolutionHandler(
-            unit_of_work_factory=unit_of_work_factory,
-            settle_pending_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_settle_pending_cancel_action", *args, **kwargs
+            finalize_cancel=FinalizeCancelHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                checkpoint_port=checkpoint,
+                now_ms=now_ms,
             ),
-            reconcile_inflight_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_reconcile_cancelling_action", *args, **kwargs
+            continue_cancel_resolution=ContinueCancelResolutionHandler(
+                unit_of_work_factory=unit_of_work_factory,
+                settle_pending_action=cancel_resolution_callbacks.settle_pending_action,
+                reconcile_inflight_action=(cancel_resolution_callbacks.reconcile_inflight_action),
+                verify_executed_action=cancel_resolution_callbacks.verify_executed_action,
+                resolve_unknown_action=cancel_resolution_callbacks.resolve_unknown_action,
+                finalize_cancel=None,
             ),
-            verify_executed_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_verify_cancelling_action", *args, **kwargs
-            ),
-            resolve_unknown_action=lambda *args, **kwargs: runtime_hooks.call(
-                "_resolve_cancelling_unknown_action", *args, **kwargs
-            ),
-            finalize_cancel=None,
+            record_review_result=record_review_result,
+            validate_action_arguments=ValidateActionArgumentsHandler(),
         ),
-        record_review_result=record_review_result,
-        validate_action_arguments=ValidateActionArgumentsHandler(),
     )
 
 
@@ -1017,6 +1075,12 @@ class ProductionRuntimeConfig:
     configuration_source: Literal["SIGNED_RELEASE_MANIFEST", "EXPLICIT_DEVELOPMENT"]
     mcp_module_name: str | None = None
     keyring_store: SecretStorePort | None = None
+    development_prompt_manifest_path: Path | None = None
+    langsmith_api_key: str | None = field(default=None, repr=False)
+    langsmith_project_name: str | None = None
+    langsmith_trace_binding: tuple[tuple[str, str], ...] = ()
+    development_sampling_temperature: float | None = None
+    development_sampling_seed: int | None = None
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = ()
     code_signature_verified_paths: frozenset[str] = frozenset()
 
@@ -1033,6 +1097,16 @@ class ProductionRuntimeConfig:
         if any(not value.strip() for value in values):
             raise ValueError("runtime configuration fields must be non-empty")
         if self.configuration_source == "SIGNED_RELEASE_MANIFEST":
+            if self.development_prompt_manifest_path is not None:
+                raise ValueError("signed runtime cannot select a development Prompt manifest")
+            if (
+                self.langsmith_api_key is not None
+                or self.langsmith_project_name is not None
+                or self.langsmith_trace_binding
+                or self.development_sampling_temperature is not None
+                or self.development_sampling_seed is not None
+            ):
+                raise ValueError("signed runtime cannot enable development-only controls")
             if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
                 raise ValueError("signed GitHub OAuth client ID must be non-empty")
             paths = [entry.file_path for entry in self.verified_release_files]
@@ -1040,6 +1114,16 @@ class ProductionRuntimeConfig:
                 raise ValueError("signed runtime release file set is invalid")
             if not self.code_signature_verified_paths.issubset(paths):
                 raise ValueError("signed runtime code signature proof is invalid")
+        if (self.langsmith_api_key is None) != (self.langsmith_project_name is None):
+            raise ValueError("LangSmith API key and project name must be configured together")
+        if self.langsmith_trace_binding and self.langsmith_api_key is None:
+            raise ValueError("LangSmith trace binding requires an enabled LangSmith client")
+        if self.development_sampling_temperature is not None and not (
+            0.0 <= self.development_sampling_temperature <= 2.0
+        ):
+            raise ValueError("development sampling temperature must be between 0.0 and 2.0")
+        if self.development_sampling_seed is not None and self.development_sampling_seed < 0:
+            raise ValueError("development sampling seed must be non-negative")
 
     def verified_frontend_site(self) -> _VerifiedFrontendSite | None:
         """Project only release-indexed frontend assets before deferred core startup."""
@@ -1063,8 +1147,17 @@ class ProductionRuntimeConfig:
         runtime_root: Path,
         working_directory: Path,
         mcp_manifest_version: str,
+        oauth_client_id: str = "development-client-id",
+        github_oauth_client_id: str | None = None,
+        github_oauth_scope: str = "",
         mcp_module_name: str | None = None,
         keyring_store: SecretStorePort | None = None,
+        prompt_manifest_path: Path | None = None,
+        langsmith_api_key: str | None = None,
+        langsmith_project_name: str | None = None,
+        langsmith_trace_binding: Mapping[str, str] | None = None,
+        sampling_temperature: float | None = None,
+        sampling_seed: int | None = None,
     ) -> ProductionRuntimeConfig:
         """Create the only explicit non-installed configuration mode."""
 
@@ -1075,9 +1168,9 @@ class ProductionRuntimeConfig:
             build_channel="DEVELOPMENT",
             deployment_profile="LOCAL_CAPABLE",
             oauth_environment=OAuthEnvironment.DEVELOPMENT,
-            oauth_client_id="development-client-id",
-            github_oauth_client_id=os.environ.get("GITHUB_APP_CLIENT_ID", "").strip() or None,
-            github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", "").strip(),
+            oauth_client_id=oauth_client_id.strip(),
+            github_oauth_client_id=(github_oauth_client_id or "").strip() or None,
+            github_oauth_scope=github_oauth_scope.strip(),
             api_contract_version=API_CONTRACT_VERSION,
             mcp_manifest_version=mcp_manifest_version,
             policy_version="2026-08-06.p0",
@@ -1085,6 +1178,14 @@ class ProductionRuntimeConfig:
             configuration_source="EXPLICIT_DEVELOPMENT",
             mcp_module_name=mcp_module_name,
             keyring_store=keyring_store,
+            development_prompt_manifest_path=(
+                None if prompt_manifest_path is None else prompt_manifest_path.resolve()
+            ),
+            langsmith_api_key=(langsmith_api_key or "").strip() or None,
+            langsmith_project_name=(langsmith_project_name or "").strip() or None,
+            langsmith_trace_binding=tuple(sorted((langsmith_trace_binding or {}).items())),
+            development_sampling_temperature=sampling_temperature,
+            development_sampling_seed=sampling_seed,
         )
 
     @classmethod
@@ -1365,8 +1466,12 @@ def _load_installed_llm_runtime_selection(
 ) -> LlmRuntimeSelectionV1:
     manifest_relative = "manifests/model-manifest-v1.json"
     decision_relative = "manifests/local-model-product-decision-v1.json"
+    profile_relative = "manifests/local-model-profile-v1.json"
     if deployment_profile == "API_ONLY":
-        if manifest_relative in release_files or decision_relative in release_files:
+        if any(
+            relative in release_files
+            for relative in (manifest_relative, decision_relative, profile_relative)
+        ):
             raise CoreInitializationError("API_ONLY_LOCAL_RELEASE_ARTIFACT_FORBIDDEN")
         return LlmRuntimeSelectionV1(
             schema_version=1,
@@ -1389,8 +1494,13 @@ def _load_installed_llm_runtime_selection(
         decision_binding = release_files[decision_relative]
     except KeyError as error:
         raise CoreInitializationError("PRODUCT_DECISION_MISSING") from error
+    try:
+        profile_binding = release_files[profile_relative]
+    except KeyError as error:
+        raise CoreInitializationError("LOCAL_MODEL_PROFILE_MISSING") from error
     manifest_path = manifest_binding.resolve_verified(install_root)
     decision_path = decision_binding.resolve_verified(install_root)
+    profile_path = profile_binding.resolve_verified(install_root)
     try:
         manifest = ModelManifestV1.from_bytes(manifest_path.read_bytes())
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
@@ -1399,32 +1509,41 @@ def _load_installed_llm_runtime_selection(
         decision = LocalModelProductDecisionV1.from_bytes(decision_path.read_bytes())
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         raise CoreInitializationError("PRODUCT_DECISION_INVALID") from error
+    try:
+        local_model_profile = LocalModelProfileV1.from_bytes(profile_path.read_bytes())
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        raise CoreInitializationError("LOCAL_MODEL_PROFILE_INVALID") from error
     manifest_hash = sha256(manifest.to_canonical_bytes()).hexdigest()
     if decision.model_manifest_hash != manifest_hash:
         raise CoreInitializationError("PRODUCT_DECISION_MANIFEST_MISMATCH")
     if decision.release_version != release_version:
         raise CoreInitializationError("PRODUCT_DECISION_STALE")
-    selected = next(
-        (
-            entry
-            for entry in manifest.approved_models
-            if entry.model_id == decision.selected_model_id
-        ),
-        None,
-    )
-    if selected is None:
-        raise CoreInitializationError("PRODUCT_DECISION_MODEL_NOT_APPROVED")
-    return LlmRuntimeSelectionV1(
-        schema_version=1,
-        deployment_profile="LOCAL_CAPABLE",
-        selected_model=ApprovedModelInfo(
-            model_id=selected.model_id,
+    approved_models = tuple(
+        ApprovedModelInfo(
+            model_id=entry.model_id,
             runtime="OLLAMA",
             manifest_version="1",
             schema_version="1",
             minimum_runtime_version=manifest.minimum_ollama_version,
-            digest=selected.model_hash,
-        ),
+            digest=entry.model_hash,
+        )
+        for entry in manifest.approved_models
+    )
+    approved_model_ids = {model.model_id for model in approved_models}
+    if not set(local_model_profile.model_ids).issubset(approved_model_ids):
+        raise CoreInitializationError("LOCAL_MODEL_PROFILE_MODEL_NOT_APPROVED")
+    selected = next(
+        (model for model in approved_models if model.model_id == decision.selected_model_id),
+        None,
+    )
+    if selected is None:
+        raise CoreInitializationError("PRODUCT_DECISION_MODEL_NOT_APPROVED")
+    if decision.selected_model_id != local_model_profile.reasoning_model_id:
+        raise CoreInitializationError("PRODUCT_DECISION_PROFILE_MISMATCH")
+    return LlmRuntimeSelectionV1(
+        schema_version=1,
+        deployment_profile="LOCAL_CAPABLE",
+        selected_model=selected,
         ollama_endpoint_policy="FIXED_LOOPBACK_OLLAMA_V1",
         model_manifest_hash=manifest_hash,
         product_decision_hash=decision_binding.sha256,
@@ -1437,7 +1556,19 @@ def _load_installed_llm_runtime_selection(
             supported_architecture=decision.supported_architecture,
         ),
         release_version=release_version,
+        approved_models=approved_models,
+        local_model_profile=local_model_profile,
     )
+
+
+def _load_development_local_model_profile(working_directory: Path) -> LocalModelProfileV1:
+    path = working_directory / "config" / "local-model-profile-v1.json"
+    try:
+        return LocalModelProfileV1.from_bytes(path.read_bytes())
+    except FileNotFoundError as error:
+        raise CoreInitializationError("LOCAL_MODEL_PROFILE_MISSING") from error
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        raise CoreInitializationError("LOCAL_MODEL_PROFILE_INVALID") from error
 
 
 def _build_verified_frontend_site(
@@ -1533,9 +1664,7 @@ def _build_connectors(
             or github_installed.mcp_schema_version != mcp_manifest_version
         ):
             raise CoreInitializationError("MCP_SCHEMA_MISMATCH")
-        executable_binding = _required_release_file(
-            release_files, google_installed.executable_path
-        )
+        executable_binding = _required_release_file(release_files, google_installed.executable_path)
         projection_binding = _required_release_file(
             release_files, google_installed.tool_projection_path
         )
@@ -1578,9 +1707,8 @@ def _build_connectors(
     connector_environment = {
         ATTACHMENT_STAGING_DIR_ENV: str(attachment_staging_dir),
         "GOOGLE_OAUTH_ENV": environment,
+        "GOOGLE_OAUTH_CLIENT_ID": oauth_client_id,
     }
-    if configuration_source == "SIGNED_RELEASE_MANIFEST":
-        connector_environment["GOOGLE_OAUTH_CLIENT_ID"] = oauth_client_id
     google_descriptor = build_google_workspace_connector_descriptor(
         MCPArtifactConfig(
             executable_path=str(executable_path),
@@ -1631,9 +1759,7 @@ def _build_connectors(
             working_directory=str(github_working_directory),
             extra_environment=github_environment,
         ),
-        expected_tool_descriptors=tuple(
-            tool_registry.descriptor_expectations(GITHUB_CONNECTOR_ID)
-        ),
+        expected_tool_descriptors=tuple(tool_registry.descriptor_expectations(GITHUB_CONNECTOR_ID)),
     )
     github_connector = GitHubConnector(
         descriptor=github_descriptor,
@@ -1688,6 +1814,7 @@ class SafeModeRecoveryBindings:
     list_backups_handler: ListBackupsHandler
     create_backup_handler: CreateBackupHandler
     restore_backup_handler: RestoreBackupHandler
+    automatically_restore_backup_handler: AutomaticallyRestoreBackupHandler
     request_shutdown_handler: RequestShutdownHandler
 
 
@@ -1861,7 +1988,15 @@ class DeferredApiContainer:
             self.core_initialization_in_progress = False
             self.safe_mode_controller.enable(error.safe_code)
             self.readiness_aggregator.fail(error.safe_code)
-            self._bind_safe_mode_recovery()
+            bindings = self._bind_safe_mode_recovery()
+            if bindings is not None:
+                try:
+                    await asyncio.to_thread(
+                        bindings.automatically_restore_backup_handler,
+                        AutomaticallyRestoreBackupCommand(error.safe_code),
+                    )
+                except Exception:
+                    self.safe_mode_controller.enable("AUTOMATIC_RESTORE_FAILED")
             return
         except Exception:
             self.core_initialization_in_progress = False
@@ -1907,14 +2042,15 @@ class DeferredApiContainer:
             if hasattr(core, name):
                 setattr(self, name, getattr(core, name))
 
-    def _bind_safe_mode_recovery(self) -> None:
+    def _bind_safe_mode_recovery(self) -> SafeModeRecoveryBindings | None:
         if self._recovery_builder is None:
-            return
+            return None
         bindings = self._recovery_builder(self._retry_core_after_restore)
         self.list_backups_handler = bindings.list_backups_handler
         self.create_backup_handler = bindings.create_backup_handler
         self.restore_backup_handler = bindings.restore_backup_handler
         self.request_shutdown_handler = bindings.request_shutdown_handler
+        return bindings
 
     def _retry_core_after_restore(self) -> bool:
         if self._event_loop is None or self._closed:
@@ -2008,6 +2144,9 @@ class _UnavailableStartupLlmStatus:
             error_code="CORE_INITIALIZATION_INCOMPLETE",
         )
 
+    def list_local_models(self) -> tuple[LocalModelRuntimeOptionV1, ...]:
+        return ()
+
 
 @dataclass(slots=True)
 class _ShutdownComponent:
@@ -2082,10 +2221,15 @@ def build_safe_mode_recovery_bindings(
         marker_path=root / "shutdown" / "request.json",
         request_process_exit=request_process_exit,
     )
+    restore_handler = RestoreBackupHandler(backups=backups, replay=replay)
     return SafeModeRecoveryBindings(
         list_backups_handler=ListBackupsHandler(backups),
         create_backup_handler=CreateBackupHandler(backups=backups, replay=replay),
-        restore_backup_handler=RestoreBackupHandler(backups=backups, replay=replay),
+        restore_backup_handler=restore_handler,
+        automatically_restore_backup_handler=AutomaticallyRestoreBackupHandler(
+            backups=backups,
+            restore=restore_handler,
+        ),
         request_shutdown_handler=RequestShutdownHandler(shutdown=shutdown, replay=replay),
     )
 
@@ -2116,7 +2260,7 @@ class _PromptInactiveWorkflowRuntime:
         return WorkflowInvocationResult(
             run_id=run_id,
             workflow_key=workflow_key,
-            outcome=WorkflowOutcome.FAILED,
+            outcome=WorkflowOutcome.CONTRACT_VIOLATION,
             payload={"safe_error_code": "PROMPT_NOT_ACTIVE"},
         )
 
@@ -2144,6 +2288,12 @@ def build_production_runtime(
     safe_mode_controller: SafeModeController | None = None,
     mcp_module_name: str | None = None,
     keyring_store: SecretStorePort | None = None,
+    development_prompt_manifest_path: Path | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_project_name: str | None = None,
+    langsmith_trace_binding: tuple[tuple[str, str], ...] = (),
+    development_sampling_temperature: float | None = None,
+    development_sampling_seed: int | None = None,
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = (),
     code_signature_verified_paths: frozenset[str] = frozenset(),
     request_process_exit: Callable[[], None] | None = None,
@@ -2152,7 +2302,24 @@ def build_production_runtime(
     """Assemble the local service from authenticated or explicit development inputs."""
 
     LocalBindPolicy(host=host, port=port).validate()
+    if configuration_source != "EXPLICIT_DEVELOPMENT" and (
+        langsmith_api_key is not None
+        or langsmith_project_name is not None
+        or langsmith_trace_binding
+        or development_sampling_temperature is not None
+        or development_sampling_seed is not None
+    ):
+        raise CoreInitializationError("EXTERNAL_DEVELOPMENT_OBSERVABILITY_FORBIDDEN")
+    langsmith_callback: LangSmithWorkflowTraceCallback | None = None
+    if langsmith_api_key is not None and langsmith_project_name is not None:
+        langsmith_callback = create_langsmith_workflow_trace_callback(
+            api_key=langsmith_api_key,
+            project_name=langsmith_project_name,
+            trace_binding=dict(langsmith_trace_binding),
+        )
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
+        if development_prompt_manifest_path is not None:
+            raise CoreInitializationError("SIGNED_RUNTIME_PATH_INVALID")
         if service_instance_id is None:
             raise CoreInitializationError("SERVICE_INSTANCE_ID_REQUIRED")
         if not runtime_root.is_absolute() or not working_directory.is_absolute():
@@ -2175,12 +2342,21 @@ def build_production_runtime(
         if development_tool_registry is None
         else _write_mcp_manifest(root, development_tool_registry)
     )
-    prompt_manifest_path = default_prompt_manifest_path()
+    prompt_manifest_path = (
+        development_prompt_manifest_path.resolve()
+        if development_prompt_manifest_path is not None
+        else default_prompt_manifest_path()
+    )
     prompt_execution_scope: PromptExecutionScope = (
         PRODUCT_RELEASE if configuration_source == "SIGNED_RELEASE_MANIFEST" else DEVELOPMENT_SMOKE
     )
     frontend_site: _VerifiedFrontendSite | _DevelopmentFrontendSite | None = (
         _build_development_frontend_site(working_directory.resolve())
+    )
+    development_local_model_profile = (
+        _load_development_local_model_profile(install_root)
+        if configuration_source == "EXPLICIT_DEVELOPMENT" and deployment_profile == "LOCAL_CAPABLE"
+        else None
     )
     runtime_selection = LlmRuntimeSelectionV1(
         schema_version=1,
@@ -2192,10 +2368,21 @@ def build_production_runtime(
         local_runtime_activation_status=(
             LocalRuntimeActivationStatus.DISABLED_BY_DEPLOYMENT_PROFILE
             if deployment_profile == "API_ONLY"
-            else LocalRuntimeActivationStatus.DEFERRED_UNTIL_PRODUCT_DECISION
+            else LocalRuntimeActivationStatus.ACTIVE
         ),
-        requirements=None,
+        requirements=(
+            None
+            if deployment_profile == "API_ONLY"
+            else LocalRuntimeRequirementsV1(
+                minimum_cpu_logical_cores=4,
+                minimum_ram_bytes=8 * 1024**3,
+                minimum_vram_bytes=4 * 1024**3,
+                supported_os="WINDOWS",
+                supported_architecture="AMD64",
+            )
+        ),
         release_version=release_version,
+        local_model_profile=development_local_model_profile,
     )
     if configuration_source == "SIGNED_RELEASE_MANIFEST":
         prompt_manifest_path = _load_verified_product_release_prompt_bundle(
@@ -2298,19 +2485,23 @@ def build_production_runtime(
         GitHubConnector,
         connector_bundle.get_required(GITHUB_CONNECTOR_ID),
     )
-    mcp_manifest_path = Path(
-        google_connector.descriptor.artifact_config.manifest_path
-    )
-    mcp_executable_path = Path(
-        google_connector.descriptor.artifact_config.executable_path
-    )
+    mcp_manifest_path = Path(google_connector.descriptor.artifact_config.manifest_path)
+    mcp_executable_path = Path(google_connector.descriptor.artifact_config.executable_path)
     if connector_bundle.tool_registry.contract_version != policy_version:
         connector_registry.close_all()
         raise CoreInitializationError("POLICY_VERSION_MISMATCH")
     google_provider = google_connector.oauth_port
     github_provider = github_connector.oauth_port
-    unit_of_work_factory = sqlite_unit_of_work_factory(database_path)
-    read_unit_of_work_factory = sqlite_read_unit_of_work_factory(database_path)
+    unit_of_work_factory = sqlite_unit_of_work_factory(
+        database_path,
+        environment=oauth_environment.value,
+        release_version=release_version,
+    )
+    read_unit_of_work_factory = sqlite_read_unit_of_work_factory(
+        database_path,
+        environment=oauth_environment.value,
+        release_version=release_version,
+    )
     connected_account_store_factory = sqlite_connected_account_store_factory(database_path)
     get_connection_status = GetConnectionStatusHandler(
         google_provider,
@@ -2325,7 +2516,9 @@ def build_production_runtime(
         ).connection.account_id
 
     def current_github_account_id() -> str | None:
-        return get_github_connection_status(GetConnectionStatusQuery(connector_id=GITHUB_CONNECTOR_ID)).connection.account_id
+        return get_github_connection_status(
+            GetConnectionStatusQuery(connector_id=GITHUB_CONNECTOR_ID)
+        ).connection.account_id
 
     try:
         (
@@ -2344,6 +2537,8 @@ def build_production_runtime(
             release_version=release_version,
             runtime_selection=runtime_selection,
             prompt_execution_scope=prompt_execution_scope,
+            sampling_temperature=development_sampling_temperature,
+            sampling_seed=development_sampling_seed,
         )
     except RuntimeError as error:
         connector_registry.close_all()
@@ -2375,11 +2570,12 @@ def build_production_runtime(
         delegate=McpConnectorReadAdapter(
             runtime_registry=connector_bundle.runtime_registry,
             mcp_client=google_connector.client,
+            external_call_trace=langsmith_callback,
+            run_context_provider=current_provider_dispatch_run_id,
             internal_bindings=(
-                google_workspace_internal_read_binding(
-                    "search_by_recovery_fingerprint"
-                ),
+                google_workspace_internal_read_binding("search_by_recovery_fingerprint"),
                 github_internal_read_binding("search_by_recovery_fingerprint"),
+                github_internal_read_binding("github.repositories.list"),
             ),
         ),
         check=check_component_circuit,
@@ -2392,11 +2588,37 @@ def build_production_runtime(
         record=record_component_call_result,
         now_ms=clock.now_ms,
     )
+    list_repositories = ListRepositoriesHandler(
+        connector_read=connector_reader,
+        binding=github_internal_read_binding("github.repositories.list"),
+        continuation_store=InMemoryResourceContinuationAdapter(),
+    )
+    get_repository_access = GetRepositoryAccessHandler(
+        list_repositories=list_repositories,
+        current_account_id=current_github_account_id,
+    )
+    inventory_reader = connector_reader
+    inventory_projection = ConnectorReadProjection(
+        connector_reader=inventory_reader, tool_registry=connector_bundle.tool_registry
+    )
+    resource_selection = RequireResourceSelectionHandler(
+        repository_access=get_repository_access,
+        settings=settings_service.get_settings,
+        current_account_id=lambda connector_id: (
+            current_github_account_id()
+            if connector_id == GITHUB_CONNECTOR_ID
+            else current_account_id()
+        ),
+    )
+    selected_resource_reader = SelectedResourceReadPort(
+        delegate=inventory_reader, require=resource_selection
+    )
     read_projection = ConnectorReadProjection(
-        connector_reader=connector_reader,
+        connector_reader=selected_resource_reader,
         tool_registry=connector_bundle.tool_registry,
     )
     dispatch_connector_write = DispatchConnectorWriteHandler(
+        resource_selection=resource_selection,
         unit_of_work_factory=unit_of_work_factory,
         tool_registry=connector_bundle.tool_registry,
         connector_write_port=connector_writer,
@@ -2407,6 +2629,7 @@ def build_production_runtime(
     )
     structured_inference_router = cast(StructuredInferenceRuntimeRouter, llm_runtime)
     structured_inference_router.checkpoint = checkpoint
+    structured_inference_router.external_call_trace = langsmith_callback
 
     def _llm_circuit_key(runtime: ActualRuntime) -> ComponentCircuitKey:
         return ComponentCircuitKey(1, "LLM_RUNTIME", None, runtime.value)
@@ -2439,6 +2662,10 @@ def build_production_runtime(
     structured_inference_router.record_runtime_result = _record_llm_circuit_result
     event_publisher = InMemorySseEventBuffer(service_instance_id=service_instance_id)
     retrieval_cache = InMemoryRunRetrievalCache()
+    workflow_execution: BackgroundRunExecutorAdapter | None = None
+
+    def _is_run_active(run_id: str) -> bool:
+        return workflow_execution is not None and workflow_execution.is_run_active(run_id)
 
     project_external_llm_transfer_scope = ProjectExternalLlmTransferScopeHandler(
         checkpoint,
@@ -2467,8 +2694,10 @@ def build_production_runtime(
         resolve_pending_confirmation=lambda run_id: workflow_runtime.resolve_pending_confirmation(
             run_id
         ),
+        is_run_active=_is_run_active,
         tool_registry=connector_bundle.tool_registry,
     )
+    get_supervisor_observation_handler = GetSupervisorObservationHandler(read_unit_of_work_factory)
 
     def work_hours_provider() -> CalendarWorkHours:
         settings = settings_service.get_settings()
@@ -2479,10 +2708,11 @@ def build_production_runtime(
             end=settings.working_day_end_local,
         )
 
-    runtime_hooks = WorkflowRuntimeHooks()
-    workflow_application_services = _build_workflow_application_services(
+    cancel_resolution_callbacks = CancelResolutionRuntimeCallbacks()
+    workflow_application_handlers = _build_workflow_application_handler_bindings(
         unit_of_work_factory=unit_of_work_factory,
         get_run_snapshot=get_run_snapshot_handler,
+        get_supervisor_observation=get_supervisor_observation_handler,
         connector_reader=read_projection,
         tool_catalog=connector_bundle.tool_registry,
         now_ms=clock.now_ms,
@@ -2490,7 +2720,7 @@ def build_production_runtime(
         service_instance_id=service_instance_id,
         checkpoint=checkpoint,
         resume_target_registry=resume_target_registry,
-        runtime_hooks=runtime_hooks,
+        cancel_resolution_callbacks=cancel_resolution_callbacks,
         claim_context_signer=connector_bundle.runtime_registry.sign_claim_context,
         work_hours_provider=work_hours_provider,
         sse_event_buffer=event_publisher,
@@ -2499,6 +2729,14 @@ def build_production_runtime(
     )
     try:
         workflow_runtime = LangGraphWorkflowRuntime(
+            connector_prerequisites=CheckConnectorPrerequisitesHandler(
+                {
+                    "google_workspace": ("Google Workspace", google_provider),
+                    GITHUB_CONNECTOR_ID: ("GitHub", github_provider),
+                },
+                tool_catalog=connector_bundle.tool_registry,
+            ),
+            repository_access=get_repository_access,
             unit_of_work_factory=unit_of_work_factory,
             llm_runtime=llm_runtime,
             connector_reader=read_projection,
@@ -2508,8 +2746,8 @@ def build_production_runtime(
             id_factory=id_generator.new_uuid,
             signing_secret=secrets.token_hex(32),
             service_instance_id=service_instance_id,
-            application_services=workflow_application_services,
-            runtime_hooks=runtime_hooks,
+            application_handlers=workflow_application_handlers,
+            cancel_resolution_callbacks=cancel_resolution_callbacks,
             claim_context_signer=connector_bundle.runtime_registry.sign_claim_context,
             mcp_process_instance_id=lambda connector_id: (
                 connector_bundle.runtime_registry.process_instance_id(connector_id)
@@ -2521,10 +2759,22 @@ def build_production_runtime(
             prompt_execution_scope=prompt_execution_scope,
             timezone_provider=lambda: settings_service.get_settings().timezone,
             work_hours_provider=work_hours_provider,
-            default_tasklist_id_provider=lambda: (
-                settings_service.get_settings().default_tasklist_id
+            default_tasklist_id_provider=lambda: resource_selection.default_target(
+                "tasks", DEFAULT_TASK_LIST_ID
+            ),
+            default_calendar_id_provider=lambda: resource_selection.default_target(
+                "calendar", DEFAULT_CALENDAR_ID
+            ),
+            authorized_tasklist_ids_provider=lambda: resource_selection.authorized_targets(
+                "tasks"
+            ),
+            authorized_calendar_ids_provider=lambda: resource_selection.authorized_targets(
+                "calendar"
             ),
             attachment_verifier=attachment_staging,
+            observability_callbacks=(
+                () if langsmith_callback is None else (langsmith_callback,)
+            ),
             resume_target_registry=resume_target_registry,
             sse_event_buffer=event_publisher,
             environment=oauth_environment.value,
@@ -2604,6 +2854,8 @@ def build_production_runtime(
                 api_contract_version=api_contract_version,
             ),
             selected_resources=context.selected_resources,
+            default_github_repository=context.default_github_repository,
+            user_message_id=context.user_message_id,
         )
 
     def _initial_target(admission: WorkflowExecutionAdmissionV1) -> AgentNodeResumeTargetV2:
@@ -2761,15 +3013,13 @@ def build_production_runtime(
         invoke_semantic_owner=_invoke_semantic_owner,
         resume_target_registry=resume_target_registry,
         lookup_unknown_result=LookupUnknownResultHandler(
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
             tool_registry=connector_bundle.tool_registry,
             recovery_search_binding=google_workspace_internal_read_binding(
                 "search_by_recovery_fingerprint"
             ),
             recovery_search_bindings={
-                GITHUB_CONNECTOR_ID: github_internal_read_binding(
-                    "search_by_recovery_fingerprint"
-                )
+                GITHUB_CONNECTOR_ID: github_internal_read_binding("search_by_recovery_fingerprint")
             },
             unit_of_work_factory=unit_of_work_factory,
             now_ms=clock.now_ms,
@@ -2793,6 +3043,7 @@ def build_production_runtime(
         ),
         now_ms=clock.now_ms,
     )
+    workflow_execution = production_runtime.workflow_execution
 
     async def _reconcile_inflight_executions() -> None:
         await asyncio.to_thread(
@@ -2827,7 +3078,7 @@ def build_production_runtime(
         signing_secret=selection_handle_secret,
         service_instance_id=service_instance_id,
         now_ms=clock.now_ms,
-        ttl_ms=5 * 60 * 1000,
+        ttl_ms=RESOURCE_SELECTION_HANDLE_TTL_MS,
     )
     resolve_selection_handle = ResolveSelectionHandle(
         signing_secret=selection_handle_secret,
@@ -2849,7 +3100,11 @@ def build_production_runtime(
             await_coordinator=_await_workflow_drain,
         ),
         workflow_runtime=_ShutdownComponent(flush_runtime=checkpoint.flush),
-        observability=_ShutdownComponent(),
+        observability=_ShutdownComponent(
+            flush_observability=(
+                (lambda: None) if langsmith_callback is None else langsmith_callback.flush
+            )
+        ),
         persistence=_ShutdownComponent(checkpoint_persistence=_checkpoint_domain_wal),
         mcp_transport=_ShutdownComponent(close_component=connector_registry.close_all),
         sessions=_ShutdownComponent(invalidate_sessions=session_manager.invalidate_all),
@@ -2871,15 +3126,15 @@ def build_production_runtime(
         supported_restore_schema_versions=("0018", actual_database_migration_version),
     )
 
-    resource_continuations = LocalResourceContinuationStore(now_ms=clock.now_ms)
+    resource_continuations = InMemoryResourceContinuationAdapter(now_ms=clock.now_ms)
     resource_access = OpaqueConnectorResourceAccess(
         ConnectorResourceAccess(
             gateway=read_projection,
             default_calendar_id_provider=(
-                lambda: llm_runtime.settings_service().default_calendar_id
+                lambda: resource_selection.browse_target("calendar", DEFAULT_CALENDAR_ID)
             ),
             default_tasklist_id_provider=(
-                lambda: llm_runtime.settings_service().default_tasklist_id
+                lambda: resource_selection.browse_target("tasks", DEFAULT_TASK_LIST_ID)
             ),
             timezone_provider=lambda: llm_runtime.settings_service().timezone,
         ),
@@ -3009,7 +3264,11 @@ def build_production_runtime(
         },
         oauth_requested_scopes_by_connector={
             GOOGLE_WORKSPACE_CONNECTOR_ID: _google_oauth_scopes(connector_bundle.tool_registry),
-            GITHUB_CONNECTOR_ID: tuple(dict.fromkeys(scope for scope in github_oauth_scope.replace(",", " ").split() if scope)),
+            GITHUB_CONNECTOR_ID: tuple(
+                dict.fromkeys(
+                    scope for scope in github_oauth_scope.replace(",", " ").split() if scope
+                )
+            ),
         },
         start_authorization_handlers_by_connector={
             GOOGLE_WORKSPACE_CONNECTOR_ID: StartAuthorizationHandler(
@@ -3044,28 +3303,31 @@ def build_production_runtime(
             GITHUB_CONNECTOR_ID: current_github_account_id,
         },
         list_resources_handler=ListResourcesHandler(resource_access),
+        list_repositories_handler=list_repositories,
         get_resource_count_handler=GetResourceCountHandler(resource_access),
         get_resource_detail_handler=GetResourceDetailHandler(resource_access),
         issue_selection_handle=issue_selection_handle,
         resolve_selection_handle=resolve_selection_handle,
         list_task_lists_handler=ListTaskListsHandler(
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
+            inventory_read=inventory_reader,
             registry=connector_bundle.tool_registry,
             continuation_store=resource_continuations,
         ),
         list_calendars_handler=ListCalendarsHandler(
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
+            inventory_read=inventory_reader,
             registry=connector_bundle.tool_registry,
             continuation_store=resource_continuations,
         ),
         get_task_resource_detail_handler=GetTaskResourceDetailHandler(
             resolve_handle=resolve_selection_handle,
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
             registry=connector_bundle.tool_registry,
         ),
         get_calendar_resource_detail_handler=GetCalendarResourceDetailHandler(
             resolve_handle=resolve_selection_handle,
-            connector_read=connector_reader,
+            connector_read=selected_resource_reader,
             registry=connector_bundle.tool_registry,
         ),
         get_attachment_handler=GetAttachmentHandler(
@@ -3150,6 +3412,16 @@ def build_production_runtime(
             tool_registry=connector_bundle.tool_registry,
         ),
         modify_action_handler=ModifyActionHandler(
+            modification_runtime=llm_runtime,
+            modification_prompt=(
+                None
+                if isinstance(workflow_runtime, _PromptInactiveWorkflowRuntime)
+                else load_prompt_reference(
+                    "planning.compose_arguments_per_output_route",
+                    prompt_manifest_path,
+                    execution_scope=prompt_execution_scope,
+                )
+            ),
             unit_of_work_factory=unit_of_work_factory,
             checkpoint_port=checkpoint,
             now_ms=clock.now_ms,
@@ -3194,6 +3466,11 @@ def build_production_runtime(
         update_settings_handler=UpdateSettingsHandler(
             settings=settings_service,
             replay=operational_replay,
+            repository_access=get_repository_access,
+            resource_inventory=inventory_projection,
+            google_account_id=current_account_id,
+            local_models=structured_inference_router.status_service,
+            has_active_run=production_runtime.workflow_execution.has_active_runs,
         ),
         list_backups_handler=ListBackupsHandler(backup_adapter),
         create_backup_handler=CreateBackupHandler(
@@ -3256,6 +3533,7 @@ def build_production_runtime(
         shutdown_callbacks=(
             _stop_workflow_handoff_runtime,
             workflow_runtime.close,
+            (lambda: None) if langsmith_callback is None else langsmith_callback.close,
             connector_registry.close_all,
         ),
     )
@@ -3271,6 +3549,8 @@ def _build_llm_runtime(
     release_version: str,
     runtime_selection: LlmRuntimeSelectionV1,
     prompt_execution_scope: PromptExecutionScope,
+    sampling_temperature: float | None = None,
+    sampling_seed: int | None = None,
     keyring_store: SecretStorePort | None = None,
 ) -> tuple[
     StructuredInferenceRuntimeRouter,
@@ -3302,17 +3582,32 @@ def _build_llm_runtime(
     ollama_transport = OllamaHTTPClient()
     ollama_probe = LoopbackOllamaProbe(transport=ollama_transport)
     gemini_transport = GeminiHTTPClient()
+    local_model_selection = LocalModelSelectionResolver(
+        preferred_model_id=lambda: settings_service.get_settings().preferred_local_model_id,
+        runtime_selection=runtime_selection,
+        catalog=ollama_transport,
+        allow_development_models=(
+            prompt_execution_scope == DEVELOPMENT_SMOKE
+            and runtime_selection.deployment_profile == "LOCAL_CAPABLE"
+        ),
+    )
     hardware_probe = WindowsHardwareProbeAdapter(
         runtime_selection=runtime_selection,
         ollama_probe=ollama_probe,
+        selected_model_provider=local_model_selection.get_selected_model,
+    )
+    runtime_policy = RuntimePolicy(
+        sampling_temperature=sampling_temperature,
+        sampling_seed=sampling_seed,
     )
     status_service = LlmRuntimeStatusRouter(
         runtime_selection=runtime_selection,
         credential_service=credential_service,
         api_connection_service=GeminiConnectionService(transport=gemini_transport),
         hardware_probe=hardware_probe,
-        runtime_policy=RuntimePolicy(),
+        runtime_policy=runtime_policy,
         api_provider_name="gemini",
+        local_model_selection=local_model_selection,
     )
     structured_inference = StructuredInferenceRuntimeRouter(
         before_provider_dispatch=account_provider_dispatch,
@@ -3346,7 +3641,7 @@ def _build_llm_runtime(
                 execution_scope=prompt_execution_scope,
             ),
         ),
-        runtime_policy=RuntimePolicy(),
+        runtime_policy=runtime_policy,
         schema_repairer=PromptRepairSchemaRepairer(
             manifest_path=prompt_manifest_path,
             execution_scope=prompt_execution_scope,

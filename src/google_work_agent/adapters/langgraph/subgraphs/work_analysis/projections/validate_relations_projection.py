@@ -3,9 +3,6 @@ from typing import TypedDict
 from google_work_agent.adapters.langgraph.subgraphs.work_analysis.state import (
     WorkAnalysisLocalState,
 )
-from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
-    CurrentSourceRelationV1,
-)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkFactV1,
     WorkRelationV1,
@@ -17,7 +14,6 @@ class ValidateRelationsInput(TypedDict):
     entity_relation_candidates: list[WorkRelationV1]
     temporal_dependency_candidates: list[WorkRelationV1]
     duplicate_conflict_candidates: list[WorkRelationV1]
-    current_source_relations: list[CurrentSourceRelationV1]
     allowed_evidence_refs: set[str]
 
 
@@ -36,6 +32,5 @@ def project_validate_relations_input(state: WorkAnalysisLocalState) -> ValidateR
         "entity_relation_candidates": list(state["entity_relation_candidates"]),
         "temporal_dependency_candidates": list(state["temporal_dependency_candidates"]),
         "duplicate_conflict_candidates": list(state["duplicate_conflict_candidates"]),
-        "current_source_relations": list(state.get("current_source_relations", [])),
         "allowed_evidence_refs": set(state["evidence_refs"]),
     }

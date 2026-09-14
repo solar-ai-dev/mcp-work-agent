@@ -8,16 +8,28 @@ from typing import Protocol
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+from google_work_agent.application.use_cases.resource.normalize_continuation_error import (
+    normalize_resource_continuation_error,
+)
+from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
+    strip_resource_recovery_marker,
+)
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
     normalize_google_workspace_failure,
 )
 from google_work_agent.ports.connector.contracts.google_workspace import (
+    DEFAULT_CALENDAR_ID,
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
+)
+from google_work_agent.ports.system.resource_continuation_invalid_error import (
+    ResourceContinuationInvalidError,
 )
 
 MAX_RESOURCE_PAGE_SIZE = 100
@@ -105,6 +117,8 @@ class ListResourceAccess(Protocol):
         continuation_scope: tuple[str, ...],
     ) -> ResourcePage: ...
 
+    def list_github_issues_page(self, *, repository: str, state: str) -> ResourcePage: ...
+
     def default_task_list_id(self) -> str | None: ...
 
     def default_calendar_id(self) -> str | None: ...
@@ -128,6 +142,8 @@ class ListResourcesQuery:
     calendar_id: str | None = None
     time_min: str | None = None
     time_max: str | None = None
+    repository: str | None = None
+    issue_state: str = "OPEN"
 
     def __post_init__(self) -> None:
         if (
@@ -155,6 +171,8 @@ class ListResourcesHandler:
                 page = self._list_tasks(query)
             elif query.source == "calendar":
                 page = self._list_calendar(query)
+            elif query.source == "github":
+                page = self._list_github(query)
             else:
                 raise ConnectorOperationFailure(
                     code=ConnectorFailureCode.NOT_FOUND,
@@ -162,6 +180,8 @@ class ListResourcesHandler:
                 )
         except GoogleWorkspaceGatewayError as error:
             raise normalize_google_workspace_failure(error) from error
+        except ResourceContinuationInvalidError as error:
+            raise normalize_resource_continuation_error(error) from error
         except ValueError as error:
             raise ConnectorOperationFailure(
                 code=ConnectorFailureCode.INVALID_ARGUMENT,
@@ -181,7 +201,6 @@ class ListResourcesHandler:
                 "gmail",
                 query.query.strip(),
                 str(query.page_size),
-                "metadata" if query.include_thread_metadata else "no-metadata",
             ),
         )
         return _project_page("gmail", page)
@@ -255,7 +274,7 @@ class ListResourcesHandler:
         )
 
     def _list_calendar(self, query: ListResourcesQuery) -> ResourceListPage:
-        calendar_id = query.calendar_id or self.access.default_calendar_id() or "primary"
+        calendar_id = query.calendar_id or self.access.default_calendar_id() or DEFAULT_CALENDAR_ID
         time_min, time_max = _resolve_calendar_window(
             query.time_min,
             query.time_max,
@@ -281,6 +300,14 @@ class ListResourcesHandler:
             ),
         )
         return _project_page("calendar", page)
+
+    def _list_github(self, query: ListResourcesQuery) -> ResourceListPage:
+        repository = (query.repository or "").strip()
+        state = query.issue_state.upper()
+        if not repository or state not in {"OPEN", "CLOSED", "ALL"}:
+            raise ValueError("invalid GitHub Issue browse scope")
+        page = self.access.list_github_issues_page(repository=repository, state=state)
+        return _project_page("github", page)
 
 
 def _validated_page_size(page_size: int) -> int:
@@ -325,7 +352,7 @@ def _resource_item_from_snapshot(snapshot: ResourceSnapshot) -> ResourceListItem
         parent_id=snapshot.parent_id,
         title=title,
         subtitle=subtitle,
-        link_url=_google_link(snapshot),
+        link_url=_resource_link(snapshot),
         version=snapshot.version,
         related_resource_ids=tuple(snapshot.related_resource_ids),
         metadata=metadata,
@@ -347,6 +374,8 @@ def _source_for_type(resource_type: ResourceType) -> str:
         return "gmail"
     if resource_type in {ResourceType.TASK_LIST, ResourceType.TASK}:
         return "tasks"
+    if resource_type is ResourceType.GITHUB_ISSUE:
+        return "github"
     return "calendar"
 
 
@@ -363,7 +392,9 @@ def _display_text(snapshot: ResourceSnapshot) -> tuple[str, str | None]:
             payload.get("snippet")
         )
     if snapshot.resource_type is ResourceType.TASK_LIST:
-        return str(payload.get("title", snapshot.resource_id)), _optional_text(payload.get("notes"))
+        return str(payload.get("title", snapshot.resource_id)), strip_resource_recovery_marker(
+            _optional_text(payload.get("notes"))
+        )
     if snapshot.resource_type is ResourceType.TASK:
         return str(payload.get("title", snapshot.resource_id)), None
     if snapshot.resource_type is ResourceType.CALENDAR:
@@ -375,6 +406,10 @@ def _display_text(snapshot: ResourceSnapshot) -> tuple[str, str | None]:
         return (
             "" if title == snapshot.resource_id else title or "",
             _optional_text(payload.get("start")),
+        )
+    if snapshot.resource_type is ResourceType.GITHUB_ISSUE:
+        return _optional_text(payload.get("title")) or snapshot.resource_id, _optional_text(
+            payload.get("description")
         )
     return snapshot.resource_id, None
 
@@ -410,6 +445,15 @@ def _metadata_from_snapshot(snapshot: ResourceSnapshot) -> dict[str, object]:
         ResourceType.CALENDAR: ("time_zone",),
         ResourceType.CALENDAR_EVENT: ("start", "end", "timezone", "location"),
         ResourceType.CALENDAR_FREEBUSY: ("intervals",),
+        ResourceType.GITHUB_ISSUE: (
+            "repository",
+            "issue_number",
+            "description",
+            "state",
+            "url",
+            "labels",
+            "assignees",
+        ),
     }[snapshot.resource_type]
     return {key: value for key, value in payload.items() if key in safe_keys and value is not None}
 
@@ -435,7 +479,7 @@ def _scheduled_date_projection(value: object) -> str | None:
     return candidate
 
 
-def _google_link(snapshot: ResourceSnapshot) -> str:
+def _resource_link(snapshot: ResourceSnapshot) -> str:
     resource_id = quote(snapshot.resource_id, safe="")
     if snapshot.resource_type is ResourceType.GMAIL_THREAD:
         return f"https://mail.google.com/mail/u/0/#inbox/{resource_id}"
@@ -445,6 +489,8 @@ def _google_link(snapshot: ResourceSnapshot) -> str:
         return "https://mail.google.com/mail/u/0/#drafts"
     if snapshot.resource_type in {ResourceType.TASK_LIST, ResourceType.TASK}:
         return "https://tasks.google.com/embed/"
+    if snapshot.resource_type is ResourceType.GITHUB_ISSUE:
+        return _optional_text(snapshot.payload.get("url")) or "https://github.com/issues"
     return "https://calendar.google.com/"
 
 

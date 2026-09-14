@@ -35,6 +35,7 @@ def recheck_affected_dimensions(
     evidence: Sequence[Mapping[str, object]] = (),
     policy_summary: Mapping[str, object] | None = None,
     confirmation_response: Mapping[str, object] | None = None,
+    user_action_modifications: Sequence[Mapping[str, object]] = (),
 ) -> RecheckAffectedDimensionsResultV1:
     """Return fresh replacement findings for exactly the supplied closed dimension set."""
     dimensions = _normalize_dimensions(affected_dimensions)
@@ -56,6 +57,10 @@ def recheck_affected_dimensions(
     ):
         if value is not None:
             prompt_input[key] = dict(value)
+    if user_action_modifications:
+        prompt_input["user_action_modifications"] = [
+            dict(item) for item in user_action_modifications
+        ]
 
     raw = invoke(PROMPT_ID, prompt_input)
     if set(raw) != {"schema_version", "affected_dimensions", "findings"}:

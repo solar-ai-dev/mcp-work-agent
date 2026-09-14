@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from email.message import Message
 from io import BytesIO
 from typing import cast
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -23,6 +23,9 @@ from google_work_agent.adapters.llm.ollama.structured_inference import (
     OllamaStructuredInferenceAdapter,
 )
 from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import (
     AvailabilityState,
     OutputSchemaDefinition,
@@ -98,6 +101,44 @@ def test_probe_reports__model_not__found_when_absent(monkeypatch: pytest.MonkeyP
     assert result.safe_error_code == "MODEL_NOT_FOUND"
 
 
+def test_installed_model_catalog__returns_sorted__bounded_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        {
+            "models": [
+                {"name": "qwen2.5:7b", "digest": "sha256:" + "b" * 64},
+                {"name": "qwen2.5:3b", "digest": "sha256:" + "a" * 64},
+                {"name": ""},
+            ]
+        }
+    ).encode("utf-8")
+    monkeypatch.setattr(
+        "google_work_agent.adapters.llm.ollama.transport.urlopen",
+        lambda request, *, timeout: _HTTPResponse(payload),
+    )
+
+    result = OllamaHTTPClient().list_installed_models()
+
+    assert [item.model_id for item in result] == ["qwen2.5:3b", "qwen2.5:7b"]
+    assert result[0].digest == "sha256:" + "a" * 64
+
+
+def test_installed_model_catalog__when_transport_fails__reports_inspection_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(request: Request, *, timeout: int) -> _HTTPResponse:
+        del request, timeout
+        raise URLError("offline")
+
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", unavailable)
+
+    with pytest.raises(LocalModelCatalogUnavailableError) as failure:
+        OllamaHTTPClient().list_installed_models()
+
+    assert failure.value.safe_error_code == "LOCAL_MODEL_INSPECTION_FAILED"
+
+
 def test_probe_reports__unavailable_on__real_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_405(request: Request, *, timeout: int) -> _HTTPResponse:
         del request, timeout
@@ -125,11 +166,19 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
         del timeout
         captured.append(request)
-        return _HTTPResponse(json.dumps({"response": "{}", "model": "qwen2.5:3b"}).encode("utf-8"))
+        return _HTTPResponse(
+            json.dumps(
+                {
+                    "response": "{}",
+                    "model": "qwen2.5:3b",
+                    "total_duration": 3_565_355_900,
+                }
+            ).encode("utf-8")
+        )
 
     monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
 
-    OllamaHTTPClient().invoke_structured(
+    result = OllamaHTTPClient().invoke_structured(
         endpoint="http://127.0.0.1:11434",
         model_id="qwen2.5:3b",
         prompt_ref=PromptReference(
@@ -145,8 +194,11 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
             input_schema_version="v1",
             output_schema_version="v1",
         ),
-        prompt_input={},
-        output_schema=OutputSchemaDefinition(schema_version="1", json_schema={}),
+        prompt_input={"request": "김대리 일정", "evidence": "9월 3일 오후 2시 서울 코엑스"},
+        output_schema=OutputSchemaDefinition(schema_version="1", json_schema={
+            "type": "object", "required": ["anchor"], "additionalProperties": False,
+            "properties": {"anchor": {"type": "string", "description": "원문 고유명"}},
+        }),
         timeout_seconds=5,
         instruction_text="You are a test assistant.",
     )
@@ -156,6 +208,17 @@ def test_invoke_structured__still_posts__to_generate(monkeypatch: pytest.MonkeyP
     assert captured[0].full_url == "http://127.0.0.1:11434/api/generate"
     sent_body = _request_body(captured[0])
     assert sent_body["system"] == "You are a test assistant."
+    assert sent_body["think"] is False
+    prompt_text = str(sent_body["prompt"])
+    assert "김대리 일정" in prompt_text
+    assert "9월 3일 오후 2시 서울 코엑스" in prompt_text
+    assert "\\u" not in prompt_text
+    assert json.loads(prompt_text)["input"]["request"] == "김대리 일정"
+    assert json.loads(prompt_text)["output_schema"] == sent_body["format"]
+    assert json.loads(prompt_text)["output_schema"]["properties"]["anchor"] == {
+        "type": "string", "description": "원문 고유명",
+    }
+    assert result.latency_ms == 3_565
 
 
 def _prompt_ref_for_sampling_tests() -> PromptReference:
@@ -174,12 +237,69 @@ def _prompt_ref_for_sampling_tests() -> PromptReference:
     )
 
 
-def test_invoke_structured__omits_options_when__sampling_is_unset(
+def test_tool_call__korean_literal__preserves_model_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """docs/15 section 9.5: production dispatch (sampling_temperature/seed
-    both None) must produce the exact same payload as before this change --
-    no "options" key at all."""
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
+        del timeout
+        captured.append(request)
+        return _HTTPResponse(b'{"message":{"tool_calls":[]},"model":"qwen3.5:9b"}')
+
+    monkeypatch.setattr("google_work_agent.adapters.llm.ollama.transport.urlopen", fake_urlopen)
+    inputs = {"request": "김대리 일정", "evidence": "동문 안내 데스크"}
+    OllamaHTTPClient().invoke_tool_call(
+        endpoint="http://127.0.0.1:11434",
+        model_id="qwen3.5:9b",
+        prompt_ref=_prompt_ref_for_sampling_tests(),
+        prompt_input=inputs,
+        tools=[],
+        timeout_seconds=5,
+        instruction_text="업무 요청을 해석하세요.",
+    )
+    body = _request_body(captured[0])
+    messages = cast(list[dict[str, str]], body["messages"])
+    content = messages[1]["content"]
+    assert "김대리 일정" in content
+    assert "동문 안내 데스크" in content
+    assert "\\u" not in content
+    assert json.loads(content)["input"] == inputs
+
+
+def test_tool_call__normalizes_total_duration__from_ns_to_ms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "google_work_agent.adapters.llm.ollama.transport.urlopen",
+        lambda request, *, timeout: _HTTPResponse(
+            json.dumps(
+                {
+                    "message": {"tool_calls": []},
+                    "model": "qwen3.5:9b",
+                    "total_duration": 3_565_355_900,
+                }
+            ).encode("utf-8")
+        ),
+    )
+
+    result = OllamaHTTPClient().invoke_tool_call(
+        endpoint="http://127.0.0.1:11434",
+        model_id="qwen3.5:9b",
+        prompt_ref=_prompt_ref_for_sampling_tests(),
+        prompt_input={},
+        tools=[],
+        timeout_seconds=5,
+        instruction_text="test",
+    )
+
+    assert result.latency_ms == 3_565
+
+
+def test_invoke_structured__sets_product_context_when__sampling_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production dispatch must not inherit Ollama's insufficient 4K default."""
     captured: list[Request] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -200,7 +320,7 @@ def test_invoke_structured__omits_options_when__sampling_is_unset(
     )
 
     sent_body = _request_body(captured[0])
-    assert "options" not in sent_body
+    assert sent_body["options"] == {"num_ctx": 16_384}
 
 
 def test_invoke_structured__sends_fixed__temperature_when_set(
@@ -227,7 +347,7 @@ def test_invoke_structured__sends_fixed__temperature_when_set(
     )
 
     sent_body = _request_body(captured[0])
-    assert sent_body["options"] == {"temperature": 0.0}
+    assert sent_body["options"] == {"num_ctx": 16_384, "temperature": 0.0}
 
 
 def test_invoke_structured__sends_fixed__seed_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,7 +373,7 @@ def test_invoke_structured__sends_fixed__seed_when_set(monkeypatch: pytest.Monke
     )
 
     sent_body = _request_body(captured[0])
-    assert sent_body["options"] == {"temperature": 0.0, "seed": 7}
+    assert sent_body["options"] == {"num_ctx": 16_384, "temperature": 0.0, "seed": 7}
 
 
 def test_provider_forwards__runtime_policy_sampling__fields_to_transport(
@@ -284,14 +404,13 @@ def test_provider_forwards__runtime_policy_sampling__fields_to_transport(
     )
 
     sent_body = _request_body(captured[0])
-    assert sent_body["options"] == {"temperature": 0.0, "seed": 7}
+    assert sent_body["options"] == {"num_ctx": 16_384, "temperature": 0.0, "seed": 7}
 
 
-def test_provider_omits_options__when_runtime_policy__leaves_sampling_unset(
+def test_provider_sets_context__when_runtime_policy__leaves_sampling_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pins the production path: a bare ``RuntimePolicy()`` (what
-    api/composition.py always constructs) must never add an "options" key."""
+    """A bare production RuntimePolicy still receives the product context window."""
     captured: list[Request] = []
 
     def fake_urlopen(request: Request, *, timeout: int) -> _HTTPResponse:
@@ -317,7 +436,7 @@ def test_provider_omits_options__when_runtime_policy__leaves_sampling_unset(
     )
 
     sent_body = _request_body(captured[0])
-    assert "options" not in sent_body
+    assert sent_body["options"] == {"num_ctx": 16_384}
 
 
 def test_provider_assembles_instruction__text_only_as__a_local_call_boundary(

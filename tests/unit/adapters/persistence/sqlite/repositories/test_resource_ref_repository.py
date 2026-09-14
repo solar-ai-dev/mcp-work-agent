@@ -36,7 +36,11 @@ def _database(tmp_path: Path) -> sqlite3.Connection:
     connection.execute("INSERT INTO conversations VALUES ('c-1', 'a-1', 'Test', 1, 1);")
     connection.execute(
         """
-        INSERT INTO runs VALUES (
+        INSERT INTO runs (
+            id, conversation_id, entry_mode, status, langgraph_thread_id,
+            requested_mode, actual_runtime, budget_json, version,
+            started_at_ms, finished_at_ms, terminal_result_kind
+        ) VALUES (
             'run-1', 'c-1', 'AGENT_SEARCH', 'CREATED', 't-1',
             'AUTO', NULL, '{}', 0, 1, NULL, NULL
         );

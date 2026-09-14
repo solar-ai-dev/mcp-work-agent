@@ -10,9 +10,13 @@ export function subscribeRunEvents(runId: string, handlers: RunEventHandlers): (
   const eventSource = new EventSource(`/api/v1/runs/${encodeURIComponent(runId)}/events`, { withCredentials: true });
   const seen = new Set<string>();
   eventSource.onopen = () => handlers.onStateChange("실시간 상태가 연결되었습니다.");
-  eventSource.onerror = () => handlers.onStateChange("실시간 연결을 다시 시도하고 있습니다.");
+  eventSource.onerror = (event) => {
+    if (!("data" in event)) handlers.onStateChange("실시간 연결을 다시 시도하고 있습니다.");
+  };
   for (const eventType of RUN_SSE_EVENT_TYPES) {
     eventSource.addEventListener(eventType, (event) => {
+      // Native transport errors share the name of the canonical server error event.
+      if (eventType === "error" && !("data" in event)) return;
       const messageEvent = event as MessageEvent<string>;
       try {
         const decoded = decodeRunSseEvent(messageEvent.data);

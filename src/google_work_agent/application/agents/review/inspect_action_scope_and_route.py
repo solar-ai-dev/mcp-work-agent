@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from google_work_agent.application.agents.review.contracts.exact_calendar_create_plan import (
+    is_exact_calendar_create_plan,
+)
+from google_work_agent.application.agents.review.contracts.exact_task_create_plan import (
+    is_exact_task_create_plan,
+)
 from google_work_agent.application.agents.review.contracts.review_findings import (
     ReviewDimensionIdV1,
     ReviewInspectorResultV1,
@@ -26,7 +32,22 @@ def inspect_action_scope_and_route(
     invoke: ReviewSemanticInvoker,
     work_analysis: Mapping[str, object] | None = None,
     confirmation_response: Mapping[str, object] | None = None,
+    user_action_modifications: Sequence[Mapping[str, object]] = (),
 ) -> ReviewInspectorResultV1:
+    if confirmation_response is None and (
+        is_exact_calendar_create_plan(
+            request_intent=request_intent,
+            planning_result=planning_result,
+            tool_route_plan=tool_route_plan,
+        )
+        or is_exact_task_create_plan(
+            request_intent=request_intent,
+            planning_result=planning_result,
+            work_analysis=work_analysis,
+            tool_route_plan=tool_route_plan,
+        )
+    ):
+        return {"schema_version": 1, "dimension": DIMENSION, "findings": []}
     prompt_input: dict[str, object] = {
         "request_intent": dict(request_intent),
         "tool_route_plan": dict(tool_route_plan),
@@ -37,6 +58,10 @@ def inspect_action_scope_and_route(
         prompt_input["work_analysis"] = dict(work_analysis)
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
+    if user_action_modifications:
+        prompt_input["user_action_modifications"] = [
+            dict(item) for item in user_action_modifications
+        ]
     return validate_review_inspector_result(
         invoke(PROMPT_ID, prompt_input), expected_dimension=DIMENSION
     )

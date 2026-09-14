@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 
+from google_work_agent.adapters.langgraph.langsmith_llm_semantic_projection import (
+    project_llm_semantic_input,
+    project_llm_semantic_output,
+)
 from google_work_agent.adapters.llm.runtime.llm_credential_router import LlmCredentialRouter
 from google_work_agent.adapters.llm.runtime.llm_runtime_status_router import LlmRuntimeStatusRouter
+from google_work_agent.adapters.llm.runtime.schema_repair_scope import (
+    find_out_of_scope_schema_repair_changes,
+)
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.runtime_selection import LlmRuntimeSelectionV1
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -24,6 +35,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     ProbeResult,
     PromptReference,
+    ProviderResponsePayload,
     RequestedRuntimeMode,
     RouteDecision,
     RouteDecisionInput,
@@ -42,8 +54,28 @@ from google_work_agent.ports.system.contracts.observability import (
     ObservabilityContext,
     Severity,
 )
+from google_work_agent.ports.system.external_call_trace_port import (
+    ExternalCallKind,
+    ExternalCallTraceFinishV1,
+    ExternalCallTraceHandleV1,
+    ExternalCallTracePort,
+    ExternalCallTraceStartV1,
+)
 from google_work_agent.ports.system.hardware_probe_port import HardwareProbePort
 from google_work_agent.ports.system.settings_port import SettingsViewV1
+
+_IDENTIFY_GOAL_PROMPT_ID = "request_understanding.identify_goal"
+_IDENTIFY_GOAL_TEMPERATURE = 0.1
+_IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = (
+    "request_understanding.identify_source_dependencies"
+)
+_IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE = 0.05
+_IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID = (
+    "request_understanding.identify_output_responsibilities"
+)
+_IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE = 0.0
+_DETECT_AMBIGUITY_PROMPT_ID = "request_understanding.detect_ambiguity"
+_DETECT_AMBIGUITY_TEMPERATURE = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +86,7 @@ class NullLLMEventRecorder:
 
 @dataclass
 class StructuredInferenceRuntimeRouter:
-    """Select API/Ollama leaves and perform the single permitted AUTO fallback."""
+    """Select API/Ollama leaves and preserve fallback only for legacy AUTO runs."""
 
     settings_service: Callable[[], SettingsViewV1]
     runtime_selection: LlmRuntimeSelectionV1
@@ -72,6 +104,7 @@ class StructuredInferenceRuntimeRouter:
     before_provider_dispatch: Callable[[], None] = lambda: None
     before_runtime_dispatch: Callable[[ActualRuntime], None] = lambda _runtime: None
     run_context_provider: Callable[[], str | None] = lambda: None
+    external_call_trace: ExternalCallTracePort | None = None
     record_runtime_result: Callable[[ActualRuntime, str | None], None] = (
         lambda _runtime, _error_code: None
     )
@@ -122,25 +155,22 @@ class StructuredInferenceRuntimeRouter:
     ) -> StructuredInferenceResultV1:
         settings = self.settings_service()
         requested = RequestedRuntimeMode(requested_mode)
-        api_status = self.status_service.get_status(self.api_provider_name)
-        approved_model = self.runtime_selection.selected_model
-        hardware = self.hardware_probe.probe()
-        hardware_capability = HardwareCapability(
-            cpu_arch=hardware.architecture,
-            core_summary=str(hardware.cpu_logical_cores),
-            memory_bytes=hardware.ram_total_bytes,
-            gpu_present=hardware.gpu_present,
-            gpu_vendor=None,
-            gpu_name=hardware.gpu_name,
-            gpu_memory_bytes=hardware.vram_total_bytes,
-            capability_status=(
-                HardwareCapabilityStatus.VALIDATED
-                if hardware.local_runtime_eligible
-                else HardwareCapabilityStatus.NOT_VALIDATED
-            ),
-            safe_reason_codes=hardware.local_runtime_reason_codes,
+        uses_local_runtime = requested is not RequestedRuntimeMode.API_LLM
+        uses_api_runtime = requested is not RequestedRuntimeMode.LOCAL_GPU
+        approved_model, hardware_capability = self._local_runtime_inputs(
+            prompt_id=prompt_ref.prompt_id,
+            required=uses_local_runtime,
         )
-        credential = self.credential_service.get_credential_status(self.api_provider_name)
+        api_status = (
+            self.status_service.get_status(self.api_provider_name)
+            if uses_api_runtime
+            else None
+        )
+        credential = (
+            self.credential_service.get_credential_status(self.api_provider_name)
+            if uses_api_runtime
+            else None
+        )
         decision = self.decide(
             RouteDecisionInput(
                 build_profile=self.runtime_selection.deployment_profile,
@@ -148,29 +178,34 @@ class StructuredInferenceRuntimeRouter:
                 external_llm_consent=settings.external_llm_consent,
                 api_credential_state=(
                     LLMCredentialState.KEYRING
-                    if credential.storage_mode == "KEYRING"
+                    if credential is not None and credential.storage_mode == "KEYRING"
                     else LLMCredentialState.SESSION_MEMORY
-                    if credential.storage_mode == "SESSION_ONLY"
+                    if credential is not None and credential.storage_mode == "SESSION_ONLY"
                     else LLMCredentialState.UNAVAILABLE
-                    if credential.validation_status == "UNAVAILABLE"
+                    if credential is not None and credential.validation_status == "UNAVAILABLE"
                     else LLMCredentialState.NOT_CONFIGURED
                 ),
                 api_probe=ProbeResult(
                     availability=(
                         AvailabilityState.AVAILABLE
-                        if api_status.availability == "READY"
+                        if api_status is not None and api_status.availability == "READY"
+                        else AvailabilityState.NOT_APPLICABLE
+                        if api_status is None
                         else AvailabilityState.UNAVAILABLE
                     ),
-                    safe_error_code=api_status.error_code,
+                    safe_error_code=None if api_status is None else api_status.error_code,
                 ),
                 hardware_capability=hardware_capability,
                 ollama_probe=ProbeResult(
                     availability=(
                         AvailabilityState.AVAILABLE
-                        if hardware.local_runtime_eligible
+                        if hardware_capability.capability_status
+                        is HardwareCapabilityStatus.VALIDATED
+                        else AvailabilityState.NOT_APPLICABLE
+                        if not uses_local_runtime
                         else AvailabilityState.UNAVAILABLE
                     ),
-                    safe_error_code=next(iter(hardware.local_runtime_reason_codes), None),
+                    safe_error_code=next(iter(hardware_capability.safe_reason_codes), None),
                 ),
                 approved_model=approved_model,
             )
@@ -186,11 +221,18 @@ class StructuredInferenceRuntimeRouter:
             trace_context=trace_context,
             requested_mode=requested,
             decision=decision,
+            selected_model_id=(
+                approved_model.model_id
+                if decision.primary_runtime is ActualRuntime.LOCAL_GPU
+                and approved_model is not None
+                else None
+            ),
         )
         if decision.safe_reason_code == LLMErrorCode.RUNTIME_MODE_BLOCKED.value:
             raise LLMInvocationError(
                 LLMErrorCode.RUNTIME_MODE_BLOCKED,
                 "requested runtime mode is disabled by the release profile",
+                runtime_prerequisite=True,
             )
         try:
             provider = self._resolve_provider(
@@ -209,6 +251,12 @@ class StructuredInferenceRuntimeRouter:
                 fallback_reason=None,
                 semantic_validate=None,
                 external_transfer_scope=external_transfer_scope,
+                selected_model_id=(
+                    approved_model.model_id
+                    if decision.primary_runtime is ActualRuntime.LOCAL_GPU
+                    and approved_model is not None
+                    else None
+                ),
             )
             return _canonical_result(result)
 
@@ -241,6 +289,7 @@ class StructuredInferenceRuntimeRouter:
                 fallback_reason=error.code.value,
                 semantic_validate=None,
                 external_transfer_scope=external_transfer_scope,
+                selected_model_id=None,
             )
             self.event_recorder.record(
                 event_name="LLM_FALLBACK_COMPLETED",
@@ -257,6 +306,49 @@ class StructuredInferenceRuntimeRouter:
                 status="COMPLETED",
             )
             return _canonical_result(result)
+
+    def _local_runtime_inputs(
+        self,
+        *,
+        prompt_id: str,
+        required: bool,
+    ) -> tuple[ApprovedModelInfo | None, HardwareCapability]:
+        if not required:
+            return None, HardwareCapability(
+                cpu_arch="NOT_APPLICABLE",
+                core_summary="NOT_APPLICABLE",
+                memory_bytes=None,
+                gpu_present=False,
+                gpu_vendor=None,
+                gpu_name=None,
+                gpu_memory_bytes=None,
+                capability_status=HardwareCapabilityStatus.NOT_APPLICABLE,
+                safe_reason_codes=(),
+            )
+        try:
+            approved_model = self.status_service.get_model_for_prompt(prompt_id)
+            hardware = self.hardware_probe.probe()
+        except LocalModelCatalogUnavailableError as error:
+            raise LLMInvocationError(
+                LLMErrorCode.LOCAL_UNAVAILABLE,
+                error.safe_error_code,
+                runtime_prerequisite=True,
+            ) from error
+        return approved_model, HardwareCapability(
+            cpu_arch=hardware.architecture,
+            core_summary=str(hardware.cpu_logical_cores),
+            memory_bytes=hardware.ram_total_bytes,
+            gpu_present=hardware.gpu_present,
+            gpu_vendor=None,
+            gpu_name=hardware.gpu_name,
+            gpu_memory_bytes=hardware.vram_total_bytes,
+            capability_status=(
+                HardwareCapabilityStatus.VALIDATED
+                if hardware.local_runtime_eligible
+                else HardwareCapabilityStatus.NOT_VALIDATED
+            ),
+            safe_reason_codes=hardware.local_runtime_reason_codes,
+        )
 
     def discard_run(self, *, run_id: str) -> None:
         """Run budgets live in checkpointed workflow state, not this router."""
@@ -338,26 +430,34 @@ class StructuredInferenceRuntimeRouter:
         if runtime is ActualRuntime.API_LLM:
             if not settings.external_llm_consent:
                 raise LLMInvocationError(
-                    LLMErrorCode.CONSENT_REQUIRED, "external LLM consent is disabled"
+                    LLMErrorCode.CONSENT_REQUIRED,
+                    "external LLM consent is disabled",
+                    runtime_prerequisite=True,
                 )
             if self.credential_service.read_secret(self.api_provider_name) is None:
                 raise LLMInvocationError(
-                    LLMErrorCode.API_KEY_MISSING, "LLM API key is not configured"
+                    LLMErrorCode.API_KEY_MISSING,
+                    "LLM API key is not configured",
+                    runtime_prerequisite=True,
                 )
             return self._api_leaf
         if hardware_capability.capability_status is not HardwareCapabilityStatus.VALIDATED:
             raise LLMInvocationError(
                 LLMErrorCode.LOCAL_UNAVAILABLE,
                 "local hardware capability is not validated for LOCAL_GPU",
+                runtime_prerequisite=True,
             )
         if approved_model is None:
             raise LLMInvocationError(
-                LLMErrorCode.MODEL_NOT_APPROVED, "approved model is unavailable"
+                LLMErrorCode.MODEL_NOT_APPROVED,
+                "approved model is unavailable",
+                runtime_prerequisite=True,
             )
         if not self.runtime_selection.is_active:
             raise LLMInvocationError(
                 LLMErrorCode.LOCAL_UNAVAILABLE,
                 "local runtime is not activated by a current signed product decision",
+                runtime_prerequisite=True,
             )
         return self.ollama_provider_factory(approved_model)
 
@@ -373,6 +473,7 @@ class StructuredInferenceRuntimeRouter:
         fallback_reason: str | None,
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
+        selected_model_id: str | None,
     ) -> StructuredLLMResult:
         self.before_runtime_dispatch(provider.runtime)
         try:
@@ -386,8 +487,34 @@ class StructuredInferenceRuntimeRouter:
                 fallback_reason=fallback_reason,
                 semantic_validate=semantic_validate,
                 external_transfer_scope=external_transfer_scope,
+                selected_model_id=selected_model_id,
             )
         except LLMInvocationError as error:
+            self.event_recorder.record(
+                event_name="LLM_CALL_FAILED",
+                severity=Severity.ERROR,
+                correlation=trace_context,
+                attributes={
+                    "operation": "INFER_STRUCTURED",
+                    "prompt_id": prompt_ref.prompt_id,
+                    "prompt_version": prompt_ref.prompt_version,
+                    "prompt_content_hash": prompt_ref.content_hash,
+                    "requested_mode": requested_mode.value,
+                    "actual_runtime": provider.runtime.value,
+                    "provider": provider.provider_name,
+                    "selected_model_id": selected_model_id,
+                    "output_schema_id": output_schema.schema_version,
+                    "safe_error_code": error.code.value,
+                    "error_type": type(error).__name__,
+                    "affected_field_paths": list(
+                        _safe_schema_field_paths(error.affected_field_paths, output_schema)
+                    ),
+                    "provider_dispatch_occurred": error.provider_dispatch_occurred,
+                    "fallback_reason": fallback_reason,
+                },
+                result_code=error.code.value,
+                status="FAILED",
+            )
             self.record_runtime_result(provider.runtime, error.code.value)
             raise
         self.record_runtime_result(provider.runtime, None)
@@ -405,21 +532,38 @@ class StructuredInferenceRuntimeRouter:
         fallback_reason: str | None,
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
+        selected_model_id: str | None,
     ) -> StructuredLLMResult:
         if provider.runtime is ActualRuntime.API_LLM:
             self._require_external_call(external_transfer_scope)
+        runtime_policy = _runtime_policy_for_prompt(self.runtime_policy, prompt_ref)
         started = time.perf_counter()
+        local_profile = self.runtime_selection.local_model_profile
+        profile_attributes = (
+            {
+                "local_model_profile_id": local_profile.profile_id,
+                "inference_class": local_profile.inference_class_for_prompt(
+                    prompt_ref.prompt_id
+                ).value,
+            }
+            if provider.runtime is ActualRuntime.LOCAL_GPU and local_profile is not None
+            else {}
+        )
         self.event_recorder.record(
             event_name="LLM_CALL_STARTED",
             severity=Severity.INFO,
             correlation=trace_context,
             attributes={
+                "operation": "INFER_STRUCTURED",
                 "prompt_id": prompt_ref.prompt_id,
                 "prompt_version": prompt_ref.prompt_version,
                 "prompt_content_hash": prompt_ref.content_hash,
                 "requested_mode": requested_mode.value,
                 "actual_runtime": provider.runtime.value,
                 "provider": provider.provider_name,
+                "selected_model_id": selected_model_id,
+                "output_schema_id": output_schema.schema_version,
+                **profile_attributes,
             },
             result_code="STARTED",
             status="STARTED",
@@ -430,16 +574,50 @@ class StructuredInferenceRuntimeRouter:
             else None
         )
         api_key = None if api_key_bytes is None else api_key_bytes.decode("utf-8")
+        provider_dispatch_occurred = False
         try:
             self.before_provider_dispatch()
-            payload = provider.invoke_structured(
+            provider_dispatch_occurred = True
+            trace_started = time.perf_counter()
+            trace_handle = self._begin_llm_trace(
+                call_kind="LLM_INFERENCE",
+                provider=provider,
                 prompt_ref=prompt_ref,
                 prompt_input=prompt_input,
                 output_schema=output_schema,
-                runtime_policy=self.runtime_policy,
-                api_key=api_key,
+                selected_model_id=selected_model_id,
             )
-            structured_output, attempts = self._validate_or_repair(
+            try:
+                payload = provider.invoke_structured(
+                    prompt_ref=prompt_ref,
+                    prompt_input=prompt_input,
+                    output_schema=output_schema,
+                    runtime_policy=runtime_policy,
+                    api_key=api_key,
+                )
+            except Exception as error:
+                self._finish_llm_trace(
+                    trace_handle,
+                    status="FAILED",
+                    started=trace_started,
+                    error=error,
+                )
+                raise
+            trace_duration_ms = max(0, int((time.perf_counter() - trace_started) * 1000))
+            safe_semantic_output = _trace_semantic_output(
+                prompt_id=prompt_ref.prompt_id,
+                payload=payload.content,
+            )
+            self._finish_llm_trace(
+                trace_handle,
+                status="COMPLETED",
+                started=trace_started,
+                duration_ms=trace_duration_ms,
+                input_tokens=payload.input_tokens,
+                output_tokens=payload.output_tokens,
+                safe_semantic_output=safe_semantic_output,
+            )
+            structured_output, attempts, repair_payload = self._validate_or_repair(
                 provider=provider,
                 prompt_ref=prompt_ref,
                 prompt_input=prompt_input,
@@ -449,25 +627,47 @@ class StructuredInferenceRuntimeRouter:
                 trace_context=trace_context,
                 semantic_validate=semantic_validate,
                 external_transfer_scope=external_transfer_scope,
+                runtime_policy=runtime_policy,
             )
+        except LLMInvocationError as error:
+            error.provider_dispatch_occurred = provider_dispatch_occurred
+            raise
         except ValueError as error:
-            raise LLMInvocationError(LLMErrorCode.INVALID_PROVIDER_RESPONSE, str(error)) from error
+            raise LLMInvocationError(
+                LLMErrorCode.INVALID_PROVIDER_RESPONSE,
+                str(error),
+                provider_dispatch_occurred=provider_dispatch_occurred,
+            ) from error
         except TimeoutError as error:
             raise LLMInvocationError(
-                LLMErrorCode.PROVIDER_TIMEOUT, "LLM invocation timed out", retryable=True
+                LLMErrorCode.PROVIDER_TIMEOUT,
+                "LLM invocation timed out",
+                retryable=True,
+                provider_dispatch_occurred=provider_dispatch_occurred,
             ) from error
         duration_ms = int((time.perf_counter() - started) * 1000)
+        input_tokens = _sum_optional_ints(
+            payload.input_tokens,
+            None if repair_payload is None else repair_payload.input_tokens,
+        )
+        output_tokens = _sum_optional_ints(
+            payload.output_tokens,
+            None if repair_payload is None else repair_payload.output_tokens,
+        )
         result = StructuredLLMResult(
             structured_output=structured_output,
             provider=provider.provider_name,
             model=payload.model,
             requested_mode=requested_mode,
             actual_runtime=provider.runtime,
-            input_tokens=payload.input_tokens,
-            output_tokens=payload.output_tokens,
-            total_tokens=_sum_tokens(payload.input_tokens, payload.output_tokens),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=_sum_tokens(input_tokens, output_tokens),
             latency_ms=max(duration_ms, payload.latency_ms),
-            estimated_cost_usd=payload.estimated_cost_usd,
+            estimated_cost_usd=_sum_optional_floats(
+                payload.estimated_cost_usd,
+                None if repair_payload is None else repair_payload.estimated_cost_usd,
+            ),
             fallback_reason=fallback_reason,
             structured_output_attempts=attempts,
             provider_request_id=payload.provider_request_id,
@@ -478,6 +678,7 @@ class StructuredInferenceRuntimeRouter:
             severity=Severity.INFO,
             correlation=trace_context,
             attributes={
+                "operation": "INFER_STRUCTURED",
                 "prompt_id": prompt_ref.prompt_id,
                 "prompt_version": prompt_ref.prompt_version,
                 "prompt_content_hash": prompt_ref.content_hash,
@@ -485,12 +686,15 @@ class StructuredInferenceRuntimeRouter:
                 "actual_runtime": result.actual_runtime.value,
                 "provider": result.provider,
                 "model": result.model,
+                "selected_model_id": selected_model_id,
+                "output_schema_id": output_schema.schema_version,
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "total_tokens": result.total_tokens,
                 "estimated_cost_usd": result.estimated_cost_usd,
                 "fallback_reason": result.fallback_reason,
                 "structured_output_attempts": result.structured_output_attempts,
+                **profile_attributes,
             },
             result_code="COMPLETED",
             status="COMPLETED",
@@ -510,36 +714,91 @@ class StructuredInferenceRuntimeRouter:
         trace_context: ObservabilityContext,
         semantic_validate: Callable[[object], object] | None,
         external_transfer_scope: ExternalLlmTransferScopeV1 | None,
-    ) -> tuple[object, int]:
-        candidate = _parse_payload(payload)
-        errors = _collect_validation_errors(candidate, output_schema, semantic_validate)
+        runtime_policy: RuntimePolicy,
+    ) -> tuple[object, int, ProviderResponsePayload | None]:
+        try:
+            candidate = _parse_payload(payload)
+        except ValueError:
+            candidate = payload
+            errors = ["$: provider output is not valid JSON"]
+        else:
+            errors = _collect_validation_errors(candidate, output_schema, semantic_validate)
         if not errors:
-            return candidate, 1
-        if self.schema_repairer is None or self.runtime_policy.structured_output_repair_budget < 1:
+            return candidate, 1, None
+        if self.schema_repairer is None or runtime_policy.structured_output_repair_budget < 1:
             raise LLMInvocationError(
-                LLMErrorCode.OUTPUT_SCHEMA_INVALID, "structured output did not satisfy schema"
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "structured output did not satisfy schema",
+                affected_field_paths=_validation_error_paths(errors),
             )
         if provider.runtime is ActualRuntime.API_LLM:
             self._require_external_call(external_transfer_scope)
         self.before_provider_dispatch()
-        repaired = self.schema_repairer.repair(
+        trace_started = time.perf_counter()
+        trace_handle = self._begin_llm_trace(
+            call_kind="LLM_SCHEMA_REPAIR",
             provider=provider,
             prompt_ref=prompt_ref,
             prompt_input=prompt_input,
-            failed_output=candidate,
             output_schema=output_schema,
-            runtime_policy=self.runtime_policy,
-            api_key=api_key,
-            attempt_no=1,
-            max_attempts=self.runtime_policy.structured_output_repair_budget,
-            failure_reason_code=LLMErrorCode.OUTPUT_SCHEMA_INVALID.value,
-            validator_errors=tuple(errors),
+            selected_model_id=None,
         )
-        if _collect_validation_errors(repaired, output_schema, semantic_validate):
-            raise LLMInvocationError(
-                LLMErrorCode.OUTPUT_SCHEMA_INVALID, "schema repair did not produce a valid payload"
+        try:
+            repair_payload = self.schema_repairer.repair(
+                provider=provider,
+                prompt_ref=prompt_ref,
+                prompt_input=prompt_input,
+                failed_output=candidate,
+                output_schema=output_schema,
+                runtime_policy=runtime_policy,
+                api_key=api_key,
+                attempt_no=1,
+                max_attempts=runtime_policy.structured_output_repair_budget,
+                failure_reason_code=LLMErrorCode.OUTPUT_SCHEMA_INVALID.value,
+                validator_errors=tuple(errors),
             )
-        return repaired, 2
+        except Exception as error:
+            self._finish_llm_trace(
+                trace_handle,
+                status="FAILED",
+                started=trace_started,
+                error=error,
+            )
+            raise
+        repaired = repair_payload.content
+        trace_duration_ms = max(0, int((time.perf_counter() - trace_started) * 1000))
+        self._finish_llm_trace(
+            trace_handle,
+            status="COMPLETED",
+            started=trace_started,
+            duration_ms=trace_duration_ms,
+            input_tokens=repair_payload.input_tokens,
+            output_tokens=repair_payload.output_tokens,
+            safe_semantic_output=_trace_semantic_output(
+                prompt_id=prompt_ref.prompt_id,
+                payload=repaired,
+            ),
+        )
+        repair_errors = _collect_validation_errors(repaired, output_schema, semantic_validate)
+        if repair_errors:
+            raise LLMInvocationError(
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "schema repair did not produce a valid payload: " + "; ".join(repair_errors[-8:]),
+                affected_field_paths=_validation_error_paths(repair_errors),
+            )
+        out_of_scope_changes = find_out_of_scope_schema_repair_changes(
+            failed_output=candidate,
+            repaired_output=repaired,
+            affected_field_paths=_validation_error_paths(errors),
+            output_schema=output_schema.json_schema,
+        )
+        if out_of_scope_changes:
+            raise LLMInvocationError(
+                LLMErrorCode.OUTPUT_SCHEMA_INVALID,
+                "schema repair changed fields outside the reported failure scope",
+                affected_field_paths=out_of_scope_changes,
+            )
+        return repaired, 2, repair_payload
 
     def _require_external_call(self, scope: ExternalLlmTransferScopeV1 | None) -> None:
         if not self.settings_service().external_llm_consent:
@@ -557,6 +816,83 @@ class StructuredInferenceRuntimeRouter:
                 LLMErrorCode.CONSENT_REQUIRED,
                 "external LLM transfer scope checkpoint is stale",
             )
+
+    def _begin_llm_trace(
+        self,
+        *,
+        call_kind: ExternalCallKind,
+        provider: StructuredLLMProvider,
+        prompt_ref: PromptReference,
+        prompt_input: Mapping[str, object],
+        output_schema: OutputSchemaDefinition,
+        selected_model_id: str | None,
+    ) -> ExternalCallTraceHandleV1 | None:
+        trace = self.external_call_trace
+        if trace is None:
+            return None
+        try:
+            return trace.begin_external_call(
+                ExternalCallTraceStartV1(
+                    schema_version=1,
+                    domain_run_id=self.run_context_provider(),
+                    call_kind=call_kind,
+                    operation=(
+                        "INFER_STRUCTURED"
+                        if call_kind == "LLM_INFERENCE"
+                        else "REPAIR_STRUCTURED_OUTPUT"
+                    ),
+                    provider=provider.provider_name,
+                    model_id=selected_model_id,
+                    prompt_id=prompt_ref.prompt_id,
+                    prompt_version=prompt_ref.prompt_version,
+                    prompt_content_hash=prompt_ref.content_hash,
+                    output_schema_id=output_schema.schema_version,
+                    safe_semantic_input=_trace_semantic_input(
+                        prompt_id=prompt_ref.prompt_id,
+                        prompt_input=prompt_input,
+                    ),
+                )
+            )
+        except Exception:
+            return None
+
+    def _finish_llm_trace(
+        self,
+        handle: ExternalCallTraceHandleV1 | None,
+        *,
+        status: Literal["COMPLETED", "FAILED"],
+        started: float,
+        duration_ms: int | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        error: Exception | None = None,
+        safe_semantic_output: Mapping[str, object] | None = None,
+    ) -> None:
+        trace = self.external_call_trace
+        if trace is None or handle is None:
+            return
+        safe_error_code = error.code.value if isinstance(error, LLMInvocationError) else None
+        try:
+            trace.finish_external_call(
+                handle,
+                ExternalCallTraceFinishV1(
+                    schema_version=1,
+                    status=status,
+                    duration_ms=(
+                        max(0, int((time.perf_counter() - started) * 1000))
+                        if duration_ms is None
+                        else duration_ms
+                    ),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=_sum_tokens(input_tokens, output_tokens),
+                    error_type=None if error is None else type(error).__name__,
+                    safe_error_code=safe_error_code,
+                    safe_semantic_output=safe_semantic_output,
+                ),
+            )
+        except Exception:
+            return
 
     def _should_fallback(
         self,
@@ -589,6 +925,7 @@ class StructuredInferenceRuntimeRouter:
         trace_context: ObservabilityContext,
         requested_mode: RequestedRuntimeMode,
         decision: RouteDecision,
+        selected_model_id: str | None,
     ) -> None:
         self.event_recorder.record(
             event_name="LLM_RUNTIME_SELECTED",
@@ -605,6 +942,7 @@ class StructuredInferenceRuntimeRouter:
                 if decision.fallback_target is None
                 else decision.fallback_target.value,
                 "safe_error_code": decision.safe_reason_code,
+                "selected_model_id": selected_model_id,
             },
             result_code="ROUTED",
             status="COMPLETED",
@@ -637,6 +975,23 @@ class StructuredInferenceRuntimeRouter:
 
 def _decision(runtime: ActualRuntime, fallback_allowed: bool, reason: str | None) -> RouteDecision:
     return RouteDecision(runtime, fallback_allowed, None, reason)
+
+
+def _runtime_policy_for_prompt(
+    runtime_policy: RuntimePolicy,
+    prompt_ref: PromptReference,
+) -> RuntimePolicy:
+    temperature = {
+        _IDENTIFY_GOAL_PROMPT_ID: _IDENTIFY_GOAL_TEMPERATURE,
+        _IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID: _IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE,
+        _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID: (
+            _IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE
+        ),
+        _DETECT_AMBIGUITY_PROMPT_ID: _DETECT_AMBIGUITY_TEMPERATURE,
+    }.get(prompt_ref.prompt_id)
+    if temperature is None:
+        return runtime_policy
+    return replace(runtime_policy, sampling_temperature=temperature)
 
 
 def _local_runtime_reason(request: RouteDecisionInput) -> str | None:
@@ -688,6 +1043,24 @@ def _parse_payload(payload: object) -> object:
     return payload
 
 
+def _trace_semantic_input(
+    *, prompt_id: str, prompt_input: Mapping[str, object]
+) -> Mapping[str, object] | None:
+    try:
+        return project_llm_semantic_input(prompt_id, prompt_input)
+    except Exception:
+        return None
+
+
+def _trace_semantic_output(
+    *, prompt_id: str, payload: object
+) -> Mapping[str, object] | None:
+    try:
+        return project_llm_semantic_output(prompt_id, _parse_payload(payload))
+    except Exception:
+        return None
+
+
 def _collect_validation_errors(
     candidate: object,
     output_schema: OutputSchemaDefinition,
@@ -703,10 +1076,56 @@ def _collect_validation_errors(
     return []
 
 
+_JSON_PATH_PREFIX = re.compile(r"^\$[\w.\[\]]*")
+
+
+def _validation_error_paths(errors: list[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                match.group(0)
+                for message in errors
+                if (match := _JSON_PATH_PREFIX.match(message)) is not None
+            }
+        )
+    )
+
+
+def _safe_schema_field_paths(
+    paths: tuple[str, ...], output_schema: OutputSchemaDefinition
+) -> tuple[str, ...]:
+    properties = output_schema.json_schema.get("properties")
+    allowed_roots = frozenset(properties) if isinstance(properties, Mapping) else frozenset()
+    safe_paths: list[str] = []
+    for path in paths:
+        match = _JSON_PATH_PREFIX.fullmatch(path)
+        if match is None:
+            continue
+        if path == "$":
+            safe_paths.append(path)
+            continue
+        root = path[2:].split(".", 1)[0].split("[", 1)[0]
+        if root in allowed_roots:
+            safe_paths.append(path)
+    return tuple(sorted(set(safe_paths)))
+
+
 def _sum_tokens(input_tokens: int | None, output_tokens: int | None) -> int | None:
     if input_tokens is None and output_tokens is None:
         return None
     return (input_tokens or 0) + (output_tokens or 0)
+
+
+def _sum_optional_ints(first: int | None, second: int | None) -> int | None:
+    if first is None and second is None:
+        return None
+    return (first or 0) + (second or 0)
+
+
+def _sum_optional_floats(first: float | None, second: float | None) -> float | None:
+    if first is None and second is None:
+        return None
+    return (first or 0.0) + (second or 0.0)
 
 
 def _canonical_result(result: StructuredLLMResult) -> StructuredInferenceResultV1:

@@ -8,7 +8,16 @@ from typing import Literal
 from google_work_agent.adapters.llm.gemini.runtime_status import GeminiLlmRuntimeStatusAdapter
 from google_work_agent.adapters.llm.gemini.structured_inference import GeminiConnectionService
 from google_work_agent.adapters.llm.runtime.llm_credential_router import LlmCredentialRouter
-from google_work_agent.ports.llm.llm_runtime_status_port import LlmProviderRuntimeStatus
+from google_work_agent.adapters.llm.runtime.local_model_selection import (
+    LocalModelSelectionResolver,
+)
+from google_work_agent.ports.llm.llm_runtime_status_port import (
+    LlmProviderRuntimeStatus,
+    LocalModelRuntimeOptionV1,
+)
+from google_work_agent.ports.llm.local_model_catalog_unavailable_error import (
+    LocalModelCatalogUnavailableError,
+)
 from google_work_agent.ports.llm.runtime_selection import LlmRuntimeSelectionV1
 from google_work_agent.ports.llm.structured_inference_contracts import (
     ApprovedModelInfo,
@@ -25,6 +34,7 @@ class LlmRuntimeStatusRouter:
     hardware_probe: HardwareProbePort
     runtime_policy: RuntimePolicy
     api_provider_name: str
+    local_model_selection: LocalModelSelectionResolver | None = None
 
     def get_status(self, provider: str) -> LlmProviderRuntimeStatus:
         if provider in {"ollama", "LOCAL_GPU"}:
@@ -50,25 +60,55 @@ class LlmRuntimeStatusRouter:
         return _with_provider(status, provider)
 
     def get_approved_model(self, model_id: str) -> ApprovedModelInfo | None:
-        selected = self.runtime_selection.selected_model
-        return selected if selected is not None and selected.model_id == model_id else None
+        if self.local_model_selection is not None:
+            return self.local_model_selection.get_approved_model(model_id)
+        return self.runtime_selection.get_approved_model(model_id)
+
+    def get_selected_model(self) -> ApprovedModelInfo | None:
+        if self.local_model_selection is not None:
+            return self.local_model_selection.get_selected_model()
+        return self.runtime_selection.selected_model
+
+    def get_model_for_prompt(self, prompt_id: str) -> ApprovedModelInfo | None:
+        if self.local_model_selection is not None:
+            return self.local_model_selection.get_model_for_prompt(prompt_id)
+        return self.runtime_selection.selected_model
+
+    def list_local_models(self) -> tuple[LocalModelRuntimeOptionV1, ...]:
+        if (
+            self.local_model_selection is None
+            or self.runtime_selection.deployment_profile == "API_ONLY"
+        ):
+            return ()
+        try:
+            return self.local_model_selection.list_options()
+        except LocalModelCatalogUnavailableError:
+            return ()
 
     def _ollama_status(self) -> LlmProviderRuntimeStatus:
         selection = self.runtime_selection
-        if not selection.is_active or selection.selected_model is None:
+        try:
+            selected_model = self.get_selected_model()
+        except LocalModelCatalogUnavailableError as error:
+            return _status("ollama", False, "UNAVAILABLE", None, error.safe_error_code)
+        if not selection.is_active or selected_model is None:
             return _status(
                 "ollama",
                 False,
                 "DISABLED",
-                selection.selected_model_id,
-                selection.local_runtime_activation_status.value,
+                None if selected_model is None else selected_model.model_id,
+                (
+                    "LOCAL_MODEL_NOT_SELECTED"
+                    if selection.is_active
+                    else selection.local_runtime_activation_status.value
+                ),
             )
         hardware = self.hardware_probe.probe()
         return _status(
             "ollama",
             True,
             "READY" if hardware.local_runtime_eligible else "UNAVAILABLE",
-            selection.selected_model_id,
+            selected_model.model_id,
             None
             if hardware.local_runtime_eligible
             else next(iter(hardware.local_runtime_reason_codes), "LOCAL_UNAVAILABLE"),

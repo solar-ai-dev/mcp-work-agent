@@ -35,6 +35,7 @@ def finalize_route(
     tool_catalog: SignedToolRegistry,
     id_factory: Callable[[], str],
     previous_plan: ToolRoutePlanV2 | None = None,
+    reuse_input_plan: bool = False,
 ) -> ToolRouteResultV1:
     try:
         request_ref = _request_intent_ref(request_intent)
@@ -46,6 +47,7 @@ def finalize_route(
             output_routes=output_routes,
             output_mode=binding.semantic.output_mode,
             previous_plan=previous_plan,
+            reuse_input_plan=reuse_input_plan,
             tool_catalog=tool_catalog,
             id_factory=id_factory,
         )
@@ -102,24 +104,38 @@ def _freeze_plan(
     output_routes: list[OutputToolRouteV1],
     output_mode: Literal["ANSWER", "ACTION"],
     previous_plan: ToolRoutePlanV2 | None,
+    reuse_input_plan: bool,
     tool_catalog: SignedToolRegistry,
     id_factory: Callable[[], str],
 ) -> ToolRoutePlanV2:
+    previous_input_plan = None if previous_plan is None else previous_plan["input_plan"]
+    previous_input_is_for_request = (
+        previous_input_plan is not None
+        and request_ref in previous_input_plan["meta"]["based_on"]
+    )
+    reuse_previous_input = (
+        previous_input_plan is not None
+        and _same_input_route_semantics(previous_input_plan["input_routes"], input_routes)
+        and (reuse_input_plan or previous_input_is_for_request)
+    )
     input_revision = (
-        1 if previous_plan is None else previous_plan["input_plan"]["meta"]["revision"] + 1
+        1 if previous_input_plan is None else previous_input_plan["meta"]["revision"] + 1
     )
     output_revision = (
         1 if previous_plan is None else previous_plan["output_plan"]["meta"]["revision"] + 1
     )
-    input_plan: InputRoutePlanV1 = {
-        "schema_version": 1,
-        "meta": {
-            "artifact_id": id_factory(),
-            "revision": input_revision,
-            "based_on": [request_ref],
-        },
-        "input_routes": input_routes,
-    }
+    if reuse_previous_input and previous_input_plan is not None:
+        input_plan: InputRoutePlanV1 = previous_input_plan
+    else:
+        input_plan = {
+            "schema_version": 1,
+            "meta": {
+                "artifact_id": id_factory(),
+                "revision": input_revision,
+                "based_on": [request_ref],
+            },
+            "input_routes": input_routes,
+        }
     if output_mode == "ANSWER":
         output_plan: OutputPlanV1 = {
             "schema_version": 1,
@@ -149,6 +165,26 @@ def _freeze_plan(
         "output_plan": output_plan,
         "tool_registry_version": tool_catalog.contract_version,
     }
+
+
+def _same_input_route_semantics(
+    previous_routes: list[InputToolRouteV1],
+    current_routes: list[InputToolRouteV1],
+) -> bool:
+    """Compare frozen READ authority without transient route identities."""
+
+    def semantics(route: InputToolRouteV1) -> tuple[object, ...]:
+        return (
+            route["resource_type"],
+            route["connector_id"],
+            tuple(route["allowed_read_tool_ids"]),
+            route["required"],
+            tuple(route["reason_codes"]),
+        )
+
+    return [semantics(route) for route in previous_routes] == [
+        semantics(route) for route in current_routes
+    ]
 
 
 def _request_intent_ref(request_intent: RequestIntentV2) -> StateArtifactRefV1:

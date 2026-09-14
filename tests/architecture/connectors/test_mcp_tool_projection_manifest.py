@@ -1,9 +1,13 @@
 from google_work_agent.adapters.connectors.github.github.mcp_server.project_registry import (
     github_registry_manifest_hash,
+)
+from google_work_agent.adapters.connectors.github.github.mcp_server.project_registry import (
     project_github_registry as github_project_registry,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.project_registry import (
     project_registry as google_project_registry,
+)
+from google_work_agent.adapters.connectors.google.workspace.mcp_server.project_registry import (
     registry_manifest_hash as google_registry_manifest_hash,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (

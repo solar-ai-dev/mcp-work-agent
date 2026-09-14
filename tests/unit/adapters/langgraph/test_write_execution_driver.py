@@ -25,6 +25,9 @@ from google_work_agent.application.use_cases.execution_attempt.classify_dispatch
 from google_work_agent.application.use_cases.execution_attempt.connector_write_projection import (
     ConnectorWriteProjection,
 )
+from google_work_agent.application.use_cases.execution_attempt.mark_failed import (
+    MarkFailedCommand,
+)
 from google_work_agent.application.use_cases.execution_attempt.write_dispatch_models import (
     PreparedWriteDispatch,
 )
@@ -51,6 +54,8 @@ from google_work_agent.ports.connector.connector_write_port import ConnectorWrit
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceErrorCode,
     GoogleWorkspaceGatewayError,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
@@ -183,10 +188,12 @@ class _ConnectorExecution:
         calls: list[str],
         snapshot: ResourceSnapshot,
         execute_error: GoogleWorkspaceGatewayError | None,
+        execute_result: ConnectorWriteResultV1 | None = None,
     ) -> None:
         self._calls = calls
         self._snapshot = snapshot
         self._execute_error = execute_error
+        self._execute_result = execute_result
 
     def prepare_write(self, **kwargs: object) -> PreparedWriteDispatch:
         self._calls.append("prepare")
@@ -197,6 +204,8 @@ class _ConnectorExecution:
 
     def dispatch_write(self, _dispatch: object) -> ConnectorWriteResultV1:
         self._calls.append("dispatch")
+        if self._execute_result is not None:
+            return self._execute_result
         if self._execute_error is None:
             return ConnectorWriteResultV1(1, True, None, "provider-1", {}, None)
         error = self._execute_error
@@ -382,6 +391,33 @@ def test_not_sent__failure_does__not_begin_verification() -> None:
     assert "begin_verification" not in calls
 
 
+def test_tool_rejected__with_invalid_argument__persists_specific_safe_cause() -> None:
+    calls: list[str] = []
+    mark_failed = _RecordedCall(
+        name="mark_failed",
+        calls=calls,
+        result=_action_response(ActionStatusV1.FAILED.value, 3),
+    )
+    result = _coordinator(
+        calls=calls,
+        connector_result=ConnectorWriteResultV1(
+            1,
+            False,
+            "NOT_SENT",
+            "request-1",
+            {},
+            "TOOL_REJECTED",
+            "CLAIM_TOKEN_REUSED",
+        ),
+        mark_failed_call=mark_failed,
+    ).execute(_request())
+
+    assert result.disposition is WriteExecutionDisposition.FAILED
+    command = cast(MarkFailedCommand, mark_failed.invocations[0][0][0])
+    assert command.error_code == "INVALID_ARGUMENT"
+    assert command.error_detail == "CLAIM_TOKEN_REUSED"
+
+
 def test_begin_rejection__aborts_claimed_attempt__before_connector_dispatch() -> None:
     calls: list[str] = []
     result = _coordinator(
@@ -551,6 +587,8 @@ def _coordinator(
     classify_dispatch_result: object | None = None,
     begin_error: Exception | None = None,
     preflight_error: Exception | None = None,
+    connector_result: ConnectorWriteResultV1 | None = None,
+    mark_failed_call: _RecordedCall | None = None,
 ) -> WriteExecutionStructuralDriver:
     snapshot = ResourceSnapshot(
         fixture_snapshot_id="snapshot-1",
@@ -631,7 +669,12 @@ def _coordinator(
         ),
         connector_execution=cast(
             ConnectorWriteProjection,
-            _ConnectorExecution(calls=calls, snapshot=snapshot, execute_error=execute_error),
+            _ConnectorExecution(
+                calls=calls,
+                snapshot=snapshot,
+                execute_error=execute_error,
+                execute_result=connector_result,
+            ),
         ),
         classify_dispatch_result=cast(Any, classify_dispatch_result or _Classify(calls)),
         store_write_success=cast(Any, _RecordedCall(name="store", calls=calls, result=stored)),
@@ -658,7 +701,8 @@ def _coordinator(
         resolve_recovery=cast(Any, _RecordedCall(name="resolve_recovery", calls=calls)),
         mark_write_failed=cast(
             Any,
-            _RecordedCall(
+            mark_failed_call
+            or _RecordedCall(
                 name="mark_failed",
                 calls=calls,
                 result=_action_response(ActionStatusV1.FAILED.value, 3),

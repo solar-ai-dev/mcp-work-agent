@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Protocol
+from typing import NoReturn, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from google_work_agent.ports.connector.contracts.google_workspace import DeliveryCertainty
+from google_work_agent.ports.connector.contracts.delivery_certainty import DeliveryCertainty
 
 from .credential_provider import GitHubCredentialProvider
 from .oauth_device_flow import GitHubReauthenticationRequired
@@ -51,9 +51,14 @@ class GitHubRestTransport(Protocol):
 
 
 class GitHubMutationRequest(Protocol):
-    method: str
-    url: str
-    body: dict[str, object]
+    @property
+    def method(self) -> str: ...
+
+    @property
+    def url(self) -> str: ...
+
+    @property
+    def body(self) -> dict[str, object]: ...
 
 
 class UrllibGitHubRestTransport:
@@ -146,7 +151,7 @@ class GitHubApiClient:
         status_code: int,
         *,
         delivery_certainty: DeliveryCertainty = DeliveryCertainty.NOT_SENT,
-    ) -> None:
+    ) -> NoReturn:
         if status_code == 401:
             self._credential_provider.invalidate_access_token()
         raise GitHubProviderError(

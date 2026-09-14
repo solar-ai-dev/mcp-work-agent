@@ -160,9 +160,20 @@ class SqliteExecutionAttemptRepository:
                           AND NOT EXISTS (
                             SELECT 1 FROM verifications v
                             WHERE v.execution_attempt_id=ea.id
+                          ) AND NOT EXISTS (
+                            SELECT 1 FROM workflow_handoffs queued
+                            WHERE queued.trigger_command_id=(
+                              'system:execution-attempt-reconcile:' || ea.id || ':verification'
+                            )
                           ) THEN 'EXECUTED_AWAITING_VERIFICATION'
                      WHEN ea.status='FAILED' AND a.status='FAILED'
                           AND p.status='WAITING_APPROVAL'
+                          AND NOT EXISTS (
+                            SELECT 1 FROM workflow_handoffs queued
+                            WHERE queued.trigger_command_id=(
+                              'system:execution-attempt-reconcile:' || ea.id || ':post-failed'
+                            )
+                          )
                           AND p.revision_no=(
                             SELECT MAX(current_plan.revision_no)
                             FROM plans current_plan

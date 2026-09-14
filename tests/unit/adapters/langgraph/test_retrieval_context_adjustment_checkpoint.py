@@ -6,6 +6,7 @@ from google_work_agent.adapters.langgraph.subgraphs.retrieval.graph import (
     _authorize_context_adjustment_budget,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
+    RETRIEVAL_HEAVY_MAX_LLM_CALLS,
     build_default_run_budget,
 )
 from google_work_agent.ports.system.contracts.workflow_handoff import (
@@ -65,4 +66,5 @@ def test_context_adjustment__charges_revision_and__additional_retrieval_budget()
 
     assert budget["planning_revisions_used"] == 1
     assert budget["additional_retrieval_rounds_used"] == 1
-    assert budget["llm_call_limit"] == budget["absolute_llm_call_limit"] == 24
+    assert budget["llm_call_limit"] == RETRIEVAL_HEAVY_MAX_LLM_CALLS
+    assert budget["absolute_llm_call_limit"] == 100

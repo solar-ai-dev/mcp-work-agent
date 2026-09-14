@@ -19,6 +19,7 @@ class ConnectorWriteResultV1:
     provider_request_id: str | None
     response_metadata: dict[str, str | int | float | bool | None] | None
     error_code: str | None
+    safe_error_code: str | None = None
 
 
 class ConnectorWritePort(Protocol):

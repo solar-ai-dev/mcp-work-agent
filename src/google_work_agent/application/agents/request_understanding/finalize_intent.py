@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     AmbiguityV1,
     ConstraintProvenanceSource,
@@ -10,6 +12,7 @@ from google_work_agent.application.agents.request_understanding.validate_intent 
     materialize_validated_constraint_provenance,
     validate_intent,
 )
+from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 
 def finalize_intent(
@@ -19,6 +22,8 @@ def finalize_intent(
     artifact_id: str,
     user_request: str,
     confirmation_response_text: str | None = None,
+    repository_default: GitHubRepositoryDefaultV1 | None = None,
+    prior_intent: RequestIntentV2 | None = None,
 ) -> RequestIntentV2:
     if not artifact_id:
         raise ValueError("artifact_id must be non-empty")
@@ -27,18 +32,35 @@ def finalize_intent(
         user_request=user_request,
         confirmation_response_text=confirmation_response_text,
     )
-    provenance_sources: dict[ConstraintProvenanceSource, str] = {
-        "USER_REQUEST": user_request
-    }
+    provenance_sources: dict[ConstraintProvenanceSource, str] = {"USER_REQUEST": user_request}
     if confirmation_response_text is not None:
         provenance_sources["CONFIRMATION_RESPONSE"] = confirmation_response_text
+    meta = (
+        {"artifact_id": artifact_id, "revision": 1, "based_on": []}
+        if prior_intent is None
+        else {
+            "artifact_id": prior_intent["meta"]["artifact_id"],
+            "revision": prior_intent["meta"]["revision"] + 1,
+            "based_on": [
+                {
+                    "artifact_id": prior_intent["meta"]["artifact_id"],
+                    "revision": prior_intent["meta"]["revision"],
+                }
+            ],
+        }
+    )
     return validate_intent(
         {
             "schema_version": 2,
             **goal_candidate,
             "constraints": constraints,
             "ambiguity": ambiguity_candidate,
-            "meta": {"artifact_id": artifact_id, "revision": 1, "based_on": []},
+            "meta": meta,
+            **(
+                {"repository_default": asdict(repository_default)}
+                if repository_default is not None
+                else {}
+            ),
         },
         require_meta=True,
         provenance_sources=provenance_sources,

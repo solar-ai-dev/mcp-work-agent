@@ -20,6 +20,43 @@ from google_work_agent.application.agents.tool_routing.validate_route import (
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.domain.action.model import EffectType
 
+_READ_DEPENDENCIES_BY_RESOURCE: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "GMAIL_MESSAGE": (("GMAIL_THREAD", "RETRIEVAL_GMAIL_DISCOVERY"),),
+    "TASK": (("TASK_LIST", "RETRIEVAL_TASK_LIST_DISCOVERY"),),
+    "TASK_LIST": (("TASK", "RETRIEVAL_TASK_DETAIL"),),
+    "CALENDAR": (("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DETAIL"),),
+    "CALENDAR_EVENT": (("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),),
+    "CALENDAR_FREEBUSY": (
+        ("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),
+        ("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DISCOVERY"),
+    ),
+}
+_RETRIEVAL_DEPENDENCY_REASON_CODES = frozenset(
+    reason_code
+    for dependencies in _READ_DEPENDENCIES_BY_RESOURCE.values()
+    for _, reason_code in dependencies
+)
+
+
+def is_retrieval_dependency_route(route: InputToolRouteV1) -> bool:
+    """Return whether a route exists only to execute a read prerequisite."""
+    reason_codes = route["reason_codes"]
+    return bool(reason_codes) and all(
+        reason_code in _RETRIEVAL_DEPENDENCY_REASON_CODES
+        for reason_code in reason_codes
+    )
+
+
+def business_required_source_routes(
+    routes: Iterable[InputToolRouteV1],
+) -> tuple[InputToolRouteV1, ...]:
+    """Project business evidence requirements without removing execution prerequisites."""
+    return tuple(
+        route
+        for route in routes
+        if route["required"] and not is_retrieval_dependency_route(route)
+    )
+
 
 def normalize_resource_type(value: str) -> str:
     normalized = value.strip().upper()
@@ -89,7 +126,15 @@ def bind_registry_candidates(
         reason_codes_by_resource=dict(candidate.input_reason_codes),
     )
     existing = {route["resource_type"] for route in input_routes}
-    for resource_type, reason_code in _read_dependencies(candidate.input_resource_types):
+    selected_resource_types = {
+        resource_type
+        for resource_type, reason_code in candidate.input_reason_codes
+        if reason_code == "RESOURCE_SELECTED"
+    }
+    for resource_type, reason_code in _read_dependencies(
+        candidate.input_resource_types,
+        direct_resource_types=selected_resource_types,
+    ):
         if resource_type in existing:
             continue
         input_routes.extend(
@@ -154,25 +199,16 @@ def _eligible_bindings(
     return matches[0]
 
 
-def _read_dependencies(resource_types: Iterable[str]) -> tuple[tuple[str, str], ...]:
-    dependencies = {
-        "GMAIL_THREAD": (("GMAIL_MESSAGE", "RETRIEVAL_THREAD_MESSAGE_DETAIL"),),
-        "GMAIL_MESSAGE": (("GMAIL_THREAD", "RETRIEVAL_GMAIL_DISCOVERY"),),
-        "TASK": (("TASK_LIST", "RETRIEVAL_TASK_LIST_DISCOVERY"),),
-        "TASK_LIST": (("TASK", "RETRIEVAL_TASK_DETAIL"),),
-        "CALENDAR": (("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DETAIL"),),
-        "CALENDAR_EVENT": (
-            ("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),
-            ("CALENDAR_FREEBUSY", "RETRIEVAL_CALENDAR_FREEBUSY_AVAILABILITY"),
-        ),
-        "CALENDAR_FREEBUSY": (
-            ("CALENDAR", "RETRIEVAL_CALENDAR_DISCOVERY"),
-            ("CALENDAR_EVENT", "RETRIEVAL_CALENDAR_EVENT_DISCOVERY"),
-        ),
-    }
+def _read_dependencies(
+    resource_types: Iterable[str],
+    *,
+    direct_resource_types: Iterable[str] = (),
+) -> tuple[tuple[str, str], ...]:
+    direct_resources = set(direct_resource_types)
     return tuple(
         dependency
         for resource_type in sorted(set(resource_types))
-        if resource_type in dependencies
-        for dependency in dependencies[resource_type]
+        if resource_type in _READ_DEPENDENCIES_BY_RESOURCE
+        and resource_type not in direct_resources
+        for dependency in _READ_DEPENDENCIES_BY_RESOURCE[resource_type]
     )

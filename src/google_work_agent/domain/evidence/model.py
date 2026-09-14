@@ -5,7 +5,7 @@ from enum import StrEnum
 
 
 class EvidenceOriginType(StrEnum):
-    GOOGLE_RESOURCE = "GOOGLE_RESOURCE"
+    CONNECTOR_RESOURCE = "CONNECTOR_RESOURCE"
     USER_MESSAGE = "USER_MESSAGE"
     DERIVED = "DERIVED"
 

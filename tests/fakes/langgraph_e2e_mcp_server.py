@@ -4,16 +4,27 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
+from collections.abc import Mapping
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+from google_work_agent.adapters.connectors.google.calendar.events.create_event import (
+    _calendar_create_body,
+)
 from google_work_agent.adapters.connectors.google.workspace.mcp_server import project_registry
 from google_work_agent.adapters.connectors.google.workspace.mcp_server import (
     validate_claim_context as claim_context_validation,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.credential_provider import (
+    _build_gmail_mime,
+    _event_snapshot,
+    _task_snapshot,
+    _task_write_body,
     _WorkspaceToolError,
 )
 from google_work_agent.adapters.connectors.google.workspace.mcp_server.project_registry import (
@@ -107,7 +118,34 @@ def _dispatch(request: dict[str, object]) -> dict[str, object]:
                 key: value for key, value in arguments.items() if key != "claim_context"
             },
         )
-    _append_event({"tool_name": tool_name, "arguments": arguments})
+    event: dict[str, object] = {"tool_name": tool_name, "arguments": arguments}
+    if tool_name in _write_tools() and (
+        _load_state().get("task_fixture_mode")
+        or _load_state().get("calendar_fixture_mode")
+        or _load_state().get("gmail_fixture_mode")
+    ):
+        claim = cast(dict[str, object], arguments["claim_context"])
+        database = _state_root().parent / "data/google_work_agent.db"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+            event["begin_committed_before_write"] = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM audit_events WHERE action_id = ? "
+                    "AND event_type = 'EXECUTION_DISPATCH_STARTED' "
+                    "AND json_extract(metadata_json, '$.attributes.attempt_id') = ? "
+                    "AND EXISTS (SELECT 1 FROM command_receipts cr "
+                    "WHERE cr.command_type = 'BeginExecutionAttempt' "
+                    "AND cr.aggregate_id = ? AND json_extract(cr.response_json, '$.applied') = 1)",
+                    (
+                        claim["action_id"],
+                        claim["execution_attempt_id"],
+                        claim["execution_attempt_id"],
+                    ),
+                ).fetchone()[0]
+                == 1
+            )
+        if not event["begin_committed_before_write"]:
+            raise AssertionError("Write reached Provider before committed BeginExecutionAttempt")
+    _append_event(event)
     payload = _tool_payload(tool_name, arguments)
     validate_tool_output(tool_name, payload)
     return payload
@@ -189,7 +227,9 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
     counts[tool_name] = int(counts.get(tool_name, 0)) + 1
     failure_mode = _failure_mode(arguments)
     fault_counts = cast(dict[str, int], state.setdefault("fault_counts", {}))
-    fault_key = f"{failure_mode}:{tool_name}"
+    claim_context = arguments.get("claim_context")
+    action_id = claim_context.get("action_id") if isinstance(claim_context, dict) else None
+    fault_key = f"{failure_mode}:{tool_name}:{action_id}"
     fault_counts[fault_key] = int(fault_counts.get(fault_key, 0)) + 1
     fault_count = fault_counts[fault_key]
     if failure_mode == "FAILED_RETRY" and fault_count == 1:
@@ -214,9 +254,11 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         return {"items": items}
     if tool_name == "calendar_query_freebusy":
         _save_state(state)
+        if state.get("calendar_read_failure") == tool_name:
+            raise _ExternalFailure("PERMISSION_DENIED", "NOT_SENT")
         return {
             "calendars": [
-                {"calendar_id": item, "intervals": []}
+                {"calendar_id": item, "intervals": state.get("calendar_busy_intervals", [])}
                 for item in cast(list[str], arguments["calendar_ids"])
             ]
         }
@@ -227,21 +269,44 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         "calendar_list_calendars",
         "calendar_list_events",
     }:
+        if state.get("calendar_fixture_mode") and tool_name == "calendar_list_events":
+            _save_state(state)
+            if state.get("calendar_read_failure") == tool_name:
+                raise _ExternalFailure("PERMISSION_DENIED", "NOT_SENT")
+            return {"items": state.get("calendar_existing_events", []), "next_page_token": None}
+        if tool_name == "tasks_list_tasklists" and state.get("task_list_snapshot"):
+            _save_state(state)
+            return {"items": [state["task_list_snapshot"]], "next_page_token": None}
+        if state.get("task_fixture_mode") and tool_name == "tasks_list_tasks":
+            items = [
+                item
+                for item in cast(dict[str, dict[str, object]], state.get("resources", {})).values()
+                if item["resource_type"] == "task"
+                and item["parent_id"] == arguments["task_list_id"]
+                and cast(dict[str, object], item["payload"]).get("status") != "completed"
+            ]
+            _save_state(state)
+            return {"items": items, "next_page_token": None}
         query = arguments.get("query")
         if isinstance(query, str) and query:
             items = [
                 item
-                for item in cast(
-                    dict[str, dict[str, object]], state.get("resources", {})
-                ).values()
-                if query in json.dumps(item, sort_keys=True)
+                for item in cast(dict[str, dict[str, object]], state.get("resources", {})).values()
+                if _resource_matches_list_tool(item, tool_name=tool_name)
+                and query in json.dumps(item, sort_keys=True)
             ]
             if not items and tool_name == "gmail_search_threads":
                 items = [_read_fixture(tool_name, arguments)]
+            resources = cast(dict[str, dict[str, object]], state.setdefault("resources", {}))
+            for item in items:
+                resources[_resource_key(item)] = item
             _save_state(state)
             return {"items": items, "next_page_token": None}
+        item = _read_fixture(tool_name, arguments)
+        resources = cast(dict[str, dict[str, object]], state.setdefault("resources", {}))
+        resources[_resource_key(item)] = item
         _save_state(state)
-        return {"items": [_read_fixture(tool_name, arguments)], "next_page_token": None}
+        return {"items": [item], "next_page_token": None}
     if tool_name in _write_tools():
         item = _write_fixture(tool_name, arguments, counts[tool_name])
         resources = cast(dict[str, dict[str, object]], state.setdefault("resources", {}))
@@ -264,9 +329,38 @@ def _tool_payload(tool_name: str, arguments: dict[str, object]) -> dict[str, obj
         read_item = _get_fixture(tool_name, arguments, state)
         if read_item is None:
             raise _ExternalFailure("NOT_FOUND", "NOT_SENT")
+        if tool_name == "gmail_get_thread":
+            payload = cast(dict[str, object], read_item.get("payload") or {})
+            if "body" not in payload and isinstance(payload.get("snippet"), str):
+                read_item = {
+                    **read_item,
+                    "payload": {**payload, "body": payload["snippet"]},
+                }
         item_failure_mode = _failure_mode(
             {"payload": cast(dict[str, object], read_item.get("payload") or {})}
         )
+        mutation_key = (
+            "calendar_verification_mutation"
+            if tool_name == "calendar_get_event"
+            else "gmail_verification_mutation"
+            if tool_name.startswith("gmail_")
+            else "task_verification_mutation"
+        )
+        if state.get(mutation_key):
+            mutation = cast(dict[str, object], state[mutation_key])
+            read_item = {
+                **read_item,
+                "resource_id": mutation.get("resource_id", read_item["resource_id"]),
+                "parent_id": mutation.get("parent_id", read_item["parent_id"]),
+                "payload": {
+                    **cast(dict[str, object], read_item["payload"]),
+                    **{
+                        key: value
+                        for key, value in mutation.items()
+                        if key not in {"parent_id", "resource_id"}
+                    },
+                },
+            }
         if item_failure_mode == "VERIFICATION_MISMATCH" or (
             item_failure_mode == "RECOVERY" and counts[tool_name] == 1
         ):
@@ -324,14 +418,53 @@ def _write_fixture(
 ) -> dict[str, object]:
     payload = dict(cast(dict[str, object], arguments.get("payload") or {}))
     fingerprint = arguments.get("recovery_fingerprint") or payload.get("recovery_fingerprint")
+    if tool_name.startswith("gmail_"):
+        parsed = BytesParser(policy=policy.default).parsebytes(_build_gmail_mime(payload))
+        body_part = parsed.get_body(preferencelist=("plain",))
+        payload = {
+            "subject": str(parsed["Subject"]),
+            "to": str(parsed["To"]),
+            "cc": str(parsed["Cc"] or ""),
+            "bcc": str(parsed["Bcc"] or ""),
+            "body": body_part.get_content() if body_part else "",
+            "thread_id": payload.get("thread_id") or "gmail-thread-created",
+            "in_reply_to": str(parsed["In-Reply-To"]) if parsed["In-Reply-To"] else None,
+            "references": str(parsed["References"]) if parsed["References"] else None,
+            "attachments": [],
+            "sent": tool_name == "gmail_send",
+        }
     if tool_name.startswith("tasks"):
         resource_type = "task"
         resource_id = str(arguments.get("task_id") or f"task-write-{count}")
         parent_id = str(arguments.get("task_list_id", "task-list-e2e"))
+        provider_body = _task_write_body(payload, title_required=tool_name == "tasks_create_task")
+        return {
+            **_task_snapshot(
+                {
+                    "id": resource_id,
+                    "status": "needsAction",
+                    **provider_body,
+                },
+                parent_id,
+            ),
+            "recovery_fingerprint": fingerprint,
+        }
     elif tool_name.startswith("calendar"):
         resource_type = "calendar_event"
         resource_id = str(arguments.get("event_id") or f"event-write-{count}")
         parent_id = str(arguments.get("calendar_id", "calendar-e2e"))
+        if tool_name == "calendar_create_event":
+            return {
+                **_event_snapshot(
+                    {
+                        "id": resource_id,
+                        "status": "confirmed",
+                        **_calendar_create_body(payload),
+                    },
+                    parent_id,
+                ),
+                "recovery_fingerprint": fingerprint,
+            }
     elif "draft" in tool_name:
         resource_type = "gmail_draft"
         resource_id = str(arguments.get("draft_id") or f"draft-write-{count}")
@@ -391,9 +524,21 @@ def _resource_key(item: dict[str, object]) -> str:
     return f"{item['resource_type']}:{item['resource_id']}"
 
 
+def _resource_matches_list_tool(item: Mapping[str, object], *, tool_name: str) -> bool:
+    resource_type = item.get("resource_type")
+    expected = {
+        "gmail_search_threads": {"gmail_thread"},
+        "tasks_list_tasklists": {"task_list"},
+        "tasks_list_tasks": {"task"},
+        "calendar_list_calendars": {"calendar"},
+        "calendar_list_events": {"calendar_event"},
+    }
+    return resource_type in expected[tool_name]
+
+
 def _failure_mode(arguments: dict[str, object]) -> str | None:
     payload = arguments.get("payload")
-    title = payload.get("title") if isinstance(payload, dict) else None
+    title = (payload.get("title") or payload.get("subject")) if isinstance(payload, dict) else None
     normalized = title.upper() if isinstance(title, str) else ""
     for value in (
         "UNKNOWN_RESULT_RECOVERY",

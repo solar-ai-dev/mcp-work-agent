@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 from google_work_agent.adapters.langgraph.subgraphs.planning.graph import (
     PlanningRuntimeDependencies,
@@ -10,6 +10,9 @@ from google_work_agent.adapters.langgraph.subgraphs.planning.graph import (
 from google_work_agent.adapters.langgraph.subgraphs.review.graph import (
     ReviewRuntimeDependencies,
     ReviewSubgraph,
+)
+from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
+    RunScopedEvidenceStore,
 )
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     PlanningSemanticInvoker,
@@ -60,6 +63,7 @@ def test_compiled_planning__answer_executes__canonical_operations() -> None:
             "user_request",
             "request_intent",
             "answer_outline",
+            "temporal_constraints",
             "work_analysis",
             "evidence",
         }
@@ -117,9 +121,7 @@ def test_compiled_planning__action_executes_exact__four_node_path() -> None:
         if prompt_id.endswith("draft_action_objective_per_output_route"):
             return {
                 "schema_version": 1,
-                "route_id": "r1",
                 "objective": "Create draft",
-                "target_semantics": "GMAIL_DRAFT",
                 "scope_constraints": ["draft only"],
                 "evidence_refs": ["e1"],
             }
@@ -148,6 +150,145 @@ def test_compiled_planning__action_executes_exact__four_node_path() -> None:
         "planning.draft_action_objective_per_output_route",
         "planning.compose_arguments_per_output_route",
     ]
+
+
+def test_compiled_planning__unchanged_draft_update__returns_answer_without_action() -> None:
+    route = {
+        "route_id": "r1",
+        "resource_type": "GMAIL_DRAFT",
+        "connector_id": "google_workspace",
+        "effect": "UPDATE",
+        "selected_tool_id": "gmail_update_draft",
+        "reason_codes": ["USER_REQUEST"],
+    }
+    snapshot = {
+        "to": ["recipient@example.com"],
+        "cc": [],
+        "bcc": [],
+        "subject": "Existing subject",
+        "body": "Already updated",
+        "thread_id": None,
+        "in_reply_to": None,
+        "references": None,
+        "attachments": [],
+    }
+    calls: list[str] = []
+    evidence_store = RunScopedEvidenceStore()
+    evidence_store.put_resource_snapshot(
+        run_id="run-1",
+        resource_handle="gmail_draft:draft-actual",
+        source_version_ref="version-1",
+        snapshot=snapshot,
+    )
+
+    def invoke(prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        if prompt_id.endswith("draft_action_objective_per_output_route"):
+            return {
+                "schema_version": 1,
+                "objective": "Apply the requested Draft update",
+                "scope_constraints": [],
+                "evidence_refs": ["draft-evidence"],
+            }
+        return {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": {"payload": {"body": "Already updated"}},
+            "evidence_refs": ["draft-evidence"],
+        }
+
+    graph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=cast(PlanningSemanticInvoker, invoke)),
+        evidence_store=evidence_store,
+    ).build()
+    result = graph.invoke(
+        {
+            "run_id": "run-1",
+            "user_request": "기존 초안을 요청한 내용으로 수정해줘",
+            "request_intent": {"goal": "update draft"},
+            "tool_route_plan": {
+                "output_plan": {"output_mode": "ACTION", "output_routes": [route]}
+            },
+            "evidence": [
+                {
+                    "evidence_ref": "draft-evidence",
+                    "resource_handle": "gmail_draft:draft-actual",
+                    "locator": {"source_version_ref": "version-1"},
+                }
+            ],
+        }
+    )
+
+    assert result["planning_disposition"] == "ANSWER"
+    assert result["final_result"] == {
+        "schema_version": 2,
+        "answer": (
+            "요청한 Gmail 임시보관함 초안 변경이 이미 반영되어 있어 "
+            "추가 변경이 필요하지 않습니다."
+        ),
+        "evidence_refs": ["draft-evidence"],
+    }
+    assert "argument_candidates" not in result
+    assert calls == [
+        "planning.draft_action_objective_per_output_route",
+        "planning.compose_arguments_per_output_route",
+    ]
+
+
+def test_planning_runtime_projection__repeated_call__uses_frozen_output_route_coverage() -> None:
+    routes = [
+        {
+            "route_id": "required-route",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "effect": "CREATE",
+            "selected_tool_id": "tasks_create_task",
+            "reason_codes": [],
+        },
+        {
+            "route_id": "satisfied-route",
+            "resource_type": "TASK",
+            "connector_id": "google_workspace",
+            "effect": "CREATE",
+            "selected_tool_id": "tasks_create_task",
+            "reason_codes": [],
+        },
+    ]
+    state = {
+        "tool_route_plan": {"output_plan": {"output_mode": "ACTION", "output_routes": routes}},
+        "work_analysis": {
+            "route_action_necessities": [
+                {
+                    "route_id": "required-route",
+                    "status": "REQUIRED",
+                    "reason": "REQUEST_REMAINS_OUTSTANDING",
+                    "evidence_refs": [],
+                    "candidate_refs": [],
+                },
+                {
+                    "route_id": "satisfied-route",
+                    "status": "NOT_REQUIRED",
+                    "reason": "REQUEST_ALREADY_SATISFIED",
+                    "evidence_refs": ["ev-1"],
+                    "candidate_refs": ["task:existing"],
+                },
+            ]
+        },
+        "evidence": [],
+    }
+    subgraph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=lambda _prompt_id, _input: {})
+    )
+
+    first = subgraph._project_runtime_inputs(cast(Any, state))  # noqa: SLF001
+    second = subgraph._project_runtime_inputs(first)  # noqa: SLF001
+
+    first_output_plan = cast(dict[str, Any], first["output_plan"])
+    first_output_routes = cast(list[dict[str, object]], first_output_plan["output_routes"])
+    assert [route["route_id"] for route in first_output_routes] == [
+        "required-route"
+    ]
+    assert second["output_plan"] == first["output_plan"]
 
 
 def test_compiled_review_revise__emits_bounded_planning__revision_signal_without_recheck() -> None:

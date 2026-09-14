@@ -18,10 +18,12 @@ from google_work_agent.application.use_cases.action.calendar_conflict_policy imp
 from google_work_agent.domain.action.model import PolicyViolationError, normalize_action_risk
 from google_work_agent.ports.connector.contracts.google_workspace import (
     FreeBusyCalendar,
+    TimeRange,
+)
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourcePage,
     ResourceSnapshot,
     ResourceType,
-    TimeRange,
 )
 
 CALENDAR_CREATE_TOOL = "calendar_create_event"
@@ -355,7 +357,7 @@ def calendar_freebusy_intervals(
 def _freebusy_payload_intervals(payload: Mapping[str, object]) -> list[CalendarInterval]:
     values = payload.get("busy_intervals")
     if not isinstance(values, list):
-        return []
+        raise PolicyViolationError("calendar freebusy evidence is malformed")
     result: list[CalendarInterval] = []
     for value in values:
         if not isinstance(value, dict):

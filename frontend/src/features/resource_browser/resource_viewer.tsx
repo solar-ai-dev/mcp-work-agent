@@ -13,8 +13,6 @@ import {
   getTaskResourceDetail,
 } from "./api/get_resource_detail";
 import { ResourceDetail } from "./resource_detail";
-import type { ResourceBrowserProjection } from "./resource_sidebar";
-import { presentResource } from "./resource_sidebar";
 
 type GmailDetailState = {
   resourceId: string | null;
@@ -37,9 +35,21 @@ type CalendarDetailState = {
   error: string | null;
 };
 
-type Props = { projection: ResourceBrowserProjection };
+type PresentedResource = {
+  title: string | null;
+  secondary: string | null;
+  snippet: string | null;
+  time: string | null;
+};
 
-export function ResourceViewer({ projection }: Props): JSX.Element {
+type Props = {
+  focusedItem: ResourceItem;
+  emptyMessage: string;
+  onOpenContainer: () => void;
+  presentResource: (item: ResourceItem) => PresentedResource;
+};
+
+export function ResourceViewer({ focusedItem, emptyMessage, onOpenContainer, presentResource }: Props): JSX.Element {
   const [gmailDetail, setGmailDetail] = useState<GmailDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
   const [taskDetail, setTaskDetail] = useState<TaskDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
   const [calendarDetail, setCalendarDetail] = useState<CalendarDetailState>({ resourceId: null, status: "idle", detail: null, error: null });
@@ -72,38 +82,50 @@ export function ResourceViewer({ projection }: Props): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const item = projection.focusedItem;
+    const item = focusedItem;
     setGmailDetail({ resourceId: null, status: "idle", detail: null, error: null });
     setTaskDetail({ resourceId: null, status: "idle", detail: null, error: null });
     setCalendarDetail({ resourceId: null, status: "idle", detail: null, error: null });
     if (item?.resource_type === "gmail_thread") void loadGmailDetail(item.resource_id);
     else if (item?.resource_type === "task") void loadTaskDetail(item);
     else if (item?.resource_type === "calendar_event") void loadCalendarDetail(item);
-  }, [loadCalendarDetail, loadGmailDetail, loadTaskDetail, projection.focusedItem]);
+  }, [focusedItem, loadCalendarDetail, loadGmailDetail, loadTaskDetail]);
 
   return (
-    <>
-      {projection.focusedItem ? <button className="button-secondary" type="button" aria-pressed={projection.focusedItemSelected} onClick={projection.toggleFocusedSelection}>{projection.focusedItemSelected ? "요청에서 제외" : "요청에 포함"}</button> : null}
+    <section
+      className="resource-accordion-detail"
+      role="region"
+      aria-label={`${presentResource(focusedItem).title ?? "제목 없음"} 상세`}
+    >
       <ResourceDetail
-        focusItem={projection.focusedItem}
+        focusItem={focusedItem}
         gmailDetail={gmailDetail}
         taskDetail={taskDetail}
         calendarDetail={calendarDetail}
-        onRetryGmailDetail={() => { if (projection.focusedItem) void loadGmailDetail(projection.focusedItem.resource_id); }}
-        onRetryTaskDetail={() => { if (projection.focusedItem) void loadTaskDetail(projection.focusedItem); }}
-        onRetryCalendarDetail={() => { if (projection.focusedItem) void loadCalendarDetail(projection.focusedItem); }}
+        onRetryGmailDetail={() => { void loadGmailDetail(focusedItem.resource_id); }}
+        onRetryTaskDetail={() => { void loadTaskDetail(focusedItem); }}
+        onRetryCalendarDetail={() => { void loadCalendarDetail(focusedItem); }}
         onDownloadGmailAttachment={(messageId, attachmentId) => { void downloadAttachment(messageId, attachmentId); }}
-        onDrillInto={projection.openFocusedContainer}
+        onDrillInto={onOpenContainer}
         presentResource={presentResource}
         metadataEntriesFor={metadataEntries}
-        emptyMessage={projection.emptyMessage}
+        emptyMessage={emptyMessage}
         formatMailboxIdentity={mailbox}
       />
-    </>
+    </section>
   );
 }
 
 function metadataEntries(item: ResourceItem): Array<[string, string]> {
+  if (item.source === "github" && item.resource_type === "github_issue") {
+    const entries: Array<[string, string]> = [];
+    entries.push(["상태", item.metadata.issue_state === "CLOSED" ? "닫힘" : "열림"]);
+    if (item.metadata.repository) entries.push(["Repository", item.metadata.repository]);
+    if (item.metadata.assignees?.length) entries.push(["담당자", item.metadata.assignees.join(", ")]);
+    if (item.metadata.labels?.length) entries.push(["라벨", item.metadata.labels.join(", ")]);
+    if (item.metadata.description) entries.push(["설명", item.metadata.description]);
+    return entries;
+  }
   if (item.source === "tasks" && item.resource_type === "task") {
     const entries: Array<[string, string]> = [];
     const status = taskStatusLabel(item.metadata.task_status ?? null);

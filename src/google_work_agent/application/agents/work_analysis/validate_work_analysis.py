@@ -55,7 +55,12 @@ def validate_work_analysis(
         "policy_confirmation_receipt_refs",
         "evidence_refs",
     }
-    if set(root) != expected or root["schema_version"] != 2:
+    actual_keys = set(root)
+    supported_keys = {
+        frozenset(expected),
+        frozenset({*expected, "route_action_necessities"}),
+    }
+    if actual_keys not in supported_keys or root["schema_version"] != 2:
         raise ValueError("WorkAnalysisResultV2 keys/schema_version do not match the contract")
     top_refs = _strings(root["evidence_refs"], "evidence_refs")
     if allowed_evidence_refs is not None and not set(top_refs).issubset(allowed_evidence_refs):
@@ -144,6 +149,29 @@ def validate_work_analysis(
     if necessity != "UNDETERMINED" and reason is None:
         raise ValueError("determinate action necessity requires a reason")
 
+    route_ids: list[str] = []
+    for route_assessment in _object_list(
+        root.get("route_action_necessities", []), "route_action_necessities"
+    ):
+        if set(route_assessment) != {
+            "route_id",
+            "status",
+            "reason",
+            "evidence_refs",
+            "candidate_refs",
+        }:
+            raise ValueError("invalid RouteActionNecessityV1 shape")
+        route_ids.append(_text(route_assessment["route_id"], "route_action_necessities.route_id"))
+        if route_assessment["status"] not in {"REQUIRED", "NOT_REQUIRED", "UNDETERMINED"}:
+            raise ValueError("invalid route action necessity status")
+        _text(route_assessment["reason"], "route_action_necessities.reason")
+        _nested_refs(
+            route_assessment["evidence_refs"], top_set, "route_action_necessities.evidence_refs"
+        )
+        _strings(route_assessment["candidate_refs"], "route_action_necessities.candidate_refs")
+    if len(route_ids) != len(set(route_ids)):
+        raise ValueError("duplicate route action necessity")
+
     receipt_refs = {
         _artifact_ref(item, "policy_confirmation_receipt_refs")
         for item in _list(
@@ -160,14 +188,8 @@ def validate_work_analysis(
         receipt = receipts_by_ref.get(ref)
         if receipt is None or receipt["semantic_owner_id"] != "WORK_ANALYSIS":
             raise ValueError("confirmation receipt ref is not current Work Analysis proof")
-    if necessity == "REQUIRED" and "DUPLICATES" in relation_kinds:
-        _require_approved(receipt_refs, receipts_by_ref, "DUPLICATE_OVERRIDE")
     if necessity == "REQUIRED" and "CONFLICTS_WITH" in relation_kinds:
         _require_approved(receipt_refs, receipts_by_ref, "CONFLICT_OVERRIDE")
-    if necessity == "NOT_REQUIRED" and not (
-        "DUPLICATES" in relation_kinds or reason == "CONFLICT_OVERRIDE_DECLINED"
-    ):
-        raise ValueError("NOT_REQUIRED requires deterministic duplicate/conflict grounding")
     return cast(WorkAnalysisResultV2, root)
 
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from math import ceil
 from typing import Literal, cast
 
@@ -14,6 +15,18 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
 )
 from google_work_agent.application.agents.retrieval.contracts.segment_identity import (
     SourceSegmentIdentityV1,
+)
+from google_work_agent.application.agents.retrieval.format_calendar_freebusy_evidence import (
+    format_calendar_freebusy_evidence,
+)
+from google_work_agent.application.agents.retrieval.project_gmail_draft_source_snapshots import (
+    gmail_draft_source_version_ref,
+)
+from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
+    strip_resource_recovery_marker,
+)
+from google_work_agent.ports.connector.contracts.gmail_message_evidence import (
+    MAX_THREAD_EVIDENCE_MESSAGES,
 )
 
 
@@ -30,7 +43,10 @@ class ContextBudget:
 
 
 DEFAULT_CONTEXT_BUDGET = ContextBudget()
-CHUNK_SCHEMA_VERSION = 1
+CHUNK_SCHEMA_VERSION = 3
+MESSAGE_CHUNK_SCHEMA_VERSION = 4
+GITHUB_CHUNK_SCHEMA_VERSION = 5
+GMAIL_DRAFT_CHUNK_SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,16 +76,18 @@ def normalize_segments(
     acquisition_result: AcquisitionResultV1,
     *,
     context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
+    preferred_segment_ids: Sequence[str] = (),
 ) -> list[SourceSegment]:
     """Normalize, deduplicate, sanitize, chunk, and bound acquired resources."""
-    segments: list[SourceSegment] = []
+    segments_by_handle: dict[str, list[SourceSegment]] = {}
     seen: set[tuple[str, str]] = set()
+    source_position = 0
     for summary in acquisition_result["source_summaries"]:
         source = str(summary.get("source", "UNKNOWN"))
         resources = summary.get("resources", [])
         if not isinstance(resources, list):
             continue
-        for raw in resources:
+        for raw in _normalization_units(resources):
             if not isinstance(raw, dict):
                 raise ValueError("$.source_summaries[].resources[] must be object")
             handle = raw.get("resource_handle")
@@ -81,8 +99,16 @@ def normalize_segments(
                 continue
             seen.add((handle, text))
             chunks = _chunk_text(text, context_budget)
+            message_id = raw.get("message_id")
+            unit_handle = handle if message_id is None else f"{handle}#message={message_id}"
+            resource_segments = segments_by_handle.setdefault(unit_handle, [])
             for index, chunk in enumerate(chunks):
-                normalized_chunk = _truncate(chunk, context_budget.max_segment_chars)
+                if len(resource_segments) >= context_budget.max_segments:
+                    break
+                # Every chunk retains its provider message provenance, not just
+                # the first header chunk. Identical bodies from peers are not one fact.
+                provenance = "" if message_id is None else f"Message: {message_id}\n"
+                normalized_chunk = _truncate(provenance + chunk, context_budget.max_segment_chars)
                 identity: SourceSegmentIdentityV1 = {
                     "schema_version": 1,
                     "connector_id": _connector_id(raw, summary),
@@ -90,13 +116,21 @@ def normalize_segments(
                     "resource_type": resource_type,
                     "resource_id": str(raw.get("resource_id", "")),
                     "source_version_ref": _optional_string(raw.get("version")),
-                    "chunk_schema_version": CHUNK_SCHEMA_VERSION,
+                    "chunk_schema_version": (
+                        GITHUB_CHUNK_SCHEMA_VERSION
+                        if resource_type == "github_issue"
+                        else GMAIL_DRAFT_CHUNK_SCHEMA_VERSION
+                        if resource_type == "gmail_draft"
+                        else CHUNK_SCHEMA_VERSION
+                        if message_id is None
+                        else MESSAGE_CHUNK_SCHEMA_VERSION
+                    ),
                     "chunk_ordinal": index,
                     "normalized_content_sha256": hashlib.sha256(
                         normalized_chunk.encode("utf-8")
                     ).hexdigest(),
                 }
-                segments.append(
+                resource_segments.append(
                     SourceSegment(
                         segment_id=_segment_id(identity),
                         resource_handle=handle,
@@ -107,23 +141,288 @@ def normalize_segments(
                         version=_optional_string(raw.get("version")),
                         locator={
                             "kind": "resource_payload",
-                            "position": len(segments),
+                            "position": source_position,
                             "chunk_index": index,
                             "chunk_count": len(chunks),
+                            **(
+                                {
+                                    "source_version_ref": gmail_draft_source_version_ref(raw)
+                                }
+                                if resource_type == "gmail_draft"
+                                else {}
+                            ),
+                            **cast(dict[str, object], raw.get("_message_locator", {})),
                         },
                         text=normalized_chunk,
                     )
                 )
-                if len(segments) >= context_budget.max_segments:
-                    return segments
-    return segments
+                source_position += 1
+    return _round_robin_segments(
+        list(segments_by_handle.values()),
+        max_segments=context_budget.max_segments,
+        preferred_segment_ids=preferred_segment_ids,
+    )
+
+
+def rehydrate_normalized_segments(
+    acquisition_result: AcquisitionResultV1,
+    segment_ids: Sequence[str],
+    *,
+    context_budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
+) -> list[SourceSegment]:
+    """Resolve one materialized segment selection without selecting it again."""
+
+    expected_ids = list(segment_ids)
+    if len(expected_ids) != len(set(expected_ids)):
+        raise ValueError("materialized segment IDs must be unique")
+    expanded_budget = replace(
+        context_budget,
+        max_segments=max(
+            context_budget.max_segments,
+            len(expected_ids) + len(acquisition_result["resource_handles"]),
+        ),
+    )
+    candidates = normalize_segments(
+        acquisition_result,
+        context_budget=expanded_budget,
+        preferred_segment_ids=expected_ids,
+    )
+    by_id = {segment.segment_id: segment for segment in candidates}
+    if any(segment_id not in by_id for segment_id in expected_ids):
+        raise ValueError("stable segment identity changed within one retrieval round")
+    return [by_id[segment_id] for segment_id in expected_ids]
+
+
+def _normalization_units(resources: list[object]) -> list[dict[str, object]]:
+    """Keep each message's headers/body independent of peer signatures and quotes."""
+    units: list[dict[str, object]] = []
+    for raw in resources:
+        if not isinstance(raw, dict):
+            raise ValueError("$.source_summaries[].resources[] must be object")
+        payload = raw.get("payload")
+        if (
+            raw.get("resource_type") != "gmail_thread"
+            or not isinstance(payload, dict)
+            or "messages" not in payload
+        ):
+            # Existing generic snapshots without the additive detail field remain readable.
+            if raw.get("resource_type") in _GMAIL_RESOURCE_TYPES and isinstance(payload, dict):
+                metadata = {
+                    key: payload[key]
+                    for key in ("sender_name", "sender_email", "received_at")
+                    if key in payload
+                }
+                if any(
+                    value is not None and not isinstance(value, str) for value in metadata.values()
+                ):
+                    raise ValueError("invalid Gmail candidate metadata")
+                units.append(
+                    {
+                        **raw,
+                        "_message_locator": {
+                            **metadata,
+                            "is_metadata_only": not any(key in payload for key in ("body", "text")),
+                        },
+                    }
+                )
+            else:
+                units.append(raw)
+            continue
+        messages = payload["messages"]
+        if not isinstance(messages, list) or len(messages) > MAX_THREAD_EVIDENCE_MESSAGES:
+            raise ValueError("Gmail message evidence must be a bounded list")
+        for message in messages:
+            optional_fields = {"rfc822_message_id", "references"}
+            if not isinstance(message, dict) or set(message) - optional_fields != {
+                "message_id",
+                "thread_id",
+                "sender_name",
+                "sender_email",
+                "recipients",
+                "received_at",
+                "subject",
+                "body",
+                "body_truncated",
+            }:
+                raise ValueError("incomplete Gmail message evidence contract")
+            if (
+                not isinstance(message["message_id"], str)
+                or not message["message_id"]
+                or message["thread_id"] != raw.get("resource_id")
+            ):
+                raise ValueError("Gmail message/thread binding mismatch")
+            if not isinstance(message["recipients"], list) or not all(
+                isinstance(value, str) for value in message["recipients"]
+            ):
+                raise ValueError("invalid Gmail message recipients")
+            if any(
+                message[key] is not None and not isinstance(message[key], str)
+                for key in (
+                    "sender_name",
+                    "sender_email",
+                    "received_at",
+                    "subject",
+                    "body",
+                )
+            ) or not isinstance(message["body_truncated"], bool):
+                raise ValueError("invalid Gmail message metadata")
+            message_count = payload.get("message_count")
+            if not isinstance(message_count, int) or message_count < len(messages):
+                raise ValueError("invalid Gmail message coverage")
+            headers = [
+                f"Thread messages collected: {len(messages)}/{message_count}",
+                f"From: {message['sender_name'] or ''} <{message['sender_email'] or ''}>",
+                f"To: {', '.join(message['recipients'])}",
+                f"Received: {message['received_at'] or 'unknown'}",
+            ]
+            for name in ("rfc822_message_id", "references"):
+                value = message.get(name)
+                if value is not None:
+                    if not isinstance(value, str):
+                        raise ValueError("invalid Gmail reply metadata")
+                    headers.append(f"{name}: {value}")
+            body = _strip_email_quote_and_signature(message["body"] or "")
+            if message["body_truncated"]:
+                body += "\n[본문 일부만 수집됨]"
+            units.append(
+                {
+                    **raw,
+                    "message_id": message["message_id"],
+                    "_message_locator": {
+                        **{
+                            key: message[key]
+                            for key in (
+                                "message_id",
+                                "thread_id",
+                                "sender_name",
+                                "sender_email",
+                                "recipients",
+                                "received_at",
+                            )
+                        },
+                        "rfc822_message_id": message.get("rfc822_message_id"),
+                        "references": message.get("references"),
+                    },
+                    "payload": {
+                        "subject": message["subject"],
+                        "body": "\n".join([*headers, body]),
+                    },
+                }
+            )
+    return units
+
+
+def _round_robin_segments(
+    resource_segments: list[list[SourceSegment]],
+    *,
+    max_segments: int,
+    preferred_segment_ids: Sequence[str] = (),
+) -> list[SourceSegment]:
+    """Bound context without allowing one long resource to hide its peers."""
+
+    by_id = {segment.segment_id: segment for group in resource_segments for segment in group}
+    preferred = [by_id[key] for key in dict.fromkeys(preferred_segment_ids) if key in by_id]
+    preferred_sources = {segment.source for segment in preferred}
+    new_sources: dict[str, SourceSegment] = {}
+    for group in resource_segments:
+        if group and group[0].source not in preferred_sources:
+            new_sources.setdefault(group[0].source, group[0])
+    reserved = list(new_sources.values())[:max_segments] if preferred else []
+    result = preferred[: max(0, max_segments - len(reserved))] + reserved
+    selected = {segment.segment_id for segment in result}
+    if result and len(result) < max_segments:
+        # Retaining earlier evidence must not hide a newly acquired source category.
+        sources = {segment.source for segment in result}
+        for group in resource_segments:
+            if group and group[0].source not in sources and len(result) < max_segments:
+                result.append(group[0])
+                selected.add(group[0].segment_id)
+                sources.add(group[0].source)
+    chunk_index = 0
+    while len(result) < max_segments:
+        added = False
+        for segments in resource_segments:
+            if chunk_index >= len(segments):
+                continue
+            added = True
+            if segments[chunk_index].segment_id in selected:
+                continue
+            result.append(segments[chunk_index])
+            selected.add(segments[chunk_index].segment_id)
+            if len(result) >= max_segments:
+                return result
+        if not added:
+            return result
+        chunk_index += 1
+    return result
 
 
 def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
     payload = resource.get("payload")
     if not isinstance(payload, dict):
         return ""
+    if resource_type == "calendar_freebusy":
+        return format_calendar_freebusy_evidence(payload)
+    if resource_type == "gmail_draft":
+        return _gmail_draft_text(resource, payload)
+    if resource_type == "github_issue":
+        fields = []
+        for key in ("repository", "issue_number", "title", "state", "url"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                fields.append(f"{key}: {value.strip()}")
+            elif key == "issue_number" and type(value) is int and value > 0:
+                fields.append(f"{key}: {value}")
+        description = payload.get("description")
+        if isinstance(description, str) and description.strip():
+            fields.append(f"description:\n{description.strip()}")
+        return "\n".join(fields)
+    if resource_type == "task":
+        fields = []
+        parent_id = resource.get("parent_id")
+        if isinstance(parent_id, str) and parent_id.strip():
+            fields.append(f"task_list_id: {parent_id.strip()}")
+        for key in ("title", "status", "due"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                fields.append(f"{key}: {value.strip()}")
+        notes = payload.get("notes")
+        if isinstance(notes, str):
+            visible_notes = strip_resource_recovery_marker(notes)
+            if visible_notes is not None and visible_notes.strip():
+                fields.append(f"notes:\n{visible_notes.strip()}")
+        if fields:
+            return "\n".join(fields)
+    if resource_type == "calendar_event":
+        fields = []
+        for label, value in (
+            ("calendar_id", resource.get("parent_id")),
+            ("event_id", resource.get("resource_id")),
+            ("title", payload.get("title")),
+            ("start", payload.get("start")),
+            ("end", payload.get("end")),
+            ("timezone", payload.get("timezone")),
+            ("status", payload.get("status")),
+            ("location", payload.get("location")),
+            ("description", payload.get("description")),
+        ):
+            if isinstance(value, str) and value.strip():
+                fields.append(f"{label}: {value.strip()}")
+        attendees = payload.get("attendees")
+        if isinstance(attendees, list) and all(isinstance(value, str) for value in attendees):
+            fields.append("attendees: " + (", ".join(attendees) if attendees else "[]"))
+        return "\n".join(fields)
     parts: list[str] = []
+    if resource_type in _GMAIL_RESOURCE_TYPES:
+        # Metadata was acquired by the provider, not inferred from the snippet.
+        for key, label in (
+            ("sender_name", "Sender name"),
+            ("sender_email", "Sender email"),
+            ("received_at", "Received"),
+        ):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{label}: {value.strip()}")
     for key in _TEXT_KEYS:
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
@@ -139,6 +438,27 @@ def _resource_text(resource: dict[str, object], *, resource_type: str) -> str:
             if isinstance(value, str) and value.strip()
         )
     return "\n".join(parts)
+
+
+def _gmail_draft_text(resource: Mapping[str, object], payload: Mapping[str, object]) -> str:
+    fields = [f"draft_id: {resource.get('resource_id', '')}"]
+    for key in (
+        "to",
+        "cc",
+        "bcc",
+        "subject",
+        "thread_id",
+        "in_reply_to",
+        "references",
+        "attachments",
+    ):
+        value = payload.get(key)
+        if isinstance(value, (str, list)) or value is None:
+            fields.append(f"{key}: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}")
+    body = payload.get("body")
+    if isinstance(body, str):
+        fields.append(f"body:\n{body}")
+    return "\n".join(fields)
 
 
 def _strip_email_quote_and_signature(text: str) -> str:
@@ -157,7 +477,7 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _chunk_text(text: str, context_budget: ContextBudget) -> list[str]:
-    words = text.split()
+    words = list(re.finditer(r"\S+", text))
     if not words:
         return []
     if _estimate_tokens(text) <= context_budget.chunk_max_tokens:
@@ -168,21 +488,27 @@ def _chunk_text(text: str, context_budget: ContextBudget) -> list[str]:
         count = 0
         end = start
         while end < len(words):
-            word_tokens = _estimate_tokens(words[end]) + (1 if end > start else 0)
+            word_tokens = _estimate_tokens(words[end].group()) + (
+                len(text[words[end - 1].end() : words[end].start()].encode("utf-8"))
+                if end > start
+                else 0
+            )
             if count + word_tokens > context_budget.chunk_max_tokens and end > start:
                 break
             count += word_tokens
             end += 1
             if count >= context_budget.chunk_target_tokens:
                 break
-        chunks.append(" ".join(words[start:end]))
+        # Preserve source layout: a receipt header, a newsletter heading and
+        # the following item's date must not become one synthetic sentence.
+        chunks.append(text[words[start].start() : words[end - 1].end()])
         if end >= len(words):
             break
         overlap_start = end
         overlap = 0
         while overlap_start > start and overlap < context_budget.chunk_overlap_tokens:
             overlap_start -= 1
-            overlap += _estimate_tokens(words[overlap_start])
+            overlap += _estimate_tokens(words[overlap_start].group())
         start = max(overlap_start, start + 1)
     return chunks
 
@@ -196,9 +522,20 @@ def _truncate(value: str, max_chars: int) -> str:
 
 
 def _connector_id(resource: dict[str, object], summary: dict[str, object]) -> str:
-    value = resource.get("connector_id", summary.get("connector_id", "google_workspace"))
+    source = str(summary.get("source", "")).upper()
+    expected = {
+        "GMAIL": "google_workspace",
+        "TASKS": "google_workspace",
+        "CALENDAR": "google_workspace",
+        "GITHUB": "github",
+    }.get(source)
+    value = resource.get("connector_id", summary.get("connector_id"))
+    if value is None and source in {"GMAIL", "TASKS", "CALENDAR"}:
+        value = expected  # Explicit legacy Google acquisition contract.
     if not isinstance(value, str) or not value.strip():
         raise ValueError("connector_id must be a non-empty string")
+    if value != expected:
+        raise ValueError("acquisition connector_id does not match its source")
     return value
 
 
@@ -234,6 +571,7 @@ __all__ = [
     "DEFAULT_CONTEXT_BUDGET",
     "RetrievalValidationError",
     "SourceSegment",
+    "rehydrate_normalized_segments",
     "_chunk_text",
     "_estimate_tokens",
     "_resource_text",

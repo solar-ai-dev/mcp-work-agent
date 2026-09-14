@@ -8,14 +8,18 @@ from threading import RLock
 from google_work_agent.ports.system.contracts.operational_command_replay import (
     OperationalReconcileResultV1,
 )
-from google_work_agent.ports.system.runtime_mode_port import RequestedRuntimeModeV1, RuntimeModePort
+from google_work_agent.ports.system.runtime_mode_port import (
+    RequestedRuntimeModeV1,
+    RuntimeModePort,
+    SelectableRuntimeModeV1,
+)
 
 
 @dataclass(slots=True)
 class ProcessRuntimeModeAdapter(RuntimeModePort):
     initial_mode: RequestedRuntimeModeV1
     _mode: RequestedRuntimeModeV1 = field(init=False)
-    _applied: dict[str, RequestedRuntimeModeV1] = field(default_factory=dict, init=False)
+    _applied: dict[str, SelectableRuntimeModeV1] = field(default_factory=dict, init=False)
     _lock: RLock = field(default_factory=RLock, init=False)
 
     def __post_init__(self) -> None:
@@ -28,9 +32,9 @@ class ProcessRuntimeModeAdapter(RuntimeModePort):
             return self._mode
 
     def set_requested_mode(
-        self, requested_mode: RequestedRuntimeModeV1, operation_ref: str
-    ) -> RequestedRuntimeModeV1:
-        if requested_mode not in {"AUTO", "LOCAL_GPU", "API_LLM"}:
+        self, requested_mode: SelectableRuntimeModeV1, operation_ref: str
+    ) -> SelectableRuntimeModeV1:
+        if requested_mode not in {"LOCAL_GPU", "API_LLM"}:
             raise ValueError("unsupported requested runtime mode")
         if not operation_ref.strip():
             raise ValueError("operation_ref is required")
@@ -43,7 +47,7 @@ class ProcessRuntimeModeAdapter(RuntimeModePort):
             return self._mode
 
     def reconcile_update(
-        self, operation_ref: str, requested_mode: RequestedRuntimeModeV1
+        self, operation_ref: str, requested_mode: SelectableRuntimeModeV1
     ) -> OperationalReconcileResultV1:
         with self._lock:
             existing = self._applied.get(operation_ref)

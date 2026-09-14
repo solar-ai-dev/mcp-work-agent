@@ -8,8 +8,9 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 
@@ -28,6 +29,21 @@ from launcher.bootstrap_secret import create_bootstrap_secret
 from launcher.open_product_ui import build_product_ui_url, open_product_ui
 from launcher.readiness import ServiceReadiness, wait_for_service_ready
 
+DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID = "development-client-id"
+DEVELOPMENT_GITHUB_APP_CLIENT_ID = "Iv23liYV2mScbAiVwc5Y"
+DEVELOPMENT_LANGSMITH_PROJECT = "google-work-agent-development"
+DEVELOPMENT_DEFAULT_LLM_TEMPERATURE = 0.0
+DEVELOPMENT_LANGSMITH_TRACE_ENVIRONMENT = {
+    "code_sha": "GWA_LANGSMITH_CODE_SHA",
+    "experiment_id": "GWA_LANGSMITH_EXPERIMENT_ID",
+    "model_digest": "GWA_LANGSMITH_MODEL_DIGEST",
+    "model_id": "GWA_LANGSMITH_MODEL_ID",
+    "prompt_content_hash": "GWA_LANGSMITH_PROMPT_CONTENT_HASH",
+    "prompt_id": "GWA_LANGSMITH_PROMPT_ID",
+    "prompt_version": "GWA_LANGSMITH_PROMPT_VERSION",
+    "question_id": "GWA_LANGSMITH_QUESTION_ID",
+}
+
 MCP_MANIFEST_VERSION = "2026-08-07.p0"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,13 +57,99 @@ class _ThreadServiceProbe:
         return None if self._thread.is_alive() else self._exit_code[0]
 
 
+def read_development_langsmith_environment(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[str | None, str | None, dict[str, str]]:
+    """Read an explicit safe tracing opt-in without enabling LangChain auto tracing."""
+
+    values = os.environ if environment is None else environment
+    if _boolean_environment(values, "LANGSMITH_TRACING") or _boolean_environment(
+        values, "LANGCHAIN_TRACING_V2"
+    ):
+        raise ValueError("automatic LangSmith tracing is not permitted by the Product boundary")
+    if not _boolean_environment(values, "GWA_LANGSMITH_ENABLED"):
+        return None, None, {}
+    api_key = values.get("LANGSMITH_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("GWA_LANGSMITH_ENABLED requires LANGSMITH_API_KEY")
+    project_name = values.get("LANGSMITH_PROJECT", DEVELOPMENT_LANGSMITH_PROJECT).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", project_name):
+        raise ValueError("LANGSMITH_PROJECT must be a safe opaque identifier")
+    trace_binding = {
+        key: values.get(environment_name, "").strip()
+        for key, environment_name in DEVELOPMENT_LANGSMITH_TRACE_ENVIRONMENT.items()
+    }
+    if any(not value for value in trace_binding.values()):
+        raise ValueError("GWA LangSmith tracing requires the complete experiment binding")
+    return api_key, project_name, trace_binding
+
+
+def read_development_sampling_environment(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[float | None, int | None]:
+    """Read development sampling controls with the evaluated temperature default."""
+
+    values = os.environ if environment is None else environment
+    temperature_value = values.get("GWA_DEVELOPMENT_LLM_TEMPERATURE", "").strip()
+    seed_value = values.get("GWA_DEVELOPMENT_LLM_SEED", "").strip()
+    try:
+        temperature = (
+            DEVELOPMENT_DEFAULT_LLM_TEMPERATURE
+            if not temperature_value
+            else float(temperature_value)
+        )
+    except ValueError as error:
+        raise ValueError("development sampling temperature must be numeric") from error
+    try:
+        seed = None if not seed_value else int(seed_value)
+    except ValueError as error:
+        raise ValueError("development sampling seed must be an integer") from error
+    return temperature, seed
+
+
+def read_development_google_oauth_client_id(
+    environment: Mapping[str, str] | None = None,
+    *,
+    env_file: Path | None = None,
+) -> str:
+    values = os.environ if environment is None else environment
+    explicit = values.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    if explicit:
+        return explicit
+
+    path = PROJECT_ROOT / ".env.local" if env_file is None else env_file
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+    configured = ""
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "GOOGLE_OAUTH_CLIENT_ID":
+            configured = value.strip().strip("\"'")
+    return configured or DEVELOPMENT_GOOGLE_OAUTH_CLIENT_ID
+
+
+def _boolean_environment(environment: Mapping[str, str], name: str) -> bool:
+    value = environment.get(name, "").strip().lower()
+    if value in {"", "0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(f"{name} must be a boolean value")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Start Google Work Agent development Product")
+    parser = argparse.ArgumentParser(description="Start mcp-work-agent development Product")
     parser.add_argument("--runtime-root", type=Path, default=PROJECT_ROOT / "runtime/development")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--launch-descriptor", type=Path)
+    parser.add_argument("--prompt-manifest", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=30.0)
     arguments = parser.parse_args(argv)
     if arguments.host != "127.0.0.1":
@@ -72,11 +174,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     thread: threading.Thread | None = None
     exit_code = [1]
     try:
+        (
+            langsmith_api_key,
+            langsmith_project_name,
+            langsmith_trace_binding,
+        ) = read_development_langsmith_environment()
+        sampling_temperature, sampling_seed = read_development_sampling_environment()
         production_config = ProductionRuntimeConfig.development(
             runtime_root=runtime_root,
             working_directory=PROJECT_ROOT,
             mcp_manifest_version=MCP_MANIFEST_VERSION,
+            oauth_client_id=read_development_google_oauth_client_id(),
+            github_oauth_client_id=os.environ.get(
+                "GITHUB_APP_CLIENT_ID", DEVELOPMENT_GITHUB_APP_CLIENT_ID
+            ),
+            github_oauth_scope=os.environ.get("GITHUB_APP_SCOPE", ""),
             keyring_store=SessionMemorySecretStore(),
+            prompt_manifest_path=arguments.prompt_manifest,
+            langsmith_api_key=langsmith_api_key,
+            langsmith_project_name=langsmith_project_name,
+            langsmith_trace_binding=langsmith_trace_binding,
+            sampling_temperature=sampling_temperature,
+            sampling_seed=sampling_seed,
         )
 
         def request_process_exit() -> None:
@@ -114,7 +233,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     server.run(sockets=[server_socket])
                 exit_code[0] = 0
-            except Exception:
+            except Exception as error:
+                print(
+                    f"Development service failed: {type(error).__name__}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 exit_code[0] = 1
 
         thread = threading.Thread(target=run_server, name="gwa-development-server")
@@ -148,7 +272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 service_instance_id=service_instance_id,
             )
         bootstrap_secret = ""
-        print(f"Google Work Agent development Product ready: http://127.0.0.1:{port}/")
+        print(f"mcp-work-agent development Product ready: http://127.0.0.1:{port}/")
         if descriptor_path is not None:
             print(f"Launch descriptor: {descriptor_path}")
         while thread.is_alive():
@@ -210,19 +334,19 @@ def _restrict_owner_only(path: Path) -> None:
         ["whoami", "/user", "/fo", "csv", "/nh"],
         check=True,
         capture_output=True,
-        text=True,
         timeout=5,
     ).stdout
-    match = re.search(r"S-1-[0-9-]+", identity)
+    match = re.search(rb"S-1-[0-9-]+", identity)
     if match is None:
         raise RuntimeError("DEVELOPMENT_DESCRIPTOR_PERMISSION_DENIED")
+    current_user_sid = match.group(0).decode("ascii")
     subprocess.run(
         [
             "icacls",
             str(path),
             "/inheritance:r",
             "/grant:r",
-            f"*{match.group(0)}:F",
+            f"*{current_user_sid}:F",
             "*S-1-5-18:F",
         ],
         check=True,

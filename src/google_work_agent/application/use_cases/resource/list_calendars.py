@@ -3,16 +3,18 @@
 from dataclasses import dataclass
 
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
-from google_work_agent.application.use_cases.resource.opaque_continuation_access import (
-    LocalResourceContinuationStore,
+from google_work_agent.application.use_cases.resource.normalize_continuation_error import (
+    normalize_resource_continuation_error,
 )
 from google_work_agent.ports.connector.connector_failure import (
     ConnectorFailureCode,
     ConnectorOperationFailure,
-    normalize_google_workspace_failure,
 )
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort, JsonValue
-from google_work_agent.ports.connector.contracts.google_workspace import GoogleWorkspaceGatewayError
+from google_work_agent.ports.system.resource_continuation_invalid_error import (
+    ResourceContinuationInvalidError,
+)
+from google_work_agent.ports.system.resource_continuation_port import ResourceContinuationPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +23,7 @@ class ListCalendarsQuery:
     account_id: str
     page_token: str | None = None
     page_size: int = 50
+    include_unselected: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -52,25 +55,34 @@ class ListCalendarsHandler:
         *,
         connector_read: ConnectorReadPort,
         registry: SignedToolRegistry,
-        continuation_store: LocalResourceContinuationStore,
+        continuation_store: ResourceContinuationPort,
+        inventory_read: ConnectorReadPort | None = None,
     ) -> None:
         self._connector_read = connector_read
+        self._inventory_read = inventory_read or connector_read
         self._registry = registry
         self._continuation_store = continuation_store
 
     def __call__(self, query: ListCalendarsQuery) -> ListCalendarsResult:
         if not 1 <= query.page_size <= 100:
             raise ValueError("page_size must be in 1..100")
-        scope = (query.session_digest, query.account_id, "calendars", str(query.page_size))
+        scope = (
+            query.session_digest,
+            query.account_id,
+            "calendars",
+            str(query.page_size),
+            str(query.include_unselected),
+        )
         try:
             provider_page_token = (
                 None
                 if query.page_token is None
                 else self._continuation_store.resolve(scope=scope, local_handle=query.page_token)
             )
-        except GoogleWorkspaceGatewayError as error:
-            raise normalize_google_workspace_failure(error) from error
-        result = self._connector_read.execute_read(
+        except ResourceContinuationInvalidError as error:
+            raise normalize_resource_continuation_error(error) from error
+        reader = self._inventory_read if query.include_unselected else self._connector_read
+        result = reader.execute_read(
             self._registry.bind_required("google_workspace", "calendar_list_calendars", "READ"),
             {"page_token": provider_page_token, "page_size": query.page_size},
         )

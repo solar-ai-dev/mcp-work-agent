@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import TypedDict
 
 from google_work_agent.adapters.langgraph.main.state import _require_state_value
+from google_work_agent.adapters.langgraph.main.supervisor_artifact_revisions import (
+    input_plan_reuse_is_current,
+)
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.state import ToolRouteStateV1
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
@@ -20,6 +23,7 @@ class FinalizeRouteInput(TypedDict):
     binding: RouteBindingCandidateV1
     selected_tools: dict[tuple[str, str], str]
     previous_plan: ToolRoutePlanV2 | None
+    reuse_input_plan: bool
 
 
 def project_finalize_route_input(state: ToolRouteStateV1) -> FinalizeRouteInput:
@@ -42,4 +46,5 @@ def project_finalize_route_input(state: ToolRouteStateV1) -> FinalizeRouteInput:
             for route in output_routes or []
         },
         "previous_plan": state.get("tool_route_plan"),
+        "reuse_input_plan": input_plan_reuse_is_current(state),
     }

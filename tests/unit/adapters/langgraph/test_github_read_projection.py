@@ -21,6 +21,7 @@ from google_work_agent.application.agents.retrieval.execute_read import execute_
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1
 from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
     ValidatedConnectorToolBindingV1,
@@ -85,7 +86,8 @@ def test_github_issue_search__projects_repository__and_state() -> None:
     assert arguments == {"repository": "acme/repo", "state": "OPEN"}
 
 
-def test_github_issue_detail__uses_normalized__composite_identity() -> None:
+@pytest.mark.parametrize("has_payload", [False, True])
+def test_github_issue_detail__uses_normalized__composite_identity(has_payload: bool) -> None:
     plan = cast(
         SourceFetchPlanV1,
         {
@@ -111,11 +113,13 @@ def test_github_issue_detail__uses_normalized__composite_identity() -> None:
             "reason_codes": ["REQUESTED_INPUT"],
         },
     )
-    resource = {
+    resource: dict[str, Any] = {
         "resource_id": "acme/repo#7",
         "parent_id": "acme/repo",
-        "payload": {"repository": "acme/repo", "issue_number": 7},
+        "connector_id": "github",
     }
+    if has_payload:
+        resource["payload"] = {"repository": "acme/repo", "issue_number": 7}
 
     tool_id, arguments = execute_read_projection.project_connector_call(
         plan,
@@ -126,6 +130,18 @@ def test_github_issue_detail__uses_normalized__composite_identity() -> None:
 
     assert tool_id == "github_get_issue"
     assert arguments == {"repository": "acme/repo", "issue_number": 7}
+
+    for change in (
+        {"connector_id": "google"},
+        {"parent_id": "other/repo"},
+        {"resource_id": "acme/repo#07"},
+        {"payload": {"repository": "other/repo", "issue_number": 7}},
+        {"payload": {"repository": "acme/repo", "issue_number": 8}},
+    ):
+        with pytest.raises(ValueError, match="identity"):
+            execute_read_projection.project_connector_call(
+                plan, route=route, page_size=1, detail_resource={**resource, **change}
+            )
 
 
 def test_github_issue_search__materializes_validated_repository__without_route_change() -> None:
@@ -163,6 +179,9 @@ def test_github_issue_search__materializes_validated_repository__without_route_c
     )
 
     execution = execute_read(
+        run_budget=build_default_run_budget(),
+        now_ms=1_000,
+        prior_query_attempts=[],
         plan=plans[0],
         run_id="run-1",
         binding=binding,
@@ -176,7 +195,7 @@ def test_github_issue_search__materializes_validated_repository__without_route_c
     assert reader.calls == [(binding, {"repository": "acme/repo", "state": "ALL"})]
 
 
-def test_github_issue_search__missing_or_forged_repository__fails_before_read() -> None:
+def test_github_issue_search__untrusted_repository__fails_closed_or_binds_authority() -> None:
     route = _github_search_route()
     reader = _RecordingReadPort()
     with pytest.raises(RetrievalV2ValidationError, match="validated container authority"):
@@ -186,16 +205,19 @@ def test_github_issue_search__missing_or_forged_repository__fails_before_read() 
             route_policies={"route-1": _github_policy()},
         )
         _execute_first(plans, route=route, reader=reader)
-    with pytest.raises(RetrievalV2ValidationError, match="validated for route"):
-        plans = build_query(
-            _github_search_plan([{"kind": "CONTAINER_REF", "container_refs": ["evil/repo"]}]),
-            frozen_routes=[route],
-            route_policies={"route-1": _github_policy()},
-            validated_container_refs={"route-1": ["acme/repo"]},
-        )
-        _execute_first(plans, route=route, reader=reader)
+    plans = build_query(
+        _github_search_plan([{"kind": "CONTAINER_REF", "container_refs": ["evil/repo"]}]),
+        frozen_routes=[route],
+        route_policies={"route-1": _github_policy()},
+        validated_container_refs={"route-1": ["acme/repo"]},
+    )
+    _execute_first(plans, route=route, reader=reader)
 
-    assert reader.calls == []
+    assert plans[0]["effective_constraints"] == [
+        {"kind": "CONTAINER_REF", "container_refs": ["acme/repo"]}
+    ]
+    assert len(reader.calls) == 1
+    assert reader.calls[0][1]["repository"] == "acme/repo"
 
 
 def _github_search_route() -> InputToolRouteV1:
@@ -230,8 +252,6 @@ def _github_search_plan(constraints: list[dict[str, object]]) -> RetrievalQueryP
                     "detail_candidate_ref": None,
                 }
             ],
-            "required_information": ["issues"],
-            "retrieval_order": ["route-1"],
         },
     )
 
@@ -246,6 +266,9 @@ def _execute_first(
         plans[0], route=route, page_size=50
     )
     execute_read(
+        run_budget=build_default_run_budget(),
+        now_ms=1_000,
+        prior_query_attempts=[],
         plan=plans[0],
         run_id="run-1",
         binding=ValidatedConnectorToolBindingV1(

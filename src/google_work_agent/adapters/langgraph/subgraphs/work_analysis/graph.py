@@ -1,4 +1,4 @@
-"""Canonical eight-node Work Analysis production runtime."""
+"""Canonical Work Analysis production runtime."""
 
 from __future__ import annotations
 
@@ -26,9 +26,10 @@ from google_work_agent.adapters.langgraph.main.state import (
     request_from_state,
 )
 from google_work_agent.adapters.langgraph.main.supervisor import (
-    SupervisorDecisionV1,
-    SupervisorTarget,
+    WorkAnalysisRouteResultV1,
+    route_supervisor,
 )
+from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorDecisionV1
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.subgraphs.work_analysis.state import (
     WorkAnalysisInputState,
@@ -44,10 +45,20 @@ from google_work_agent.application.agents.request_understanding.contracts import
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
 )
+from google_work_agent.application.agents.work_analysis import (
+    assess_action_necessity as action_necessity,
+)
+from google_work_agent.application.agents.work_analysis import (
+    detect_duplicate_conflict_candidates as duplicate_candidates,
+)
 from google_work_agent.application.agents.work_analysis.assemble_work_analysis import (
     required_override_confirmation_kind,
 )
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    DuplicateConflictAssessmentV1,
+)
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
+    RouteActionNecessityV1,
     StateArtifactRefV1,
     WorkAnalysisResultV2,
 )
@@ -67,11 +78,14 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.observability import ObservabilityContext
 from google_work_agent.ports.system.contracts.workflow_signal import (
+    RequestReconsiderationObservationV1,
+    RequestReconsiderationRequiredV1,
     RetrievalRequiredV1,
     RouteReconsiderationRequiredV1,
 )
 
 from .nodes.assemble_work_analysis_node import assemble_work_analysis_node
+from .nodes.assess_action_necessity_node import assess_action_necessity_node
 from .nodes.assess_information_gaps_node import assess_information_gaps_node
 from .nodes.assess_operational_risks_node import assess_operational_risks_node
 from .nodes.detect_duplicate_conflict_candidates_node import (
@@ -81,7 +95,11 @@ from .nodes.extract_work_facts_node import extract_work_facts_node
 from .nodes.resolve_entity_relations_node import resolve_entity_relations_node
 from .nodes.resolve_temporal_dependencies_node import resolve_temporal_dependencies_node
 from .nodes.validate_relations_node import validate_relations_node
+from .projections.task_duplicate_review_requirement_projection import (
+    project_task_duplicate_review_requirement,
+)
 from .routing.route_after_assemble_work_analysis import route_after_assemble_work_analysis
+from .routing.route_after_assess_action_necessity import route_after_assess_action_necessity
 from .routing.route_after_assess_information_gaps import route_after_assess_information_gaps
 from .routing.route_after_assess_operational_risks import route_after_assess_operational_risks
 from .routing.route_after_detect_duplicate_conflict_candidates import (
@@ -103,7 +121,7 @@ ConfirmInline = Callable[
 
 
 class WorkAnalysisSubgraph:
-    """Run six atomic Prompt operations and two deterministic runtime nodes."""
+    """Run eight atomic Prompt operations and two deterministic runtime nodes."""
 
     def __init__(
         self,
@@ -141,8 +159,18 @@ class WorkAnalysisSubgraph:
                 manifest,
                 execution_scope=prompt_execution_scope,
             ),
+            "assess_requested_task_satisfaction": load_prompt_reference(
+                "work_analysis.assess_requested_task_satisfaction",
+                manifest,
+                execution_scope=prompt_execution_scope,
+            ),
             "assess_information_gaps": load_prompt_reference(
                 "work_analysis.assess_information_gaps",
+                manifest,
+                execution_scope=prompt_execution_scope,
+            ),
+            "assess_action_necessity": load_prompt_reference(
+                "work_analysis.assess_action_necessity",
                 manifest,
                 execution_scope=prompt_execution_scope,
             ),
@@ -172,6 +200,7 @@ class WorkAnalysisSubgraph:
             "detect_duplicate_conflict_candidates", self._detect_duplicate_conflict_candidates_node
         )
         graph.add_node("validate_relations", self._validate_relations_node)
+        graph.add_node("assess_action_necessity", self._assess_action_necessity_node)
         graph.add_node("assess_information_gaps", self._assess_information_gaps_node)
         graph.add_node("assess_operational_risks", self._assess_operational_risks_node)
         graph.add_node("finalize", self._finalize_node)
@@ -181,13 +210,18 @@ class WorkAnalysisSubgraph:
             route_after_extract_work_facts,
             {
                 "resolve_entity_relations": "resolve_entity_relations",
+                "resolve_temporal_dependencies": "resolve_temporal_dependencies",
+                "detect_duplicate_conflict_candidates": "detect_duplicate_conflict_candidates",
                 "validate_relations": "validate_relations",
             },
         )
         graph.add_conditional_edges(
             "resolve_entity_relations",
             route_after_resolve_entity_relations,
-            {"resolve_temporal_dependencies": "resolve_temporal_dependencies"},
+            {
+                "resolve_temporal_dependencies": "resolve_temporal_dependencies",
+                "detect_duplicate_conflict_candidates": "detect_duplicate_conflict_candidates",
+            },
         )
         graph.add_conditional_edges(
             "resolve_temporal_dependencies",
@@ -202,6 +236,11 @@ class WorkAnalysisSubgraph:
         graph.add_conditional_edges(
             "validate_relations",
             route_after_validate_relations,
+            {"assess_action_necessity": "assess_action_necessity"},
+        )
+        graph.add_conditional_edges(
+            "assess_action_necessity",
+            route_after_assess_action_necessity,
             {"assess_information_gaps": "assess_information_gaps"},
         )
         graph.add_conditional_edges(
@@ -221,7 +260,9 @@ class WorkAnalysisSubgraph:
             "finalize",
             route_after_assemble_work_analysis,
             {
+                "assess_information_gaps": "assess_information_gaps",
                 "assess_operational_risks": "assess_operational_risks",
+                "finalize": "finalize",
                 "end": END,
             },
         )
@@ -249,7 +290,6 @@ class WorkAnalysisSubgraph:
                 "availability_results": []
                 if retrieval_result is None
                 else list(retrieval_result["availability_results"]),
-                "current_source_relations": [],
             },
         )
         confirmation_response = self._confirmation_response(state)
@@ -268,7 +308,6 @@ class WorkAnalysisSubgraph:
             "evidence": working["evidence"],
             "evidence_refs": working["evidence_refs"],
             "availability_results": working["availability_results"],
-            "current_source_relations": working["current_source_relations"],
         }
         if confirmation_response is not None:
             owner_inputs["confirmation_response"] = confirmation_response
@@ -290,16 +329,31 @@ class WorkAnalysisSubgraph:
             {
                 **owner_inputs,
                 **patch,
-                "retry_budget": consume_llm_call_budget(working),
+                "retry_budget": patch["retry_budget"],
                 "trace_context": self._trace(
-                    working, "extract_facts", self._prompt_refs["extract_work_facts"], first
+                    working,
+                    "extract_facts",
+                    self._prompt_refs["extract_work_facts"],
+                    first,
+                    llm_call_increment=(
+                        patch["retry_budget"]["llm_calls_used"]
+                        - working["retry_budget"]["llm_calls_used"]
+                    ),
                 ),
             },
         )
-        if not returned["fact_candidates"]:
-            returned["entity_relation_candidates"] = []
-            returned["temporal_dependency_candidates"] = []
-            returned["duplicate_conflict_candidates"] = []
+        returned["entity_relation_candidates"] = []
+        returned["temporal_dependency_candidates"] = []
+        returned["duplicate_conflict_candidates"] = []
+        returned["duplicate_conflict_assessment"] = {
+            "relation_candidates": [],
+            "requested_work_status": "NOT_APPLICABLE",
+            "requested_work_reason": None,
+            "matched_fact_ids": [],
+            "matched_candidate_refs": [],
+            "evidence_refs": [],
+        }
+        returned["route_action_necessities"] = []
         return returned
 
     def _resolve_entity_relations_node(
@@ -351,11 +405,17 @@ class WorkAnalysisSubgraph:
     def _detect_duplicate_conflict_candidates_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
-        ensure_llm_call_budget(state)
+        llm_required = duplicate_candidates.duplicate_conflict_candidate_llm_required(
+            state.get("fact_candidates", []),
+            task_duplicate_review_required=project_task_duplicate_review_requirement(state),
+        )
+        if llm_required:
+            ensure_llm_call_budget(state)
         patch = detect_duplicate_conflict_candidates_node(
             cast(Any, state),
             llm_runtime=self._llm_runtime,
             prompt_ref=self._prompt_refs["detect_duplicate_conflict_candidates"],
+            task_satisfaction_prompt_ref=self._prompt_refs["assess_requested_task_satisfaction"],
             requested_mode=request_from_state(state).requested_mode,
             confirmation_response=self._confirmation_response(state),
         )
@@ -363,11 +423,19 @@ class WorkAnalysisSubgraph:
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": consume_llm_call_budget(state),
+                "retry_budget": patch["retry_budget"],
                 "trace_context": self._trace(
                     state,
                     "detect_duplicate_conflict_candidates",
-                    self._prompt_refs["detect_duplicate_conflict_candidates"],
+                    (
+                        self._prompt_refs["detect_duplicate_conflict_candidates"]
+                        if llm_required
+                        else None
+                    ),
+                    llm_call_increment=(
+                        patch["retry_budget"]["llm_calls_used"]
+                        - state["retry_budget"]["llm_calls_used"]
+                    ),
                 ),
             },
         )
@@ -425,6 +493,47 @@ class WorkAnalysisSubgraph:
                 ),
             },
         )
+        patch["information_gap_confirmation_resolution"] = None
+
+    def _assess_action_necessity_node(
+        self, state: WorkAnalysisLocalState
+    ) -> WorkAnalysisLocalState:
+        plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
+        output_plan = plan["output_plan"]
+        routes = [] if output_plan["output_mode"] == "ANSWER" else output_plan["output_routes"]
+        duplicate_assessment = cast(
+            DuplicateConflictAssessmentV1,
+            _require_state_value(
+                state.get("duplicate_conflict_assessment"),
+                "duplicate_conflict_assessment",
+            ),
+        )
+        llm_required = action_necessity.action_necessity_llm_required(
+            routes,
+            duplicate_conflict_assessment=duplicate_assessment,
+        )
+        if llm_required:
+            ensure_llm_call_budget(state)
+        patch = assess_action_necessity_node(
+            cast(dict[str, object], state),
+            llm_runtime=self._llm_runtime,
+            prompt_ref=self._prompt_refs["assess_action_necessity"],
+            requested_mode=request_from_state(state).requested_mode,
+        )
+        return cast(
+            WorkAnalysisLocalState,
+            {
+                **patch,
+                "retry_budget": (
+                    consume_llm_call_budget(state) if llm_required else state["retry_budget"]
+                ),
+                "trace_context": self._trace(
+                    state,
+                    "assess_action_necessity",
+                    self._prompt_refs["assess_action_necessity"] if llm_required else None,
+                ),
+            },
+        )
 
     def _assess_operational_risks_node(
         self, state: WorkAnalysisLocalState
@@ -436,37 +545,6 @@ class WorkAnalysisSubgraph:
             prompt_ref=self._prompt_refs["assess_operational_risks"],
             requested_mode=request_from_state(state).requested_mode,
         )
-        assessment = patch.get("__analysis_operational_risk_assessment__")
-        if isinstance(assessment, Mapping):
-            override_kind = required_override_confirmation_kind(
-                validated_relations=cast(list[Any], state.get("validated_relations", [])),
-                action_necessity_candidate=cast(Any, assessment["action_necessity_candidate"]),
-                policy_confirmation_receipts=cast(
-                    list[PolicyConfirmationReceiptV1],
-                    state.get("policy_confirmation_receipts", []),
-                ),
-                based_on=self._based_on(state),
-            )
-            if override_kind is not None:
-                cast(dict[str, Any], patch).update(
-                    self._confirmation_patch(
-                        state,
-                        origin_target="analysis.assess_operational_risks",
-                        question=(
-                            "The current evidence indicates an existing duplicate or conflict. "
-                            "Do you approve proceeding with the requested action?"
-                        ),
-                        reason_code=f"{override_kind}_REQUIRED",
-                        options=[
-                            {"option_id": "APPROVED", "label": "Proceed"},
-                            {"option_id": "DECLINED", "label": "Do not proceed"},
-                        ],
-                        policy_confirmation={
-                            "confirmation_kind": override_kind,
-                            "based_on": self._based_on(state),
-                        },
-                    )
-                )
         return cast(
             WorkAnalysisLocalState,
             {
@@ -485,37 +563,65 @@ class WorkAnalysisSubgraph:
         if isinstance(gap_assessment, Mapping) and gap_assessment.get("disposition") != "COMPLETE":
             return self._resolve_gap_disposition(state, gap_assessment)
 
-        risk_assessment = _require_state_value(
+        _require_state_value(
             state.get("__analysis_operational_risk_assessment__"),
             "operational risk assessment",
         )
         based_on = self._based_on(state)
         override_kind = required_override_confirmation_kind(
             validated_relations=cast(list[Any], state.get("validated_relations", [])),
-            action_necessity_candidate=cast(Any, risk_assessment["action_necessity_candidate"]),
+            action_execution_required=_action_execution_required(state),
+            route_action_necessities=cast(
+                list[RouteActionNecessityV1],
+                state.get("route_action_necessities", []),
+            ),
             policy_confirmation_receipts=cast(
                 list[PolicyConfirmationReceiptV1],
                 state.get("policy_confirmation_receipts", []),
             ),
             based_on=based_on,
+            duplicate_conflict_assessment=cast(
+                DuplicateConflictAssessmentV1,
+                state.get("duplicate_conflict_assessment"),
+            ),
         )
         if override_kind is not None:
+            question = (
+                "조회한 자료에서 중복된 업무 또는 일정 충돌이 확인됐습니다. "
+                "이를 감안하여 작업 제안을 계속 준비할까요? 실제 실행은 별도로 승인받습니다."
+            )
+            reason_code = f"{override_kind}_REQUIRED"
+            options = [
+                {"option_id": "APPROVED", "label": "계속 준비해 주세요"},
+                {"option_id": "DECLINED", "label": "진행하지 않을게요"},
+            ]
+            policy_confirmation: dict[str, object] = {
+                "confirmation_kind": override_kind,
+                "based_on": based_on,
+            }
+            if not isinstance(state.get("user_interrupt"), Mapping):
+                return cast(
+                    WorkAnalysisLocalState,
+                    {
+                        **self._confirmation_patch(
+                            state,
+                            origin_target="analysis.assess_operational_risks",
+                            question=question,
+                            reason_code=reason_code,
+                            options=options,
+                            policy_confirmation=policy_confirmation,
+                        ),
+                        "__analysis_noncomplete_disposition__": "RESUME_FINALIZE",
+                        "__work_analysis_retry_confirmation__": True,
+                    },
+                )
             return self._resolve_confirmation(
                 state,
                 origin_target="analysis.assess_operational_risks",
-                question=(
-                    "The current evidence indicates an existing duplicate or conflict. "
-                    "Do you approve proceeding with the requested action?"
-                ),
-                reason_code=f"{override_kind}_REQUIRED",
-                options=[
-                    {"option_id": "APPROVED", "label": "Proceed"},
-                    {"option_id": "DECLINED", "label": "Do not proceed"},
-                ],
-                policy_confirmation={
-                    "confirmation_kind": override_kind,
-                    "based_on": based_on,
-                },
+                question=question,
+                reason_code=reason_code,
+                options=options,
+                policy_confirmation=policy_confirmation,
             )
 
         patch = assemble_work_analysis_node(
@@ -523,19 +629,19 @@ class WorkAnalysisSubgraph:
             artifact_id=self._id_factory(),
         )
         result = cast(WorkAnalysisResultV2, patch["final_analysis"])
-        decision: SupervisorDecisionV1 = {
-            "target": SupervisorTarget.SOLUTION_PLANNING.value,
-            "next_phase": WorkflowPhase.SOLUTION_PLANNING.value,
-            "state_update": {
-                "workflow_phase": WorkflowPhase.SOLUTION_PLANNING.value,
-                "work_analysis_result": result,
-                "workflow_signal": None,
-                "user_interrupt": None,
-                "finalize_intent": None,
-            },
-            "reason_code": "WORK_ANALYSIS_COMPLETE",
-            "budget_decision": None,
-        }
+        decision = route_supervisor(
+            phase=WorkflowPhase.WORK_ANALYSIS,
+            state=cast(GraphState, state),
+            result=cast(
+                WorkAnalysisRouteResultV1,
+                {
+                    "disposition": "COMPLETE",
+                    "typed_result": result,
+                    "workflow_signal": None,
+                    "reason_codes": [],
+                },
+            ),
+        )
         merged = self._merge_decision(
             state,
             {
@@ -582,49 +688,59 @@ class WorkAnalysisSubgraph:
             )
         if disposition == "NEEDS_MORE_DATA":
             signal: RetrievalRequiredV1 | RouteReconsiderationRequiredV1
-            target: SupervisorTarget
-            phase: WorkflowPhase
             if self._has_usable_input_route(state):
                 signal = {
                     "kind": "RETRIEVAL_REQUIRED",
                     "reason_codes": reason_codes,
                     "needs": list(cast(list[Any], state.get("retrieval_needs", []))),
                 }
-                target = SupervisorTarget.CONTEXT_RETRIEVAL
-                phase = WorkflowPhase.CONTEXT_RETRIEVAL
             else:
                 signal = {
                     "kind": "ROUTE_RECONSIDERATION_REQUIRED",
                     "reason_codes": reason_codes,
                 }
-                target = SupervisorTarget.TOOL_ROUTE
-                phase = WorkflowPhase.TOOL_ROUTING
-            return self._finish_with_signal(state, signal=signal, target=target, phase=phase)
+                disposition = "ROUTE_RECONSIDERATION_REQUIRED"
+            return self._finish_with_signal(
+                state,
+                disposition=cast(Any, disposition),
+                signal=signal,
+            )
+        if disposition == "REQUEST_RECONSIDERATION_REQUIRED":
+            return self._finish_with_signal(
+                state,
+                disposition="REQUEST_RECONSIDERATION_REQUIRED",
+                signal=self._request_reconsideration_signal(
+                    state,
+                    evidence_refs=[
+                        item
+                        for item in cast(list[object], assessment.get("evidence_refs", []))
+                        if isinstance(item, str) and item
+                    ],
+                    reason_codes=reason_codes,
+                ),
+            )
         if disposition == "ROUTE_RECONSIDERATION_REQUIRED":
             return self._finish_with_signal(
                 state,
+                disposition="ROUTE_RECONSIDERATION_REQUIRED",
                 signal={
                     "kind": "ROUTE_RECONSIDERATION_REQUIRED",
                     "reason_codes": reason_codes,
                 },
-                target=SupervisorTarget.TOOL_ROUTE,
-                phase=WorkflowPhase.TOOL_ROUTING,
             )
-        decision: SupervisorDecisionV1 = {
-            "target": SupervisorTarget.FINALIZE.value,
-            "next_phase": WorkflowPhase.FINALIZE.value,
-            "state_update": {
-                "workflow_phase": WorkflowPhase.FINALIZE.value,
-                "workflow_signal": None,
-                "finalize_intent": {
-                    "schema_version": 1,
-                    "intent": "BLOCKED",
-                    "reason_code": reason_codes[0],
+        decision = route_supervisor(
+            phase=WorkflowPhase.WORK_ANALYSIS,
+            state=cast(GraphState, state),
+            result=cast(
+                WorkAnalysisRouteResultV1,
+                {
+                    "disposition": "BLOCKED",
+                    "typed_result": None,
+                    "workflow_signal": None,
+                    "reason_codes": reason_codes,
                 },
-            },
-            "reason_code": reason_codes[0],
-            "budget_decision": None,
-        }
+            ),
+        )
         return cast(
             WorkAnalysisLocalState,
             {
@@ -637,28 +753,61 @@ class WorkAnalysisSubgraph:
         self,
         state: WorkAnalysisLocalState,
         *,
-        signal: RetrievalRequiredV1 | RouteReconsiderationRequiredV1,
-        target: SupervisorTarget,
-        phase: WorkflowPhase,
+        disposition: str,
+        signal: (
+            RetrievalRequiredV1 | RequestReconsiderationRequiredV1 | RouteReconsiderationRequiredV1
+        ),
     ) -> WorkAnalysisLocalState:
         reason_codes = signal["reason_codes"]
-        decision: SupervisorDecisionV1 = {
-            "target": target.value,
-            "next_phase": phase.value,
-            "state_update": {
-                "workflow_phase": phase.value,
-                "workflow_signal": signal,
-                "user_interrupt": None,
-            },
-            "reason_code": reason_codes[0],
-            "budget_decision": None,
-        }
+        decision = route_supervisor(
+            phase=WorkflowPhase.WORK_ANALYSIS,
+            state=cast(GraphState, state),
+            result=cast(
+                WorkAnalysisRouteResultV1,
+                {
+                    "disposition": disposition,
+                    "typed_result": None,
+                    "workflow_signal": signal,
+                    "reason_codes": reason_codes,
+                },
+            ),
+        )
         merged = self._merge_decision(state, {}, decision)
         merged.pop(ANALYSIS_AGENT_LOCAL_KEY, None)
         return cast(
             WorkAnalysisLocalState,
             {**merged, "__work_analysis_retry_confirmation__": False},
         )
+
+    @staticmethod
+    def _request_reconsideration_signal(
+        state: WorkAnalysisLocalState,
+        *,
+        evidence_refs: list[str],
+        reason_codes: list[str],
+    ) -> RequestReconsiderationRequiredV1:
+        intent = _require_state_value(state.get("request_intent"), "request_intent")
+        selected = set(evidence_refs)
+        observations = [
+            cast(
+                RequestReconsiderationObservationV1,
+                {
+                    "evidence_ref": item["evidence_id"],
+                    "resource_ref": item["resource_handle"],
+                    "excerpt": item["excerpt"],
+                },
+            )
+            for item in state.get("evidence", [])
+            if item["evidence_id"] in selected
+        ]
+        if not observations:
+            raise ValueError("request reconsideration requires current evidence observations")
+        return {
+            "kind": "REQUEST_RECONSIDERATION_REQUIRED",
+            "reason_codes": reason_codes,
+            "based_on_request_intent": dict(intent["meta"]),
+            "observations": observations,
+        }
 
     def _resolve_confirmation(
         self,
@@ -672,7 +821,8 @@ class WorkAnalysisSubgraph:
     ) -> WorkAnalysisLocalState:
         del question, reason_code, options, policy_confirmation
         working = cast(WorkAnalysisLocalState, dict(state))
-        if not isinstance(working.get("user_interrupt"), Mapping):
+        raw_interrupt = working.get("user_interrupt")
+        if not isinstance(raw_interrupt, Mapping):
             raise ValueError("Work Analysis confirmation must be checkpointed by its producer node")
         response, early = self._confirm_inline(working)
         if early is not None:
@@ -687,21 +837,25 @@ class WorkAnalysisSubgraph:
         context["confirmation_response"] = dict(response)
         patch: dict[str, Any] = {}
         if origin_target == "analysis.assess_information_gaps":
-            acknowledged = [
-                {**item, "requires_confirmation": False}
-                for item in cast(list[dict[str, object]], working.get("ambiguity_candidates", []))
-            ]
             patch.update(
                 {
-                    "ambiguity_candidates": cast(Any, acknowledged),
-                    "relation_validation_ambiguities": cast(Any, acknowledged),
-                    "__analysis_information_gap_assessment__": {
-                        "disposition": "COMPLETE",
-                        "ambiguities": acknowledged,
-                        "retrieval_needs": [],
-                        "evidence_refs": list(working.get("evidence_refs", [])),
+                    "information_gap_confirmation_resolution": {
+                        "schema_version": 1,
+                        "reason_code": str(raw_interrupt.get("reason_code", "")),
+                        "question": str(raw_interrupt.get("question", "")),
+                        "affected_field_paths": [
+                            item
+                            for item in cast(
+                                list[object], raw_interrupt.get("affected_field_paths", [])
+                            )
+                            if isinstance(item, str)
+                        ],
+                        "response": dict(response),
+                        "prior_ambiguities": [
+                            dict(item) for item in working.get("ambiguity_candidates", [])
+                        ],
                     },
-                    "__analysis_noncomplete_disposition__": "RESUME_RISKS",
+                    "__analysis_noncomplete_disposition__": "RESUME_INFORMATION_GAPS",
                 }
             )
         else:
@@ -775,8 +929,17 @@ class WorkAnalysisSubgraph:
     @staticmethod
     def _based_on(state: WorkAnalysisLocalState) -> list[StateArtifactRefV1]:
         result: list[StateArtifactRefV1] = []
-        for key in ("request_intent", "tool_route_plan", "retrieval_result"):
-            artifact = state.get(key)
+        route_plan = state.get("tool_route_plan")
+        route_artifacts = (
+            [route_plan.get("input_plan"), route_plan.get("output_plan")]
+            if isinstance(route_plan, Mapping)
+            else []
+        )
+        for artifact in [
+            state.get("request_intent"),
+            *route_artifacts,
+            state.get("retrieval_result"),
+        ]:
             meta = artifact.get("meta") if isinstance(artifact, Mapping) else None
             if not isinstance(meta, Mapping):
                 continue
@@ -821,6 +984,7 @@ class WorkAnalysisSubgraph:
         node: str,
         prompt_ref: PromptReference | None = None,
         first: bool = False,
+        llm_call_increment: int | None = None,
     ) -> dict[str, object]:
         return cast(
             dict[str, object],
@@ -835,7 +999,9 @@ class WorkAnalysisSubgraph:
                 llm_call_id=(f"{state['run_id']}:analysis.{node}" if prompt_ref else None),
                 prompt_ref=prompt_ref,
                 agent_invocation_increment=1 if first else 0,
-                llm_call_increment=1 if prompt_ref else 0,
+                llm_call_increment=(
+                    (1 if prompt_ref else 0) if llm_call_increment is None else llm_call_increment
+                ),
             ),
         )
 
@@ -857,6 +1023,14 @@ class WorkAnalysisSubgraph:
     @staticmethod
     def _has_invocation(state: WorkAnalysisLocalState) -> bool:
         return isinstance(state.get(ANALYSIS_AGENT_LOCAL_KEY), Mapping)
+
+
+def _action_execution_required(state: WorkAnalysisLocalState) -> bool:
+    return any(
+        item.get("status") == "REQUIRED"
+        for item in state.get("route_action_necessities", [])
+        if isinstance(item, Mapping)
+    )
 
 
 __all__ = ["WorkAnalysisSubgraph"]

@@ -32,6 +32,7 @@ from google_work_agent.domain.plan.model import Plan as PlanRecord
 from google_work_agent.domain.plan.model import PlanStatusV1
 from google_work_agent.domain.results import CommandResult
 from google_work_agent.domain.run.model import RunCommand, RunStatusV1
+from google_work_agent.ports.connector.connector_failure import ConnectorOperationFailure
 from google_work_agent.ports.connector.contracts.google_workspace import (
     GoogleWorkspaceGatewayError,
 )
@@ -137,6 +138,7 @@ class WriteRecoveryCoordinator:
         return {
             **state,
             "__target__": "action_execution",
+            "__logical_target__": "action_execution",
             "workflow_phase": WorkflowPhase.ACTION_EXECUTION.value,
             "execution_summary": _execution_summary(
                 action_id=action.id,
@@ -187,7 +189,7 @@ class WriteRecoveryCoordinator:
                     attempt_id=attempt_id,
                     request_kind="verify_after_restart",
                 )
-            except GoogleWorkspaceGatewayError as error:
+            except (GoogleWorkspaceGatewayError, ConnectorOperationFailure) as error:
                 failure = self._execution_phase.handle_verification_error(
                     request=WriteExecutionPhaseRequest(run_id, action.id, action.version),
                     error=error,
@@ -202,6 +204,7 @@ class WriteRecoveryCoordinator:
                 return {
                     **state,
                     "__target__": "end",
+                    "__logical_target__": "end",
                     "workflow_phase": WorkflowPhase.VERIFICATION.value,
                     "__workflow_control__": {
                         "schema_version": 1,
@@ -325,6 +328,7 @@ class WriteRecoveryCoordinator:
         return {
             **state,
             "__target__": target,
+            "__logical_target__": target,
             "workflow_phase": (
                 WorkflowPhase.RECOVERY.value
                 if target == "end" or target == "recovery"
@@ -364,6 +368,7 @@ class WriteRecoveryCoordinator:
         return {
             **state,
             "__target__": target,
+            "__logical_target__": target,
             "workflow_phase": (
                 WorkflowPhase.RECOVERY.value
                 if target == "end" or target == "recovery"
@@ -395,6 +400,7 @@ class WriteRecoveryCoordinator:
         return {
             **state,
             "__target__": "end",
+            "__logical_target__": "end",
             "workflow_phase": WorkflowPhase.RECOVERY.value,
             "__workflow_control__": {
                 "schema_version": 1,

@@ -218,8 +218,12 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
             "github": ("repo",),
         },
         start_authorization_handlers_by_connector={
-            "google_workspace": StartAuthorizationHandler(credentials=provider, replay=operational_replay),
-            "github": StartAuthorizationHandler(credentials=github_provider, replay=operational_replay),
+            "google_workspace": StartAuthorizationHandler(
+                credentials=provider, replay=operational_replay
+            ),
+            "github": StartAuthorizationHandler(
+                credentials=github_provider, replay=operational_replay
+            ),
         },
         get_connection_status_handlers_by_connector={
             "google_workspace": GetConnectionStatusHandler(provider),
@@ -300,7 +304,9 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
             assert github_connected.json()["display_email"] == "octocat"
             assert github_connected.json()["granted_scopes"] == ["repo"]
 
-            unknown_connector = client.get("/api/v1/connections/not-installed/status", headers=headers)
+            unknown_connector = client.get(
+                "/api/v1/connections/not-installed/status", headers=headers
+            )
             assert unknown_connector.status_code == 404
 
             started = client.post(
@@ -333,6 +339,7 @@ def test_google_connection__api_flow_over__local_mcp_process(tmp_path: Path) -> 
                 "service_instance_id",
                 "connectors",
                 "llm_providers",
+                "local_models",
                 "component_circuits",
                 "active_run_budget",
                 "recovery_required",
@@ -410,7 +417,9 @@ class _GitHubCredentials:
             5,
         )
 
-    def reconcile_authorization_start(self, connector_id: str, operation_ref: str) -> OperationalReconcileResultV1:
+    def reconcile_authorization_start(
+        self, connector_id: str, operation_ref: str
+    ) -> OperationalReconcileResultV1:
         return OperationalReconcileResultV1("SAFE_TO_RETRY", None, None)
 
     def approve(self) -> None:
@@ -427,11 +436,15 @@ class _GitHubCredentials:
             (),
         )
 
-    def revoke_connection(self, connector_id: str, account_id: str, operation_ref: str) -> OAuthRevokeResult:
+    def revoke_connection(
+        self, connector_id: str, account_id: str, operation_ref: str
+    ) -> OAuthRevokeResult:
         self.connected = False
         return OAuthRevokeResult(1, False, True, "DISCONNECTED")
 
-    def reconcile_revoke_connection(self, connector_id: str, account_id: str, operation_ref: str) -> OperationalReconcileResultV1:
+    def reconcile_revoke_connection(
+        self, connector_id: str, account_id: str, operation_ref: str
+    ) -> OperationalReconcileResultV1:
         return OperationalReconcileResultV1("SAFE_TO_RETRY", None, None)
 
     def refresh_access(self, connector_id: str, account_id: str) -> str:

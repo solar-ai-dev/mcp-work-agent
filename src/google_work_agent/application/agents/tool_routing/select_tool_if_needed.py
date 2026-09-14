@@ -33,19 +33,23 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
-TOOL_SELECTION_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="tool-selection-v1",
-    json_schema={
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["schema_version", "route_id", "selected_tool_id"],
-        "properties": {
-            "schema_version": {"const": 1},
-            "route_id": {"type": "string"},
-            "selected_tool_id": {"type": "string"},
+
+def _bound_tool_selection_output_schema(
+    *, route_id: str, eligible_tool_ids: tuple[str, ...]
+) -> OutputSchemaDefinition:
+    return OutputSchemaDefinition(
+        schema_version="tool-selection-v1",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["schema_version", "route_id", "selected_tool_id"],
+            "properties": {
+                "schema_version": {"const": 1},
+                "route_id": {"const": route_id},
+                "selected_tool_id": {"enum": list(eligible_tool_ids)},
+            },
         },
-    },
-)
+    )
 
 
 def select_tool_if_needed(
@@ -70,7 +74,12 @@ def select_tool_if_needed(
         "tool_routing.select_tool_if_needed",
         manifest_path or default_prompt_manifest_path(),
     )
+    output_schema = _bound_tool_selection_output_schema(
+        route_id=route_id,
+        eligible_tool_ids=eligible_tool_ids,
+    )
     base_projection: dict[str, object] = {
+        "user_request": request.request_text,
         "route_candidate": {
             "route_id": route_id,
             "connector_id": connector_id,
@@ -86,10 +95,12 @@ def select_tool_if_needed(
             request.requested_mode,
             resolved_prompt_ref,
             base_projection,
-            TOOL_SELECTION_OUTPUT_SCHEMA,
+            output_schema,
         )
         selected = _validated_selection(
-            result.structured_output, eligible_tool_ids=eligible_tool_ids
+            result.structured_output,
+            route_id=route_id,
+            eligible_tool_ids=eligible_tool_ids,
         )
         if selected is not None:
             return selected, merge_provider_dispatch_usage(retry_budget)
@@ -114,14 +125,18 @@ def select_tool_if_needed(
                     detected_by="RUNTIME_DOMAIN_VALIDATOR",
                     runtime_disposition="RETRYABLE",
                     experiment_disposition="RUN_REVISION",
-                    affected_field_paths=["$.selected_tool_id"],
-                    failure_context_ids=["selected_tool_id is not a Registry-eligible candidate"],
+                    affected_field_paths=["$.route_id", "$.selected_tool_id"],
+                    failure_context_ids=[
+                        "selection must preserve route_id and choose a Registry-eligible tool"
+                    ],
                 ),
             },
-            TOOL_SELECTION_OUTPUT_SCHEMA,
+            output_schema,
         )
         selected = _validated_selection(
-            revised.structured_output, eligible_tool_ids=eligible_tool_ids
+            revised.structured_output,
+            route_id=route_id,
+            eligible_tool_ids=eligible_tool_ids,
         )
         if selected is None:
             raise ToolRouteValidationError(
@@ -130,10 +145,15 @@ def select_tool_if_needed(
         return selected, merge_provider_dispatch_usage(decision["run_budget"])
 
 
-def _validated_selection(value: object, *, eligible_tool_ids: tuple[str, ...]) -> str | None:
+def _validated_selection(
+    value: object,
+    *,
+    route_id: str,
+    eligible_tool_ids: tuple[str, ...],
+) -> str | None:
     if not isinstance(value, Mapping) or value.get("schema_version") != 1:
         return None
-    if not isinstance(value.get("route_id"), str) or not value.get("route_id"):
+    if value.get("route_id") != route_id:
         return None
     selected = value.get("selected_tool_id")
     return selected if isinstance(selected, str) and selected in eligible_tool_ids else None

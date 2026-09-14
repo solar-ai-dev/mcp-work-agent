@@ -43,16 +43,26 @@ def test_resource_routes__only_call_composition__injected_exact_handlers() -> No
 
 def test_resource_continuations_are__local_session_account__bound_and_expiring() -> None:
     query = _read(SRC / "application" / "use_cases" / "resource" / "list_resources.py")
-    containers = _read(
-        SRC / "application" / "use_cases" / "resource" / "list_task_lists.py"
-    ) + _read(SRC / "application" / "use_cases" / "resource" / "list_calendars.py")
-    store = _read(SRC / "application" / "use_cases" / "resource" / "opaque_continuation_access.py")
+    handlers = "".join(
+        _read(SRC / "application" / "use_cases" / "resource" / filename)
+        for filename in (
+            "list_task_lists.py",
+            "list_calendars.py",
+            "list_repositories.py",
+            "opaque_continuation_access.py",
+        )
+    )
+    port = _read(SRC / "ports" / "system" / "resource_continuation_port.py")
+    adapter = _read(SRC / "adapters" / "system" / "memory" / "resource_continuation.py")
+    composition = _read(SRC / "api" / "composition.py")
     assert "session_digest" in query and "account_id" in query
-    assert containers.count("session_digest") >= 2
-    assert containers.count("account_id") >= 2
-    assert "provider_page_token" in store
-    assert "expires_at_ms" in store
-    assert "LocalResourceContinuationStore" in containers
+    assert handlers.count("session_digest") >= 3
+    assert handlers.count("account_id") >= 3
+    assert "provider_page_token" in port and "provider_page_token" in adapter
+    assert "expires_at_ms" in adapter
+    assert "ResourceContinuationPort" in handlers
+    assert ".adapters." not in handlers
+    assert "InMemoryResourceContinuationAdapter(" in composition
 
 
 def test_selection_handle__has_one_issuer__and_resolver_authority() -> None:

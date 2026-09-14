@@ -9,39 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 
-type JsonValue = Any
+from google_work_agent.ports.connector.contracts import delivery_certainty
 
-
-class ResourceType(StrEnum):
-    GMAIL_THREAD = "gmail_thread"
-    GMAIL_MESSAGE = "gmail_message"
-    GMAIL_DRAFT = "gmail_draft"
-    TASK_LIST = "task_list"
-    TASK = "task"
-    CALENDAR = "calendar"
-    CALENDAR_EVENT = "calendar_event"
-    CALENDAR_FREEBUSY = "calendar_freebusy"
-    GITHUB_ISSUE = "github_issue"
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceSnapshot:
-    fixture_snapshot_id: str
-    resource_type: ResourceType
-    resource_id: str
-    parent_id: str | None
-    related_resource_ids: tuple[str, ...]
-    version: str
-    recovery_fingerprint: str | None
-    payload: dict[str, JsonValue]
-
-
-@dataclass(frozen=True, slots=True)
-class ResourcePage:
-    items: tuple[ResourceSnapshot, ...]
-    next_page_token: str | None
+DEFAULT_CALENDAR_ID = "primary"
+DEFAULT_TASK_LIST_ID = "@default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,12 +83,6 @@ class GoogleWorkspaceErrorCode(StrEnum):
     NO_RECOVERY_CANDIDATE = "NO_RECOVERY_CANDIDATE"
 
 
-class DeliveryCertainty(StrEnum):
-    NOT_SENT = "NOT_SENT"
-    MAY_HAVE_BEEN_SENT = "MAY_HAVE_BEEN_SENT"
-    SENT_RESPONSE_LOST = "SENT_RESPONSE_LOST"
-
-
 class GoogleWorkspaceGatewayError(RuntimeError):
     """Delivery-aware Google Workspace connector failure."""
 
@@ -135,11 +101,11 @@ class GoogleWorkspaceGatewayError(RuntimeError):
         self.mutated = mutated
         self.mcp_request_id = mcp_request_id
         self.delivery_certainty = (
-            DeliveryCertainty.NOT_SENT
+            delivery_certainty.DeliveryCertainty.NOT_SENT
             if not delivered
-            else DeliveryCertainty.SENT_RESPONSE_LOST
+            else delivery_certainty.DeliveryCertainty.SENT_RESPONSE_LOST
             if mutated
-            else DeliveryCertainty.MAY_HAVE_BEEN_SENT
+            else delivery_certainty.DeliveryCertainty.MAY_HAVE_BEEN_SENT
         )
 
 

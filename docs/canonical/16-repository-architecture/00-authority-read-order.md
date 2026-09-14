@@ -1,21 +1,22 @@
 # 00. Authority · Read Order
 
-**Normative detail of the current Repository Architecture Source.**
+**상태:** CANONICAL
 
-Read order:
+이 디렉터리는 `16 Repository Architecture`의 세부 구조 규칙이다. 제품 behavior는 01–15의 concern owner가 소유한다.
 
-1. Spec-to-code mapping
-2. Directory ownership
-3. Naming grammar
-4. Artifact taxonomy
-5. Dependency/import/export rules
-6. LangGraph/state ownership
-7. Connector/API/Persistence grammar
-8. Single-authority/compat policy
-9. Test/fixture/migration grammar
-10. Error/event/config naming
-11. Refactor playbook
-12. Enforcement
-13. Exception registry
+읽는 순서:
 
-Behavior remains owned by the applicable concern sources in 01–15 together with the Domain State Transition Contract and `04 Domain·DB` required persistence invariants where those concerns apply. The State Transition Test Matrix is normative verification authority for those contracts and implementation migrations do not independently define lifecycle behavior. If this detail conflicts with the current Repository Architecture Source page, the Source page wins.
+1. Directory ownership
+2. Naming grammar
+3. Artifact taxonomy
+4. Dependency/import/export rules
+5. LangGraph/state ownership
+6. Connector/API/Persistence grammar
+7. Single-authority/compat policy
+8. Test/fixture/migration grammar
+9. Error/event/config naming
+10. Refactor playbook
+11. Enforcement
+12. Exception registry
+
+파일·심볼·테스트의 현재 inventory는 Git과 코드 검색이 제공한다. 이 문서군은 spec-to-code snapshot이나 완료 ledger를 별도 권위로 유지하지 않는다.

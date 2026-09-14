@@ -1,36 +1,21 @@
 # 01-B. 정책 정의서
 
 > **Authority:** 안전·금지·승인 정책. 시스템·Domain·Interface 구현 세부는 `00 Project Source Guide`의 전문 owner를 따른다.  
-> **상태:** Draft v2.16 · **기준일:** 2026-09-05
+> **수정일:** 2026-09-07 · **상태:** 제품 정책 정리본 — 구현·출시 검증 완료를 뜻하지 않음
 
 ## 0. 사람이 먼저 볼 핵심 정책
 
-1. **읽기는 요청 범위 안에서 자동**, Write는 반드시 사용자 승인 후 실행한다.
-2. **LLM은 허용 여부를 최종 결정하지 않는다.** deterministic Policy·registered Tool Schema allowlist·Domain guard가 강제한다.
-3. Gmail 원문 삭제·반복 Event 전체 일괄 수정은 금지한다. Google Task 삭제는 정확한 대상·인자를 고정한 승인형 `DELETE`로 허용한다.
-4. Gmail SEND·Calendar Event DELETE·Task 완료·참석자 변경은 정확한 대상·인자를 고정해 승인 후 실행한다.
-5. `UNKNOWN_RESULT`는 재전송하지 않고 기존 결과를 조회한다.
-6. Source 본문은 비신뢰 데이터이며 Prompt Injection이 정책을 바꿀 수 없다.
+읽기는 허용된 요청 범위 안에서 자동 수행할 수 있지만, 모든 외부 Write에는 명시적인 사용자 승인이 필요하다. 사용자의 편의 설정이나 LLM 제안은 접근 권한·대상 무결성·승인을 대신하지 않는다.
+
+Gmail 원문 삭제와 반복 Event 전체 일괄 수정은 금지한다. GitHub는 현재 허용된 Issue 작업 범위를 넘겨 PR·저장소 관리 작업을 추측 실행하지 않는다. 결과가 불확실한 Write는 재전송하지 않고 기존 결과를 확인한다. Source 본문은 항상 비신뢰 데이터이며 실행 권한을 만들지 않는다.
 
 ## 1. 문서 목적
 
-이 문서는 Agent가 어떤 Connector 데이터를 읽을 수 있고, 어떤 Action을 제안·승인·실행할 수 있으며, 어떤 경우에 차단·경고·재질문해야 하는지 정의한다. 정책은 LLM Prompt가 아니라 일반 코드와 Tool Allowlist로 강제한다.
+이 문서는 **허용·금지·승인·개인정보·실행 안전의 경계**를 소유한다. 사용자가 할 수 있는 기능 목록, 화면 배치, API field 목록, SQL, Graph topology는 여기서 재정의하지 않는다.
 
-### Deterministic enforcement boundary
+정책은 일반 코드가 강제한다. LLM은 의미·후보를 제안할 수 있지만 정책 Override, 승인 유효성 또는 실행 성공을 확정할 수 없다. Schema 검증은 형식을, 정책 평가는 허용·확인 조건을, Domain guard는 상태·동시성·불변조건을 각각 담당한다. 한 검증의 통과로 다른 검증을 생략하지 않는다.
 
-Policy 판단은 Product LLM이 아니라 deterministic Application policy evaluation이 소유한다. Repository file/symbol은 16이 매핑하며 이 문서는 의미만 소유한다.
-
-- **Schema validation**: current registered Tool Input Schema의 field/type/closed-world 형식만 검사한다. 허용/금지 정책을 결정하지 않는다.
-- **Policy validation**: 이 문서의 allow/deny/confirmation-required 규칙을 current Action/Route/Source snapshot에 적용한다. Domain status를 직접 변경하지 않는다.
-- **Domain validation**: State Transition Contract의 source state/version/freshness/receipt/review gate를 검사한다. Policy를 새로 해석하지 않는다.
-- **LLM semantic judgement**: 사용자 의미·목표·후보 인자 생성만 담당하며 Policy allow/deny, Approval 유효성, Claim 가능 여부를 결정할 수 없다.
-
-Write Approval 진입 순서는 `Schema validation → Policy validation → Review freshness → Domain ApproveAction guard`이며 하나라도 실패하면 Approval을 만들지 않는다.
-
-정책은 두 층으로 구분한다.
-
-- **Core Policy:** Connector와 무관한 승인·무결성·Write·Verification·UNKNOWN_RESULT·Prompt Injection 안전 규칙
-- **Connector Policy:** Provider별 Resource·Scope·금지 Tool·중복/충돌·Verification 세부 규칙. P0에서는 Google Workspace의 Gmail·Tasks·Calendar 정책을 정의한다.
+공통 안전 규칙은 모든 등록 Connector에 동일하게 적용하고, Gmail·Tasks·Calendar·GitHub의 고유 제한만 각 절에서 정의한다. 기술적 강제 방법은 기존 보안·Domain·Interface 계약을 따른다. 이 문서 정리는 보호된 실행 계약이나 실제 권한을 자동 변경하지 않는다.
 
 ## 2. 정책 우선순위
 
@@ -43,7 +28,7 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 5. 사용자 설정
 6. Agent 추천
 
-메일·Task·Event 본문에 포함된 지시는 이 정책보다 우선할 수 없다.
+메일·Task·Event·Issue 본문에 포함된 지시는 이 정책보다 우선할 수 없다.
 
 ## 3. 위험 등급
 
@@ -58,29 +43,24 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 
 ### 4.1 허용되는 읽기 Tool
 
-- Gmail Thread·Message 검색과 조회
-- Google Tasks List·Task 조회
-- Google Calendar List·Event 조회
-- Calendar FreeBusy 조회
-- 생성 결과 재조회
+허용된 계정·범위의 Gmail Thread/Message, Tasks List/Task, Calendar List/Event/FreeBusy, GitHub 접근 가능 저장소와 Issue를 조회할 수 있다. 실행 결과의 재조회도 같은 Connector 접근 경계를 따른다. 등록되지 않은 Tool이나 권한 밖 데이터는 허용 목록에 있다고 추측하지 않는다.
 
 ### 4.2 승인 후 허용되는 쓰기 Tool
 
-- Gmail Draft 생성·수정
-- Gmail 실제 전송 (`gmail_send`, `SEND`)
-- Google Task 생성·허용 필드 수정·완료 상태 변경·삭제
-- Calendar Event 생성·허용 필드 수정·삭제 (`calendar_delete_event`, `DELETE`)
-- Calendar 참석자 추가·수정
+현재 등록 계약이 지원하는 다음 변경만 승인 후 허용한다.
+
+- Gmail Draft 생성·수정, 새 메일 전송, 기존 Thread Reply.
+- Google Task 생성·허용 필드 수정·완료 상태 변경·삭제.
+- Calendar Event 생성·허용 필드 수정·삭제 및 참석자 변경.
+- GitHub Issue 생성·허용 필드 수정·닫기·다시 열기.
+
+이 목록은 정책상 허용 범위이지 각 작업의 구현·Live 검증 완료 선언이 아니다. 실제 배포는 해당 Tool의 계약·권한·출시 검증을 충족해야 한다.
 
 ### 4.3 금지 Tool
 
-- Gmail Message·Thread 원문 삭제
-- Gmail Label·설정 변경
-- 반복 Event 전체 일괄 수정
-- 승인·Policy·Verification을 우회하는 System/DB 직접 변경
-- Connector MCP 경계 밖에서 외부 Provider API/SDK를 직접 호출하는 경로. 외부 Connector I/O의 직접 제품 caller는 Application의 결정적 use-case/Application operation이며, Application은 내부 structural `SignedToolRegistry`로 `ValidatedConnectorToolBindingV1`을 만든 뒤 **외부 I/O에는 `ConnectorReadPort | ConnectorWritePort | OAuthCredentialPort` 같은 abstract Connector Application Port에만 의존한다.** Core-side Connector Adapter는 그 binding과 `ConnectorRuntimeRegistry + MCPClientPort`를 사용해 정확한 Connector MCP Server로 dispatch한다. React·FastAPI Route·LangGraph adapter/Agent·Domain은 concrete Connector/MCP path나 `ConnectorRuntimeRegistry`를 직접 호출하지 않는다. Provider Credential/API Adapter는 해당 Connector MCP Server 내부에서만 소유하며 P0 Google Workspace도 동일하다.
+Gmail Message/Thread 원문 삭제, Gmail Label/설정 변경, 반복 Event 전체 일괄 수정, 미등록 GitHub PR·저장소 mutation을 허용하지 않는다.
 
-금지 Tool은 UI에서 숨기는 것만으로 끝내지 않고 MCP Server에 등록하지 않는다.
+승인·정책·검증을 우회하는 DB/System 직접 변경이나 Connector MCP 경계 밖의 Provider 접근도 금지한다. 금지 Tool은 화면에서 숨기는 데 그치지 않고 실행 가능한 등록·dispatch 대상에서 제외한다. 구체적인 계층·Port 배치는 Repository Architecture를 따른다.
 
 ## 5. 승인 정책
 
@@ -97,23 +77,17 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 
 ### POL-APP-003 승인 내용
 
-승인 화면은 다음을 표시해야 한다.
-
-- Tool과 Action 유형
-- 변경 전·후 값
-- 대상 Connector Resource
-- 근거 Evidence
-- 중복·충돌·Evidence 기반 업무 마감 위험
-- 예상 실행 결과
+승인 대상의 변경 종류, Connector와 정확한 Resource, 변경할 업무 값, 필요한 근거·위험·외부 영향과 예상 결과를 사용자가 확인할 수 있어야 한다. 단순히 ‘계속’이라는 버튼을 누른 사실만으로 숨겨진 변경 범위까지 승인받았다고 해석하지 않는다. 카드 배치와 상세 펼침은 UI concern이다.
 
 ### POL-APP-004 승인 무결성
 
-- Arguments를 Canonical JSON으로 변환한다.
-- SHA-256 Hash를 생성하고 Approval Snapshot에 Action Version·Tool·Arguments·Source Snapshot·Policy/Tool Schema Version과 함께 고정한다.
-- 실행 전 Preflight/Claim에서 현재 Action과 Approval Snapshot의 Hash·Version·정책·Source 조건을 재검증한다.
-- Domain Claim Commit 이후 서버가 발급한 1회용 `claim_token`은 Action·Approval·Attempt·Tool·실제 Execution Arguments Hash·Service Instance를 바인딩하며 MCP가 실제 수신 인자와 함께 재검증한다. **Claim Commit과 Token 발급은 필요조건일 뿐 외부 Write 권한이 아니다.**
-- Application은 current ClaimContext binding과 `cancel_intent_active=false`를 검증해 `BeginExecutionAttempt`를 적용하고, 해당 Command/Receipt/Audit가 `applied=true`로 Commit되어 current Attempt가 `EXECUTING`인 경우에만 MCP Write를 호출한다. 불일치·conflict·cancel intent이면 외부 Write는 0이고 필요한 경우 Action 수정·새 Approval 또는 cancel resolution으로 돌아간다.
-- 기존 Resource를 대상으로 하고 immutable container/resource binding을 포함하는 Action은 현재 persisted target의 `parent_resource_id` 또는 Connector contract가 정한 동등한 container component와 bound container identity가 결정적으로 일치해야 한다. 불일치는 Approval admission과 Preflight 실행 가능성을 차단하며 Connector I/O는 0이다. Provider 조회는 이미 검증된 target의 freshness observation일 뿐 identity 일관성을 새로 성립시키는 authority가 아니다. 이 규칙은 connector-neutral하며 GitHub 전용 Approval·Preflight·Claim 정책을 만들지 않는다.
+승인은 당시의 Action revision, 대상 Connector/Resource, 업무 인자, 근거·정책·Tool 계약에 결합한다. 실행 직전까지 그 결합과 최신성·실행 가능 상태를 검증해야 한다.
+
+승인 이후 업무 값·대상·dependency가 달라지면 이전 승인을 재사용하지 않는다. 자연어 수정도 예외가 아니며 재검토·재승인을 거친다. 화면 요약과 저장된 승인 대상이 다르면 실행을 허용하지 않는다.
+
+실행권 예약·Claim Token 발급만으로 외부 Write를 허용하지 않는다. 기존 실행 admission이 실제 적용된 동일 Attempt에만 dispatch를 허용한다. 이미 존재하는 Resource와 bound container/repository가 모순되면 Provider 조회·Write 전에 차단한다. Provider 조회는 틀린 대상 binding을 사후 정당화하는 수단이 아니다.
+
+서명·Hash·Nonce·UoW·상태 전이의 상세는 기존 실행·보안 계약이 소유하며 여기서 별도 변형을 만들지 않는다.
 
 ### POL-APP-005 승인 만료
 
@@ -134,7 +108,7 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 
 ### POL-EVD-002 기존 Resource 수정
 
-기존 Draft·Task·Event 수정은 다음 중 하나가 필요하다.
+기존 Draft·Task·Event·Issue 수정은 다음 중 하나가 필요하다.
 
 - 사용자가 Resource를 직접 지정함
 - 서로 독립적인 Evidence 2개 이상
@@ -142,7 +116,7 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 
 ### POL-EVD-003 낮은 신뢰도
 
-근거가 부족하거나 후보가 복수이면 실행 가능한 Action으로 만들지 않고 제안 또는 확인 질문으로 전환한다.
+조회 가능한 모호성은 허용된 bounded 검색으로 먼저 확인한다. 단, 근거가 약한 후보·별칭·추정 날짜를 확정된 identity나 업무 사실로 승격하지 않는다. 복수의 유효 후보가 남거나 안전한 실행에 필수인 값이 불명확하면 사용자 확인 또는 차단이 필요하다. 부분 READ 답변 허용은 미해결 WRITE 허용이 아니다.
 
 ## 6-A. Run Context 격리 정책
 
@@ -159,9 +133,7 @@ Write Approval 진입 순서는 `Schema validation → Policy validation → Rev
 
 ### POL-GML-001 읽기 범위
 
-- 사용자 요청과 관련된 Thread·Message만 조회한다.
-- 기간·사람·제목·Resource ID를 우선 사용한다.
-- 필요 이상으로 전체 메일함을 조회하지 않는다.
+사용자의 업무 의미에 관련된 Thread/Message만 조회한다. 사람·기간·정확한 제목이나 ID는 명시된 의미를 유지한다. 추상 개념을 찾기 위한 bounded 검색 표현 변경은 허용하지만, 그것이 계정·Source·대상 범위 확대에 대한 동의를 만들지는 않는다. 전체 메일함의 무제한 조회는 허용하지 않는다.
 
 ### POL-GML-002 Draft 생성
 
@@ -217,14 +189,9 @@ Task 완료 상태 변경과 Task 삭제는 정확한 Task 대상과 사용자 �
 
 ### POL-CAL-001 Event 생성 조건
 
-작업 Event 생성에는 다음이 필요하다.
+Event의 대상 Calendar, 시작·종료 또는 확정 가능한 소요시간, 배치 기준, 필요한 충돌 검사 결과가 있어야 한다. 명시된 시작·종료로 소요시간을 계산할 수 있으면 같은 값을 다시 질문할 이유가 없다. 값이 없거나 상충해 안전하게 결정할 수 없으면 확인한다.
 
-- 예상 소요시간
-- 업무 마감 또는 배치 기준
-- 대상 Calendar
-- 충돌 검사 결과
-
-예상 소요시간이 없으면 사용자에게 질문한다.
+충돌 조회 실패를 ‘충돌 없음’으로 간주하지 않는다. 메일 수신일이나 미해결 날짜·인물을 행사일·참석자로 확정해 실행하지 않는다.
 
 ### POL-CAL-002 Busy 판정
 
@@ -243,7 +210,7 @@ Tentative는 경고로 처리하고, Declined 또는 Free Event는 Busy에서 �
 
 ### POL-CAL-004 작업 시간
 
-초기 기본값은 평일 09:00~18:00이며 사용자가 Settings의 `working_day_start_local`, `working_day_end_local`, `include_weekends`로 변경할 수 있다. 주말은 기본 제외한다. 일정 앞뒤 Buffer는 `calendar_buffer_minutes`, timezone 해석은 persisted `timezone`을 사용하며 exact Settings meaning은 10, wire는 07이 소유한다.
+일정 자동 배치는 제품 고정 timezone `Asia/Seoul`과 사용자가 설정한 업무 시간·주말·Buffer를 적용한다. 초기 기준은 평일 09:00~18:00, 주말 제외다. 명시된 사용자 시각을 편의상 다른 시각으로 몰래 바꾸지 않는다.
 
 ## 10. 중복·충돌 정책
 
@@ -257,11 +224,31 @@ Tentative는 경고로 처리하고, Declined 또는 Free Event는 Busy에서 �
 - 명확한 중복도 사용자가 중복 사실을 인지하고 동일 Resource 추가 생성을 명시적으로 요구한 경우 재확인·승인 후 허용 가능
 - 금지 작업과 승인 무결성 위반은 Override 불가
 
+## 10-A. Connector 사용 전제 정책
+
+### POL-CON-001 Core와 업무 연결의 분리
+
+Google Workspace는 P0 핵심 Connector지만 Google·GitHub Credential의 존재는 Core startup/readiness·메인 UI·기본 Conversation/Run 생성의 전역 허용 조건이 아니다. 업무 연결을 하지 않은 이유로 앱 자체를 사용 불가로 판정하거나 Google 기능을 제품에서 제거하지 않는다. Local Session·DB 무결성·필수 실행 파일/계약 검사는 이와 별개로 유지한다.
+
+### POL-CON-002 초기 사용 불가 요청의 종료
+
+현재 요청에 필요한 Connector만 확인한다. 필요한 연결이 처음부터 없거나 App 설치·repository 접근·필수 permission이 준비되지 않았으면 해당 업무 처리를 진행하지 않고 조치 안내와 함께 현재 요청을 종료한다. 연결 후 사용자의 재전송은 새로운 요청이다. 이 상태를 자료 없음이나 실행 성공으로 처리하지 않는다.
+
+초기 연결을 기다리는 durable Run, AUTH_WAITING 상태, 인증 대기 checkpoint, callback 기반 자동 resume, background App 설치 polling/watcher를 만들지 않는다. Settings의 정상 Device Flow 인증 polling은 계정 연결 절차이며 중단 Run을 감시·재개하는 기능이 아니다. 필요한 연결의 실패를 무관한 정상 Connector로 전파하지 않는다.
+
+### POL-CON-003 실행 중 인증 만료의 구분
+
+필요한 연결을 갖추고 정상 실행 중이던 Run의 Credential 만료·갱신 실패는 기존 REAUTH_REQUIRED·safe resume 계약을 유지한다. OAuth callback은 특정 Run을 자동 재개하지 않는다. 이미 수행했거나 수행했을 수 있는 외부 효과는 기존 Verification/Recovery로 처리하며, 초기 미연결 종료 규칙으로 in-flight 사실을 덮어쓰지 않는다.
+
+### POL-CON-004 권한 밖 접근과 실패 설명
+
+연결을 안내하는 동안 권한 밖 repository를 탐색하거나 다른 계정·저장소로 자동 대체하지 않는다. 연결 상태·권한·App 설치 여부와 현재 사용자의 필요한 조치를 허용된 metadata로만 설명한다. 조회가 수행되지 않은 상태를 정상 빈 결과로 표현하지 않는다.
+
 ## 11. Google Workspace Connector OAuth 정책
 
 ### POL-OAUTH-001 사용자 로그인 방식
 
-사용자는 자신의 Google Cloud 프로젝트나 OAuth Client JSON을 준비하지 않는다. 앱은 개발팀이 소유한 Desktop OAuth Client를 사용하고 UI에는 `Google로 로그인` 버튼만 제공한다. 다만 계정 인증만으로는 충분하지 않으며 Gmail·Tasks·Calendar Scope 동의가 함께 완료되어야 한다.
+사용자는 자신의 Google Cloud 프로젝트나 OAuth Client JSON을 준비하지 않는다. 앱은 개발팀이 소유한 Desktop OAuth Client를 사용하고 UI에는 `Google로 로그인` 버튼만 제공한다. Google 연결 선택은 앱 진입의 전제와 구분한다. Google Workspace를 사용할 때는 계정 인증뿐 아니라 필요한 Gmail·Tasks·Calendar Scope 동의가 완료되어야 한다.
 
 ### POL-OAUTH-002 OAuth 프로젝트 분리
 
@@ -292,7 +279,7 @@ Tentative는 경고로 처리하고, Declined 또는 Free Event는 Busy에서 �
 
 P0 OAuth permission은 **구현된 기능에 필요한 최소 집합만 요청**하고, required permission 일부가 거절되면 연결을 완료 처리하지 않는다.
 
-Exact provider Scope 문자열과 Credential/Auth realization은 `09 Security §P0 Scope`가 소유하고, Tool별 required Scope mapping은 `07 Interface`가 소비한다. Policy 문서에서 같은 Scope 목록을 별도 유지하지 않는다. Gmail Send를 포함한 모든 Write는 Scope 보유 여부와 무관하게 본 문서의 승인·Tool Allowlist·실행 무결성 정책을 그대로 통과해야 한다.
+Exact provider Scope 문자열과 Credential/Auth realization은 `09 Security`의 Connector credential·resource authorization contract가 소유하고, Tool별 required Scope mapping은 `07 Interface`가 소비한다. Policy 문서에서 같은 Scope 목록을 별도 유지하지 않는다. Gmail Send를 포함한 모든 Write는 Scope 보유 여부와 무관하게 본 문서의 승인·Tool Allowlist·실행 무결성 정책을 그대로 통과해야 한다.
 
 ### POL-OAUTH-007 Gmail 데이터 외부 처리
 
@@ -302,41 +289,42 @@ API LLM 모드에서 Gmail Context를 외부 Provider로 전송하는 것은 사
 
 ### POL-LLM-001 CPU-only
 
-CPU-only 또는 GPU 기준 미달 PC는 API_LLM으로 고정한다. CPU Local LLM은 지원하지 않는다.
+Local AI readiness는 지원 OS·architecture, CPU·RAM, 실제 Ollama와 선택된 승인 모델 검사로 구성된 CPU profile 또는 기존 GPU·VRAM 조건까지 포함한 GPU profile 중 하나가 통과하면 충족한다. GPU 부재·VRAM 부족만으로 CPU profile을 통과한 Local 실행을 차단하지 않는다. Local이 준비되지 않았다고 Gemini로 자동 전환하지 않는다.
 
-### POL-LLM-002 P0 GPU 사용 가능 환경
+### POL-LLM-002 P0 Local 사용 가능 환경
 
-P0에서 검증된 GPU 환경은 AUTO, LOCAL_GPU, API_LLM을 모두 제공한다. Local 모드는 후속 기능이 아니라 P0 제품 기능이다.
+Settings의 사용자 실행 방식은 `LOCAL_GPU`(Local AI)와 `API_LLM`(Gemini)뿐이다. 사용자용 AUTO는 없다.
 
-### POL-LLM-003 AUTO fallback
+### POL-LLM-003 Runtime 간 자동 fallback 금지
 
-AUTO는 다음 기술 오류에서 API로 최대 1회 fallback할 수 있다.
-
-- Local Runtime 연결 실패
-- 모델 없음 또는 로드 실패
-- GPU OOM
-- Timeout
-- 반복된 Structured Output 실패
-
-단순한 답변 품질 불만이나 낮은 자신감만으로 자동 fallback하지 않는다.
+Gemini 미준비를 Local로, Local 미준비·OOM·Timeout·Structured Output 실패를 Gemini로 자동 전환하지 않는다. 선택한 runtime을 사용할 수 없으면 해당 요청을 중단하고 설정·연결 안내를 제공한다.
 
 ### POL-LLM-004 명시 모드
 
-사용자가 LOCAL_GPU 또는 API_LLM을 명시 선택하면 동의 없이 다른 모드로 전환하지 않는다.
+사용자가 Local AI 또는 Gemini를 선택하면 동의 없이 다른 runtime으로 전환하지 않는다.
 
 ### POL-LLM-005 Ollama 고정
 
 제품의 Local LLM Runtime은 Ollama로 고정한다. Release Config에 포함되지 않은 Runtime은 제품 Runtime/UI authority가 아니며 제품 UI에 노출하지 않는다.
 
-### POL-LLM-006 모델 선택
+### POL-LLM-006 모델 선택·Tier
 
-제품 기본 Model은 current Release Gate를 통과해 승인된 구성만 사용한다. 일반 사용자 UI에 임의 모델명 입력이나 평가용 후보 선택을 노출하지 않는다.
+지원 Local 모델은 `qwen3.5:9b`, `qwen3.5:4b`뿐이다. 업무 Agent와 임의 사용자 문자열은 model ID/digest를 정하지 않는다. WORKER/REASONING 책임 class가 서로 다른 모델을 자동 선택하지 않는다.
+
+검사에서 지원 모델이 하나만 있으면 그 모델을 자동 사용한다. 이전 선택 모델이 사라져도 다른 지원 모델 하나가 있으면 별도 확인 없이 전환한다. 두 모델이 있고 유효한 기존 선택이 없을 때만 사용자 선택이 필요하다. inference 실패 때마다 모델을 교대하거나 진행 중 Run binding을 바꾸지 않는다.
 
 ### POL-LLM-007 배포 프로필
 
-- `API_ONLY`: Ollama·GPU·모델 파일 불필요. CPU-only와 GPU 없는 팀원의 기본 프로필.
-- `LOCAL_CAPABLE`: Ollama Adapter와 Local 설정을 포함. 검증된 GPU에서만 Local 기능 활성화.
+- `API_ONLY`: Ollama·GPU·모델 파일 없이 API LLM만 사용하는 프로필.
+- `LOCAL_CAPABLE`: CPU 또는 GPU 환경의 Ollama 상태·설치 모델 검사와 Local 설정을 포함한다. Local readiness가 확인된 경우에만 Local 기능을 활성화한다.
 - 두 프로필은 동일한 LangGraph, Tool Schema, Policy, Test Suite를 사용한다.
+
+### POL-LLM-008 Local Runtime 비개입
+
+- 제품은 Ollama 설치, model pull, download/provisioning, 설치 Wizard를 제공하지 않는다.
+- Browser·Prompt·Connector Source가 임의 URL, shell argument, model tag 또는 digest를 실행 authority에 전달할 수 없다.
+- 제품은 사용자 동의 없이 모델을 설치·삭제하거나 shared Ollama를 update·종료·제거하지 않는다.
+- 모델이 없으면 안내만 제공하며 Core UI와 기존 이력 접근을 차단하지 않는다.
 
 ## 13. API LLM 개인정보 정책
 
@@ -352,7 +340,7 @@ API LLM을 사용하면 선택된 업무 Context가 외부 Provider로 전송될
 
 ### POL-API-003 동의
 
-세션 또는 설정에서 API 전송 동의를 받고, 각 Run에서 전송 Source와 범위를 요약한다.
+외부 LLM 호출에는 저장된 외부 전송 동의가 필요하다. API Key 등록·연결 시험·API 모드 선택은 업무 자료 전송 동의를 대신하지 않는다. 동의 철회 이후 새 외부 추론을 시작하지 않는다. Run별 최소 전송 범위는 별도로 고지한다. exact 전송 scope publish 순서는 보안·Interface 계약을 따른다.
 
 ## 14. Credential 정책
 
@@ -369,13 +357,13 @@ Credential, Authorization Header, Token, API Key 패턴은 로그 기록 전에 
 
 ### POL-SEC-003 연결 해제
 
-Google 연결 해제 또는 API Key 삭제 시 OS Keyring에서 해당 Secret을 삭제한다.
+Google/GitHub 연결 해제와 API Key 삭제는 해당 credential의 로컬 저장·세션 사용을 해제한다. 다른 Connector의 credential을 삭제하거나 정상 연결을 실패로 만들지 않는다. 계정 변경 뒤 이전 계정의 Resource allowlist와 접근 권한을 재사용하지 않는다. Provider revoke 가능 여부와 로컬 폐기를 구분한다.
 
 ## 15. Prompt Injection 정책
 
 ### POL-PI-001 Source 비신뢰
 
-메일·Task·Event 본문은 모두 비신뢰 데이터로 취급한다.
+메일·Task·Event·Issue 본문과 그 안의 링크는 모두 비신뢰 데이터로 취급한다.
 
 ### POL-PI-002 지시 무시
 
@@ -406,19 +394,21 @@ System Policy, 사용자 요청, Source Context를 Prompt에서 명확히 분리
 
 ### POL-EXE-003 재시도
 
-일시적 Google API 오류만 제한적으로 재시도한다. Policy 오류, 승인 오류, Schema 오류는 자동 재시도하지 않는다.
+현재 Connector 계약이 재시도를 허용하는 일시 오류만 제한적으로 재시도한다. Policy·승인·Schema·identity 오류를 반복 호출로 해결하지 않는다. Write 재시도는 전달 확실성 및 새 승인/Attempt 요건을 따라야 하며 일반 READ retry와 혼용하지 않는다.
 
 ## 17. 검증 정책
 
 ### POL-VER-001 필수 검증
 
-모든 쓰기 Action은 실행 직후 대상 Resource를 GET으로 재조회한다.
+모든 외부 Write는 Effect에 맞는 동일 Connector의 독립적인 재조회로 검증한다. 생성·수정은 실제 대상 비교, 삭제는 대상 부재/삭제 상태, 전송은 전송 결과 조회로 확인한다. 단순 dispatch 응답이나 UI 전환은 검증 완료 근거가 아니다. 전송 기록 확인을 수신자의 읽음·확인으로 과장하지 않는다.
 
 ### POL-VER-002 비교 기준
 
-- expected와 actual을 필드별 비교
-- 공백·줄바꿈·Timezone·초 단위는 정규화 가능
-- 대상, 제목, 본문 의미, Task 예정일, Event 시작·종료 시간 등 핵심 값 차이는 MISMATCH다. 실제 업무 마감은 Google Task `due` 비교값으로 대체하지 않는다.
+승인 당시의 expected와 실제 actual을 독립적으로 비교한다. 표현상의 공백·줄바꿈·시간대 정규화는 가능하지만 업무 의미를 바꾸지 않는다. 대상·제목·본문 의미·Task 예정일·Event 시간·GitHub Issue의 승인된 변경 내용이 다르면 mismatch다. 실제 결과에 맞춰 expected를 사후 수정해서 통과시키지 않는다. 부분 UPDATE는 승인된 변경 필드의 의미로 비교한다.
+
+Task CREATE의 비교 범위는 승인한 Task List, 제목, 메모, 예정일, 완료 상태이며 메모·예정일을 지정하지 않은 경우도 그 부재를 확인한다. 별도의 승인된 상태 변경이 없으면 새 Task의 상태는 미완료여야 한다. 재조회한 Task identity는 실행 결과의 ResourceRef와 일치해야 한다. 기존 persisted expected가 일부 필드를 생략했더라도 비교를 생략하지 않고 immutable Approval arguments에서 동일한 deterministic expected projection을 도출한다. Provider actual은 expected 도출에 사용하지 않는다. Task UPDATE는 대상 identity와 승인한 변경 필드만 비교한다.
+
+Calendar CREATE도 immutable Approval arguments에서 대상 Calendar, 제목, 시작·종료, description, attendees의 expected를 도출한다. 생략한 description과 attendees는 각각 빈 내용·빈 목록으로 비교하고, 생성 결과는 취소되지 않은 confirmed Event여야 한다. 재조회 Event identity는 실행 결과 ResourceRef와 일치해야 한다. Calendar UPDATE는 대상 identity와 승인한 변경 필드만 비교한다. 시간대 표기가 달라도 같은 instant는 같지만 서로 다른 instant를 같은 값으로 취급하지 않는다.
 
 ### POL-VER-003 불일치 처리
 
@@ -426,18 +416,15 @@ Mismatch를 자동 수정하지 않고 사용자에게 차이와 Recovery Action
 
 ### POL-VER-004 MISMATCH Recovery 선택
 
-P0에서 Verification `MISMATCH`를 해소하는 사용자 선택은 다음 두 가지로 제한한다.
+현재 결과 유지와 교정 계획 생성은 기존 Recovery 계약이 허용한 상태에서만 선택할 수 있다. 현재 결과 유지는 실제 상태·mismatch 기록을 보존하고 추가 Write 없이 부분 결과로 종료한다. 교정 계획은 최신 실제 상태를 근거로 새 계획·검토·승인·Attempt·Verification을 요구한다.
 
-- `ACCEPT_PARTIAL`: 현재 Google 실제 상태와 기존 `MISMATCH`를 보존하고 추가 Write 없이 종료한다. 미실행 Action은 취소 처리하며 Run은 `COMPLETED`, 결과 분류는 `PARTIAL`이다.
-- `CREATE_CORRECTIVE_PLAN`: 실제 Google 상태를 최신 Source Snapshot으로 재조회하고 같은 Run에서 새 Plan Revision을 만든다. 기존 MISMATCH Action·Approval·Attempt·Verification을 재사용하지 않는다.
-
-교정 Write는 반드시 새 Domain Validation → 새 Approval → 새 `ClaimExecution` → ClaimContext 구성 → `BeginExecutionAttempt(applied=true)` → external Write → 새 Verification 경계를 통과한다. 기존 MISMATCH Action을 `EXECUTING`으로 되돌리거나 자동 수정·자동 Rollback하지 않는다. 전체 Run 중단은 Recovery 선택이 아니라 별도 Cancel Command로 처리한다.
+기존 mismatch Action을 재실행하거나 자동 수정·rollback하지 않는다. Run 전체 취소는 별도 취소 의미이며 현재 결과 유지와 혼동하지 않는다. 정확한 허용 resolution/state matrix는 Domain State Transition Contract가 소유한다.
 
 ### POL-VER-005 Write 전달 확실성
 
 Write 실패 분류는 Exception 이름이 아니라 외부 시스템 전달 가능성을 기준으로 한다.
 
-- `NOT_SENT`: Google 변경이 발생하지 않았음을 확정할 수 있는 경우에만 `FAILED` 후보가 된다.
+- `NOT_SENT`: 외부 변경이 발생하지 않았음을 확정할 수 있는 경우에만 `FAILED` 후보가 된다.
 - `MAY_HAVE_BEEN_SENT`: 요청이 전달됐을 가능성이 있으면 `UNKNOWN_RESULT`로 처리한다.
 - `SENT_RESPONSE_LOST`: 요청 전달 후 응답만 유실된 경우 `UNKNOWN_RESULT`로 처리한다.
 
@@ -456,7 +443,7 @@ P0의 persisted `retention_days`는 **기본 30일, 허용 범위 1..30일**이�
 | Audit Log | 90일 고정 | **아니오** | 제품 데이터 삭제 뒤에도 업무 원문 없이 최소 식별·상태만 유지 |
 | Sidebar page/batch·opaque Local API continuation·Calendar Month cache | React Client Session Cache, 세션 종료 시 삭제 | 아니오 | 세션 폐기 |
 | Agent 검색 중간 후보 | 현재 Run 메모리, Run 종료 시 삭제 | 아니오 | Run 종료 시 폐기 |
-| Gmail 전체 원문 | 영구 저장하지 않음 | 아니오 | 해당 없음 |
+| Gmail·Issue 전체 원문 | 영구 저장하지 않음 | 아니오 | 해당 없음 |
 | Task·Event 상세 원문 | 기본적으로 영구 저장하지 않음 | 아니오 | 해당 없음 |
 | Google Refresh Token | OS Keyring | 아니오 | 연결 해제/Uninstall 정책 |
 | Google Access Token | Connector MCP Credential Provider process memory만 | 아니오 | process/session 종료 시 폐기 |
@@ -464,7 +451,7 @@ P0의 persisted `retention_days`는 **기본 30일, 허용 범위 1..30일**이�
 
 **Purge 보호 규칙:** nonterminal Run, active Confirmation/Reauth/Recovery, replay에 필요한 Command Receipt, 아직 보존 대상인 child를 가진 parent는 retention cutoff가 지났다는 이유만으로 먼저 삭제하지 않는다. Conversation은 retained Message/Run이 모두 정리되고 open Run이 0일 때만 삭제한다. Audit 90일은 `retention_days`로 줄이거나 늘리지 않는다. 정확한 timestamp/cascade/UoW realization은 04가 이 Policy를 그대로 소비한다.
 
-Sidebar page/batch·opaque Local API continuation·Calendar Month cache는 React Client Session Cache에, Agent 검색 중간 후보는 Python Run 메모리에만 유지한다. Google Workspace 목록 전체를 SQLite에 동기화하거나 상시 복제하지 않는다.
+Sidebar page/batch·opaque Local API continuation·Calendar Month cache는 React Client Session Cache에, Agent 검색 중간 후보는 Python Run 메모리에만 유지한다. 외부 업무 자료 목록 전체를 SQLite에 동기화하거나 상시 복제하지 않는다. Activity 이력을 이유로 원문·미사용 후보의 보존 범위를 늘리지 않는다.
 
 ## 19. 로그·감사 정책
 
@@ -486,32 +473,30 @@ Sidebar page/batch·opaque Local API continuation·Calendar Month cache는 React
 - 불필요한 전체 Gmail 원문
 - OS·GPU 고유 식별자
 
-## 21. Policy 결과 유형
+## 21. 정책·안전 결과의 의미
 
 | 결과 | 의미 |
 | --- | --- |
-| ALLOW | 자동 읽기 또는 승인된 쓰기 실행 가능 |
+| ALLOW | 정책상 허용. WRITE의 승인·상태·실행 admission 검증을 대신하지 않음 |
 | REQUIRE_APPROVAL | 사용자 승인 필요 |
 | REQUIRE_CONFIRMATION | 모호성·경고에 대한 사용자 확인 필요 |
 | BLOCK | 정책상 실행 금지 |
 | EXPIRED | 승인 또는 Credential 상태 만료 |
 | MISMATCH | 실행 결과가 승인 내용과 다름 |
 
-## 22. Google Source 조회·메모리 캐시 정책
+## 22. Source 조회·메모리 캐시 정책
 
 ### POL-SRC-001 호출 위치
 
-Google Workspace API는 사용자 PC의 로컬 MCP Server가 사용자 OAuth Credential로 호출한다. React Frontend는 Google Credential과 Google API를 직접 다루지 않으며 별도의 원격 동기화 서버나 Google 데이터 저장 서버를 두지 않는다.
+외부 업무 데이터는 로컬 Connector MCP 경계를 통해 현재 사용자의 유효 credential로 조회한다. Frontend가 Provider credential이나 외부 API를 직접 다루는 우회 경로, 별도의 원격 데이터 동기화 서버는 허용하지 않는다.
 
 ### POL-SRC-002 요청 진입 방식
 
-- `AGENT_SEARCH`: 사용자의 Query, 날짜·기간, 사람·이메일, Keyword 또는 복합 요구사항을 구조화해 Source-native 검색을 수행한다.
-- `RESOURCE_SELECTED`: 사용자가 사이드바에서 선택한 하나 이상의 Resource를 초기 Context로 사용한다.
-- 두 방식은 Context 구성 이후 동일한 분석·계획·승인·실행·검증 정책을 적용한다.
+검색형 요청과 사용자가 Resource를 선택한 요청에 같은 접근·개인정보·승인 정책을 적용한다. 화면에 보인 이력이나 선택 label만으로 새로운 계정·Source 접근 권한이 생기지 않는다.
 
 ### POL-SRC-003 사이드바 목록
 
-Sidebar의 표시 순서·기본 범위·Month View·페이지 presentation은 `01-A Functional`과 `02 UI·UX`, wire/continuation semantics는 `07 Interface`가 소유한다. Policy는 사용자가 허용한 Source·기간·계정 범위를 벗어난 조회를 금지하고, Browser가 Provider raw continuation을 생성·해석·수정하지 못하게 한다.
+사용자가 허용한 계정·Source·기간·container 범위를 벗어난 조회를 금지한다. Browser가 Provider raw continuation을 생성·해석·수정하지 못하게 한다. 표시 순서·Month View·페이지 크기는 정책에서 중복 정의하지 않는다.
 
 ### POL-SRC-004 페이지 메모리 캐시
 
@@ -522,17 +507,11 @@ Sidebar의 표시 순서·기본 범위·Month View·페이지 presentation은 `
 
 ### POL-SRC-005 직접 선택
 
-- authenticated `selection_handle`에서 resolve된 current Resource identity는 다시 검색해 추측하지 않고 canonical Connector detail Read로 최신 상세를 조회한다.
-- 하나 또는 여러 Resource를 선택할 수 있다.
-- 추가 Source 검색은 사용자의 요청을 수행하는 데 필요한 경우에만 허용한다.
-- 선택한 Resource의 사람·날짜·제목을 사용자에게 다시 입력하도록 요구하지 않는다.
+검증된 선택 identity는 최신 상세 조회의 기준으로 사용하며 다시 검색해 다른 대상으로 바꾸지 않는다. 선택 Resource와 사용자 명시 대상이 모순되면 임의 우선순위로 실행하지 않는다. 추가 Source는 현재 요청과 허용된 범위에 필요한 경우에만 조회한다.
 
 ### POL-SRC-006 Agent 검색
 
-- Agent는 요청 조건으로 Google Source-native 목록 검색을 먼저 수행한다.
-- 후보 전체의 상세를 조회하지 않고 Metadata와 일반 코드로 후보를 축소한다.
-- 필요한 후보만 상세 조회하고 필요한 Context만 LLM에 전달한다.
-- Context가 부족한 경우에만 최대 2회 재검색한다.
+Source-native 후보 검색 뒤 필요한 상세만 조회하고 필요한 Context만 모델에 전달한다. semantic hypothesis의 변경과 detail hydration을 구분하되 현재 검색·detail·호출 예산을 모두 지킨다. 기존 재검색 상한을 새 Connector나 back-edge를 이유로 초기화·우회하지 않는다. 동일 검색이나 동일 후보를 새 정보 없이 반복하지 않는다.
 
 ### POL-SRC-007 영구 저장 범위
 
@@ -542,8 +521,8 @@ SQLite에는 실제 Run에서 사용된 Resource ID, Source, 원본 링크, 최�
 
 - 사이드바 Cache는 탐색과 즉시 표시를 위한 임시 데이터다.
 - 선택형 요청 시작 시 선택 Resource의 상세를 다시 조회한다.
-- 쓰기 계획 확정 전, 승인 후 실행 직전, 실행 직후에는 관련 Resource를 Google API로 재조회한다.
-- 승인·충돌·중복·검증 판단에서 Cache보다 최신 Google API 응답을 우선한다.
+- 쓰기 계획 확정 전, 승인 후 실행 직전, 실행 직후에는 관련 Resource를 해당 Connector로 재조회한다.
+- 승인·충돌·중복·검증 판단에서 Cache보다 현재의 검증된 Source observation을 우선한다.
 
 ### POL-SRC-009 수동 새로고침
 
@@ -581,7 +560,7 @@ FastAPI Local Agent Service는 `127.0.0.1`의 동적 포트에만 바인딩한�
 
 #### POL-LOCAL-003 외부 Endpoint 제한
 
-외부 통신 목적지는 검증된 Google Workspace API, 승인된 API LLM Provider, OAuth Endpoint로 제한한다. React Browser Runtime은 제품 외부 API를 직접 호출하지 않고 Local Agent Service를 통한다. 사용자 입력 URL을 서버가 임의 Fetch하는 범용 기능은 제공하지 않는다.
+외부 통신은 등록된 Google/GitHub Provider, 승인 API LLM과 각 인증 Endpoint로 제한한다. 사용자·Source 본문의 URL이 임의 서버 Fetch나 shell 실행을 유발하면 안 된다. Frontend는 제품 API를 통해 업무 연결을 사용하고, 인증·접근 관리 링크는 명시적인 사용자 동작으로 연다.
 
 #### POL-LOCAL-004 Local Session 수립
 
@@ -592,10 +571,7 @@ FastAPI Local Agent Service는 `127.0.0.1`의 동적 포트에만 바인딩한�
 
 #### POL-LOCAL-005 Local API Command 경계
 
-- FastAPI Route는 UI Adapter이며 Policy와 Domain Transition을 직접 구현하지 않는다.
-- 모든 변경 Command는 Command ID, Aggregate ID, expected version을 포함한다.
-- 승인·수정·거절·취소·실행 시작은 Application Command를 통해서만 수행한다.
-- Endpoint 재호출은 기존 Command Result를 반환하거나 Version Conflict로 종료하며 상태를 중복 적용하지 않는다.
+업무 상태 변경은 Application Command 경계에서 검증하고 Domain에 적용한다. Domain Command의 대상 version과 non-Domain 설정/인증 operation의 replay 계약을 혼용하지 않는다. Endpoint 재호출은 동일 명령의 기존 결과 또는 conflict를 반환하며 실행 사실을 중복 적용하지 않는다. 정확한 wire field는 Interface가 소유한다.
 
 #### POL-LOCAL-006 Event Stream
 
@@ -612,11 +588,11 @@ FastAPI Local Agent Service는 `127.0.0.1`의 동적 포트에만 바인딩한�
 
 #### POL-APIX-001 Versioned Contract
 
-REST Request·Response·Error와 SSE Event는 `/api/v1`과 Versioned Pydantic Schema로 관리한다. Frontend Type은 동일 Contract에서 생성하거나 CI에서 호환성을 검증한다.
+통신 계약은 version과 호환성을 검증한다. Frontend와 Backend가 서로 다른 shape를 조용히 보정·추측하여 실행하지 않는다. 이 wire/schema version은 문서의 수정일과 다른 개념이며 문서 정리 때문에 제거하지 않는다.
 
 #### POL-APIX-002 오류 정규화
 
-Local API 오류는 `error_code`, `user_message`, `retryable`, `current_state`, `request_id`를 포함하는 공통 형식으로 반환한다. Stack Trace·SQL·파일 경로·Secret은 Frontend에 반환하지 않는다.
+오류는 공통 Interface 계약으로 정규화하고 사용자용 원인·다음 행동과 진단 정보를 구분한다. stack trace·SQL·raw path·secret은 Frontend 응답에 노출하지 않는다.
 
 #### POL-APIX-003 명령과 조회 분리
 
@@ -638,26 +614,19 @@ React Client State, Browser Storage, URL Parameter와 SSE Payload는 Domain 사�
 
 #### POL-DB-002 짧은 Transaction
 
-DB Transaction 안에서 Google API, LLM, MCP 호출을 기다리지 않는다. `ClaimExecution` Commit, ClaimContext 구성, `BeginExecutionAttempt` Commit, 외부 호출, 결과 저장, GET 검증, 최종 상태 저장을 각각 명시된 경계로 분리한다. 외부 Write는 `BeginExecutionAttempt` Transaction이 종료되고 `applied=true`인 뒤에만 수행한다.
+DB Transaction 안에서 외부 Provider API, LLM 또는 MCP 호출을 기다리지 않는다. 실행권 예약만으로 외부 Write를 허용하지 않으며, 현재 승인·무결성·취소 조건을 확인한 실행 admission이 성공으로 영속 확정된 뒤에만 호출한다. 외부 효과와 결과 저장·검증을 하나의 원자 Transaction으로 간주하지 않는다. 구체 Command·transaction 순서는 Domain·Interface의 실행 계약이 소유한다.
 
 #### POL-DB-003 실행권 Claim
 
-Action 실행 전 `ClaimExecution` 조건부 상태 전이로 실행권을 **예약**한다. `APPROVED` 상태와 Version이 일치하는 Row 하나만 Action `EXECUTING` + Attempt `CLAIMED`로 전환할 수 있으며 영향 Row가 1개가 아니면 진행하지 않는다. 이 Commit은 외부 dispatch authority가 아니며, 별도 `BeginExecutionAttempt`가 Attempt `CLAIMED → EXECUTING`으로 `applied=true` Commit되어야 한다.
+실행권은 현재 승인·Plan·Run·Action의 무결성과 동시성 검사를 통과한 단일 Attempt에만 예약한다. 예약 완료와 실제 외부 호출 admission은 구별하며, 하나의 성공한 검사를 나머지 guard 생략의 근거로 사용하지 않는다. 조건부 갱신·원자성의 구체 구현은 Domain/DB 계약을 따른다.
 
 #### POL-DB-004 DB Constraint 우선
 
-다음 무결성은 애플리케이션 코드와 함께 DB Constraint로 강제한다.
-
-- Foreign Key
-- Idempotency Key UNIQUE
-- Action별 Attempt Number UNIQUE
-- 필수 식별자 NOT NULL
-- 허용 상태 CHECK 또는 Repository 상태 전이 검증
-- 동일 Run·Source·Resource 중복 참조 제한
+참조 무결성, 허용 상태, 식별자의 유일성, 승인·Attempt의 단일성 및 Connector-aware Resource identity를 DB의 최종 방어와 함께 지킨다. UI 잠금이나 LLM의 정상 출력을 무결성 보장으로 대체하지 않는다. Constraint/column 정의를 이 문서에 중복 유지하지 않는다.
 
 #### POL-DB-005 SQLite Connection
 
-모든 Connection은 Foreign Key 검사를 활성화한다. `busy_timeout`, WAL 사용 여부, `synchronous` 수준, Retry 횟수는 `04. 도메인·데이터베이스 설계서`의 고정 Config를 사용하며 각 Repository가 임의 변경하지 않는다.
+모든 연결에 동일한 검증된 무결성·동시성 설정을 적용한다. Repository마다 임의로 Foreign Key 검사를 끄거나 busy/durability 설정을 완화하지 않는다. 값과 적용 방식은 DB·환경 계약을 따른다.
 
 #### POL-DB-006 Busy 처리
 
@@ -669,25 +638,25 @@ SQLite와 외부 Connector Provider API를 하나의 Transaction으로 취급하
 
 #### POL-DB-008 정규화와 Snapshot
 
-관계·상태·검색 대상 필드는 정규화된 Table로 관리한다. Action Arguments, 승인 당시 값, expected·actual 결과, Provider Metadata처럼 구조가 변하거나 불변 이력이 필요한 값은 Version이 포함된 JSON Snapshot으로 저장할 수 있다.
+현재 가변 업무 상태와 승인 당시의 불변 Snapshot을 혼동하지 않는다. 표현 변환·저장 편의를 이유로 승인된 값이나 과거 실행 사실을 덮어쓰지 않는다. Table/JSON 배치는 DB concern이다.
 
 ### 23.4 조회·Pagination 정책
 
 #### POL-QRY-001 N+1 방지
 
-Repository는 View와 Use Case에 필요한 Aggregate를 Batch Query 또는 Join으로 조회한다. Action·Evidence·Execution을 Row별 반복 조회하는 구조를 기본 구현으로 사용하지 않는다.
+제품 조회가 데이터 개수에 비례한 무제한 반복 I/O로 확장되지 않게 한다. 필요한 범위의 bounded/batch 조회를 사용하고, 정확한 query 구조는 persistence owner에서 관리한다.
 
 #### POL-QRY-002 로컬 Cursor Pagination
 
-Conversation, Message, Run, Audit처럼 증가하는 목록은 안정된 정렬값과 고유 ID를 결합한 Cursor를 사용한다. 작은 고정 목록에만 OFFSET을 허용한다.
+증가하는 이력 목록은 중복·누락 없는 안정적 페이지 조회를 제공해야 한다. local cursor를 Provider continuation과 혼용하거나 Browser가 임의 생성한 cursor를 검증 없이 신뢰하지 않는다. 구체 정렬·pagination 구현은 Interface/DB가 소유한다.
 
-#### POL-QRY-003 Google Pagination 분리
+#### POL-QRY-003 Provider Pagination 분리
 
 Browser는 opaque Local API continuation만 보존·재전송한다. Provider raw continuation은 Connector/MCP Adapter 내부 구현 세부사항이며 SQLite local keyset cursor와 혼용하지 않는다.
 
-#### POL-QRY-004 Index 근거
+#### POL-QRY-004 조회 최적화의 안전 경계
 
-Index는 실제 `WHERE`, `JOIN`, `ORDER BY` Query와 Query Plan을 근거로 추가한다. 추적 편의를 이유로 사용되지 않는 Column과 Index를 미리 대량 생성하지 않는다.
+조회 최적화나 추적 편의를 이유로 승인·참조 무결성·보존 정책을 완화하거나 불필요한 데이터를 추가 수집·저장하지 않는다. Column·Index·Query Plan의 선택과 검증은 persistence 구현의 책임이며 정책 규칙으로 중복 정의하지 않는다.
 
 ### 23.5 Migration·Backup·복구 정책
 
@@ -715,19 +684,21 @@ Conversation·Message와 terminal Run 소유 데이터는 §18의 P0 retention m
 
 #### POL-RES-001 Run Budget
 
-각 Run은 Google 목록 페이지 수, 상세 조회 수, LLM 호출 수, 재검색, Retry, Context 크기, 최대 실행 시간의 Config 상한을 가진다. 상한이 없으면 무제한 탐색을 허용하지 않는다.
+각 Run은 Source 페이지·상세 조회·LLM·재검색·Retry·Context·실행 시간에 상한을 둔다. 새 단계·Connector·resume를 핑계로 사용량을 초기화하지 않는다. 남은 유효 근거로 제한된 답변을 만들 수 있어도 미확인 내용을 채우거나 WRITE 필수정보 검사를 우회하지 않는다.
 
 #### POL-RES-002 Retry 제한
 
-일시 오류만 제한적으로 재시도한다. Schema, Policy, 승인, 인증 거절, 잘못된 Arguments는 자동 재시도하지 않는다. 재시도는 동일 Idempotency 문맥을 유지한다.
+재시도는 해당 operation의 전달 확실성과 replay 계약 안에서만 수행한다. 일시 오류가 아닌 Schema·Policy·승인·인증 거절·잘못된 arguments에는 자동 retry하지 않는다. 동일 command replay와 새로운 WRITE 시도를 혼동하지 않으며 새 Write 시도는 기존 재검토·새 승인 계약을 따른다.
 
 #### POL-RES-003 Circuit 상태
 
-Google API, API LLM, Ollama, MCP가 연속 실패하면 Component별 Circuit을 일시적으로 열어 새 호출을 중단한다. Circuit 상태와 재시도 가능 시각을 사용자 진단 화면에 표시한다.
+등록 Connector, API LLM, Ollama, MCP가 연속 실패하면 Component별 Circuit을 일시적으로 열어 새 호출을 중단한다. Circuit 상태와 재시도 가능 시각을 사용자 진단 화면에 표시한다.
 
 #### POL-RES-004 Degraded Mode
 
-읽기 Source 일부가 실패해도 남은 Source만으로 의미 있는 결과가 가능하면 부분 결과를 제공한다. DB 무결성 실패, 승인 무결성 실패, 사용 가능한 LLM 없음은 Degraded Mode로 우회하지 않고 실행을 차단한다.
+일부 Source의 실패나 조회·LLM 예산 소진 후에도 이미 검증된 근거로 의미 있는 READ 결과를 설명할 수 있으면 확인한 범위의 부분 답변을 허용한다. 요청 시작부터 필수 Connector가 미연결·권한 부족인 경우에는 부분 실행으로 우회하지 않고 연결 전제 정책에 따라 안내 후 종료한다. 접근 실패를 검색 결과 없음으로, 일부 확인을 전체 확인으로 표시하지 않는다.
+
+DB·승인·identity 무결성 실패와 안전한 실행에 필수인 값의 부재를 Degraded Mode로 우회할 수 없다. 사용 가능한 모델이 없을 때 새 의미 판단은 수행하지 않으며, 기존 사실만 표시하는 결정적 종료와 새로운 추론 실행은 구분한다.
 
 ### 23.7 공급망·Release 정책
 
@@ -753,43 +724,23 @@ LOCAL_CAPABLE Release는 검증된 Ollama Version, Model ID, Model Hash와 Runti
 
 ## 24. Multi-Agent 정책
 
-- Supervisor와 전문 Agent는 제안·분석·검토만 수행하며 정책 허용 여부를 최종 확정하지 않는다.
-- 요청 이해 Agent는 Google Tool을 호출하지 않는다.
-- Retrieval의 LLM semantic operation은 조회 전략 후보만 제안하고, 같은 Retrieval owner의 결정적 Application operation이 Query·MCP 인자를 검증·실행한다.
-- Retrieval LLM Node와 Agent Subgraph는 MCP·Provider API를 직접 호출하지 않는다. 외부 Read는 결정적 Application operation이 `ConnectorReadPort`를 통해 수행한다.
-- 업무 분석 Agent의 중복·충돌·위험 판단은 후보이며 `work_analysis.validate_relations`/`validate_work_analysis`가 Evidence·semantic consistency를 결정적으로 검증한다. 이후 `action.evaluate_action_policy`가 Policy requirement를, lifecycle Domain guard가 상태·version/freshness를 각각 별도로 판정한다.
-- 해결책·계획 Agent와 계획 검토 Agent는 Approval·ExecutionAttempt·Verification Row를 생성하거나 변경하지 않는다.
-- Agent 간 자유 대화, 무제한 Handoff, Agent별 독립 장기 Memory와 Peer-to-Peer A2A를 금지한다. 전문 Agent Subgraph는 invocation 범위의 Local State만 보유하며 이를 장기 Memory나 Domain 사실로 승격하지 않는다.
-- Agent Subgraph Output은 Schema 검증 실패 시 동일 invocation 안에서 최대 1회 Schema Repair하고, 다시 실패하면 Supervisor에 실패 disposition을 반환하여 사용자 확인·부분 결과·차단 중 하나로 전환한다.
-- 승인 이후 Tool·Arguments·대상 Resource·Dependency를 LLM이 다시 생성하거나 수정할 수 없다.
-- 실행·검증·복구는 결정적 Subgraph와 Domain Command가 담당하며 Agent 판단으로 성공 상태를 확정하지 않는다.
+업무 의미의 해석·분석·계획은 검증된 후보를 만드는 과정이며 승인·권한·외부 실행 사실을 만들지 않는다. LLM은 Tool/계정/대상을 마음대로 재선택하거나 Provider를 직접 호출하지 않는다.
+
+전문 Agent의 Local State는 해당 invocation의 작업 메모리다. 이를 독립 장기 Memory·다른 Run의 승인·권한으로 승격하지 않는다. 자유 Peer-to-Peer 호출과 무제한 Handoff는 금지한다.
+
+Structured Output 실패는 기존 bounded repair 안에서 처리하고, 실패를 정상 결과로 강제 보정하지 않는다. 승인 이후의 업무 값 변경은 LLM 재작성으로 우회하지 않는다. 정확한 역할·노드·상태 topology는 Workflow와 Repository Architecture가 소유한다.
 
 ## 25. Agent·Retry 정책
 
-- Tool Route와 Retrieval 책임을 분리한다.
-- Tool Route는 IN/OUT Tool을 한 번 확정하고 Retrieval·Planning은 재선택하지 않는다.
-- Retrieval의 LLM Node는 Google API·MCP를 직접 호출하지 않는다.
-- Supervisor는 결정적 Conditional Edge를 사용한다.
-- 일반 Retrieval 호출은 Action Row가 아니다.
-- Answer-only Run은 Open Write·UNKNOWN_RESULT·Recovery 상태가 없을 때만 완료한다.
-- READ Output Schema 실패는 `FAILED`이며 Approval·Attempt·Verification Row를 만들지 않는다.
-- Write `FAILED`는 `FAILED → MODIFIED → 새 승인 → APPROVED`로만 재시도한다.
-- `UNKNOWN_RESULT`에서는 기존 결과 확인만 허용한다.
-- 승인 이후 LLM은 Tool·Arguments·대상 Resource를 변경할 수 없다.
+State와 검증된 결과에 따른 결정적 제어를 사용한다. 일반 Retrieval은 승인형 Action이 아니며, 답변만 종료하는 경로가 미확정 Write·Recovery를 숨기면 안 된다. Write 실패 뒤 기존 승인 재사용과 UNKNOWN_RESULT에서 신규 Write는 금지한다.
 
 ### POL-EXE-004 Command Receipt
 
-- Domain Aggregate 상태 변경 lifecycle Command는 영속 SQLite `command_receipts`에 등록한다. non-Domain operational Command는 07의 별도 `OperationalCommandReplayPort`를 사용하며 Domain DB receipt를 복구 선행조건으로 만들지 않는다.
-- 같은 `command_id`와 같은 Request Hash는 기존 결과를 반환한다.
-- 같은 `command_id`와 다른 Request Hash는 보안·무결성 오류로 차단한다.
-- Receipt 완료와 Domain 변경은 같은 SQLite Transaction에서 Commit한다.
+동일 command와 동일 입력의 replay는 이전 결과를 재사용한다. 같은 identity에 다른 입력을 보낸 경우에는 conflict로 차단한다. Domain 변경과 필수 Receipt/Audit는 원자적으로 저장하며 non-Domain operation의 replay는 별도 기존 계약을 따른다. 관측 실패나 응답 유실이 외부 Write 재전송을 유발하면 안 된다.
 
 ### POL-EXE-005 MCP 실행 Claim
 
-- Connector Write Tool은 Domain Claim 이후 발급된 1회용 `claim_token`을 요구한다. 단 Claim/Token만으로 dispatch하지 않으며, Core Application은 `BeginExecutionAttempt(applied=true)`와 current Attempt=`EXECUTING`을 외부 호출의 선행조건으로 강제한다.
-- Token은 Service Instance, Action, Approval, ExecutionAttempt, Tool, Arguments Hash, 만료와 Nonce에 바인딩한다.
-- 재사용·만료·Binding 불일치 Token은 차단하고 Audit한다.
-- Token 원문은 Log·Trace·Audit·SQLite에 저장하지 않는다.
+Write는 현재 승인과 실행 admission에 결합된 유효한 single-use Claim을 요구한다. 다른 Connector·Process·Action·Attempt·Tool·대상 인자에 Claim을 교차 사용할 수 없다. 만료·재사용·binding 불일치는 dispatch 전에 차단하고 Token 원문은 저장·노출하지 않는다. exact signed shape와 검증 순서는 보안·MCP 계약을 따른다.
 
 ### POL-OAUTH-008 Credential Provider 소유권
 
@@ -800,20 +751,17 @@ LOCAL_CAPABLE Release는 검증된 Ollama Version, Model ID, Model Hash와 Runti
 
 ## 26. Clarification·조회 범위·일정 관계 정책
 
-- 전체 Gmail Mailbox, 장기간 무제한 원문, 모든 Workspace Source 전체 조회 요청은 `BLOCKED`다. 자동으로 범위를 축소해 실행하지 않는다.
-- bounded 범위 확대가 새로 필요하면 이유·Source·기간을 제시하고 사용자 확인 후 수행한다.
-- 시간 `overlap`은 곧바로 업무 `conflict`가 아니다. `NESTED_RELATED`, `TRUE_BUSY_CONFLICT`, `TENTATIVE`, `FREE_OR_TRANSPARENT`, `UNKNOWN_RELATION`을 구분한다.
-- 모호성은 실제 발견 단계에서 `NEEDS_CONFIRMATION`으로 보내며 후보가 존재하면 후보·차이·선택지를 제공한다.
+전체 Mailbox·장기간 무제한 원문·모든 Source 일괄 조회처럼 허용 범위를 벗어난 요청은 차단한다. 사용자 확인 없이 요청을 허용 범위로 자동 축소해 실행하지 않는다. 승인된 제한 범위만 수행한 경우에도 원래 요구 전체를 완료했다고 표시하지 않는다. 새 bounded 범위 확대에는 이유와 범위를 제시하고 기존 사용자 확인을 받는다.
+
+허용된 검색으로 해소할 수 있는 별칭·기간·업무 개념은 먼저 확인할 수 있다. 검색 후에도 여러 유효 후보가 남거나 안전한 판단을 막는 모순이 있으면 실제 차이를 제시해 확인한다. 근거 없는 identity·연도·시간대·요일을 생성하지 않는다.
+
+시간 overlap과 업무 conflict는 동일하지 않다. 관련 일정의 포함 관계, 실제 busy conflict, tentative/free, 관계 불명을 구분하며 불명을 안전한 충돌 없음으로 처리하지 않는다.
 
 ## 27. 승인 인자·첨부파일 정책
 
 ### Claim V2
 
-1. Approval Snapshot은 사용자 의미를 갖는 Canonical Business Arguments와 `approval_arguments_hash`를 고정한다.
-2. 실행 준비 과정에서 Recovery Fingerprint 같은 서버 생성 전송 Metadata를 결정적으로 추가할 수 있으나 사용자 의미·Target·Tool을 변경할 수 없다.
-3. 최종 MCP Dispatch Payload는 별도 `execution_arguments_hash`로 고정한다.
-4. Core Application은 `BeginExecutionAttempt(applied=true)`와 current Attempt=`EXECUTING`을 확인한 뒤에만 MCP 호출을 시작한다. MCP는 실제 수신 인자를 동일 Canonical 규칙으로 재해시하여 서명된 ClaimContextV2의 `execution_arguments_hash`와 비교한 뒤에만 Provider Write한다.
-5. Claim Token은 TTL 내 1회용이며 Process Instance와 Action·Approval·Attempt·Tool·두 Hash·Nonce에 바인딩한다.
+승인한 업무 인자와 서버가 추가하는 전송용 metadata를 구분한다. 후자는 결정적으로 구성할 수 있지만 승인된 의미·대상·Tool을 바꿀 수 없다. 두 무결성 경계와 실행 admission은 기존 보안·MCP 계약 그대로 적용한다. 문서 수정일 갱신이 Claim wire version 변경을 뜻하지 않는다.
 
 ### 첨부파일
 
@@ -825,4 +773,44 @@ LOCAL_CAPABLE Release는 검증된 Ollama Version, Model ID, Model Hash와 Runti
 
 ### External LLM prior-consent exact rule
 
-P0 외부 LLM 전송은 persisted Settings의 `external_llm_consent=true`가 선행조건이다. `API_LLM`과 `AUTO`의 API fallback 모두 동일 guard를 사용하고, consent revoke 뒤 새 external inference는 0이다. API Key configured 여부는 동의를 대체하지 않는다. **“Run UI가 external call 전에 범위를 표시한다”의 enforceable 의미는 Browser paint ACK가 아니라, exact inference input에서 계산한 bounded source/data-class `ExternalLlmTransferScopeV1`을 server-side Run projection/checkpoint metadata에 먼저 publish하고 SSE-visible event를 만든 뒤에만 Provider adapter를 호출한다는 순서 보장이다.** P0는 별도 Browser ACK를 consent authority로 만들지 않는다. Retrieval/Route 변화로 전송 scope hash가 커지거나 달라지면 새 scope를 다시 publish한 뒤 다음 external call을 허용한다.
+API_LLM은 저장된 외부 전송 동의 guard를 따른다. 전송 scope는 실제 입력의 최소 Source/data-class를 기준으로 호출 전에 server projection에 게시한다. Scope가 달라지면 다음 외부 호출 전에 갱신한다. Browser paint ACK나 추가 버튼을 새로운 동의 authority로 만들지 않는다. Local-only 사용에는 이 동의를 요구하지 않는다.
+
+## 28. GitHub 계정·저장소·Issue 정책
+
+### POL-GH-001 계정 인증과 저장소 권한
+
+계정 인증 성공과 App 설치·저장소 접근 허용은 별개다. 현재 사용자와 App이 모두 접근 가능한 범위만 사용한다. 초기 사용 전제가 충족되지 않은 요청은 공통 Connector 전제 정책으로 종료하며 GitHub 전용 인증 대기·설치 감시 workflow를 추가하지 않는다. 권한 부족·미설치·미연결은 Issue 없음과 구분한다. Client ID는 제품 개발·배포 구성이고, 일반 사용자에게 PAT·client secret 입력을 요구해 제품 인증을 우회하지 않는다.
+
+### POL-GH-002 저장소 allowlist의 효력
+
+저장소 선택은 Provider permission과 함께 모든 Browse/Retrieval/READ/WRITE의 접근 상한이다. 현재 요청의 명시 저장소는 그 안에서만 범위를 좁힌다. selected Issue와 명시 저장소가 모순되면 임의 우선순위나 첫 항목을 적용하지 않는다. 복수 allowlist는 WRITE target을 제공하지 않으며 빈 선택은 전체 허용이 아니다.
+
+### POL-GH-003 Run 대상 고정
+
+유효한 저장소 선택의 출처와 현재 Run 대상 binding을 구분하여 보존한다. 설정 변경은 이미 시작되거나 승인된 Run을 다른 저장소로 옮기지 않는다. 계정 변경·접근 철회·삭제·이름 변경 이후 기존 저장 선택을 무조건 신뢰하거나 다른 저장소로 silent fallback하지 않는다.
+
+### POL-GH-004 기존 Issue 무결성
+
+기존 Issue mutation은 현재 persisted target과 repository identity가 일치해야 한다. 불일치를 Provider probing으로 해결하지 않으며 사전 검증에서 차단한다. Issue와 PR을 혼동하거나 같은 issue number만으로 다른 repository의 대상을 연결하지 않는다.
+
+### POL-GH-005 공통 실행 안전
+
+Issue 생성·수정·닫기·다시 열기는 기존 공통 승인·Claim·실행·검증·복구 경계를 따른다. GitHub를 이유로 별도 느슨한 승인 경로를 두지 않는다. 실제 결과를 다시 조회하지 않고 완료를 확정하거나 불확실한 생성 요청을 재전송하지 않는다.
+
+### POL-GH-006 연결 격리
+
+GitHub 연결 실패·해제·재인증은 다른 Connector의 credential과 정상 요청을 훼손하지 않는다. Google credential을 GitHub에 사용하거나 반대로 fallback하지 않는다. 해당 Run이 실제로 필요로 하는 연결의 문제를 정확히 표시한다.
+
+## 29. 사용자 표시의 신뢰 경계
+
+### POL-DSP-001 확인된 사실만 표시
+
+사용자에게 제시하는 설명·작업 내역·최종 답변은 이미 검증된 상태·결과·근거에 한정한다. 계획·후보·dispatch 응답·Verification 완료를 동일한 성공으로 취급하지 않는다. 이후 결과를 이전 시점의 판단 사실처럼 소급 표시하지 않는다.
+
+### POL-DSP-002 표시의 비권위성
+
+Activity와 SSE는 업무·권한·승인·성공의 authority가 아니다. 화면 클릭·펼침·이력 복원은 새로운 업무 실행이나 외부 조회를 유발하지 않으며, 설명을 만들기 위한 추가 LLM 호출도 수행하지 않는다. 필요한 저장된 정보의 Local API 조회는 가능하다.
+
+### POL-DSP-003 최소 노출과 보존
+
+작업 설명을 이유로 raw Prompt/Completion, hidden reasoning, credential, Claim, Provider 원문 전체를 노출하거나 새로 장기 보존하지 않는다. 표시할 근거가 없거나 보존 기간이 지나면 생략·제한을 알리며 과거 이력을 생성하지 않는다.

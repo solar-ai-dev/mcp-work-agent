@@ -35,9 +35,10 @@ PORT_METHODS = {
         "get_credential_status",
         "reconcile_credential",
     },
-    "ports/llm/llm_runtime_status_port.py": {"get_status"},
+    "ports/llm/llm_runtime_status_port.py": {"get_status", "list_local_models"},
     "ports/keyring/secret_store_port.py": {"put", "get", "delete"},
     "ports/system/checkpoint_port.py": {
+        "update_run_budget",
         "create_workflow_binding",
         "load_workflow_binding",
         "store_same_run_checkpoint",
@@ -132,9 +133,7 @@ def test_google_mcp_dispatch__has_exact_signed__registry_operation_set() -> None
     registry = load_signed_tool_registry()
 
     assert set(dispatch_tool._OPERATIONS) == {
-        entry.tool_id
-        for entry in registry.entries
-        if entry.connector_id == "google_workspace"
+        entry.tool_id for entry in registry.entries if entry.connector_id == "google_workspace"
     }
     assert set(dispatch_tool._INTERNAL_OPERATIONS) == {
         "gmail_get_ui_thread_detail",

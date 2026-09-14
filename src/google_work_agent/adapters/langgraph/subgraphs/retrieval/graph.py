@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
+from langchain_core.runnables import RunnableLambda
 from langgraph.graph import END, START, StateGraph
 
 from google_work_agent.adapters.langgraph.agent_kernel import (
@@ -30,6 +32,7 @@ from google_work_agent.adapters.langgraph.main.state import (
     CONTEXT_RAG_CANDIDATES_KEY,
     CONTEXT_READ_BINDINGS_KEY,
     CONTEXT_READ_RESULT_HANDLES_KEY,
+    CONTEXT_ROUND_PREADVANCED_KEY,
     CONTEXT_SEGMENT_HANDLES_KEY,
     CONTEXT_SELECTION_OUTPUT_KEY,
     CONTEXT_SUFFICIENCY_OUTPUT_KEY,
@@ -41,9 +44,9 @@ from google_work_agent.adapters.langgraph.main.state import (
 )
 from google_work_agent.adapters.langgraph.main.supervisor import (
     RetrievalRouteResultV1,
-    SupervisorDecisionV1,
     route_supervisor,
 )
+from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorDecisionV1
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.subgraph_state import (
     AgentLocalStateV1,
@@ -72,10 +75,12 @@ from google_work_agent.adapters.langgraph.subgraphs.retrieval.nodes.select_evide
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.state import (
     ContextRetrievalInputState,
     ContextRetrievalLocalState,
+    ReadResultBindingV1,
     RetrievalState,
 )
 from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
     RunScopedEvidenceStore,
+    resolve_evidence_projection,
 )
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_understanding_output,
@@ -83,19 +88,31 @@ from google_work_agent.application.agents.request_understanding.contracts import
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
     StateArtifactRefV1,
-)
-from google_work_agent.application.agents.request_understanding.validate_intent import (
     validated_repository_authority,
 )
+from google_work_agent.application.agents.retrieval.assess_sufficiency import (
+    authorize_retrieval_followup,
+    deterministic_sufficiency,
+)
+from google_work_agent.application.agents.retrieval.authorize_evidence_reassessment import (
+    authorize_evidence_reassessment,
+)
+from google_work_agent.application.agents.retrieval.bind_exact_resource_refs import (
+    ExactResourceBindingsV1,
+    bind_exact_resource_refs,
+)
 from google_work_agent.application.agents.retrieval.build_query import (
+    QueryUnchangedAfterFailureError,
     RouteConstraintPolicy,
     build_query_attempt,
     followup_planner_projection,
+    materialize_container_read_plans,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalConstraintKindV1,
     RetrievalQueryPlanV2,
+    RetrievalV2ValidationError,
     SourceFetchPlanV1,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
@@ -103,21 +120,53 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
+    PersonCandidateV1,
+    RetrievalResultV1,
+    SufficiencyIssueV2,
     SufficiencyResultV2,
 )
 from google_work_agent.application.agents.retrieval.execute_read import RetrievalReadBindingError
 from google_work_agent.application.agents.retrieval.finalize_retrieval import (
+    advance_current_round_no,
+    followup_fits_retrieval_round_budget,
     initialize_current_round_no,
+)
+from google_work_agent.application.agents.retrieval.match_person_mention import (
+    project_person_candidates,
+    resolve_supported_person_identities,
+)
+from google_work_agent.application.agents.retrieval.normalize_segments import (
+    rehydrate_normalized_segments,
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
     DEFAULT_RETRIEVAL_BUDGET,
+    deterministic_query_plan,
     followup_retrieval_planner_input,
+    has_retrieval_followup_path,
     initial_retrieval_planner_input,
+)
+from google_work_agent.application.agents.retrieval.project_attempted_detail_refs import (
+    project_attempted_detail_refs,
+)
+from google_work_agent.application.agents.retrieval.project_detail_candidate_refs import (
+    project_detail_candidate_refs,
+)
+from google_work_agent.application.agents.retrieval.project_gmail_draft_source_snapshots import (
+    project_gmail_draft_source_snapshots,
+)
+from google_work_agent.application.agents.retrieval.project_task_review_candidates import (
+    project_task_review_candidates,
 )
 from google_work_agent.application.agents.retrieval.resolve_availability import (
     AvailableIntervalV1,
     BusyIntervalV1,
     resolve_availability,
+)
+from google_work_agent.application.agents.retrieval.resolve_route_container_scopes import (
+    resolve_route_container_scopes,
+)
+from google_work_agent.application.agents.retrieval.retain_unchanged_evidence import (
+    preferred_detail_evidence_ids,
 )
 from google_work_agent.application.agents.retrieval.select_evidence import (
     materialize_evidence_drafts,
@@ -127,6 +176,7 @@ from google_work_agent.application.agents.tool_routing.bind_registry_candidates 
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
+    ToolRoutePlanV2,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
@@ -135,6 +185,9 @@ from google_work_agent.application.prompt_runtime.prompt_registry import (
     load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
+from google_work_agent.application.use_cases.resource.get_repository_access import (
+    GetRepositoryAccessHandler,
+)
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     BudgetDecision,
     RunBudgetV2,
@@ -147,6 +200,7 @@ from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.observability import ObservabilityContext
+from google_work_agent.ports.system.contracts.retrieval_head import RetrievalHeadV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
     RetrievalRequiredV1,
@@ -162,10 +216,18 @@ from .projections.execute_read_projection import (
     project_connector_call,
     sanitize_acquisition_result,
 )
+from .projections.retrieval_continuation_projection import (
+    bind_read_result_plan,
+    read_result_binding_matches_plan,
+    resolve_read_result_plan,
+    restore_prior_evidence_selection,
+    restore_retrieval_continuation,
+)
 from .routing.route_after_assess_sufficiency import (
     route_after_assess_sufficiency,
 )
 from .routing.route_after_build_query import (
+    followup_operation_marker,
     route_after_build_query,
 )
 from .routing.route_after_execute_read import (
@@ -183,6 +245,7 @@ from .routing.route_after_plan_query import (
 from .routing.route_after_rag_retrieve_rerank import (
     route_after_rag_retrieve_rerank,
 )
+from .routing.route_after_retrieval_boundary import route_after_retrieval_boundary
 from .routing.route_after_select_evidence import (
     route_after_select_evidence,
 )
@@ -268,6 +331,7 @@ def _runtime_route_constraint_policies(
                 "TEMPORAL_RANGE",
                 "PARTICIPANT",
                 "KEYWORD",
+                "CONCEPT",
                 "RESOURCE_REF",
                 "CONTAINER_REF",
                 "STATUS_SCOPE",
@@ -277,23 +341,30 @@ def _runtime_route_constraint_policies(
         "ISSUE": frozenset({"CONTAINER_REF", "STATUS_SCOPE"}),
         "CALENDAR": frozenset({"TEMPORAL_RANGE", "CONTAINER_REF"}),
     }
+    calendar_event_search_kinds = frozenset(
+        {"TEMPORAL_RANGE", "CONTAINER_REF", "KEYWORD", "CONCEPT"}
+    )
     return {
         route["route_id"]: RouteConstraintPolicy(
             supported_kinds=cast(
                 frozenset[RetrievalConstraintKindV1],
-                supported_by_resource[coarse_resource_category(route["resource_type"])],
+                (
+                    calendar_event_search_kinds
+                    if route["resource_type"] == "CALENDAR_EVENT"
+                    else supported_by_resource[
+                        coarse_resource_category(route["resource_type"])
+                    ]
+                ),
             ),
             required_kinds=(
-                frozenset({"KEYWORD"})
-                if coarse_resource_category(route["resource_type"]) == "EMAIL"
-                and "gmail_search_threads" in route["allowed_read_tool_ids"]
-                else (
-                    frozenset({"CONTAINER_REF"})
-                    if route["connector_id"] == "github"
-                    and route["resource_type"].upper() == "GITHUB_ISSUE"
+                frozenset({"CONTAINER_REF"})
+                if route["resource_type"] in {"TASK", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+                or (
+                    route["connector_id"] == "github"
+                    and route["resource_type"] == "GITHUB_ISSUE"
                     and "github_list_issues" in route["allowed_read_tool_ids"]
-                    else frozenset()
                 )
+                else frozenset()
             ),
         )
         for route in routes
@@ -347,14 +418,26 @@ class RetrievalSubgraph:
         id_factory: Callable[[], str],
         graph_profile: GraphProfile,
         transition_run: Callable[[str, str], None],
+        should_stop_for_cancel: Callable[[str], bool],
         merge_decision: MergeDecision,
         evidence_store: RunScopedEvidenceStore,
         connector_reader: ConnectorReadPort,
         tool_catalog: SignedToolRegistry,
         read_result_cache: RunRetrievalCachePort,
         confirm_inline: ConfirmInline,
+        now_ms: Callable[[], int],
+        timezone_provider: Callable[[], str],
         default_tasklist_id_provider: Callable[[], str | None] | None = None,
         default_calendar_id_provider: Callable[[], str | None] | None = None,
+        authorized_tasklist_ids_provider: Callable[[], Sequence[str]] | None = None,
+        authorized_calendar_ids_provider: Callable[[], Sequence[str]] | None = None,
+        repository_access: GetRepositoryAccessHandler | None = None,
+        load_retrieval_head: Callable[[str], RetrievalHeadV1 | None] | None = None,
+        update_run_budget: Callable[
+            [str, Callable[[Mapping[str, object]], Mapping[str, object]]],
+            Mapping[str, object],
+        ]
+        | None = None,
     ) -> None:
         self._llm_runtime = llm_runtime
         manifest_path = prompt_manifest_path or default_prompt_manifest_path()
@@ -372,12 +455,18 @@ class RetrievalSubgraph:
         self._id_factory = id_factory
         self._graph_profile = graph_profile
         self._transition_run = transition_run
+        self._should_stop_for_cancel = should_stop_for_cancel
         self._merge_decision = merge_decision
         self._evidence_store = evidence_store
         self._connector_reader = connector_reader
+        self._repository_access = repository_access
+        self._load_retrieval_head = load_retrieval_head
+        self._update_run_budget = update_run_budget
         self._tool_catalog = tool_catalog
         self._read_result_cache = read_result_cache
         self._confirm_inline = confirm_inline
+        self._now_ms = now_ms
+        self._timezone_provider = timezone_provider
         # Pre-Prompt Runtime Closure: TASK routes' only supported semantic
         # constraint kind is CONTAINER_REF (_runtime_route_constraint_policies
         # below), but nothing ever populated validated_container_refs for the
@@ -389,6 +478,8 @@ class RetrievalSubgraph:
         # existing (pre-existing, unrelated to this change) behavior.
         self._default_tasklist_id_provider = default_tasklist_id_provider
         self._default_calendar_id_provider = default_calendar_id_provider
+        self._authorized_tasklist_ids_provider = authorized_tasklist_ids_provider
+        self._authorized_calendar_ids_provider = authorized_calendar_ids_provider
 
     def build(self) -> Any:
         graph = StateGraph(
@@ -396,65 +487,80 @@ class RetrievalSubgraph:
             input_schema=ContextRetrievalInputState,
             output_schema=GraphState,
         )
-        graph.add_node("plan_query", self._plan_query_node)
-        graph.add_node("build_query", self._build_query_node)
-        graph.add_node("execute_read", self._execute_read_node)
-        graph.add_node("normalize_segments", self._normalize_segments_node)
-        graph.add_node("rag_retrieve", self._rag_retrieve_node)
-        graph.add_node("select_evidence", self._select_evidence_node)
-        graph.add_node("assess_sufficiency", self._assess_sufficiency_node)
-        graph.add_node("finalize", self._finalize_node)
+        graph.add_node("plan_query", self._cancellable_node(self._plan_query_node))
+        graph.add_node("build_query", self._cancellable_node(self._build_query_node))
+        graph.add_node("execute_read", self._cancellable_node(self._execute_read_node))
+        graph.add_node("normalize_segments", self._cancellable_node(self._normalize_segments_node))
+        graph.add_node("rag_retrieve", self._cancellable_node(self._rag_retrieve_node))
+        graph.add_node("select_evidence", self._cancellable_node(self._select_evidence_node))
+        graph.add_node("assess_sufficiency", self._cancellable_node(self._assess_sufficiency_node))
+        graph.add_node("finalize", self._cancellable_node(self._finalize_node))
         graph.add_edge(START, "plan_query")
-        graph.add_conditional_edges(
-            "plan_query",
-            route_after_plan_query,
-            {"build_query": "build_query"},
+        boundaries = (
+            ("plan_query", route_after_plan_query, ("build_query", "finalize")),
+            ("build_query", route_after_build_query, ("execute_read", "finalize")),
+            ("execute_read", route_after_execute_read, ("normalize_segments",)),
+            ("normalize_segments", route_after_normalize_segments, ("rag_retrieve",)),
+            ("rag_retrieve", route_after_rag_retrieve_rerank, ("select_evidence",)),
+            ("select_evidence", route_after_select_evidence, ("assess_sufficiency",)),
+            (
+                "assess_sufficiency",
+                route_after_assess_sufficiency,
+                ("select_evidence", "plan_query", "finalize"),
+            ),
+            ("finalize", route_after_finalize_retrieval, ("finalize", "plan_query")),
         )
-        graph.add_conditional_edges(
-            "build_query",
-            route_after_build_query,
-            {"execute_read": "execute_read", "finalize": "finalize"},
-        )
-        graph.add_conditional_edges(
-            "execute_read",
-            route_after_execute_read,
-            {"normalize_segments": "normalize_segments"},
-        )
-        graph.add_conditional_edges(
-            "normalize_segments",
-            route_after_normalize_segments,
-            {"rag_retrieve": "rag_retrieve"},
-        )
-        graph.add_conditional_edges(
-            "rag_retrieve",
-            route_after_rag_retrieve_rerank,
-            {"select_evidence": "select_evidence"},
-        )
-        graph.add_conditional_edges(
-            "select_evidence",
-            route_after_select_evidence,
-            {"assess_sufficiency": "assess_sufficiency"},
-        )
-        graph.add_conditional_edges(
-            "assess_sufficiency",
-            route_after_assess_sufficiency,
-            {"plan_query": "plan_query", "finalize": "finalize"},
-        )
-        graph.add_conditional_edges(
-            "finalize",
-            route_after_finalize_retrieval,
-            {"finalize": "finalize", "end": END},
-        )
+        for name, router, successors in boundaries:
+            graph.add_conditional_edges(
+                name,
+                partial(
+                    route_after_retrieval_boundary,
+                    normal_route=router,
+                    should_stop_for_cancel=self._should_stop_for_cancel,
+                ),
+                {**{target: target for target in successors}, "end": END},
+            )
         return graph.compile(name="retrieval_subgraph")
+
+    def _cancellable_node(
+        self,
+        step: Callable[[ContextRetrievalLocalState], ContextRetrievalLocalState],
+    ) -> RunnableLambda[ContextRetrievalLocalState, ContextRetrievalLocalState]:
+        def invoke(state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
+            # Cancellation can arrive after edge evaluation, while the next
+            # checkpoint/node is being scheduled. Recheck before starting work.
+            if self._should_stop_for_cancel(state["run_id"]):
+                return state
+            return step(state)
+
+        return RunnableLambda(invoke)
 
     def _initialize_state(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         request = request_from_state(state)
         self._transition_run(request.run_id, "begin_retrieval")
         invocation_id = self._id_factory()
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
-        current_round_no = initialize_current_round_no(
-            prior_result=state.get("retrieval_result"),
-            tool_route_plan=tool_route_plan,
+        prior_sufficiency = state.get(CONTEXT_SUFFICIENCY_OUTPUT_KEY)
+        persisted_round_no = state.get(CONTEXT_CURRENT_ROUND_NO_KEY)
+        resumes_route_reconsideration = (
+            isinstance(prior_sufficiency, Mapping)
+            and prior_sufficiency.get("status") == "ROUTE_RECONSIDERATION_REQUIRED"
+        )
+        if resumes_route_reconsideration:
+            if not isinstance(persisted_round_no, int):
+                raise ValueError("retrieval route continuation is missing its round identity")
+            current_round_no = advance_current_round_no(
+                current_round_no=persisted_round_no,
+                is_followup=True,
+            )
+        else:
+            current_round_no = initialize_current_round_no(
+                prior_result=state.get("retrieval_result"),
+                tool_route_plan=tool_route_plan,
+            )
+        continuation = restore_retrieval_continuation(
+            state,
+            has_prior_result=resumes_route_reconsideration or current_round_no > 0,
         )
         local_state = build_agent_local_state(
             agent_role="context_retriever",
@@ -467,18 +573,26 @@ class RetrievalSubgraph:
             prompt_ref=self._select_prompt_ref,
         )
         retry_budget = _authorize_context_adjustment_budget(state)
+        prior_result = state.get("retrieval_result")
+        serialized_read_bindings: dict[str, dict[str, object]] = {
+            handle: dict(binding) for handle, binding in continuation["read_bindings"].items()
+        }
         next_state: ContextRetrievalLocalState = {
             **state,
             "retry_budget": retry_budget,
+            "selected_person_identities": state.get(
+                "selected_person_identities",
+                {} if prior_result is None else prior_result.get("selected_person_identities", {}),
+            ),
             "input_route_ref": cast(
                 StateArtifactRefV1, dict(tool_route_plan["input_plan"]["meta"])
             ),
             "input_routes": list(tool_route_plan["input_plan"]["input_routes"]),
             "query_plan": None,
-            "query_attempts": [],
+            "query_attempts": list(continuation["query_attempts"]),
             "source_statuses": [],
-            "read_result_handles": [],
-            "segment_handles": [],
+            "read_result_handles": list(continuation["read_result_handles"]),
+            "segment_handles": list(continuation["segment_handles"]),
             "availability_results": [],
             "rag_candidates": [],
             "evidence_selection": None,
@@ -486,10 +600,13 @@ class RetrievalSubgraph:
             "final_result": None,
             CONTEXT_AGENT_LOCAL_KEY: local_state,
             CONTEXT_CURRENT_ROUND_NO_KEY: current_round_no,
-            CONTEXT_READ_RESULT_HANDLES_KEY: [],
-            CONTEXT_READ_BINDINGS_KEY: {},
-            CONTEXT_SEGMENT_HANDLES_KEY: [],
-            CONTEXT_QUERY_ATTEMPTS_KEY: [],
+            CONTEXT_READ_RESULT_HANDLES_KEY: list(continuation["read_result_handles"]),
+            CONTEXT_READ_BINDINGS_KEY: serialized_read_bindings,
+            CONTEXT_SEGMENT_HANDLES_KEY: list(continuation["segment_handles"]),
+            CONTEXT_QUERY_ATTEMPTS_KEY: list(continuation["query_attempts"]),
+            CONTEXT_CANONICAL_PLANS_KEY: dict(continuation["canonical_plans"]),
+            CONTEXT_ROUND_PREADVANCED_KEY: resumes_route_reconsideration
+            or current_round_no > 0,
             "trace_context": merge_trace_context(
                 state,
                 graph_profile=self._graph_profile.value,
@@ -510,6 +627,18 @@ class RetrievalSubgraph:
         # this subgraph -- only Supervisor constructs it.
         retrieval_required = _retrieval_required_signal(state.get("workflow_signal"))
         pending_need = _pending_retrieval_need(state.get("pending_user_retrieval_need"))
+        if resumes_route_reconsideration:
+            if not continuation["canonical_plans"] or not continuation["query_attempts"]:
+                raise ValueError("retrieval route continuation has no prior query facts")
+            route_sufficiency = cast(SufficiencyResultV2, prior_sufficiency)
+            next_state[CONTEXT_SUFFICIENCY_OUTPUT_KEY] = route_sufficiency
+            next_state["sufficiency"] = route_sufficiency
+            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
+                current_round_no=current_round_no,
+                prior_query_attempts=list(continuation["query_attempts"]),
+                unresolved_sufficiency_issues=route_sufficiency["issues"],
+                read_result_summaries=self._bounded_read_result_summaries(next_state),
+            )
         if retrieval_required is not None or pending_need is not None:
             next_state["workflow_signal"] = None
             needs = (
@@ -517,12 +646,39 @@ class RetrievalSubgraph:
                 if retrieval_required is not None
                 else [cast(RetrievalNeedV1, pending_need)]
             )
-            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
-                current_round_no=current_round_no,
-                prior_query_attempts=[],
-                unresolved_sufficiency_issues=_needs_as_sufficiency_issues(needs),
-                read_result_summaries=self._bounded_read_result_summaries(next_state),
-            )
+            if continuation["canonical_plans"]:
+                sufficiency: SufficiencyResultV2 = {
+                    "schema_version": 2,
+                    "status": "NEEDS_MORE_DATA",
+                    "issues": _needs_as_sufficiency_issues(needs, state["tool_route_plan"]),
+                }
+                prior_result = cast(RetrievalResultV1, state.get("retrieval_result"))
+                if prior_result is None:
+                    raise ValueError("retrieval continuation requires its prior result")
+                evidence_drafts = resolve_evidence_projection(
+                    store=self._evidence_store,
+                    run_id=state["run_id"],
+                    retrieval_result=prior_result,
+                )
+                selection = restore_prior_evidence_selection(
+                    prior_result=prior_result,
+                    evidence_drafts=evidence_drafts,
+                )
+                next_state[CONTEXT_SUFFICIENCY_OUTPUT_KEY] = sufficiency
+                next_state["sufficiency"] = sufficiency
+                next_state[CONTEXT_SELECTION_OUTPUT_KEY] = selection
+                next_state["evidence_selection"] = selection
+                next_state["evidence_drafts"] = evidence_drafts
+                next_state["availability_results"] = cast(
+                    list[AvailableIntervalV1],
+                    list(prior_result["availability_results"]),
+                )
+                next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
+                    current_round_no=current_round_no,
+                    prior_query_attempts=list(continuation["query_attempts"]),
+                    unresolved_sufficiency_issues=sufficiency["issues"],
+                    read_result_summaries=self._bounded_read_result_summaries(next_state),
+                )
         return next_state
 
     def _select_evidence_node(
@@ -535,6 +691,7 @@ class RetrievalSubgraph:
         rag_candidates = _require_state_value(
             state.get(CONTEXT_RAG_CANDIDATES_KEY), "rag candidates"
         )
+        calls_before = state["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(state)
         patch = select_evidence_node(
             cast(
@@ -542,20 +699,35 @@ class RetrievalSubgraph:
                 {
                     "request_intent": request_intent,
                     "rag_candidates": rag_candidates,
+                    "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+                    "evidence_selection": state.get("evidence_selection"),
                     "exclusion_obligation_segment_ids": state.get(
                         "exclusion_obligation_segment_ids", []
                     ),
+                    "evidence_reassessment_issues": state.get(
+                        "__context_evidence_reassessment_issues__", []
+                    )
+                    or [],
                 },
             ),
             llm_runtime=self._llm_runtime,
             prompt_ref=self._select_prompt_ref,
             revision_prompt_ref=self._select_prompt_ref,
+            source_fetch_plans=[
+                state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
+                for query in _require_state_value(state["query_plan"], "query_plan")[
+                    "route_queries"
+                ]
+            ],
             requested_mode=request.requested_mode,
             segments=cast(list[Any], segments),
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
         )
         selection = cast(Any, patch["evidence_selection"])
-        revised_retry_budget = cast(RunBudgetV2, patch["retry_budget"])
+        revised_retry_budget = consume_llm_call_budget(
+            {**state, "retry_budget": cast(RunBudgetV2, patch["retry_budget"])}
+        )
+        calls_used = revised_retry_budget["llm_calls_used"] - calls_before
         updated_local = dict(local_state)
         updated_local["node_state"] = "SELECT_EVIDENCE_COMPLETE"
         updated_local["typed_result"] = cast(dict[str, object], selection)
@@ -568,9 +740,8 @@ class RetrievalSubgraph:
                 CONTEXT_SELECTION_OUTPUT_KEY: selection,
                 "rag_candidates": rag_candidates,
                 "evidence_selection": selection,
-                "retry_budget": consume_llm_call_budget(
-                    {**state, "retry_budget": revised_retry_budget}
-                ),
+                "__context_evidence_reassessment_issues__": None,
+                "retry_budget": revised_retry_budget,
                 "trace_context": merge_trace_context(
                     state,
                     graph_profile=self._graph_profile.value,
@@ -579,13 +750,15 @@ class RetrievalSubgraph:
                     agent_invocation_id=local_state["invocation_id"],
                     subgraph_namespace="context",
                     node_name="select_evidence",
-                    llm_call_id=f"{request.run_id}:retrieval.select_evidence",
-                    prompt_ref=self._select_prompt_ref,
-                    llm_call_increment=1,
+                    llm_call_id=(
+                        f"{request.run_id}:retrieval.select_evidence" if calls_used else None
+                    ),
+                    prompt_ref=self._select_prompt_ref if calls_used else None,
+                    llm_call_increment=calls_used,
                 ),
             },
         )
-        return self._materialize_evidence(selected_state)
+        return self._materialize_evidence(selected_state, segments=segments)
 
     def _normalize_segments_node(
         self, state: ContextRetrievalLocalState
@@ -594,12 +767,22 @@ class RetrievalSubgraph:
         acquisition_result = _require_state_value(
             working_state["acquisition_result"], "acquisition_result"
         )
+        for observation in project_gmail_draft_source_snapshots(acquisition_result):
+            self._evidence_store.put_resource_snapshot(
+                run_id=state["run_id"],
+                resource_handle=observation["resource_handle"],
+                source_version_ref=observation["source_version_ref"],
+                snapshot=observation["snapshot"],
+            )
         patch = normalize_segments_node(
             cast(
                 Any,
                 {
                     "operation_inputs": {
-                        "normalize_segments": {"acquisition_result": acquisition_result}
+                        "normalize_segments": {
+                            "acquisition_result": acquisition_result,
+                            "preferred_segment_ids": self._preferred_segment_ids(state),
+                        }
                     }
                 },
             )
@@ -624,22 +807,39 @@ class RetrievalSubgraph:
         acquisition_result = _require_state_value(
             working_state["acquisition_result"], "acquisition_result"
         )
-        patch = normalize_segments_node(
-            cast(
-                Any,
-                {
-                    "operation_inputs": {
-                        "normalize_segments": {"acquisition_result": acquisition_result}
-                    }
-                },
-            )
-        )
-        segments = cast(list[Any], patch["normalized_segments"])
         expected_ids = state.get("segments")
+        if expected_ids is None:
+            patch = normalize_segments_node(
+                cast(
+                    Any,
+                    {
+                        "operation_inputs": {
+                            "normalize_segments": {
+                                "acquisition_result": acquisition_result,
+                                "preferred_segment_ids": self._preferred_segment_ids(state),
+                            }
+                        }
+                    },
+                )
+            )
+            segments = cast(list[Any], patch["normalized_segments"])
+        else:
+            segments = cast(
+                list[Any],
+                rehydrate_normalized_segments(acquisition_result, expected_ids),
+            )
         actual_ids = [segment.segment_id for segment in segments]
         if expected_ids is not None and actual_ids != expected_ids:
             raise ValueError("stable segment identity changed within one retrieval round")
         return segments
+
+    def _preferred_segment_ids(self, state: ContextRetrievalLocalState) -> list[str]:
+        query_plan = _require_state_value(state["query_plan"], "query_plan")
+        canonical_plans = state[CONTEXT_CANONICAL_PLANS_KEY]
+        return preferred_detail_evidence_ids(
+            state.get("evidence_selection"),
+            [canonical_plans[query["route_id"]] for query in query_plan["route_queries"]],
+        )
 
     def _ephemeral_raw_state(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         handles = cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, []))
@@ -657,6 +857,7 @@ class RetrievalSubgraph:
         hydrated = project_acquisition_result(
             list(zip(plans, results, strict=True)),
             remaining_budget=dict(safe["remaining_budget"]),
+            prior_result=safe,
         )
         return cast(
             ContextRetrievalLocalState,
@@ -674,6 +875,7 @@ class RetrievalSubgraph:
                         "rag_retrieve_rerank": {
                             "segments": cast(list[Any], segments),
                             "request_intent": request_intent,
+                            "source_plans": list(state[CONTEXT_CANONICAL_PLANS_KEY].values()),
                             "top_k": 24,
                         }
                     }
@@ -689,21 +891,44 @@ class RetrievalSubgraph:
         }
 
     def _materialize_evidence(
-        self, state: ContextRetrievalLocalState
+        self,
+        state: ContextRetrievalLocalState,
+        *,
+        segments: list[Any],
     ) -> ContextRetrievalLocalState:
         local_state = cast(AgentLocalStateV1, state[CONTEXT_AGENT_LOCAL_KEY])
         selection = state[CONTEXT_SELECTION_OUTPUT_KEY]
         evidence_drafts = materialize_evidence_drafts(
             selection,
-            segments=cast(list[Any], self._normalized_segments(state)),
+            segments=segments,
         )
         updated_local = dict(local_state)
         updated_local["node_state"] = "SELECTION_VALIDATED"
         updated_local["typed_result"] = cast(dict[str, object], selection)
+        prior_result = state.get("retrieval_result")
+        prior_candidates = [] if prior_result is None else prior_result.get("person_candidates", [])
+        person_candidates = project_person_candidates(
+            _require_state_value(state["request_intent"], "request_intent"),
+            evidence_drafts,
+            state.get("person_candidates", prior_candidates),
+            state.get("exclusion_obligation_segment_ids", []),
+            source_segments=segments,
+        )
         return {
             **state,
             CONTEXT_AGENT_LOCAL_KEY: cast(AgentLocalStateV1, updated_local),
             "evidence_drafts": evidence_drafts,
+            "person_candidates": person_candidates,
+            "selected_person_identities": resolve_supported_person_identities(
+                person_candidates,
+                evidence_drafts,
+                state.get(
+                    "selected_person_identities",
+                    {}
+                    if prior_result is None
+                    else prior_result.get("selected_person_identities", {}),
+                ),
+            ),
             "trace_context": merge_trace_context(
                 state,
                 graph_profile=self._graph_profile.value,
@@ -727,6 +952,26 @@ class RetrievalSubgraph:
         pause, so ``evidence_drafts`` here is always the same already-frozen
         selection, never re-derived or re-fetched.
         """
+        deterministic = deterministic_sufficiency(
+            request_intent=_require_state_value(state["request_intent"], "request_intent"),
+            tool_route_plan=state.get("tool_route_plan"),
+            acquisition_result=_require_state_value(
+                state["acquisition_result"], "acquisition_result"
+            ),
+            evidence_drafts=state["evidence_drafts"],
+            retry_budget=cast(RunBudgetV2, state["retry_budget"]),
+            confirmation_response=confirmation_response,
+            person_candidates=state.get("person_candidates", []),
+            selected_person_identities=state.get("selected_person_identities"),
+            query_attempts=state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+            read_result_summaries=self._bounded_read_result_summaries(state),
+        )
+        if deterministic is not None:
+            return (
+                deterministic,
+                {"structured_output_attempts": 0},
+                cast(RunBudgetV2, state["retry_budget"]),
+            )
         ensure_llm_call_budget(state)
         patch = assess_sufficiency_node(
             cast(
@@ -736,6 +981,7 @@ class RetrievalSubgraph:
                         state["request_intent"], "request_intent"
                     ),
                     "evidence_selection": state[CONTEXT_SELECTION_OUTPUT_KEY],
+                    "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
                 },
             ),
             llm_runtime=self._llm_runtime,
@@ -748,6 +994,8 @@ class RetrievalSubgraph:
             evidence_drafts=state["evidence_drafts"],
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
             confirmation_response=confirmation_response,
+            attempted_detail_candidate_refs=self._attempted_detail_candidate_refs(state),
+            read_result_summaries=self._bounded_read_result_summaries(state),
         )
         sufficiency_result = cast(SufficiencyResultV2, patch["sufficiency"])
         llm_provider_result: dict[str, object] = {"structured_output_attempts": 1}
@@ -761,6 +1009,94 @@ class RetrievalSubgraph:
         sufficiency_result, llm_provider_result, retry_budget = self._run_sufficiency_attempt(
             state, confirmation_response=None
         )
+        request_intent = _require_state_value(state["request_intent"], "request_intent")
+        tool_route_plan = _require_state_value(state["tool_route_plan"], "tool_route_plan")
+        frozen_routes = tool_route_plan["input_plan"]["input_routes"]
+        current_round_no = _require_state_value(
+            state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+        )
+        query_attempts = cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []))
+        read_result_summaries = self._bounded_read_result_summaries(state)
+        detail_candidate_refs = project_detail_candidate_refs(
+            evidence_drafts=state.get("evidence_drafts", []),
+            acquisition_result=state.get("acquisition_result"),
+        )
+        attempted_detail_candidate_refs = self._attempted_detail_candidate_refs(state)
+        followup_projection = followup_planner_projection(
+            current_round_no=current_round_no,
+            prior_query_attempts=query_attempts,
+            unresolved_sufficiency_issues=cast(
+                list[dict[str, object]], list(sufficiency_result["issues"])
+            ),
+            read_result_summaries=read_result_summaries,
+        )
+        deterministic_followup = deterministic_query_plan(
+            prompt_input={"request_intent": request_intent, **followup_projection},
+            frozen_routes=frozen_routes,
+            route_policies=_runtime_route_constraint_policies(frozen_routes),
+            validated_resource_refs=None,
+            validated_container_refs=None,
+            detail_candidate_refs=detail_candidate_refs,
+            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+            person_candidates=state.get("person_candidates", []),
+            selected_person_identities=state.get("selected_person_identities"),
+        )
+        planned_operation_kinds = (
+            {query["operation"] for query in deterministic_followup["route_queries"]}
+            if deterministic_followup is not None
+            else {"SEARCH"}
+        )
+        planned_detail_fetch_count = (
+            len(deterministic_followup["route_queries"])
+            if planned_operation_kinds <= {"DETAIL_FETCH"} and deterministic_followup is not None
+            else 0
+        )
+        acquisition_result = _require_state_value(state["acquisition_result"], "acquisition_result")
+        sufficiency_result, retry_budget, should_plan_followup = authorize_retrieval_followup(
+            sufficiency_result,
+            request_intent=request_intent,
+            retry_budget=retry_budget,
+            evidence_supported_partial_possible=bool(state["evidence_drafts"]),
+            detail_fetch_count=planned_detail_fetch_count,
+            can_acquire_new_information=(
+                not _has_bounded_read_stop(acquisition_result)
+                and followup_fits_retrieval_round_budget(
+                    current_round_no=current_round_no,
+                    operation_kinds=planned_operation_kinds,
+                )
+                and (
+                    any(
+                        item["slot"] == "person_identity_search"
+                        for item in sufficiency_result["issues"]
+                    )
+                    or has_retrieval_followup_path(
+                        request_intent=request_intent,
+                        tool_route_plan=tool_route_plan,
+                        route_policies=_runtime_route_constraint_policies(frozen_routes),
+                        unresolved_sufficiency_issues=cast(
+                            list[Mapping[str, object]], sufficiency_result["issues"]
+                        ),
+                        read_result_summaries=read_result_summaries,
+                        query_attempts=query_attempts,
+                        detail_candidate_refs=detail_candidate_refs,
+                        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+                    )
+                )
+            ),
+        )
+        reassessment_segments = (
+            self._normalized_segments(state)
+            if sufficiency_result["status"] == "PARTIAL" and not should_plan_followup
+            else []
+        )
+        reassessment_issues, retry_budget = authorize_evidence_reassessment(
+            sufficiency=sufficiency_result,
+            selection=state[CONTEXT_SELECTION_OUTPUT_KEY],
+            candidates=state.get(CONTEXT_RAG_CANDIDATES_KEY, []),
+            segments=reassessment_segments,
+            retry_budget=retry_budget,
+            can_acquire_new_information=should_plan_followup,
+        )
         updated_local = dict(local_state)
         updated_local["node_state"] = "SUFFICIENCY_COMPLETE"
         updated_local["typed_result"] = cast(dict[str, object], sufficiency_result)
@@ -771,6 +1107,7 @@ class RetrievalSubgraph:
             "sufficiency": sufficiency_result,
             "llm_provider_result": llm_provider_result,
             "retry_budget": retry_budget,
+            "__context_evidence_reassessment_issues__": reassessment_issues or None,
             "trace_context": merge_trace_context(
                 state,
                 graph_profile=self._graph_profile.value,
@@ -779,20 +1116,23 @@ class RetrievalSubgraph:
                 agent_invocation_id=local_state["invocation_id"],
                 subgraph_namespace="context",
                 node_name="assess_sufficiency",
-                llm_call_id=f"{request_from_state(state).run_id}:retrieval.assess_sufficiency",
-                prompt_ref=self._sufficiency_prompt_ref,
-                llm_call_increment=1,
+                llm_call_id=(
+                    f"{request_from_state(state).run_id}:retrieval.assess_sufficiency"
+                    if llm_provider_result.get("structured_output_attempts", 0)
+                    else None
+                ),
+                prompt_ref=(
+                    self._sufficiency_prompt_ref
+                    if llm_provider_result.get("structured_output_attempts", 0)
+                    else None
+                ),
+                llm_call_increment=cast(
+                    int, llm_provider_result.get("structured_output_attempts", 0)
+                ),
             ),
         }
-        if sufficiency_result["status"] == "NEEDS_MORE_DATA":
-            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_planner_projection(
-                current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
-                prior_query_attempts=list(state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])),
-                unresolved_sufficiency_issues=cast(
-                    list[dict[str, object]], list(sufficiency_result["issues"])
-                ),
-                read_result_summaries=self._bounded_read_result_summaries(state),
-            )
+        if should_plan_followup:
+            next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_projection
         elif sufficiency_result["status"] == "NEEDS_CONFIRMATION":
             # Materialized here -- not in finalize -- because this node never
             # replays on resume (it completes and commits before any pause),
@@ -800,7 +1140,10 @@ class RetrievalSubgraph:
             # across finalize's node-replay.
             request_intent = _require_state_value(state["request_intent"], "request_intent")
             user_interrupt, confirmation_interrupt = self._materialize_confirmation_interrupt(
-                result=sufficiency_result, request_intent=request_intent
+                result=sufficiency_result,
+                request_intent=request_intent,
+                person_candidates=state.get("person_candidates", []),
+                selected_person_identities=state.get("selected_person_identities", {}),
             )
             next_state["workflow_phase"] = WorkflowPhase.WAITING_CONFIRMATION.value
             next_state["user_interrupt"] = cast(Any, user_interrupt)
@@ -820,23 +1163,28 @@ class RetrievalSubgraph:
         Google defaults retain their existing behavior. GitHub routes consume
         only current-Run RequestIntent/SelectedResourceRef authority.
         """
-        tasklist_id = (
-            None
-            if self._default_tasklist_id_provider is None
-            else self._default_tasklist_id_provider()
+        tasklist_ids = (
+            tuple(self._authorized_tasklist_ids_provider())
+            if self._authorized_tasklist_ids_provider is not None
+            else ()
         )
-        calendar_id = (
-            None
-            if self._default_calendar_id_provider is None
-            else self._default_calendar_id_provider()
+        calendar_ids = (
+            tuple(self._authorized_calendar_ids_provider())
+            if self._authorized_calendar_ids_provider is not None
+            else ()
         )
-        result: dict[str, list[str]] = {}
-        for route in frozen_routes:
-            category = coarse_resource_category(route["resource_type"])
-            if category == "TASK" and tasklist_id:
-                result[route["route_id"]] = [tasklist_id]
-            elif category == "CALENDAR" and calendar_id:
-                result[route["route_id"]] = [calendar_id]
+        if not tasklist_ids and self._default_tasklist_id_provider is not None:
+            tasklist_id = self._default_tasklist_id_provider()
+            tasklist_ids = () if tasklist_id is None else (tasklist_id,)
+        if not calendar_ids and self._default_calendar_id_provider is not None:
+            calendar_id = self._default_calendar_id_provider()
+            calendar_ids = () if calendar_id is None else (calendar_id,)
+        result = resolve_route_container_scopes(
+            frozen_routes=frozen_routes,
+            selected_resources=request_from_state(state).selected_resources,
+            authorized_tasklist_ids=tasklist_ids,
+            authorized_calendar_ids=calendar_ids,
+        )
         github_routes = [
             route
             for route in frozen_routes
@@ -858,53 +1206,36 @@ class RetrievalSubgraph:
         return result
 
     @staticmethod
-    def _validated_resource_refs(
+    def _exact_resource_bindings(
         state: ContextRetrievalLocalState,
         frozen_routes: list[InputToolRouteV1],
-    ) -> dict[str, list[str]]:
-        """Bind current-Run selected identities only to exact direct-read routes."""
-        selected_refs = request_from_state(state).selected_resources
-        direct_read_tools = {
-            "gmail_get_thread",
-            "gmail_get_message",
-            "gmail_get_draft",
-            "gmail_get_attachment",
-            "tasks_get_task",
-            "calendar_get_event",
-            "github_get_issue",
-        }
-        result: dict[str, list[str]] = {}
-        for route in frozen_routes:
-            if not direct_read_tools.intersection(route["allowed_read_tool_ids"]):
-                continue
-            route_type = route["resource_type"].upper()
-            refs: list[str] = []
-            for item in selected_refs:
-                if item.connector_id != route["connector_id"]:
-                    continue
-                selected_type = item.resource_type.upper()
-                if selected_type == route_type:
-                    refs.append(f"{route_type.lower()}:{item.resource_id}")
-            if refs:
-                result[route["route_id"]] = refs
-        return result
+    ) -> ExactResourceBindingsV1:
+        request_intent = cast(
+            RequestIntentV2,
+            _require_state_value(state.get("request_intent"), "request intent"),
+        )
+        return bind_exact_resource_refs(
+            request_intent=request_intent,
+            frozen_routes=frozen_routes,
+            selected_resources=request_from_state(state).selected_resources,
+        )
 
     @staticmethod
-    def _selected_detail_resource(
+    def _bound_detail_resource(
         state: ContextRetrievalLocalState,
         *,
         resource_type: str,
         resource_ref: str,
     ) -> Mapping[str, object] | None:
-        for item in request_from_state(state).selected_resources:
-            if resource_ref != f"{resource_type.lower()}:{item.resource_id}":
-                continue
-            return {
-                "resource_type": resource_type.lower(),
-                "resource_id": item.resource_id,
-                "parent_id": item.parent_resource_id,
-            }
-        return None
+        tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
+        bindings = RetrievalSubgraph._exact_resource_bindings(
+            state,
+            tool_route_plan["input_plan"]["input_routes"],
+        )
+        identity = bindings["identities_by_ref"].get(resource_ref)
+        if identity is None or identity["resource_type"].upper() != resource_type.upper():
+            return None
+        return identity
 
     def _plan_query_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         if CONTEXT_AGENT_LOCAL_KEY not in state:
@@ -912,9 +1243,18 @@ class RetrievalSubgraph:
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
-        validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
+        exact_resource_bindings = self._exact_resource_bindings(state, frozen_routes)
+        validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)
         followup = state.get(CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY)
+        detail_candidate_refs = project_detail_candidate_refs(
+            evidence_drafts=state.get("evidence_drafts", []),
+            acquisition_result=state.get("acquisition_result"),
+        )
+        attempted_detail_candidate_refs = self._attempted_detail_candidate_refs(state)
+        prior_canonical = state.get(CONTEXT_CANONICAL_PLANS_KEY, {})
+        prior_read_result_handles = self._prior_read_result_handles(state, prior_canonical)
+        read_result_summaries = self._bounded_read_result_summaries(state)
         prompt_input = (
             initial_retrieval_planner_input(
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
@@ -933,61 +1273,168 @@ class RetrievalSubgraph:
                 validated_container_refs=validated_container_refs,
             )
         )
-        ensure_llm_call_budget(state)
-        patch = plan_query_node(
-            cast(
-                Any,
-                {
-                    "operation_inputs": {
-                        "plan_query": {
-                            "llm_runtime": self._llm_runtime,
-                            "prompt_ref": self._plan_query_prompt_ref,
-                            "revision_prompt_ref": self._plan_query_prompt_ref,
-                            "output_schema": RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
-                            "prompt_input": prompt_input,
-                            "requested_mode": request_from_state(state).requested_mode,
-                            "frozen_routes": frozen_routes,
-                            "route_policies": route_policies,
-                            "retry_budget": cast(RunBudgetV2, state["retry_budget"]),
-                            "validated_resource_refs": validated_resource_refs,
-                            "validated_container_refs": validated_container_refs,
-                            "detail_candidate_refs": state.get(CONTEXT_SEGMENT_HANDLES_KEY, []),
-                        }
-                    }
-                },
-            )
+        deterministic_plan = deterministic_query_plan(
+            prompt_input=prompt_input,
+            frozen_routes=frozen_routes,
+            route_policies=route_policies,
+            validated_resource_refs=validated_resource_refs,
+            validated_container_refs=validated_container_refs,
+            timezone=self._timezone_provider(),
+            detail_candidate_refs=detail_candidate_refs,
+            attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+            person_candidates=state.get("person_candidates", []),
+            selected_person_identities=state.get("selected_person_identities"),
         )
+        if deterministic_plan is None:
+            ensure_llm_call_budget(state)
+        try:
+            patch = plan_query_node(
+                cast(
+                    Any,
+                    {
+                        "operation_inputs": {
+                            "plan_query": {
+                                "llm_runtime": self._llm_runtime,
+                                "prompt_ref": self._plan_query_prompt_ref,
+                                "revision_prompt_ref": self._plan_query_prompt_ref,
+                                "output_schema": RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+                                "prompt_input": prompt_input,
+                                "requested_mode": request_from_state(state).requested_mode,
+                                "frozen_routes": frozen_routes,
+                                "route_policies": route_policies,
+                                "retry_budget": cast(RunBudgetV2, state["retry_budget"]),
+                                "validated_resource_refs": validated_resource_refs,
+                                "validated_container_refs": validated_container_refs,
+                                "detail_candidate_refs": detail_candidate_refs,
+                                "attempted_detail_candidate_refs": attempted_detail_candidate_refs,
+                                "now_ms": state["retry_budget"]["started_at_ms"],
+                                "timezone": self._timezone_provider(),
+                                "person_candidates": state.get("person_candidates", []),
+                                "selected_person_identities": state.get(
+                                    "selected_person_identities"
+                                ),
+                                "prior_plans": prior_canonical,
+                                "prior_read_result_handles": prior_read_result_handles,
+                                "read_result_summaries": read_result_summaries,
+                            }
+                        }
+                    },
+                )
+            )
+        except QueryUnchangedAfterFailureError as error:
+            if followup is None:
+                raise
+            return self._close_unmaterializable_followup(state, validation_error=error)
         query_plan = cast(RetrievalQueryPlanV2, patch["query_plan"])
         revised_retry_budget = cast(RunBudgetV2, patch["retry_budget"])
-        return {
+        llm_invoked = deterministic_plan is None
+        result: ContextRetrievalLocalState = {
             **state,
             "query_plan": query_plan,
-            "retry_budget": consume_llm_call_budget(
-                {**state, "retry_budget": revised_retry_budget}
+            "retry_budget": (
+                consume_llm_call_budget({**state, "retry_budget": revised_retry_budget})
+                if llm_invoked
+                else revised_retry_budget
             ),
         }
+        result.pop(CONTEXT_FOLLOWUP_OPERATION_KEY, None)
+        return result
+
+    @staticmethod
+    def _attempted_detail_candidate_refs(state: ContextRetrievalLocalState) -> list[str]:
+        return project_attempted_detail_refs(
+            cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []))
+        )
+
+    @staticmethod
+    def _prior_read_result_handles(
+        state: ContextRetrievalLocalState,
+        prior_canonical: Mapping[str, SourceFetchPlanV1],
+    ) -> dict[str, str]:
+        bindings = cast(Mapping[str, ReadResultBindingV1], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
+        result: dict[str, str] = {}
+        handles = cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, list(bindings)))
+        for handle in reversed(handles):
+            binding = bindings.get(handle)
+            if not isinstance(binding, Mapping):
+                raise RetrievalReadBindingError("read-result binding is malformed")
+            route_id = binding.get("route_id")
+            query_hash = binding.get("query_identity_hash")
+            plan = prior_canonical.get(route_id) if isinstance(route_id, str) else None
+            if (
+                plan is not None
+                and isinstance(query_hash, str)
+                and read_result_binding_matches_plan(binding, plan)
+                and route_id not in result
+            ):
+                result[route_id] = handle
+        return result
 
     def _execute_read_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
-        plans = cast(
-            list[SourceFetchPlanV1],
-            list(state.get(CONTEXT_CANONICAL_PLANS_KEY, {}).values()),
+        round_no = (
+            _require_state_value(
+                state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+            )
+            if state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True
+            else advance_current_round_no(
+                current_round_no=_require_state_value(
+                    state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+                ),
+                is_followup=state.get(CONTEXT_FOLLOWUP_OPERATION_KEY)
+                in {"SEARCH", "NEXT_PAGE", "READ"},
+            )
+        )
+        plans = materialize_container_read_plans(
+            cast(
+                list[SourceFetchPlanV1],
+                [
+                    state[CONTEXT_CANONICAL_PLANS_KEY][query["route_id"]]
+                    for query in _require_state_value(state.get("query_plan"), "query_plan")[
+                        "route_queries"
+                    ]
+                ],
+            )
         )
         route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         routes = {route["route_id"]: route for route in route_plan["input_plan"]["input_routes"]}
         bindings = dict(cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {})))
-        prior_results = self._resolve_cached_results(state, bindings=bindings)
         new_handles: list[str] = []
+        failed_reads: list[tuple[SourceFetchPlanV1, str, bool]] = []
+        budget_stops: list[tuple[SourceFetchPlanV1, int, str]] = []
+        page_calls = 0
         attempts = list(cast(list[QueryAttemptV1], state.get(CONTEXT_QUERY_ATTEMPTS_KEY, [])))
-        for plan in plans:
+        for plan_index, plan in enumerate(plans):
+            if self._should_stop_for_cancel(state["run_id"]):
+                break
             route = routes.get(plan["route_id"])
             if route is None:
                 raise RetrievalReadBindingError("retrieval plan route is not frozen")
             detail_resource = None
             candidate_ref = plan["detail_candidate_ref"]
             if candidate_ref is not None:
+                route_handles = [
+                    handle
+                    for handle in state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])
+                    if isinstance(bindings.get(handle), Mapping)
+                    and cast(Mapping[str, object], bindings[handle]).get("route_id")
+                    == plan["route_id"]
+                ]
+                prior_results = self._resolve_cached_results(
+                    state,
+                    bindings=bindings,
+                    handles=route_handles,
+                )
                 detail_resource = find_detail_resource(candidate_ref, prior_results)
                 if detail_resource is None:
-                    raise RetrievalReadBindingError("DETAIL_FETCH candidate is not cache-bound")
+                    detail_resource = self._bound_detail_resource(
+                        state,
+                        resource_type=plan["resource_type"],
+                        resource_ref=candidate_ref,
+                    )
+                if detail_resource is None:
+                    raise RetrievalReadBindingError(
+                        "DETAIL_FETCH candidate is neither cache-bound nor current-Run selected"
+                    )
             resource_refs = [
                 ref
                 for constraint in plan["effective_constraints"]
@@ -999,7 +1446,7 @@ class RetrievalSubgraph:
                     raise RetrievalReadBindingError(
                         "direct selected-resource read requires exactly one resource ref"
                     )
-                detail_resource = self._selected_detail_resource(
+                detail_resource = self._bound_detail_resource(
                     state,
                     resource_type=plan["resource_type"],
                     resource_ref=resource_refs[0],
@@ -1027,18 +1474,44 @@ class RetrievalSubgraph:
                                 "connector_reader": self._connector_reader,
                                 "read_result_cache": self._read_result_cache,
                                 "read_result_handle": read_handle,
+                                "run_budget": state["retry_budget"],
+                                "now_ms": self._now_ms(),
+                                "prior_query_attempts": attempts,
+                                "repository_access": self._repository_access,
+                                "request_intent": state["request_intent"],
+                                "selected_resources": request_from_state(state).selected_resources,
+                                "durable_budget_accountant": (
+                                    None
+                                    if self._update_run_budget is None
+                                    else lambda update: self._update_run_budget(
+                                        state["run_id"], update
+                                    )
+                                ),
                             }
                         }
                     },
                 )
             )
             execution = cast(Any, patch["read_execution"])
+            if execution.status == "FAILED":
+                failed_reads.append((plan, execution.failure_code, execution.provider_called))
+            if execution.status == "BUDGET_STOPPED":
+                remaining_by_route: dict[str, tuple[SourceFetchPlanV1, int]] = {}
+                for pending in plans[plan_index:]:
+                    representative, count = remaining_by_route.get(
+                        pending["route_id"], (pending, 0)
+                    )
+                    remaining_by_route[pending["route_id"]] = (representative, count + 1)
+                budget_stops = [
+                    (representative, count, execution.stop_reason or "RUN_BUDGET_LIMIT")
+                    for representative, count in remaining_by_route.values()
+                ]
+                break
+            if execution.provider_called and plan["operation_kind"] != "DETAIL_FETCH":
+                page_calls += 1
             effective_handle = execution.read_result_handle
             if execution.status == "COMPLETE":
-                bindings[effective_handle] = {
-                    "route_id": plan["route_id"],
-                    "query_identity_hash": plan["query_identity_hash"],
-                }
+                bindings[effective_handle] = bind_read_result_plan(plan)
                 new_handles.append(effective_handle)
             token = None
             resolution = self._read_result_cache.resolve_read_result(
@@ -1054,18 +1527,28 @@ class RetrievalSubgraph:
                     query_attempt_id=self._id_factory(),
                     run_id=state["run_id"],
                     plan=plan,
-                    round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
+                    round_no=round_no,
                     attempt_no=len(attempts),
                     tool_id=tool_id,
                     canonical_arguments=arguments,
                     previous_query_hash=(
                         None
                         if plan["prior_read_result_handle"] is None
-                        else plan["query_identity_hash"]
+                        else cast(Mapping[str, str], bindings[plan["prior_read_result_handle"]])[
+                            "query_identity_hash"
+                        ]
                     ),
                     page_state_hash=(None if token is None else sha256(token.encode()).hexdigest()),
-                    candidate_count=execution.total_count,
+                    candidate_count=execution.candidate_count,
                     stop_reason=execution.status,
+                    prior_query_attempts=attempts,
+                    change_reason_code=next(
+                        query["reason_codes"][0]
+                        for query in _require_state_value(state.get("query_plan"), "query_plan")[
+                            "route_queries"
+                        ]
+                        if query["route_id"] == plan["route_id"]
+                    ),
                 )
             )
         all_handles = [
@@ -1082,10 +1565,11 @@ class RetrievalSubgraph:
         )
         acquisition = project_acquisition_result(
             list(zip(plan_by_binding, raw_results, strict=True)),
-            remaining_budget=self._remaining_retrieval_budget(state, len(new_handles)),
+            remaining_budget=self._remaining_retrieval_budget(state, page_calls),
+            failed_reads=failed_reads,
+            budget_stops=budget_stops,
+            prior_result=state.get("acquisition_result"),
         )
-        prior_round = state[CONTEXT_CURRENT_ROUND_NO_KEY]
-        round_no = prior_round + (1 if state.get(CONTEXT_FOLLOWUP_OPERATION_KEY) else 0)
         safe_acquisition = self._bounded_acquisition(acquisition)
         return cast(
             ContextRetrievalLocalState,
@@ -1097,9 +1581,11 @@ class RetrievalSubgraph:
                 CONTEXT_SEGMENT_HANDLES_KEY: list(acquisition["resource_handles"]),
                 CONTEXT_QUERY_ATTEMPTS_KEY: attempts,
                 CONTEXT_READ_BINDINGS_KEY: bindings,
+                CONTEXT_ROUND_PREADVANCED_KEY: False,
                 "read_result_handles": all_handles,
                 "segment_handles": list(acquisition["resource_handles"]),
                 "query_attempts": attempts,
+                "task_review_candidates": project_task_review_candidates(acquisition),
             },
         )
 
@@ -1111,7 +1597,11 @@ class RetrievalSubgraph:
         handles: list[str] | None = None,
     ) -> list[Any]:
         resolved = []
-        for handle in handles or cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])):
+        for handle in (
+            cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, []))
+            if handles is None
+            else handles
+        ):
             raw = bindings.get(handle)
             if not isinstance(raw, Mapping):
                 raise RetrievalReadBindingError("read-result handle has no local binding")
@@ -1141,17 +1631,16 @@ class RetrievalSubgraph:
             Mapping[str, SourceFetchPlanV1],
             state.get(CONTEXT_CANONICAL_PLANS_KEY, {}),
         )
-        by_route = {**prior, **{plan["route_id"]: plan for plan in plans}}
+        available_plans = [*plans, *prior.values()]
         result = []
         for handle in handles:
             raw = bindings.get(handle)
-            if not isinstance(raw, Mapping) or not isinstance(raw.get("route_id"), str):
+            if not isinstance(raw, Mapping):
                 raise RetrievalReadBindingError("read-result binding is malformed")
-            route_id = cast(str, raw["route_id"])
-            plan = by_route.get(route_id)
-            if plan is None:
-                raise RetrievalReadBindingError("cached read has no canonical source plan")
-            result.append(plan)
+            try:
+                result.append(resolve_read_result_plan(raw, available_plans=available_plans))
+            except ValueError as error:
+                raise RetrievalReadBindingError(str(error)) from error
         return result
 
     @staticmethod
@@ -1181,7 +1670,8 @@ class RetrievalSubgraph:
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
         route_policies = _runtime_route_constraint_policies(frozen_routes)
-        validated_resource_refs = self._validated_resource_refs(state, frozen_routes)
+        exact_resource_bindings = self._exact_resource_bindings(state, frozen_routes)
+        validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)
         query_plan = _require_state_value(state.get("query_plan"), "query plan")
         detail_candidate_refs = state.get(CONTEXT_SEGMENT_HANDLES_KEY, [])
@@ -1209,12 +1699,7 @@ class RetrievalSubgraph:
                 **state,
                 CONTEXT_CANONICAL_PLANS_KEY: {plan["route_id"]: plan for plan in canonical_plans},
             }
-        bindings = cast(Mapping[str, Mapping[str, str]], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
-        handles = {
-            value["route_id"]: handle
-            for handle, value in bindings.items()
-            if value["route_id"] in prior_canonical
-        }
+        handles = self._prior_read_result_handles(state, prior_canonical)
         try:
             patch = build_query_node(
                 cast(
@@ -1226,7 +1711,12 @@ class RetrievalSubgraph:
                                 "frozen_routes": frozen_routes,
                                 "route_policies": route_policies,
                                 "prior_plans": prior_canonical,
+                                "person_candidates": state.get("person_candidates", []),
+                                "selected_person_identities": state.get(
+                                    "selected_person_identities"
+                                ),
                                 "prior_read_result_handles": handles,
+                                "read_result_summaries": self._bounded_read_result_summaries(state),
                                 "validated_resource_refs": validated_resource_refs,
                                 "validated_container_refs": validated_container_refs,
                                 "detail_candidate_refs": detail_candidate_refs,
@@ -1236,45 +1726,86 @@ class RetrievalSubgraph:
                 )
             )
             canonical_plans = cast(list[SourceFetchPlanV1], patch["source_fetch_plans"])
-        except Exception:
-            return {**state, CONTEXT_FOLLOWUP_OPERATION_KEY: "FINALIZE"}
+        except QueryUnchangedAfterFailureError as error:
+            return self._close_unmaterializable_followup(
+                state,
+                validation_error=error,
+            )
         operations = {plan["operation_kind"] for plan in canonical_plans}
-        if operations == {"NEXT_PAGE"}:
-            return {
-                **state,
-                CONTEXT_CANONICAL_PLANS_KEY: {
-                    **prior_canonical,
-                    **{plan["route_id"]: plan for plan in canonical_plans},
-                },
-                CONTEXT_FOLLOWUP_OPERATION_KEY: "NEXT_PAGE",
-                CONTEXT_NEXT_PAGE_HANDLES_KEY: {
-                    plan["route_id"]: cast(str, plan["prior_read_result_handle"])
-                    for plan in canonical_plans
-                },
+        if not operations:
+            raise RetrievalV2ValidationError(
+                "materialized retrieval plan contains no executable operation",
+                reason_code="QUERY_OPERATION_UNAVAILABLE",
+            )
+        operation_marker = followup_operation_marker(operations)
+        result: ContextRetrievalLocalState = {
+            **state,
+            CONTEXT_CANONICAL_PLANS_KEY: {
+                **prior_canonical,
+                **{plan["route_id"]: plan for plan in canonical_plans},
+            },
+            CONTEXT_FOLLOWUP_OPERATION_KEY: operation_marker,
+        }
+        next_page_plans = [
+            plan for plan in canonical_plans if plan["operation_kind"] == "NEXT_PAGE"
+        ]
+        if next_page_plans:
+            result[CONTEXT_NEXT_PAGE_HANDLES_KEY] = {
+                plan["route_id"]: cast(str, plan["prior_read_result_handle"])
+                for plan in next_page_plans
             }
-        if operations in ({"SEARCH"}, {"FREEBUSY"}):
-            return {
-                **state,
-                CONTEXT_CANONICAL_PLANS_KEY: {
-                    **prior_canonical,
-                    **{plan["route_id"]: plan for plan in canonical_plans},
-                },
-                CONTEXT_FOLLOWUP_OPERATION_KEY: "SEARCH",
+        detail_plans = [
+            plan for plan in canonical_plans if plan["operation_kind"] == "DETAIL_FETCH"
+        ]
+        if detail_plans:
+            result[CONTEXT_DETAIL_CANDIDATES_KEY] = {
+                plan["route_id"]: cast(str, plan["detail_candidate_ref"]) for plan in detail_plans
             }
-        if operations == {"DETAIL_FETCH"}:
-            return {
-                **state,
-                CONTEXT_CANONICAL_PLANS_KEY: {
-                    **prior_canonical,
-                    **{plan["route_id"]: plan for plan in canonical_plans},
-                },
-                CONTEXT_FOLLOWUP_OPERATION_KEY: "DETAIL_FETCH",
-                CONTEXT_DETAIL_CANDIDATES_KEY: {
-                    plan["route_id"]: cast(str, plan["detail_candidate_ref"])
-                    for plan in canonical_plans
-                },
+        return result
+
+    def _close_unmaterializable_followup(
+        self,
+        state: ContextRetrievalLocalState,
+        *,
+        validation_error: RetrievalV2ValidationError | None = None,
+    ) -> ContextRetrievalLocalState:
+        """Close a planned follow-up that cannot produce a distinct read."""
+
+        working_state = self._ephemeral_raw_state(state)
+        sufficiency, retry_budget, _ = authorize_retrieval_followup(
+            cast(SufficiencyResultV2, working_state[CONTEXT_SUFFICIENCY_OUTPUT_KEY]),
+            request_intent=_require_state_value(working_state["request_intent"], "request_intent"),
+            retry_budget=cast(RunBudgetV2, working_state["retry_budget"]),
+            evidence_supported_partial_possible=bool(working_state["evidence_drafts"]),
+            can_acquire_new_information=False,
+        )
+        current_round_no = _require_state_value(
+            working_state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+        )
+        if working_state.get(CONTEXT_ROUND_PREADVANCED_KEY) is True:
+            current_round_no = max(0, current_round_no - 1)
+        local_state = cast(AgentLocalStateV1, working_state[CONTEXT_AGENT_LOCAL_KEY])
+        updated_local = dict(local_state)
+        if validation_error is not None:
+            updated_local["node_state"] = "QUERY_BUILD_REJECTED"
+            updated_local["candidate_output"] = cast(
+                dict[str, object], working_state.get("query_plan")
+            )
+            updated_local["failure_record"] = {
+                "schema_version": 1,
+                "reason_code": validation_error.reason_code,
+                "diagnostic": str(validation_error),
+                "retryable": False,
             }
-        return {**state, CONTEXT_FOLLOWUP_OPERATION_KEY: "FINALIZE"}
+        return {
+            **working_state,
+            CONTEXT_AGENT_LOCAL_KEY: cast(AgentLocalStateV1, updated_local),
+            CONTEXT_SUFFICIENCY_OUTPUT_KEY: sufficiency,
+            "sufficiency": sufficiency,
+            "retry_budget": retry_budget,
+            CONTEXT_CURRENT_ROUND_NO_KEY: current_round_no,
+            CONTEXT_FOLLOWUP_OPERATION_KEY: "FINALIZE",
+        }
 
     @staticmethod
     def _route_after_followup_plan(state: ContextRetrievalLocalState) -> str:
@@ -1288,7 +1819,12 @@ class RetrievalSubgraph:
         return "finalize"
 
     def _materialize_confirmation_interrupt(
-        self, *, result: SufficiencyResultV2, request_intent: RequestIntentV2
+        self,
+        *,
+        result: SufficiencyResultV2,
+        request_intent: RequestIntentV2,
+        person_candidates: Sequence[PersonCandidateV1] = (),
+        selected_person_identities: Mapping[str, str] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         """Build one round's ``(user_interrupt, confirmation_interrupt metadata)``.
 
@@ -1317,12 +1853,31 @@ class RetrievalSubgraph:
         question: request_understanding_output.ClarificationQuestionV1 = {
             "schema_version": 1,
             "origin_target": "retrieval.assess_sufficiency",
-            "question": f"Please clarify the retrieval requirement: {slot}",
+            "question": f"‘{request_intent['goal']}’을 위한 조회 조건을 확정하지 못했습니다. "
+            "대상이나 기간 중 원하는 조건을 알려주세요. 아직 외부 변경은 실행하지 않았습니다.",
             "affected_field_paths": [slot],
             "reason_code": reason_code,
             "known_context_summary": request_intent["goal"],
             "options": [],
         }
+        if reason_code == "PERSON_IDENTITY_AMBIGUOUS":
+            for mention in dict.fromkeys(item["mention"] for item in person_candidates):
+                candidates = [item for item in person_candidates if item["mention"] == mention]
+                if len(candidates) < 2 or (selected_person_identities or {}).get(mention) in {
+                    item["identity"] for item in candidates
+                }:
+                    continue
+                question["question"] = (
+                    f"‘{mention}’에 해당할 수 있는 사람이 여러 명입니다. 누구를 찾으시나요?"
+                )
+                question["options"] = [
+                    {
+                        "option_id": item["identity"],
+                        "label": f"{' / '.join(item['display_names'])} ({item['identity']})",
+                    }
+                    for item in candidates
+                ]
+                break
         interrupt_id = self._id_factory()
         user_interrupt = {
             **build_user_interrupt_v1(question),
@@ -1362,7 +1917,10 @@ class RetrievalSubgraph:
                 # task for that round.
                 request_intent = _require_state_value(state["request_intent"], "request_intent")
                 user_interrupt, confirmation_interrupt = self._materialize_confirmation_interrupt(
-                    result=result, request_intent=request_intent
+                    result=result,
+                    request_intent=request_intent,
+                    person_candidates=state.get("person_candidates", []),
+                    selected_person_identities=state.get("selected_person_identities", {}),
                 )
                 prompt_context = dict(cast(dict[str, object], state.get("prompt_context", {})))
                 prompt_context["confirmation_interrupt"] = confirmation_interrupt
@@ -1377,6 +1935,8 @@ class RetrievalSubgraph:
                     },
                 )
 
+        if result["status"] == "NEEDS_MORE_DATA":
+            return self._assess_sufficiency_node(state)
         return self._finalize_resolved(state, result=result)
 
     def _resolve_confirmation_inline(
@@ -1402,6 +1962,23 @@ class RetrievalSubgraph:
         if early_return_patch is not None:
             return cast(ContextRetrievalLocalState, {**state, **early_return_patch}), None
         assert confirmation_response is not None
+
+        candidates = state.get("person_candidates", [])
+        selection = confirmation_response.get("selected_option") or confirmation_response.get(
+            "free_text"
+        )
+        current_interrupt = state.get("user_interrupt")
+        offered = (
+            set()
+            if current_interrupt is None
+            else {item["option_id"] for item in current_interrupt["options"]}
+        )
+        if selection in offered:
+            selected = dict(state.get("selected_person_identities", {}))
+            for item in candidates:
+                if item["identity"] == selection:
+                    selected[item["mention"]] = item["identity"]
+            state = {**state, "selected_person_identities": selected}
 
         sufficiency_result, llm_provider_result, retry_budget = self._run_sufficiency_attempt(
             state, confirmation_response=confirmation_response
@@ -1439,6 +2016,15 @@ class RetrievalSubgraph:
             "SUFFICIENT",
             "PARTIAL",
         }:
+            prior_result = state.get("retrieval_result")
+            prior_artifact_ref: StateArtifactRefV1 | None = None
+            if prior_result is None and self._load_retrieval_head is not None:
+                head = self._load_retrieval_head(state["run_id"])
+                if head is not None:
+                    prior_artifact_ref = {
+                        "artifact_id": head.retrieval_artifact_id,
+                        "revision": head.retrieval_revision,
+                    }
             patch = finalize_retrieval_node(
                 cast(
                     RetrievalState,
@@ -1449,6 +2035,9 @@ class RetrievalSubgraph:
                         "evidence_selection": selection,
                         "sufficiency": sufficiency,
                         "availability_results": state.get("availability_results", []),
+                        "query_attempts": state.get(CONTEXT_QUERY_ATTEMPTS_KEY, []),
+                        "person_candidates": state.get("person_candidates", []),
+                        "selected_person_identities": state.get("selected_person_identities", {}),
                         "exclusion_obligation_segment_ids": state.get(
                             "exclusion_obligation_segment_ids", []
                         ),
@@ -1460,8 +2049,13 @@ class RetrievalSubgraph:
                     state["acquisition_result"], "acquisition_result"
                 ),
                 evidence_drafts=state["evidence_drafts"],
-                current_round_no=state[CONTEXT_CURRENT_ROUND_NO_KEY],
-                prior_result=state.get("retrieval_result"),
+                current_round_no=_require_state_value(
+                    state.get(CONTEXT_CURRENT_ROUND_NO_KEY), "current retrieval round"
+                ),
+                prior_result=prior_result,
+                prior_artifact_ref=prior_artifact_ref,
+                task_review_candidates=list(state.get("task_review_candidates", [])),
+                read_result_summaries=self._bounded_read_result_summaries(state),
             )
             retrieval_result = cast(Any, patch["final_result"])
         self._evidence_store.put(run_id=state["run_id"], evidence_drafts=state["evidence_drafts"])
@@ -1511,17 +2105,16 @@ class RetrievalSubgraph:
         merged.pop(CONTEXT_AGENT_LOCAL_KEY, None)
         merged.pop(CONTEXT_RAG_CANDIDATES_KEY, None)
         merged.pop(CONTEXT_SELECTION_OUTPUT_KEY, None)
-        merged.pop(CONTEXT_SUFFICIENCY_OUTPUT_KEY, None)
-        merged.pop(CONTEXT_CURRENT_ROUND_NO_KEY, None)
-        merged.pop(CONTEXT_READ_RESULT_HANDLES_KEY, None)
-        merged.pop(CONTEXT_SEGMENT_HANDLES_KEY, None)
-        merged.pop(CONTEXT_QUERY_ATTEMPTS_KEY, None)
+        if result["status"] != "ROUTE_RECONSIDERATION_REQUIRED":
+            merged[CONTEXT_SUFFICIENCY_OUTPUT_KEY] = None
+            merged[CONTEXT_CURRENT_ROUND_NO_KEY] = None
+        merged.pop(CONTEXT_ROUND_PREADVANCED_KEY, None)
+        # Keep bounded read identities until terminal cleanup so a Main
+        # Analysis/Review back-edge can extend the exact prior query.
         merged.pop(CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY, None)
-        merged.pop(CONTEXT_CANONICAL_PLANS_KEY, None)
         merged.pop(CONTEXT_FOLLOWUP_OPERATION_KEY, None)
         merged.pop(CONTEXT_NEXT_PAGE_HANDLES_KEY, None)
         merged.pop(CONTEXT_DETAIL_CANDIDATES_KEY, None)
-        merged.pop(CONTEXT_READ_BINDINGS_KEY, None)
         merged.pop("query_plan", None)
         merged.pop("query_attempts", None)
         merged.pop("source_statuses", None)
@@ -1538,13 +2131,14 @@ class RetrievalSubgraph:
         merged.pop("availability_results", None)
         merged.pop("evidence_drafts", None)
         merged.pop("llm_provider_result", None)
+        merged.pop("__context_evidence_reassessment_issues__", None)
         merged.pop("source_fetch_plans", None)
         return cast(ContextRetrievalLocalState, merged)
 
     def _bounded_read_result_summaries(
         self, state: ContextRetrievalLocalState
     ) -> list[dict[str, object]]:
-        summaries: list[dict[str, object]] = []
+        summaries: dict[tuple[str, str], dict[str, object]] = {}
         bindings = cast(Mapping[str, object], state.get(CONTEXT_READ_BINDINGS_KEY, {}))
         for handle in cast(list[str], state.get(CONTEXT_READ_RESULT_HANDLES_KEY, [])):
             raw = bindings.get(handle)
@@ -1563,26 +2157,29 @@ class RetrievalSubgraph:
             output = resolution.entry.read_result.output
             raw_items = output.get("items", [])
             count = len(raw_items) if isinstance(raw_items, list) else 1 if "item" in output else 0
-            summaries.append(
-                {
-                    "read_result_handle": handle,
-                    "route_id": route_id,
-                    "query_identity_hash": query_hash,
-                    "has_next_page": token is not None,
-                    "exhausted": resolution.status == "EXHAUSTED",
-                    "result_count": count,
-                    "page_state_hash": None
-                    if token is None
-                    else sha256(token.encode()).hexdigest(),
-                }
-            )
-        return summaries
+            summaries[(route_id, query_hash)] = {
+                "read_result_handle": handle,
+                "route_id": route_id,
+                "query_identity_hash": query_hash,
+                "has_next_page": token is not None,
+                "exhausted": resolution.status == "EXHAUSTED",
+                "result_count": count,
+                "page_state_hash": None if token is None else sha256(token.encode()).hexdigest(),
+            }
+        return list(summaries.values())
 
 
 def _retrieval_required_signal(signal: object) -> RetrievalRequiredV1 | None:
     if isinstance(signal, dict) and signal.get("kind") == "RETRIEVAL_REQUIRED":
         return cast(RetrievalRequiredV1, signal)
     return None
+
+
+def _has_bounded_read_stop(acquisition_result: AcquisitionResultV1) -> bool:
+    return any(
+        summary.get("termination_kind") == "BUDGET_STOPPED"
+        for summary in acquisition_result["source_summaries"]
+    )
 
 
 def _pending_retrieval_need(value: object) -> RetrievalNeedV1 | None:
@@ -1602,20 +2199,32 @@ def _pending_retrieval_need(value: object) -> RetrievalNeedV1 | None:
     }
 
 
-def _needs_as_sufficiency_issues(needs: list[RetrievalNeedV1]) -> list[dict[str, object]]:
+def _needs_as_sufficiency_issues(
+    needs: list[RetrievalNeedV1],
+    tool_route_plan: ToolRoutePlanV2 | None,
+) -> list[SufficiencyIssueV2]:
     """Project an incoming WorkAnalysis/Review need into the same bounded,
     Retrieval-local ``unresolved_sufficiency_issues`` shape the internal
     local loop already feeds ``retrieval.plan_query`` with (SufficiencyIssue,
     docs/05-context-retrieval.md SS19.1) -- reusing the existing follow-up
     channel rather than adding a second, differently-shaped planner input."""
-    return [
+    routes = [] if tool_route_plan is None else tool_route_plan["input_plan"]["input_routes"]
+    issues: list[SufficiencyIssueV2] = [
         {
             "slot": need["required_information"],
             "issue_type": "MISSING",
             "required": True,
-            "resolution_source": "GOOGLE",
+            "resolution_source": "ROUTE"
+            if len(routes) != 1
+            else "GOOGLE"
+            if routes[0]["connector_id"] == "google_workspace"
+            else "CONNECTOR",
             "safety_critical": False,
             "reason_codes": list(need["reason_codes"]),
         }
         for need in needs
     ]
+    if len(routes) == 1:
+        for issue in issues:
+            issue["route_id"] = routes[0]["route_id"]
+    return issues

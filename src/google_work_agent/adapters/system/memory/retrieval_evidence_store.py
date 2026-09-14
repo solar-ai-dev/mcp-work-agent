@@ -1,7 +1,8 @@
-"""Run-memory store for already materialized Retrieval evidence only."""
+"""Run-memory store for Retrieval evidence and exact source snapshots."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from threading import Lock
 from typing import cast
 
@@ -19,6 +20,9 @@ class RunScopedEvidenceStore:
     def __init__(self) -> None:
         self._lock = Lock()
         self._by_run: dict[str, dict[str, EvidenceDraftV1]] = {}
+        self._snapshots_by_run: dict[
+            str, dict[str, dict[str, dict[str, object]]]
+        ] = {}
 
     def put(self, *, run_id: str, evidence_drafts: list[EvidenceDraftV1]) -> None:
         with self._lock:
@@ -40,9 +44,47 @@ class RunScopedEvidenceStore:
                 resolved.append(cast(EvidenceDraftV1, dict(draft)))
             return resolved
 
+    def put_resource_snapshot(
+        self,
+        *,
+        run_id: str,
+        resource_handle: str,
+        source_version_ref: str,
+        snapshot: Mapping[str, object],
+    ) -> None:
+        if not source_version_ref:
+            raise EvidenceResolutionError("resource snapshot version is required")
+        with self._lock:
+            entries = self._snapshots_by_run.setdefault(run_id, {}).setdefault(
+                resource_handle, {}
+            )
+            projected = dict(snapshot)
+            existing = entries.get(source_version_ref)
+            if existing is not None and existing != projected:
+                raise EvidenceResolutionError("conflicting resource snapshot in retrieval run")
+            entries[source_version_ref] = projected
+
+    def resolve_resource_snapshot(
+        self,
+        *,
+        run_id: str,
+        resource_handle: str,
+        source_version_ref: str | None = None,
+    ) -> dict[str, object]:
+        with self._lock:
+            versions = self._snapshots_by_run.get(run_id, {}).get(resource_handle, {})
+            if source_version_ref is None:
+                snapshot = next(iter(versions.values())) if len(versions) == 1 else None
+            else:
+                snapshot = versions.get(source_version_ref)
+            if snapshot is None:
+                raise EvidenceResolutionError("resource snapshot is unavailable for this run")
+            return dict(snapshot)
+
     def discard_run(self, *, run_id: str) -> None:
         with self._lock:
             self._by_run.pop(run_id, None)
+            self._snapshots_by_run.pop(run_id, None)
 
 
 def resolve_evidence_projection(

@@ -11,6 +11,7 @@ from google_work_agent.api.dependencies.contract_version import (
 )
 from google_work_agent.api.dependencies.request_hash import calculate_server_request_hash
 from google_work_agent.api.dependencies.runtime_operation import enforce_runtime_operation
+from google_work_agent.api.errors.api_request_error import ApiRequestError
 from google_work_agent.api.errors.result_code_http_mapping import http_status_for_result_code
 from google_work_agent.api.schemas.actions.approve_action import (
     ActionCommandResponse,
@@ -122,14 +123,32 @@ def modify(
             command_id=payload.command_id,
             request_hash=calculate_server_request_hash(
                 operation="ModifyActionRequestV2",
-                payload={"action_id": action_id, **payload.model_dump()},
+                payload={
+                    "action_id": action_id,
+                    **payload.model_dump(
+                        exclude={"modification_request"}
+                        if payload.modification_request is None
+                        else set()
+                    ),
+                },
             ),
             request_id=request.state.request_id,
             action_id=action_id,
             expected_version=payload.expected_version,
             arguments_patch=dict(payload.arguments_patch),
+            modification_request=payload.modification_request,
         )
     )
+    if payload.modification_request is not None and not result.applied:
+        raise ApiRequestError(
+            error_code=result.result_code,
+            user_message=(
+                "수정 내용을 확정하지 못했습니다. 최신 미리보기를 확인하고 "
+                "날짜와 바꿀 항목을 구체적으로 입력하거나 직접 편집하세요."
+            ),
+            status_code=http_status_for_result_code(result.result_code),
+            request_id=request.state.request_id,
+        )
     response.status_code = http_status_for_result_code(result.result_code)
     return _response(result)
 

@@ -59,7 +59,7 @@ class ApiContainer:
     local_session_manager: Any | None = None
     start_run_service: Any | None = None
     graph_profile: Any = "SIX_ROLE_BASELINE"
-    graph_version: str = "resume-contract-v1"
+    graph_version: str = "resume-contract-v2"
     schedule_run_execution: Any | None = None
     resume_target_registry: Any | None = None
     checkpoint_port: Any | None = None
@@ -77,6 +77,7 @@ class ApiContainer:
     get_resource_count_handler: Any | None = None
     get_resource_detail_handler: Any | None = None
     list_task_lists_handler: Any | None = None
+    list_repositories_handler: Any | None = None
     list_calendars_handler: Any | None = None
     get_task_resource_detail_handler: Any | None = None
     get_calendar_resource_detail_handler: Any | None = None
@@ -130,6 +131,8 @@ class ApiContainer:
     start_authorization_handlers_by_connector: dict[str, Any] = field(default_factory=dict)
     get_connection_status_handlers_by_connector: dict[str, Any] = field(default_factory=dict)
     revoke_connection_handlers_by_connector: dict[str, Any] = field(default_factory=dict)
-    current_account_id_providers_by_connector: dict[str, Callable[[], str | None]] = field(default_factory=dict)
+    current_account_id_providers_by_connector: dict[str, Callable[[], str | None]] = field(
+        default_factory=dict
+    )
     startup_callbacks: tuple[Callable[[], Awaitable[None]], ...] = ()
     shutdown_callbacks: tuple[Callable[[], None], ...] = ()

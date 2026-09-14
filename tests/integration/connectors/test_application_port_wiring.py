@@ -60,6 +60,7 @@ from google_work_agent.application.use_cases.run.begin_verification import (
     BeginVerificationCommand,
     BeginVerificationHandler,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.application.use_cases.verification.store_verification import (
     StoreVerificationCommand,
     StoreVerificationHandler,
@@ -68,7 +69,7 @@ from google_work_agent.application.use_cases.verification.verify_effect import (
     VerifyEffectHandler,
 )
 from google_work_agent.domain.canonical import calculate_canonical_json_hash
-from google_work_agent.ports.connector.contracts.google_workspace import (
+from google_work_agent.ports.connector.contracts.resource_snapshot import (
     ResourceSnapshot,
     ResourceType,
 )
@@ -100,6 +101,9 @@ class _RuntimeHandle:
     def call_tool(self, tool_id: str, arguments: object, timeout_ms: int) -> MCPToolCallResultV1:
         raise AssertionError((tool_id, arguments, timeout_ms))
 
+    def sign_claim_context(self, payload: dict[str, object]) -> str:
+        return calculate_canonical_json_hash(payload)
+
     def restart_once(self) -> MCPRestartResultV1:
         return MCPRestartResultV1(1, False, None)
 
@@ -108,7 +112,6 @@ class _RuntimeHandle:
 
 
 class _DeterministicMcpClient:
-
     def __init__(self, descriptors: list[MCPToolDescriptorV1]) -> None:
         self._descriptors = descriptors
         self.calls: list[tuple[str, dict[str, object]]] = []
@@ -117,9 +120,7 @@ class _DeterministicMcpClient:
         assert connector_id == GOOGLE_WORKSPACE_CONNECTOR_ID
         return "mcp-1"
 
-    def sign_claim_context(
-        self, connector_id: str, payload: dict[str, object]
-    ) -> str:
+    def sign_claim_context(self, connector_id: str, payload: dict[str, object]) -> str:
         assert connector_id == GOOGLE_WORKSPACE_CONNECTOR_ID
         del payload
         return "signature-1"
@@ -440,7 +441,7 @@ def test_retrieval_application__uses_connector_read_adapter__through_mcp_port() 
             "route_id": "route-1",
             "connector_id": GOOGLE_WORKSPACE_CONNECTOR_ID,
             "resource_type": binding.resource_type,
-            "operation_kind": "INITIAL",
+            "operation_kind": "SEARCH",
             "effective_constraints": [],
             "query_identity_hash": "a" * 64,
             "prior_read_result_handle": None,
@@ -456,6 +457,9 @@ def test_retrieval_application__uses_connector_read_adapter__through_mcp_port() 
         connector_reader=read_port,
         read_result_cache=InMemoryRunRetrievalCache(),
         read_result_handle="read-result-1",
+        run_budget=build_default_run_budget(),
+        now_ms=0,
+        prior_query_attempts=[],
     )
 
     assert result.status == "COMPLETE"

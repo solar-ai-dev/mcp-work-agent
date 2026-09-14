@@ -134,6 +134,13 @@ def test_finalize_is_post__commit_best_effort__and_end_only() -> None:
         "__target__": "end",
         "workflow_phase": "FINALIZE",
         "terminal_commit_intent": None,
+        "__context_canonical_plans__": {},
+        "__context_query_attempts__": [],
+        "__context_read_result_handles__": [],
+        "__context_read_bindings__": {},
+        "__context_segment_handles__": [],
+        "__context_sufficiency_output__": None,
+        "__context_current_round_no__": None,
     }
 
 

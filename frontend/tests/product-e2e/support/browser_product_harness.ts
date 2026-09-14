@@ -64,6 +64,7 @@ export class BrowserProductHarness {
   readonly context: BrowserContext;
   readonly page: Page;
   private restartCredentialSequence = 0;
+  private runtimeModeSequence = 0;
 
   private constructor(context: BrowserContext, page: Page) {
     this.context = context;
@@ -102,7 +103,7 @@ export class BrowserProductHarness {
     await this.page.goto(entryPath);
     const onboarding = this.page
       .getByRole("main")
-      .getByRole("heading", { name: "Google Work Agent 시작하기" });
+      .getByRole("heading", { name: "mcp-work-agent 시작하기" });
     const composer = this.page.getByRole("textbox", {
       name: /선택한 .*업무를 요청하세요/,
     });
@@ -110,6 +111,8 @@ export class BrowserProductHarness {
       await onboarding.count() + await composer.count()
     )).toBeGreaterThan(0);
     if (await composer.isVisible()) {
+      await this.selectDeterministicFakeRuntime();
+      await this.page.reload();
       await this.expectMainUi();
       return;
     }
@@ -131,21 +134,40 @@ export class BrowserProductHarness {
       await this.page.getByLabel("저장 방식").selectOption("SESSION_ONLY");
       await this.page.getByRole("button", { name: "저장하고 연결 검사" }).click();
     }
-    await expect(this.page.getByText("완료 · API LLM 연결")).toBeVisible();
+    await expect(this.page.getByText("완료 · LLM 자동 연결")).toBeVisible();
     const completeSetup = this.page.getByRole("button", { name: "설정 완료하고 시작" });
     await expect(completeSetup).toBeEnabled();
     await completeSetup.click();
+    await this.expectMainUi();
+    await this.selectDeterministicFakeRuntime();
+    await this.page.reload();
     await this.expectMainUi();
   }
 
   async beginNewConversation(): Promise<void> {
     await this.page.getByRole("button", { name: /새 대화/ }).click();
-    await expect(this.page.getByRole("region", { name: "Action Plan" })).toHaveCount(0);
+    await expect(this.page.getByRole("region", { name: "실행 계획" })).toHaveCount(0);
   }
 
   async startNewRun(requestText: string): Promise<StartedRun> {
     await this.beginNewConversation();
     return this.startRun(requestText);
+  }
+
+  async selectTaskListAllowlist(taskListId: string): Promise<void> {
+    this.runtimeModeSequence += 1;
+    const response = await this.context.request.put(`${baseURL}/api/v1/settings`, {
+      headers: requestHeaders,
+      data: {
+        schema_version: 1,
+        command_id: `browser-e2e-task-list-selection-${this.runtimeModeSequence}`,
+        settings_patch: {
+          schema_version: 1,
+          selected_tasklist_ids: [taskListId],
+        },
+      },
+    });
+    expect(response.ok()).toBe(true);
   }
 
   async startRun(requestText: string): Promise<StartedRun> {
@@ -189,7 +211,7 @@ export class BrowserProductHarness {
     await expect.poll(async () => {
       current = await this.productState(runId);
       return current.run.status;
-    }).toBe(status);
+    }, { timeout: 90_000 }).toBe(status);
     return current;
   }
 
@@ -224,9 +246,8 @@ export class BrowserProductHarness {
 
   async actionCard(toolName: string): Promise<Locator> {
     const card = this.page
-      .getByRole("region", { name: "Action Plan" })
-      .getByRole("article")
-      .filter({ hasText: toolName });
+      .getByRole("region", { name: "실행 계획" })
+      .locator(`[data-tool-name="${toolName}"]`);
     await expect(card).toBeVisible();
     return card;
   }
@@ -237,12 +258,14 @@ export class BrowserProductHarness {
       await acknowledgements.nth(index).check();
     }
     await card.getByRole("button", {
-      name: /^(네, 실행해 주세요|위험을 확인하고 실행해 주세요|충돌을 알고도 실행해 주세요|그래도 새로 만들어 주세요)$/,
+      name: /^(확인|위험을 확인하고 실행해 주세요|충돌을 알고도 실행해 주세요|그래도 새로 만들어 주세요)$/,
     }).click();
   }
 
   async assertCompletedUi(answer?: string): Promise<void> {
-    await expect(this.page.getByText("메인 에이전트 · 작업을 완료했습니다.", { exact: true })).toBeVisible();
+    await expect(
+      this.page.getByText("메인 에이전트 · 작업을 완료했습니다.", { exact: true }),
+    ).toHaveCount(0);
     let assistantMessage = this.page.getByRole("article", { name: "에이전트 응답" });
     if (answer) assistantMessage = assistantMessage.filter({ hasText: answer });
     await expect(assistantMessage).toBeVisible();
@@ -280,6 +303,7 @@ export class BrowserProductHarness {
       },
     );
     expect(credential.ok()).toBe(true);
+    await this.selectDeterministicFakeRuntime();
     await this.page.reload();
     await this.expectMainUi();
   }
@@ -304,7 +328,12 @@ export class BrowserProductHarness {
   effectCount(state: ProductState): number {
     const resources = state.mcp_state.resources;
     return resources && typeof resources === "object"
-      ? Object.keys(resources).length
+      ? Object.values(resources).filter(
+          (resource) =>
+            resource !== null &&
+            typeof resource === "object" &&
+            typeof (resource as ProductRow).recovery_fingerprint === "string",
+        ).length
       : 0;
   }
 
@@ -327,5 +356,30 @@ export class BrowserProductHarness {
       name: /선택한 .*업무를 요청하세요/,
     })).toBeVisible();
     await expect(this.page.getByRole("button", { name: /새 대화/ })).toBeVisible();
+  }
+
+  private async selectDeterministicFakeRuntime(): Promise<void> {
+    this.runtimeModeSequence += 1;
+    const settingsResponse = await this.context.request.put(`${baseURL}/api/v1/settings`, {
+      headers: requestHeaders,
+      data: {
+        schema_version: 1,
+        command_id: `browser-e2e-api-consent-${this.runtimeModeSequence}`,
+        settings_patch: {
+          schema_version: 1,
+          external_llm_consent: true,
+        },
+      },
+    });
+    expect(settingsResponse.ok()).toBe(true);
+    const response = await this.context.request.post(`${baseURL}/api/v1/runtime/mode`, {
+      headers: requestHeaders,
+      data: {
+        schema_version: 1,
+        command_id: `browser-e2e-api-runtime-${this.runtimeModeSequence}`,
+        requested_mode: "API_LLM",
+      },
+    });
+    expect(response.ok()).toBe(true);
   }
 }

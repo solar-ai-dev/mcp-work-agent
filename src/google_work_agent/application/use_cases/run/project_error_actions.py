@@ -20,8 +20,8 @@ from google_work_agent.application.use_cases.run.resume_safe_checkpoint import (
 )
 from google_work_agent.domain.action.model import ActionStatusV1
 from google_work_agent.domain.run.model import RunStatusV1
-from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.persistence.trace_event_repository import TraceEventCursor
+from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.system.checkpoint_port import CheckpointPort
 
 type ErrorUiActionKindV1 = Literal[
@@ -75,6 +75,7 @@ class ProjectErrorActionsHandler:
             plans = current_plan_tuple(unit_of_work.plans, run.id)
             plan = max(plans, key=lambda item: (item.revision_no, item.id), default=None)
             actions = () if plan is None else unit_of_work.actions.list_for_plan(plan.id)
+            korean = _uses_korean(_request_text(unit_of_work, run.id, run.conversation_id))
 
             retry_actions = tuple(
                 ErrorUiActionV1("PREPARE_RETRY", action_id=action.id)
@@ -85,18 +86,32 @@ class ProjectErrorActionsHandler:
             if run.status is RunStatusV1.REAUTH_REQUIRED:
                 latest_action_id = _latest_reauth_action_id(unit_of_work, run.id)
                 affected_action = next(
-                    (action for action in actions if latest_action_id is not None and action.id == latest_action_id),
+                    (
+                        action
+                        for action in actions
+                        if latest_action_id is not None and action.id == latest_action_id
+                    ),
                     None,
                 )
-                connector_id = "google_workspace" if affected_action is None else affected_action.connector_id
+                connector_id = None if affected_action is None else affected_action.connector_id
                 if connector_id == "google_workspace":
                     error_code = "GOOGLE_REAUTH_REQUIRED"
-                    message = "Google authentication must be restored before this run can continue."
+                    message = (
+                        "이 요청을 계속하려면 Google 인증을 다시 연결해야 합니다."
+                        if korean else
+                        "Google authentication must be restored before this run can continue."
+                    )
                     reauth_action = ErrorUiActionV1("REAUTHENTICATE_GOOGLE")
                 else:
                     error_code = "CONNECTOR_REAUTH_REQUIRED"
-                    message = "Connector authentication must be restored before this run can continue."
-                    reauth_action = ErrorUiActionV1("REAUTHENTICATE_CONNECTOR", connector_id=connector_id)
+                    message = (
+                        "이 요청을 계속하려면 해당 Connector 인증을 다시 연결해야 합니다."
+                        if korean else
+                        "Connector authentication must be restored before this run can continue."
+                    )
+                    reauth_action = ErrorUiActionV1(
+                        "REAUTHENTICATE_CONNECTOR", connector_id=connector_id
+                    )
                 return ProjectErrorActionsResultV1(
                     1,
                     error_code,
@@ -111,7 +126,14 @@ class ProjectErrorActionsHandler:
                 return ProjectErrorActionsResultV1(
                     1,
                     "ACTION_NOT_SENT",
-                    "One or more actions failed before provider delivery.",
+                    (
+                        "일부 작업이 외부 서비스에 전달되기 전에 실패했습니다. "
+                        "아직 적용되지 않은 항목만 다시 준비할 수 있습니다."
+                        if korean
+                        else "Some actions failed before reaching the external service. "
+                        "Only the items that "
+                        "were not applied can be prepared again."
+                    ),
                     (*retry_actions, ErrorUiActionV1("OPEN_DIAGNOSTICS")),
                 )
             if safe_checkpoint_resume_is_allowed(
@@ -123,7 +145,13 @@ class ProjectErrorActionsHandler:
                 return ProjectErrorActionsResultV1(
                     1,
                     "SAFE_CHECKPOINT_RESUME_AVAILABLE",
-                    "This run can continue from its validated safe checkpoint.",
+                    (
+                        "검증된 안전 지점이 있어 완료되지 않은 작업을 "
+                        "그 위치부터 계속할 수 있습니다."
+                        if korean
+                        else "A validated safe checkpoint is available, so the unfinished work "
+                        "can continue from there."
+                    ),
                     (
                         ErrorUiActionV1(
                             "RESUME_SAFE_CHECKPOINT",
@@ -136,17 +164,42 @@ class ProjectErrorActionsHandler:
                 return ProjectErrorActionsResultV1(
                     1,
                     "RUN_FAILED",
-                    "The run failed.",
+                    (
+                        "요청을 완료하지 못했으며 성공으로 처리하지 않았습니다. "
+                        "진단에서 실패 지점을 확인할 수 있습니다."
+                        if korean
+                        else "I could not complete the request and did not report it as a "
+                        "success. You can inspect the failure point in diagnostics."
+                    ),
                     (ErrorUiActionV1("OPEN_DIAGNOSTICS"),),
                 )
         return None
+
+
+def _request_text(unit_of_work: UnitOfWork, run_id: str, conversation_id: str) -> str | None:
+    messages, _ = unit_of_work.messages.list_by_conversation_keyset(
+        conversation_id=conversation_id,
+        cursor=None,
+        page_size=200,
+    )
+    message = next(
+        (item for item in messages if item.run_id == run_id and item.role == "USER"),
+        None,
+    )
+    return None if message is None else message.content
+
+
+def _uses_korean(value: str | None) -> bool:
+    return value is None or any("\uac00" <= character <= "\ud7a3" for character in value)
 
 
 def _latest_reauth_action_id(unit_of_work: UnitOfWork, run_id: str) -> str | None:
     after_id: int | None = None
     latest_action_id: str | None = None
     while True:
-        page = unit_of_work.traces.list_page(TraceEventCursor(run_id=run_id, after_id=after_id), 500)
+        page = unit_of_work.traces.list_page(
+            TraceEventCursor(run_id=run_id, after_id=after_id), 500
+        )
         for event in page:
             if event.event_type == "RUN_REAUTH_REQUIRED" and event.action_id is not None:
                 latest_action_id = event.action_id
