@@ -71,7 +71,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("each Canonical Case may be attempted once")
     if arguments.all:
         _require_frozen_worktree()
-    metadata = _frozen_metadata(full_run=arguments.all)
+    metadata = _frozen_metadata(
+        full_run=arguments.all,
+        case_timeout=arguments.case_timeout,
+        startup_timeout=arguments.startup_timeout,
+    )
     date = datetime.now(UTC).astimezone().strftime("%Y%m%d")
     suffix = "full" if arguments.all else "diagnostic"
     result_dir = (
@@ -395,13 +399,11 @@ def _failure_projection(
     }
 
 
-def _frozen_metadata(*, full_run: bool) -> dict[str, Any]:
+def _frozen_metadata(
+    *, full_run: bool, case_timeout: float, startup_timeout: float
+) -> dict[str, Any]:
     sha = _git("rev-parse", "HEAD")
-    src_tree = (
-        _git("rev-parse", "HEAD:src/google_work_agent")
-        if full_run
-        else _directory_hash(ROOT / "src/google_work_agent")
-    )
+    src_tree = _directory_hash(ROOT / "src/google_work_agent")
     prompt = json.loads(PROMPT_MANIFEST.read_text(encoding="utf-8"))
     model_digest = _ollama_digest("qwen3.5:9b")
     experiment_id = f"canonical92-v8-{sha[:8]}-{uuid.uuid4().hex[:10]}"
@@ -422,6 +424,8 @@ def _frozen_metadata(*, full_run: bool) -> dict[str, Any]:
         "temperature": 0.0,
         "seed": 20260914,
         "context_config": "production-default",
+        "case_timeout_seconds": case_timeout,
+        "startup_timeout_seconds": startup_timeout,
         "provider_snapshot_sha256": normalized_sha256(PROVIDER_SNAPSHOT),
         "fault_config_sha256": normalized_sha256(FAULT_CONFIG),
         "fault_adapter_sha256": normalized_sha256(FAULT_ADAPTER),
