@@ -9,7 +9,9 @@
 
 이번 Gmail 묶음은 사용자가 원격 공유를 명시한 전달 예외다. 비식별 README·요약 표와
 결과 ZIP만 추적하며, 재실행용 원시 로그는 계속 gitignored 로컬 영역에 둔다.
+Canonical 92 실행 경계 보고서도 사용자가 원격 포함을 명시한 예외다.
 
 | 날짜 | 목적 | 결과 묶음 | 핵심 판정 | ZIP |
 | --- | --- | --- | --- | --- |
 | 2026-09-14 | Gmail Thread 목록 metadata N+1 개선 | [gmail-metadata-hydration-20260914-7afac9f5](gmail-metadata-hydration-20260914-7afac9f5/README.md) | B20/W1 선택, Production Node p95 63.20% 개선, WRITE/SEND 0 | [다운로드](gmail-metadata-hydration-20260914-7afac9f5-result-bundle.zip) |
+| 2026-09-14 | Canonical 92 시간·STRESS 평가 경계 연결 | [canonical92-runtime-boundary-20260914](canonical92-runtime-boundary-20260914/README.md) | adapter 직접 경계 20/20, 모델 평가 0, 제품 source/Prompt 변경 0 | — |
