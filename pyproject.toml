@@ -20,6 +20,11 @@ dependencies = [
     "uvicorn>=0.52,<0.53",
 ]
 
+[project.optional-dependencies]
+windows-build = [
+    "pyinstaller>=6.11,<7",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=2.3,<2.4",
