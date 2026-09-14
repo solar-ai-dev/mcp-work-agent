@@ -1,0 +1,94 @@
+실행일: 2026-09-14 KST
+Repository: solar-ai-dev/google-work-agent
+Branch: codex/issue-251-connected-contract
+Start SHA: 923ed43749d29d0a312c5707d89c7c81dd566c4b
+Product implementation SHA: 94db77e75314255d2193a8a07a219af4019061fa
+
+[PASS] 수정 전 직접 영향 기준선
+result: 217 passed
+
+[PASS] 최종 직접 영향 + upstream 보존 unit/contract 묶음
+scope:
+- terminal response use case / node / runtime router
+- complete-write / terminal control / message projection
+- request understanding confirmed-target preservation
+- retrieval query planning and dependency/business evidence invariants
+result: 1098 passed in 10.60s
+
+[PASS] 신규·직접 단위 집중 묶음
+result: 70 passed
+
+[PASS] Architecture suite
+command: pytest -q tests/architecture
+result: 371 passed in 34.12s
+note: 첫 실행은 신규 테스트 이름 16개가 canonical naming gate에 걸렸다. 테스트 이름만 규칙에 맞게 고친 뒤 전부 통과했다.
+
+[PASS] Component Main Graph
+command: pytest -q tests/component/langgraph/test_production_main_graph.py
+result: 9 passed
+
+[PASS] Production Main Graph E2E 선택 묶음
+command scope: tests/e2e/test_langgraph_real_production.py 중 approved-write, partial approval, response fallback, cancel, mismatch, recovery, answer 경계
+result: 19 passed, 46 deselected in 77.46s
+
+[PASS] limitation 보존 수정 후 집중 회귀
+command scope: compose_terminal_response와 production graph 직접 영향 테스트
+result: 35 passed, 61 deselected in 19.24s
+
+[PASS] Ruff
+scope: 변경 Python 파일
+result: no findings
+
+[PASS] mypy
+scope: 변경 production source 및 measurement runner 8개 파일
+result: no issues
+
+[PASS] git diff --check
+result: no whitespace errors
+
+[PASS] 원격 최신 커밋 통합 후 직접 + Component + 전체 Architecture
+integrated HEAD: b0f2ff73eb910c4a31f9cea5ed99c0ba03e8621d
+result: 450 passed in 34.06s
+
+[PASS] 원격 evaluation runtime 경계 묶음
+scope: canonical dataset, case runtime, fault adapters/profiles, evaluation architecture/integration
+result: 53 passed in 2.17s
+
+[FIXED] 원격 f78e404a integration 테스트 naming Gate
+first result: 449 passed, 1 failed — 새 테스트 함수 11개가 canonical naming grammar 위반
+change: 함수명만 수정, assertion/product source 변경 0
+focused result: 16 passed in 1.73s
+
+[MEASURED] 실제 LOCAL_GPU LLM
+runner: scripts/measure_terminal_response_llm.py
+fixture: terminal-response-fixed-8-v1
+model: qwen3.5:9b
+digest: 6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7
+prompt: run.compose_terminal_response 1.0.0
+prompt hash: 014a5e8a60d7e02e5ff2b998ac57e279fcd8e17b7e7a078892bedfe99b45794e
+temperature: 0.2
+seed: 1729
+result: 16/16 LLM generation, provider dispatch 16, repair 0, fallback 0
+human semantic review: raw generation 14/16 PASS; TR-03 2건 필수 limitation 누락
+post-fix: deterministic limitation guard unit test PASS; actual Provider rerun 0
+
+[MEASURED] 최종 6 Production Smoke
+code SHA: 94db77e75314255d2193a8a07a219af4019061fa
+model: qwen3.5:9b
+temperature: 0.0
+safe LangSmith tracing: enabled
+automatic LANGSMITH_TRACING/LANGCHAIN_TRACING_V2: disabled
+domain runs: 각 Case 1회, 총 6
+result: semantic PASS 4/6
+failures:
+- targetless Calendar: evidence 10:00~11:00, answer 10:00~23:00 표현
+- Quartz Draft: REQUEST_STATUS_PROVENANCE_MISMATCH before planning
+rerun-to-pass: 0
+approval clicks: 0
+approval rows: 0
+execution attempt rows: 0
+Provider WRITE/SEND: 0
+
+[NOTE] 검증 준비 중 잘못된 테스트 경로를 지정한 명령 1회는 collection 전에 종료되어 테스트가 실행되지 않았다. 올바른 경로로 실행한 결과만 위 PASS 수치에 포함했다.
+[NOTE] Smoke bootstrap/credential/selected-resource 준비 오류는 Domain Run 생성 전에 정정했다. 최종 6개 Run은 Case별 한 번만 생성했다.
+[NOT RUN] Live approved WRITE/SEND, DELETE, 전체 Provider write E2E, qwen3.5:9b 외 모델, Release activation

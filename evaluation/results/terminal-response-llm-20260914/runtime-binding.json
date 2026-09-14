@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "repository": "solar-ai-dev/google-work-agent",
+  "branch": "codex/issue-251-connected-contract",
+  "start_sha": "923ed43749d29d0a312c5707d89c7c81dd566c4b",
+  "implementation_code_sha": "94db77e75314255d2193a8a07a219af4019061fa",
+  "integrated_head_before_report": "b0f2ff73eb910c4a31f9cea5ed99c0ba03e8621d",
+  "remote_commit_merged_after_validation": "f78e404a3bd40b22eb10a077958562440659bb46",
+  "actual_llm_quality_run": {
+    "code_sha": "ca7757ecb2350bcac1611df52fab9f750ff5789d",
+    "model": "qwen3.5:9b",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "sampling_temperature": 0.2,
+    "sampling_seed": 1729,
+    "prompt_id": "run.compose_terminal_response",
+    "prompt_version": "1.0.0",
+    "prompt_hash": "014a5e8a60d7e02e5ff2b998ac57e279fcd8e17b7e7a078892bedfe99b45794e",
+    "requested_mode": "LOCAL_GPU",
+    "actual_runtime": "LOCAL_GPU",
+    "external_llm_consent": false,
+    "fixture_set": "terminal-response-fixed-8-v1",
+    "case_count": 8,
+    "trials_per_case": 2,
+    "total_trials": 16,
+    "provider_dispatches": 16,
+    "schema_repairs": 0,
+    "fallbacks": 0,
+    "rerun_to_pass": 0
+  },
+  "final_six_smoke": {
+    "code_sha": "94db77e75314255d2193a8a07a219af4019061fa",
+    "model": "qwen3.5:9b",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "sampling_temperature": 0.0,
+    "sampling_seed": null,
+    "requested_mode": "LOCAL_GPU",
+    "safe_langsmith_tracing": true,
+    "automatic_langsmith_tracing": false,
+    "credential_value_in_report": "REDACTED",
+    "case_count": 6,
+    "rerun_to_pass": 0,
+    "approval_clicks": 0,
+    "provider_write_send": 0,
+    "terminal_response_llm_calls": 0
+  },
+  "activation": {
+    "development_candidate": "IMPLEMENTED",
+    "release_runtime_active": false,
+    "post_fix_actual_provider_validation": "PENDING"
+  }
+}
