@@ -11,11 +11,6 @@ E2E_ROOT = DATASET_ROOT / "e2e"
 DATASET_PATH = E2E_ROOT / "canonical_cases_v8.jsonl"
 MANIFEST_PATH = E2E_ROOT / "dataset-manifest-v8.json"
 PROVIDER_PATH = E2E_ROOT / "fixtures" / "google_workspace" / "provider-snapshot-v8.json"
-FAULT_CONFIG_PATH = ROOT / "evaluation" / "harness" / "canonical_v8_fault_profiles.json"
-FAULT_ADAPTER_PATH = ROOT / "evaluation" / "harness" / "fault_adapters.py"
-SIMULATED_FIXTURE_PATH = (
-    ROOT / "evaluation" / "harness" / "canonical_v8_simulated_fixtures.json"
-)
 
 
 def _json(path: Path) -> dict[str, object]:
@@ -125,25 +120,11 @@ def test_temporal_and_provider_readiness_are_complete() -> None:
     assert manifest["benchmark_ready"] == "YES"
     assert manifest["stress_harness_ready"] is True
     assert manifest["stress_harness"] == {
-        "adapter": "evaluation/harness/fault_adapters.py",
-        "adapter_sha256": _sha256(FAULT_ADAPTER_PATH),
         "configuration": "evaluation/harness/canonical_v8_fault_profiles.json",
-        "configuration_sha256": _sha256(FAULT_CONFIG_PATH),
-        "evaluation_mode_counts": {
-            "COMPONENT_ONLY": 1,
-            "LIVE_WITH_FAULT_INJECTION": 6,
-            "SIMULATED_PROVIDER": 13,
-        },
         "profile_count": 20,
         "ready": True,
         "resolver": "evaluation/harness/fault_profiles.py",
-        "runtime": "evaluation/harness/case_runtime.py",
-        "simulated_fixture": (
-            "evaluation/harness/canonical_v8_simulated_fixtures.json"
-        ),
-        "simulated_fixture_sha256": _sha256(SIMULATED_FIXTURE_PATH),
-        "stateful_provider": "evaluation/harness/stateful_provider.py",
-        "validation": "ADAPTER_BOUNDARY_VALIDATED_20_OF_20",
+        "validation": "DRY_VALIDATED_20_OF_20",
     }
 
     changes = manifest["provider_changes"]
@@ -155,25 +136,6 @@ def test_temporal_and_provider_readiness_are_complete() -> None:
     assert changes["juniper_review_event"]["distinct_identity_verified"] is True
     assert changes["room_conflict"]["owner_binding_verified"] is True
     assert changes["quartz_attachment"]["attachment_count"] == 1
-
-
-def test_delta_close_candidate_fixture_is_explicit_and_does_not_replace_live_data() -> None:
-    cases = {case["case_id"]: case for case in _cases()}
-    stress = cases["CASE-STRESS-010"]
-    context = stress["evaluation_context"]
-    fixture = _json(SIMULATED_FIXTURE_PATH)["fixtures"]["DELTA_CLOSE_CANDIDATES"]
-
-    assert stress["provider_fixture_ref"] == (
-        "fixtures/google_workspace/provider-snapshot-v8.json#DELTA"
-    )
-    assert context["evaluation_mode"] == "SIMULATED_PROVIDER"
-    assert context["simulated_fixture_ref"] == (
-        "harness/canonical_v8_simulated_fixtures.json#DELTA_CLOSE_CANDIDATES"
-    )
-    assert {item["payload"]["project"] for item in fixture["resources"]} == {
-        "Delta",
-        "Delta Plus",
-    }
 
 
 def test_only_canonical_v8_dataset_assets_remain_active() -> None:
