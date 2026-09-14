@@ -49,7 +49,9 @@ SIMULATED_PROVIDER = ROOT / "evaluation/harness/stateful_provider.py"
 GRADER = ROOT / "evaluation/grader_v8.py"
 OBSERVATION = ROOT / "evaluation/observation_v8.py"
 PUBLIC_RUNNER = ROOT / "evaluation/public_runner_v8.py"
+PUBLIC_CLIENT = ROOT / "evaluation/public_client_v8.py"
 PRODUCT_LAUNCHER = ROOT / "scripts/serve_canonical_v8_product.py"
+EXECUTION_RUNNER = Path(__file__).resolve()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -477,7 +479,9 @@ def _frozen_metadata(
         "fault_adapter_sha256": normalized_sha256(FAULT_ADAPTER),
         "simulated_provider_sha256": normalized_sha256(SIMULATED_PROVIDER),
         "public_runner_sha256": normalized_sha256(PUBLIC_RUNNER),
+        "public_client_sha256": normalized_sha256(PUBLIC_CLIENT),
         "product_launcher_sha256": normalized_sha256(PRODUCT_LAUNCHER),
+        "execution_runner_sha256": normalized_sha256(EXECUTION_RUNNER),
         "normalized_observation_sha256": normalized_sha256(OBSERVATION),
         "grader_version": "canonical-v8-grader-1",
         "grader_sha256": normalized_sha256(GRADER),
