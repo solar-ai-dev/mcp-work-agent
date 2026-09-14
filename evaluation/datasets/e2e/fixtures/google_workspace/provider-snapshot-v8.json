@@ -223,233 +223,42 @@
   "provider": "google_workspace",
   "provider_changes": {
     "delta_message": {
-      "active_thread_isolated_verified": true,
-      "all_retired_messages_trash_confirmed": true,
       "independent_reread_verified": true,
-      "new_resource_id": "1a09dba5b0f71571",
-      "new_thread_id": "1a09db0d32ed4383",
-      "old_moved_to_trash": true,
-      "old_resource_id": "1a079af147cffb7f",
+      "new_resource_id": "1a09e0e0fda9ed25",
+      "new_thread_id": "1a09e0e0fda9ed25",
       "operation": "REPLACE",
-      "retired_resource_ids": [
-        "1a079af147cffb7f",
-        "1a09db0d32ed4383"
-      ],
-      "standalone_thread_verified": false,
-      "thread_contains_retired_history": true
+      "retired_thread_id": "1a09db0d32ed4383",
+      "retired_thread_trashed_verified": true,
+      "standalone_thread_verified": true
+    },
+    "juniper_review_event": {
+      "distinct_identity_verified": true,
+      "independent_reread_verified": true,
+      "new_resource_id": "apvloa2go3hvs4ib86fvjos3jo",
+      "operation": "ADD",
+      "overlap_verified": true,
+      "parent_id": "1ffbfb5494c5b68d8157430cd565a53798fd083f3a736e19afc6dceb9dd68cbc@group.calendar.google.com"
     },
     "kestrel_task": {
       "independent_reread_verified": true,
       "new_resource_id": "OVY2NGN5VTVNV3I4TmV5Sw",
+      "old_resource_deleted_verified": true,
       "old_resource_id": "cTkxR21FX1FSTnU0XzlWWg",
       "operation": "REPLACE",
       "parent_id": "V0JUdGxoNUJGN01rSTZhag"
+    },
+    "quartz_attachment": {
+      "attachment_count": 1,
+      "independent_reread_verified": true,
+      "message_id": "1a079aeb254e0b1b",
+      "operation": "KEEP_AND_BIND_ATTACHMENT"
+    },
+    "room_conflict": {
+      "independent_event_reread_verified": true,
+      "operation": "KEEP",
+      "owner_binding_verified": true,
+      "yuna_owner_email": "qhdrbdhkdwks2@gmail.com"
     }
-  },
-  "provider_repair_backups": {
-    "active_fixture_data": false,
-    "delta_wrong_message": {
-      "attachments": [],
-      "full": {
-        "historyId": "173768",
-        "id": "1a079af147cffb7f",
-        "internalDate": "1788747910000",
-        "labelIds": [
-          "UNREAD",
-          "CATEGORY_PERSONAL",
-          "INBOX"
-        ],
-        "payload": {
-          "body": {
-            "size": 0
-          },
-          "filename": "",
-          "headers": [
-            {
-              "name": "Delivered-To",
-              "value": "bonggyulim0728@gmail.com"
-            },
-            {
-              "name": "Received",
-              "value": "by 2002:a17:906:5815:b0:c15:d510:36c0 with SMTP id m21csp2842722ejq;        Sun, 6 Sep 2026 19:25:12 -0700 (PDT)"
-            },
-            {
-              "name": "X-Received",
-              "value": "by 2002:a05:6a00:981:b0:848:2e7e:353a with SMTP id d2e1a72fcca58-861650e9760mr23262930b3a.0.1788747912385;        Sun, 06 Sep 2026 19:25:12 -0700 (PDT)"
-            },
-            {
-              "name": "ARC-Seal",
-              "value": "i=1; a=rsa-sha256; t=1788747912; cv=none;        d=google.com; s=arc-20260327;        b=eJAx46jndPhOikN3OzvVFK5E9mpDO4tokvrGzO0ThnC93ykohazgxFc9ea8Kf4lERp         KlYGa0Al5U6BygOcOU5M6uzM2noFAUCTJJgCaLfYqSsWb/ieqZjumvO6OMy3LMZ7oRNF         ZbbzNbsCQLzZ1+3zLLNy3d3UU9DL9STSXOPUNYqmFF3rvDSeBNphHf+2c6rKSqv7ifrb         xyp63HeYRJK5EawmnwpiAfqDEO8IwFnPFGHi3CI0/OjEG6rBoa65jTYRNxYjsZwfclV4         oKRfQ2rxW5bWTksPq36FLA870oM0yrA79rkPozYOVQrU9u07Vy7KPIQxH2egMnxxp7QE         GrPA=="
-            },
-            {
-              "name": "ARC-Message-Signature",
-              "value": "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;        h=subject:cc:to:importance:from:date:message-id:mime-version         :dkim-signature;        bh=rGLKZ6o7Cv6t2XaM3qmZqGhQtTTy49sOpm/6fgd6evQ=;        fh=qmmGelj6rw+hJsN3f1E1n2QhqHziwyndYJCXTxUodBw=;        b=nzdTcNfD3b+0xIh2nnphPzWP7irg5rbHLVWY+akOmaVlY8FEJ4hba4c75xcghaZFgC         UvTsIAL1bthkE9DdWEs0KsNl4ZoQXWu4ryjrO0coFKg+Ow6YLN1i/s0DkFaXEwmcrNar         XuwwubxV3wXvHbU6lC2YPrME6NlJVDLfjevXspOo4tadcYSbBjKwzLwBd563oJ0HZoar         QYVy1pCevpZDFrDn/0kVQml1kcUTmbd4pmiuxguS3ZA2EpV7CLGIpoeOdgt35kDrFE2V         BM7Dgy0nnmgN1Q5CSkVTuChn/J3jT5USAGjypKeZ4xIDQOn3Wt2bhO9IWZmEqkTEU/Ii         H6xw==;        dara=google.com"
-            },
-            {
-              "name": "ARC-Authentication-Results",
-              "value": "i=1; mx.google.com;       dkim=pass header.i=@naver.com header.s=s20171208 header.b=HfF19Ott;       spf=pass (google.com: domain of qhdrbdhkdwks@naver.com designates 114.111.35.38 as permitted sender) smtp.mailfrom=qhdrbdhkdwks@naver.com;       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=naver.com"
-            },
-            {
-              "name": "Return-Path",
-              "value": "<qhdrbdhkdwks@naver.com>"
-            },
-            {
-              "name": "Received",
-              "value": "from cvsmtppost29.nm.naver.com (cvsmtppost29.nm.naver.com. [114.111.35.38])        by mx.google.com with ESMTPS id 41be03b00d2f7-cc455107266si17814641a12.3.2026.09.06.19.25.11        for <bonggyulim0728@gmail.com>        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);        Sun, 06 Sep 2026 19:25:12 -0700 (PDT)"
-            },
-            {
-              "name": "Received-SPF",
-              "value": "pass (google.com: domain of qhdrbdhkdwks@naver.com designates 114.111.35.38 as permitted sender) client-ip=114.111.35.38;"
-            },
-            {
-              "name": "Authentication-Results",
-              "value": "mx.google.com;       dkim=pass header.i=@naver.com header.s=s20171208 header.b=HfF19Ott;       spf=pass (google.com: domain of qhdrbdhkdwks@naver.com designates 114.111.35.38 as permitted sender) smtp.mailfrom=qhdrbdhkdwks@naver.com;       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=naver.com"
-            },
-            {
-              "name": "X-Originating-IP",
-              "value": "49.163.252.6"
-            },
-            {
-              "name": "X-Works-Smtp-Source",
-              "value": "gdnwFq2/FqJCpNmmKxE9WHF0"
-            },
-            {
-              "name": "Received",
-              "value": "from cvsendbo023.nm ([10.112.22.35])  by cvsmtppost29.nm.naver.com with ESMTP id I+UH18Y2T+SDwNQOIcTjjA  for <bonggyulim0728@gmail.com>;  Mon, 07 Sep 2026 02:25:10 -0000"
-            },
-            {
-              "name": "DKIM-Signature",
-              "value": "v=1; a=rsa-sha256; c=relaxed/simple; d=naver.com; s=s20171208; t=1788747910; bh=7SyvsjLttADIz3P85W/Mpt4obUGKo02IX9cUHZiDMKU=; h=Message-ID:Date:From:To:Subject:From:Subject:Feedback-ID:\t X-Works-Security; b=HfF19Otti6u/8vbs4FgT7rBqJB3Zj0GjVaqNMCZ9jO4Gzf1AzPEdF+WVLT5HyiWHw\t qShnnleCUxJ6l8QV5DA1JUp21pyGS5PAR9+Oz+XylrGpAOjN1CFioBIzn74njUHls9\t co7/ZeWuFQCZyNfa4kHCh44Cml8IM637xH1NLY1ej6c8ohGZ+W9oKnRCvUSfxt24eN\t vzyMp7mO6jTK7dM6N4FKM4qsW/HbK2yrUj7xyt22LmU2frwHkK3YZhlzYS1ZYphfee\t YI6eduTOHH4gVRWS9sO8qVNyEI1oRP+ug1kmTeatZMumS6aLuAgFj9BxPe9ybxBfxA\t HEJD8hW3QeJYw=="
-            },
-            {
-              "name": "X-Session-ID",
-              "value": "3368057e55ad51d3e079ccf113f56927f58937a2a4dae724a53e9c6f7d9421be"
-            },
-            {
-              "name": "MIME-Version",
-              "value": "1.0"
-            },
-            {
-              "name": "Message-ID",
-              "value": "<44464cc9adaedf47af7366d08fd2fc74@cweb005.nm>"
-            },
-            {
-              "name": "Date",
-              "value": "Mon, 07 Sep 2026 11:25:10 +0900"
-            },
-            {
-              "name": "From",
-              "value": "\"임봉규\" <qhdrbdhkdwks@naver.com>"
-            },
-            {
-              "name": "Importance",
-              "value": "normal"
-            },
-            {
-              "name": "To",
-              "value": "<qhdrbdhkdwks2@gmail.com>"
-            },
-            {
-              "name": "Cc",
-              "value": "<bonggyulim0728@gmail.com>"
-            },
-            {
-              "name": "Subject",
-              "value": "[Delta] 포장 승인 요청"
-            },
-            {
-              "name": "X-Originating-IP",
-              "value": "49.163.252.6"
-            },
-            {
-              "name": "X-Works-Send-Opt",
-              "value": "NQ+ZpzCwjHwO+r3O1z3SbXmmjAiYKxuwKqMqKAtZFXwYKBmm"
-            },
-            {
-              "name": "Content-Type",
-              "value": "multipart/alternative; boundary=\"-----Boundary-WM=_7f8042c3b700.1788747910646\""
-            }
-          ],
-          "mimeType": "multipart/alternative",
-          "partId": "",
-          "parts": [
-            {
-              "body": {
-                "data": "RGVsdGEg7Y-s7J6lIOyKueyduCDsmpTssq3rk5zrpr3ri4jri6QuIOy1nOyihSDsirnsnbjsnpDripQg7IiY67mI7J6F64uI64ukLiDsi5zslYjsl5Ag7J2Y6rKs7J20IOyeiOycvOuptCDsirnsnbgg7KCE7JeQIO2ajOyLoCDrtoDtg4Hrk5zrpr3ri4jri6QuCg==",
-                "size": 148
-              },
-              "filename": "",
-              "headers": [
-                {
-                  "name": "Content-Type",
-                  "value": "text/plain; charset=\"utf-8\""
-                },
-                {
-                  "name": "Content-Transfer-Encoding",
-                  "value": "base64"
-                }
-              ],
-              "mimeType": "text/plain",
-              "partId": "0"
-            },
-            {
-              "body": {
-                "data": "PGh0bWw-PGhlYWQ-PHN0eWxlPnB7bWFyZ2luLXRvcDowcHg7bWFyZ2luLWJvdHRvbTowcHg7fTwvc3R5bGU-PC9oZWFkPjxib2R5PjxkaXYgc3R5bGU9ImZvbnQtc2l6ZToxNHB4OyBmb250LWZhbWlseTpHdWxpbSzqtbTrprwsc2Fucy1zZXJpZjsiPkRlbHRhIO2PrOyepSDsirnsnbgg7JqU7LKt65Oc66a964uI64ukLiDstZzsooUg7Iq57J247J6Q64qUIOyImOu5iOyeheuLiOuLpC4g7Iuc7JWI7JeQIOydmOqyrOydtCDsnojsnLzrqbQg7Iq57J24IOyghOyXkCDtmozsi6Ag67aA7YOB65Oc66a964uI64ukLjwvZGl2PjwvYm9keT48L2h0bWw-PHRhYmxlIHN0eWxlPSdkaXNwbGF5Om5vbmUnPjx0cj48dGQ-PGltZyBzcmM9Imh0dHBzOi8vbWFpbC5uYXZlci5jb20vcmVhZFJlY2VpcHQvbm90aWZ5Lz9pbWc9OVhSdk1OaXYxSHVzYnJSWHB6UmNoQXRkRkFNZE1yS2xNNjNDcDYzNEZBJTJCQ3BvYnFGb3B2S0FDNHBBaTRNcWJkdHpGWHA2VW1LQUU1VzRkUWFyaVRXNCUyQk5EQmtuMTZkbUZxVSUyRnR6JTJCUk02MG43NEZUV3QlM0QlM0QuZ2lmIiBib3JkZXI9IjAiLz48L3RkPjwvdHI-PC90YWJsZT4=",
-                "size": 566
-              },
-              "filename": "",
-              "headers": [
-                {
-                  "name": "Content-Type",
-                  "value": "text/html; charset=\"utf-8\""
-                },
-                {
-                  "name": "Content-Transfer-Encoding",
-                  "value": "base64"
-                }
-              ],
-              "mimeType": "text/html",
-              "partId": "1"
-            }
-          ]
-        },
-        "sizeEstimate": 5525,
-        "snippet": "Delta 포장 승인 요청드립니다. 최종 승인자는 수빈입니다. 시안에 의견이 있으면 승인 전에 회신 부탁드립니다.",
-        "threadId": "1a0799a5424b0b05"
-      },
-      "raw": {
-        "historyId": "173768",
-        "id": "1a079af147cffb7f",
-        "internalDate": "1788747910000",
-        "labelIds": [
-          "UNREAD",
-          "CATEGORY_PERSONAL",
-          "INBOX"
-        ],
-        "raw": "RGVsaXZlcmVkLVRvOiBib25nZ3l1bGltMDcyOEBnbWFpbC5jb20NClJlY2VpdmVkOiBieSAyMDAyOmExNzo5MDY6NTgxNTpiMDpjMTU6ZDUxMDozNmMwIHdpdGggU01UUCBpZCBtMjFjc3AyODQyNzIyZWpxOw0KICAgICAgICBTdW4sIDYgU2VwIDIwMjYgMTk6MjU6MTIgLTA3MDAgKFBEVCkNClgtUmVjZWl2ZWQ6IGJ5IDIwMDI6YTA1OjZhMDA6OTgxOmIwOjg0ODoyZTdlOjM1M2Egd2l0aCBTTVRQIGlkIGQyZTFhNzJmY2NhNTgtODYxNjUwZTk3NjBtcjIzMjYyOTMwYjNhLjAuMTc4ODc0NzkxMjM4NTsNCiAgICAgICAgU3VuLCAwNiBTZXAgMjAyNiAxOToyNToxMiAtMDcwMCAoUERUKQ0KQVJDLVNlYWw6IGk9MTsgYT1yc2Etc2hhMjU2OyB0PTE3ODg3NDc5MTI7IGN2PW5vbmU7DQogICAgICAgIGQ9Z29vZ2xlLmNvbTsgcz1hcmMtMjAyNjAzMjc7DQogICAgICAgIGI9ZUpBeDQ2am5kUGhPaWtOM096dlZGSzVFOW1wRE80dG9rdnJHek8wVGhuQzkzeWtvaGF6Z3hGYzllYThLZjRsRVJwDQogICAgICAgICBLbFlHYTBBbDVVNkJ5Z09jT1U1TTZ1ek0ybm9GQVVDVEpKZ0NhTGZZcVNzV2IvaWVxWmp1bXZPNk9NeTNMTVo3b1JORg0KICAgICAgICAgWmJiek5ic0NRTHpaMSszekxMTnkzZDNVVTlETDlTVFNYT1BVTllxbUZGM3J2RFNlQk5waEhmKzJjNnJLU3F2N2lmcmINCiAgICAgICAgIHh5cDYzSGVZUkpLNUVhd21ud3BpQWZxREVPOEl3Rm5QRkdIaTNDSTAvT2pFRzZyQm9hNjVqVFlSTnhZanNad2ZjbFY0DQogICAgICAgICBvS1JmUTJyeFc1YldUa3NQcTM2RkxBODcwb00weXJBNzlya1BvellPVlFyVTl1MDdWeTdLUElReEgyZWdNbnh4cDdRRQ0KICAgICAgICAgR3JQQT09DQpBUkMtTWVzc2FnZS1TaWduYXR1cmU6IGk9MTsgYT1yc2Etc2hhMjU2OyBjPXJlbGF4ZWQvcmVsYXhlZDsgZD1nb29nbGUuY29tOyBzPWFyYy0yMDI2MDMyNzsNCiAgICAgICAgaD1zdWJqZWN0OmNjOnRvOmltcG9ydGFuY2U6ZnJvbTpkYXRlOm1lc3NhZ2UtaWQ6bWltZS12ZXJzaW9uDQogICAgICAgICA6ZGtpbS1zaWduYXR1cmU7DQogICAgICAgIGJoPXJHTEtaNm83Q3Y2dDJYYU0zcW1acUdoUXRUVHk0OXNPcG0vNmZnZDZldlE9Ow0KICAgICAgICBmaD1xbW1HZWxqNnJ3K2hKc04zZjFFMW4yUWhxSHppd3luZFlKQ1hUeFVvZEJ3PTsNCiAgICAgICAgYj1uemRUY05mRDNiKzB4SWgybm5waFB6V1A3aXJnNXJiSExWV1krYWtPbWFWbFk4RkVKNGhiYTRjNzV4Y2doYVpGZ0MNCiAgICAgICAgIFV2VHNJQUwxYnRoa0U5RGRXRXMwS3NObDRab1FYV3U0cnlqck8wY29GS2crT3c2WUxOMWkvczBEa0ZhWEV3bWNyTmFyDQogICAgICAgICBYdXd3dWJ4VjN3WHZIYlU2bEMyWVByTUU2TmxKVkRMZmpldlhzcE9vNHRhZGNZU2JCakt3ekx3QmQ1NjNvSjBIWm9hcg0KICAgICAgICAgUVlWeTFwQ2V2cFpERnJEbi8wa1ZRbWwxa2NVVG1iZDRwbWl1eGd1UzNaQTJFcFY3Q0xHSXBvZU9kZ3QzNWtEckZFMlYNCiAgICAgICAgIEJNN0RneTBubm1nTjFRNUNTa1ZUdUNobi9KM2pUNVVTQUdqeXBLZVo0eElEUU9uM1d0MmJoTzlJV1ptRXFrVEVVL0lpDQogICAgICAgICBINnh3PT07DQogICAgICAgIGRhcmE9Z29vZ2xlLmNvbQ0KQVJDLUF1dGhlbnRpY2F0aW9uLVJlc3VsdHM6IGk9MTsgbXguZ29vZ2xlLmNvbTsNCiAgICAgICBka2ltPXBhc3MgaGVhZGVyLmk9QG5hdmVyLmNvbSBoZWFkZXIucz1zMjAxNzEyMDggaGVhZGVyLmI9SGZGMTlPdHQ7DQogICAgICAgc3BmPXBhc3MgKGdvb2dsZS5jb206IGRvbWFpbiBvZiBxaGRyYmRoa2R3a3NAbmF2ZXIuY29tIGRlc2lnbmF0ZXMgMTE0LjExMS4zNS4zOCBhcyBwZXJtaXR0ZWQgc2VuZGVyKSBzbXRwLm1haWxmcm9tPXFoZHJiZGhrZHdrc0BuYXZlci5jb207DQogICAgICAgZG1hcmM9cGFzcyAocD1OT05FIHNwPU5PTkUgZGlzPU5PTkUpIGhlYWRlci5mcm9tPW5hdmVyLmNvbQ0KUmV0dXJuLVBhdGg6IDxxaGRyYmRoa2R3a3NAbmF2ZXIuY29tPg0KUmVjZWl2ZWQ6IGZyb20gY3ZzbXRwcG9zdDI5Lm5tLm5hdmVyLmNvbSAoY3ZzbXRwcG9zdDI5Lm5tLm5hdmVyLmNvbS4gWzExNC4xMTEuMzUuMzhdKQ0KICAgICAgICBieSBteC5nb29nbGUuY29tIHdpdGggRVNNVFBTIGlkIDQxYmUwM2IwMGQyZjctY2M0NTUxMDcyNjZzaTE3ODE0NjQxYTEyLjMuMjAyNi4wOS4wNi4xOS4yNS4xMQ0KICAgICAgICBmb3IgPGJvbmdneXVsaW0wNzI4QGdtYWlsLmNvbT4NCiAgICAgICAgKHZlcnNpb249VExTMV8zIGNpcGhlcj1UTFNfQUVTXzI1Nl9HQ01fU0hBMzg0IGJpdHM9MjU2LzI1Nik7DQogICAgICAgIFN1biwgMDYgU2VwIDIwMjYgMTk6MjU6MTIgLTA3MDAgKFBEVCkNClJlY2VpdmVkLVNQRjogcGFzcyAoZ29vZ2xlLmNvbTogZG9tYWluIG9mIHFoZHJiZGhrZHdrc0BuYXZlci5jb20gZGVzaWduYXRlcyAxMTQuMTExLjM1LjM4IGFzIHBlcm1pdHRlZCBzZW5kZXIpIGNsaWVudC1pcD0xMTQuMTExLjM1LjM4Ow0KQXV0aGVudGljYXRpb24tUmVzdWx0czogbXguZ29vZ2xlLmNvbTsNCiAgICAgICBka2ltPXBhc3MgaGVhZGVyLmk9QG5hdmVyLmNvbSBoZWFkZXIucz1zMjAxNzEyMDggaGVhZGVyLmI9SGZGMTlPdHQ7DQogICAgICAgc3BmPXBhc3MgKGdvb2dsZS5jb206IGRvbWFpbiBvZiBxaGRyYmRoa2R3a3NAbmF2ZXIuY29tIGRlc2lnbmF0ZXMgMTE0LjExMS4zNS4zOCBhcyBwZXJtaXR0ZWQgc2VuZGVyKSBzbXRwLm1haWxmcm9tPXFoZHJiZGhrZHdrc0BuYXZlci5jb207DQogICAgICAgZG1hcmM9cGFzcyAocD1OT05FIHNwPU5PTkUgZGlzPU5PTkUpIGhlYWRlci5mcm9tPW5hdmVyLmNvbQ0KWC1PcmlnaW5hdGluZy1JUDogNDkuMTYzLjI1Mi42DQpYLVdvcmtzLVNtdHAtU291cmNlOiBnZG53RnEyL0ZxSkNwTm1tS3hFOVdIRjANClJlY2VpdmVkOiBmcm9tIGN2c2VuZGJvMDIzLm5tIChbMTAuMTEyLjIyLjM1XSkNCiAgYnkgY3ZzbXRwcG9zdDI5Lm5tLm5hdmVyLmNvbSB3aXRoIEVTTVRQIGlkIEkrVUgxOFkyVCtTRHdOUU9JY1RqakENCiAgZm9yIDxib25nZ3l1bGltMDcyOEBnbWFpbC5jb20-Ow0KICBNb24sIDA3IFNlcCAyMDI2IDAyOjI1OjEwIC0wMDAwDQpES0lNLVNpZ25hdHVyZTogdj0xOyBhPXJzYS1zaGEyNTY7IGM9cmVsYXhlZC9zaW1wbGU7IGQ9bmF2ZXIuY29tOyBzPXMyMDE3MTIwODsNCgl0PTE3ODg3NDc5MTA7IGJoPTdTeXZzakx0dEFESXozUDg1Vy9NcHQ0b2JVR0tvMDJJWDljVUhaaURNS1U9Ow0KCWg9TWVzc2FnZS1JRDpEYXRlOkZyb206VG86U3ViamVjdDpGcm9tOlN1YmplY3Q6RmVlZGJhY2stSUQ6DQoJIFgtV29ya3MtU2VjdXJpdHk7DQoJYj1IZkYxOU90dGk2dS84dmJzNEZnVDdyQnFKQjNaajBHalZhcU5NQ1o5ak80R3pmMUF6UEVkRitXVkxUNUh5aVdIdw0KCSBxU2hubmxlQ1V4SjZsOFFWNURBMUpVcDIxcHlHUzVQQVI5K096K1h5bHJHcEFPak4xQ0Zpb0JJem43NG5qVUhsczkNCgkgY283L1plV3VGUUNaeU5mYTRrSENoNDRDbWw4SU02Mzd4SDFOTFkxZWo2YzhvaEdaK1c5b0tuUkN2VVNmeHQyNGVODQoJIHZ6eU1wN21PNmpUSzdkTTZONEZLTTRxc1cvSGJLMnlyVWo3eHl0MjJMbVUyZnJ3SGtLM1laaGx6WVMxWllwaGZlZQ0KCSBZSTZlZHVUT0hINGdWUldTOXNPOHFWTnlFSTFvUlArdWcxa21UZWF0Wk11bVM2YUx1QWdGajlCeFBlOXlieEJmeEENCgkgSEVKRDhoVzNRZUpZdz09DQpYLVNlc3Npb24tSUQ6IDMzNjgwNTdlNTVhZDUxZDNlMDc5Y2NmMTEzZjU2OTI3ZjU4OTM3YTJhNGRhZTcyNGE1M2U5YzZmN2Q5NDIxYmUNCk1JTUUtVmVyc2lvbjogMS4wDQpNZXNzYWdlLUlEOiA8NDQ0NjRjYzlhZGFlZGY0N2FmNzM2NmQwOGZkMmZjNzRAY3dlYjAwNS5ubT4NCkRhdGU6IE1vbiwgMDcgU2VwIDIwMjYgMTE6MjU6MTAgKzA5MDANCkZyb206ID0_dXRmLTg_Qj83SjZFNjdTSjZyZWM_PSA8cWhkcmJkaGtkd2tzQG5hdmVyLmNvbT4NCkltcG9ydGFuY2U6IG5vcm1hbA0KVG86IDxxaGRyYmRoa2R3a3MyQGdtYWlsLmNvbT4NCkNjOiA8Ym9uZ2d5dWxpbTA3MjhAZ21haWwuY29tPg0KU3ViamVjdDogPT91dGYtOD9CP1cwUmxiSFJoWFNEdGo2enNucVVnN0lxNTdKMjRJT3lhbE95eXJRPT0_PQ0KWC1PcmlnaW5hdGluZy1JUDogNDkuMTYzLjI1Mi42DQpYLVdvcmtzLVNlbmQtT3B0OiBOUStacHpDd2pId08rcjNPMXozU2JYbW1qQWlZS3h1d0txTXFLQXRaRlh3WUtCbW0NCkNvbnRlbnQtVHlwZTogbXVsdGlwYXJ0L2FsdGVybmF0aXZlOw0KCWJvdW5kYXJ5PSItLS0tLUJvdW5kYXJ5LVdNPV83ZjgwNDJjM2I3MDAuMTc4ODc0NzkxMDY0NiINCg0KLS0tLS0tLUJvdW5kYXJ5LVdNPV83ZjgwNDJjM2I3MDAuMTc4ODc0NzkxMDY0Ng0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluOw0KCWNoYXJzZXQ9InV0Zi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClJHVnNkR0VnN1krczdKNmxJT3lLdWV5ZHVDRHNtcFRzc3Ezcms1enJwcjNyaTRqcmk2UXVJT3kxbk95aWhTRHNpcm5zbmJqc25wRHINCmlwUWc3SWlZNjdtSTdKNkY2NHVJNjR1a0xpRHNpNXpzbFlqc2w1QWc3SjJZNnJLczdKMjBJT3llaU95Y3ZPdXB0Q0RzaXJuc25iZ2cNCjdLQ0U3SmVRSU8yYWpPeUxvQ0RydG9EdGc0SHJrNXpycHIzcmk0anJpNlF1Q2c9PQ0KDQotLS0tLS0tQm91bmRhcnktV009XzdmODA0MmMzYjcwMC4xNzg4NzQ3OTEwNjQ2DQpDb250ZW50LVR5cGU6IHRleHQvaHRtbDsNCgljaGFyc2V0PSJ1dGYtOCINCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IGJhc2U2NA0KDQpQR2gwYld3K1BHaGxZV1ErUEhOMGVXeGxQbkI3YldGeVoybHVMWFJ2Y0Rvd2NIZzdiV0Z5WjJsdUxXSnZkSFJ2YlRvd2NIZzdmVHd2DQpjM1I1YkdVK1BDOW9aV0ZrUGp4aWIyUjVQanhrYVhZZ2MzUjViR1U5SW1admJuUXRjMmw2WlRveE5IQjRPeUJtYjI1MExXWmhiV2xzDQplVHBIZFd4cGJTenF0YlRycHJ3c2MyRnVjeTF6WlhKcFpqc2lQa1JsYkhSaElPMlByT3llcFNEc2lybnNuYmdnN0pxVTdMS3Q2NU9jDQo2NmE5NjR1STY0dWtMaURzdFp6c29vVWc3SXE1N0oyNDdKNlE2NHFVSU95SW1PdTVpT3llaGV1TGlPdUxwQzRnN0l1YzdKV0k3SmVRDQpJT3lkbU9xeXJPeWR0Q0Rzbm9qc25MenJxYlFnN0lxNTdKMjRJT3lnaE95WGtDRHRtb3pzaTZBZzY3YUE3WU9CNjVPYzY2YTk2NHVJDQo2NHVrTGp3dlpHbDJQand2WW05a2VUNDhMMmgwYld3K1BIUmhZbXhsSUhOMGVXeGxQU2RrYVhOd2JHRjVPbTV2Ym1VblBqeDBjajQ4DQpkR1ErUEdsdFp5QnpjbU05SW1oMGRIQnpPaTh2YldGcGJDNXVZWFpsY2k1amIyMHZjbVZoWkZKbFkyVnBjSFF2Ym05MGFXWjVMejlwDQpiV2M5T1ZoU2RrMU9hWFl4U0hWelluSlNXSEI2VW1Ob1FYUmtSa0ZOWkUxeVMyeE5Oak5EY0RZek5FWkJKVEpDUTNCdlluRkdiM0IyDQpTMEZETkhCQmFUUk5jV0prZEhwR1dIQTJWVzFMUVVVMVZ6UmtVV0Z5YVZSWE5DVXlRazVFUW10dU1UWmtiVVp4VlNVeVJuUjZKVEpDDQpVazAyTUc0M05FWlVWM1FsTTBRbE0wUXVaMmxtSWlCaWIzSmtaWEk5SWpBaUx6NDhMM1JrUGp3dmRISStQQzkwWVdKc1pUND0NCg0KLS0tLS0tLUJvdW5kYXJ5LVdNPV83ZjgwNDJjM2I3MDAuMTc4ODc0NzkxMDY0Ni0tDQo=",
-        "sizeEstimate": 5525,
-        "snippet": "Delta 포장 승인 요청드립니다. 최종 승인자는 수빈입니다. 시안에 의견이 있으면 승인 전에 회신 부탁드립니다.",
-        "threadId": "1a0799a5424b0b05"
-      }
-    },
-    "kestrel_task": {
-      "task": {
-        "due": "2026-08-08T00:00:00.000Z",
-        "etag": "\"hXeFxhCTgDg\"",
-        "id": "cTkxR21FX1FSTnU0XzlWWg",
-        "kind": "tasks#task",
-        "links": [],
-        "notes": "진행 중",
-        "position": "00000000000000000000",
-        "selfLink": "https://www.googleapis.com/tasks/v1/lists/V0JUdGxoNUJGN01rSTZhag/tasks/cTkxR21FX1FSTnU0XzlWWg",
-        "status": "needsAction",
-        "title": "Kestrel 대체 일정 확인",
-        "updated": "2026-09-07T01:33:38.612Z",
-        "webViewLink": "https://tasks.google.com/task/q91GmE_QRNu4_9VZ?sa=6"
-      },
-      "task_list_id": "V0JUdGxoNUJGN01rSTZhag"
-    },
-    "purpose": "RECOVERABLE_PROVIDER_REPAIR_BACKUP"
   },
   "resource_packs": {
     "ASTER_NOVA": {
@@ -830,35 +639,30 @@
       "keep_rule": "상기 내용이 맞으면 유지. 낮은 score 차이는 source 결함 아님.",
       "legacy_fixture_snapshot_id": "FW-D-004",
       "notes": "",
-      "readiness_blockers": [
-        "DELTA_TRASHED_HISTORY_VISIBLE_TO_PRODUCT_THREAD_GET"
-      ],
+      "readiness_blockers": [],
       "repair_rule": "승인자/프로젝트 귀속이 실제로 잘못된 메일만 교체. score를 메일 본문에 적지 않음.",
       "required_business_data": "Delta 승인 요청→수빈, Delta Plus 승인 요청→수민, 별도 포장 시안 hard negative. 점수가 아니라 본문·프로젝트로 구별 가능.",
       "resources": [
         {
-          "excluded_retired_message_ids": [
-            "1a079af147cffb7f",
-            "1a09db0d32ed4383"
-          ],
+          "excluded_retired_message_ids": [],
           "message_count": 1,
           "messages": [
             {
               "attachments": [],
               "body": "Delta 포장 승인 요청드립니다. 최종 승인자는 수빈입니다. 시안에 의견이 있으면 승인 전에 회신 부탁드립니다.",
               "body_sha256": "b1549024d0b2f624596c74825d778675e80ae549d6a93d9ca4b71df61349946d",
-              "message_id": "1a09dba5b0f71571",
-              "received_at": "2026-09-14T02:23:49+00:00",
+              "message_id": "1a09e0e0fda9ed25",
+              "received_at": "2026-09-14T03:55:14+00:00",
               "recipients": [
                 "qhdrbdhkdwks2@gmail.com",
                 "bonggyulim0728@gmail.com"
               ],
               "references": null,
-              "rfc822_message_id": "<7d8f63af788be1d6fac7ef4da3259e9@cweb014.nm>",
+              "rfc822_message_id": "<ee9908a83209e3c4c7a695d38e97e0@cweb018.nm>",
               "sender_email": "qhdrbdhkdwks@naver.com",
               "sender_name": "임봉규",
-              "subject": "[Delta] 포장 승인 요청",
-              "thread_id": "1a09db0d32ed4383"
+              "subject": "[Delta] 포장 승인 검토 요청",
+              "thread_id": "1a09e0e0fda9ed25"
             }
           ],
           "participants": [
@@ -866,16 +670,18 @@
             "qhdrbdhkdwks2@gmail.com",
             "bonggyulim0728@gmail.com"
           ],
-          "resource_id": "1a09db0d32ed4383",
+          "resource_id": "1a09e0e0fda9ed25",
           "resource_type": "gmail_thread",
-          "subject": "[Delta] 포장 승인 요청",
-          "version": "177858"
+          "semantic_identity": {
+            "final_approver": "수빈",
+            "project": "Delta",
+            "thread_clean_verified": true
+          },
+          "subject": "[Delta] 포장 승인 검토 요청",
+          "version": "178130"
         },
         {
-          "excluded_retired_message_ids": [
-            "1a079af147cffb7f",
-            "1a09db0d32ed4383"
-          ],
+          "excluded_retired_message_ids": [],
           "message_count": 1,
           "messages": [
             {
@@ -905,10 +711,7 @@
           "version": "177970"
         },
         {
-          "excluded_retired_message_ids": [
-            "1a079af147cffb7f",
-            "1a09db0d32ed4383"
-          ],
+          "excluded_retired_message_ids": [],
           "message_count": 1,
           "messages": [
             {
@@ -1266,15 +1069,13 @@
       ]
     },
     "JUNIPER": {
-      "decision": "PENDING_ADD",
+      "decision": "ADD",
       "fixture_snapshot_id": "PROVIDER-V8-JUNIPER",
       "keep_rule": "OOO는 실제 정상 조회됨: 절대 삭제·교체하지 않음.",
       "legacy_fixture_snapshot_id": "FW-D-010",
       "notes": "공통 OOO를 새 검토 Event로 대체하지 않는다. CORE-058 생성대상과 제목/업무를 달리하여 새 duplicate 회귀를 만들지 않는다.",
-      "readiness_blockers": [
-        "JUNIPER_REVIEW_EVENT_TEMPORAL_BINDING_PENDING"
-      ],
-      "repair_rule": "없는 검토 Event만 추가한다. 제목=Juniper 요구사항 검토, 설명=제품 요구사항 변경과 검토 의견을 확인하는 회의. 참석자 없음. start/end는 이번에 새로 산정하지 않으며 결속 전 업로드 금지.",
+      "readiness_blockers": [],
+      "repair_rule": "기존 OOO를 유지하고 결속된 첫 1시간에 별도 Juniper 요구사항 검토 Event를 추가한 뒤 독립 재조회했다.",
       "required_business_data": "정상 OOO Event는 보존. CORE-017에 필요한 별도 요구사항 검토 Event 1개(신규 합성 근거)가 필요하며 OOO와 겹치는 관계를 갖도록 별도 시간 결속. 준비 Task는 없음. CORE-058의 신규 로드맵 검토와 다른 업무 identity.",
       "resources": [
         {
@@ -1319,8 +1120,43 @@
           "title": "Out of Office",
           "transparency": null,
           "updated": "2026-09-07T01:45:22.984Z"
+        },
+        {
+          "attendees": [],
+          "creator": {
+            "email": "bonggyulim0728@gmail.com"
+          },
+          "description": "제품 요구사항 변경과 검토 의견을 확인하는 회의.",
+          "description_sha256": "a74bdd5451fe4efa625bd4772978ace503f9f86f975069f8ae1c70b730345cd8",
+          "end": {
+            "dateTime": "2026-08-12T16:00:00+09:00",
+            "timeZone": "Asia/Seoul"
+          },
+          "etag": "\"3578714849377758\"",
+          "location": null,
+          "organizer": {
+            "displayName": "Juniper 일정",
+            "email": "1ffbfb5494c5b68d8157430cd565a53798fd083f3a736e19afc6dceb9dd68cbc@group.calendar.google.com",
+            "self": true
+          },
+          "parent_id": "1ffbfb5494c5b68d8157430cd565a53798fd083f3a736e19afc6dceb9dd68cbc@group.calendar.google.com",
+          "resource_id": "apvloa2go3hvs4ib86fvjos3jo",
+          "resource_type": "calendar_event",
+          "start": {
+            "dateTime": "2026-08-12T15:00:00+09:00",
+            "timeZone": "Asia/Seoul"
+          },
+          "status": "confirmed",
+          "title": "Juniper 요구사항 검토",
+          "transparency": null,
+          "updated": "2026-09-14T03:43:44.688Z"
         }
-      ]
+      ],
+      "temporal_binding": {
+        "rule": "FIRST_ONE_HOUR_OF_EXISTING_CONFLICT_INTERVAL",
+        "source_event_id": "4c4qfigrf35q8mqjvkia3dus4f",
+        "time_zone": "Asia/Seoul"
+      }
     },
     "KESTREL": {
       "decision": "REPLACE",
@@ -1366,7 +1202,7 @@
           "resource_id": "V0JUdGxoNUJGN01rSTZhag",
           "resource_type": "task_list",
           "title": "Kestrel 업무",
-          "updated": "2026-09-07T01:30:45.737Z"
+          "updated": "2026-09-14T01:50:38.274Z"
         },
         {
           "due": "2026-08-08T00:00:00.000Z",
@@ -1851,7 +1687,18 @@
           "message_count": 1,
           "messages": [
             {
-              "attachments": [],
+              "attachments": [
+                {
+                  "attachment_id": "ANGjdJ8DkUQBi-HJ-0wUl_z00No1rmN9yKh4hHaEu98jSin1eeZqgYBnz-9lCmSwrOgnkZm8Nc_vPkbCdTlBfa0JNPdci0iwPfXfiPLKoJjzEh0rQg7VuR3SjFRyCxdHfApGrzj8o9IDhyvxxwMN2J5ZBVMlJOC7dwPJl6Fvwe413UlbsNuGq9qdPGzzyOSJRubymR2Em1jFa19pVPKr8GoedSpQVj9xisTFRb1YtStNz8sFjgUaMl5cEP6nLPLdB8IXhcdVVhcoRm6I9fh34RaP0W_opqafib3tPlSbTDFUvESCTpEz9-jpB2QjWLdeX87_7armBbqXK3lJ3R2IMBnqVCUclAZVMDrbzZg3xvkwbha2UoF8TDNI-kM2xzceXIpUn1l33d8Nbrn5lWnI",
+                  "data_base64url": "ZG9jdW1lbnRfaWQsZGVsaXZlcnlfZGF0ZSxzdGF0dXMNClFaLURFTElWRVJZLTA4MjEsMjAyNi0wOC0yMSxjb25maXJtZWQNCg==",
+                  "declared_size_bytes": 73,
+                  "filename": "quartz-delivery-confirmation.csv",
+                  "mime_type": "text/csv",
+                  "sha256": "4cc98439c11bfa29405d9c6bacbc77f748b65cba5d89b820c20392e7245601dd",
+                  "size_bytes": 73,
+                  "utf8_text": "document_id,delivery_date,status\r\nQZ-DELIVERY-0821,2026-08-21,confirmed\r\n"
+                }
+              ],
               "body": "Quartz 납품일은 8월 21일로 확정했습니다. 일정 확인 후 이 메일로 회신 부탁드립니다.",
               "body_sha256": "97f60b5f09a015aa1c7bcb72e5797926401a865ba765a13bf9875050e8a47e71",
               "message_id": "1a079aeb254e0b1b",
@@ -1909,14 +1756,29 @@
       ]
     },
     "ROOM_CONFLICT": {
-      "decision": "PENDING_KEEP_VERIFICATION",
+      "decision": "KEEP",
       "fixture_snapshot_id": "PROVIDER-V8-ROOM_CONFLICT",
       "keep_rule": "두 scenario Calendar의 접근권한과 민재 Event는 조회됨. 유나 Event와 full organizer binding까지 대조해 맞으면 유지.",
       "legacy_fixture_snapshot_id": "FX-007-A9C7",
       "notes": "민재=bonggyulim0728@gmail.com, 유나=qhdrbdhkdwks2@gmail.com. group Calendar organizer는 소유 관계와 함께 확인하며 description만 보고 native organizer로 위조하지 않음.",
-      "readiness_blockers": [
-        "YUNA_CALENDAR_OWNER_BINDING_UNVERIFIED"
-      ],
+      "owner_binding_verification": {
+        "different_accounts_verified": true,
+        "method": "GOOGLE_CALENDAR_SETTINGS_UI_AND_CONNECTED_CALENDAR_READ",
+        "minjae": {
+          "calendar_id": "c0d81a21d0c0f33e6e006bad0a397dcf772713b06df37ccec2998ccbf3989ff5@group.calendar.google.com",
+          "connected_account_access_role": "owner",
+          "owner_email": "bonggyulim0728@gmail.com"
+        },
+        "overlap_verified": true,
+        "same_location_verified": true,
+        "verified_at": "2026-09-14",
+        "yuna": {
+          "calendar_id": "b875369877ab487951505ffa0db39b5dda277274b0cacdad77e3d7940b0beb06@group.calendar.google.com",
+          "connected_account_access_role": "reader",
+          "owner_email": "qhdrbdhkdwks2@gmail.com"
+        }
+      },
+      "readiness_blockers": [],
       "repair_rule": "잘못된 owner/역할인 경우 해당 소유자 계정에서 문제 Event만 재등록. 합동 Draft는 source가 아니라 Gold 결함이므로 Calendar를 재생성할 이유가 아님.",
       "required_business_data": "서비스 지표 회의/고객지원 주간회의 두 Event; 같은 실제 location; 서로 다른 주최 역할 민재/유나와 실제 계정. 겹침은 나중에 실제 start/end로 검사.",
       "resources": [
