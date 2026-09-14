@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from typing import Literal, Required, TypedDict, cast
 
@@ -14,6 +15,11 @@ from google_work_agent.application.use_cases.run.build_terminal_message import (
     TerminalEffectTypeV1,
     TerminalMessageSourceKindV1,
 )
+from google_work_agent.application.use_cases.run.compose_terminal_response import (
+    ComposeTerminalResponseCommandV1,
+    ComposeTerminalResponseHandler,
+    build_terminal_response_input,
+)
 
 type TerminalCommitKindV1 = Literal[
     "COMPLETE_ANSWER_ONLY",
@@ -25,6 +31,8 @@ type TerminalCommitKindV1 = Literal[
     "RECOVERY_CANCEL",
     "RECOVERY_FAIL",
 ]
+
+_LOGGER = logging.getLogger(__name__)
 type TerminalResultKindV1 = Literal["SUCCESS", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"]
 
 
@@ -66,11 +74,36 @@ def response_synthesis_node(
     *,
     read_terminal_facts: Callable[[str], Mapping[str, object]],
     build_terminal_message: BuildTerminalMessageHandler,
+    compose_terminal_response: ComposeTerminalResponseHandler | None = None,
 ) -> dict[str, object]:
     """Build one terminal input/intent from already-decided durable facts."""
 
     run_id = _required_string(state.get("run_id"), "run_id")
     facts = read_terminal_facts(run_id)
+    intent = build_terminal_commit_intent(
+        state,
+        facts=facts,
+        build_terminal_message=build_terminal_message,
+        compose_terminal_response=compose_terminal_response,
+    )
+    return {
+        "__logical_target__": "terminal_commit",
+        "__target__": "terminal_commit",
+        "workflow_phase": "RESPONSE_SYNTHESIS",
+        "terminal_commit_intent": intent,
+    }
+
+
+def build_terminal_commit_intent(
+    state: Mapping[str, object],
+    *,
+    facts: Mapping[str, object],
+    build_terminal_message: BuildTerminalMessageHandler,
+    compose_terminal_response: ComposeTerminalResponseHandler | None = None,
+) -> TerminalCommitIntentV1:
+    """Build an intent from one fact snapshot; optional LLM changes prose only."""
+
+    run_id = _required_string(state.get("run_id"), "run_id")
     expected_version = _required_non_negative_int(facts.get("version"), "version")
     status = _required_string(facts.get("status"), "status")
     action_statuses = _string_tuple(facts.get("action_statuses"), "action_statuses")
@@ -99,6 +132,44 @@ def response_synthesis_node(
             action_outcomes=_action_outcomes(facts.get("actions")),
         )
     )
+    if (
+        kind == "COMPLETE_WRITE"
+        and result_kind in {"SUCCESS", "PARTIAL"}
+        and compose_terminal_response is not None
+    ):
+        request_text = _required_string(_request_text(state), "run_input.user_request")
+        try:
+            response_input = build_terminal_response_input(
+                user_request=request_text,
+                result_kind=result_kind,
+                actions=facts.get("actions"),
+                send_not_dispatched_current_run=(
+                    facts.get("send_not_dispatched_current_run") is True
+                ),
+            )
+        except ValueError:
+            # A bounded response projection must never invalidate an already
+            # closed WRITE result. The canonical deterministic message remains
+            # the safe terminal fallback.
+            _LOGGER.warning(
+                "terminal response used deterministic fallback",
+                extra={
+                    "run_id": run_id,
+                    "generation_mode": "FALLBACK",
+                    "fallback_reason": "TERMINAL_RESPONSE_INPUT_INVALID",
+                },
+            )
+            response_input = None
+        if response_input is not None:
+            terminal_message = compose_terminal_response(
+                ComposeTerminalResponseCommandV1(
+                    schema_version=1,
+                    run_id=run_id,
+                    requested_mode=_requested_mode(state),
+                    response_input=response_input,
+                    fallback_message=terminal_message,
+                )
+            ).terminal_message
     intent: TerminalCommitIntentV1 = {
         "schema_version": 1,
         "kind": kind,
@@ -106,12 +177,7 @@ def response_synthesis_node(
         "terminal_message": terminal_message,
         "reason_codes": reason_codes,
     }
-    return {
-        "__logical_target__": "terminal_commit",
-        "__target__": "terminal_commit",
-        "workflow_phase": "RESPONSE_SYNTHESIS",
-        "terminal_commit_intent": intent,
-    }
+    return intent
 
 
 def validate_terminal_commit_intent(value: object) -> TerminalCommitIntentV1:
@@ -272,6 +338,18 @@ def _request_text(state: Mapping[str, object]) -> str | None:
     return user_request if isinstance(user_request, str) and user_request.strip() else None
 
 
+def _requested_mode(
+    state: Mapping[str, object],
+) -> Literal["AUTO", "LOCAL_GPU", "API_LLM"]:
+    run_input = state.get("run_input")
+    if not isinstance(run_input, Mapping):
+        raise ValueError("run_input is required")
+    requested_mode = run_input.get("requested_mode")
+    if requested_mode not in {"AUTO", "LOCAL_GPU", "API_LLM"}:
+        raise ValueError("run_input.requested_mode is invalid")
+    return cast(Literal["AUTO", "LOCAL_GPU", "API_LLM"], requested_mode)
+
+
 def _action_outcomes(value: object) -> tuple[TerminalActionOutcomeV1, ...]:
     if value is None:
         return ()
@@ -337,6 +415,7 @@ def _required_non_negative_int(value: object, field_name: str) -> int:
 __all__ = [
     "TerminalCommitIntentV1",
     "TerminalCommitKindV1",
+    "build_terminal_commit_intent",
     "response_synthesis_node",
     "validate_terminal_commit_intent",
 ]

@@ -257,6 +257,14 @@
       "required_root_fields": ["affected_dimensions", "request_intent", "planning_result"],
       "optional_root_fields": ["affected_action_ids", "affected_route_ids", "tool_route_plan", "work_analysis", "evidence", "policy_summary", "confirmation_response", "user_action_modifications"],
       "output_schema_version": 1
+    },
+    {
+      "prompt_slot_id": "run.compose_terminal_response",
+      "runtime_node_id": "run.compose_terminal_response",
+      "input_schema_version": 1,
+      "required_root_fields": ["schema_version", "user_request", "result_kind", "action_results", "effect_observations", "limitations"],
+      "optional_root_fields": [],
+      "output_schema_version": 1
     }
   ]
 }

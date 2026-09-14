@@ -66,9 +66,7 @@ from google_work_agent.ports.system.settings_port import SettingsViewV1
 
 _IDENTIFY_GOAL_PROMPT_ID = "request_understanding.identify_goal"
 _IDENTIFY_GOAL_TEMPERATURE = 0.1
-_IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = (
-    "request_understanding.identify_source_dependencies"
-)
+_IDENTIFY_SOURCE_DEPENDENCIES_PROMPT_ID = "request_understanding.identify_source_dependencies"
 _IDENTIFY_SOURCE_DEPENDENCIES_TEMPERATURE = 0.05
 _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID = (
     "request_understanding.identify_output_responsibilities"
@@ -76,6 +74,7 @@ _IDENTIFY_OUTPUT_RESPONSIBILITIES_PROMPT_ID = (
 _IDENTIFY_OUTPUT_RESPONSIBILITIES_TEMPERATURE = 0.0
 _DETECT_AMBIGUITY_PROMPT_ID = "request_understanding.detect_ambiguity"
 _DETECT_AMBIGUITY_TEMPERATURE = 0.0
+_COMPOSE_TERMINAL_RESPONSE_PROMPT_ID = "run.compose_terminal_response"
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,9 +161,7 @@ class StructuredInferenceRuntimeRouter:
             required=uses_local_runtime,
         )
         api_status = (
-            self.status_service.get_status(self.api_provider_name)
-            if uses_api_runtime
-            else None
+            self.status_service.get_status(self.api_provider_name) if uses_api_runtime else None
         )
         credential = (
             self.credential_service.get_credential_status(self.api_provider_name)
@@ -262,6 +259,7 @@ class StructuredInferenceRuntimeRouter:
 
         except LLMInvocationError as error:
             if not self._should_fallback(
+                prompt_ref=prompt_ref,
                 error=error,
                 decision=decision,
                 requested_mode=requested,
@@ -897,11 +895,14 @@ class StructuredInferenceRuntimeRouter:
     def _should_fallback(
         self,
         *,
+        prompt_ref: PromptReference,
         error: LLMInvocationError,
         decision: RouteDecision,
         requested_mode: RequestedRuntimeMode,
         settings: SettingsViewV1,
     ) -> bool:
+        if prompt_ref.prompt_id == _COMPOSE_TERMINAL_RESPONSE_PROMPT_ID:
+            return False
         return (
             requested_mode is RequestedRuntimeMode.AUTO
             and settings.external_llm_consent
@@ -1052,9 +1053,7 @@ def _trace_semantic_input(
         return None
 
 
-def _trace_semantic_output(
-    *, prompt_id: str, payload: object
-) -> Mapping[str, object] | None:
+def _trace_semantic_output(*, prompt_id: str, payload: object) -> Mapping[str, object] | None:
     try:
         return project_llm_semantic_output(prompt_id, _parse_payload(payload))
     except Exception:
@@ -1159,12 +1158,17 @@ def _external_data_classes(source_kinds: tuple[str, ...]) -> tuple[str, ...]:
         for item in lowered
     ):
         classes.add("RESOURCE_METADATA")
+    if any(any(marker in item for marker in ("action", "effect", "verified")) for item in lowered):
+        classes.add("RESOURCE_METADATA")
     if any(any(marker in item for marker in ("evidence", "excerpt", "source")) for item in lowered):
         classes.add("EVIDENCE_EXCERPT")
     if (
         any(
             any(marker in item for marker in ("plan", "context", "analysis", "route", "goal"))
             for item in lowered
+        )
+        or any(
+            any(marker in item for marker in ("action", "effect", "limitation")) for item in lowered
         )
         or not classes
     ):

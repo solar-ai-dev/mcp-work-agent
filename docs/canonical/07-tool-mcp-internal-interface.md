@@ -786,6 +786,20 @@ class TerminalAssistantMessageInputV1:
     reason_codes: list[str]     # bounded, machine-owned; may be empty for SUCCESS
 ```
 
+종료 가능한 WRITE의 자연어 설명에만 다음 bounded Application input을 사용한다.
+
+```python
+class TerminalResponseInputV1:
+    schema_version: Literal[1]
+    user_request: str
+    result_kind: Literal["SUCCESS", "PARTIAL"]
+    action_results: list[TerminalActionResultProjectionV1]
+    effect_observations: list[TerminalEffectObservationV1]
+    limitations: list[str]
+```
+
+`action_results`는 persisted Action→Attempt→Verification에 결속된 connector/resource/effect/status, 안전한 target label, allowlisted verified field만 포함한다. 계획 arguments는 실제 반영값으로 승격하지 않는다. `effect_observations`의 미실행 사실은 같은 Run의 완전한 실행 이력으로 증명될 때만 만든다. GraphState 전체, raw Provider payload, Approval snapshot, credential, 과거 Conversation은 입력하지 않는다.
+
 `TerminalCommitIntentV1`의 exact shape/kind owner는 06 Workflow current contract다. 07은 그 intent가 호출하는 lifecycle handler의 Application/Domain interface만 제공하고 별도 terminal kind를 발명하지 않는다.
 
 이 타입은 Browser Wire Request가 아니다. `BuildTerminalMessageHandler`가 `BuildTerminalMessageQueryV1`을 받아 UoW **전에** 만드는 Application input이다.
@@ -793,12 +807,13 @@ class TerminalAssistantMessageInputV1:
 | 입력·단계 | 처리 |
 | --- | --- |
 | `ANSWER_DRAFT` | 이미 검증된 `answer_text`를 그대로 사용한다. |
-| WRITE/Block/Cancel/Recovery | persisted typed Run·Plan·Action·Verification projection과 bounded `reason_codes`를 고정 템플릿으로 포맷한다. |
+| WRITE | 종료 가능한 `SUCCESS | PARTIAL`에서 `run.compose_terminal_response`가 최소 typed projection으로 `answer` 하나를 작성한다. 형식·Provider·budget·동의 실패는 같은 사실을 쓰는 기존 결정적 formatter로 fallback한다. |
+| Block/Cancel/Recovery | persisted typed Run·Plan·Action·Verification projection과 bounded `reason_codes`를 고정 템플릿으로 포맷한다. |
 | 사용자-facing `content` | `request_text`의 언어를 보존하고 실제 완료·미실행·실패 Action을 구분한다. raw state/reason code/artifact id는 포함하지 않는다. |
 | `message_id`, `conversation_id`, `run_id`, `created_at_ms` | server-owned aggregate/context에서 채운다. Product Prompt가 생성하지 않는다. |
 | Terminal lifecycle handler | 이 값을 Domain transition·Receipt·required Audit와 같은 UoW에 stage한다. |
 
-P0 terminal response synthesis는 deterministic이다. 새 LLM call을 하지 않으며 lifecycle/policy/outcome을 재판정하지 않는다.
+P0 terminal response의 lifecycle/policy/outcome 판정은 deterministic이다. LLM은 정상 종료 가능한 WRITE의 사용자용 설명 문장만 작성하며 Connector/Tool/Plan/Approval/Write capability가 없다. 최종 Message 저장은 기존 terminal lifecycle UoW가 소유한다.
 
 ### 3.4 SSE 계약
 

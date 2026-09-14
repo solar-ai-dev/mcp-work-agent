@@ -85,6 +85,10 @@ from google_work_agent.adapters.langgraph.main.routing.route_after_stage_two imp
     ROUTE_AFTER_STAGE_TWO_SUCCESSORS,
     route_after_stage_two,
 )
+from google_work_agent.adapters.langgraph.main.routing.route_after_terminal_commit import (
+    ROUTE_AFTER_TERMINAL_COMMIT_SUCCESSORS,
+    route_after_terminal_commit,
+)
 from google_work_agent.adapters.langgraph.main.routing.route_after_tool_route import (
     ROUTE_AFTER_TOOL_ROUTE_SUCCESSORS,
     route_after_tool_route,
@@ -247,7 +251,6 @@ class WorkflowGraphComposition:
             }
             graph.add_conditional_edges(name, router, closed_map)
         graph.add_edge("response_synthesis", "terminal_commit")
-        graph.add_edge("terminal_commit", "finalize")
         graph.add_edge("finalize", END)
         return graph.compile(checkpointer=self._checkpointer)
 
@@ -324,6 +327,10 @@ class WorkflowGraphComposition:
             "cancel_resolution": (
                 route_after_cancel_resolution,
                 ROUTE_AFTER_CANCEL_RESOLUTION_SUCCESSORS,
+            ),
+            "terminal_commit": (
+                route_after_terminal_commit,
+                ROUTE_AFTER_TERMINAL_COMMIT_SUCCESSORS,
             ),
         }
         routers.update(

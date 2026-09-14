@@ -204,6 +204,12 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 - `RESPONSE_SYNTHESIS → TERMINAL_COMMIT → FINALIZE` 순서를 강제하고 `TERMINAL_COMMIT` closed dispatch가 unknown kind를 fail closed하는지 검증한다. Response LLM이 terminal kind/status를 변경하거나 FINALIZE가 lifecycle handler를 대신 호출하면 실패
 
+- 종료 가능한 WRITE만 결과 설명 LLM을 호출하고 Planning ANSWER·Block·Cancel·Recovery·Preview의 추가 호출은 0인지 검증한다. 입력은 실제 Verification allowlist만 포함하고 계획값·raw payload·가짜 미전송 Action을 포함하지 않아야 한다.
+
+- 결과 설명 호출은 SQLite write transaction 밖에서 수행하고 Provider/timeout/schema/budget/동의 실패가 기존 결정적 문장으로 fallback해도 이미 검증된 외부 효과와 Run 성공 가능성을 바꾸지 않는지 검증한다. 이 슬롯은 schema repair를 포함한 Provider dispatch 최대 2회이며 Local→API 자동 fallback은 0이다.
+
+- `TERMINAL_COMMIT applied=false`에서 먼저 commit된 terminal 결과 재사용, cancel/recovery 우선, stale 문장 폐기와 최신 사실의 bounded 결정적 재조정을 검증한다. expected version만 바꾼 stale LLM 문장, 무한 retry, 중복 final Message·WRITE가 있으면 실패다.
+
 ### 7.3 Agent·Registry·관측·평가 계약
 
 - Agent Structured Output Version·Enum·Repair 1회

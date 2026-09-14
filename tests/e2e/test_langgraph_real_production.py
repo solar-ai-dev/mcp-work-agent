@@ -100,9 +100,7 @@ def test_unresolved_current_run_target__waits_before__retrieval_or_connector(
     profile: GraphProfile,
 ) -> None:
     runtime_root = tmp_path / "unresolved-target" / profile.value
-    transport = LangGraphE2EGeminiTransport(
-        scenario_override="UNRESOLVED_TARGET_CONFIRMATION"
-    )
+    transport = LangGraphE2EGeminiTransport(scenario_override="UNRESOLVED_TARGET_CONFIRMATION")
     container = _build_container(
         runtime_root,
         transport=transport,
@@ -128,9 +126,7 @@ def test_unresolved_current_run_target__waits_before__retrieval_or_connector(
         "REQUEST_UNDERSTANDING"
     )
     invoked = [
-        str(item["prompt_id"])
-        for item in transport.invocations
-        if item.get("kind") == "invoke"
+        str(item["prompt_id"]) for item in transport.invocations if item.get("kind") == "invoke"
     ]
     assert invoked == [
         "request_understanding.identify_goal",
@@ -332,6 +328,79 @@ def test_approved_write_executes__claims_and_verifies__through_real_mcp(
     assert "work_analysis.assess_requested_task_satisfaction" in invoked
     assert "review.inspect_action_scope_and_route" in invoked
     assert "review.inspect_constraints_and_policy_summary" not in invoked
+    assert "run.compose_terminal_response" in invoked
+    terminal_invocation = next(
+        item
+        for item in transport.invocations
+        if item.get("prompt_id") == "run.compose_terminal_response"
+    )
+    terminal_input = cast(dict[str, object], terminal_invocation["prompt_input"])
+    terminal_actions = cast(list[dict[str, object]], terminal_input["action_results"])
+    assert len(terminal_actions) == 1
+    assert set(terminal_actions[0]) == {
+        "connector_id",
+        "resource_type",
+        "target_label",
+        "effect_type",
+        "status",
+        "verified_fields",
+    }
+    assert "arguments" not in terminal_actions[0]
+    assert any(
+        message["role"] == "ASSISTANT" and message["content"] == "검증된 실행 결과를 반영했습니다."
+        for message in cast(list[dict[str, object]], completed["messages"])
+    )
+
+
+def test_terminal_response_failure__keeps_verified_write_and_uses_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "terminal-response-fallback"
+    transport = LangGraphE2EGeminiTransport(terminal_response_error=True)
+    container = _build_container(
+        runtime_root,
+        transport=transport,
+        monkeypatch=monkeypatch,
+        profile=GraphProfile.SIX_ROLE_BASELINE,
+    )
+    with TestClient(
+        create_app(container),
+        base_url="http://127.0.0.1:8000",
+        headers=_API_HEADERS,
+    ) as client:
+        _bootstrap(client)
+        run_id = _start_run(
+            client,
+            _create_conversation(client, "terminal-response-fallback"),
+            "E2E:APPROVED_WRITE create task",
+        )
+        waiting = _wait_for_status(client, run_id, {"WAITING_APPROVAL"})
+        action = cast(list[dict[str, object]], waiting["actions"])[0]
+        approval = client.post(
+            f"/api/v1/actions/{action['action_id']}/approve",
+            json={
+                "api_contract_version": "1",
+                "command_id": "approve-terminal-response-fallback",
+                "expected_version": action["version"],
+            },
+        )
+        assert approval.status_code == 200, approval.text
+        completed = _wait_for_status(client, run_id, {"COMPLETED"})
+
+    assert completed["terminal_result_kind"] == "SUCCESS"
+    assert [
+        event["tool_name"]
+        for event in _mcp_events(runtime_root)
+        if event["tool_name"] == "tasks_create_task"
+    ] == ["tasks_create_task"]
+    final_messages = [
+        str(message["content"])
+        for message in cast(list[dict[str, object]], completed["messages"])
+        if message["role"] == "ASSISTANT"
+    ]
+    assert len(final_messages) == 1
+    assert "요청하신 작업을 완료했습니다" in final_messages[0]
 
 
 @pytest.mark.parametrize(

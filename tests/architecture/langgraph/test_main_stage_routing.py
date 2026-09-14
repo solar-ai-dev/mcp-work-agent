@@ -40,6 +40,7 @@ CONDITIONAL_STAGES = frozenset(
         "verification",
         "recovery",
         "cancel_resolution",
+        "terminal_commit",
     }
 )
 
@@ -180,9 +181,10 @@ def test_main_router_modules__for_each_conditional_stage__define_exact_symbol() 
         assert f"route_after_{stage}" in functions
 
 
-def test_main_terminal_chain__after_response_synthesis__uses_unconditional_edges() -> None:
+def test_main_terminal_chain__uses_conditional_commit_reconciliation() -> None:
     source = (MAIN / "graph.py").read_text(encoding="utf-8")
     assert "_route_next_node" not in source
     assert 'graph.add_edge("response_synthesis", "terminal_commit")' in source
-    assert 'graph.add_edge("terminal_commit", "finalize")' in source
+    assert 'graph.add_edge("terminal_commit", "finalize")' not in source
+    assert '"terminal_commit": (' in source
     assert 'graph.add_edge("finalize", END)' in source

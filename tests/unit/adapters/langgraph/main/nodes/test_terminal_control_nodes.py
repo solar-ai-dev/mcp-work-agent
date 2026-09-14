@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import cast
 
 import pytest
@@ -27,6 +29,11 @@ def _intent(kind: str = "COMPLETE_WRITE") -> TerminalCommitIntentV1:
             "reason_codes": ["WRITE_VERIFIED"],
         },
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _HandlerResult:
+    applied: bool
 
 
 def test_terminal_commit_dispatches__exactly_one_handler__then_verifies_truth() -> None:
@@ -91,6 +98,132 @@ def test_terminal_commit__replay_verifies__without_duplicate_dispatch() -> None:
 
     assert calls == 0
     assert patch["__target__"] == "finalize"
+
+
+def test_terminal_commit__applied_false_cancel__routes_without_stale_retry() -> None:
+    facts: dict[str, object] = {
+        "status": "VERIFYING",
+        "version": 4,
+        "terminal_result_kind": None,
+        "final_message_count": 0,
+    }
+    rebuilds = 0
+
+    def complete_write(_state: object, _intent: object) -> _HandlerResult:
+        facts.update(status="CANCEL_REQUESTED", version=5, cancel_intent_active=True)
+        return _HandlerResult(False)
+
+    def rebuild(_state: object, _facts: object) -> TerminalCommitIntentV1:
+        nonlocal rebuilds
+        rebuilds += 1
+        return _intent()
+
+    patch = terminal_commit_node(
+        {"run_id": "run-1", "terminal_commit_intent": _intent()},
+        read_terminal_facts=lambda _run_id: facts,
+        complete_answer_only=lambda *_args: None,
+        complete_read_only=lambda *_args: None,
+        complete_write=complete_write,
+        block_run=lambda *_args: None,
+        finalize_cancel=lambda *_args: None,
+        resolve_recovery=lambda *_args: None,
+        rebuild_terminal_intent=rebuild,
+    )
+
+    assert patch["__target__"] == "cancel_resolution"
+    assert patch["terminal_commit_intent"] is None
+    assert rebuilds == 0
+
+
+def test_terminal_commit__stale_write_discards_prose_and_rebuilds_once() -> None:
+    facts: dict[str, object] = {
+        "status": "VERIFYING",
+        "version": 4,
+        "terminal_result_kind": None,
+        "final_message_count": 0,
+        "cancel_intent_active": False,
+        "action_statuses": ["VERIFIED"],
+        "action_effect_types": ["UPDATE"],
+    }
+    contents: list[str] = []
+
+    def complete_write(_state: object, intent: TerminalCommitIntentV1) -> _HandlerResult:
+        contents.append(intent["terminal_message"].content)
+        if len(contents) == 1:
+            facts["version"] = 5
+            return _HandlerResult(False)
+        facts.update(
+            status="COMPLETED",
+            version=6,
+            terminal_result_kind="SUCCESS",
+            final_message_count=1,
+        )
+        return _HandlerResult(True)
+
+    def rebuild(_state: object, current: Mapping[str, object]) -> TerminalCommitIntentV1:
+        rebuilt = _intent()
+        rebuilt["expected_run_version"] = cast(int, current["version"])
+        rebuilt["terminal_message"] = TerminalAssistantMessageInputV1(
+            1,
+            "SUCCESS",
+            "최신 사실의 결정적 응답",
+            ["WRITE_VERIFIED"],
+        )
+        return rebuilt
+
+    patch = terminal_commit_node(
+        {"run_id": "run-1", "terminal_commit_intent": _intent()},
+        read_terminal_facts=lambda _run_id: facts,
+        complete_answer_only=lambda *_args: None,
+        complete_read_only=lambda *_args: None,
+        complete_write=complete_write,
+        block_run=lambda *_args: None,
+        finalize_cancel=lambda *_args: None,
+        resolve_recovery=lambda *_args: None,
+        rebuild_terminal_intent=rebuild,
+    )
+
+    assert contents == ["done", "최신 사실의 결정적 응답"]
+    assert patch["__target__"] == "finalize"
+
+
+def test_terminal_commit__second_stale_conflict__does_not_loop() -> None:
+    facts: dict[str, object] = {
+        "status": "VERIFYING",
+        "version": 4,
+        "terminal_result_kind": None,
+        "final_message_count": 0,
+        "cancel_intent_active": False,
+        "action_statuses": ["VERIFIED"],
+        "action_effect_types": ["UPDATE"],
+    }
+    calls = 0
+
+    def complete_write(_state: object, _intent: object) -> _HandlerResult:
+        nonlocal calls
+        calls += 1
+        facts["version"] = cast(int, facts["version"]) + 1
+        return _HandlerResult(False)
+
+    def rebuild(_state: object, current: Mapping[str, object]) -> TerminalCommitIntentV1:
+        rebuilt = _intent()
+        rebuilt["expected_run_version"] = cast(int, current["version"])
+        return rebuilt
+
+    patch = terminal_commit_node(
+        {"run_id": "run-1", "terminal_commit_intent": _intent()},
+        read_terminal_facts=lambda _run_id: facts,
+        complete_answer_only=lambda *_args: None,
+        complete_read_only=lambda *_args: None,
+        complete_write=complete_write,
+        block_run=lambda *_args: None,
+        finalize_cancel=lambda *_args: None,
+        resolve_recovery=lambda *_args: None,
+        rebuild_terminal_intent=rebuild,
+    )
+
+    assert calls == 2
+    assert patch["__target__"] == "domain_reconcile"
 
 
 def test_terminal_commit__unknown_kind__fails_closed() -> None:

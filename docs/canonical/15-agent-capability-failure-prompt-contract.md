@@ -706,7 +706,7 @@ Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identi
 
 `SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
 
-Current required Product-LLM Prompt Slot set은 아래 28개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
+Current required Product-LLM Prompt Slot set은 아래 29개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
 
 | Runtime Node | `prompt_slot_id` (= `prompt_id`) |
 | --- | --- |
@@ -738,6 +738,7 @@ Current required Product-LLM Prompt Slot set은 아래 28개다. 각 slot에서 
 | `review.inspect_action_scope_route` | `review.inspect_action_scope_and_route` |
 | `review.inspect_constraints_policy` | `review.inspect_constraints_and_policy_summary` |
 | `review.recheck` | `review.recheck_affected_dimensions` |
+| `run.compose_terminal_response` | `run.compose_terminal_response` |
 
 Current PromptRef 집합은 current LLM responsibility에 실제 caller가 있는 Slot에서 파생한다. Active Slot 수를 별도 설계 상수로 두거나 broad predecessor ID의 수를 보존하기 위해 current 집합을 만들지 않는다. manifest/source/caller/input-contract의 exact-set equality로 계산한다.
 
@@ -756,7 +757,7 @@ review.recheck
 
 이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
 
-`prompt-runtime-input-contract-v1`은 위 28개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
+`prompt-runtime-input-contract-v1`은 위 29개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
 
 Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
@@ -774,7 +775,9 @@ prompt_runtime_input_contract:
       output_schema_version: integer
 ```
 
-`entries[].prompt_slot_id`는 위 28개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+`entries[].prompt_slot_id`는 위 29개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+
+`run.compose_terminal_response`는 Main Application caller가 종료 가능한 WRITE의 `TerminalResponseInputV1`만 전달한다. 출력은 `{answer}` exact object이며 LLM이 result kind, terminal kind, 실행 여부, 승인·정책을 다시 출력하거나 판정하지 않는다. Planning ANSWER에는 이 슬롯을 호출하지 않는다. 응답 실패는 기존 결정적 formatter로 fallback하고 Local→API 자동 fallback은 허용하지 않는다.
 
 ### 9.3-B Tool Routing 선택 Prompt 입력
 
@@ -848,7 +851,7 @@ Offline candidate evaluation 전용이다. Product user runtime과 분리하고 
 | 검증 결과 | Node DEV/HOLDOUT/Safety 결과 artifact path/hash |
 | 승인 | Manifest Approval artifact path/hash |
 
-모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 28개 exact Slot의 source hash와 이 evidence chain을 검증한다.
+모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 29개 exact Slot의 source hash와 이 evidence chain을 검증한다.
 
 #### Gate Sampling
 

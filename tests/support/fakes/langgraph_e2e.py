@@ -9,6 +9,8 @@ from typing import cast
 
 from google_work_agent.ports.llm.structured_inference_contracts import (
     AvailabilityState,
+    LLMErrorCode,
+    LLMInvocationError,
     OutputSchemaDefinition,
     ProbeResult,
     PromptReference,
@@ -30,6 +32,7 @@ class LangGraphE2EGeminiTransport:
     github_tool_id: str = "github_create_issue"
     task_modification_patch: dict[str, object] | None = None
     scenario_override: str | None = None
+    terminal_response_error: bool = False
     _scenario_prompt_counts: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def probe(self, *, api_key: str, timeout_seconds: int) -> ProbeResult:
@@ -77,6 +80,12 @@ class LangGraphE2EGeminiTransport:
             # intentionally bypasses Product failure/recovery translation, just
             # as an actual process termination would.
             raise SystemExit("simulated E2E process loss")
+        if prompt_id == "run.compose_terminal_response" and self.terminal_response_error:
+            raise LLMInvocationError(
+                LLMErrorCode.PROVIDER_TIMEOUT,
+                "simulated terminal response timeout",
+                retryable=True,
+            )
         output = _respond(
             prompt_id,
             prompt_input,
@@ -183,9 +192,7 @@ def _match_goal_constraints_to_schema(
     if not isinstance(constraints, list):
         return
     slots: dict[str, object] = {
-        str(field): (
-            "NOT_COLLECTION" if field == "coverage_requirement" else []
-        )
+        str(field): ("NOT_COLLECTION" if field == "coverage_requirement" else [])
         for field in allowed_slots
         if field != "additional_constraints"
     }
@@ -451,6 +458,15 @@ def _respond(
             "route_id": str(route["route_id"]),
             "arguments": _arguments(str(route["resource_type"]), scenario),
             "evidence_refs": _evidence_refs(base),
+        }
+    if prompt_id == "run.compose_terminal_response":
+        result_kind = base.get("result_kind")
+        return {
+            "answer": (
+                "검증된 실행 결과를 반영했습니다."
+                if result_kind == "SUCCESS"
+                else "완료된 항목과 실행되지 않은 항목을 구분해 반영했습니다."
+            )
         }
     if prompt_id.startswith("review.inspect_"):
         findings: list[dict[str, object]] = []

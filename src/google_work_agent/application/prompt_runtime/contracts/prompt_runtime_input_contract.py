@@ -44,6 +44,7 @@ REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "review.inspect_action_scope_and_route": "review.inspect_action_scope_route",
     "review.inspect_constraints_and_policy_summary": "review.inspect_constraints_policy",
     "review.recheck_affected_dimensions": "review.recheck",
+    "run.compose_terminal_response": "run.compose_terminal_response",
 }
 
 REQUIRED_PROMPT_SLOT_IDS: Final[frozenset[str]] = frozenset(REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT)
