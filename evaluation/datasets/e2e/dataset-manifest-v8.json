@@ -172,9 +172,9 @@
   "status": "BENCHMARK_READY",
   "stress_harness": {
     "adapter": "evaluation/harness/fault_adapters.py",
-    "adapter_sha256": "51080dfed0b96f7dc58ab31856cb349703c949e5ff9a3bc1cd5e3246d2118635",
+    "adapter_sha256": "79ed16f76e1688ee30f8fd42cad3c766a19c047f6ca331d2e52891ff79b7a640",
     "configuration": "evaluation/harness/canonical_v8_fault_profiles.json",
-    "configuration_sha256": "b37f683e7f00d01e6712deb7d51f06b52656d92f7534f64664ac4ddd87b75e0a",
+    "configuration_sha256": "58dabcb5022931249fb7f52efe614862b93f7b6f70207915e00afe9793df687e",
     "evaluation_mode_counts": {
       "COMPONENT_ONLY": 1,
       "LIVE_WITH_FAULT_INJECTION": 6,
