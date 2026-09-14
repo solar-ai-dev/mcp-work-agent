@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import NamedTuple
 
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
@@ -36,7 +37,7 @@ def project_task_read_answer(
     ]
     evidence_refs = [ref for item in citation_items if (ref := _evidence_ref(item)) is not None]
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
-    titles = [_task_title(item) for item in task_items]
+    requested_fields = _requested_task_fields(request_intent)
     if task_items:
         lead = (
             f"Google Tasks에서 확인된 현재 할 일은 {len(task_items)}개입니다."
@@ -49,7 +50,13 @@ def project_task_read_answer(
             else "Task title unavailable"
         )
         answer = f"{lead}\n\n" + "\n".join(
-            f"- {title or unavailable_title}" for title in titles
+            _task_line(
+                item,
+                requested_fields=requested_fields,
+                unavailable_title=unavailable_title,
+                korean=korean,
+            )
+            for item in task_items
         )
         section = "현재 Google Tasks 할 일" if korean else "Current Google Tasks items"
     else:
@@ -82,10 +89,75 @@ def _evidence_ref(item: Mapping[str, object]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _task_title(item: Mapping[str, object]) -> str | None:
+def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[str]:
+    responsibilities = request_intent.get("resource_responsibilities")
+    if not isinstance(responsibilities, Mapping):
+        return frozenset({"title"})
+    source_reads = responsibilities.get("source_reads")
+    if not isinstance(source_reads, list):
+        return frozenset({"title"})
+    required_information = {
+        information
+        for source in source_reads
+        if isinstance(source, Mapping) and source.get("resource_type") == "TASK"
+        for information in _strings(source.get("required_information"))
+    }
+    fields = {"title"}
+    if required_information.intersection({"completion_status", "status", "task_status"}):
+        fields.add("status")
+    if required_information.intersection({"due", "scheduled_date"}):
+        fields.add("scheduled_date")
+    return frozenset(fields)
+
+
+def _task_line(
+    item: Mapping[str, object],
+    *,
+    requested_fields: frozenset[str],
+    unavailable_title: str,
+    korean: bool,
+) -> str:
+    fields = _task_fields(item)
+    title = fields.get("title") or unavailable_title
+    details: list[str] = []
+    if "status" in requested_fields:
+        status = _task_status(fields.get("status"), korean=korean)
+        details.append(
+            f"상태: {status or '확인할 수 없음'}"
+            if korean
+            else f"Status: {status or 'unavailable'}"
+        )
+    if "scheduled_date" in requested_fields:
+        scheduled_date = _scheduled_date(fields.get("due"))
+        details.append(
+            f"예정일: {scheduled_date or '확인할 수 없음'}"
+            if korean
+            else f"Scheduled date: {scheduled_date or 'unavailable'}"
+        )
+    return f"- {title}" if not details else f"- {title} — {'; '.join(details)}"
+
+
+def _task_status(value: str | None, *, korean: bool) -> str | None:
+    return {
+        "needsAction": "미완료" if korean else "incomplete",
+        "completed": "완료" if korean else "completed",
+    }.get(value or "")
+
+
+def _scheduled_date(value: str | None) -> str | None:
+    if value is None or len(value) < 10:
+        return None
+    candidate = value[:10]
+    try:
+        return date.fromisoformat(candidate).isoformat()
+    except ValueError:
+        return None
+
+
+def _task_fields(item: Mapping[str, object]) -> dict[str, str]:
     excerpt = item.get("excerpt")
     if not isinstance(excerpt, str):
-        return None
+        return {}
     lines = [line.strip() for line in excerpt.splitlines() if line.strip()]
     metadata_keys = {
         "completed",
@@ -98,15 +170,15 @@ def _task_title(item: Mapping[str, object]) -> str | None:
         "title",
         "updated",
     }
-    structured_fields = {
+    structured_fields: dict[str, str] = {
         key.strip(): value.strip()
         for line in lines
         for key, separator, value in (line.partition(":"),)
         if separator and key.strip() in metadata_keys
     }
     if structured_fields:
-        return structured_fields.get("title") or None
-    return lines[0] if lines else None
+        return structured_fields
+    return {"title": lines[0]} if lines else {}
 
 
 __all__ = ["TaskReadAnswerProjection", "project_task_read_answer"]

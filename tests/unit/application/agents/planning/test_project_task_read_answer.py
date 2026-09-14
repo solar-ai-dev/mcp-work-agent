@@ -132,3 +132,86 @@ def test_task_read_answer__no_task_items__reports_zero_result() -> None:
 
     assert result is not None
     assert result.draft["answer"] == "Google Tasks에서 현재 표시할 할 일을 찾지 못했습니다."
+
+
+def _field_selecting_intent(required_information: list[str]) -> dict[str, object]:
+    return {
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["TASK"],
+        "analysis_requirement": "NONE",
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "TASK",
+                    "required_information": required_information,
+                }
+            ],
+            "outputs": [],
+        },
+    }
+
+
+def _structured_task(*, status: str = "needsAction") -> dict[str, str]:
+    return {
+        "evidence_id": "e-task",
+        "resource_handle": "task:42",
+        "excerpt": (
+            "title: Ion 신입 온보딩 체크리스트\n"
+            f"status: {status}\n"
+            "due: 2026-08-10T00:00:00.000Z\n"
+            "notes: 내부 참고"
+        ),
+    }
+
+
+def test_task_read_answer__title_only__does_not_force_other_fields() -> None:
+    result = project_task_read_answer(
+        user_request="할 일 제목을 알려줘.",
+        request_intent=_field_selecting_intent(["task_identity", "title"]),
+        evidence=[_structured_task()],
+    )
+
+    assert result is not None
+    assert result.draft["answer"].endswith("- Ion 신입 온보딩 체크리스트")
+    assert "상태:" not in result.draft["answer"]
+    assert "예정일:" not in result.draft["answer"]
+
+
+@pytest.mark.parametrize(
+    ("required_information", "expected", "excluded"),
+    [
+        (["completion_status"], "상태: 미완료", "예정일:"),
+        (["due"], "예정일: 2026-08-10", "상태:"),
+    ],
+)
+def test_task_read_answer__selects_requested_status_or_scheduled_date(
+    required_information: list[str], expected: str, excluded: str
+) -> None:
+    result = project_task_read_answer(
+        user_request="할 일 정보를 알려줘.",
+        request_intent=_field_selecting_intent(required_information),
+        evidence=[_structured_task()],
+    )
+
+    assert result is not None
+    assert expected in result.draft["answer"]
+    assert excluded not in result.draft["answer"]
+
+
+def test_task_read_answer__status_and_scheduled_date__preserve_both_meanings() -> None:
+    result = project_task_read_answer(
+        user_request="할 일 상태와 예정일을 알려줘.",
+        request_intent=_field_selecting_intent(
+            ["task_identity", "title", "notes", "due", "completion_status"]
+        ),
+        evidence=[_structured_task()],
+    )
+
+    assert result is not None
+    answer = result.draft["answer"]
+    assert "Ion 신입 온보딩 체크리스트" in answer
+    assert "상태: 미완료" in answer
+    assert "예정일: 2026-08-10" in answer
+    assert "완료" not in answer.replace("미완료", "")
+    assert "마감" not in answer
+    assert "deadline" not in answer.casefold()
