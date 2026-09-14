@@ -14,7 +14,10 @@ from typing import Any, Literal, cast
 from .fault_profiles import FaultDirective, FaultHarness, FaultObservation
 
 EvaluationMode = Literal[
-    "LIVE_WITH_FAULT_INJECTION", "SIMULATED_PROVIDER", "COMPONENT_ONLY"
+    "LIVE_PROVIDER",
+    "LIVE_WITH_FAULT_INJECTION",
+    "SIMULATED_PROVIDER",
+    "COMPONENT_ONLY",
 ]
 
 

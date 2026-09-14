@@ -78,9 +78,7 @@ def test_reauth_fault_stays_active_until_completed_then_does_not_reactivate() ->
         "gmail_search_threads"
     )
     checkpoints.clear()
-    assert adapter.execute_read(_Binding("gmail_get_thread"), {})["tool_id"] == (
-        "gmail_get_thread"
-    )
+    assert adapter.execute_read(_Binding("gmail_get_thread"), {})["tool_id"] == ("gmail_get_thread")
 
 
 class _McpDelegate:
@@ -196,12 +194,15 @@ def test_fixture_budget_and_candidate_faults_apply_real_adapter_outputs() -> Non
         FaultHarness.for_case("CASE-STRESS-008"),
         fixture_provider=lambda _directive: malicious,
     )
-    assert fixture_adapter.invoke(
-        boundary="FIXTURE_PRECONDITION",
-        connector="gmail",
-        operation="bind_provider_fixture",
-        delegate=lambda: pytest.fail("bound fixture must replace the delegate"),
-    ) == malicious
+    assert (
+        fixture_adapter.invoke(
+            boundary="FIXTURE_PRECONDITION",
+            connector="gmail",
+            operation="bind_provider_fixture",
+            delegate=lambda: pytest.fail("bound fixture must replace the delegate"),
+        )
+        == malicious
+    )
 
     budget_adapter = FaultApplyingAdapter(FaultHarness.for_case("CASE-STRESS-009"))
     budget = budget_adapter.invoke(
@@ -232,20 +233,19 @@ def test_fixture_budget_and_candidate_faults_apply_real_adapter_outputs() -> Non
     assert all(start <= _received(item) < end for item in ranked)
 
 
-@pytest.mark.parametrize("case_id,tool_id", [
-    ("CASE-STRESS-011", "tasks_create_task"),
-    ("CASE-STRESS-012", "tasks_update_task"),
-    ("CASE-STRESS-019", "calendar_create_event"),
-])
+@pytest.mark.parametrize(
+    "case_id,tool_id",
+    [
+        ("CASE-STRESS-011", "tasks_create_task"),
+        ("CASE-STRESS-012", "tasks_update_task"),
+        ("CASE-STRESS-019", "calendar_create_event"),
+    ],
+)
 def test_not_sent_faults_block_the_target_effect_only(case_id: str, tool_id: str) -> None:
     checkpoints = (
-        frozenset({"TASK_UPDATE_VERIFIED"})
-        if case_id == "CASE-STRESS-019"
-        else frozenset()
+        frozenset({"TASK_UPDATE_VERIFIED"}) if case_id == "CASE-STRESS-019" else frozenset()
     )
-    provider = StatefulSimulatedProvider(
-        initial_resources=[_task("task-1", notes="old")]
-    )
+    provider = StatefulSimulatedProvider(initial_resources=[_task("task-1", notes="old")])
     adapter = FaultInjectingConnectorAdapter(
         fault_adapter=FaultApplyingAdapter(FaultHarness.for_case(case_id)),
         write_delegate=provider,
@@ -360,9 +360,7 @@ def test_verification_mismatch_is_delivered_on_independent_read() -> None:
     actual = provider.resource("task", "task-1")
 
     assert actual["payload"]["notes"] == "approved"  # type: ignore[index]
-    assert result["output"]["item"]["payload"]["notes"].endswith(
-        "[EVALUATION_MISMATCH]"
-    )
+    assert result["output"]["item"]["payload"]["notes"].endswith("[EVALUATION_MISMATCH]")
 
 
 def test_persistent_verification_timeout_never_rewrites_applied_task() -> None:
@@ -394,6 +392,69 @@ def test_wrong_task_list_get_does_not_return_same_id_from_another_list() -> None
     )
 
     assert result["output"]["item"] is None
+
+
+def test_simulated_provider_lists_product_shaped_fixture_resources() -> None:
+    provider = StatefulSimulatedProvider(
+        initial_resources=[
+            {
+                "resource_type": "task_list",
+                "resource_id": "list-1",
+                "version": "1",
+                "payload": {"title": "Atlas"},
+            },
+            {
+                "resource_type": "gmail_thread",
+                "resource_id": "thread-1",
+                "version": "1",
+                "payload": {"subject": "Atlas 검토", "messages": []},
+            },
+        ]
+    )
+
+    task_lists = provider.execute_read(_Binding("tasks_list_tasklists"), {"page_size": 100})
+    threads = provider.execute_read(
+        _Binding("gmail_search_threads"), {"query": "Atlas", "page_size": 20}
+    )
+
+    assert task_lists["output"]["items"][0]["payload"]["title"] == "Atlas"
+    assert task_lists["output"]["items"][0]["resource_id"] == "list-1"
+    assert threads["output"]["items"][0]["payload"]["subject"] == "Atlas 검토"
+
+
+def test_simulated_provider_freebusy_reads_stored_event_state() -> None:
+    provider = StatefulSimulatedProvider(
+        initial_resources=[
+            {
+                "resource_type": "calendar_event",
+                "resource_id": "event-1",
+                "parent_id": "calendar-1",
+                "version": "1",
+                "payload": {
+                    "start": "2026-08-14T10:00:00+09:00",
+                    "end": "2026-08-14T11:00:00+09:00",
+                    "transparency": "opaque",
+                },
+            }
+        ]
+    )
+
+    result = provider.execute_read(
+        _Binding("calendar_query_freebusy"),
+        {
+            "calendar_ids": ["calendar-1"],
+            "time_min": "2026-08-14T09:00:00+09:00",
+            "time_max": "2026-08-14T12:00:00+09:00",
+        },
+    )
+
+    assert result["output"]["calendars"][0]["intervals"] == [
+        {
+            "start": "2026-08-14T10:00:00+09:00",
+            "end": "2026-08-14T11:00:00+09:00",
+            "transparency": "busy",
+        }
+    ]
 
 
 def test_wrong_task_list_update_has_no_effect() -> None:

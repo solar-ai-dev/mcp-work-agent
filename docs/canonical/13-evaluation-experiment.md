@@ -1204,7 +1204,7 @@ Prompt-only comparison은 Product, Dataset/Gold, Grader, Tool Registry, Graph Pr
 
 | 단계 | 처리·제한 |
 | --- | --- |
-| One-case 실행 | `evaluation/runner.py`를 one-case public HTTP execution authority로 유지한다. |
+| One-case 실행 | `evaluation/public_runner_v8.py`를 v8 one-case public HTTP execution authority로 유지한다. |
 | Batch | Validated Plan의 Case × repetition을 순회하며 같은 `run_case()`를 호출한다. |
 | 기록 | Raw trial, normalized observation, Product/Candidate/Dataset/Grader provenance와 summary를 원자적으로 기록한다. |
 | 반복 지표 | `pass@k`와 `pass^k`를 모두 기록한다. 한 번의 성공이나 평균 점수만으로 승격을 선언하지 않는다. |

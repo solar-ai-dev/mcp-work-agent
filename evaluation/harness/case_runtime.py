@@ -66,7 +66,7 @@ class CanonicalCaseRuntime:
             self.evaluation_mode = self.fault_harness.profile.evaluation_mode
         else:
             self.fault_harness = None
-            self.evaluation_mode = "COMPONENT_ONLY"
+            self.evaluation_mode = "LIVE_PROVIDER"
         self._simulated_provider: StatefulSimulatedProvider | None = None
 
     @classmethod

@@ -5,6 +5,10 @@ from datetime import datetime
 from evaluation.harness.case_runtime import CanonicalCaseRuntime
 
 
+def test_normal_case_is_reported_as_live_provider_execution() -> None:
+    assert CanonicalCaseRuntime.for_case("CASE-CORE-001").evaluation_mode == "LIVE_PROVIDER"
+
+
 def test_case_runtime_exposes_fixed_business_clock_and_independent_elapsed_clock() -> None:
     monotonic_values = iter((100.0, 100.125, 100.250))
     runtime = CanonicalCaseRuntime.for_case(

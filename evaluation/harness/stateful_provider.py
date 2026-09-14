@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -45,16 +46,30 @@ class StatefulSimulatedProvider:
         if tool_id == "search_by_recovery_fingerprint":
             output = self._search_by_recovery_fingerprint(tool_arguments)
             return self._read_result_factory(tool_id, output, len(self.read_calls))
+        if tool_id == "gmail_get_attachment":
+            output = self._get_gmail_attachment(tool_arguments)
+            return self._read_result_factory(tool_id, output, len(self.read_calls))
+        if tool_id == "calendar_query_freebusy":
+            output = self._query_freebusy(tool_arguments)
+            return self._read_result_factory(tool_id, output, len(self.read_calls))
+        list_type = {
+            "gmail_search_threads": "gmail_thread",
+            "gmail_search_drafts": "gmail_draft",
+            "tasks_list_tasklists": "task_list",
+            "tasks_list_tasks": "task",
+            "calendar_list_calendars": "calendar",
+            "calendar_list_events": "calendar_event",
+        }.get(tool_id)
+        if list_type is not None:
+            output = self._list_resources(list_type, tool_arguments)
+            return self._read_result_factory(tool_id, output, len(self.read_calls))
         resource_type, identity_key, parent_key = _read_identity(tool_id)
         resource_id = tool_arguments.get(identity_key)
         if not isinstance(resource_id, str) or not resource_id:
             raise ValueError(f"{tool_id} requires {identity_key}")
         parent_id = _required_parent(tool_arguments, parent_key, tool_id)
         item = self._resources.get((resource_type, parent_id, resource_id))
-        output = {
-            "item": None if item is None else deepcopy(item),
-            "total_count": int(item is not None),
-        }
+        output = {"item": None if item is None else _project_item(item)}
         return self._read_result_factory(tool_id, output, len(self.read_calls))
 
     def execute_write(
@@ -114,13 +129,100 @@ class StatefulSimulatedProvider:
         )
         parent_id = _required_parent(arguments, parent_key, "search_by_recovery_fingerprint")
         items = [
-            deepcopy(item)
+            _project_item(item)
             for (stored_type, stored_parent, _), item in self._resources.items()
             if stored_type == resource_type
             and stored_parent == parent_id
             and _contains_value(item, fingerprint)
         ]
         return {"items": items, "total_count": len(items)}
+
+    def _list_resources(self, resource_type: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        parent_key = (
+            "task_list_id"
+            if resource_type == "task"
+            else "calendar_id"
+            if resource_type == "calendar_event"
+            else None
+        )
+        parent_id = arguments.get(parent_key) if parent_key is not None else None
+        if parent_key is not None and (not isinstance(parent_id, str) or not parent_id):
+            raise ValueError(f"{resource_type} list requires {parent_key}")
+        items = [
+            _project_item(item)
+            for (stored_type, stored_parent, _), item in self._resources.items()
+            if stored_type == resource_type and (parent_key is None or stored_parent == parent_id)
+        ]
+        if resource_type == "task" and not bool(arguments.get("show_completed", False)):
+            items = [item for item in items if _item_payload(item).get("status") != "completed"]
+        if resource_type == "calendar_event":
+            items = [item for item in items if _event_in_range(item, arguments)]
+        page_size = arguments.get("page_size", 100)
+        if not isinstance(page_size, int) or page_size < 1:
+            raise ValueError("page_size must be a positive integer")
+        return {"items": items[:page_size], "next_page_token": None}
+
+    def _query_freebusy(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        calendar_ids = arguments.get("calendar_ids")
+        if not isinstance(calendar_ids, list) or not all(
+            isinstance(item, str) and item for item in calendar_ids
+        ):
+            raise ValueError("calendar_query_freebusy requires calendar_ids")
+        time_min = arguments.get("time_min")
+        time_max = arguments.get("time_max")
+        if not isinstance(time_min, str) or not isinstance(time_max, str):
+            raise ValueError("calendar_query_freebusy requires a temporal range")
+        calendars = []
+        for calendar_id in calendar_ids:
+            intervals = []
+            for (stored_type, stored_parent, _), stored in self._resources.items():
+                if stored_type != "calendar_event" or stored_parent != calendar_id:
+                    continue
+                item = _project_item(stored)
+                payload = _item_payload(item)
+                if (
+                    payload.get("status") == "cancelled"
+                    or payload.get("transparency") == "transparent"
+                    or not _event_in_range(
+                        item,
+                        {"time_min": time_min, "time_max": time_max},
+                    )
+                ):
+                    continue
+                intervals.append(
+                    {
+                        "start": payload["start"],
+                        "end": payload["end"],
+                        "transparency": "busy",
+                    }
+                )
+            calendars.append({"calendar_id": calendar_id, "intervals": intervals})
+        return {"calendars": calendars}
+
+    def _get_gmail_attachment(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        message_id = arguments.get("message_id")
+        attachment_id = arguments.get("attachment_id")
+        if not isinstance(message_id, str) or not isinstance(attachment_id, str):
+            raise ValueError("gmail_get_attachment requires message_id and attachment_id")
+        for (resource_type, _, _), stored in self._resources.items():
+            if resource_type != "gmail_thread":
+                continue
+            messages = stored.get("payload", {}).get("messages", [])
+            if not isinstance(messages, list):
+                continue
+            for message in messages:
+                if not isinstance(message, Mapping) or message.get("message_id") != message_id:
+                    continue
+                attachments = message.get("attachments", [])
+                if not isinstance(attachments, list):
+                    continue
+                for attachment in attachments:
+                    if (
+                        isinstance(attachment, Mapping)
+                        and attachment.get("attachment_id") == attachment_id
+                    ):
+                        return deepcopy(dict(attachment))
+        raise LookupError("simulated Gmail attachment not found")
 
     def _create(self, tool_id: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         resource_type, identity_key, parent_key = _write_identity(tool_id)
@@ -176,6 +278,7 @@ def _read_identity(tool_id: str) -> tuple[str, str, str | None]:
         "tasks_get_task": ("task", "task_id", "task_list_id"),
         "calendar_get_event": ("calendar_event", "event_id", "calendar_id"),
         "gmail_get_draft": ("gmail_draft", "draft_id", None),
+        "gmail_get_thread": ("gmail_thread", "thread_id", None),
     }
     try:
         return mapping[tool_id]
@@ -239,6 +342,56 @@ def _contains_value(value: Any, expected: str) -> bool:
     return False
 
 
+def _project_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    payload = item.get("payload")
+    resource_type = str(item["resource_type"])
+    resource_id = str(item["resource_id"])
+    parent_id = item.get("parent_id")
+    return {
+        "fixture_snapshot_id": resource_id,
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "parent_id": parent_id,
+        "related_resource_ids": (
+            [parent_id] if resource_type in {"task", "calendar_event"} else []
+        ),
+        "version": str(item.get("version", "1")),
+        "recovery_fingerprint": (
+            payload.get("recovery_fingerprint") if isinstance(payload, Mapping) else None
+        ),
+        "payload": deepcopy(dict(payload)) if isinstance(payload, Mapping) else {},
+    }
+
+
+def _item_payload(item: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = item.get("payload")
+    return payload if isinstance(payload, Mapping) else item
+
+
+def _event_in_range(item: Mapping[str, Any], arguments: Mapping[str, Any]) -> bool:
+    payload = _item_payload(item)
+    start = _temporal_value(payload.get("start"))
+    end = _temporal_value(payload.get("end"))
+    time_min = arguments.get("time_min")
+    time_max = arguments.get("time_max")
+    if isinstance(time_min, str) and end is not None and end <= _parse_time(time_min):
+        return False
+    return not (isinstance(time_max, str) and start is not None and start >= _parse_time(time_max))
+
+
+def _temporal_value(value: Any) -> datetime | None:
+    if isinstance(value, Mapping):
+        value = value.get("date_time") or value.get("dateTime") or value.get("date")
+    return _parse_time(value) if isinstance(value, str) else None
+
+
+def _parse_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (
+        parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)  # noqa: UP017 -- Python 3.10 target
+    )
+
+
 def _default_read_result(tool_id: str, output: dict[str, Any], sequence: int) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -246,13 +399,11 @@ def _default_read_result(tool_id: str, output: dict[str, Any], sequence: int) ->
         "request_id": f"evaluation-read-{sequence}",
         "output": output,
         "next_page_token": None,
-        "total_count": output["total_count"],
+        "total_count": output.get("total_count"),
     }
 
 
-def _default_write_result(
-    tool_id: str, item: dict[str, Any], sequence: int
-) -> dict[str, Any]:
+def _default_write_result(tool_id: str, item: dict[str, Any], sequence: int) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "success": True,

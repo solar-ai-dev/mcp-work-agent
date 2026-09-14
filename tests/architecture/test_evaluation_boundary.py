@@ -18,7 +18,9 @@ SHADOW_EVALUATION_RESULT_ROOTS = (
 EXPECTED_EVALUATION_CODE = {
     "evaluation/__init__.py",
     "evaluation/check_workspace.py",
+    "evaluation/dataset_v8.py",
     "evaluation/export_materials.py",
+    "evaluation/grader_v8.py",
     "evaluation/harness/__init__.py",
     "evaluation/harness/case_runtime.py",
     "evaluation/harness/fault_adapters.py",
@@ -26,11 +28,16 @@ EXPECTED_EVALUATION_CODE = {
     "evaluation/harness/stateful_provider.py",
     "evaluation/harness/temporal_bindings.py",
     "evaluation/prompt_candidate.py",
+    "evaluation/observation_v8.py",
+    "evaluation/public_client_v8.py",
+    "evaluation/public_runner_v8.py",
+    "evaluation/semantic_judge_v8.py",
     "evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py",
     "evaluation/tests/test_canonical_dataset.py",
     "evaluation/tests/test_case_runtime.py",
     "evaluation/tests/test_fault_adapters.py",
     "evaluation/tests/test_fault_profiles.py",
+    "evaluation/tests/test_public_runner_v8.py",
     "evaluation/tests/test_temporal_bindings.py",
     "evaluation/tests/test_workspace_tools.py",
 }
@@ -127,6 +134,8 @@ def test_evaluation_assets__do_not_reference__retired_json_authorities() -> None
     checked_suffixes = {".json", ".jsonl", ".md", ".py"}
     stale: list[str] = []
     for path in EVALUATION.rglob("*"):
+        if path.is_relative_to(EVALUATION / "results"):
+            continue
         if not path.is_file() or path.suffix not in checked_suffixes:
             continue
         content = path.read_text(encoding="utf-8")
@@ -143,11 +152,7 @@ def _tracked_files() -> set[str]:
         check=True,
         capture_output=True,
     ).stdout.decode("utf-8")
-    return {
-        path
-        for path in output.split("\0")
-        if path and (ROOT / Path(path)).is_file()
-    }
+    return {path for path in output.split("\0") if path and (ROOT / Path(path)).is_file()}
 
 
 def _imports(path: Path) -> list[tuple[str, int]]:
