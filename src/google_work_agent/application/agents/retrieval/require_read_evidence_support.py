@@ -13,6 +13,9 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     SufficiencyResolutionSourceValue,
     SufficiencyResultV2,
 )
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    business_required_source_routes,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ToolRoutePlanV2,
 )
@@ -38,11 +41,9 @@ def require_read_evidence_support(
     ):
         return result
 
-    required_routes = [
-        route
-        for route in tool_route_plan["input_plan"]["input_routes"]
-        if route["required"]
-    ]
+    required_routes = business_required_source_routes(
+        tool_route_plan["input_plan"]["input_routes"]
+    )
     if not required_routes:
         return result
     resolution_source: SufficiencyResolutionSourceValue = (

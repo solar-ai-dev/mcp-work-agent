@@ -118,6 +118,30 @@ def test_source_schema__source_required__requires_non_empty_information() -> Non
     )
 
 
+def test_source_schema__general_request__allows_no_existing_source() -> None:
+    candidate = _decisions()
+
+    assert not validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+
+
+def test_source_schema__confirmed_target__requires_a_source_without_choosing_its_type() -> None:
+    schema = source_dependencies.build_source_dependency_output_schema(
+        _CANDIDATES,
+        require_at_least_one_source=True,
+    ).json_schema
+
+    assert validate_output_schema(_decisions(), schema)
+    assert not validate_output_schema(
+        _decisions(sources={"CALENDAR_EVENT": ["event_identity"]}), schema
+    )
+    assert not validate_output_schema(
+        _decisions(sources={"TASK": ["task_identity"]}), schema
+    )
+
+
 @pytest.mark.parametrize(
     ("required_resource", "excluded_related_resource", "required_information"),
     [

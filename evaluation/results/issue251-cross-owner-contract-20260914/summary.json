@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "branch": "codex/issue-251-connected-contract",
+  "start_head": "ea0169d3000c672cec38394b071828066a089d37",
+  "product_final_sha": "34e147312a4b0fd9ad653c0ad4443a8f1a8cba69",
+  "contract_changes": {
+    "confirmation_propagation": true,
+    "derived_state_recomputation": true,
+    "semantic_dependency_route_separation": true,
+    "sufficiency_accounting": true,
+    "stale_required_information_fixed": true
+  },
+  "contract_surface": {
+    "prompt_changed": false,
+    "schema_changed": false,
+    "state_changed": false,
+    "graph_node_or_edge_changed": false,
+    "llm_call_added": false
+  },
+  "direct_tests": {
+    "pytest_passed": 391,
+    "ruff": "PASS",
+    "mypy": "PASS"
+  },
+  "calendar_gate": {
+    "domain_run_id": "3492909d-bea9-4988-b9e8-f2ee3d47a9ec",
+    "initial_status": "WAITING_CONFIRMATION",
+    "confirmation_responses": 1,
+    "connector_reads": 23,
+    "evidence_drafts": 0,
+    "terminal_status": "BLOCKED",
+    "reason_code": "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
+    "product_result": "FAIL",
+    "rerun": false
+  },
+  "first_divergence": {
+    "boundary": "request_understanding.identify_source_dependencies structured output",
+    "classification": "A_SAME_INPUT_LLM_OUTPUT_VARIANCE",
+    "safe_semantic_input_sha256": "af30f5bd640161a385c2e8f9c9259f6ebea2d9bbc03d060f9874718e932290cb",
+    "prior_output": {
+      "calendar_event_dependency": "SOURCE_REQUIRED",
+      "required_information_count": 2
+    },
+    "current_output": {
+      "calendar_event_dependency": "SOURCE_NOT_REQUIRED",
+      "required_information_count": 0
+    },
+    "prior_retrieval_counts": {
+      "read_handles": 23,
+      "segments": 2,
+      "rag_candidates": 2,
+      "evidence_drafts": 2
+    },
+    "current_retrieval_counts": {
+      "read_handles": 23,
+      "segments": 60,
+      "rag_candidates": 24,
+      "evidence_drafts": 0
+    }
+  },
+  "traces": {
+    "prior_initial": "01a09cb0-1347-7c73-ad7b-dd6ca9ab9a31",
+    "prior_resume": "01a09cb0-7fe8-7ff2-9b04-bf819d5b7928",
+    "current_initial": "01a09cc7-8394-7591-a1af-75f34026afdf",
+    "current_resume": "01a09cc7-f2d3-7e92-84db-882a1d52f48f"
+  },
+  "final_six_executed": false,
+  "rerun_to_pass": 0,
+  "provider_write_send": 0
+}

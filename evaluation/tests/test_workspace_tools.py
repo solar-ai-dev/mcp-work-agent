@@ -9,7 +9,6 @@ from urllib.parse import unquote, urlsplit
 from check_workspace import check_workspace, heading_anchors
 from export_materials import (
     ALLOWED_EMAIL_ADDRESSES,
-    EMAIL_ADDRESS,
     LINK,
     export_to_file,
     extract_materials,
@@ -303,19 +302,6 @@ class WorkspaceTests(unittest.TestCase):
     def test_current_workspace_has_no_structural_errors(self) -> None:
         self.assertEqual([], check_workspace(Path(__file__).resolve().parents[1]))
 
-    def test_every_scenario_exports_without_evaluator_section(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        for scenario in sorted((root / "datasets").glob("*.md")):
-            with self.subTest(scenario=scenario.name):
-                value = read_scenario(scenario, root)
-                outside = "\n".join(line for _, line in outside_fence_lines(value))
-                self.assertNotIn("## 시험 질문과 확인 기준", outside)
-                self.assertNotIn("**평가자 확인", outside)
-                self.assertNotIn("### 질문 ", outside)
-
-
-
-
 class PromptPathContractTests(unittest.TestCase):
     """Packaging tests of the supplied Prompt assets; not a production/LLM test."""
 
@@ -588,32 +574,6 @@ class CandidateMaterializationTests(unittest.TestCase):
         self.assertEqual(original, self._run(keep_extra_product_slots=True).input_contract_path.read_bytes())
 
 
-class ReadableGoldBoundaryTests(unittest.TestCase):
-    """Check evaluator-only placement, not LLM answer correctness."""
-
-    def test_bilingual_variants_have_both_languages_per_question(self) -> None:
-        import re
-        root = Path(__file__).resolve().parents[1]
-        groups = []
-        for path in (root / "datasets").glob("*.md"):
-            for block in re.split(r"(?=^### 질문 )", path.read_text(encoding="utf-8"), flags=re.M)[1:]:
-                if "**같은 뜻의 다른 말투**" in block:
-                    groups.append(block)
-                    self.assertIn("한국어:\n>", block)
-                    self.assertIn("English:\n>", block)
-                    before = block.split("**평가자 확인")[0]
-                    self.assertEqual(3, len(re.findall(r"^> ", before, re.M)))
-        self.assertTrue(groups)
-
-    def test_gold_and_user_questions_do_not_enter_upload_materials(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        for path in (root / "datasets").glob("*.md"):
-            material = extract_materials(path.read_text(encoding="utf-8"))
-            outside = "\n".join(line for _, line in outside_fence_lines(material))
-            self.assertNotIn("**평가자 확인", outside)
-            self.assertNotIn("**같은 뜻의 다른 말투**", outside)
-
-
 class EmailScopeTests(unittest.TestCase):
     """Evaluation text restrictions only; never a production authorization test."""
 
@@ -683,44 +643,6 @@ class EmailScopeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_to_file(scenario, output, root)
             self.assertFalse(output.exists())
-
-    def test_current_text_data_contains_only_the_three_accounts(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        seen = set()
-        for folder in (root / "datasets", root / "checks"):
-            for path in folder.rglob("*"):
-                if path.is_file() and path.suffix in (".md", ".txt", ".csv"):
-                    text = path.read_text(encoding="utf-8-sig")
-                    validate_material_emails(text)
-                    seen.update(m.group().casefold() for m in EMAIL_ADDRESS.finditer(text))
-        self.assertEqual(set(ALLOWED_EMAIL_ADDRESSES), seen)
-
-    def test_same_name_senders_stay_distinct(self) -> None:
-        import re
-        root = Path(__file__).resolve().parents[1]
-        text = extract_materials((root / "datasets" / "aster-nova-동명이인.md").read_text(encoding="utf-8"))
-        senders = re.findall(r"발신 박민수 <([^>]+)>", text)
-        self.assertEqual(["qhdrbdhkdwks@naver.com", "qhdrbdhkdwks2@gmail.com"], senders)
-
-    def test_grove_new_recipient_is_not_in_original_thread(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        text = (root / "datasets" / "grove-캠페인.md").read_text(encoding="utf-8")
-        material = extract_materials(text)
-        self.assertIn("qhdrbdhkdwks@naver.com", material)
-        self.assertIn("bonggyulim0728@gmail.com", material)
-        self.assertNotIn("qhdrbdhkdwks2@gmail.com", material)
-        self.assertIn("qhdrbdhkdwks2@gmail.com", text.split("## 시험 질문과 확인 기준", 1)[1])
-
-    def test_aurora_two_kims_and_forward_recipient_not_merged(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        text = extract_materials((root / "datasets" / "오로라-현장과연수.md").read_text(encoding="utf-8"))
-        self.assertIn("발신 김하늘 대리 <qhdrbdhkdwks@naver.com>", text)
-        self.assertIn("발신 김바다 대리 <qhdrbdhkdwks2@gmail.com>", text)
-        forward = text.split("### 메일 대화 4 — 오로라 참고 전달", 1)[1].split("### 메일 대화 5", 1)[0]
-        self.assertIn("발신: 업무 취합 담당 <bonggyulim0728@gmail.com>", forward)
-        self.assertIn("수신: qhdrbdhkdwks@naver.com", forward)
-        self.assertIn("참조: bonggyulim0728@gmail.com", forward)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
@@ -12,9 +11,6 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     repository_authority_requires_confirmation,
 )
-from google_work_agent.application.prompt_runtime.contracts.failure_record import (
-    build_failure_record_v1,
-)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
     load_prompt_reference,
@@ -24,10 +20,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
     provider_dispatch_budget_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
-    BudgetDecision,
     RunBudgetV2,
-    approve_semantic_revision,
-    build_semantic_failure_signature_v1,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
@@ -121,14 +114,6 @@ def detect_ambiguity(
             },
             retry_budget,
         )
-    if _is_general_answer_only(
-        request=request,
-        goal_candidate=goal_candidate,
-    ):
-        return (
-            {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
-            retry_budget,
-        )
     resolved_prompt_ref = prompt_ref or load_prompt_reference(
         "request_understanding.detect_ambiguity",
         manifest_path or default_prompt_manifest_path(),
@@ -161,48 +146,11 @@ def detect_ambiguity(
             prompt_input,
             DETECT_AMBIGUITY_OUTPUT_SCHEMA,
         )
-        try:
-            candidate = _validate_ambiguity_candidate(
-                result.structured_output,
-                goal_candidate=goal_candidate,
-                selected_resources=request.selected_resources,
-            )
-        except RequestAmbiguityValidationError as error:
-            signature = build_semantic_failure_signature_v1(
-                node_id="request.detect_ambiguity",
-                failure_reason_codes=[error.reason_code],
-            )
-            decision = approve_semantic_revision(retry_budget, signature=signature)
-            if decision["decision"] == BudgetDecision.DENY.value:
-                raise RequestAmbiguityValidationError(
-                    "request ambiguity semantic revision denied",
-                    reason_code=error.reason_code,
-                    affected_field_paths=error.affected_field_paths,
-                ) from error
-            revised = llm_runtime.infer(
-                request.requested_mode,
-                resolved_prompt_ref,
-                {
-                    "base_projection": prompt_input,
-                    "candidate_output": result.structured_output,
-                    "failure_record": build_failure_record_v1(
-                        failure_reason_code=error.reason_code,
-                        failure_origin="LLM_OUTPUT",
-                        detected_by="RUNTIME_DOMAIN_VALIDATOR",
-                        runtime_disposition="RETRYABLE",
-                        experiment_disposition="RUN_REVISION",
-                        affected_field_paths=error.affected_field_paths,
-                        failure_context_ids=[str(error)],
-                    ),
-                },
-                DETECT_AMBIGUITY_OUTPUT_SCHEMA,
-            )
-            candidate = _validate_ambiguity_candidate(
-                revised.structured_output,
-                goal_candidate=goal_candidate,
-                selected_resources=request.selected_resources,
-            )
-            retry_budget = decision["run_budget"]
+        candidate = _validate_ambiguity_candidate(
+            result.structured_output,
+            goal_candidate=goal_candidate,
+            selected_resources=request.selected_resources,
+        )
         retry_budget = merge_provider_dispatch_usage(retry_budget)
     return _finalize_ambiguity_candidate(candidate), retry_budget
 
@@ -273,20 +221,6 @@ def _validate_ambiguity_candidate(
         missing_fields,
         goal_candidate=goal_candidate,
     )
-    if missing_information_owner == "USER" and _overlaps_connector_owned_information(
-        missing_fields,
-        goal_candidate=goal_candidate,
-        target_identity_fields=frozenset(target_identity_resource_types),
-    ):
-        raise RequestAmbiguityValidationError(
-            "retrieval-owned information was reclassified as a user-owned choice",
-            reason_code="REQUEST_AMBIGUITY_RESOLUTION_OWNER_CONFLICT",
-            affected_field_paths=(
-                "$.missing_information_owner",
-                "$.missing_fields",
-                "$.goal_candidate.constraints",
-            ),
-        )
     if (
         missing_information_owner == "USER"
         and ("target_resource" in missing_fields or target_identity_resource_types)
@@ -308,19 +242,6 @@ def _validate_ambiguity_candidate(
                 "$.missing_fields",
                 "$.selected_resource_refs",
             ),
-        )
-    if (
-        missing_information_owner == "USER"
-        and ("target_resource" in missing_fields or target_identity_resource_types)
-        and _searchable_target_anchor_count(goal_candidate) > 0
-        and _connector_owned_source_count(goal_candidate) > 0
-    ):
-        return cast(
-            AmbiguityCandidateV2,
-            {
-                "missing_information_owner": "CONNECTOR",
-                "missing_fields": list(missing_fields),
-            },
         )
     return cast(
         AmbiguityCandidateV2,
@@ -380,23 +301,6 @@ def _searchable_target_anchor_count(goal_candidate: RequestGoalCandidateV1) -> i
 def _connector_owned_source_count(goal_candidate: RequestGoalCandidateV1) -> int:
     responsibilities = goal_candidate.get("resource_responsibilities")
     return 0 if responsibilities is None else len(responsibilities["source_reads"])
-
-
-def _overlaps_connector_owned_information(
-    missing_fields: Sequence[str],
-    *,
-    goal_candidate: RequestGoalCandidateV1,
-    target_identity_fields: frozenset[str],
-) -> bool:
-    connector_information = [
-        item["information"] for item in _connector_owned_information(goal_candidate)
-    ]
-    return any(
-        _same_information_need(missing, owned)
-        for missing in missing_fields
-        if missing != "target_resource" and missing not in target_identity_fields
-        for owned in connector_information
-    )
 
 
 def _target_identity_resource_types(
@@ -472,25 +376,3 @@ def _connector_owned_information(
 
 def _constraint_values(value: str | list[str]) -> list[str]:
     return [value] if isinstance(value, str) else value
-
-
-def _same_information_need(left: str, right: str) -> bool:
-    """Match only the same normalized need; wording similarity is not ownership proof."""
-
-    normalized_left = _normalize_information_need(left)
-    normalized_right = _normalize_information_need(right)
-    return bool(normalized_left and normalized_left == normalized_right)
-
-
-def _normalize_information_need(value: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-
-
-def _is_general_answer_only(
-    *, request: WorkflowStartRequest, goal_candidate: RequestGoalCandidateV1
-) -> bool:
-    return (
-        not request.selected_resources
-        and not goal_candidate["requested_effect_hints"]
-        and not goal_candidate["requested_resource_hints"]
-    )

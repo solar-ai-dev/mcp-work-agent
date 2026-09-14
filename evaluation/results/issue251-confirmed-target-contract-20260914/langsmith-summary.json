@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "project": "google-work-agent-development",
+  "product_sha": "deed527515dff0e53ef54f2d6bb0baaf9134a85d",
+  "experiment_id": "issue251-final-six-deed5275",
+  "question_id": "issue251-final-six",
+  "automatic_tracing": false,
+  "safe_product_tracing": true,
+  "cases": [
+    {
+      "case_id": "case-01-no-target-calendar",
+      "run_id": "831e458d-c7db-48c6-a419-508b9cc42de2",
+      "trace_ids": [
+        "01a09ce8-dece-7f43-b698-3e00525b9c1a",
+        "01a09ce9-538d-75d2-93bd-f94225bad11b"
+      ],
+      "root_spans": 2,
+      "node_spans": 35,
+      "llm_spans": 11,
+      "tool_spans": 23,
+      "error_spans": 0
+    },
+    {
+      "case_id": "case-02-selected-calendar-event",
+      "run_id": "51e7eacb-08cb-4684-ab50-157b426e6654",
+      "trace_ids": [
+        "01a09cea-39e2-7082-b3f2-045e306860a7"
+      ],
+      "root_spans": 1,
+      "node_spans": 29,
+      "llm_spans": 8,
+      "tool_spans": 1,
+      "error_spans": 0
+    },
+    {
+      "case_id": "case-03-atlas-draft",
+      "run_id": "bd49c9a5-dbc9-452d-bf37-44ce120b115c",
+      "trace_ids": [
+        "01a09cea-c73c-7921-b9cd-455d68fdfaa8"
+      ],
+      "root_spans": 1,
+      "node_spans": 36,
+      "llm_spans": 8,
+      "tool_spans": 47,
+      "error_spans": 0
+    },
+    {
+      "case_id": "case-04-juniper-titles",
+      "run_id": "cc0394cc-2689-494a-88b6-dc2a47e9347d",
+      "trace_ids": [
+        "01a09ceb-b6e6-73c0-8b7b-bd88f63048f0"
+      ],
+      "root_spans": 1,
+      "node_spans": 36,
+      "llm_spans": 9,
+      "tool_spans": 2,
+      "error_spans": 0
+    },
+    {
+      "case_id": "case-05-atlas-q19",
+      "run_id": "ac3bc6a6-1d56-4c94-b808-a3f054587190",
+      "trace_ids": [
+        "01a09ced-a734-77c2-bd7b-adbace131eec"
+      ],
+      "root_spans": 1,
+      "node_spans_lower_bound": 100,
+      "node_query_capped_at": 100,
+      "llm_spans": 14,
+      "tool_spans": 13,
+      "error_spans": 0
+    },
+    {
+      "case_id": "case-06-quartz-draft",
+      "run_id": "84c0a60b-d821-4783-aec5-dd7aa1e0bdca",
+      "trace_ids": [
+        "01a09cef-5eae-7fa1-90ea-6ec6e5077568"
+      ],
+      "root_spans": 1,
+      "node_spans": 36,
+      "llm_spans": 13,
+      "tool_spans": 1,
+      "error_spans": 0
+    }
+  ],
+  "binding_verified_for_all_spans": {
+    "code_sha": "deed527515dff0e53ef54f2d6bb0baaf9134a85d",
+    "experiment_id": "issue251-final-six-deed5275",
+    "question_id": "issue251-final-six",
+    "model_id": "qwen3.5:9b",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "prompt_id": "request_understanding.identify_goal",
+    "prompt_version": "1.0.62",
+    "prompt_content_hash": "98fc61337e02e8cc7099f52925bccbbc03e1f5a8b3f821f996c30ea5d592d7aa"
+  }
+}

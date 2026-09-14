@@ -67,10 +67,10 @@ test("restores identical rows from Snapshot and isolates a new Run", async () =>
   expect(screen.getByText(/저장된 단계 이력이 없습니다/)).toBeVisible();
 });
 
-test("partial and unknown results do not imply cancellation or success", () => {
+test("partial results rely on the recorded cause instead of a generic disclaimer", () => {
   const value = { ...snapshot(0), terminal_result_kind: "PARTIAL", recovery_summary: { unknown_result_action_count: 1 } } as RunSnapshot;
   render(<RunProgress snapshot={value} busy={null} onResume={vi.fn()} />);
-  expect(screen.getByText(/미완료 이유/)).toBeVisible();
+  expect(screen.queryByText(/미완료 이유/)).not.toBeInTheDocument();
   expect(screen.getByText(/검증 전 성공으로 판단하지 않습니다/)).toBeVisible();
   expect(screen.queryByText(/나머지는 취소/)).not.toBeInTheDocument();
 });

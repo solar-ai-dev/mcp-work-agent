@@ -1,0 +1,31 @@
+{
+  "domain_run_id": "79aecaeb-86e8-4bad-a2e6-c581597ba4a5",
+  "binding": {
+    "code_sha": "493e2f047c6cec210d98d524c96b58493350b32e",
+    "experiment_id": "issue251-calendar-source-reassessment-493e2f04",
+    "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "model_id": "qwen3.5:9b",
+    "prompt_content_hash": "98fc61337e02e8cc7099f52925bccbbc03e1f5a8b3f821f996c30ea5d592d7aa",
+    "prompt_id": "request_understanding.identify_goal",
+    "prompt_version": "1.0.62",
+    "question_id": "issue251-calendar-source-reassessment"
+  },
+  "traces": [
+    {
+      "phase": "initial",
+      "trace_id": "01a09cb0-1347-7c73-ad7b-dd6ca9ab9a31",
+      "root_count": 1,
+      "node_count": 6,
+      "llm_count": 6,
+      "tool_count": 0
+    },
+    {
+      "phase": "confirmation_resume",
+      "trace_id": "01a09cb0-7fe8-7ff2-9b04-bf819d5b7928",
+      "root_count": 1,
+      "node_count": 29,
+      "llm_count": 6,
+      "tool_count": 23
+    }
+  ]
+}

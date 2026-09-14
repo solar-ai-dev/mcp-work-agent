@@ -1,0 +1,18 @@
+{
+  "phase": "failed-three",
+  "cases": [
+    {
+      "case": "calendar",
+      "run_id": "79aecaeb-86e8-4bad-a2e6-c581597ba4a5",
+      "status": "COMPLETED",
+      "version": 6,
+      "terminal_result_kind": "PARTIAL",
+      "pending_interrupt": null,
+      "error": null,
+      "assistant_messages": [
+        "확인한 범위의 부분 결과입니다. 요청한 전체 범위를 확인한 것은 아닙니다.\n\n프로젝트 검토 회의 일정은 2026 년 8 월 18 일 오전 10 시부터 오후 11 시까지입니다."
+      ],
+      "actions": []
+    }
+  ]
+}

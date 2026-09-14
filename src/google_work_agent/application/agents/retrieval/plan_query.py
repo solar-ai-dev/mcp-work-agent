@@ -67,6 +67,7 @@ from google_work_agent.application.agents.task_calendar_draft_source import (
     project_task_calendar_source_terms,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    business_required_source_routes,
     coarse_resource_category,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -157,6 +158,16 @@ def deterministic_initial_query_plan(
     )
     if exact_detail is not None:
         return exact_detail
+    confirmed_target_plan = _confirmed_target_search_plan(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        route_policies=route_policies,
+        validated_resource_refs=validated_resource_refs,
+        validated_container_refs=validated_container_refs,
+        is_followup="current_round_no" in prompt_input,
+    )
+    if confirmed_target_plan is not None:
+        return confirmed_target_plan
     draft_source_plan = _exact_gmail_draft_source_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
@@ -230,7 +241,7 @@ def _exact_gmail_metadata_collection_plan(
         or route_operation_tool_id(route, "SEARCH") is None
     ):
         return None
-    terms = _user_bound_search_prefix(request_intent.get("constraints"))
+    terms = _current_run_search_prefix(request_intent.get("constraints"))
     if not terms:
         return None
     return {
@@ -252,10 +263,15 @@ def _exact_gmail_metadata_collection_plan(
     }
 
 
-def _user_bound_search_prefix(value: object) -> list[str]:
+def _trusted_search_literals(
+    value: object,
+    *,
+    provenance_sources: frozenset[str],
+) -> tuple[str, ...]:
     if not isinstance(value, list):
-        return []
-    tokens: list[str] = []
+        return ()
+    literals: list[str] = []
+    found_constraint = False
     for constraint in value:
         if (
             not isinstance(constraint, Mapping)
@@ -264,14 +280,100 @@ def _user_bound_search_prefix(value: object) -> list[str]:
         ):
             continue
         provenance = constraint.get("provenance")
-        if not isinstance(provenance, Mapping) or provenance.get("source") != "USER_REQUEST":
+        if (
+            not isinstance(provenance, Mapping)
+            or provenance.get("source") not in provenance_sources
+        ):
             continue
+        found_constraint = True
         raw = constraint.get("value")
-        values = raw if isinstance(raw, list) else [raw]
-        for item in values:
-            if isinstance(item, str):
-                tokens.extend(part for part in item.split() if part)
+        terms = raw if isinstance(raw, list) else [raw]
+        if not all(isinstance(term, str) and term.strip() for term in terms):
+            return ()
+        literals.extend(term.strip() for term in cast(list[str], terms))
+    if not found_constraint:
+        return ()
+    return tuple(dict.fromkeys(literals))
+
+
+def _current_run_search_prefix(value: object) -> list[str]:
+    tokens: list[str] = []
+    for literal in _trusted_search_literals(
+        value,
+        provenance_sources=frozenset({"USER_REQUEST", "CONFIRMATION_RESPONSE"}),
+    ):
+        tokens.extend(part for part in literal.split() if part)
     return list(dict.fromkeys(tokens))[:2]
+
+
+def _confirmed_target_search_plan(
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    validated_resource_refs: Mapping[str, Collection[str]] | None,
+    validated_container_refs: Mapping[str, Collection[str]] | None,
+    is_followup: bool,
+) -> RetrievalQueryPlanV2 | None:
+    """Preserve a confirmed target label as the first bounded discovery anchor."""
+
+    if is_followup:
+        return None
+    request_intent = prompt_input.get("request_intent")
+    if not isinstance(request_intent, Mapping):
+        return None
+    confirmation_literals = _trusted_search_literals(
+        request_intent.get("constraints"),
+        provenance_sources=frozenset({"CONFIRMATION_RESPONSE"}),
+    )
+    if len(confirmation_literals) != 1:
+        return None
+    routes = business_required_source_routes(frozen_routes)
+    if len(routes) != 1:
+        return None
+    route = routes[0]
+    route_id = route["route_id"]
+    if (validated_resource_refs or {}).get(route_id):
+        return None
+    policy = route_policies.get(route_id)
+    if (
+        policy is None
+        or "KEYWORD" not in policy.supported_kinds
+        or not policy.required_kinds.issubset({"CONTAINER_REF"})
+        or route_operation_tool_id(route, "SEARCH") is None
+    ):
+        return None
+    constraints: list[dict[str, object]] = [
+        {
+            "kind": "KEYWORD",
+            "terms": [confirmation_literals[0]],
+            "match_mode": "PHRASE",
+        }
+    ]
+    if "CONTAINER_REF" in policy.required_kinds:
+        container_refs = list(
+            dict.fromkeys((validated_container_refs or {}).get(route_id, ()))
+        )
+        if not container_refs:
+            return None
+        constraints.append(
+            {"kind": "CONTAINER_REF", "container_refs": container_refs}
+        )
+    return cast(
+        RetrievalQueryPlanV2,
+        {
+            "schema_version": 2,
+            "route_queries": [
+                {
+                    "route_id": route_id,
+                    "operation": "SEARCH",
+                    "reason_codes": ["CONFIRMED_TARGET_DISCOVERY"],
+                    "search_spec": {"mode": "INITIAL", "constraints": constraints},
+                    "detail_candidate_ref": None,
+                }
+            ],
+        },
+    )
 
 
 def _exact_gmail_draft_source_plan(
@@ -293,7 +395,7 @@ def _exact_gmail_draft_source_plan(
     effects = _string_collection(request_intent.get("requested_effect_hints"))
     if "UPDATE" not in effects or not effects.issubset({"READ", "UPDATE"}):
         return None
-    lookup_literal = _one_user_bound_search_literal(request_intent.get("constraints"))
+    lookup_literal = _one_current_run_search_literal(request_intent.get("constraints"))
     policy = route_policies.get(route["route_id"])
     if (
         lookup_literal is None
@@ -322,27 +424,12 @@ def _exact_gmail_draft_source_plan(
     }
 
 
-def _one_user_bound_search_literal(value: object) -> str | None:
-    if not isinstance(value, list):
-        return None
-    literals: list[str] = []
-    for constraint in value:
-        if (
-            not isinstance(constraint, Mapping)
-            or constraint.get("kind") != "USER_REQUIREMENT"
-            or constraint.get("field") != "search_terms"
-        ):
-            continue
-        provenance = constraint.get("provenance")
-        if not isinstance(provenance, Mapping) or provenance.get("source") != "USER_REQUEST":
-            continue
-        raw = constraint.get("value")
-        terms = raw if isinstance(raw, list) else [raw]
-        if not all(isinstance(term, str) and term.strip() for term in terms):
-            return None
-        literals.extend(term.strip() for term in cast(list[str], terms))
-    unique = tuple(dict.fromkeys(literals))
-    return unique[0] if len(unique) == 1 else None
+def _one_current_run_search_literal(value: object) -> str | None:
+    literals = _trusted_search_literals(
+        value,
+        provenance_sources=frozenset({"USER_REQUEST", "CONFIRMATION_RESPONSE"}),
+    )
+    return literals[0] if len(literals) == 1 else None
 
 
 def _exact_task_calendar_source_plan(
@@ -427,6 +514,14 @@ def deterministic_query_plan(
 ) -> RetrievalQueryPlanV2 | None:
     """Project deterministic initial and evidence-expanding continuations."""
 
+    candidate_detail = plan_candidate_detail(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        detail_candidate_refs=detail_candidate_refs,
+        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
+    )
+    if candidate_detail is not None and _candidate_detail_precedes_expansion(prompt_input):
+        return candidate_detail
     followup = plan_query_expansion(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
@@ -435,12 +530,6 @@ def deterministic_query_plan(
     )
     if followup is not None:
         return followup
-    candidate_detail = plan_candidate_detail(
-        prompt_input=prompt_input,
-        frozen_routes=frozen_routes,
-        detail_candidate_refs=detail_candidate_refs,
-        attempted_detail_candidate_refs=attempted_detail_candidate_refs,
-    )
     if candidate_detail is not None:
         return candidate_detail
     return deterministic_initial_query_plan(
@@ -450,6 +539,28 @@ def deterministic_query_plan(
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         timezone=timezone,
+    )
+
+
+def _candidate_detail_precedes_expansion(prompt_input: Mapping[str, object]) -> bool:
+    request_intent = prompt_input.get("request_intent")
+    if not isinstance(request_intent, Mapping):
+        return False
+    constraints = request_intent.get("constraints")
+    if isinstance(constraints, list) and any(
+        isinstance(constraint, Mapping)
+        and constraint.get("kind") == "SCOPE"
+        and constraint.get("field") == "coverage_requirement"
+        and constraint.get("value") == "EXHAUSTIVE"
+        for constraint in constraints
+    ):
+        return False
+    issues = prompt_input.get("unresolved_sufficiency_issues")
+    return isinstance(issues, list) and any(
+        isinstance(issue, Mapping)
+        and issue.get("required") is True
+        and "CANDIDATE_DETAIL_REQUIRED" in _string_collection(issue.get("reason_codes"))
+        for issue in issues
     )
 
 

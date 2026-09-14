@@ -13,6 +13,7 @@ from google_work_agent.application.agents.project_run_reference_time import (
     project_run_reference_time,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    AmbiguityV1,
     ConstraintProvenanceSource,
     RequestGoalCandidateV1,
     ResourceResponsibilitiesV1,
@@ -45,7 +46,11 @@ from google_work_agent.ports.system.contracts.confirmation import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import WorkflowStartRequest
 
-from .contracts.output_responsibility_decision import OutputResponsibilityCandidateV1
+from .contracts.output_responsibility_decision import (
+    OutputResponsibilityCandidateV1,
+    OutputResponsibilityDecisionCandidateV2,
+    OutputResponsibilityDecisionV2,
+)
 from .contracts.request_goal_candidate_schema import (
     IDENTIFY_GOAL_OUTPUT_SCHEMA,
     RequestGoalSemanticValidationError,
@@ -188,6 +193,8 @@ def identify_goal_with_budget(
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
+    prior_goal_candidate: RequestGoalCandidateV1 | None = None,
+    prior_ambiguity_candidate: AmbiguityV1 | None = None,
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Identify the goal with one bounded semantic contract revision."""
 
@@ -219,6 +226,24 @@ def identify_goal_with_budget(
         confirmation_response=confirmation_response,
         request_reconsideration=request_reconsideration,
     )
+    if (
+        confirmation_response is not None
+        and prior_goal_candidate is not None
+        and request_reconsideration is None
+    ):
+        return _resolve_confirmed_goal(
+            llm_runtime=llm_runtime,
+            request=request,
+            retry_budget=retry_budget,
+            prompt_ref=resolved_prompt_ref,
+            source_dependency_prompt_ref=resolved_source_dependency_prompt_ref,
+            prompt_input=prompt_input,
+            confirmation_response=confirmation_response,
+            prior_goal_candidate=prior_goal_candidate,
+            prior_ambiguity_candidate=prior_ambiguity_candidate,
+            source_dependency_candidates=source_dependency_candidates,
+            output_responsibility_candidates=output_responsibility_candidates,
+        )
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(
             request.requested_mode,
@@ -387,6 +412,243 @@ def identify_goal_with_budget(
             )
             retry_budget = decision["run_budget"]
         return candidate, merge_provider_dispatch_usage(retry_budget)
+
+
+def _resolve_confirmed_goal(
+    *,
+    llm_runtime: StructuredInferencePort,
+    request: WorkflowStartRequest,
+    retry_budget: RunBudgetV2,
+    prompt_ref: PromptReference,
+    source_dependency_prompt_ref: PromptReference,
+    prompt_input: Mapping[str, object],
+    confirmation_response: ConfirmationResponseProjectionV1,
+    prior_goal_candidate: RequestGoalCandidateV1,
+    prior_ambiguity_candidate: AmbiguityV1 | None,
+    source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
+    output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
+) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
+    """Resolve only source-bound facts supplied by one confirmation response."""
+
+    responsibilities = prior_goal_candidate.get("resource_responsibilities")
+    if responsibilities is None:
+        raise ValueError("confirmation resume requires prior resource responsibilities")
+    confirmation_text = _confirmation_response_text(confirmation_response)
+    target_resource_confirmation_requested = (
+        confirmation_text is not None
+        and prior_ambiguity_candidate is not None
+        and "target_resource" in prior_ambiguity_candidate["missing_fields"]
+    )
+    if target_resource_confirmation_requested:
+        assert confirmation_text is not None
+        candidate = prior_goal_candidate
+        if not request.selected_resources:
+            candidate = _bind_target_resource_confirmation(
+                candidate,
+                confirmation_text=confirmation_text,
+            )
+        if request.selected_resources or responsibilities["source_reads"]:
+            return validate_normalized_request_goal_candidate(candidate), retry_budget
+        with provider_dispatch_budget_scope(retry_budget):
+            source_decisions = identify_source_dependencies(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=source_dependency_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=_confirmed_source_goal(candidate),
+                source_candidates=source_dependency_candidates,
+                require_at_least_one_source=True,
+            )
+            responsibilities = merge_resource_responsibilities(
+                source_decisions=source_decisions,
+                output_decisions=_project_preserved_output_decisions(
+                    prior_goal_candidate,
+                    output_candidates=output_responsibility_candidates,
+                ),
+                source_candidates=source_dependency_candidates,
+                output_candidates=output_responsibility_candidates,
+                request_text=request.request_text,
+            )
+            candidate = _with_derived_resource_responsibilities(
+                candidate,
+                responsibilities=responsibilities,
+            )
+            retry_budget = merge_provider_dispatch_usage(retry_budget)
+        return validate_normalized_request_goal_candidate(candidate), retry_budget
+    with provider_dispatch_budget_scope(retry_budget):
+        result = llm_runtime.infer(
+            request.requested_mode,
+            prompt_ref,
+            prompt_input,
+            IDENTIFY_GOAL_OUTPUT_SCHEMA,
+        )
+        resolved = _validated_candidate(
+            result.structured_output,
+            resource_responsibilities=responsibilities,
+            source_statuses=_project_preserved_source_statuses(prior_goal_candidate),
+            request=request,
+            confirmation_response=confirmation_response,
+        )
+        candidate = _merge_confirmation_constraints(
+            prior_goal_candidate,
+            resolved,
+            confirmation_text=confirmation_text,
+        )
+        retry_budget = merge_provider_dispatch_usage(retry_budget)
+    return validate_normalized_request_goal_candidate(candidate), retry_budget
+
+
+def _project_preserved_source_statuses(
+    candidate: RequestGoalCandidateV1,
+) -> dict[str, object]:
+    statuses: list[dict[str, object]] = []
+    for constraint in candidate["constraints"]:
+        if not (
+            constraint.get("kind") == "SCOPE"
+            and constraint.get("field") == "status"
+        ):
+            continue
+        provenance = constraint.get("provenance")
+        resource_type = constraint.get("source_resource_type")
+        source_text = provenance.get("source_text") if isinstance(provenance, Mapping) else None
+        source = provenance.get("source") if isinstance(provenance, Mapping) else None
+        if not all(
+            isinstance(value, str) and value
+            for value in (resource_type, source_text, source)
+        ):
+            raise ValueError("preserved source status has no current-Run provenance")
+        statuses.append(
+            {
+                "value": constraint["value"],
+                "source_resource_type": resource_type,
+                "source": source,
+                "source_text": source_text,
+            }
+        )
+    return {"statuses": statuses}
+
+
+def _merge_confirmation_constraints(
+    prior: RequestGoalCandidateV1,
+    resolved: RequestGoalCandidateV1,
+    *,
+    confirmation_text: str | None,
+) -> RequestGoalCandidateV1:
+    if not confirmation_text:
+        return prior
+    constraints = list(prior["constraints"])
+    identities = {
+        (item["kind"], item["field"], repr(item["value"])) for item in constraints
+    }
+    for constraint in resolved["constraints"]:
+        if constraint.get("field") == "status":
+            continue
+        values = (
+            constraint["value"]
+            if isinstance(constraint["value"], list)
+            else [constraint["value"]]
+        )
+        bound_values = [
+            value
+            for value in values
+            if isinstance(value, str) and value and value in confirmation_text
+        ]
+        if not bound_values:
+            continue
+        value: str | list[str] = (
+            bound_values[0] if isinstance(constraint["value"], str) else bound_values
+        )
+        identity = (constraint["kind"], constraint["field"], repr(value))
+        if identity in identities:
+            continue
+        identities.add(identity)
+        constraints.append({**constraint, "value": value})
+    return {**prior, "constraints": constraints}
+
+
+def _bind_target_resource_confirmation(
+    prior: RequestGoalCandidateV1,
+    *,
+    confirmation_text: str,
+) -> RequestGoalCandidateV1:
+    return {
+        **prior,
+        "constraints": [
+            *prior["constraints"],
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": confirmation_text,
+                "provenance": {
+                    "source": "CONFIRMATION_RESPONSE",
+                    "start_offset": 0,
+                    "end_offset": len(confirmation_text),
+                    "source_text": confirmation_text,
+                },
+            },
+        ],
+    }
+
+
+def _confirmed_source_goal(candidate: RequestGoalCandidateV1) -> dict[str, object]:
+    return {
+        "goal": candidate["goal"],
+        "completion_conditions": list(candidate["completion_conditions"]),
+        "constraints": [dict(item) for item in candidate["constraints"]],
+        "analysis_requirement": candidate["analysis_requirement"],
+    }
+
+
+def _project_preserved_output_decisions(
+    candidate: RequestGoalCandidateV1,
+    *,
+    output_candidates: tuple[OutputResponsibilityCandidateV1, ...],
+) -> OutputResponsibilityDecisionCandidateV2:
+    allowed_effects = {
+        item["resource_type"]: set(item["allowed_output_effects"])
+        for item in output_candidates
+    }
+    decisions: list[OutputResponsibilityDecisionV2] = []
+    for output in candidate["resource_responsibilities"]["outputs"]:
+        if output["effect"] not in allowed_effects.get(output["resource_type"], set()):
+            raise ValueError("preserved output responsibility is absent from current candidates")
+        decisions.append(
+            {
+                "resource_type": output["resource_type"],
+                "effect": output["effect"],
+            }
+        )
+    return {"output_responsibilities": decisions}
+
+
+def _with_derived_resource_responsibilities(
+    candidate: RequestGoalCandidateV1,
+    *,
+    responsibilities: ResourceResponsibilitiesV1,
+) -> RequestGoalCandidateV1:
+    effects, resource_hints, source_information = derive_requested_resource_fields(
+        responsibilities
+    )
+    constraints = [
+        constraint
+        for constraint in candidate["constraints"]
+        if constraint["field"] != "required_information"
+    ]
+    if source_information:
+        constraints.append(
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": source_information,
+            }
+        )
+    return {
+        **candidate,
+        "constraints": constraints,
+        "requested_effect_hints": effects,
+        "requested_resource_hints": resource_hints,
+        "resource_responsibilities": responsibilities,
+    }
 
 
 def _prompt_input(

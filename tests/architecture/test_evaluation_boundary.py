@@ -7,6 +7,13 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 EVALUATION = ROOT / "evaluation"
 PRODUCT_ROOTS = (ROOT / "src" / "google_work_agent", ROOT / "launcher")
+SHADOW_EVALUATION_RESULT_ROOTS = (
+    ROOT / ".runtime" / "reports",
+    ROOT / ".runtime" / "results",
+    ROOT / "runtime" / "reports",
+    ROOT / "runtime" / "results",
+    ROOT / "evaluation" / "reports",
+)
 
 EXPECTED_EVALUATION_CODE = {
     "evaluation/__init__.py",
@@ -14,6 +21,7 @@ EXPECTED_EVALUATION_CODE = {
     "evaluation/export_materials.py",
     "evaluation/prompt_candidate.py",
     "evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py",
+    "evaluation/tests/test_canonical_dataset.py",
     "evaluation/tests/test_workspace_tools.py",
 }
 
@@ -26,9 +34,6 @@ RETIRED_EVALUATION_AUTHORITIES = {
     "evaluation/experiment_plan.py",
     "evaluation/run_experiment.py",
     "evaluation/compare_experiment_results.py",
-    "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
-    "evaluation/datasets/e2e/product_episodes_v1.jsonl",
-    "evaluation/datasets/agent/node_evaluation_items_v1.jsonl",
     "evaluation/scoring-contract-v1.1.json",
     "evaluation/configs/experiments/prompt-baseline-smoke.template.json",
     "evaluation/configs/experiments/prompt-mcp-research-smoke.template.json",
@@ -88,16 +93,19 @@ def test_evaluation_assets_are__repository_only_and_results__are_local_by_defaul
         "evaluation/README.md",
         "evaluation/check_workspace.py",
         "evaluation/export_materials.py",
-        "evaluation/datasets/atlas-출고준비.md",
-        "evaluation/datasets/github-결제재시도.md",
-        "evaluation/checks/실행안전.md",
+        "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+        "evaluation/datasets/e2e/dataset-manifest-v8.json",
+        "evaluation/datasets/e2e/fixtures/google_workspace/provider-snapshot-v8.json",
         "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.json",
         "evaluation/prompt_candidates/planning-review-sllm-decomposition-v0.9.2/"
         "prompt-manifest-v0.9.2-candidate.json",
-        "evaluation/실행기록.md",
     }
     assert required <= tracked
     assert RETIRED_EVALUATION_AUTHORITIES.isdisjoint(tracked)
+
+
+def test_evaluation_results__have_no_shadow_output_root() -> None:
+    assert not any(path.exists() for path in SHADOW_EVALUATION_RESULT_ROOTS)
 
 
 def test_evaluation_assets__do_not_reference__retired_json_authorities() -> None:

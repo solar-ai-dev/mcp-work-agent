@@ -481,7 +481,19 @@ def test_selected_calendar_event__materializes_detail_fetch__without_search_cont
         prompt_ref=prompt_ref,
         revision_prompt_ref=prompt_ref,
         output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
-        prompt_input={"request_intent": {}, "input_routes": frozen_routes},
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "confirmed target label",
+                        "provenance": {"source": "CONFIRMATION_RESPONSE"},
+                    }
+                ]
+            },
+            "input_routes": frozen_routes,
+        },
         requested_mode="LOCAL_GPU",
         frozen_routes=cast(list[InputToolRouteV1], frozen_routes),
         route_policies={
@@ -858,7 +870,15 @@ def test_followup_with_ranked_candidate__materializes_detail_fetch__without_llm(
     ]
 
 
-def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_first() -> None:
+@pytest.mark.parametrize(
+    ("coverage_requirement", "expected_operation"),
+    [(None, "DETAIL_FETCH"), ("EXHAUSTIVE", "NEXT_PAGE")],
+    ids=["normal-fact-detail-first", "exhaustive-page-first"],
+)
+def test_plan_query__page_and_detail_candidate__uses_coverage_aware_priority(
+    coverage_requirement: str | None,
+    expected_operation: Literal["DETAIL_FETCH", "NEXT_PAGE"],
+) -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     route = cast(
         InputToolRouteV1,
@@ -910,8 +930,30 @@ def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_firs
         revision_prompt_ref=_retrieval_prompt_ref(),
         output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
         prompt_input={
+            "request_intent": cast(
+                RequestIntentV2,
+                {
+                    "constraints": (
+                        []
+                        if coverage_requirement is None
+                        else [
+                            {
+                                "kind": "SCOPE",
+                                "field": "coverage_requirement",
+                                "value": coverage_requirement,
+                            }
+                        ]
+                    ),
+                },
+            ),
             "current_round_no": 1,
             "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "route-1",
+                    "reason_codes": ["CANDIDATE_DETAIL_REQUIRED"],
+                },
                 {
                     "required": True,
                     "resolution_source": "GOOGLE",
@@ -935,9 +977,102 @@ def test_plan_query__with_unread_page_and_detail_candidate__reads_next_page_firs
     assert result["route_queries"] == [
         {
             "route_id": "route-1",
-            "operation": "NEXT_PAGE",
-            "reason_codes": ["UNREAD_PAGE_AVAILABLE"],
+            "operation": expected_operation,
+            "reason_codes": [
+                "CANDIDATE_DETAIL_REQUIRED"
+                if expected_operation == "DETAIL_FETCH"
+                else "UNREAD_PAGE_AVAILABLE"
+            ],
             "search_spec": None,
+            "detail_candidate_ref": (
+                "gmail_thread:candidate" if expected_operation == "DETAIL_FETCH" else None
+            ),
+        }
+    ]
+
+
+def test_confirmed_target__preserves_phrase_anchor_and_required_container() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[])
+    frozen_routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "event-search",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "calendar-discovery",
+                "resource_type": "CALENDAR",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_calendars"],
+                "required": True,
+                "reason_codes": ["RETRIEVAL_CALENDAR_DISCOVERY"],
+            },
+        ],
+    )
+    policies = {
+        "event-search": RouteConstraintPolicy(
+            frozenset({"KEYWORD", "CONTAINER_REF"}),
+            frozenset({"CONTAINER_REF"}),
+        ),
+        "calendar-discovery": RouteConstraintPolicy(frozenset({"CONTAINER_REF"})),
+    }
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "confirmed target label",
+                        "provenance": {
+                            "source": "CONFIRMATION_RESPONSE",
+                            "start_offset": 0,
+                            "end_offset": 22,
+                            "source_text": "confirmed target label",
+                        },
+                    }
+                ]
+            },
+            "input_routes": frozen_routes,
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=frozen_routes,
+        route_policies=policies,
+        retry_budget=build_default_run_budget(),
+        validated_container_refs={"event-search": ["calendar:authorized"]},
+    )
+
+    assert llm_invoked is False
+    assert runtime.calls == []
+    assert result["route_queries"] == [
+        {
+            "route_id": "event-search",
+            "operation": "SEARCH",
+            "reason_codes": ["CONFIRMED_TARGET_DISCOVERY"],
+            "search_spec": {
+                "mode": "INITIAL",
+                "constraints": [
+                    {
+                        "kind": "KEYWORD",
+                        "terms": ["confirmed target label"],
+                        "match_mode": "PHRASE",
+                    },
+                    {
+                        "kind": "CONTAINER_REF",
+                        "container_refs": ["calendar:authorized"],
+                    },
+                ],
+            },
             "detail_candidate_ref": None,
         }
     ]

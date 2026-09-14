@@ -112,6 +112,7 @@ Canonical은 기존 구조 위에 추가되는 새 계층이 아니다.
 * production source 문자열이나 private method 내부 구현을 직접 검사하는 테스트는 피한다.
 * 테스트 파일끼리 private helper를 import하지 않는다. 반복되는 fixture/fake는 `tests/support` 또는 `tests/fakes`로 이동한다.
 * 구조 Gate는 위 Architecture / Ownership의 금지 의존성, 중복 production authority, 외부 I/O 중 SQLite write transaction 유지가 모두 0임을 검증한다.
+* 실험·Smoke·진단의 사람이 읽는 보고서, summary/comparison JSON, safe trace projection, 전달용 ZIP은 모두 `evaluation/results/<주제>-<YYYYMMDD>/`와 그 바로 옆 ZIP에 둔다. `.runtime`과 `runtime`은 DB·checkpoint·replay·로그 같은 실행 상태만 소유하며 그 아래 `reports`/`results` 폴더를 만들지 않는다.
 
 ## Completion
 

@@ -86,7 +86,7 @@ def test_answer_only__reaches_terminal_through__real_production_composition(
         "planning.outline_answer",
         "planning.compose_answer",
     }.issubset(invoked)
-    assert "request_understanding.detect_ambiguity" not in invoked
+    assert "request_understanding.detect_ambiguity" in invoked
     assert not any(prompt_id.startswith("tool_routing.") for prompt_id in invoked)
     assert not any(prompt_id.startswith("retrieval.") for prompt_id in invoked)
     assert not any(prompt_id.startswith("work_analysis.") for prompt_id in invoked)

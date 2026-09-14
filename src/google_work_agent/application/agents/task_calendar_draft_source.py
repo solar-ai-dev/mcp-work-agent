@@ -82,6 +82,9 @@ def project_task_calendar_source_terms(value: object) -> TaskCalendarSourceTerms
             task_specific.append((position, _TASK_SUFFIX.sub("", literal).strip() or literal))
         elif "@" not in literal:
             unqualified.append((position, literal))
+    recovered = _project_source_bound_business_terms(value)
+    if recovered is not None and not task_specific:
+        return recovered
     project_term = next((value for _, value in sorted(unqualified)), None)
     task_values = [value for _, value in sorted(task_specific)]
     calendar_values = [value for _, value in sorted(calendar_specific)]
@@ -97,6 +100,53 @@ def project_task_calendar_source_terms(value: object) -> TaskCalendarSourceTerms
         "calendar_provider_terms": calendar_provider_terms,
         "calendar_evidence_terms": calendar_evidence_terms,
     }
+
+
+def _project_source_bound_business_terms(
+    constraints: Sequence[object],
+) -> TaskCalendarSourceTerms | None:
+    source_texts = [
+        text
+        for constraint in constraints
+        if isinstance(constraint, Mapping)
+        and constraint.get("kind") == "USER_REQUIREMENT"
+        and constraint.get("field") == "original_search_request"
+        for text in _strings(constraint.get("value"))
+    ]
+    if not source_texts:
+        return None
+    task_terms: list[str] = []
+    calendar_terms: list[str] = []
+    for constraint in constraints:
+        if not (
+            isinstance(constraint, Mapping)
+            and constraint.get("kind") == "USER_REQUIREMENT"
+            and constraint.get("field") == "business_concepts"
+        ):
+            continue
+        for concept in _strings(constraint.get("value")):
+            if _CALENDAR_NOUN.search(concept):
+                term = _CALENDAR_SUFFIX.sub("", concept).strip()
+                if term and any(term in source_text for source_text in source_texts):
+                    calendar_terms.append(term)
+            elif _TASK_NOUN.search(concept):
+                term = _TASK_SUFFIX.sub("", concept).strip()
+                if term and any(term in source_text for source_text in source_texts):
+                    task_terms.append(term)
+    task_terms = _unique(task_terms)
+    calendar_terms = _unique(calendar_terms)
+    if not task_terms or not calendar_terms:
+        return None
+    return {
+        "task_terms": task_terms,
+        "calendar_provider_terms": calendar_terms,
+        "calendar_evidence_terms": _unique([*task_terms, *calendar_terms]),
+    }
+
+
+def _strings(value: object) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    return [item.strip() for item in values if isinstance(item, str) and item.strip()]
 
 
 def project_draft_recipients(request_intent: Mapping[str, object]) -> list[str]:

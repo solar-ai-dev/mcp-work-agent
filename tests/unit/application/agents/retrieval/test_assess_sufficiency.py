@@ -894,8 +894,144 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
     assert "NO_SELECTED_EVIDENCE_SUPPORTS_REQUESTED_FACT" in reasons
 
 
-def test_assess_sufficiency__with_complete_scope_discovery__accepts_empty_business_evidence(
+@pytest.mark.parametrize(
+    "direct_resource,dependency_resources,source,direct_handle,dependency_handles",
+    [
+        (
+            "CALENDAR_EVENT",
+            ("CALENDAR",),
+            "CALENDAR",
+            "calendar_event:event-1",
+            ("calendar:primary",),
+        ),
+        ("TASK", ("TASK_LIST",), "TASKS", "task:task-1", ("task_list:list-1",)),
+        ("TASK_LIST", ("TASK",), "TASKS", "task_list:list-1", ("task:task-1",)),
+        (
+            "GMAIL_MESSAGE",
+            ("GMAIL_THREAD",),
+            "GMAIL",
+            "gmail_message:message-1",
+            ("gmail_thread:thread-1",),
+        ),
+        (
+            "CALENDAR_FREEBUSY",
+            ("CALENDAR", "CALENDAR_EVENT"),
+            "CALENDAR",
+            "calendar_freebusy:freebusy-1",
+            ("calendar:primary", "calendar_event:event-1"),
+        ),
+    ],
+)
+@pytest.mark.parametrize("dependency_executed", [False, True])
+def test_assess_sufficiency__dependency_is_not_business_completeness(
+    direct_resource: str,
+    dependency_resources: tuple[str, ...],
+    source: str,
+    direct_handle: str,
+    dependency_handles: tuple[str, ...],
+    dependency_executed: bool,
 ) -> None:
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    intent = request_intent()
+    intent["constraints"] = []
+    intent["requested_resource_hints"] = [direct_resource]
+    intent["resource_responsibilities"] = {
+        "source_reads": [
+            {"resource_type": direct_resource, "required_information": ["identity", "fact"]}
+        ],
+        "outputs": [],
+    }
+    dependency_reasons = {
+        "CALENDAR": "RETRIEVAL_CALENDAR_DISCOVERY",
+        "CALENDAR_EVENT": "RETRIEVAL_CALENDAR_EVENT_DISCOVERY",
+        "TASK_LIST": "RETRIEVAL_TASK_LIST_DISCOVERY",
+        "TASK": "RETRIEVAL_TASK_DETAIL",
+        "GMAIL_THREAD": "RETRIEVAL_GMAIL_DISCOVERY",
+    }
+    route_plan = tool_route_plan(
+        [
+            {
+                "route_id": "direct-route",
+                "resource_type": direct_resource,
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["direct_read"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            *[
+                {
+                    "route_id": f"dependency-route-{index}",
+                    "resource_type": dependency_resource,
+                    "connector_id": "google_workspace",
+                    "allowed_read_tool_ids": ["dependency_read"],
+                    "required": True,
+                    "reason_codes": [dependency_reasons[dependency_resource]],
+                }
+                for index, dependency_resource in enumerate(dependency_resources)
+            ],
+        ]
+    )
+    acquisition = acquisition_result()
+    acquisition["resource_handles"] = [direct_handle]
+    acquisition["source_summaries"] = [
+        {
+            "route_id": "direct-route",
+            "source": source,
+            "status": "COMPLETE",
+            "required": True,
+            "resource_count": 1,
+            "resource_handles": [direct_handle],
+            "resources": [],
+        }
+    ]
+    if dependency_executed:
+        acquisition["resource_handles"].extend(dependency_handles)
+        acquisition["source_summaries"].extend(
+            {
+                "route_id": f"dependency-route-{index}",
+                "source": source,
+                "status": "COMPLETE",
+                "required": True,
+                "resource_count": 1,
+                "resource_handles": [dependency_handle],
+                "resources": [],
+            }
+            for index, dependency_handle in enumerate(dependency_handles)
+        )
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition,
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "direct-evidence",
+                "resource_handle": direct_handle,
+                "segment_id": "direct-segment",
+                "kind": "excerpt",
+                "excerpt": "retrieved business fact",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        retry_budget=run_budget(used=0),
+    )
+
+    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
+    assert len(runtime.calls) == 1
+    source_statuses = cast(dict[str, object], runtime.calls[0]["prompt_input"])[
+        "source_statuses"
+    ]
+    assert [item["route_id"] for item in cast(list[dict[str, object]], source_statuses)] == [
+        "direct-route"
+    ]
+
+
+def test_assess_sufficiency__incomplete_direct_calendar_event_remains_required() -> None:
     runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
     intent = request_intent()
     intent["constraints"] = []
@@ -927,17 +1063,8 @@ def test_assess_sufficiency__with_complete_scope_discovery__accepts_empty_busine
         ]
     )
     acquisition = acquisition_result()
-    acquisition["resource_handles"] = ["calendar_event:event-1", "calendar:primary"]
+    acquisition["resource_handles"] = ["calendar:primary"]
     acquisition["source_summaries"] = [
-        {
-            "route_id": "event-route",
-            "source": "CALENDAR",
-            "status": "COMPLETE",
-            "required": True,
-            "resource_count": 1,
-            "resource_handles": ["calendar_event:event-1"],
-            "resources": [],
-        },
         {
             "route_id": "calendar-discovery",
             "source": "CALENDAR",
@@ -946,7 +1073,7 @@ def test_assess_sufficiency__with_complete_scope_discovery__accepts_empty_busine
             "resource_count": 1,
             "resource_handles": ["calendar:primary"],
             "resources": [],
-        },
+        }
     ]
 
     result = assess_sufficiency(
@@ -956,23 +1083,16 @@ def test_assess_sufficiency__with_complete_scope_discovery__accepts_empty_busine
         request_intent=intent,
         tool_route_plan=route_plan,
         acquisition_result=acquisition,
-        evidence_drafts=[
-            {
-                "schema_version": 1,
-                "evidence_id": "event-evidence",
-                "resource_handle": "calendar_event:event-1",
-                "segment_id": "event-segment",
-                "kind": "excerpt",
-                "excerpt": "Orion 제작사 일정 8월 13일",
-                "locator": {},
-                "reason_codes": ["SUPPORTS"],
-            }
-        ],
+        evidence_drafts=[],
         retry_budget=run_budget(used=0),
     )
 
-    assert result == {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
-    assert len(runtime.calls) == 1
+    assert result["status"] != "SUFFICIENT"
+    assert "REQUIRED_SOURCE_NOT_ATTEMPTED" in {
+        reason_code
+        for issue in result["issues"]
+        for reason_code in issue["reason_codes"]
+    }
 
 
 @pytest.mark.parametrize("failed", [False, True])

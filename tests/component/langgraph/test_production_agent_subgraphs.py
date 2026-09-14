@@ -295,12 +295,9 @@ class _ComponentInferencePort:
                     "missing_fields": ["event_identity"],
                 }
             if self.searchable_target:
-                first_attempt = self.calls.count(prompt_id) == 1
                 return {
-                    "missing_information_owner": "USER" if first_attempt else "CONNECTOR",
-                    "missing_fields": (
-                        ["target_resource"] if first_attempt else ["shipment criteria and owner"]
-                    ),
+                    "missing_information_owner": "CONNECTOR",
+                    "missing_fields": ["shipment criteria and owner"],
                 }
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
@@ -1093,11 +1090,14 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         "request_understanding.identify_source_dependencies",
         "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
+        "request_understanding.detect_ambiguity",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 
-def test_request_understanding__compiled_searchable_target__normalizes_false_confirmation() -> None:
+def test_request_understanding__compiled_searchable_target__keeps_semantic_connector_owner() -> (
+    None
+):
     llm = _ComponentInferencePort(searchable_target=True)
     graph = RequestUnderstandingSubgraph(
         llm_runtime=llm,
@@ -1602,6 +1602,68 @@ def test_retrieval__compiled_budget_exhaustion__projects_terminal_partial() -> N
         for item in result["retrieval_result"]["missing_information"]
     )
     assert result["__context_query_attempts__"] == []
+
+
+def test_retrieval__third_page__closes_partial_without_fourth_round() -> None:
+    class ThreePageConnector:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def execute_read(
+            self, binding: Any, tool_arguments: dict[str, Any]
+        ) -> ConnectorReadResultV1:
+            del tool_arguments
+            page = self.call_count
+            self.call_count += 1
+            return ConnectorReadResultV1(
+                schema_version=1,
+                tool_id=binding.tool_id,
+                request_id=f"component-three-page-{page}",
+                output={
+                    "items": [
+                        {
+                            "resource_type": "gmail_thread",
+                            "resource_id": f"thread-{page}",
+                            "parent_id": None,
+                            "version": "v1",
+                            "related_resource_ids": [],
+                            "payload": {"subject": f"Status {page}"},
+                        }
+                    ]
+                },
+                next_page_token=f"next-page-{page}",
+                total_count=4,
+            )
+
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    connector = ThreePageConnector()
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(retrieval_needs_more=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=RunScopedEvidenceStore(),
+        connector_reader=connector,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=cast(Any, _confirm_early),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    assert connector.call_count == 3
+    assert result["retrieval_result"]["coverage"] == "PARTIAL"
+    assert result["retrieval_result"]["retrieval_rounds"] == 3
+    assert result["retry_budget"]["additional_retrieval_rounds_used"] == 2
 
 
 def test_retrieval__compiled_budget_stop__halts_remaining_container_fanout() -> None:

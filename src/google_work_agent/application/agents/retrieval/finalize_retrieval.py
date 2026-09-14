@@ -452,6 +452,20 @@ def advance_current_round_no(*, current_round_no: int, is_followup: bool) -> int
     return next_round_no
 
 
+def followup_fits_retrieval_round_budget(
+    *, current_round_no: int, operation_kinds: Iterable[str]
+) -> bool:
+    """Return whether the planned follow-up can run in the bounded round chain."""
+
+    retrieval_round_count(current_round_no=current_round_no)
+    operations = set(operation_kinds)
+    if not operations:
+        return False
+    if operations <= {"DETAIL_FETCH"}:
+        return True
+    return current_round_no + 1 < MAX_RETRIEVAL_ROUNDS
+
+
 def retrieval_round_count(*, current_round_no: int) -> int:
     if current_round_no < 0 or current_round_no >= MAX_RETRIEVAL_ROUNDS:
         raise ValueError("current_round_no is outside the canonical retrieval round range")
