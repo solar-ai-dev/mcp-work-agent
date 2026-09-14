@@ -312,6 +312,16 @@ def _validate_route_materializability(
 ) -> None:
     """Reject semantic plans that the frozen route cannot lower without data loss."""
 
+    if operation == "FREEBUSY" and not any(
+        constraint["kind"] == "TEMPORAL_RANGE" for constraint in constraints
+    ):
+        raise RetrievalV2ValidationError(
+            "FREEBUSY requires a temporal range",
+            affected_field_paths=(
+                "$.route_queries[].search_spec.constraints[?(@.kind=='TEMPORAL_RANGE')]",
+            ),
+        )
+
     if operation != "SEARCH" or resource_type not in {
         "EMAIL",
         "GMAIL_THREAD",

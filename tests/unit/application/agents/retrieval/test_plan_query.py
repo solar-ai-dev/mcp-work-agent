@@ -2368,6 +2368,96 @@ def test_calendar_route__projects_existing__route_constraint_policy() -> None:
     assert projected_routes[0]["required_constraint_kinds"] == []
 
 
+def test_plan_query__freebusy_without_temporal_range__uses_semantic_revision() -> None:
+    missing_temporal = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "calendar-availability",
+                "operation": "FREEBUSY",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["calendar-1"],
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    repaired = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "calendar-availability",
+                "operation": "FREEBUSY",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["calendar-1"],
+                        },
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "AVAILABILITY_WINDOW",
+                            "start_local": "2026-09-15T09:00:00",
+                            "end_local": "2026-09-15T18:00:00",
+                            "timezone": "Asia/Seoul",
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[missing_temporal, repaired])
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "calendar-availability",
+            "resource_type": "CALENDAR_FREEBUSY",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["calendar_query_freebusy"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+
+    result, budget, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": {"constraints": []}, "input_routes": [route]},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={
+            "calendar-availability": RouteConstraintPolicy(
+                frozenset({"CONTAINER_REF", "TEMPORAL_RANGE"}),
+                frozenset({"CONTAINER_REF"}),
+            )
+        },
+        retry_budget=build_default_run_budget(),
+        validated_container_refs={"calendar-availability": ["calendar-1"]},
+    )
+
+    assert llm_invoked is True
+    assert len(runtime.calls) == 2
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+    search_spec = result["route_queries"][0]["search_spec"]
+    assert search_spec is not None
+    assert {constraint["kind"] for constraint in search_spec["constraints"]} == {
+        "CONTAINER_REF",
+        "TEMPORAL_RANGE",
+    }
+
+
 def test_exact_calendar_create_precondition__materializes_all_policy_reads__without_llm() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     prompt_ref = PromptReference(
