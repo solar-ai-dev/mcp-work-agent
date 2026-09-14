@@ -21,6 +21,7 @@ EXPECTED_EVALUATION_CODE = {
     "evaluation/export_materials.py",
     "evaluation/prompt_candidate.py",
     "evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py",
+    "evaluation/tests/test_canonical_dataset.py",
     "evaluation/tests/test_workspace_tools.py",
 }
 
@@ -92,11 +93,9 @@ def test_evaluation_assets_are__repository_only_and_results__are_local_by_defaul
         "evaluation/README.md",
         "evaluation/check_workspace.py",
         "evaluation/export_materials.py",
-        "evaluation/datasets/atlas-출고준비.md",
-        "evaluation/datasets/github-결제재시도.md",
-        "evaluation/datasets/e2e/canonical_cases_v7.jsonl",
-        "evaluation/datasets/e2e/dataset-build-manifest-v1.17.json",
-        "evaluation/checks/실행안전.md",
+        "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+        "evaluation/datasets/e2e/dataset-manifest-v8.json",
+        "evaluation/datasets/e2e/fixtures/google_workspace/provider-snapshot-v8.json",
         "evaluation/prompt_candidates/mcp-tool-use-2026-v1/candidate.json",
         "evaluation/prompt_candidates/planning-review-sllm-decomposition-v0.9.2/"
         "prompt-manifest-v0.9.2-candidate.json",

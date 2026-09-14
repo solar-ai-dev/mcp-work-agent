@@ -1,189 +1,38 @@
-# 실제 업무 자료로 확인하는 LangGraph 실험
+# Canonical 92 평가 자료
 
-**기본 기능 baseline: `deed5275` · `qwen3.5:9b` · Production Smoke 6/6 PASS. 전체 Dataset 항목의 검증 완료를 뜻하지는 않는다.**
+현재 활성 평가 데이터셋과 Gold의 단일 원본은
+[`datasets/e2e/canonical_cases_v8.jsonl`](datasets/e2e/canonical_cases_v8.jsonl)이다.
+92개 Case ID와 분할은 `CORE 60 / STRESS 20 / HOLDOUT 12`로 고정한다.
 
-한 업무 문서에서 자료·질문·확인 기준을 읽고, 실제 제품을 실행한 결과를 간단히 기록한다. 현재 검수용 Gold는 업무 문서가 소유하고, 과거 실험의 정확한 재현·비교에 필요한 machine-readable Dataset과 fixture는 버전·manifest와 함께 보존한다. 두 기준을 같은 점수로 섞지 않는다. 업무 문서 33개에 질문·조작 확인 117개(사용자 질문 115개, 입력 없는 UI 확인 2개)가 있고, 말투 변형 40개(한국어 20·영어 20)는 원본의 20개 질문 계열 아래에 있다. 내부 Prompt 수정 후보 21개는 원본 `prompt_candidates/mcp-tool-use-2026-v1/sources/`에 둔다. 이전 후보·입력 계약·manifest도 원래 경로에 보존한다.
+## 활성 파일
 
-## 구조
+- [`canonical_cases_v8.jsonl`](datasets/e2e/canonical_cases_v8.jsonl) — 사용자 입력, Provider binding, readiness, 의미 Gold
+- [`dataset-manifest-v8.json`](datasets/e2e/dataset-manifest-v8.json) — 버전, hash, 개수, 변경 및 미완료 상태
+- [`provider-snapshot-v8.json`](datasets/e2e/fixtures/google_workspace/provider-snapshot-v8.json) — 독립 재조회한 Google 자료와 실제 Resource ID
 
-- [datasets](datasets/) — 현재 시험 자료·질문별 Gold와 버전 고정 machine-readable Dataset/fixture
-- [checks](checks/) — 안전·검증 기준
-- [experiments](experiments/) — baseline 및 이후 실제 실험 요약
-- [results](results/) — Git history에서 복구한 과거 실행·비교 원시 기록
-- [실행기록.md](실행기록.md) — 과거 실행 누적 기록
-- [tests](tests/) — evaluation tooling 검증
+v8은 확정 산정서의 의미 결정을 적용한 버전이다. 가상 주소를 실제 시험 계정에
+결속하도록 산정서가 지정한 17개 입력만 함께 변경했고, 그 외 사용자 요청과 Case
+identity는 이전 버전에서 유지했다. 이전 Dataset, 별도 Markdown 질문·Gold,
+agent/retrieval/micro/Episode 데이터는 활성 평가 기준이 아니며 Git history로만
+보존한다.
 
-## 세 종류를 분리해서 사용한다
+## 준비 상태
 
-| 구분 | 읽을 곳 | 전달할 곳 |
-| --- | --- | --- |
-| 업무 자료 | 아래 `datasets/*.md`의 「서비스에 등록할 자료」 | 승인된 실제 Google·GitHub 테스트 환경 |
-| 시험용 사용자 질문 | 같은 문서의 「사용자 입력」 | 제품의 정상 요청 경로. 시작 조건의 선택이 있을 때만 실제 Resource 선택 |
-| 내부 Agent Prompt | [Prompt 후보 안내](prompt_candidates/mcp-tool-use-2026-v1/README.md) | 현재 제품 caller·schema와 대조한 뒤 별도로 적용·비교 |
-| 평가자 확인·준비 조건 | 각 질문 아래·문서 상단 | 진행자만 읽음. 메일·Issue·Agent 입력에 넣지 않음 |
+Dataset Gold와 실행 준비 상태는 별도다. 새 시각을 결정해야 하는 46개 Case는
+`PENDING_TEMPORAL_BINDING`이며 임시 날짜를 넣지 않는다. Juniper 검토 Event의
+시간 결속, Room Conflict의 Yuna Calendar owner binding, Delta 교체 뒤 휴지통
+메시지도 노출하는 현재 Product thread read 제한을 미완료 상태 그대로 manifest에
+기록한다. 이 항목을 제외하거나 모델 실패로 바꾸지 않는다.
 
-업무 본문은 코드 블록으로 구분했다. 제목·발신·시간·상태·권한은 등록 준비용 메타정보다. 문서 전체를 하나의 메일/Issue 본문으로 올리면 안 된다. 정답·내부 Prompt·질문 표식을 서비스 자료에 섞지 않는다.
+HOLDOUT 표식은 기존 ID 분류 보존용이며 blind holdout을 뜻하지 않는다. v8은 아직
+모델 평가 전이므로 과거 Dataset 점수나 Production Smoke 결과를 승계하지 않는다.
 
-[실행 안전](checks/실행안전.md)은 승인·거절 10개 흐름과 Stress 20개를 확인할 때, [내부 출력과 비신뢰 입력](checks/내부출력과비신뢰입력.md)은 해당 경계를 점검할 때 사용한다. 그 결과는 일반적인 Live 검색 품질 결과와 구분한다.
+## 평가와 기록 경계
 
-## 업무 상황 목록
+Gold는 제품 Prompt나 Provider 업무 본문에 넣지 않는다. WRITE Case는 Preview와
+승인 대기, 승인 후 실제 Effect, 독립 Provider 재조회를 서로 다른 관측 시점으로
+평가한다. 평가 결과는 `evaluation/results/<주제>-<YYYYMMDD>/`에 두고, DB·checkpoint·
+replay·로그 같은 실행 상태는 runtime 영역에 둔다.
 
-기존 업무 주제를 바탕으로 업무 자료·질문·확인 기준을 개정했다. 이는 원본 Gold의 무손실 변환이 아니며 원본의 모순·누락을 수정한 현재 시험안이다. 원본과 같은 시험 점수로 소급 비교하지 않는다. `CASE-…`, `SQ-…`, `EPV-…`는 과거 항목을 찾을 수 있는 짧은 질문 표식일 뿐, 제품의 Resource ID나 실행 경로가 아니다.
-
-### 기존 Google 업무
-
-| 자료 | 주제 |
-| --- | --- |
-| [Atlas — 출고 준비와 인쇄소 인계](datasets/atlas-출고준비.md) | 질문 19개 |
-| [Boreal — 계약 갱신과 최신 회신](datasets/boreal-계약갱신.md) | 질문 3개 |
-| [Aster·Nova — 같은 이름의 서로 다른 담당자](datasets/aster-nova-동명이인.md) | 질문 1개 |
-| [Delta·Delta Plus — 비슷한 프로젝트의 승인 요청](datasets/delta-포장승인.md) | 질문 2개 |
-| [Echo — 업무 마감과 작업 예정일·가용 시간](datasets/echo-약관검토.md) | 질문 14개 |
-| [Fjord — 선호 시간은 있지만 소요시간은 없는 워크숍](datasets/fjord-워크숍.md) | 질문 2개 |
-| [Grove — 캠페인 결과와 외부 공유](datasets/grove-캠페인.md) | 질문 2개 |
-| [Harbor — 업무 요청에 섞인 지시문](datasets/harbor-보안공지.md) | 질문 3개 |
-| [Ion — 기존 미완료 작업과 중복 요청](datasets/ion-온보딩.md) | 질문 4개 |
-| [Juniper — 부재 일정과 검토 회의](datasets/juniper-일정충돌.md) | 질문 3개 |
-| [Kestrel — 선적 지연과 후속 확인](datasets/kestrel-공급지연.md) | 질문 8개 |
-| [Lumen / Aurora Migration — 이름이 바뀐 데이터 이전](datasets/lumen-이전승인.md) | 질문 2개 |
-| [Quartz — 납품 확인 회신](datasets/quartz-납품회신.md) | 질문 3개 |
-| [Raven — 기존 작업의 완료 처리](datasets/raven-작업완료.md) | 질문 1개 |
-| [Solstice — 출시 문구의 수정된 마감](datasets/solstice-출시준비.md) | 질문 2개 |
-| [Vela — 일반 청구와 청구 이의](datasets/vela-청구이의.md) | 질문 2개 |
-| [Willow — 회의 전 자료 공유](datasets/willow-킥오프.md) | 질문 2개 |
-| [Zenith — 패치 기한과 금지된 요청](datasets/zenith-패치.md) | 질문 2개 |
-| [정리 대상 작업·회의 — 삭제와 참석자 수정](datasets/정리대상-작업과회의.md) | 다른 상황과 함께 쓰는 준비 자료 |
-
-### 원본의 빈 업무 내용을 보강한 상황
-
-| 자료 | 주제 |
-| --- | --- |
-| [Orion — 최신 품질 인증 안내](datasets/orion-품질인증.md) | 질문 2개 |
-| [운영회의 — 불참자와 인수인계](datasets/운영회의-인수인계.md) | 질문 1개 |
-| [외부 감사 — 읽기 전용 캘린더](datasets/외부감사-읽기권한.md) | 질문 1개 |
-| [번역 검수 — 선행 법무 검토](datasets/번역검수-선행작업.md) | 질문 1개 |
-| [회의실 — 같은 방의 겹친 두 회의](datasets/회의실-중복예약.md) | 질문 1개 |
-| [현장 점검 — 취소 뒤 남은 작업](datasets/현장점검-취소후속.md) | 질문 1개 |
-| [배송 지연 — 고객 안내 마감 변경](datasets/배송지연-고객안내.md) | 질문 1개 |
-| [배포 점검 — 보안 확인 뒤 회의와 안내](datasets/배포점검-보안승인.md) | 질문 1개 |
-
-### 모호한 질문·검색 누락·GitHub 보강
-
-| 자료 | 주제 |
-| --- | --- |
-| [오로라 — 현장·연수·동명이인·시간 역할](datasets/오로라-현장과연수.md) | 질문 13개 |
-| [GitHub — 같은 제목·재발·저장소 범위](datasets/github-결제재시도.md) | 질문 6개 |
-| [Google·GitHub — 출시 변경의 교차 근거](datasets/google-github-출시인계.md) | 질문 4개 |
-| [모호한 참조·빈 결과·미확정 사실](datasets/불명확한참조-빈결과-미확정.md) | 질문 7개 |
-| [페이지네이션 — Juniper 단말 교체 메일](datasets/페이지네이션-운영메일.md) | 질문 3개 |
-| [공통 사내 자료](datasets/00-공통사내자료.md) | 다른 상황과 함께 쓰는 준비 자료 |
-
-## 사용할 메일 계정 — 세 주소만
-
-데이터셋의 메일 발신·To/CC/BCC·Reply/Draft/SEND 수신자, 본문 속 연락처, Calendar 참석자·공유 대상과 질문·Gold의 주소는 다음 세 개만 사용한다.
-
-| 계정 | 이 자료의 준비 기준 |
-| --- | --- |
-| `bonggyulim0728@gmail.com` | 기본 제품 연결·조회 계정으로 배치한 기준. 실제 연결 여부는 별도 확인 |
-| `qhdrbdhkdwks@naver.com` | 첫 번째 상대 역할의 실제 Naver 발신·수신 주소와 Calendar 참석·공유 대상 |
-| `qhdrbdhkdwks2@gmail.com` | 두 번째 상대 역할의 실제 발신·수신·Calendar 계정 |
-
-이는 테스트 자료의 배치일 뿐 제품의 기본 계정 설정이나 소유권 선언이 아니다. 계정을 달리 배치해야 하면 이 세 주소 안에서 자료·질문·Gold·실제 발신/수신 관계를 함께 맞춘다. 네 번째 계정, plus-address, 점 변형, 별도 발신 별칭, 임의 외부 주소를 추가하지 않는다. 테스트 주소가 허용됐다는 사실은 개별 WRITE 승인이나 새 권한 부여가 아니다.
-
-가상 인물명·부서는 해당 업무 안의 역할이다. 같은 세 계정을 여러 업무에서 재사용하므로 동일 주소를 서로 다른 독립 인물의 증거로 채점하지 않는다. 사람 식별 검증은 해당 프로젝트·본문의 근거와 실제 서로 다른 발신 주소를 사용한다. 역할이 충돌하는 인물 사례는 분리 준비하고 여러 역할을 전역 Prompt/연락처 사전으로 주입하지 않는다. 이름을 계정 소유자의 실제 신원으로 주장하거나 전역 Google 표시 이름을 일괄 변경하지 않는다.
-
-두 주소는 Gmail이고 한 주소는 Naver이므로 메일의 교차 Provider 송수신 관계를 실제 메타정보로 확인한다. Naver 주소가 Google 계정으로 연결되지 않았다면 Calendar 참석·공유 대상에는 쓸 수 있어도 Calendar 소유자·주최자로 재현했다고 보고하지 않는다. 필요한 경우 controlled/미재현 또는 `PROVISIONING_MISMATCH`로 구분하며 제한 밖 계정을 만들거나 초대하지 않는다. GitHub username/저장소 권한은 이 이메일로 추측하지 않는다.
-
-주소 변경은 실제 Provider 자료의 역할 배치와 함께 맞춘다. 파일 변경만으로 계정 연결·메일 전송·Draft 저장·Calendar 초대·공유·자료 업로드가 검증됐다고 보지 않으며, 각 효과는 Provider에서 별도로 재조회한다. 원본/과거 보존 ZIP에는 이전 주소가 있으므로 현재 등록 자료로 다시 합치지 않는다.
-
-## 실제 서비스에 준비할 때
-
-먼저 사용할 업무 묶음과 테스트 계정·목록·캘린더·저장소를 확정한다. 아래 조건을 충족하지 못한 자료는 준비 오류/미재현으로 기록하며 모델의 검색 실패에 섞지 않는다.
-
-**현재 Live 준비 기준일:** 2026-09-07 Asia/Seoul. 이번 Gmail 자료는 실제 Provider가 부여한 2026-09-07 수신시각을 사용한다. 문서에 적힌 과거 수신시각을 본문 날짜로만 흉내 내지 않는다. MESSAGE_TIME을 조건으로 하는 질문은 실제 수신일과 맞췄다. 본문 속 행사일·마감일과 Calendar/Task 날짜는 해당 업무 사실이므로 수신시각과 구분해 그대로 유지한다.
-
-| 준비 대상 | 확인할 조건 |
-| --- | --- |
-| 실제 역할 | 위 세 주소로 이미 배치한 실제 발신·수신 관계를 사용한다. 같은 질문의 자료·본문·사용자 입력·기대 결과가 일치해야 한다. 두 구분 대상의 주소를 합치지 않으며 재현할 수 없는 발신·권한 관계는 밝힌다. |
-| 수신 메일과 Draft | 수신 메일·발신 메일·임시보관 Draft를 실제로 구분한다. 회신은 실제 Thread 관계도 확인한다. 본문에 적은 날짜·주최자와 Provider가 반환하는 메타정보는 다른 값이다. |
-| 시간 | 현재 사용자 질문의 상대 날짜는 실제 Run 기준시각을 따른다. 원문 안의 상대 표현은 그 원문이 작성된 시점의 의미다. 날짜를 옮길 때 메일 시간·본문·요일·Task/Event·질문·확인 기준을 같이 맞춘다. 절대 날짜의 연도 미기재는 그대로 남긴다. 제품 시계를 몰래 고치거나 실제 과거 수신시각 재현을 주장하지 않는다. |
-| 자료 범위 | 같은 업무의 정답·오답 후보를 함께 둔다. 질문마다 정답만 남기는 숨은 필터를 사용하지 않는다. 독립된 시나리오를 무심코 합쳐 정답을 바꾸지 않는다. 가용 시간은 허용 범위의 다른 업무·개인 busy도 함께 고려한다. |
-| 빈 자료·권한 | 빈 Task List/Calendar가 필요한 경우 실제 빈 목록을 만들어 선택한다. 목록이 없음·미연결·권한 실패를 정상 0건으로 바꾸지 않는다. 읽기 전용 권한과 Settings allowlist 밖 조건은 실제 권한으로 따로 재현한다. |
-| 순서·상태 | 먼저 원래 상태의 조회를 검증하고, 변경 질문 뒤에는 같은 초기 조건의 대상이 맞는지 확인한다. 앞선 생성/수정/삭제/재개 결과를 다음 Run의 정답이나 숨은 기억으로 사용하지 않는다. 반복 준비도 중복 생성과 알림을 확인한다. |
-| 첨부·페이지 | 첨부가 실제로 읽혔는지, 목록에 실제 continuation이 있었는지 확인한다. 본문 요약을 첨부 해석으로, 자료 26건 존재를 pagination 실행 증거로 바꾸지 않는다. |
-
-자료 생성은 승인된 MCP 또는 준비 스크립트로 수행할 수 있지만 **제품 WRITE 성공 증거가 아니다**. 허용된 세 계정 밖으로 메일·초대·공유 요청을 보내지 않는다. 세 계정 안에서도 사전에 승인된 테스트 자료 준비와 제품 WRITE 범위를 지킨다. 업로드·권한 부여·삭제·초기화는 승인된 테스트 대상에 한정하며 이 ZIP은 그 작업을 실행하지 않는다.
-
-등록 뒤 Provider 재조회로 시간·계정·관계·상태를 확인하고, 필요한 실제 ID/URL은 해당 자료 옆에만 적는다. 별도 관계표를 만들지 않는다. `CASE-…` 같은 옛 질문 표식은 탐색용이지 Resource ID/selection_handle이 아니다. 실제 선택형 질문은 제품의 정상 선택 경로를 사용한다. 관리 마커가 검색 범위를 좁혔다면 그 제한을 기록한다.
-
-## 실행과 판정
-
-**현재 코드와 Prompt를 기준 커밋으로 고정 → 준비된 자료에서 질문 실행 → 실패 위치 기록 → 코드/Prompt 개선 → 같은 조건에서 재검증.** 한 측정 묶음 안에서는 실패할 때마다 바로 코드를 바꾸지 않는다. 자료나 질문 자체를 고쳤다면 결과 개선을 코드만의 효과로 주장하지 않는다.
-
-UI·선택·확인은 실제 화면으로 검증한다. 반복 실행은 정상 제품 API를 통해 production LangGraph·실제 Local LLM·실제 Connector를 사용해도 된다. 정답 Intent·Route·Evidence를 주입한 내부 진단은 전체 경로의 성공 증거가 아니다. 9B와 4B를 따로 기록한다.
-
-| 상황 | 판정 원칙 |
-| --- | --- |
-| 정상 준비 + 요청한 결과 충족 | 해당 범위의 성공. 조회·Preview·실제 WRITE 완료를 구분 |
-| 정상 준비인데 오답·필수 근거 누락·불필요한 차단 | 제품 실패. 안전하게 멈췄다는 이유만으로 업무 성공으로 계산하지 않음 |
-| 금지·권한 부족·거절·조건 미충족을 의도적으로 시험 | 그 항목에서 기대한 안전한 무변경을 확인. 정상 생성 성공으로 확대하지 않음 |
-| 계정/데이터/현재 구현 경로가 준비되지 않음 | 준비 오류·차단·미실행을 기록. 성공 분모에서 조용히 제외해 점수를 높이지 않음 |
-| 일부만 확인한 정직한 답변 | 한계를 잘 알린 것과 전체 업무 성공은 별도. 충분한 조건에서의 누락은 실패 |
-
-「초안 써줘」만 있는 질문은 본문 품질을 우선 확인하고 실제 Gmail 저장을 몰래 필수 정답으로 만들지 않는다. 저장·전송을 시험하는 질문은 해당 행동을 명시했다. 실제 WRITE는 Preview/승인값 보존 → 사용자 승인 → 정확한 대상 실행 → 독립 Provider 재조회까지 확인해야 완료다. 자연어 일반 요청을 고정 키워드로 분류하라는 새 제품 규칙은 아니다.
-
-실패는 **요청 의미 / 후보 수집 / 상세·정규화 / Evidence / Sufficiency / 최종 답변**으로 나눠 본다. 필요한 사실·적절한 범위·실제 근거가 기준이다. 컨텍스트 개수, 고정 Query, 모든 Node 방문, 필수 재검색 횟수는 정답이 아니다. Review도 제품의 일부이므로 그 PASS를 독립 평가 대신 사용하지 않는다.
-
-새 실험 요약은 [experiments](experiments/)에 순번이 있는 파일 하나로 남긴다. 복구된 과거 원시 기록은 [results](results/)와 [실행기록.md](실행기록.md)에 동결해 보존하고, 새 임시 trace·JSON·ZIP은 추가로 누적하지 않는다. 코드/Prompt 상세 diff는 Git에 남긴다.
-
-## 자료의 출처와 한계
-
-원본의 기존 27개 업무 주제를 바탕으로 유효한 사실을 유지했다. 본문이 비어 있던 8개 묶음은 새 가상 자료로 보강했다고 각 문서에 표시했다. 오로라는 원본 검색 corpus를 정리한 자료다. Maple·GitHub·교차 Source·운영메일과 Quartz의 저장/수정용 Draft는 새 가상 자료다. 실제 회사 사실이나 원본에 있던 사실로 주장하지 않는다.
-
-CORE 60·옛 HOLDOUT 12·검색 질문 12개의 표식과 Stress 20·사용자 개입 10개의 주제를 보존했지만, 옛 채점 조건의 오류까지 고정하지 않았다. 현재 자료는 검수에 노출된 개발 자료다. 이름이 HOLDOUT이어도 미관측 평가라고 주장하지 않는다. 일반화 확인은 아직 튜닝하지 않은 별도 질문·자료에서 해야 한다.
-
-원본 CSV 2개는 바이트를 보존했고, Orion 텍스트 첨부 2개는 가상 자료다. 원본 결과 49개는 합성 READ 실행 기록이며 새 Live PASS가 아니다. 상세 과거 기록은 실행 기록의 접힌 표와 원본 ZIP에서 확인한다.
-
-## 현재 Gold와 원본의 관계
-
-현재 Markdown 실험에서 평가자가 사용할 기준은 각 질문 바로 아래의 **평가자 확인**이다. 업무 정답, 허용할 효과, 대상, 필요한 사용자 개입, 금지 변경을 함께 읽는다. 보존된 machine-readable Gold는 해당 manifest로 고정한 과거 Dataset 실험에서만 사용하고 Markdown Gold와 묵시적으로 합치지 않는다. 어느 기준도 제품 Prompt나 서비스 자료로 전달하지 않는다.
-
-원본의 질문 표식은 유지했지만 잘못된 기대까지 유지하지는 않았다. READ Action 생성 요구, 제목 차이만으로 중복을 부정하는 기준, 미관측 유사도 점수로 Confirmation을 강제하는 기준, 예정일을 시각 있는 업무 마감으로 취급하는 기준은 현재 요청·자료에 맞게 정리했다. 원본 업무 자료가 비어 있던 경우와 새 자료는 해당 문서에 표시했다.
-
-**계획 확인과 실행 완료를 분리한다.** 「계획·승인 전 확인」 항목은 실제 필요한 조회와 Preview·확인/승인 대기까지 평가한다. 그 시점에 Provider 생성이 없다고 실패시키지 않고, 실행 완료로도 기록하지 않는다. 진행자가 승인 후 실행까지 측정한 경우에만 실제 효과·독립 재조회를 추가 평가한다. 조회·답변 항목은 필요한 답과 근거 및 외부 변경 없음이 기준이다. 거절·금지·장애는 [실행 안전](checks/실행안전.md)의 해당 조건으로 판정한다.
-
-원본 planned-action Gold의 Draft 저장이 단순 본문 제안으로 약해졌던 질문은 저장 요청을 자연어에 명시했다. Event/Task 뒤에 Draft가 의존하는 질문은 선행 결과 확인 전 후행 저장 금지도 함께 확인한다. 반면 「본문만 써줘」를 제품 전체에서 일괄 CREATE로 해석하라는 규칙은 아니다.
-
-말투 변형은 원본의 20개 질문 계열별로 한국어·영어 하나씩 둔다. 개정된 본 질문과 조회 범위·날짜·효과가 같도록 맞췄으며, 내부 Prompt가 출력 언어를 영어로 강제하지 않는다. 표현만 다를 때 같은 업무 결과와 안전 경계를 기대한다.
-
-원본 92개 Case에는 대기 checkpoint와 terminal 판정이 충돌하는 값이 있었다. 현재 기준은 위의 **관측 시점**을 분리하므로, 승인 대기 결과에 과거 BLOCKED 기대를 적용하지 않는다. 원본 Dataset과 fixture는 재현 근거로 보존하되 옛 자동 grader를 현재 Markdown의 채점기로 다시 연결하지 않는다. 현재 Domain 문자열의 적합성은 해당 실제 실행 계약으로 검증하며 이 문서가 새 상태를 만들지 않는다.
-
-원본 micro 변형/CTXREADY/과거 rubric 전부를 이 Markdown과 동일한 시험으로 간주하지 않는다. 필요한 내부 진단의 목적과 한계는 [내부 출력과 비신뢰 입력](checks/내부출력과비신뢰입력.md)에 있다. 과거 exact 입력·Gold·fixture는 `datasets/agent`, `datasets/e2e`, `datasets/retrieval`에 원본 바이트로 보존하며, 여기의 현재 업무 기준과 섞어 점수를 계산하지 않는다. 표식/주제 보존을 모든 원본 assertion의 무손실 변환이라고 주장하지 않는다.
-
-## Prompt 경로와 후보 적용
-
-본문을 수정한 21개 후보는 원본 `prompt_candidates/mcp-tool-use-2026-v1/sources/`에 있다. 경로·파일명·slot ID는 바꾸지 않았다. 이전 `planning-review-sllm-decomposition-v0.9.2`의 Prompt와 입력 계약은 보존하며 그 과거 후보를 새로 활성화하지 않는다. 현재 제품 source를 이 ZIP으로 직접 덮어쓰지 않는다.
-
-`prompt_candidate.py`는 후보 수를 21로 고정하지 않고 선언된 source 수·ID·파일·hash를 검증한다. 기본 materialization은 후보/현재 Product manifest/input-contract의 slot 일치를 요구한다. 명시적 `--keep-extra-product-slots`를 사용하면 현재 제품에만 있는 추가 slot의 **실제 source와 hash가 있을 때만** 그대로 복사해 DRAFT 묶음을 만든다. 새 시간축 Prompt를 발명하거나 제거하지 않으며, manifest와 input-contract가 불일치하면 옵션과 무관하게 거부한다. 모든 binding을 검증한 뒤 임시 출력에 쓰므로 검증 실패가 반쯤 작성된 후보를 남기지 않는다.
-
-추가 slot 보존은 새로운 Prompt의 입출력 의미가 호환된다는 보장이 아니다. 최신 로컬 caller·schema·시간축 Prompt가 이 ZIP에 없으므로 적용 전에 각 후보의 책임과 입력을 대조해야 한다. 서로 다른 schema를 Prompt 지시만으로 맞추거나 version/hash 검증을 해제하지 않는다. 상세 사용법은 [Prompt 안내](prompt_candidates/mcp-tool-use-2026-v1/README.md)에 있다.
-
-## 저장소 적용과 로컬 도구
-
-Markdown 자료와 machine-readable Dataset은 목적이 다르다. Dataset·manifest·fixture는 exact 입력과 과거 계약 보존을 위해 유지하지만, 폐기된 loader/runner/grader를 production authority로 되살리지는 않는다. 새 실행기는 현재 public API, signed selection handle, terminal/approval 계약을 사용하고 Dataset/Gold 변환이 있으면 별도 버전으로 기록해야 한다. 이번 세 계정 주소 보정은 Prompt 경로·본문·slot·manifest·materializer를 바꾸지 않았다. 제품 API/schema, runtime manifest/Prompt 등록, checkpoint, DB migration도 수정하지 않았다.
-
-내부 Prompt 21개는 첨부본의 후보 수이지 현재 제품의 고정 Slot 수가 아니다. 로컬에 추가된 시간축 Node의 Prompt 원문·최신 schema/caller는 이 ZIP에 없어 직접 대조하지 못했다. 없는 입력을 Prompt에 맞춰 발명하거나 새 Node를 삭제하지 않는다. 현재 계약과 맞는 후보만 실제 실행으로 비교한다.
-
-주소 검사는 datasets/checks와 텍스트 첨부의 이메일 토큰을 세 계정 목록과 대조한다. 추출 도구는 원문과 첨부에 다른 주소가 있으면 출력을 거부한다. 이는 오프라인 자료 검사이며 실제 메일 헤더·동적 수신자·Provider 권한 검증을 대신하지 않는다. 실제 등록자는 전송 직전에도 From/To/CC/BCC/참석자 전체가 세 주소 안인지 확인한다.
-
-Python 3.10 이상, 표준 라이브러리만 사용하는 선택적 도구다. 아래 명령은 `evaluation/`에서 실행한다.
-
-```text
-python check_workspace.py
-python -m unittest discover -s tests -v
-python export_materials.py datasets/오로라-현장과연수.md --output 자료-준비.md
-```
-
-`check_workspace.py`는 읽기용 문서의 절·펜스·질문 표식·로컬 링크, 원본 Prompt 경로·candidate source/bundle hash와 이전 assembled hash를 검사한다. 의미 채점기·전체 Markdown parser·외부 URL 검사기가 아니다. `export_materials.py`는 자료 절만 로컬 준비 파일로 추출한다. 질문·평가 기준·Prompt를 포함하지 않고 업로드하지 않는다. 바깥 폴더로 출력해도 첨부 링크가 원래 파일을 가리키도록 고친다. 첨부를 복사하지는 않으므로 원본 폴더를 옮기면 재추출한다. 기존 출력은 덮어쓰지 않는다.
-
-**도구 PASS는 문서 구조 검사 결과다. 업무 정답·현행 runtime/schema 호환·실계정 접근·모델 품질은 실제 실행 전까지 미검증이다.**
+과거 Production Smoke 요약은 [`experiments`](experiments/)에, 누적 실행 이력은
+[`실행기록.md`](실행기록.md)에 있다. 이 기록은 v8 평가 결과가 아니다.
