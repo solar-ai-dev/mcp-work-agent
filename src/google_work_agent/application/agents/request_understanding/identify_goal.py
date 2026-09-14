@@ -67,7 +67,11 @@ from .identify_output_responsibilities import (
     ProhibitedOutputResponsibilityDecisionError,
     identify_output_responsibilities,
 )
-from .identify_source_dependencies import identify_source_dependencies
+from .identify_source_dependencies import (
+    SourceDependencyContradictionError,
+    identify_source_dependencies,
+    validate_source_dependency_semantics,
+)
 from .identify_source_status import identify_source_status
 from .merge_resource_responsibilities import merge_resource_responsibilities
 from .preserve_explicit_search_anchors import (
@@ -153,6 +157,14 @@ def identify_goal(
         goal_candidate=result.structured_output,
         output_candidates=output_responsibility_candidates,
         effect_prohibitions=effect_prohibitions,
+    )
+    validate_source_dependency_semantics(
+        source_decisions,
+        goal_candidate=project_extractive_source_goal(
+            result.structured_output,
+            request_text=request.request_text,
+        ),
+        has_output_responsibilities=bool(output_decisions["output_responsibilities"]),
     )
     responsibilities = merge_resource_responsibilities(
         source_decisions=source_decisions,
@@ -309,6 +321,53 @@ def identify_goal_with_budget(
                 effect_prohibitions=prohibition_output,
                 candidate_output=error.candidate_output,
                 failure_record=failure_record,
+            )
+            retry_budget = decision["run_budget"]
+        source_goal = project_extractive_source_goal(
+            goal_output,
+            request_text=request.request_text,
+        )
+        try:
+            source_output = validate_source_dependency_semantics(
+                source_output,
+                goal_candidate=source_goal,
+                has_output_responsibilities=bool(
+                    output_output["output_responsibilities"]
+                ),
+            )
+        except SourceDependencyContradictionError as error:
+            signature = build_semantic_failure_signature_v1(
+                node_id="request.identify_goal",
+                failure_reason_codes=[error.reason_code],
+            )
+            decision = approve_semantic_revision(retry_budget, signature=signature)
+            if decision["decision"] == BudgetDecision.DENY.value:
+                raise
+            failure_record = build_failure_record_v1(
+                failure_reason_code=error.reason_code,
+                failure_origin="LLM_OUTPUT",
+                detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE",
+                experiment_disposition="RUN_REVISION",
+                affected_field_paths=list(error.affected_field_paths),
+                failure_context_ids=[str(error)],
+            )
+            source_output = identify_source_dependencies(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_source_dependency_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=source_goal,
+                source_candidates=source_dependency_candidates,
+                candidate_output=error.candidate_output,
+                failure_record=failure_record,
+            )
+            source_output = validate_source_dependency_semantics(
+                source_output,
+                goal_candidate=source_goal,
+                has_output_responsibilities=bool(
+                    output_output["output_responsibilities"]
+                ),
             )
             retry_budget = decision["run_budget"]
         responsibilities = merge_resource_responsibilities(

@@ -127,6 +127,56 @@ def test_source_schema__general_request__allows_no_existing_source() -> None:
     )
 
 
+def test_source_semantics__source_free_answer__allows_all_not_required() -> None:
+    candidate = source_dependencies.validate_source_dependency_candidate(
+        _decisions(),
+        source_candidates=_CANDIDATES,
+    )
+
+    assert source_dependencies.validate_source_dependency_semantics(
+        candidate,
+        goal_candidate={"constraints": {"search_terms": [], "business_concepts": []}},
+        has_output_responsibilities=False,
+    ) == _decisions()
+
+
+def test_source_semantics__standalone_output__does_not_force_retrieval() -> None:
+    candidate = source_dependencies.validate_source_dependency_candidate(
+        _decisions(),
+        source_candidates=_CANDIDATES,
+    )
+
+    assert source_dependencies.validate_source_dependency_semantics(
+        candidate,
+        goal_candidate={"constraints": {"search_terms": ["Project Anchor"]}},
+        has_output_responsibilities=True,
+    ) == _decisions()
+
+
+def test_source_semantics__external_answer_facts__reject_all_not_required() -> None:
+    candidate = source_dependencies.validate_source_dependency_candidate(
+        _decisions(),
+        source_candidates=_CANDIDATES,
+    )
+
+    with pytest.raises(
+        source_dependencies.SourceDependencyContradictionError
+    ) as raised:
+        source_dependencies.validate_source_dependency_semantics(
+            candidate,
+            goal_candidate={
+                "constraints": {
+                    "search_terms": ["Atlas"],
+                    "business_concepts": ["최종 출고일", "담당자"],
+                }
+            },
+            has_output_responsibilities=False,
+        )
+
+    assert raised.value.reason_code == "INTENT_SOURCE_DEPENDENCY_CONTRADICTION"
+    assert raised.value.candidate_output == _decisions()
+
+
 def test_source_schema__confirmed_target__requires_a_source_without_choosing_its_type() -> None:
     schema = source_dependencies.build_source_dependency_output_schema(
         _CANDIDATES,

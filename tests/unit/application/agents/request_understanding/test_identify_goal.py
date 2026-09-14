@@ -2839,6 +2839,92 @@ def test_lexical_anchor_alone__standalone_write__does_not_force_source_read() ->
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
 
 
+def test_external_answer_source_contradiction__uses_bounded_semantic_revision() -> None:
+    goal = {
+        "goal": "Atlas 프로젝트의 최종 출고일과 담당자를 확인한다",
+        "completion_conditions": ["외부 자료에서 확인한 값을 답한다"],
+        "constraints": _goal_constraints(
+            search_terms=["Atlas"],
+            business_concepts=["최종 출고일", "담당자"],
+        ),
+        "analysis_requirement": "NONE",
+    }
+    all_not_required = _source_dependency_decisions()
+    revised = _source_dependency_decisions(
+        source_types={
+            "GMAIL_THREAD": ["subject", "message_history", "timestamps"],
+        }
+    )
+    runtime = FakeStructuredInferencePort(
+        outputs=[goal, all_not_required, _output_responsibility_decisions(), revised]
+    )
+
+    candidate, budget = identify_goal_with_budget(
+        llm_runtime=runtime,
+        request=_request("Atlas 프로젝트의 최종 출고일과 담당자를 찾아줘."),
+        prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+        retry_budget=build_default_run_budget(),
+    )
+
+    assert candidate["resource_responsibilities"]["source_reads"] == [
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": ["subject", "message_history", "timestamps"],
+        }
+    ]
+    source_calls = [
+        call
+        for call in runtime.calls
+        if call["prompt_ref"].prompt_id
+        == "request_understanding.identify_source_dependencies"
+    ]
+    assert len(source_calls) == 2
+    revision_input = cast(dict[str, object], source_calls[1]["prompt_input"])
+    assert revision_input["candidate_output"] == all_not_required
+    failure_record = cast(dict[str, object], revision_input["failure_record"])
+    assert failure_record["failure_reason_code"] == (
+        "INTENT_SOURCE_DEPENDENCY_CONTRADICTION"
+    )
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+
+
+def test_external_answer_source_contradiction__failed_revision_does_not_select_source() -> None:
+    goal = {
+        "goal": "Atlas 프로젝트의 최종 출고일과 담당자를 확인한다",
+        "completion_conditions": ["외부 자료에서 확인한 값을 답한다"],
+        "constraints": _goal_constraints(
+            search_terms=["Atlas"],
+            business_concepts=["최종 출고일", "담당자"],
+        ),
+        "analysis_requirement": "NONE",
+    }
+    all_not_required = _source_dependency_decisions()
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            goal,
+            all_not_required,
+            _output_responsibility_decisions(),
+            all_not_required,
+        ]
+    )
+
+    with pytest.raises(source_dependencies.SourceDependencyContradictionError):
+        identify_goal_with_budget(
+            llm_runtime=runtime,
+            request=_request("Atlas 프로젝트의 최종 출고일과 담당자를 찾아줘."),
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+            retry_budget=build_default_run_budget(),
+        )
+
+    source_calls = [
+        call
+        for call in runtime.calls
+        if call["prompt_ref"].prompt_id
+        == "request_understanding.identify_source_dependencies"
+    ]
+    assert len(source_calls) == 2
+
+
 def test_existing_gmail_thread_reply__incompatible_output_resource__rejects_output() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
