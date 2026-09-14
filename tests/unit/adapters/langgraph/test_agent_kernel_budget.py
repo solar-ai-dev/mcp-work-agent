@@ -133,4 +133,4 @@ def test_budget_state_is_carried__entirely_by_the_caller__not_by_any_runtime_ins
     restored_state = {"retry_budget": {**consumed}}
 
     ensure_llm_call_budget(restored_state)
-    assert restored_state["retry_budget"]["llm_calls_used"] == NORMAL_MAX_LLM_CALLS  # type: ignore[index]
+    assert restored_state["retry_budget"]["llm_calls_used"] == NORMAL_MAX_LLM_CALLS

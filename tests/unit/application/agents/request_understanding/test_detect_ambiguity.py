@@ -368,7 +368,7 @@ def test_selected_gmail_read__retrievable_content_gap__still_assesses_ambiguity(
     assert len(runtime.calls) == 1
 
 
-def test_general_advice__semantic_call_returns_no_missing_information() -> None:
+def test_general_advice__from_semantic_call__returns_no_missing_information() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[{"missing_information_owner": "NONE", "missing_fields": []}]
     )
@@ -688,7 +688,7 @@ def test_unselected_calendar_event_identity__without_target_anchor__is_user_owne
     assert len(runtime.calls) == 1
 
 
-def test_searchable_calendar_event_identity__keeps_connector_owner_from_semantic_call() -> None:
+def test_searchable_calendar_event_identity__after_semantic_call__keeps_connector_owner() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {
@@ -736,7 +736,7 @@ def test_selected_event_identity__reclassified_as_user__is_rejected_structurally
     assert len(runtime.calls) == 1
 
 
-def test_connector_metadata_does_not__reinterpret_user_owned_event_attribute() -> None:
+def test_connector_metadata__for_user_owned_event_attribute__does_not_reinterpret() -> None:
     runtime = FakeStructuredInferencePort(
         outputs=[
             {

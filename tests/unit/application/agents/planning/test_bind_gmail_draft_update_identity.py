@@ -57,7 +57,7 @@ def test_gmail_draft_update__patch_preserves__unrequested_observed_values() -> N
     assert result["arguments"] == {"draft_id": "draft-actual", "payload": PAYLOAD}
 
 
-def test_quartz_baseline_snapshot__builds_exact_update_preview() -> None:
+def test_quartz_baseline_snapshot__with_known_fixture__builds_exact_update_preview() -> None:
     exact_sentence = "8월 21일 입고 준비를 확인 중입니다."
 
     result = _compose(

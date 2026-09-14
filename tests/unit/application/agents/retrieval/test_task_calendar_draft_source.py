@@ -32,7 +32,7 @@ def test_project_task_calendar_source_terms__with_ordered_sources__strips_calend
     }
 
 
-def test_project_task_calendar_source_terms__recovers_source_bound_typed_concepts() -> None:
+def test_project_task_calendar_source_terms__for_bound_source__recovers_typed_concepts() -> None:
     request = (
         "Orion 할 일과 제작소 일정 보고로 준비 상황을 알리는 메일 초안을 작성해줘."
     )
@@ -68,7 +68,7 @@ def test_project_task_calendar_source_terms__recovers_source_bound_typed_concept
     }
 
 
-def test_project_task_calendar_source_terms__does_not_invent_unbound_concept_anchor() -> None:
+def test_source_terms__without_bound_source__omit_concept_anchor() -> None:
     constraints = [
         {
             "kind": "USER_REQUIREMENT",

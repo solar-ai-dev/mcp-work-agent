@@ -123,7 +123,7 @@ def test_explicit_freebusy_read__when_requested__retains_route() -> None:
     assert is_retrieval_dependency_route(routes["CALENDAR_EVENT"])
 
 
-def test_gmail_message_read__distinguishes_thread_discovery_dependency() -> None:
+def test_gmail_message_read__for_thread_discovery__distinguishes_dependency() -> None:
     ids = iter(f"route-{index}" for index in range(10))
     binding = bind_registry_candidates(
         candidate=SemanticRouteCandidate(

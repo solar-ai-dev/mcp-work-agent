@@ -104,7 +104,7 @@ def test_evaluation_assets_are__repository_only_and_results__are_local_by_defaul
     assert RETIRED_EVALUATION_AUTHORITIES.isdisjoint(tracked)
 
 
-def test_evaluation_results__have_no_shadow_output_root() -> None:
+def test_evaluation_results__when_scanned__have_no_shadow_output_root() -> None:
     assert not any(path.exists() for path in SHADOW_EVALUATION_RESULT_ROOTS)
 
 

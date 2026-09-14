@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+from typing import cast
 
 from scripts import benchmark_gmail_execute_read_node as benchmark
 
@@ -66,8 +68,8 @@ def test_result_hashes__when_metadata_changes__detect_projection_only() -> None:
     assert benchmark._metadata_hash(original) != benchmark._metadata_hash(changed_metadata)
 
 
-def test_summary__from_measured_rows__excludes_dataset_drift(tmp_path) -> None:
-    rows = []
+def test_summary__from_measured_rows__excludes_dataset_drift(tmp_path: Path) -> None:
+    rows: list[dict[str, object]] = []
     for config_id, latency, http_count in (
         ("S3_BASELINE", 4000.0, 21),
         ("B20W1", 1000.0, 2),
@@ -108,7 +110,7 @@ def test_summary__from_measured_rows__excludes_dataset_drift(tmp_path) -> None:
 
     summary = benchmark._summary(tmp_path)
 
-    configs = {row["config_id"]: row for row in summary["configs"]}
+    configs = {row["config_id"]: row for row in cast(list[dict[str, object]], summary["configs"])}
     assert configs["B20W1"]["comparable_attempts"] == 100
     assert configs["B20W1"]["dataset_drift_count"] == 1
     assert configs["B20W1"]["p95_node_latency_ms"] == 1000

@@ -600,7 +600,7 @@ def test_source_status_revision__with_unaffected_owner_outputs__preserves_them()
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_target_confirmation_resume__preserves_nonempty_source_without_reassessment() -> None:
+def test_target_confirmation_resume__with_nonempty_source__preserves_without_reassessment() -> None:
     request_text = "확정된 일정의 시작과 끝을 알려줘"
     prior_candidate = {
         "goal": "대상 일정의 시작과 끝 확인",
@@ -678,7 +678,7 @@ def test_target_confirmation_resume__preserves_nonempty_source_without_reassessm
     assert runtime.calls == []
 
 
-def test_target_confirmation_resume__reassesses_only_empty_source_responsibility() -> None:
+def test_target_confirmation_resume__with_empty_source__reassesses_responsibility() -> None:
     request_text = "확정된 그 일정의 시작과 끝으로 초안을 만들어줘"
     status = {
         "kind": "SCOPE",
@@ -753,7 +753,7 @@ def test_target_confirmation_resume__reassesses_only_empty_source_responsibility
                 "required_information": ["event_identity", "start", "end"],
             }
         ],
-        "outputs": prior_candidate["resource_responsibilities"]["outputs"],
+        "outputs": cast(Any, prior_candidate)["resource_responsibilities"]["outputs"],
     }
     assert candidate["requested_effect_hints"] == ["READ", "CREATE"]
     assert candidate["requested_resource_hints"] == ["CALENDAR_EVENT", "GMAIL_DRAFT"]
@@ -829,7 +829,7 @@ def test_target_confirmation_resume__reassesses_only_empty_source_responsibility
     assert len(runtime.calls) == 2
 
 
-def test_confirmation_resume__keeps_selected_resource_identity_authority() -> None:
+def test_confirmation_resume__with_selected_resource__keeps_identity_authority() -> None:
     selected = SelectedResourceRef(
         "ref-event-42",
         "google_workspace",
@@ -886,7 +886,7 @@ def test_confirmation_resume__keeps_selected_resource_identity_authority() -> No
         },
     )
 
-    assert candidate["constraints"][0] == prior_candidate["constraints"][0]
+    assert candidate["constraints"][0] == cast(Any, prior_candidate)["constraints"][0]
     assert all(item["field"] != "search_terms" for item in candidate["constraints"])
     assert runtime.calls == []
 

@@ -959,7 +959,7 @@ def test_plan_query__page_and_detail_candidate__uses_coverage_aware_priority(
                     "resolution_source": "GOOGLE",
                     "route_id": "route-1",
                     "reason_codes": ["COLLECTION_PAGE_REMAINS"],
-                }
+                },
             ],
             "read_result_summaries": read_summaries,
         },
@@ -991,7 +991,7 @@ def test_plan_query__page_and_detail_candidate__uses_coverage_aware_priority(
     ]
 
 
-def test_confirmed_target__preserves_phrase_anchor_and_required_container() -> None:
+def test_confirmed_target__during_query_planning__preserves_phrase_anchor_and_container() -> None:
     runtime = FakeStructuredInferencePort(outputs=[])
     frozen_routes = cast(
         list[InputToolRouteV1],

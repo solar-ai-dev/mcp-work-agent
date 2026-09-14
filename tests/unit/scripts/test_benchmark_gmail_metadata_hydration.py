@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from scripts import benchmark_gmail_metadata_hydration as benchmark
 
 
@@ -71,11 +73,11 @@ def test_paired_bootstrap__reports_candidate__reduction() -> None:
 
     assert result["n_pairs"] == 100
     assert result["delta_p95_ms"] == -50.0
-    assert float(result["reduction_pct"]) > 0
+    assert cast(float, result["reduction_pct"]) > 0
 
 
 def test_logical_api_operation_count__counts_list_and_batch__inner_calls_once() -> None:
-    rows = [
+    rows: list[dict[str, object]] = [
         {"kind": "GMAIL_THREADS_LIST", "inner_count": None},
         {"kind": "GMAIL_BATCH", "inner_count": 10},
         {"kind": "GMAIL_BATCH", "inner_count": 10},

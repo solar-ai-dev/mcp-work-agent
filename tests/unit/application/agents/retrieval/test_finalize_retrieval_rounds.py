@@ -35,13 +35,13 @@ def test_fourth_attempt__round_limit_reached__blocks_before_connector_read() -> 
         advance_current_round_no(current_round_no=2, is_followup=True)
 
 
-def test_fourth_semantic_followup__does_not_fit_round_budget() -> None:
+def test_fourth_semantic_followup__against_round_budget__does_not_fit() -> None:
     assert not followup_fits_retrieval_round_budget(
         current_round_no=2, operation_kinds={"NEXT_PAGE"}
     )
 
 
-def test_detail_hydration__still_fits_after_third_semantic_round() -> None:
+def test_detail_hydration__after_third_semantic_round__still_fits_budget() -> None:
     assert followup_fits_retrieval_round_budget(
         current_round_no=2, operation_kinds={"DETAIL_FETCH"}
     )

@@ -923,7 +923,7 @@ def test_assess_sufficiency__rejects_required_lookup__without_evidence() -> None
     ],
 )
 @pytest.mark.parametrize("dependency_executed", [False, True])
-def test_assess_sufficiency__dependency_is_not_business_completeness(
+def test_assess_sufficiency__for_dependency__does_not_treat_as_business_completeness(
     direct_resource: str,
     dependency_resources: tuple[str, ...],
     source: str,
@@ -1031,7 +1031,7 @@ def test_assess_sufficiency__dependency_is_not_business_completeness(
     ]
 
 
-def test_assess_sufficiency__incomplete_direct_calendar_event_remains_required() -> None:
+def test_assess_sufficiency__for_incomplete_calendar_event__keeps_source_required() -> None:
     runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
     intent = request_intent()
     intent["constraints"] = []
