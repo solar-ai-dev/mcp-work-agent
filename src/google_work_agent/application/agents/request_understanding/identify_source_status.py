@@ -19,12 +19,17 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 
+_INTRINSIC_SOURCE_STATUSES: dict[str, frozenset[str]] = {
+    "GMAIL_DRAFT": frozenset({"DRAFT"}),
+}
+
 
 def _llm_facing_status_values(resource_type: str) -> list[str]:
     return sorted(
         value
         for value in SOURCE_STATUS_VALUES_BY_RESOURCE.get(resource_type, frozenset())
         if value != "ANY"
+        and value not in _INTRINSIC_SOURCE_STATUSES.get(resource_type, frozenset())
     )
 
 
@@ -97,6 +102,8 @@ def identify_source_status(
     source_types = list(
         dict.fromkeys(source["resource_type"] for source in responsibilities["source_reads"])
     )
+    if not any(_llm_facing_status_values(resource_type) for resource_type in source_types):
+        return {"statuses": []}
     base_projection: dict[str, object] = {
         "user_request": prompt_input["user_request"],
         "selected_resource_refs": prompt_input["selected_resource_refs"],

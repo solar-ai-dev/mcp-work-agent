@@ -23,8 +23,9 @@ def project_calendar_event_read_answer(
     user_request: str,
     request_intent: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
+    retrieval_result: Mapping[str, object] | None = None,
 ) -> CalendarEventReadAnswerProjection | None:
-    """Render one selected event's exact start and end without model regeneration."""
+    """Render one exact event's start and end without model regeneration."""
     if (
         request_intent.get("analysis_requirement") != "NONE"
         or set(_strings(request_intent.get("requested_effect_hints"))) != {"READ"}
@@ -41,22 +42,41 @@ def project_calendar_event_read_answer(
         and constraint.get("field") == "selected_resource_id"
         for item in _strings(constraint.get("value"))
     ]
-    if len(selected_ids) != 1:
+    target_resource_ref: str | None = None
+    allow_equivalent_duplicates = False
+    if len(selected_ids) == 1:
+        target_resource_ref = f"calendar_event:{selected_ids[0]}"
+    elif not selected_ids:
+        target_resource_ref = _confirmed_retrieval_resource_ref(
+            request_intent=request_intent,
+            retrieval_result=retrieval_result,
+        )
+        allow_equivalent_duplicates = target_resource_ref is not None
+    if target_resource_ref is None:
         return None
 
     matching = [
         item
         for item in evidence
-        if (handle := _resource_handle(item)).startswith("calendar_event:")
-        and handle.partition(":")[2] == selected_ids[0]
+        if _resource_handle(item) == target_resource_ref
     ]
-    if len(matching) != 1:
+    if not matching:
         return None
 
-    fields = _event_fields(matching[0])
-    evidence_ref = _evidence_ref(matching[0])
-    if fields is None or evidence_ref is None:
+    if len(matching) != 1 and not allow_equivalent_duplicates:
         return None
+
+    parsed: list[tuple[tuple[str, datetime, datetime, str], str]] = []
+    for item in matching:
+        fields = _event_fields(item)
+        evidence_ref = _evidence_ref(item)
+        if fields is None or evidence_ref is None:
+            return None
+        parsed.append((fields, evidence_ref))
+    if len({fields for fields, _evidence_ref_value in parsed}) != 1:
+        return None
+    fields = parsed[0][0]
+    evidence_refs = list(dict.fromkeys(evidence_ref for _fields, evidence_ref in parsed))
     title, start, end, timezone_name = fields
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
     answer = (
@@ -66,9 +86,46 @@ def project_calendar_event_read_answer(
     )
     section = "선택한 일정" if korean else "Selected event schedule"
     return CalendarEventReadAnswerProjection(
-        outline={"sections": [section], "evidence_refs": [evidence_ref]},
-        draft={"schema_version": 2, "answer": answer, "evidence_refs": [evidence_ref]},
+        outline={"sections": [section], "evidence_refs": evidence_refs},
+        draft={"schema_version": 2, "answer": answer, "evidence_refs": evidence_refs},
     )
+
+
+def _confirmed_retrieval_resource_ref(
+    *,
+    request_intent: Mapping[str, object],
+    retrieval_result: Mapping[str, object] | None,
+) -> str | None:
+    if retrieval_result is None or retrieval_result.get("coverage") != "SUFFICIENT":
+        return None
+    has_confirmation_search_anchor = False
+    for constraint in _mappings(request_intent.get("constraints")):
+        provenance = constraint.get("provenance")
+        if (
+            constraint.get("kind") == "USER_REQUIREMENT"
+            and constraint.get("field") == "search_terms"
+            and isinstance(provenance, Mapping)
+            and provenance.get("source") == "CONFIRMATION_RESPONSE"
+        ):
+            has_confirmation_search_anchor = True
+            break
+    required_information = {
+        item
+        for constraint in _mappings(request_intent.get("constraints"))
+        if constraint.get("kind") == "USER_REQUIREMENT"
+        and constraint.get("field") == "required_information"
+        for item in _strings(constraint.get("value"))
+    }
+    if not has_confirmation_search_anchor or not {"start", "end"}.issubset(
+        required_information
+    ):
+        return None
+    source_resource_refs = _strings(retrieval_result.get("source_resource_refs"))
+    if len(source_resource_refs) != 1 or not source_resource_refs[0].startswith(
+        "calendar_event:"
+    ):
+        return None
+    return source_resource_refs[0]
 
 
 def _asks_for_schedule(user_request: str) -> bool:

@@ -1050,7 +1050,7 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
     )
 
     assert raw_candidate == original_candidate
-    assert len(runtime.calls) == 5
+    assert len(runtime.calls) == 4
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {
@@ -1296,7 +1296,7 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
-def test_source_status_revision__with_source_information__preserves_responsibilities() -> None:
+def test_source_status_inference__with_intrinsic_draft_status__skips_revision() -> None:
     invalid_candidate = {
         "goal": "기존 Quartz 초안 수정",
         "completion_conditions": ["초안을 수정한다"],
@@ -1321,13 +1321,14 @@ def test_source_status_revision__with_source_information__preserves_responsibili
         retry_budget=build_default_run_budget(),
     )
 
-    assert len(runtime.calls) == 6
+    assert len(runtime.calls) == 4
     assert candidate["resource_responsibilities"]["source_reads"] == [
         {
             "resource_type": "GMAIL_DRAFT",
             "required_information": ["기존 초안"],
         }
     ]
+    assert not any(item.get("field") == "status" for item in candidate["constraints"])
 
 
 def test_standalone_send__source_scope__does_not_create_status_or_read() -> None:
