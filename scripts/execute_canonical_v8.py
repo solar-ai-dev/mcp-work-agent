@@ -204,6 +204,7 @@ def _execute_one(
         _stop_process(process)
     call_records = _read_jsonl(observation_log)
     trace_id = _trace_id(run_id, metadata["langsmith_project"], case_env) if run_id else None
+    trace_missing = run_id is not None and trace_id is None
     if snapshot is None:
         observation = {
             "schema_version": 1,
@@ -284,6 +285,13 @@ def _execute_one(
             grade = GradeV8(
                 "INVALID_HARNESS",
                 "COMPONENT_ONLY_NOT_PROMOTED_TO_PUBLIC_E2E",
+                grade.deterministic_checks,
+                grade.semantic_review,
+            )
+        if trace_missing:
+            grade = GradeV8(
+                "INVALID_HARNESS",
+                "LANGSMITH_TRACE_CORRELATION_MISSING",
                 grade.deterministic_checks,
                 grade.semantic_review,
             )
@@ -520,18 +528,21 @@ def _trace_id(run_id: str, project: str, environment: dict[str, str]) -> str | N
         from langsmith import Client
 
         client = Client(api_key=environment["LANGSMITH_API_KEY"])
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
-            runs = client.list_runs(
-                project_name=project,
-                is_root=True,
-                start_time=datetime.now(UTC) - timedelta(minutes=30),
-                limit=100,
-            )
-            for run in runs:
-                metadata = (run.extra or {}).get("metadata", {})
-                if isinstance(metadata, dict) and metadata.get("domain_run_id") == run_id:
-                    return str(run.trace_id or run.id)
+            try:
+                runs = client.list_runs(
+                    project_name=project,
+                    is_root=True,
+                    start_time=datetime.now(UTC) - timedelta(minutes=30),
+                    limit=100,
+                )
+                for run in runs:
+                    metadata = (run.extra or {}).get("metadata", {})
+                    if isinstance(metadata, dict) and metadata.get("domain_run_id") == run_id:
+                        return str(run.trace_id or run.id)
+            except Exception:
+                pass
             time.sleep(1)
     except Exception:
         return None

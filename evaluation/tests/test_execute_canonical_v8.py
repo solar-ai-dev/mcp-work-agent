@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
 from typing import Any
 
 from evaluation.dataset_v8 import load_cases
@@ -51,4 +53,33 @@ def test_frozen_metadata__binds_execution_runner_and_public_client(
     )
     assert metadata["public_client_sha256"] == execute_canonical_v8.normalized_sha256(
         execute_canonical_v8.PUBLIC_CLIENT
+    )
+
+
+def test_trace_id__retries_transient_langsmith_query_failure(monkeypatch: Any) -> None:
+    class _Client:
+        calls = 0
+
+        def __init__(self, *, api_key: str) -> None:
+            assert api_key == "key"
+
+        def list_runs(self, **kwargs: Any) -> list[Any]:
+            assert kwargs["project_name"] == "project"
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient")
+            return [
+                SimpleNamespace(
+                    extra={"metadata": {"domain_run_id": "run-1"}},
+                    trace_id="trace-1",
+                    id="root-1",
+                )
+            ]
+
+    monkeypatch.setitem(sys.modules, "langsmith", SimpleNamespace(Client=_Client))
+    monkeypatch.setattr(execute_canonical_v8.time, "sleep", lambda _seconds: None)
+
+    assert (
+        execute_canonical_v8._trace_id("run-1", "project", {"LANGSMITH_API_KEY": "key"})
+        == "trace-1"
     )
