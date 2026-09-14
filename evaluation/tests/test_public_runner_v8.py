@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from evaluation.dataset_v8 import load_cases
@@ -132,3 +133,53 @@ def test_public_client__timeout_preserves_last_public_snapshot() -> None:
 
     assert caught.value.run_id == "run-1"
     assert caught.value.snapshot["run"]["status"] == "RETRIEVING"
+
+
+def test_public_client__selection_scan_uses_safe_type_specific_windows() -> None:
+    gmail = PublicProductClientV8("http://127.0.0.1:1")
+    gmail_paths: list[str] = []
+
+    def gmail_request(
+        method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, Any]:
+        del method, payload
+        gmail_paths.append(path)
+        return {
+            "items": [{"resource_id": "thread-1", "selection_handle": "gmail-handle"}],
+            "next_page_token": None,
+        }
+
+    gmail._request = gmail_request  # type: ignore[method-assign]
+    assert gmail.resolve_selection_handles(
+        [{"resource_type": "gmail_thread", "resource_id": "thread-1"}]
+    ) == ["gmail-handle"]
+    assert parse_qs(urlparse(gmail_paths[0]).query)["page_size"] == ["20"]
+
+    calendar = PublicProductClientV8("http://127.0.0.1:1")
+    calendar_paths: list[str] = []
+
+    def calendar_request(
+        method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, Any]:
+        del method, payload
+        calendar_paths.append(path)
+        return {
+            "items": [{"resource_id": "event-1", "selection_handle": "event-handle"}],
+            "next_page_token": None,
+        }
+
+    calendar._request = calendar_request  # type: ignore[method-assign]
+    assert calendar.resolve_selection_handles(
+        [
+            {
+                "resource_type": "calendar_event",
+                "resource_id": "event-1",
+                "parent_id": "calendar-1",
+            }
+        ]
+    ) == ["event-handle"]
+    calendar_query = parse_qs(urlparse(calendar_paths[0]).query)
+    assert calendar_query["calendar_id"] == ["calendar-1"]
+    assert calendar_query["page_size"] == ["100"]
+    assert "time_min" in calendar_query
+    assert "time_max" in calendar_query

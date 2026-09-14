@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from http.cookiejar import CookieJar
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -108,6 +109,8 @@ class PublicProductClientV8:
         *,
         parent_id: str | None = None,
         page_token: str | None = None,
+        time_min: str | None = None,
+        time_max: str | None = None,
     ) -> dict[str, Any]:
         path_by_type = {
             "gmail_thread": "/api/v1/resources/gmail",
@@ -120,17 +123,23 @@ class PublicProductClientV8:
             raise ValueError(
                 f"unsupported public selection resource type: {resource_type}"
             ) from error
-        query: dict[str, object] = {"page_size": 100}
+        query: dict[str, object] = {"page_size": 20 if resource_type == "gmail_thread" else 100}
         if page_token:
             query["page_token"] = page_token
         if parent_id:
             query["calendar_id" if resource_type == "calendar_event" else "task_list_id"] = (
                 parent_id
             )
+        if resource_type == "calendar_event" and time_min and time_max:
+            query["time_min"] = time_min
+            query["time_max"] = time_max
         return self._request("GET", f"{path}?{urlencode(query)}")
 
     def resolve_selection_handles(self, bindings: list[dict[str, Any]]) -> list[str]:
         handles: list[str] = []
+        now = datetime.now(UTC)
+        calendar_time_min = (now - timedelta(days=366)).isoformat(timespec="seconds")
+        calendar_time_max = (now + timedelta(days=366)).isoformat(timespec="seconds")
         for binding in bindings:
             resource_id = binding.get("resource_id")
             resource_type = binding.get("resource_type")
@@ -143,6 +152,8 @@ class PublicProductClientV8:
                     resource_type,
                     parent_id=parent_id if isinstance(parent_id, str) else None,
                     page_token=token,
+                    time_min=(calendar_time_min if resource_type == "calendar_event" else None),
+                    time_max=(calendar_time_max if resource_type == "calendar_event" else None),
                 )
                 items = page.get("items")
                 if not isinstance(items, list):

@@ -345,17 +345,63 @@ def _fault_target_reached(case: CanonicalCaseV8, call_records: list[dict[str, An
     )
     if not isinstance(profile, dict):
         return False
-    operations = {
-        operation
-        for rule in profile.get("rules", [])
-        if isinstance(rule, dict)
-        for operation in rule.get("operations", [])
-        if isinstance(operation, str)
-    }
-    return any(
-        record.get("tool_id") in operations or record.get("operation") in operations
-        for record in call_records
-    )
+    for rule in profile.get("rules", []):
+        if not isinstance(rule, dict):
+            continue
+        operations = {
+            operation for operation in rule.get("operations", []) if isinstance(operation, str)
+        }
+        trigger = rule.get("trigger")
+        prerequisite = trigger.get("prerequisite") if isinstance(trigger, dict) else None
+        for index, record in enumerate(call_records):
+            if (
+                record.get("tool_id") not in operations
+                and record.get("operation") not in operations
+            ):
+                continue
+            if prerequisite is None or _fault_prerequisite_reached(
+                str(prerequisite), call_records[:index]
+            ):
+                return True
+    return False
+
+
+def _fault_prerequisite_reached(prerequisite: str, call_records: list[dict[str, Any]]) -> bool:
+    if prerequisite == "WRITE_RESULT_UNKNOWN":
+        return any(
+            record.get("kind") == "FAULT"
+            and record.get("outcome") in {"LOSE_RESPONSE", "RETURN_UNKNOWN"}
+            for record in call_records
+        )
+    if prerequisite == "TASK_UPDATE_APPLIED":
+        return any(
+            record.get("kind") == "CONNECTOR_WRITE"
+            and record.get("tool_id") == "tasks_update_task"
+            and record.get("effect_applied") is True
+            for record in call_records
+        )
+    if prerequisite == "TASK_UPDATE_VERIFIED":
+        return _fault_prerequisite_reached("TASK_UPDATE_APPLIED", call_records) and any(
+            record.get("kind") == "CONNECTOR_READ"
+            and record.get("tool_id") == "tasks_get_task"
+            and record.get("outcome") == "SUCCESS"
+            for record in call_records
+        )
+    if prerequisite == "CALENDAR_EVENT_VERIFIED":
+        effect_applied = any(
+            record.get("kind") == "CONNECTOR_WRITE"
+            and record.get("tool_id") == "calendar_create_event"
+            and record.get("effect_applied") is True
+            for record in call_records
+        )
+        verification_succeeded = any(
+            record.get("kind") == "CONNECTOR_READ"
+            and record.get("tool_id") == "calendar_get_event"
+            and record.get("outcome") == "SUCCESS"
+            for record in call_records
+        )
+        return effect_applied and verification_succeeded
+    return False
 
 
 def _failure_projection(
