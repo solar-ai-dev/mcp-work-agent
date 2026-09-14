@@ -1089,7 +1089,6 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
         "request_understanding.identify_output_responsibilities",
-        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
