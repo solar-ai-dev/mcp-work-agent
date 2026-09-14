@@ -184,7 +184,7 @@ def test_task_read_answer__title_only__does_not_force_other_fields() -> None:
         (["due"], "예정일: 2026-08-10", "상태:"),
     ],
 )
-def test_task_read_answer__selects_requested_status_or_scheduled_date(
+def test_task_read_answer__selected_field__preserves_status_or_scheduled_date(
     required_information: list[str], expected: str, excluded: str
 ) -> None:
     result = project_task_read_answer(

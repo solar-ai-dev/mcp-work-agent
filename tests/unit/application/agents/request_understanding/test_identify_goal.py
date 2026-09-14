@@ -2839,7 +2839,7 @@ def test_lexical_anchor_alone__standalone_write__does_not_force_source_read() ->
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
 
 
-def test_external_answer_source_contradiction__uses_bounded_semantic_revision() -> None:
+def test_external_answer__source_contradiction__uses_bounded_semantic_revision() -> None:
     goal = {
         "goal": "Atlas 프로젝트의 최종 출고일과 담당자를 확인한다",
         "completion_conditions": ["외부 자료에서 확인한 값을 답한다"],
@@ -2888,7 +2888,7 @@ def test_external_answer_source_contradiction__uses_bounded_semantic_revision() 
     assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
 
 
-def test_external_answer_source_contradiction__failed_revision_does_not_select_source() -> None:
+def test_external_answer__failed_source_revision__does_not_select_source() -> None:
     goal = {
         "goal": "Atlas 프로젝트의 최종 출고일과 담당자를 확인한다",
         "completion_conditions": ["외부 자료에서 확인한 값을 답한다"],
