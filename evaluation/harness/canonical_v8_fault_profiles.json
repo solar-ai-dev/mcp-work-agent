@@ -225,11 +225,11 @@
         "recovery": {"kind": "LOOKUP_REMAINS_INDETERMINATE", "checkpoint": "RECOVERY_REQUIRED"}
       }, {
         "rule_id": "keep-task-create-recovery-indeterminate",
-        "boundary": "VERIFICATION_READ",
+        "boundary": "RECOVERY_READ",
         "connector": "tasks",
-        "operations": ["tasks_get_task"],
+        "operations": ["search_by_recovery_fingerprint"],
         "trigger": {"kind": "AFTER_PREREQUISITE", "prerequisite": "WRITE_RESULT_UNKNOWN"},
-        "outcome": {"kind": "RETURN_ERROR", "safe_code": "TIMEOUT", "delivery_certainty": "NOT_SENT", "payload": {"provider_effect": "INDETERMINATE", "verification": "UNAVAILABLE"}},
+        "outcome": {"kind": "RETURN_ERROR", "safe_code": "TIMEOUT", "delivery_certainty": "NOT_SENT", "payload": {"provider_effect": "INDETERMINATE", "recovery_search": "UNAVAILABLE"}},
         "persistence": {"mode": "MATCHING_CALLS_THROUGH_CASE"},
         "recovery": {"kind": "LOOKUP_REMAINS_INDETERMINATE", "checkpoint": "RECOVERY_REQUIRED"}
       }]

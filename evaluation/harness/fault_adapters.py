@@ -198,10 +198,11 @@ class FaultInjectingConnectorAdapter:
             raise RuntimeError("read_delegate is required")
         read_delegate = self._read_delegate
         operation = _tool_id(binding)
+        connector = _connector_for_call(operation, tool_arguments)
         try:
             return self._fault_adapter.invoke(
                 boundary=self._read_boundary,
-                connector=_connector_for_tool(operation),
+                connector=connector,
                 operation=operation,
                 checkpoints=self._checkpoints(),
                 delegate=lambda: read_delegate.execute_read(binding, tool_arguments),
@@ -372,6 +373,17 @@ def _tool_id(binding: Any) -> str:
 def _connector_for_tool(tool_id: str) -> str:
     prefix = tool_id.split("_", 1)[0]
     return "calendar" if prefix == "calendar" else "tasks" if prefix == "tasks" else "gmail"
+
+
+def _connector_for_call(tool_id: str, arguments: Mapping[str, Any]) -> str:
+    if tool_id != "search_by_recovery_fingerprint":
+        return _connector_for_tool(tool_id)
+    resource_type = arguments.get("resource_type")
+    if resource_type == "task":
+        return "tasks"
+    if resource_type in {"calendar", "calendar_event"}:
+        return "calendar"
+    return "gmail"
 
 
 def _write_boundary(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,6 +12,7 @@ from typing import Any
 
 from .fault_adapters import EvaluationMode, FaultApplyingAdapter
 from .fault_profiles import DEFAULT_DATASET_PATH, FaultHarness, load_cases
+from .stateful_provider import StatefulSimulatedProvider
 from .temporal_bindings import resolve_reference_time
 
 DEFAULT_SIMULATED_FIXTURES_PATH = (
@@ -66,6 +67,7 @@ class CanonicalCaseRuntime:
         else:
             self.fault_harness = None
             self.evaluation_mode = "COMPONENT_ONLY"
+        self._simulated_provider: StatefulSimulatedProvider | None = None
 
     @classmethod
     def for_case(
@@ -100,6 +102,25 @@ class CanonicalCaseRuntime:
         if self.fault_harness is None:
             raise RuntimeError(f"{self.case_id} has no fault profile")
         return FaultApplyingAdapter(self.fault_harness, **kwargs)
+
+    def simulated_provider(
+        self,
+        *,
+        initial_resources: Sequence[Mapping[str, Any]] = (),
+        read_result_factory: Callable[[str, dict[str, Any], int], Any] | None = None,
+        write_result_factory: Callable[[str, dict[str, Any], int], Any] | None = None,
+    ) -> StatefulSimulatedProvider:
+        """Return the stateful provider owned exclusively by this Case runtime."""
+
+        if self.evaluation_mode != "SIMULATED_PROVIDER":
+            raise RuntimeError(f"{self.case_id} does not use a simulated provider")
+        if self._simulated_provider is None:
+            self._simulated_provider = StatefulSimulatedProvider(
+                initial_resources=initial_resources,
+                read_result_factory=read_result_factory,
+                write_result_factory=write_result_factory,
+            )
+        return self._simulated_provider
 
     def simulated_fixture(self) -> dict[str, Any]:
         context = self.case.get("evaluation_context")

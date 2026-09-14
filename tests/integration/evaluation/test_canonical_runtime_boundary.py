@@ -22,6 +22,9 @@ from tests.support.checkpoint import sqlite_checkpoint
 from tests.support.fakes import DeterministicUUID
 from tests.support.llm_runtime import runtime_selection, settings_view
 
+from google_work_agent.adapters.connectors.google.workspace.composition import (
+    google_workspace_internal_read_binding,
+)
 from google_work_agent.adapters.langgraph.registry.node_registry import NodeRegistry
 from google_work_agent.adapters.langgraph.registry.resume_target_registry import (
     ResumeTargetRegistry,
@@ -67,8 +70,15 @@ from google_work_agent.application.use_cases.execution_attempt.classify_dispatch
     ClassifyDispatchResultHandler,
     ClassifyDispatchResultQueryV1,
 )
+from google_work_agent.application.use_cases.execution_attempt.connector_write_projection import (
+    ConnectorWriteProjection,
+)
 from google_work_agent.application.use_cases.execution_attempt.dispatch_connector_write import (
     DispatchConnectorWriteResultV1,
+)
+from google_work_agent.application.use_cases.recovery.lookup_unknown_result import (
+    LookupUnknownResultHandler,
+    LookupUnknownResultQueryV1,
 )
 from google_work_agent.application.use_cases.run.continue_cancel_resolution import (
     ContinueCancelResolutionCommandV1,
@@ -160,6 +170,7 @@ def test_fault_adapter__transient_failures__reach_execute_read_node(
 
 def test_connector_fault_operations__current_signed_registry__contain_tools() -> None:
     registered = {entry.tool_id for entry in load_signed_tool_registry().entries}
+    registered.add(google_workspace_internal_read_binding("search_by_recovery_fingerprint").tool_id)
     connector_operations = {
         operation
         for profile in load_fault_profiles().values()
@@ -170,6 +181,7 @@ def test_connector_fault_operations__current_signed_registry__contain_tools() ->
             "CONNECTOR_PRE_DISPATCH",
             "CONNECTOR_POST_EFFECT",
             "CONNECTOR_DISPATCH_RESULT",
+            "RECOVERY_READ",
             "VERIFICATION_READ",
             "BEFORE_DEPENDENT_DISPATCH",
         }
@@ -403,6 +415,121 @@ def test_write_fault_result__product_dispatch_classifier__receives_result(
     assert provider.effect_counts.get(tool_id, 0) == (1 if case_id == "CASE-STRESS-013" else 0)
 
 
+def test_stress_013__product_unknown_lookup__finds_single_created_event() -> None:
+    runtime = CanonicalCaseRuntime.for_case("CASE-STRESS-013")
+    provider = runtime.simulated_provider(read_result_factory=_simulated_read_result)
+    fault_adapter = runtime.fault_adapter()
+    writer = FaultInjectingConnectorAdapter(
+        fault_adapter=fault_adapter,
+        write_delegate=provider,
+        write_result_factory=_connector_write_result,
+    )
+    fingerprint = "stress-013-recovery-fingerprint"
+    approved_arguments: dict[str, object] = {
+        "calendar_id": "calendar-1",
+        "payload": {
+            "title": "Atlas review",
+            "start": "2026-08-14T10:00:00+09:00",
+            "end": "2026-08-14T11:00:00+09:00",
+        },
+    }
+    prepared = _prepare_create(
+        "calendar_create_event",
+        approved_arguments,
+        recovery_fingerprint=fingerprint,
+    )
+
+    connector_result = writer.execute_write(
+        load_signed_tool_registry().bind_required(
+            "google_workspace", "calendar_create_event", "CREATE"
+        ),
+        prepared,
+        {},
+    )
+    lookup = _unknown_lookup_handler(
+        FaultInjectingConnectorAdapter(
+            fault_adapter=fault_adapter,
+            read_delegate=provider,
+            read_boundary="RECOVERY_READ",
+            read_error_factory=_connector_failure,
+        )
+    )(
+        _create_lookup_query(
+            resource_type="calendar_event",
+            parent_id="calendar-1",
+            fingerprint=fingerprint,
+            tool_name="calendar_create_event",
+            approved_arguments=approved_arguments,
+        )
+    )
+
+    assert connector_result.success is False
+    assert connector_result.delivery_certainty == "MAY_HAVE_BEEN_SENT"
+    assert lookup.disposition == "MUTATION_FOUND"
+    assert lookup.reason_codes == ["SINGLE_MATCH"]
+    assert len(lookup.candidate_resource_refs) == 1
+    assert provider.write_calls == ["calendar_create_event"]
+    assert provider.read_calls == ["search_by_recovery_fingerprint"]
+    assert provider.effect_counts == {"calendar_create_event": 1}
+
+
+def test_stress_014__product_unknown_lookup__keeps_timeout_unresolved_without_recreate() -> None:
+    runtime = CanonicalCaseRuntime.for_case("CASE-STRESS-014")
+    provider = runtime.simulated_provider(read_result_factory=_simulated_read_result)
+    fault_adapter = runtime.fault_adapter()
+    writer = FaultInjectingConnectorAdapter(
+        fault_adapter=fault_adapter,
+        write_delegate=provider,
+        write_result_factory=_connector_write_result,
+    )
+    fingerprint = "stress-014-recovery-fingerprint"
+    approved_arguments: dict[str, object] = {
+        "task_list_id": "list-1",
+        "payload": {"title": "Atlas handoff", "due": "2026-08-13T13:00:00+09:00"},
+    }
+    prepared = _prepare_create(
+        "tasks_create_task",
+        approved_arguments,
+        recovery_fingerprint=fingerprint,
+    )
+    connector_result = writer.execute_write(
+        load_signed_tool_registry().bind_required(
+            "google_workspace", "tasks_create_task", "CREATE"
+        ),
+        prepared,
+        {},
+    )
+    lookup_handler = _unknown_lookup_handler(
+        FaultInjectingConnectorAdapter(
+            fault_adapter=fault_adapter,
+            read_delegate=provider,
+            read_boundary="RECOVERY_READ",
+            read_error_factory=_connector_failure,
+            checkpoints=lambda: frozenset({"WRITE_RESULT_UNKNOWN"}),
+        )
+    )
+    query = _create_lookup_query(
+        resource_type="task",
+        parent_id="list-1",
+        fingerprint=fingerprint,
+        tool_name="tasks_create_task",
+        approved_arguments=approved_arguments,
+    )
+
+    for expected_injection in (1, 2):
+        with pytest.raises(ConnectorOperationFailure) as raised:
+            lookup_handler(query)
+        assert raised.value.code is ConnectorFailureCode.TIMEOUT
+        assert fault_adapter.records[-1].operation == "search_by_recovery_fingerprint"
+        assert fault_adapter.records[-1].injection_number == expected_injection
+
+    assert connector_result.success is False
+    assert connector_result.delivery_certainty == "MAY_HAVE_BEEN_SENT"
+    assert provider.write_calls == ["tasks_create_task"]
+    assert provider.read_calls == []
+    assert provider.effect_counts == {"tasks_create_task": 1}
+
+
 def test_verification_mismatch__product_verifier__detects_difference() -> None:
     provider = StatefulSimulatedProvider(
         initial_resources=[_task_resource(notes="approved")],
@@ -551,6 +678,60 @@ def _simulated_read_result(
     tool_id: str, output: dict[str, Any], call_no: int
 ) -> ConnectorReadResultV1:
     return ConnectorReadResultV1(1, tool_id, f"simulated-{call_no}", output, None, None)
+
+
+def _prepare_create(
+    tool_name: str,
+    arguments: dict[str, object],
+    *,
+    recovery_fingerprint: str,
+) -> dict[str, object]:
+    projection = ConnectorWriteProjection(
+        dispatch_connector_write=cast(Any, None),
+        connector_reader=cast(Any, None),
+    )
+    return projection.prepare_write(
+        tool_name=tool_name,
+        arguments=arguments,
+        recovery_fingerprint=recovery_fingerprint,
+    ).arguments
+
+
+def _unknown_lookup_handler(connector_read: Any) -> LookupUnknownResultHandler:
+    return LookupUnknownResultHandler(
+        connector_read=connector_read,
+        tool_registry=load_signed_tool_registry(),
+        recovery_search_binding=google_workspace_internal_read_binding(
+            "search_by_recovery_fingerprint"
+        ),
+    )
+
+
+def _create_lookup_query(
+    *,
+    resource_type: str,
+    parent_id: str,
+    fingerprint: str,
+    tool_name: str,
+    approved_arguments: dict[str, object],
+) -> LookupUnknownResultQueryV1:
+    return LookupUnknownResultQueryV1(
+        run_id="run",
+        action_id="action",
+        execution_attempt_id="attempt",
+        effect="CREATE",
+        recovery_fingerprint=fingerprint,
+        target_resource_ref=SelectedResourceRefV1(
+            1,
+            "recovery-search-scope",
+            "google_workspace",
+            resource_type,
+            "recovery-search-scope",
+            parent_id,
+        ),
+        tool_name=tool_name,
+        approved_arguments=approved_arguments,
+    )
 
 
 def _task_resource(*, notes: str) -> dict[str, object]:
