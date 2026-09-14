@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from evaluation.harness.case_runtime import CanonicalCaseRuntime
@@ -11,6 +14,7 @@ from scripts.serve_canonical_v8_product import (
     _normalize_provider_resources,
     _RetrievalFaultReadAdapter,
     _simulated_read_result,
+    _write_descriptor,
 )
 
 from google_work_agent.ports.connector.connector_failure import (
@@ -65,3 +69,31 @@ def test_ranking_fault__binds_simulated_fixture_before_product_consumes_read() -
     ]
     assert len(fault.records) == 1
     assert fault.records[0].boundary == "RETRIEVAL_RANKING"
+
+
+def test_write_descriptor__retries_transient_windows_publish_lock(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    descriptor = tmp_path / "launch.json"
+    real_replace = os.replace
+    attempts = 0
+
+    def replace_after_transient_lock(source: Any, destination: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("transient descriptor lock")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "scripts.serve_canonical_v8_product.os.replace", replace_after_transient_lock
+    )
+    monkeypatch.setattr("scripts.serve_canonical_v8_product.time.sleep", lambda _: None)
+
+    _write_descriptor(descriptor, {"schema_version": 1, "base_url": "http://127.0.0.1"})
+
+    assert attempts == 2
+    assert json.loads(descriptor.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "base_url": "http://127.0.0.1",
+    }
