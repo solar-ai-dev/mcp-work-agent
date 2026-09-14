@@ -40,3 +40,16 @@ replay·로그 같은 실행 상태는 runtime 영역에 둔다.
 과거 Production Smoke 기준점 요약은 [`experiments`](experiments/)에 남긴다.
 정리 전 원시 결과와 누적 실행 기록은 Git history에서만 복구할 수 있으며 v8 평가
 결과가 아니다.
+
+## v8 공식 실행 경계
+
+- `public_client_v8.py` — loopback HTTP와 공개 Resource selection 계약만 호출한다.
+- `public_runner_v8.py` — Case 입력을 Conversation/Run으로 변환하고 공개 관측 상태까지 기다린다.
+- `observation_v8.py` — 공개 Run projection과 안전한 Connector/LLM 호출 요약을 정규화한다.
+- `grader_v8.py` — 구조적 safety/terminal/effect 판정과 자연어 semantic review를 분리한다.
+- `scripts/serve_canonical_v8_product.py` — Case별 새 Product process/checkpoint에 개발 전용 generic DI를 조립한다.
+- `scripts/execute_canonical_v8.py` — diagnostic 또는 동결 SHA의 92개 one-shot 평가를 순차 실행한다.
+
+공식 실행은 `public_runner_v8.py → public HTTP API → production LangGraph` 경계이며
+Product Handler/Node/private state를 직접 호출하지 않는다. `evaluation_gold`는 실행 입력에서
+제거되고 Product 종료 후 grader에서만 사용한다. 결과는 `evaluation/results/**`에만 둔다.

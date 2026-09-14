@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = HERE / "canonical_v8_fault_profiles.json"
@@ -60,6 +60,9 @@ class FaultRule:
 @dataclass(frozen=True)
 class FaultProfile:
     name: str
+    evaluation_mode: Literal[
+        "LIVE_WITH_FAULT_INJECTION", "SIMULATED_PROVIDER", "COMPONENT_ONLY"
+    ]
     expected_checkpoint: str
     unaffected_boundaries: tuple[str, ...]
     rules: tuple[FaultRule, ...]
@@ -77,6 +80,9 @@ class FaultObservation:
 @dataclass(frozen=True)
 class FaultDirective:
     profile_name: str
+    evaluation_mode: Literal[
+        "LIVE_WITH_FAULT_INJECTION", "SIMULATED_PROVIDER", "COMPONENT_ONLY"
+    ]
     rule_id: str
     outcome: FaultOutcome
     recovery: FaultRecovery
@@ -115,7 +121,12 @@ def _rule(value: Mapping[str, Any], profile_name: str) -> FaultRule:
     outcome = value.get("outcome")
     persistence = value.get("persistence")
     recovery = value.get("recovery")
-    if not all(isinstance(item, dict) for item in (trigger, outcome, persistence, recovery)):
+    if (
+        not isinstance(trigger, dict)
+        or not isinstance(outcome, dict)
+        or not isinstance(persistence, dict)
+        or not isinstance(recovery, dict)
+    ):
         raise ValueError(f"{profile_name}: rule contracts must be objects")
     operations = value.get("operations")
     if not isinstance(operations, list) or not operations:
@@ -187,6 +198,7 @@ def load_fault_profiles(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, FaultProf
             raise ValueError(f"{name}: unaffected_boundaries must be a list")
         profile = FaultProfile(
             name=name,
+            evaluation_mode=_evaluation_mode(value.get("evaluation_mode"), name),
             expected_checkpoint=_required_text(
                 value.get("expected_checkpoint"), "expected_checkpoint"
             ),
@@ -209,6 +221,7 @@ class FaultHarness:
         self.profile = profile
         self._match_counts: dict[str, int] = {}
         self._injection_counts: dict[str, int] = {}
+        self._active_rules: set[str] = set()
 
     @classmethod
     def for_case(
@@ -218,7 +231,7 @@ class FaultHarness:
         dataset_path: Path = DEFAULT_DATASET_PATH,
         config_path: Path = DEFAULT_CONFIG_PATH,
     ) -> FaultHarness:
-        cases = _load_cases(dataset_path)
+        cases = load_cases(dataset_path)
         try:
             case = cases[case_id]
         except KeyError as error:
@@ -239,9 +252,20 @@ class FaultHarness:
         for rule in self.profile.rules:
             if not self._matches(rule, observation):
                 continue
+            if (
+                rule.persistence.until_checkpoint is not None
+                and rule.persistence.until_checkpoint in observation.checkpoints
+            ):
+                self._active_rules.discard(rule.rule_id)
+                continue
             matched = self._match_counts.get(rule.rule_id, 0) + 1
             self._match_counts[rule.rule_id] = matched
-            if rule.trigger.ordinal is not None and matched != rule.trigger.ordinal:
+            active = rule.rule_id in self._active_rules
+            if (
+                not active
+                and rule.trigger.ordinal is not None
+                and matched != rule.trigger.ordinal
+            ):
                 continue
             injected = self._injection_counts.get(rule.rule_id, 0)
             if (
@@ -249,15 +273,13 @@ class FaultHarness:
                 and injected >= rule.persistence.max_injections
             ):
                 continue
-            if (
-                rule.persistence.until_checkpoint is not None
-                and rule.persistence.until_checkpoint in observation.checkpoints
-            ):
-                continue
+            if rule.persistence.until_checkpoint is not None:
+                self._active_rules.add(rule.rule_id)
             injected += 1
             self._injection_counts[rule.rule_id] = injected
             return FaultDirective(
                 profile_name=self.profile.name,
+                evaluation_mode=self.profile.evaluation_mode,
                 rule_id=rule.rule_id,
                 outcome=rule.outcome,
                 recovery=rule.recovery,
@@ -294,7 +316,7 @@ class FaultHarness:
         return prerequisite is None or prerequisite in observation.checkpoints
 
 
-def _load_cases(path: Path) -> dict[str, dict[str, Any]]:
+def load_cases(path: Path = DEFAULT_DATASET_PATH) -> dict[str, dict[str, Any]]:
     cases: dict[str, dict[str, Any]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -307,6 +329,22 @@ def _load_cases(path: Path) -> dict[str, dict[str, Any]]:
     return cases
 
 
+def _evaluation_mode(
+    value: Any, profile_name: str
+) -> Literal["LIVE_WITH_FAULT_INJECTION", "SIMULATED_PROVIDER", "COMPONENT_ONLY"]:
+    allowed = {
+        "LIVE_WITH_FAULT_INJECTION",
+        "SIMULATED_PROVIDER",
+        "COMPONENT_ONLY",
+    }
+    if value not in allowed:
+        raise ValueError(f"{profile_name}: unsupported evaluation_mode")
+    return cast(
+        Literal["LIVE_WITH_FAULT_INJECTION", "SIMULATED_PROVIDER", "COMPONENT_ONLY"],
+        value,
+    )
+
+
 def validate_canonical_stress_profiles(
     *,
     dataset_path: Path = DEFAULT_DATASET_PATH,
@@ -315,7 +353,7 @@ def validate_canonical_stress_profiles(
     """Dry-validate all v8 STRESS profile bindings and a matching directive."""
     failures: list[str] = []
     try:
-        cases = _load_cases(dataset_path)
+        cases = load_cases(dataset_path)
         profiles = load_fault_profiles(config_path)
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
         return [str(error)]

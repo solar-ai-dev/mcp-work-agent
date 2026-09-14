@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "fixtures": {
+    "DELTA_CLOSE_CANDIDATES": {
+      "evaluation_mode": "SIMULATED_PROVIDER",
+      "fixture_snapshot_id": "SIMULATED-V8-DELTA-CLOSE-CANDIDATES",
+      "time_zone": "Asia/Seoul",
+      "valid_search_window": {
+        "start_local": "2026-09-14T00:00:00",
+        "end_local": "2026-09-21T00:00:00"
+      },
+      "resources": [
+        {
+          "resource_type": "gmail_thread",
+          "resource_id": "evaluation-delta-thread",
+          "received_at": "2026-09-14T12:55:14+09:00",
+          "subject": "[Delta] 포장 승인 검토 요청",
+          "ranking_score": 0.82,
+          "payload": {
+            "project": "Delta",
+            "body": "Delta 포장 승인 요청입니다. 최종 승인자는 수빈이며 시안 의견은 승인 전에 회신합니다.",
+            "final_approver": "수빈"
+          }
+        },
+        {
+          "resource_type": "gmail_thread",
+          "resource_id": "evaluation-delta-plus-thread",
+          "received_at": "2026-09-16T11:02:30+09:00",
+          "subject": "[Delta Plus] 포장 승인 요청",
+          "ranking_score": 0.8,
+          "payload": {
+            "project": "Delta Plus",
+            "body": "Delta Plus 포장 승인 건은 수민이 최종 승인하며 수정 의견은 이 요청에 모읍니다.",
+            "final_approver": "수민"
+          }
+        }
+      ]
+    }
+  }
+}
