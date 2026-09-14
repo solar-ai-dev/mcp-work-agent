@@ -114,6 +114,15 @@ def _hydrate_thread_metadata(
 ) -> list[dict[str, object]]:
     if not thread_entries:
         return []
+    if len(thread_entries) == 1:
+        thread_id, list_snippet, _history_id = thread_entries[0]
+        return [
+            workspace_support._gmail_thread_list_metadata(
+                state=state,
+                thread_id=thread_id,
+                list_snippet=list_snippet,
+            )
+        ]
     if config.transport == "INDIVIDUAL":
         return _map_bounded(
             lambda entry: workspace_support._gmail_thread_list_metadata(

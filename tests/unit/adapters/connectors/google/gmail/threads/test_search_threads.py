@@ -73,11 +73,16 @@ def test_batch_hydration__for_synthetic_page_sizes__preserves_count_order_and_ht
     thread_ids = [f"thread-{index}" for index in range(count)]
     batch_sizes: list[int] = []
 
-    monkeypatch.setattr(
-        workspace,
-        "_google_api",
-        lambda *_args, **_kwargs: {"threads": [{"id": value} for value in thread_ids]},
-    )
+    def google_api(
+        _state: workspace.GoogleWorkspaceCredentialProvider,
+        url: str,
+        _params: object = None,
+    ) -> dict[str, object]:
+        if url.endswith("/threads"):
+            return {"threads": [{"id": value} for value in thread_ids]}
+        return _thread_payload(url.rsplit("/", 1)[-1])
+
+    monkeypatch.setattr(workspace, "_google_api", google_api)
 
     def batch_get(
         _state: workspace.GoogleWorkspaceCredentialProvider,
@@ -108,7 +113,10 @@ def test_batch_hydration__for_synthetic_page_sizes__preserves_count_order_and_ht
     assert [item["resource_id"] for item in cast(list[dict[str, object]], payload["items"])] == (
         thread_ids
     )
-    assert batch_sizes == ([20] * (count // 20) + ([count % 20] if count % 20 else []))
+    expected_batch_sizes = (
+        [] if count <= 1 else [20] * (count // 20) + ([count % 20] if count % 20 else [])
+    )
+    assert batch_sizes == expected_batch_sizes
 
 
 def test_metadata_disabled__never_dispatches_detail__or_batch_http(
@@ -244,11 +252,13 @@ def test_google_batch_get__correlates_parts__and_preserves_request_order(
         [(1, 200, _thread_payload("thread-2")), (0, 200, _thread_payload("thread-1"))]
     )
     captured: list[Request] = []
-    monkeypatch.setattr(
-        workspace,
-        "urlopen",
-        lambda request, timeout: captured.append(request) or response,
-    )
+
+    def urlopen(request: Request, timeout: float) -> _Response:
+        del timeout
+        captured.append(request)
+        return response
+
+    monkeypatch.setattr(workspace, "urlopen", urlopen)
 
     result = workspace._google_batch_get(
         _authorized_state(),

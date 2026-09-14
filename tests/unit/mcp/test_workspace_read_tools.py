@@ -173,6 +173,65 @@ def test_gmail_list__enriches_current__page_thread_metadata(
     ]
 
 
+def test_gmail_search_mcp__with_variable_page__uses_b20_chunks_and_preserves_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    thread_ids = [f"thread-{index}" for index in range(37)]
+    list_params: list[dict[str, str | list[str]] | None] = []
+    batch_sizes: list[int] = []
+
+    def google_api(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        url: str,
+        params: dict[str, str | list[str]] | None = None,
+    ) -> dict[str, object]:
+        assert url.endswith("/threads")
+        list_params.append(params)
+        return {"threads": [{"id": thread_id} for thread_id in thread_ids]}
+
+    def batch_get(
+        _state: server.GoogleWorkspaceCredentialProvider,
+        targets: tuple[str, ...],
+    ) -> tuple[server._GoogleBatchGetResult, ...]:
+        offset = sum(batch_sizes)
+        batch_sizes.append(len(targets))
+        return tuple(
+            server._GoogleBatchGetResult(
+                ordinal=ordinal,
+                status_code=200,
+                response_body_bytes=100,
+                payload={
+                    "messages": [
+                        {
+                            "internalDate": "1780000000000",
+                            "payload": {
+                                "headers": [
+                                    {"name": "Subject", "value": f"Subject {offset + ordinal}"}
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
+            for ordinal in range(len(targets))
+        )
+
+    monkeypatch.setattr(server, "_google_api", google_api)
+    monkeypatch.setattr(server, "_google_batch_get", batch_get)
+
+    payload = verified_server._tool_call(
+        _state(),
+        tool_name="gmail_search_threads",
+        arguments={"query": "label:inbox fixed", "page_size": 100, "page_token": None},
+    )
+
+    assert list_params == [{"maxResults": "100", "q": "label:inbox fixed"}]
+    assert batch_sizes == [20, 17]
+    assert [
+        item["resource_id"] for item in cast(list[dict[str, object]], payload["items"])
+    ] == thread_ids
+
+
 def test_gmail_draft_search__with_listing_result__hydrates_provider_identity_and_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
