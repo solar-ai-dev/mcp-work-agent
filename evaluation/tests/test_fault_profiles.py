@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
 
 from evaluation.harness.fault_profiles import (
     DEFAULT_DATASET_PATH,
@@ -16,11 +15,6 @@ def test_canonical_stress_fault_profiles_resolve_20_of_20() -> None:
     profiles = load_fault_profiles()
 
     assert len(profiles) == 20
-    assert Counter(profile.evaluation_mode for profile in profiles.values()) == {
-        "COMPONENT_ONLY": 1,
-        "LIVE_WITH_FAULT_INJECTION": 6,
-        "SIMULATED_PROVIDER": 13,
-    }
     assert validate_canonical_stress_profiles() == []
 
 

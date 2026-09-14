@@ -8,7 +8,7 @@
     "TOTAL": 92
   },
   "dataset_path": "canonical_cases_v8.jsonl",
-  "dataset_sha256": "f92603216a7f0a214bc72ce1f0301b64299e1ed2dbc59c6d20359ee053daa9d8",
+  "dataset_sha256": "170de919d9eac09e75d6e1bc1c2bc94736f075ee06c798fd130a0350607fff43",
   "dataset_version": "canonical-92-v8-provider-bound-gold-corrected",
   "full_pytest_runs": 0,
   "holdout_blind": false,
@@ -171,30 +171,18 @@
   ],
   "status": "BENCHMARK_READY",
   "stress_harness": {
-    "adapter": "evaluation/harness/fault_adapters.py",
-    "adapter_sha256": "51080dfed0b96f7dc58ab31856cb349703c949e5ff9a3bc1cd5e3246d2118635",
     "configuration": "evaluation/harness/canonical_v8_fault_profiles.json",
-    "configuration_sha256": "b37f683e7f00d01e6712deb7d51f06b52656d92f7534f64664ac4ddd87b75e0a",
-    "evaluation_mode_counts": {
-      "COMPONENT_ONLY": 1,
-      "LIVE_WITH_FAULT_INJECTION": 6,
-      "SIMULATED_PROVIDER": 13
-    },
     "profile_count": 20,
     "ready": true,
     "resolver": "evaluation/harness/fault_profiles.py",
-    "runtime": "evaluation/harness/case_runtime.py",
-    "simulated_fixture": "evaluation/harness/canonical_v8_simulated_fixtures.json",
-    "simulated_fixture_sha256": "5c3d6858c04e37b79b9756a80a92587bf0e015ec615f60461e7aa4b7020dea68",
-    "stateful_provider": "evaluation/harness/stateful_provider.py",
-    "validation": "ADAPTER_BOUNDARY_VALIDATED_20_OF_20"
+    "validation": "DRY_VALIDATED_20_OF_20"
   },
   "stress_harness_ready": true,
   "temporal_binding": {
     "bound_case_count": 48,
     "policy": "CANONICAL_V8_SCENARIO_FIXED_TIME",
     "provider_timestamps_mutated": false,
-    "runtime_requirement": "FIX_RUN_START_AT_CASE_TIME_AND_ADVANCE_PRODUCT_NOW_WITH_MONOTONIC_ELAPSED",
+    "runtime_requirement": "START_EVALUATION_RUN_AT_CASE_RUN_REFERENCE_TIME",
     "time_zone": "Asia/Seoul"
   },
   "temporal_pending_case_ids": []
