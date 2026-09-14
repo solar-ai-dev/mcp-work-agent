@@ -252,6 +252,252 @@ def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revisio
     assert budget["semantic_revisions_used_by_failure"] == {}
 
 
+def _provenance_constraint(
+    *, kind: str, field: str, value: str
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "field": field,
+        "value": value,
+        "provenance": {
+            "source": "USER_REQUEST",
+            "start_offset": 0,
+            "end_offset": len(value),
+        },
+    }
+
+
+def _gmail_initial_candidate(*constraints: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": list(constraints),
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+
+def _run_gmail_initial_plan(
+    *,
+    constraints: list[dict[str, object]],
+    outputs: list[object],
+) -> tuple[dict[str, object], dict[str, object], FakeStructuredInferencePort]:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    runtime = FakeStructuredInferencePort(outputs=outputs)
+    result, budget, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": constraints},
+            "input_routes": [route],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={
+            "route-1": RouteConstraintPolicy(
+                frozenset({"KEYWORD", "CONCEPT", "PARTICIPANT"})
+            )
+        },
+        retry_budget=build_default_run_budget(),
+    )
+    return cast(dict[str, object], result), cast(dict[str, object], budget), runtime
+
+
+@pytest.mark.parametrize(
+    ("intent_constraint", "query_constraint"),
+    [
+        (
+            _provenance_constraint(
+                kind="USER_REQUIREMENT",
+                field="search_terms",
+                value="Lumen 마이그레이션 승인 메일",
+            ),
+            {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "PHRASE"},
+        ),
+        (
+            _provenance_constraint(
+                kind="RESOURCE", field="subject", value="Atlas 납품 확정"
+            ),
+            {
+                "kind": "KEYWORD",
+                "terms": ["Atlas 납품 확정"],
+                "match_mode": "PHRASE",
+            },
+        ),
+        (
+            _provenance_constraint(kind="PERSON", field="person", value="수민"),
+            {"kind": "KEYWORD", "terms": ["수민"], "match_mode": "PHRASE"},
+        ),
+        (
+            _provenance_constraint(
+                kind="EMAIL", field="sender_email", value="sumin@example.com"
+            ),
+            {
+                "kind": "PARTICIPANT",
+                "participants": [{"role": "SENDER", "identity": "sumin@example.com"}],
+                "match_mode": "ALL",
+            },
+        ),
+    ],
+)
+def test_plan_query__explicit_user_anchor__is_preserved(
+    intent_constraint: dict[str, object], query_constraint: dict[str, object]
+) -> None:
+    candidate = _gmail_initial_candidate(query_constraint)
+
+    result, budget, runtime = _run_gmail_initial_plan(
+        constraints=[intent_constraint],
+        outputs=[candidate],
+    )
+
+    assert result == candidate
+    assert budget["semantic_revisions_used_by_failure"] == {}
+    assert len(runtime.calls) == 1
+
+
+def test_plan_query__anchor_and_planner_manifestations__are_both_allowed() -> None:
+    intent_constraints = [
+        _provenance_constraint(
+            kind="USER_REQUIREMENT",
+            field="search_terms",
+            value="Lumen 마이그레이션 승인 메일",
+        ),
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": "데이터 이전 시작 시간",
+        },
+    ]
+    candidate = _gmail_initial_candidate(
+        {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "PHRASE"},
+        {
+            "kind": "CONCEPT",
+            "concept": "데이터 이전 시작 시간",
+            "manifestations": ["시작 예정 시간", "이전 시작일"],
+        },
+    )
+
+    result, budget, _ = _run_gmail_initial_plan(
+        constraints=intent_constraints,
+        outputs=[candidate],
+    )
+
+    assert result == candidate
+    assert budget["semantic_revisions_used_by_failure"] == {}
+
+
+def test_plan_query__omitted_user_anchor__uses_existing_semantic_revision() -> None:
+    intent_constraints = [
+        _provenance_constraint(
+            kind="USER_REQUIREMENT",
+            field="search_terms",
+            value="Lumen 마이그레이션 승인 메일",
+        ),
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": "데이터 이전 시작 시간",
+        },
+    ]
+    omitted = _gmail_initial_candidate(
+        {
+            "kind": "CONCEPT",
+            "concept": "데이터 이전 시작 시간",
+            "manifestations": ["시작 예정 시간", "이전 시작일"],
+        }
+    )
+    revised = _gmail_initial_candidate(
+        {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "PHRASE"}
+    )
+
+    result, budget, runtime = _run_gmail_initial_plan(
+        constraints=intent_constraints,
+        outputs=[omitted, revised],
+    )
+
+    assert result == revised
+    assert sum(cast(dict[str, int], budget["semantic_revisions_used_by_failure"]).values()) == 1
+    revision_input = cast(dict[str, object], runtime.calls[1]["prompt_input"])
+    assert revision_input["candidate_output"] == omitted
+    failure = cast(dict[str, object], revision_input["failure_record"])
+    assert failure["failure_reason_code"] == "QUERY_USER_CONSTRAINT_MISSING"
+
+
+def test_plan_query__concept_only__cannot_invent_exact_keyword_anchor() -> None:
+    constraints = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": "업무 일정",
+        }
+    ]
+    invented = _gmail_initial_candidate(
+        {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "PHRASE"}
+    )
+    concept = _gmail_initial_candidate(
+        {
+            "kind": "CONCEPT",
+            "concept": "업무 일정",
+            "manifestations": ["일정"],
+        }
+    )
+
+    result, budget, runtime = _run_gmail_initial_plan(
+        constraints=constraints,
+        outputs=[invented, concept],
+    )
+
+    assert result == concept
+    assert sum(cast(dict[str, int], budget["semantic_revisions_used_by_failure"]).values()) == 1
+    assert cast(dict[str, object], runtime.calls[1]["prompt_input"])[
+        "candidate_output"
+    ] == invented
+
+
+def test_plan_query__multiple_user_anchors__does_not_force_all_match_mode() -> None:
+    constraints = [
+        _provenance_constraint(
+            kind="USER_REQUIREMENT", field="search_terms", value=value
+        )
+        for value in ("Atlas", "Lumen")
+    ]
+    candidate = _gmail_initial_candidate(
+        {
+            "kind": "KEYWORD",
+            "terms": ["Atlas", "Lumen"],
+            "match_mode": "ANY",
+        }
+    )
+
+    result, budget, _ = _run_gmail_initial_plan(
+        constraints=constraints,
+        outputs=[candidate],
+    )
+
+    assert result == candidate
+    assert budget["semantic_revisions_used_by_failure"] == {}
+
+
 def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
     assert not has_retrieval_followup_path(
         request_intent=cast(RequestIntentV2, {"constraints": []}),
