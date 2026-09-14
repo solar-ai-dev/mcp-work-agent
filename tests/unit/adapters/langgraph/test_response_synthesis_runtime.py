@@ -235,7 +235,7 @@ def test_response_synthesis__projects_verified_write_into__assistant_message() -
     assert "WRITE_VERIFIED" not in intent["terminal_message"].content
 
 
-def test_response_synthesis__uses_llm_only_for_terminal_write_prose() -> None:
+def test_response_synthesis__uses_llm_only__for_terminal_write_prose() -> None:
     composer = _Composer()
     result = response_synthesis_node(
         {
@@ -273,7 +273,7 @@ def test_response_synthesis__uses_llm_only_for_terminal_write_prose() -> None:
     assert intent["terminal_message"].content == "LLM이 작성한 검증 결과"
 
 
-def test_response_synthesis__planning_answer_does_not_call_terminal_llm() -> None:
+def test_response_synthesis__planning_answer__does_not_call_terminal_llm() -> None:
     composer = _Composer()
     result = response_synthesis_node(
         {
@@ -297,7 +297,7 @@ def test_response_synthesis__planning_answer_does_not_call_terminal_llm() -> Non
     assert intent["terminal_message"].content == "완료된 답변"
 
 
-def test_response_synthesis__invalid_llm_projection_keeps_deterministic_write_message() -> None:
+def test_response_synthesis__invalid_llm_projection__keeps_deterministic_write_message() -> None:
     composer = _Composer()
     result = response_synthesis_node(
         {
@@ -332,7 +332,7 @@ def test_response_synthesis__invalid_llm_projection_keeps_deterministic_write_me
     assert "회의 준비" in intent["terminal_message"].content
 
 
-def test_response_synthesis__closes_fact_read_before_terminal_llm_call() -> None:
+def test_response_synthesis__closes_fact_read__before_terminal_llm_call() -> None:
     fact_read_active = False
 
     class TransactionAwareComposer(_Composer):

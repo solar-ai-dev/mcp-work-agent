@@ -95,7 +95,7 @@ def _response_input(*, no_send: bool = False):
     )
 
 
-def test_terminal_response_input__uses_verified_values_not_plan_arguments() -> None:
+def test_terminal_response_input__uses_verified_values__not_plan_arguments() -> None:
     projection = _response_input(no_send=True).to_projection()
 
     action = projection["action_results"][0]  # type: ignore[index]
@@ -110,13 +110,13 @@ def test_terminal_response_input__uses_verified_values_not_plan_arguments() -> N
     ]
 
 
-def test_terminal_response_input__does_not_invent_no_dispatch_observation() -> None:
+def test_terminal_response_input__does_not_invent__no_dispatch_observation() -> None:
     projection = _response_input().to_projection()
 
     assert projection["effect_observations"] == []
 
 
-def test_terminal_response_input__preserves_prior_effect_without_resource_overcount() -> None:
+def test_terminal_response_input__preserves_prior_effect__without_resource_overcount() -> None:
     response_input = build_terminal_response_input(
         user_request="초안을 만든 뒤 수정해 줘",
         result_kind="SUCCESS",
@@ -151,7 +151,7 @@ def test_terminal_response_input__preserves_prior_effect_without_resource_overco
     assert {item.target_label for item in response_input.action_results} == {"하나의 초안"}
 
 
-def test_compose_terminal_response__returns_only_sanitized_llm_prose() -> None:
+def test_compose_terminal_response__returns_only__sanitized_llm_prose() -> None:
     inference = _Inference(
         {"answer": "google_workspace 내부 코드 없이 검증된 초안을 수정했습니다."}
     )
@@ -184,7 +184,50 @@ def test_compose_terminal_response__returns_only_sanitized_llm_prose() -> None:
     }
 
 
-def test_compose_terminal_response__llm_failure_keeps_success_and_falls_back() -> None:
+def test_compose_terminal_response__preserves_send_limitation__for_llm_and_fallback() -> None:
+    response_input = build_terminal_response_input(
+        user_request="안내 메일을 보내 줘",
+        result_kind="SUCCESS",
+        actions=[
+            {
+                "connector_id": "google_workspace",
+                "resource_type": "gmail_message",
+                "effect_type": "SEND",
+                "status": "VERIFIED",
+                "target_display": {"subject": "안내"},
+                "verification_actual": {
+                    "subject": "안내",
+                    "to": ["owner@example.test"],
+                },
+            }
+        ],
+        send_not_dispatched_current_run=False,
+    )
+    limitation = response_input.limitations[0]
+    command = ComposeTerminalResponseCommandV1(
+        schema_version=1,
+        run_id="run-1",
+        requested_mode="LOCAL_GPU",
+        response_input=response_input,
+        fallback_message=_fallback(),
+    )
+
+    llm_result = ComposeTerminalResponseHandler(
+        llm_runtime=_Inference({"answer": "안내 메일을 전송했습니다."}),  # type: ignore[arg-type]
+        prompt_ref=_prompt_ref(),
+    )(command)
+    assert limitation in llm_result.terminal_message.content
+
+    fallback_result = ComposeTerminalResponseHandler(
+        llm_runtime=_Inference(
+            LLMInvocationError(LLMErrorCode.PROVIDER_TIMEOUT, "timeout")
+        ),  # type: ignore[arg-type]
+        prompt_ref=_prompt_ref(),
+    )(command)
+    assert limitation in fallback_result.terminal_message.content
+
+
+def test_compose_terminal_response__llm_failure__keeps_success_and_falls_back() -> None:
     inference = _Inference(
         LLMInvocationError(LLMErrorCode.PROVIDER_TIMEOUT, "timeout", retryable=True)
     )
@@ -207,7 +250,7 @@ def test_compose_terminal_response__llm_failure_keeps_success_and_falls_back() -
     assert result.terminal_message.result_kind == "SUCCESS"
 
 
-def test_compose_terminal_response__malformed_answer_uses_fallback() -> None:
+def test_compose_terminal_response__malformed_answer__uses_fallback() -> None:
     result = ComposeTerminalResponseHandler(
         llm_runtime=_Inference({"answer": "ok", "next_action": "send"}),  # type: ignore[arg-type]
         prompt_ref=_prompt_ref(),

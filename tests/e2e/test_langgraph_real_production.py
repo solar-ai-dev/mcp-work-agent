@@ -352,7 +352,7 @@ def test_approved_write_executes__claims_and_verifies__through_real_mcp(
     )
 
 
-def test_terminal_response_failure__keeps_verified_write_and_uses_fallback(
+def test_terminal_response_failure__keeps_verified_write__and_uses_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

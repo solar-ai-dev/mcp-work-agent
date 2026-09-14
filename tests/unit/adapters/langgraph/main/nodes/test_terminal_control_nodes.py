@@ -135,7 +135,7 @@ def test_terminal_commit__applied_false_cancel__routes_without_stale_retry() -> 
     assert rebuilds == 0
 
 
-def test_terminal_commit__stale_write_discards_prose_and_rebuilds_once() -> None:
+def test_terminal_commit__stale_write__discards_prose_and_rebuilds_once() -> None:
     facts: dict[str, object] = {
         "status": "VERIFYING",
         "version": 4,

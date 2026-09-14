@@ -807,7 +807,7 @@ class TerminalResponseInputV1:
 | 입력·단계 | 처리 |
 | --- | --- |
 | `ANSWER_DRAFT` | 이미 검증된 `answer_text`를 그대로 사용한다. |
-| WRITE | 종료 가능한 `SUCCESS | PARTIAL`에서 `run.compose_terminal_response`가 최소 typed projection으로 `answer` 하나를 작성한다. 형식·Provider·budget·동의 실패는 같은 사실을 쓰는 기존 결정적 formatter로 fallback한다. |
+| WRITE | 종료 가능한 `SUCCESS | PARTIAL`에서 `run.compose_terminal_response`가 최소 typed projection으로 `answer` 하나를 작성한다. 형식·Provider·budget·동의 실패는 같은 사실을 쓰는 기존 결정적 formatter로 fallback한다. `limitations`의 필수 안전 한계는 LLM 정상 문장과 fallback 모두에서 결정적으로 보존한다. |
 | Block/Cancel/Recovery | persisted typed Run·Plan·Action·Verification projection과 bounded `reason_codes`를 고정 템플릿으로 포맷한다. |
 | 사용자-facing `content` | `request_text`의 언어를 보존하고 실제 완료·미실행·실패 Action을 구분한다. raw state/reason code/artifact id는 포함하지 않는다. |
 | `message_id`, `conversation_id`, `run_id`, `created_at_ms` | server-owned aggregate/context에서 채운다. Product Prompt가 생성하지 않는다. |

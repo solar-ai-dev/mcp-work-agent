@@ -880,7 +880,7 @@ def test_auto_fallback_does__not_call_api__without_published_scope() -> None:
     assert api.calls == 0
 
 
-def test_terminal_response__auto_does_not_cross_to_api_fallback() -> None:
+def test_terminal_response__auto_mode__does_not_cross_to_api_fallback() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     api = _Provider()
     local = _Provider(
@@ -909,7 +909,7 @@ def test_terminal_response__auto_does_not_cross_to_api_fallback() -> None:
     assert api.calls == 0
 
 
-def test_terminal_response__external_scope_includes_result_data_classes() -> None:
+def test_terminal_response__external_scope__includes_result_data_classes() -> None:
     scope = _scope()
     checkpoint = ExternalScopeCheckpoint(scope=scope)
     router = _router(checkpoint=checkpoint, api=_Provider())

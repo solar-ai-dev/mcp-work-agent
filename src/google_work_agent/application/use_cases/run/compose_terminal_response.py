@@ -216,6 +216,11 @@ class ComposeTerminalResponseHandler:
                 result.structured_output,
                 response_input=command.response_input,
             )
+            answer = _with_required_limitations(
+                answer,
+                command.response_input.limitations,
+                maximum=MAX_TERMINAL_RESPONSE_CHARS,
+            )
         except LLMInvocationError as error:
             return self._fallback(command, error.code.value)
         except TerminalResponseOutputError:
@@ -267,8 +272,20 @@ class ComposeTerminalResponseHandler:
                 "fallback_reason": reason,
             },
         )
+        fallback_message = validate_terminal_assistant_message_input(
+            TerminalAssistantMessageInputV1(
+                schema_version=1,
+                result_kind=command.fallback_message.result_kind,
+                content=_with_required_limitations(
+                    command.fallback_message.content,
+                    command.response_input.limitations,
+                    maximum=65_536,
+                ),
+                reason_codes=list(command.fallback_message.reason_codes),
+            )
+        )
         return ComposeTerminalResponseResultV1(
-            terminal_message=command.fallback_message,
+            terminal_message=fallback_message,
             generation_mode="FALLBACK",
             fallback_reason=reason,
             provider=None,
@@ -453,6 +470,19 @@ def _required_bounded_text(value: object, field_name: str, maximum: int) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValueError(f"{field_name} is invalid")
     return value
+
+
+def _with_required_limitations(
+    content: str,
+    limitations: Sequence[str],
+    *,
+    maximum: int,
+) -> str:
+    missing = [item for item in limitations if item not in content]
+    combined = content if not missing else "\n\n".join((content, *missing))
+    if len(combined) > maximum:
+        raise TerminalResponseOutputError("terminal response limitations exceed output bound")
+    return combined
 
 
 __all__ = [
