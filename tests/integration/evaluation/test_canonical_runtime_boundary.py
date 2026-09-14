@@ -141,7 +141,7 @@ class _ReadDelegate:
         ("CASE-STRESS-002", ConnectorFailureCode.UPSTREAM_UNAVAILABLE),
     ),
 )
-def test_fault_adapter_delivers_transient_failures_to_execute_read_node(
+def test_fault_adapter__transient_failures__reach_execute_read_node(
     case_id: str, expected_code: ConnectorFailureCode
 ) -> None:
     delegate = _ReadDelegate()
@@ -158,7 +158,7 @@ def test_fault_adapter_delivers_transient_failures_to_execute_read_node(
     assert delegate.calls == 0
 
 
-def test_connector_fault_operations_are_current_signed_registry_tools() -> None:
+def test_connector_fault_operations__current_signed_registry__contain_tools() -> None:
     registered = {entry.tool_id for entry in load_signed_tool_registry().entries}
     connector_operations = {
         operation
@@ -179,7 +179,7 @@ def test_connector_fault_operations_are_current_signed_registry_tools() -> None:
     assert connector_operations <= registered
 
 
-def test_reauth_fault_persists_through_execute_read_node_until_checkpoint() -> None:
+def test_reauth_fault__execute_read_node__persists_until_checkpoint() -> None:
     checkpoints: set[str] = set()
     delegate = _ReadDelegate()
     adapter = FaultInjectingConnectorAdapter(
@@ -211,7 +211,7 @@ def test_reauth_fault_persists_through_execute_read_node_until_checkpoint() -> N
 
 
 @pytest.mark.parametrize("case_id", ("CASE-CORE-033", "CASE-CORE-035"))
-def test_fixed_case_time_flows_through_start_run_and_gmail_query_projection(
+def test_fixed_case_time__start_run_and_gmail_query__preserve_projection(
     tmp_path: Path, case_id: str
 ) -> None:
     tick = [100.0]
@@ -275,7 +275,7 @@ def test_fixed_case_time_flows_through_start_run_and_gmail_query_projection(
     assert guard.elapsed_ms == 125
 
 
-def test_delta_fixture_and_product_query_share_the_same_last_week_window() -> None:
+def test_delta_fixture__product_query__shares_last_week_window() -> None:
     runtime = CanonicalCaseRuntime.for_case("CASE-STRESS-010")
     resolved = resolve_gmail_query_periods(
         prompt_input={"request_intent": {"constraints": _relative_constraints("지난주")}},
@@ -307,7 +307,7 @@ def test_delta_fixture_and_product_query_share_the_same_last_week_window() -> No
         ("CASE-STRESS-007", None, LLMErrorCode.OUTPUT_SCHEMA_INVALID),
     ),
 )
-def test_schema_faults_reach_product_validation_and_repair(
+def test_schema_faults__product_validation_and_repair__receive_injections(
     case_id: str,
     expected_attempts: int | None,
     expected_error: LLMErrorCode | None,
@@ -335,7 +335,7 @@ def test_schema_faults_reach_product_validation_and_repair(
     assert delegate.calls == 2
 
 
-def test_local_inference_failure_reaches_product_router_without_fallback() -> None:
+def test_local_inference_failure__product_router__does_not_fallback() -> None:
     prompt = _prompt()
     delegate = _LLMDelegate()
     provider = FaultInjectingLLMProviderAdapter(
@@ -371,7 +371,7 @@ def test_local_inference_failure_reaches_product_router_without_fallback() -> No
         ),
     ),
 )
-def test_write_fault_result_reaches_product_dispatch_classifier(
+def test_write_fault_result__product_dispatch_classifier__receives_result(
     case_id: str, tool_id: str, delivery: str, disposition: str
 ) -> None:
     provider = StatefulSimulatedProvider()
@@ -403,7 +403,7 @@ def test_write_fault_result_reaches_product_dispatch_classifier(
     assert provider.effect_counts.get(tool_id, 0) == (1 if case_id == "CASE-STRESS-013" else 0)
 
 
-def test_verification_mismatch_is_detected_by_product_verifier() -> None:
+def test_verification_mismatch__product_verifier__detects_difference() -> None:
     provider = StatefulSimulatedProvider(
         initial_resources=[_task_resource(notes="approved")],
         read_result_factory=_simulated_read_result,
@@ -427,7 +427,7 @@ def test_verification_mismatch_is_detected_by_product_verifier() -> None:
     assert stored["payload"]["notes"] == "approved"
 
 
-def test_verification_timeout_is_delivered_to_product_verifier_without_rewrite() -> None:
+def test_verification_timeout__product_verifier__receives_without_rewrite() -> None:
     provider = StatefulSimulatedProvider(
         initial_resources=[_task_resource(notes="approved")],
         read_result_factory=_simulated_read_result,
@@ -451,7 +451,7 @@ def test_verification_timeout_is_delivered_to_product_verifier_without_rewrite()
     assert provider.write_calls == []
 
 
-def test_cancel_fault_invokes_product_cancel_command_before_draft_dispatch(
+def test_cancel_fault__before_draft_dispatch__invokes_product_cancel_command(
     tmp_path: Path,
 ) -> None:
     database_path = _cancel_database(tmp_path / "cancel.db")
