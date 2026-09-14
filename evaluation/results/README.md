@@ -7,6 +7,7 @@
 
 | 날짜 | 목적 | 결과 묶음 | 핵심 판정 | ZIP |
 | --- | --- | --- | --- | --- |
+| 2026-09-14 | Gmail Thread 목록 metadata N+1 개선 | [gmail-metadata-hydration-20260914-7afac9f5](gmail-metadata-hydration-20260914-7afac9f5/README.md) | Provider 10-config, Local API, J=2, Production execute_read_node 검증. B20/W1 선택, Node p95 63.20% 개선, WRITE/SEND 0 | [다운로드](gmail-metadata-hydration-20260914-7afac9f5-result-bundle.zip) |
 | 2026-09-14 | Issue 251 confirmed target contract 복구 | [issue251-confirmed-target-contract-20260914](issue251-confirmed-target-contract-20260914/README.md) | Product SHA 고정, Calendar Gate PASS 뒤 최종 6/6 PASS. rerun-to-pass 0, 승인·WRITE/SEND 0 | `summary.json` |
 | 2026-09-14 | Issue 251 회귀 복구 6개 Production Smoke | [issue251-regression-smoke-six-20260914](issue251-regression-smoke-six-20260914/README.md) | 고정 SHA·각 1회: 3/6 PASS. Selected Event·Juniper EXHAUSTIVE·Atlas q19 통과, WRITE/SEND 0 | `summary.json` |
 | 2026-09-14 | Atlas Draft·q19 성공/실패 Run 최초 차이 비교 | [atlas-comparison-20260914](atlas-comparison-20260914/README.md) | Draft는 source-page 8 제한에 따른 route starvation, q19는 실제 NEXT_PAGE와 budget 승인 operation의 불일치. 추가 Run 0, WRITE/SEND 0 | [다운로드](atlas-comparison-20260914.zip) |
