@@ -5,7 +5,6 @@ import json
 from collections import Counter
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DATASET_ROOT = ROOT / "evaluation" / "datasets"
 E2E_ROOT = DATASET_ROOT / "e2e"
@@ -91,39 +90,52 @@ def test_every_case_has_provider_binding_gold_and_explicit_readiness() -> None:
         assert readiness["data_ready"] == (not readiness["data_blockers"])
         assert readiness["ready_for_evaluation"] == (
             readiness["data_ready"]
-            and readiness["temporal_status"] == "NOT_REQUIRED"
+            and readiness["temporal_status"]
+            in {"NOT_REQUIRED", "BOUND_FIXED_RUN_REFERENCE_TIME"}
         )
 
 
-def test_pending_temporal_and_provider_repairs_are_not_hidden() -> None:
+def test_temporal_and_provider_readiness_are_complete() -> None:
     manifest = _json(MANIFEST_PATH)
     cases = _cases()
-    pending = {
+    bound = {
         case["case_id"]
         for case in cases
-        if case["readiness"]["temporal_status"] == "PENDING_TEMPORAL_BINDING"
+        if case["readiness"]["temporal_status"]
+        == "BOUND_FIXED_RUN_REFERENCE_TIME"
     }
 
-    assert len(pending) == 46
-    assert pending == set(manifest["temporal_pending_case_ids"])
-    assert manifest["provider_unresolved_packs"] == [
-        "DELTA",
-        "JUNIPER",
-        "ROOM_CONFLICT",
-    ]
+    assert len(bound) == 48
+    assert {"CASE-CORE-033", "CASE-CORE-035"} <= bound
+    assert manifest["temporal_pending_case_ids"] == []
+    assert manifest["temporal_binding"]["bound_case_count"] == 48
+    assert manifest["provider_unresolved_packs"] == []
     assert manifest["provider_pack_counts"] == {
-        "ADD": 0,
-        "KEEP": 22,
-        "PENDING": 2,
+        "ADD": 1,
+        "KEEP": 23,
+        "PENDING": 0,
         "REPLACE": 2,
+    }
+    assert manifest["status"] == "BENCHMARK_READY"
+    assert manifest["benchmark_ready"] == "YES"
+    assert manifest["stress_harness_ready"] is True
+    assert manifest["stress_harness"] == {
+        "configuration": "evaluation/harness/canonical_v8_fault_profiles.json",
+        "profile_count": 20,
+        "ready": True,
+        "resolver": "evaluation/harness/fault_profiles.py",
+        "validation": "DRY_VALIDATED_20_OF_20",
     }
 
     changes = manifest["provider_changes"]
     assert changes["kestrel_task"]["independent_reread_verified"] is True
     assert changes["delta_message"]["independent_reread_verified"] is True
-    assert changes["delta_message"]["all_retired_messages_trash_confirmed"] is True
-    assert changes["delta_message"]["standalone_thread_verified"] is False
-    assert changes["delta_message"]["active_thread_isolated_verified"] is True
+    assert changes["delta_message"]["standalone_thread_verified"] is True
+    assert changes["delta_message"]["retired_thread_trashed_verified"] is True
+    assert changes["juniper_review_event"]["overlap_verified"] is True
+    assert changes["juniper_review_event"]["distinct_identity_verified"] is True
+    assert changes["room_conflict"]["owner_binding_verified"] is True
+    assert changes["quartz_attachment"]["attachment_count"] == 1
 
 
 def test_only_canonical_v8_dataset_assets_remain_active() -> None:

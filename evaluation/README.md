@@ -18,11 +18,14 @@ agent/retrieval/micro/Episode 데이터는 활성 평가 기준이 아니며 Git
 
 ## 준비 상태
 
-Dataset Gold와 실행 준비 상태는 별도다. 새 시각을 결정해야 하는 46개 Case는
-`PENDING_TEMPORAL_BINDING`이며 임시 날짜를 넣지 않는다. Juniper 검토 Event의
-시간 결속, Room Conflict의 Yuna Calendar owner binding, Delta 교체 뒤 휴지통
-메시지도 노출하는 현재 Product thread read 제한을 미완료 상태 그대로 manifest에
-기록한다. 이 항목을 제외하거나 모델 실패로 바꾸지 않는다.
+Dataset Gold와 실행 준비 상태는 별도다. 시간 맥락이 필요한 48개 Case는
+Provider timestamp를 위조하지 않고 Case별 고정 `run_reference_time`에 결속한다.
+실행기는 [`harness/temporal_bindings.py`](harness/temporal_bindings.py)로 이 값을
+해석해 해당 시각에서 Run을 시작해야 한다.
+
+STRESS 20개는 [`harness/canonical_v8_fault_profiles.json`](harness/canonical_v8_fault_profiles.json)의
+평가 전용 주입 사양을 [`harness/fault_profiles.py`](harness/fault_profiles.py)로
+resolve한다. 이 하네스는 제품 코드·Prompt에 fault 의미를 넣지 않는다.
 
 HOLDOUT 표식은 기존 ID 분류 보존용이며 blind holdout을 뜻하지 않는다. v8은 아직
 모델 평가 전이므로 과거 Dataset 점수나 Production Smoke 결과를 승계하지 않는다.
@@ -34,5 +37,6 @@ Gold는 제품 Prompt나 Provider 업무 본문에 넣지 않는다. WRITE Case�
 평가한다. 평가 결과는 `evaluation/results/<주제>-<YYYYMMDD>/`에 두고, DB·checkpoint·
 replay·로그 같은 실행 상태는 runtime 영역에 둔다.
 
-과거 Production Smoke 요약은 [`experiments`](experiments/)에, 누적 실행 이력은
-[`실행기록.md`](실행기록.md)에 있다. 이 기록은 v8 평가 결과가 아니다.
+과거 Production Smoke 기준점 요약은 [`experiments`](experiments/)에 남긴다.
+정리 전 원시 결과와 누적 실행 기록은 Git history에서만 복구할 수 있으며 v8 평가
+결과가 아니다.
