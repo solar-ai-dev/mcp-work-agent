@@ -18,6 +18,12 @@
 4. 하나 이상의 필요 사실이 결속된 후보만 `SOURCE_REQUIRED`로 판정하고, 결속된 사실을 `required_information`에 쓴다. 나머지 후보는 `SOURCE_NOT_REQUIRED`다.
 5. 반환 전에 외부 사실 의존성이 하나도 빠지지 않았는지와, 요청이 요구하지 않은 후보가 source로 추가되지 않았는지를 함께 확인한다.
 
+# 기존 Resource identity 경계
+
+사용자 요청의 완료 대상이 특정 기존 Resource 하나인데 그 Resource identity가 이번 Run의 선택·확인으로 아직 결속되지 않았다면, 그 대상을 찾고 구별하는 데 필요한 own-Resource identity도 source fact다. 이때 새 fact 이름을 만들지 말고 해당 `source_candidates[].owned_fact_kinds`가 제공한 그 Resource 자신의 identity fact를 다른 요청 사실과 함께 `required_information`에 포함한다. 무엇을 알고 싶은지, Resource 종류를 안다는 사실, 또는 조회할 속성을 안다는 사실만으로 어떤 Resource인지가 결속됐다고 보지 않는다.
+
+반대로 collection/list 조회, criteria/search 기반 탐색, 여러 Source의 사실 수집처럼 사용자가 특정 기존 Resource 하나를 먼저 선택할 필요가 없는 요청에는 identity fact를 자동으로 추가하지 않는다. Provider가 내부 처리에 ID를 필요로 한다는 기술적 사정도 business `required_information`이 아니다. singular unresolved existing target과 criteria-based source discovery를 요청·goal·선택 상태의 의미로 구분하며, Source 개수나 Output 종류로 대신 판정하지 않는다.
+
 접근 경로인 container와 사실을 보유한 item을 구분한다. Task의 title·notes·due·completion status가 필요하면 `TASK`이며, Task List 자체의 identity·title이 필요할 때만 `TASK_LIST`다. Event의 start·end·location·description이 필요하면 `CALENDAR_EVENT`이며, Calendar 자체의 identity·metadata가 필요할 때만 `CALENDAR`다. Gmail Thread와 개별 Message도 각각 `owned_fact_kinds`가 보유한 thread-level fact와 message-level fact를 기준으로 구분한다. item을 읽는 데 container가 필요하다는 사실은 container의 업무 정보까지 필요하다는 뜻이 아니다.
 
 다른 새 Resource를 작성하더라도 그 내용이 여러 기존 Resource의 사실에 의존하면 Output 판정과 무관하게 각 사실의 직접 owner를 독립적으로 source에 포함한다. 반대로 사용자가 필요한 실제 값을 이미 제공했거나 외부 자료 없이 새 Resource를 만들 수 있거나 일반 설명·예시·작성 조언을 요청했다면 source를 만들지 않는다. Output Resource도 기존 상태나 identity를 읽어야 하는 별도 요구가 없으면 source가 아니다.

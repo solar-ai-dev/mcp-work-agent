@@ -109,6 +109,46 @@ def test_source_validation__with_cross_resource_request__preserves_dependencies(
     )
 
 
+def test_source_validation__singular_event__allows_identity_and_requested_facts() -> None:
+    candidate = _decisions(
+        sources={"CALENDAR_EVENT": ["event_identity", "start", "end"]}
+    )
+
+    assert not validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+    validated = source_dependencies.validate_source_dependency_candidate(
+        candidate,
+        source_candidates=_CANDIDATES,
+    )
+    by_resource = {
+        decision["resource_type"]: decision for decision in validated["source_dependencies"]
+    }
+    assert by_resource["CALENDAR_EVENT"]["required_information"] == [
+        "event_identity",
+        "start",
+        "end",
+    ]
+    assert by_resource["CALENDAR"]["dependency"] == "SOURCE_NOT_REQUIRED"
+
+
+def test_source_validation__criteria_event__allows_fact_without_identity() -> None:
+    candidate = _decisions(sources={"CALENDAR_EVENT": ["status"]})
+
+    assert not validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+    assert (
+        source_dependencies.validate_source_dependency_candidate(
+            candidate,
+            source_candidates=_CANDIDATES,
+        )
+        == candidate
+    )
+
+
 def test_source_schema__source_required__requires_non_empty_information() -> None:
     candidate = _decisions(sources={"TASK": []})
 
