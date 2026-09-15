@@ -44,7 +44,7 @@ class _FixedClock:
         return 123
 
 
-def test_development_runtime_bindings__are_explicit_and_forbidden_in_signed_mode(
+def test_development_runtime_bindings__remain_explicit__outside_signed_mode(
     tmp_path: Path,
 ) -> None:
     bindings = DevelopmentRuntimeBindings(clock=_FixedClock())

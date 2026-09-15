@@ -376,7 +376,7 @@ def test_plan_query__explicit_user_anchor__is_preserved(
 
 
 def test_plan_query__anchor_and_planner_manifestations__are_both_allowed() -> None:
-    intent_constraints = [
+    intent_constraints: list[dict[str, object]] = [
         _provenance_constraint(
             kind="USER_REQUIREMENT",
             field="search_terms",
@@ -407,7 +407,7 @@ def test_plan_query__anchor_and_planner_manifestations__are_both_allowed() -> No
 
 
 def test_plan_query__omitted_user_anchor__uses_existing_semantic_revision() -> None:
-    intent_constraints = [
+    intent_constraints: list[dict[str, object]] = [
         _provenance_constraint(
             kind="USER_REQUIREMENT",
             field="search_terms",
@@ -444,7 +444,7 @@ def test_plan_query__omitted_user_anchor__uses_existing_semantic_revision() -> N
 
 
 def test_plan_query__concept_only__cannot_invent_exact_keyword_anchor() -> None:
-    constraints = [
+    constraints: list[dict[str, object]] = [
         {
             "kind": "USER_REQUIREMENT",
             "field": "business_concepts",
@@ -2452,6 +2452,7 @@ def test_plan_query__freebusy_without_temporal_range__uses_semantic_revision() -
     assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
     search_spec = result["route_queries"][0]["search_spec"]
     assert search_spec is not None
+    assert search_spec["mode"] == "INITIAL"
     assert {constraint["kind"] for constraint in search_spec["constraints"]} == {
         "CONTAINER_REF",
         "TEMPORAL_RANGE",

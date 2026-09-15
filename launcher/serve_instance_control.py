@@ -9,8 +9,13 @@ import os
 import threading
 from collections.abc import Callable
 from ctypes import wintypes
-from multiprocessing.connection import PipeConnection, answer_challenge, deliver_challenge
-from typing import Any
+from multiprocessing.connection import (
+    Connection,
+    PipeConnection,
+    answer_challenge,
+    deliver_challenge,
+)
+from typing import Any, cast
 
 from launcher.acquire_single_instance import _current_user_identity
 
@@ -115,8 +120,9 @@ class _CurrentUserPipeListener:
             self._pending_handle = None
         connection = PipeConnection(handle)
         try:
-            deliver_challenge(connection, self._authkey)
-            answer_challenge(connection, self._authkey)
+            challenge_connection = cast("Connection[Any, Any]", connection)
+            deliver_challenge(challenge_connection, self._authkey)
+            answer_challenge(challenge_connection, self._authkey)
         except Exception:
             connection.close()
             raise

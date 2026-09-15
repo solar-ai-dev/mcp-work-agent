@@ -198,7 +198,7 @@ def test_connector_fault_operations__current_signed_registry__contain_tools() ->
     assert connector_operations <= registered
 
 
-def test_acquisition_fault__stops_before_provider_read() -> None:
+def test_acquisition_fault__stops_before_provider_read__deterministically() -> None:
     provider = StatefulSimulatedProvider(read_result_factory=_simulated_read_result)
     fault = FaultApplyingAdapter(FaultHarness.for_case("CASE-STRESS-009"))
     adapter = _RetrievalFaultReadAdapter(delegate=provider, fault_adapter=fault)
@@ -216,7 +216,7 @@ def test_acquisition_fault__stops_before_provider_read() -> None:
     assert fault.records[0].boundary == "RETRIEVAL_ACQUISITION"
 
 
-def test_ranking_fault__binds_simulated_fixture_before_product_consumes_read() -> None:
+def test_ranking_fault__binds_fixture_before_product_read__deterministically() -> None:
     runtime = CanonicalCaseRuntime.for_case("CASE-STRESS-010")
     fixture = runtime.simulated_fixture()
     resources = _normalize_provider_resources(fixture["resources"])
@@ -246,7 +246,7 @@ def test_ranking_fault__binds_simulated_fixture_before_product_consumes_read() -
     assert fault.records[0].boundary == "RETRIEVAL_RANKING"
 
 
-def test_write_descriptor__retries_transient_windows_publish_lock(
+def test_write_descriptor__retries_transient_publish_lock__on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     descriptor = tmp_path / "launch.json"

@@ -2107,6 +2107,7 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
             if prompt_id == "retrieval.plan_query":
                 result = super()._response(prompt_id, projection)
                 constraints = cast(Any, result)["route_queries"][0]["search_spec"]["constraints"]
+                constraints.pop("keyword", None)
                 constraints["concept"] = {
                     "kind": "CONCEPT",
                     "concept": "일정",

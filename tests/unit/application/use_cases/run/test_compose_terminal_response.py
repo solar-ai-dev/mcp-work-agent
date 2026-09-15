@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from google_work_agent.application.use_cases.run.build_terminal_message import (
     TerminalAssistantMessageInputV1,
@@ -8,6 +9,7 @@ from google_work_agent.application.use_cases.run.build_terminal_message import (
 from google_work_agent.application.use_cases.run.compose_terminal_response import (
     ComposeTerminalResponseCommandV1,
     ComposeTerminalResponseHandler,
+    TerminalResponseInputV1,
     build_terminal_response_input,
 )
 from google_work_agent.ports.llm.structured_inference_contracts import (
@@ -20,7 +22,7 @@ from google_work_agent.ports.llm.structured_inference_port import StructuredInfe
 
 
 class _Inference:
-    def __init__(self, output: object) -> None:
+    def __init__(self, output: dict[str, object] | Exception) -> None:
         self.output = output
         self.calls: list[Mapping[str, object]] = []
 
@@ -37,7 +39,7 @@ class _Inference:
             raise self.output
         return StructuredInferenceResultV1(
             schema_version=1,
-            structured_output=self.output,  # type: ignore[arg-type]
+            structured_output=self.output,
             provider="test",
             model="test-model",
             actual_runtime="LOCAL_GPU",
@@ -73,7 +75,7 @@ def _fallback() -> TerminalAssistantMessageInputV1:
     )
 
 
-def _response_input(*, no_send: bool = False):
+def _response_input(*, no_send: bool = False) -> TerminalResponseInputV1:
     return build_terminal_response_input(
         user_request="메일 초안을 수정해 줘",
         result_kind="SUCCESS",
@@ -98,7 +100,7 @@ def _response_input(*, no_send: bool = False):
 def test_terminal_response_input__uses_verified_values__not_plan_arguments() -> None:
     projection = _response_input(no_send=True).to_projection()
 
-    action = projection["action_results"][0]  # type: ignore[index]
+    action = cast(list[dict[str, object]], projection["action_results"])[0]
     assert action["target_label"] == "검증된 초안"
     assert action["verified_fields"] == [
         {"field": "subject", "value": "검증된 초안"},
@@ -156,7 +158,7 @@ def test_compose_terminal_response__returns_only__sanitized_llm_prose() -> None:
         {"answer": "google_workspace 내부 코드 없이 검증된 초안을 수정했습니다."}
     )
     handler = ComposeTerminalResponseHandler(
-        llm_runtime=inference,  # type: ignore[arg-type]
+        llm_runtime=inference,
         prompt_ref=_prompt_ref(),
     )
 
@@ -213,7 +215,7 @@ def test_compose_terminal_response__preserves_send_limitation__for_llm_and_fallb
     )
 
     llm_result = ComposeTerminalResponseHandler(
-        llm_runtime=_Inference({"answer": "안내 메일을 전송했습니다."}),  # type: ignore[arg-type]
+        llm_runtime=_Inference({"answer": "안내 메일을 전송했습니다."}),
         prompt_ref=_prompt_ref(),
     )(command)
     assert limitation in llm_result.terminal_message.content
@@ -221,7 +223,7 @@ def test_compose_terminal_response__preserves_send_limitation__for_llm_and_fallb
     fallback_result = ComposeTerminalResponseHandler(
         llm_runtime=_Inference(
             LLMInvocationError(LLMErrorCode.PROVIDER_TIMEOUT, "timeout")
-        ),  # type: ignore[arg-type]
+        ),
         prompt_ref=_prompt_ref(),
     )(command)
     assert limitation in fallback_result.terminal_message.content
@@ -232,7 +234,7 @@ def test_compose_terminal_response__llm_failure__keeps_success_and_falls_back() 
         LLMInvocationError(LLMErrorCode.PROVIDER_TIMEOUT, "timeout", retryable=True)
     )
     result = ComposeTerminalResponseHandler(
-        llm_runtime=inference,  # type: ignore[arg-type]
+        llm_runtime=inference,
         prompt_ref=_prompt_ref(),
     )(
         ComposeTerminalResponseCommandV1(
@@ -252,7 +254,7 @@ def test_compose_terminal_response__llm_failure__keeps_success_and_falls_back() 
 
 def test_compose_terminal_response__malformed_answer__uses_fallback() -> None:
     result = ComposeTerminalResponseHandler(
-        llm_runtime=_Inference({"answer": "ok", "next_action": "send"}),  # type: ignore[arg-type]
+        llm_runtime=_Inference({"answer": "ok", "next_action": "send"}),
         prompt_ref=_prompt_ref(),
     )(
         ComposeTerminalResponseCommandV1(

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import Literal, Required, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, Required, TypedDict, cast
 
+from google_work_agent.adapters.langgraph.agent_kernel import consume_llm_call_budget
 from google_work_agent.application.use_cases.run.build_terminal_message import (
     BuildTerminalMessageHandler,
     BuildTerminalMessageQueryV1,
@@ -20,6 +21,9 @@ from google_work_agent.application.use_cases.run.compose_terminal_response impor
     ComposeTerminalResponseHandler,
     build_terminal_response_input,
 )
+
+if TYPE_CHECKING:
+    from google_work_agent.adapters.langgraph.main.state import GraphState
 
 type TerminalCommitKindV1 = Literal[
     "COMPLETE_ANSWER_ONLY",
@@ -86,12 +90,15 @@ def response_synthesis_node(
         build_terminal_message=build_terminal_message,
         compose_terminal_response=compose_terminal_response,
     )
-    return {
+    patch: dict[str, object] = {
         "__logical_target__": "terminal_commit",
         "__target__": "terminal_commit",
         "workflow_phase": "RESPONSE_SYNTHESIS",
         "terminal_commit_intent": intent,
     }
+    if "retry_budget" in state:
+        patch["retry_budget"] = consume_llm_call_budget(cast("GraphState", state))
+    return patch
 
 
 def build_terminal_commit_intent(

@@ -151,6 +151,8 @@ def account_provider_dispatch() -> None:
             mutable = cast(dict[str, object], run_budget)
             mutable.clear()
             mutable.update(updated)
+        else:
+            _CURRENT_RUN_BUDGET.set(updated)
         return
     if run_budget is None:
         # Non-Run diagnostic/connection probes intentionally have no RunBudget.

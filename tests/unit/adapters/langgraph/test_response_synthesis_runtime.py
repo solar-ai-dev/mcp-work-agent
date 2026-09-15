@@ -12,6 +12,10 @@ from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor im
 from google_work_agent.adapters.langgraph.main.state import GraphState, WorkflowPhase
 from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorTarget
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+from google_work_agent.application.use_cases.run.account_provider_dispatch import (
+    account_provider_dispatch,
+    provider_dispatch_budget_scope,
+)
 from google_work_agent.application.use_cases.run.build_terminal_message import (
     BuildTerminalMessageHandler,
     TerminalAssistantMessageInputV1,
@@ -19,6 +23,7 @@ from google_work_agent.application.use_cases.run.build_terminal_message import (
 from google_work_agent.application.use_cases.run.compose_terminal_response import (
     ComposeTerminalResponseResultV1,
 )
+from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 
 
 class _Composer:
@@ -380,6 +385,50 @@ def test_response_synthesis__closes_fact_read__before_terminal_llm_call() -> Non
     )
 
     assert composer.calls == 1
+
+
+def test_response_synthesis__merges_terminal_llm_call__into_run_budget() -> None:
+    class AccountingComposer(_Composer):
+        def __call__(self, command: object) -> ComposeTerminalResponseResultV1:
+            account_provider_dispatch()
+            return super().__call__(command)
+
+    budget = build_default_run_budget()
+    composer = AccountingComposer()
+    with provider_dispatch_budget_scope(budget):
+        result = response_synthesis_node(
+            {
+                "run_id": "run-1",
+                "run_input": {
+                    "user_request": "회의 준비 태스크를 만들어 줘",
+                    "requested_mode": "LOCAL_GPU",
+                },
+                "retry_budget": budget,
+            },
+            read_terminal_facts=lambda _run_id: {
+                "status": "VERIFYING",
+                "version": 7,
+                "terminal_result_kind": None,
+                "action_statuses": ["VERIFIED"],
+                "action_effect_types": ["CREATE"],
+                "actions": [
+                    {
+                        "connector_id": "google_workspace",
+                        "resource_type": "task",
+                        "tool_name": "tasks_create_task",
+                        "effect_type": "CREATE",
+                        "status": "VERIFIED",
+                        "arguments": {},
+                        "target_display": {},
+                        "verification_actual": {"title": "회의 준비"},
+                    }
+                ],
+            },
+            build_terminal_message=BuildTerminalMessageHandler(),
+            compose_terminal_response=composer,  # type: ignore[arg-type]
+        )
+
+    assert cast(dict[str, object], result["retry_budget"])["llm_calls_used"] == 1
 
 
 def test_response_synthesis__projects_read_evidence_into__assistant_message() -> None:
