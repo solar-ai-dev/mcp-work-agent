@@ -296,8 +296,8 @@ class _ComponentInferencePort:
                 }
             if self.searchable_target:
                 return {
-                    "missing_information_owner": "CONNECTOR",
-                    "missing_fields": ["shipment criteria and owner"],
+                    "missing_information_owner": "USER",
+                    "missing_fields": ["target_resource"],
                 }
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
@@ -1094,7 +1094,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 
-def test_request_understanding__compiled_searchable_target__keeps_semantic_connector_owner() -> (
+def test_request_understanding__compiled_searchable_target__resolves_semantic_user_owner() -> (
     None
 ):
     llm = _ComponentInferencePort(searchable_target=True)
@@ -1123,7 +1123,7 @@ def test_request_understanding__compiled_searchable_target__keeps_semantic_conne
         Mapping[str, object],
         llm.inputs["request_understanding.detect_ambiguity"][0]["resolution_responsibilities"],
     )
-    assert resolution["searchable_target_anchor_count"] == 1
+    assert resolution["searchable_target_anchor_count"] == 2
     assert resolution["connector_owned_source_count"] == 1
 
 
