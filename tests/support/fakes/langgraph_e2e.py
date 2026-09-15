@@ -634,11 +634,37 @@ def _goal_source_dependency_decisions(
                     "resource_type": resource_type,
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": required_information,
+                    "target_scope": _e2e_target_scope(
+                        scenario,
+                        resource_type=resource_type,
+                        projection=projection,
+                    ),
                 }
             )
         else:
             decisions.append({"resource_type": resource_type, "dependency": "SOURCE_NOT_REQUIRED"})
     return {"source_dependencies": decisions}
+
+
+def _e2e_target_scope(
+    scenario: str,
+    *,
+    resource_type: str,
+    projection: Mapping[str, object],
+) -> str:
+    selected = cast(list[Mapping[str, object]], projection.get("selected_resource_refs", []))
+    if any(str(item.get("resource_type", "")).upper() in resource_type for item in selected):
+        return "SINGULAR"
+    if scenario in {
+        "GITHUB_UPDATE",
+        "GITHUB_CLOSE",
+        "GITHUB_REOPEN",
+        "GMAIL_DRAFT_UPDATE",
+        "GMAIL_REPLY",
+        "UNRESOLVED_TARGET_CONFIRMATION",
+    }:
+        return "SINGULAR"
+    return "CRITERIA"
 
 
 def _goal_output_responsibility_decisions(

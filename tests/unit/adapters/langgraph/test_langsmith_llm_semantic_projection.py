@@ -27,6 +27,7 @@ def test_detect_ambiguity_input__keeps_typed_counts__without_business_content() 
                         {
                             "resource_type": "CALENDAR_EVENT",
                             "required_information": ["일정의 실제 시각"],
+                            "target_scope": "SINGULAR",
                         }
                     ]
                 },
@@ -58,6 +59,7 @@ def test_detect_ambiguity_input__keeps_typed_counts__without_business_content() 
                     {
                         "resource_type": "CALENDAR_EVENT",
                         "required_information_count": 1,
+                        "target_scope": "SINGULAR",
                     }
                 ],
             },
@@ -163,11 +165,13 @@ def test_atomic_responsibility_outputs__keep_decisions__without_business_literal
                     "resource_type": "TASK",
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": ["private task state"],
+                    "target_scope": "CRITERIA",
                 },
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": ["private event time"],
+                    "target_scope": "SINGULAR",
                 },
             ],
         },
@@ -186,11 +190,13 @@ def test_atomic_responsibility_outputs__keep_decisions__without_business_literal
                     "resource_type": "TASK",
                     "dependency": "SOURCE_REQUIRED",
                     "required_information_count": 1,
+                    "target_scope": "CRITERIA",
                 },
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "dependency": "SOURCE_REQUIRED",
                     "required_information_count": 1,
+                    "target_scope": "SINGULAR",
                 },
             ],
         },
@@ -260,7 +266,13 @@ def test_source_status_projection__shows_fixed_shape__without_source_literals() 
                 "constraints": {"search_terms": ["private anchor"]},
                 "analysis_requirement": "NONE",
             },
-            "source_reads": [{"resource_type": "TASK", "required_information": ["private fact"]}],
+            "source_reads": [
+                {
+                    "resource_type": "TASK",
+                    "required_information": ["private fact"],
+                    "target_scope": "CRITERIA",
+                }
+            ],
             "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
             "allowed_status_values": [
                 {
@@ -286,7 +298,13 @@ def test_source_status_projection__shows_fixed_shape__without_source_literals() 
 
     assert semantic_input["source_reads"] == {
         "count": 1,
-        "items": [{"resource_type": "TASK", "required_information_count": 1}],
+        "items": [
+            {
+                "resource_type": "TASK",
+                "required_information_count": 1,
+                "target_scope": "CRITERIA",
+            }
+        ],
     }
     assert semantic_input["outputs"] == {
         "count": 1,

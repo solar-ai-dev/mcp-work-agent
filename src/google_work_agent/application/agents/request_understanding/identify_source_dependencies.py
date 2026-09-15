@@ -162,7 +162,12 @@ def build_source_dependency_output_schema(
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["resource_type", "dependency", "required_information"],
+            "required": [
+                "resource_type",
+                "dependency",
+                "required_information",
+                "target_scope",
+            ],
             "properties": {
                 "resource_type": {"enum": resource_types},
                 "dependency": {"const": "SOURCE_REQUIRED"},
@@ -173,6 +178,7 @@ def build_source_dependency_output_schema(
                     "uniqueItems": True,
                     "items": dict(_NONEMPTY_INFORMATION_SCHEMA),
                 },
+                "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
             },
         },
     ]
@@ -208,7 +214,7 @@ def build_source_dependency_output_schema(
         "allOf": exact_resource_constraints,
     }
     return OutputSchemaDefinition(
-        schema_version="request-source-dependency-decision-v2",
+        schema_version="request-source-dependency-decision-v3",
         json_schema={
             "type": "object",
             "additionalProperties": False,

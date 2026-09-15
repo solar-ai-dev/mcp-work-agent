@@ -35,6 +35,7 @@ ConstraintKindValue = Literal[
 ]
 ActionEffectValue = Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]
 WriteEffectValue = Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+TargetScopeValue = Literal["SINGULAR", "CRITERIA"]
 ConstraintProvenanceSource = Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
 REQUEST_RESOURCE_TYPES: tuple[str, ...] = (
     "GMAIL_THREAD",
@@ -89,6 +90,7 @@ class AmbiguityV1(TypedDict):
 class SourceResourceResponsibilityV1(TypedDict):
     resource_type: str
     required_information: list[str]
+    target_scope: TargetScopeValue
 
 
 class OutputResourceResponsibilityV1(TypedDict):

@@ -180,17 +180,28 @@ def _resource_responsibilities(
     *,
     source_type: str | None = None,
     required_information: list[str] | None = None,
+    target_scope: str | None = None,
     output_type: str | None = None,
     output_effect: str | None = None,
 ) -> dict[str, list[dict[str, object]]]:
-    if (source_type is None) != (required_information is None):
-        raise ValueError("source_type and required_information must be supplied together")
+    if len({source_type is None, required_information is None, target_scope is None}) != 1:
+        raise ValueError(
+            "source_type, required_information, and target_scope must be supplied together"
+        )
     if (output_type is None) != (output_effect is None):
         raise ValueError("output_type and output_effect must be supplied together")
     return {
         "source_reads": (
-            [{"resource_type": source_type, "required_information": required_information}]
-            if source_type is not None and required_information is not None
+            [
+                {
+                    "resource_type": source_type,
+                    "required_information": required_information,
+                    "target_scope": target_scope,
+                }
+            ]
+            if source_type is not None
+            and required_information is not None
+            and target_scope is not None
             else []
         ),
         "outputs": (
@@ -216,8 +227,16 @@ def test_normalized_search_semantic_fields__wrong_kind__fails_output_contract(
         "requested_resource_hints": ["GMAIL_THREAD", "TASK"],
         "resource_responsibilities": {
             "source_reads": [
-                {"resource_type": "GMAIL_THREAD", "required_information": []},
-                {"resource_type": "TASK", "required_information": []},
+                {
+                    "resource_type": "GMAIL_THREAD",
+                    "required_information": [],
+                    "target_scope": "CRITERIA",
+                },
+                {
+                    "resource_type": "TASK",
+                    "required_information": [],
+                    "target_scope": "CRITERIA",
+                },
             ],
             "outputs": [],
         },
@@ -238,7 +257,9 @@ def test_gmail_goal__unknown_named_slot__rejects_before_routing() -> None:
                 "completion_conditions": ["확인"],
                 "constraints": {"target_project": ["ORB-17"]},
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD",
+                    required_information=["message_history"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -267,7 +288,9 @@ def test_gmail_goal__keyed_slots__preserves_distinct_semantic_roles() -> None:
                     period=["이번 주"],
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=["최종 정정된 시각"]
+                    source_type="GMAIL_THREAD",
+                    required_information=["최종 정정된 시각"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -303,7 +326,9 @@ def test_gmail_goal__finalized_literal__binds_normalized_ru_output_to_request() 
                     business_concepts=["출시"],
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=["출시 날짜"]
+                    source_type="GMAIL_THREAD",
+                    required_information=["출시 날짜"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -344,7 +369,11 @@ def test_source_status__explicit_sent_scope__retains_resource_and_source_provena
                 "constraints": _goal_constraints(search_terms=["Quartz"]),
                 "analysis_requirement": "NONE",
             },
-            _resource_responsibilities(source_type="GMAIL_MESSAGE", required_information=[]),
+            _resource_responsibilities(
+                source_type="GMAIL_MESSAGE",
+                required_information=["labels"],
+                target_scope="CRITERIA",
+            ),
             {"statuses": [_source_status("SENT", "GMAIL_MESSAGE", "보낸 편지함")]},
         ]
     )
@@ -388,7 +417,11 @@ def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
                 "constraints": _goal_constraints(),
                 "analysis_requirement": "NONE",
             },
-            _resource_responsibilities(source_type=resource_type, required_information=[]),
+            _resource_responsibilities(
+                source_type=resource_type,
+                required_information=["status"],
+                target_scope="CRITERIA",
+            ),
             {
                 "statuses": [
                     _source_status(status_value, resource_type, source_text),
@@ -420,19 +453,20 @@ def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
 
 def _source_dependency_decisions(
     *,
-    source_types: dict[str, list[str]] | None = None,
+    source_types: dict[str, tuple[list[str], str]] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     source_types = source_types or {}
     decisions: list[dict[str, object]] = []
     for candidate in _SOURCE_DEPENDENCY_CANDIDATES:
         resource_type = candidate["resource_type"]
-        information = source_types.get(resource_type)
-        if information is not None:
+        source = source_types.get(resource_type)
+        if source is not None:
             decisions.append(
                 {
                     "resource_type": resource_type,
                     "dependency": "SOURCE_REQUIRED",
-                    "required_information": information,
+                    "required_information": source[0],
+                    "target_scope": source[1],
                 }
             )
         else:
@@ -483,6 +517,7 @@ def test_source_status__task_update_output__does_not_become_completed_source_sco
             _resource_responsibilities(
                 source_type="TASK",
                 required_information=["기존 할 일 identity"],
+                target_scope="SINGULAR",
                 output_type="TASK",
                 output_effect="UPDATE",
             ),
@@ -499,7 +534,11 @@ def test_source_status__task_update_output__does_not_become_completed_source_sco
 
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
-            {"resource_type": "TASK", "required_information": ["기존 할 일 identity"]}
+            {
+                "resource_type": "TASK",
+                "required_information": ["기존 할 일 identity"],
+                "target_scope": "SINGULAR",
+            }
         ],
         "outputs": [{"resource_type": "TASK", "effect": "UPDATE"}],
     }
@@ -518,6 +557,7 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
             _resource_responsibilities(
                 source_type="GMAIL_THREAD",
                 required_information=["납품 일정", "답장 대상 대화 identity"],
+                target_scope="SINGULAR",
                 output_type="GMAIL_MESSAGE",
                 output_effect="SEND",
             ),
@@ -531,6 +571,7 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
             _resource_responsibilities(
                 source_type="GMAIL_THREAD",
                 required_information=["납품 일정", "답장 대상 대화 identity"],
+                target_scope="SINGULAR",
                 output_type="GMAIL_MESSAGE",
                 output_effect="SEND",
             ),
@@ -564,6 +605,7 @@ def test_source_status_revision__with_unaffected_owner_outputs__preserves_them()
             _resource_responsibilities(
                 source_type="GMAIL_THREAD",
                 required_information=["납품 일정", "답장 대상 대화 identity"],
+                target_scope="SINGULAR",
                 output_type="GMAIL_MESSAGE",
                 output_effect="SEND",
             ),
@@ -593,6 +635,7 @@ def test_source_status_revision__with_unaffected_owner_outputs__preserves_them()
             {
                 "resource_type": "GMAIL_THREAD",
                 "required_information": ["납품 일정", "답장 대상 대화 identity"],
+                "target_scope": "SINGULAR",
             }
         ],
         "outputs": [{"resource_type": "GMAIL_MESSAGE", "effect": "SEND"}],
@@ -631,6 +674,7 @@ def test_target_confirmation_resume__with_nonempty_source__preserves_without_rea
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["event_identity", "start", "end"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],
@@ -715,7 +759,10 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
         outputs=[
             _source_dependency_decisions(
                 source_types={
-                    "CALENDAR_EVENT": ["event_identity", "start", "end"],
+                    "CALENDAR_EVENT": (
+                        ["event_identity", "start", "end"],
+                        "SINGULAR",
+                    ),
                 }
             ),
             {
@@ -751,6 +798,7 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["event_identity", "start", "end"],
+                "target_scope": "SINGULAR",
             }
         ],
         "outputs": cast(Any, prior_candidate)["resource_responsibilities"]["outputs"],
@@ -778,7 +826,7 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
     assert validate_output_schema(_source_dependency_decisions(), source_schema)
     assert not validate_output_schema(
         _source_dependency_decisions(
-            source_types={"TASK": ["task_identity"]}
+            source_types={"TASK": (["task_identity"], "SINGULAR")}
         ),
         source_schema,
     )
@@ -859,6 +907,7 @@ def test_confirmation_resume__with_selected_resource__keeps_identity_authority()
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["event_identity", "start", "end"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],
@@ -903,6 +952,7 @@ def test_thread_reply__without_explicit_source_status__does_not_create_status() 
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["납품 일정", "답장 대상 대화 identity"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
@@ -951,6 +1001,7 @@ def test_cross_resource_read_write__single_responsibility__derives_flat_fields()
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["기존 자료의 일정"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
@@ -984,6 +1035,7 @@ def test_same_resource_read_update__single_responsibility__preserves_both_roles(
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="TASK",
                     required_information=["기존 태스크 identity"],
+                    target_scope="SINGULAR",
                     output_type="TASK",
                     output_effect="UPDATE",
                 ),
@@ -1020,10 +1072,12 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
                 {
                     "resource_type": "GMAIL_DRAFT",
                     "required_information": ["기존 본문 확인"],
+                    "target_scope": "SINGULAR",
                 },
                 {
                     "resource_type": "GMAIL_DRAFT",
                     "required_information": ["기존 수신자 확인"],
+                    "target_scope": "SINGULAR",
                 },
             ],
             "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
@@ -1056,6 +1110,7 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
             {
                 "resource_type": "GMAIL_DRAFT",
                 "required_information": ["기존 본문 확인", "기존 수신자 확인"],
+                "target_scope": "SINGULAR",
             }
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
@@ -1077,14 +1132,17 @@ def test_source_information_normalization__when_repeated__is_lossless_and_idempo
                 {
                     "resource_type": "GMAIL_DRAFT",
                     "required_information": ["기존 본문", "기존 수신자"],
+                    "target_scope": "SINGULAR",
                 },
                 {
                     "resource_type": "GMAIL_THREAD",
                     "required_information": [],
+                    "target_scope": "CRITERIA",
                 },
                 {
                     "resource_type": "GMAIL_DRAFT",
                     "required_information": ["기존 수신자", "기존 제목"],
+                    "target_scope": "SINGULAR",
                 },
             ],
             "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
@@ -1111,8 +1169,13 @@ def test_source_information_normalization__when_repeated__is_lossless_and_idempo
             {
                 "resource_type": "GMAIL_DRAFT",
                 "required_information": ["기존 본문", "기존 수신자", "기존 제목"],
+                "target_scope": "SINGULAR",
             },
-            {"resource_type": "GMAIL_THREAD", "required_information": []},
+            {
+                "resource_type": "GMAIL_THREAD",
+                "required_information": [],
+                "target_scope": "CRITERIA",
+            },
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
     }
@@ -1139,10 +1202,15 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
             },
             {
                 "source_reads": [
-                    {"resource_type": "TASK", "required_information": ["준비 상황"]},
+                    {
+                        "resource_type": "TASK",
+                        "required_information": ["준비 상황"],
+                        "target_scope": "CRITERIA",
+                    },
                     {
                         "resource_type": "CALENDAR_EVENT",
                         "required_information": ["인쇄소 일정"],
+                        "target_scope": "CRITERIA",
                     },
                 ],
                 "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
@@ -1169,7 +1237,7 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
         "request-goal-candidate-v16",
         "request-effect-prohibition-decision-v1",
-        "request-source-dependency-decision-v2",
+        "request-source-dependency-decision-v3",
         "request-output-responsibility-decision-v2",
         "request-source-status-v2",
     ]
@@ -1192,10 +1260,15 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
     )
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
-            {"resource_type": "TASK", "required_information": ["준비 상황"]},
+            {
+                "resource_type": "TASK",
+                "required_information": ["준비 상황"],
+                "target_scope": "CRITERIA",
+            },
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["인쇄소 일정"],
+                "target_scope": "CRITERIA",
             },
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
@@ -1207,10 +1280,15 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
         "GMAIL_DRAFT",
     ]
     assert runtime.calls[4]["prompt_input"]["source_reads"] == [
-        {"resource_type": "TASK", "required_information": ["준비 상황"]},
+        {
+            "resource_type": "TASK",
+            "required_information": ["준비 상황"],
+            "target_scope": "CRITERIA",
+        },
         {
             "resource_type": "CALENDAR_EVENT",
             "required_information": ["인쇄소 일정"],
+            "target_scope": "CRITERIA",
         },
     ]
     assert runtime.calls[4]["prompt_input"]["outputs"] == [
@@ -1241,8 +1319,8 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
     }
     source_decisions = _source_dependency_decisions(
         source_types={
-            "TASK": ["준비 상황"],
-            "CALENDAR_EVENT": ["인쇄소 일정"],
+            "TASK": (["준비 상황"], "CRITERIA"),
+            "CALENDAR_EVENT": (["인쇄소 일정"], "CRITERIA"),
         },
     )
     invalid_outputs = _output_responsibility_decisions(
@@ -1285,10 +1363,15 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
     assert failure_record["failure_reason_code"] == ("REQUEST_PROHIBITED_OUTPUT_EFFECT_SELECTED")
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
-            {"resource_type": "TASK", "required_information": ["준비 상황"]},
+            {
+                "resource_type": "TASK",
+                "required_information": ["준비 상황"],
+                "target_scope": "CRITERIA",
+            },
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["인쇄소 일정"],
+                "target_scope": "CRITERIA",
             },
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
@@ -1307,6 +1390,7 @@ def test_source_status_inference__with_intrinsic_draft_status__skips_revision() 
         "resource_responsibilities": _resource_responsibilities(
             source_type="GMAIL_DRAFT",
             required_information=["기존 초안"],
+            target_scope="SINGULAR",
             output_type="GMAIL_DRAFT",
             output_effect="UPDATE",
         ),
@@ -1326,6 +1410,7 @@ def test_source_status_inference__with_intrinsic_draft_status__skips_revision() 
         {
             "resource_type": "GMAIL_DRAFT",
             "required_information": ["기존 초안"],
+            "target_scope": "SINGULAR",
         }
     ]
     assert not any(item.get("field") == "status" for item in candidate["constraints"])
@@ -1369,7 +1454,9 @@ def test_gmail_goal__invented_exact_subject__is_not_promoted_to_anchor() -> None
                 "completion_conditions": ["확인"],
                 "constraints": _goal_constraints(subject=["ORB-17 검수 일정"]),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD",
+                    required_information=["subject"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -1394,7 +1481,9 @@ def test_gmail_goal__empty_array_text__cannot_become_a_person(value: str, valid:
                 "completion_conditions": ["확인"],
                 "constraints": _goal_constraints(person=[value]),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD",
+                    required_information=["participants"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -1556,6 +1645,7 @@ def test_request_goal_schema__with_exhaustive_collection__preserves_model_scope(
         resource_responsibilities=_resource_responsibilities(
             source_type="GMAIL_THREAD",
             required_information=["관련 제목 목록"],
+            target_scope="CRITERIA",
         ),
     )
 
@@ -1580,6 +1670,7 @@ def test_request_goal_schema__with_non_typed_collection_scope__rejects_candidate
             resource_responsibilities=_resource_responsibilities(
                 source_type="GMAIL_THREAD",
                 required_information=["관련 제목 목록"],
+                target_scope="CRITERIA",
             ),
         )
 
@@ -1600,6 +1691,7 @@ def test_request_goal_schema__limited_collection__does_not_enable_exhaustive() -
         resource_responsibilities=_resource_responsibilities(
             source_type="GMAIL_THREAD",
             required_information=["제한된 관련 제목 목록"],
+            target_scope="CRITERIA",
         ),
     )
 
@@ -1659,6 +1751,7 @@ def test_request_goal_validator__with_empty_responsibility_text__rejects_candida
         "resource_responsibilities": _resource_responsibilities(
             source_type="GMAIL_THREAD",
             required_information=["[]"],
+            target_scope="CRITERIA",
             output_type="TASK",
             output_effect="CREATE",
         ),
@@ -1686,7 +1779,9 @@ def test_default_repository__stays_system_owned__without_user_constraint_or_conf
                     status=[_source_status("OPEN", "GITHUB_ISSUE", "열린")]
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GITHUB_ISSUE", required_information=[]
+                    source_type="GITHUB_ISSUE",
+                    required_information=["state"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             },
@@ -1740,7 +1835,9 @@ def test_explicit_repository__omitted_by_inference__retains_current_run_authorit
                     status=[_source_status("OPEN", "GITHUB_ISSUE", "열린")]
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GITHUB_ISSUE", required_information=[]
+                    source_type="GITHUB_ISSUE",
+                    required_information=["state"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             },
@@ -1805,7 +1902,11 @@ def test_identify_goal__payload_literals_do_not__add_unrequested_resources(
                 ),
                 "resource_responsibilities": {
                     "source_reads": [
-                        {"resource_type": resource, "required_information": []}
+                        {
+                            "resource_type": resource,
+                            "required_information": ["message_history"],
+                            "target_scope": "CRITERIA",
+                        }
                         for resource in expected_resources
                         if resource != "CALENDAR_EVENT"
                     ],
@@ -1867,6 +1968,7 @@ def test_identify_goal__with_spaced_literal__restores_exact_semantic_fields() ->
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_DRAFT",
                     required_information=[f"초안 끝에 '{spaced_sentence}'를 추가"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_DRAFT",
                     output_effect="UPDATE",
                 ),
@@ -1897,6 +1999,7 @@ def test_identify_goal__with_spaced_literal__restores_exact_semantic_fields() ->
             {
                 "resource_type": "GMAIL_DRAFT",
                 "required_information": [f"초안 끝에 '{exact_sentence}'를 추가"],
+                "target_scope": "SINGULAR",
             }
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
@@ -1911,7 +2014,9 @@ def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> Non
                 "completion_conditions": ["관련 메일을 찾는다"],
                 "constraints": _goal_constraints(),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=["관련 자료"]
+                    source_type="GMAIL_THREAD",
+                    required_information=["관련 자료"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "REQUIRED",
             }
@@ -2028,7 +2133,9 @@ def test_existing_resource_update__with_missing_source__revises_source_owner() -
                 "analysis_requirement": "NONE",
             },
             _source_dependency_decisions(
-                source_types={"GITHUB_ISSUE": ["기존 issue identity와 현재 상태"]}
+                source_types={
+                    "GITHUB_ISSUE": (["기존 issue identity와 현재 상태"], "SINGULAR")
+                }
             ),
         ]
     )
@@ -2045,6 +2152,7 @@ def test_existing_resource_update__with_missing_source__revises_source_owner() -
             {
                 "resource_type": "GITHUB_ISSUE",
                 "required_information": ["기존 issue identity와 현재 상태"],
+                "target_scope": "SINGULAR",
             }
         ],
         "outputs": [{"resource_type": "GITHUB_ISSUE", "effect": "UPDATE"}],
@@ -2069,6 +2177,7 @@ def test_source_status_revision__with_independent_source_need__preserves_it() ->
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["발명된 기존 대화 identity"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
@@ -2091,6 +2200,7 @@ def test_source_status_revision__with_independent_source_need__preserves_it() ->
         {
             "resource_type": "GMAIL_THREAD",
             "required_information": ["발명된 기존 대화 identity"],
+            "target_scope": "SINGULAR",
         }
     ]
     assert len(runtime.calls) == 6
@@ -2114,6 +2224,7 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["기존 메일의 납품 주소"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
@@ -2136,6 +2247,7 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
         {
             "resource_type": "GMAIL_THREAD",
             "required_information": ["기존 메일의 납품 주소"],
+            "target_scope": "SINGULAR",
         }
     ]
     assert len(runtime.calls) == 6
@@ -2146,6 +2258,7 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
         {
             "resource_type": "GMAIL_THREAD",
             "required_information": ["기존 메일의 납품 주소"],
+            "target_scope": "SINGULAR",
         }
     ]
     assert base_projection["outputs"] == [
@@ -2172,6 +2285,7 @@ def test_semantic_revision__validated_selected_resource__remains_bound() -> None
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["선택한 메일 내용"],
+                    target_scope="SINGULAR",
                 ),
                 "analysis_requirement": "NONE",
             },
@@ -2192,6 +2306,7 @@ def test_semantic_revision__validated_selected_resource__remains_bound() -> None
         {
             "resource_type": "GMAIL_THREAD",
             "required_information": ["선택한 메일 내용"],
+            "target_scope": "SINGULAR",
         }
     ]
 
@@ -2207,7 +2322,9 @@ def test_selected_github_issue__uses_typed_repository__without_unbound_duplicate
                     {"field": "repository", "value": repository}
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GITHUB_ISSUE", required_information=[]
+                    source_type="GITHUB_ISSUE",
+                    required_information=["title", "state", "body"],
+                    target_scope="SINGULAR",
                 ),
                 "analysis_requirement": "NONE",
             },
@@ -2322,7 +2439,15 @@ def test_identify_goal__with_advice_keywords__preserves_model_semantics() -> Non
                 "constraints": _goal_constraints(),
                 "resource_responsibilities": {
                     "source_reads": [
-                        {"resource_type": resource, "required_information": []}
+                        {
+                            "resource_type": resource,
+                            "required_information": {
+                                "GMAIL_THREAD": ["message_history"],
+                                "TASK": ["completion_status"],
+                                "CALENDAR_EVENT": ["start", "end"],
+                            }[resource],
+                            "target_scope": "CRITERIA",
+                        }
                         for resource in ("GMAIL_THREAD", "TASK", "CALENDAR_EVENT")
                     ],
                     "outputs": [],
@@ -2351,7 +2476,9 @@ def test_identify_goal__current_workspace_read__is_not_rewritten_as_advice() -> 
                 "completion_conditions": ["현재 태스크를 읽어 답한다"],
                 "constraints": _goal_constraints(),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="TASK", required_information=[]
+                    source_type="TASK",
+                    required_information=["completion_status"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -2376,7 +2503,9 @@ def test_identify_goal__validated_google_tasks_read__preserves_model_semantics()
                 "completion_conditions": ["할 일을 간단히 답한다"],
                 "constraints": _goal_constraints(),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="TASK", required_information=[]
+                    source_type="TASK",
+                    required_information=["title", "completion_status"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -2407,6 +2536,7 @@ def test_identify_goal__vague_mail_read__requires_original_search_semantics() ->
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["일정", "후속 작업"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "REQUIRED",
             }
@@ -2441,7 +2571,9 @@ def test_identify_goal__inference_omits_topic__preserves_only_verbatim_request()
                 "completion_conditions": ["Summarize schedule information"],
                 "constraints": _goal_constraints(),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=["message_history"]
+                    source_type="GMAIL_THREAD",
+                    required_information=["message_history"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -2472,7 +2604,9 @@ def test_identify_goal__decision_word__does_not_override_analysis_semantics() ->
                 "completion_conditions": ["관련 메일을 찾는다"],
                 "constraints": _goal_constraints(search_terms=["KAN-93"]),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD",
+                    required_information=["message_history"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -2498,6 +2632,7 @@ def test_identify_goal__schedule_words__do_not_rewrite_model_resource_or_effect(
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["회의 일정"],
+                    target_scope="CRITERIA",
                     output_type="CALENDAR_EVENT",
                     output_effect="CREATE",
                 ),
@@ -2553,6 +2688,7 @@ def test_identify_goal__mail_derived_task_registration__preserves_inferred_effec
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["후속 업무"],
+                    target_scope="CRITERIA",
                     output_type="TASK",
                     output_effect="CREATE",
                 ),
@@ -2590,7 +2726,9 @@ def test_identify_goal__forbidden_or_quoted_registration__does_not_require_creat
                 "completion_conditions": ["메일 확인"],
                 "constraints": constraints,
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD",
+                    required_information=["message_history"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -2763,6 +2901,7 @@ def test_existing_gmail_thread_reply__thread_input_hint__is_not_collapsed() -> N
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["기존 대화 identity"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
@@ -2796,6 +2935,7 @@ def test_source_search_write__source_responsibility__derives_read_effect() -> No
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
                     required_information=["일정"],
+                    target_scope="CRITERIA",
                     output_type="GMAIL_MESSAGE",
                     output_effect="SEND",
                 ),
@@ -2852,7 +2992,10 @@ def test_external_answer__source_contradiction__uses_bounded_semantic_revision()
     all_not_required = _source_dependency_decisions()
     revised = _source_dependency_decisions(
         source_types={
-            "GMAIL_THREAD": ["subject", "message_history", "timestamps"],
+            "GMAIL_THREAD": (
+                ["subject", "message_history", "timestamps"],
+                "CRITERIA",
+            ),
         }
     )
     runtime = FakeStructuredInferencePort(
@@ -2870,6 +3013,7 @@ def test_external_answer__source_contradiction__uses_bounded_semantic_revision()
         {
             "resource_type": "GMAIL_THREAD",
             "required_information": ["subject", "message_history", "timestamps"],
+            "target_scope": "CRITERIA",
         }
     ]
     source_calls = [
@@ -2937,7 +3081,8 @@ def test_existing_gmail_thread_reply__incompatible_output_resource__rejects_outp
                 ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="GMAIL_THREAD",
-                    required_information=[],
+                    required_information=["message_history"],
+                    target_scope="SINGULAR",
                     output_type="GMAIL_THREAD",
                     output_effect="SEND",
                 ),
@@ -3034,7 +3179,9 @@ def test_identify_goal__named_recipient_in_additional_constraints__rejects_outpu
                     sender=["qhdrbdhkdwks2@gmail.com"],
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GMAIL_THREAD", required_information=[]
+                    source_type="GMAIL_THREAD",
+                    required_information=["message_history"],
+                    target_scope="SINGULAR",
                 ),
                 "analysis_requirement": "NONE",
             }
@@ -3060,7 +3207,8 @@ def test_identify_goal__repository_constraint_without_github_target__rejects_out
                 ),
                 "resource_responsibilities": _resource_responsibilities(
                     source_type="TASK",
-                    required_information=[],
+                    required_information=["title", "notes"],
+                    target_scope="SINGULAR",
                     output_type="TASK",
                     output_effect="UPDATE",
                 ),
@@ -3095,7 +3243,9 @@ def test_identify_goal__llm_supplied_constraint_provenance__rejects_output() -> 
                     }
                 ),
                 "resource_responsibilities": _resource_responsibilities(
-                    source_type="GITHUB_ISSUE", required_information=[]
+                    source_type="GITHUB_ISSUE",
+                    required_information=["state"],
+                    target_scope="CRITERIA",
                 ),
                 "analysis_requirement": "REQUIRED",
             }

@@ -1,6 +1,6 @@
 # 역할과 반환 위치
 
-현재 요청과 바로 앞의 goal candidate를 보고, Runtime이 제공한 각 Resource 후보가 최종 Answer 또는 Output을 만드는 데 필요한 기존 사실·현재 상태·identity의 원천인지 판정한다. Output effect, Tool, Query, 정책, 실행 계획은 판정하지 않는다.
+현재 요청과 바로 앞의 goal candidate를 보고, Runtime이 제공한 각 Resource 후보가 최종 Answer 또는 Output을 만드는 데 필요한 기존 사실·현재 상태의 원천인지 판정하고 대상 범위를 분류한다. Output effect, Tool, Query, 정책, 실행 계획은 판정하지 않는다.
 
 # 입력의 의미
 
@@ -12,17 +12,17 @@
 
 후보를 바로 고르지 말고 다음 순서로 한 번 판정한다.
 
-1. `user_request`와 `goal_candidate`에서 기존 외부 Resource의 사실·현재 상태·identity를 확인하거나 참고해야 하는 의존 관계를 먼저 찾는다. 아직 Output 종류를 추측하거나 선택하지 않는다.
+1. `user_request`와 `goal_candidate`에서 기존 외부 Resource의 사실·현재 상태를 확인하거나 참고해야 하는 의존 관계를 먼저 찾는다. 아직 Output 종류를 추측하거나 선택하지 않는다.
 2. 의존 관계마다 최종 결과에 필요한 실제 사실이 사용자 입력에 값으로 주어졌는지, 일반 설명만으로 작성 가능한지, 기존 Resource에서 읽어야 하는지 구분한다. Resource·프로젝트·업무의 이름이나 검색 대상을 특정하는 표현은 실제 상태·일정·내용 값이 아니다.
 3. 읽어야 하는 사실만 `owned_fact_kinds`와 대조해 그 사실을 직접 보유한 Resource 후보 하나에 결속한다. 현재 요청이 참고하도록 지정하지 않은 후보를 가능한 보조 자료나 대체 검색처라는 이유로 추가하지 않는다.
-4. 하나 이상의 필요 사실이 결속된 후보만 `SOURCE_REQUIRED`로 판정하고, 결속된 사실을 `required_information`에 쓴다. 나머지 후보는 `SOURCE_NOT_REQUIRED`다.
-5. 반환 전에 외부 사실 의존성이 하나도 빠지지 않았는지와, 요청이 요구하지 않은 후보가 source로 추가되지 않았는지를 함께 확인한다.
+4. 하나 이상의 필요 사실이 결속된 후보만 `SOURCE_REQUIRED`로 판정하고, 결속된 사실을 `required_information`에 쓴다. 이 Source가 특정 existing Resource 하나를 뜻하면 `target_scope=SINGULAR`, 조건에 맞는 Resource 조회를 뜻하면 `target_scope=CRITERIA`로 독립 판정한다. 나머지 후보는 `SOURCE_NOT_REQUIRED`다.
+5. 반환 전에 외부 사실 의존성이 하나도 빠지지 않았는지, 요청이 요구하지 않은 후보가 source로 추가되지 않았는지, 각 `SOURCE_REQUIRED`의 두 판정이 서로 바뀌지 않았는지를 함께 확인한다.
 
-# 기존 Resource identity 경계
+# 기존 Resource 대상 범위 경계
 
-사용자 요청의 완료 대상이 특정 기존 Resource 하나인데 그 Resource identity가 이번 Run의 선택·확인으로 아직 결속되지 않았다면, 그 대상을 찾고 구별하는 데 필요한 own-Resource identity도 source fact다. 이때 새 fact 이름을 만들지 말고 해당 `source_candidates[].owned_fact_kinds`가 제공한 그 Resource 자신의 identity fact를 다른 요청 사실과 함께 `required_information`에 포함한다. 무엇을 알고 싶은지, Resource 종류를 안다는 사실, 또는 조회할 속성을 안다는 사실만으로 어떤 Resource인지가 결속됐다고 보지 않는다.
+사용자 요청의 완료 대상이 특정 existing Resource 하나라면 identity가 이번 Run의 선택·확인으로 아직 결속되지 않았어도 `target_scope=SINGULAR`다. 사용자가 조건에 맞는 Resource 조회를 위임했다면 `target_scope=CRITERIA`다. 선택된 Resource도 요청 의미가 특정 하나라면 `SINGULAR`이며, 선택 여부 자체로 사실 읽기가 완료됐다고 보지 않는다.
 
-반대로 collection/list 조회, criteria/search 기반 탐색, 여러 Source의 사실 수집처럼 사용자가 특정 기존 Resource 하나를 먼저 선택할 필요가 없는 요청에는 identity fact를 자동으로 추가하지 않는다. Provider가 내부 처리에 ID를 필요로 한다는 기술적 사정도 business `required_information`이 아니다. singular unresolved existing target과 criteria-based source discovery를 요청·goal·선택 상태의 의미로 구분하며, Source 개수나 Output 종류로 대신 판정하지 않는다.
+`required_information`에는 사용자가 최종 결과에서 필요로 하는 Source fact·state·content만 둔다. 대상 탐색에 기술적으로 필요하다는 이유만으로 identity fact를 추가하지 않는다. 사용자가 identity 자체를 답으로 요청한 경우에만 해당 identity는 requested fact로 들어갈 수 있다. singular unresolved target과 criteria-based 조회를 요청·goal 의미로 구분하며 Resource 종류, Source 개수, Output 종류, READ 여부로 대신 판정하지 않는다.
 
 접근 경로인 container와 사실을 보유한 item을 구분한다. Task의 title·notes·due·completion status가 필요하면 `TASK`이며, Task List 자체의 identity·title이 필요할 때만 `TASK_LIST`다. Event의 start·end·location·description이 필요하면 `CALENDAR_EVENT`이며, Calendar 자체의 identity·metadata가 필요할 때만 `CALENDAR`다. Gmail Thread와 개별 Message도 각각 `owned_fact_kinds`가 보유한 thread-level fact와 message-level fact를 기준으로 구분한다. item을 읽는 데 container가 필요하다는 사실은 container의 업무 정보까지 필요하다는 뜻이 아니다.
 

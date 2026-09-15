@@ -81,7 +81,7 @@ class FakeStructuredInferencePort:
         )
         output: object
         if (
-            output_schema_ref.schema_version == "request-source-dependency-decision-v2"
+            output_schema_ref.schema_version == "request-source-dependency-decision-v3"
             and self._pending_resource_responsibilities is not None
         ):
             output = _source_dependency_decisions_from_responsibilities(
@@ -154,7 +154,7 @@ class FakeStructuredInferencePort:
                         if key != "resource_responsibilities"
                     }
             elif (
-                output_schema_ref.schema_version == "request-source-dependency-decision-v2"
+                output_schema_ref.schema_version == "request-source-dependency-decision-v3"
                 and isinstance(output, Mapping)
                 and "source_reads" in output
                 and "outputs" in output
@@ -224,8 +224,14 @@ def _source_dependency_decisions_from_responsibilities(
         resource_type = cast(str, source["resource_type"])
         current = sources.setdefault(
             resource_type,
-            {"resource_type": resource_type, "required_information": []},
+            {
+                "resource_type": resource_type,
+                "required_information": [],
+                "target_scope": source["target_scope"],
+            },
         )
+        if current["target_scope"] != source["target_scope"]:
+            raise AssertionError("fake source responsibilities contain conflicting target scopes")
         information = cast(list[str], current["required_information"])
         for value in cast(Sequence[str], source["required_information"]):
             if value not in information:
@@ -245,15 +251,12 @@ def _source_dependency_decisions_from_responsibilities(
             required_information = list(
                 cast(Sequence[str], selected_source["required_information"])
             )
-            if not required_information:
-                required_information = [
-                    cast(str, cast(Sequence[object], candidate["owned_fact_kinds"])[0])
-                ]
             decisions.append(
                 {
                     "resource_type": resource_type,
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": required_information,
+                    "target_scope": selected_source["target_scope"],
                 }
             )
         else:
@@ -264,6 +267,7 @@ def _source_dependency_decisions_from_responsibilities(
             "resource_type": resource_type,
             "dependency": "SOURCE_REQUIRED",
             "required_information": list(cast(Sequence[str], source["required_information"])),
+            "target_scope": source["target_scope"],
         }
         for resource_type, source in sources.items()
         if resource_type not in candidate_types

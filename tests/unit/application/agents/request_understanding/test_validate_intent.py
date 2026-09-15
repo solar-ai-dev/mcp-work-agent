@@ -46,13 +46,68 @@ def test_validate_intent__canonical_duplicate_source_read__remains_rejected() ->
     ]
     candidate["resource_responsibilities"] = {
         "source_reads": [
-            {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 본문"]},
-            {"resource_type": "GMAIL_DRAFT", "required_information": ["기존 수신자"]},
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "required_information": ["기존 본문"],
+                "target_scope": "SINGULAR",
+            },
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "required_information": ["기존 수신자"],
+                "target_scope": "SINGULAR",
+            },
         ],
         "outputs": [],
     }
 
     with pytest.raises(RequestUnderstandingValidationError, match="duplicate source read"):
+        validate_intent(candidate)
+
+
+@pytest.mark.parametrize("target_scope", ["SINGULAR", "CRITERIA"])
+def test_validate_intent__source_target_scope__is_preserved(target_scope: str) -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": ["start", "end"],
+        }
+    ]
+    candidate["requested_resource_hints"] = ["CALENDAR_EVENT"]
+    candidate["resource_responsibilities"] = {
+        "source_reads": [
+            {
+                "resource_type": "CALENDAR_EVENT",
+                "required_information": ["start", "end"],
+                "target_scope": target_scope,
+            }
+        ],
+        "outputs": [],
+    }
+
+    intent = validate_intent(candidate)
+
+    assert intent["resource_responsibilities"]["source_reads"][0]["target_scope"] == target_scope
+
+
+def test_validate_intent__source_target_scope__rejects_missing_or_unknown_value() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": ["status"],
+        }
+    ]
+    candidate["requested_resource_hints"] = ["TASK"]
+    source = {"resource_type": "TASK", "required_information": ["status"]}
+    candidate["resource_responsibilities"] = {"source_reads": [source], "outputs": []}
+    with pytest.raises(RequestUnderstandingValidationError, match="fields are invalid"):
+        validate_intent(candidate)
+
+    source["target_scope"] = "UNKNOWN"
+    with pytest.raises(RequestUnderstandingValidationError, match="target_scope is invalid"):
         validate_intent(candidate)
 
 

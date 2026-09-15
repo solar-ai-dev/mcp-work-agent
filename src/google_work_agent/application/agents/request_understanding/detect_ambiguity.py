@@ -176,6 +176,7 @@ def _ambiguity_goal_candidate_projection(
                 {
                     "resource_type": item["resource_type"],
                     "required_information": list(item["required_information"]),
+                    "target_scope": item["target_scope"],
                 }
                 for item in resource_responsibilities["source_reads"]
             ],

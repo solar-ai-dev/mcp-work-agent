@@ -822,6 +822,7 @@ def _apply_quoted_literal_authority(
                 restore_exact_user_literals(item, source_texts=[request_text])
                 for item in source["required_information"]
             ],
+            target_scope=source["target_scope"],
         )
         for source in responsibilities["source_reads"]
     ]
@@ -918,7 +919,13 @@ def _apply_selected_resource_authority(
     source_resource_types = {source["resource_type"] for source in source_reads}
     for hint in _selected_resource_hints(request):
         if hint not in source_resource_types:
-            source_reads.append({"resource_type": hint, "required_information": []})
+            source_reads.append(
+                {
+                    "resource_type": hint,
+                    "required_information": [],
+                    "target_scope": "SINGULAR",
+                }
+            )
     responsibilities = ResourceResponsibilitiesV1(
         source_reads=source_reads,
         outputs=responsibilities["outputs"],

@@ -230,6 +230,7 @@ def test_detect_ambiguity__with_searchable_target__keeps_connector_owner_from_se
                 {
                     "resource_type": "GMAIL_THREAD",
                     "required_information": ["final shipment criteria", "owner"],
+                    "target_scope": "CRITERIA",
                 }
             ],
             "outputs": [],
@@ -258,6 +259,9 @@ def test_detect_ambiguity__with_searchable_target__keeps_connector_owner_from_se
     assert projected_candidate["resource_responsibilities"] == candidate[
         "resource_responsibilities"
     ]
+    assert projected_candidate["resource_responsibilities"]["source_reads"][0][
+        "target_scope"
+    ] == "CRITERIA"
     assert "requested_effect_hints" not in projected_candidate
     assert "requested_resource_hints" not in projected_candidate
     assert "analysis_requirement" not in projected_candidate
@@ -292,8 +296,16 @@ def test_searchable_connector_target__misclassified_as_user__proceeds_to_bounded
         "requested_resource_hints": ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"],
         "resource_responsibilities": {
             "source_reads": [
-                {"resource_type": "TASK", "required_information": ["completion_status"]},
-                {"resource_type": "CALENDAR_EVENT", "required_information": ["status"]},
+                {
+                    "resource_type": "TASK",
+                    "required_information": ["completion_status"],
+                    "target_scope": "CRITERIA",
+                },
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["status"],
+                    "target_scope": "CRITERIA",
+                },
             ],
             "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
         },
@@ -728,6 +740,7 @@ def test_unselected_read__target_identity_named_as_connector_need__still_asks_us
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["target_resource", "event_time"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],
@@ -897,6 +910,7 @@ def test_unselected_task_identity__without_target_anchor__uses_user_owner() -> N
                 {
                     "resource_type": "TASK",
                     "required_information": ["task_identity", "title"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],
@@ -1308,6 +1322,7 @@ def _calendar_event_identity_candidate(
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["event_identity", "start"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],

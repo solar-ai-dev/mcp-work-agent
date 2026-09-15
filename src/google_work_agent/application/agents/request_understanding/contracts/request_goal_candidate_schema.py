@@ -233,7 +233,7 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
     "required": ["source_reads", "outputs"],
     "description": (
         "요청의 외부 Resource 의미를 한 번만 표현한다. SOURCE는 Connector가 조회할 "
-        "기존 사실/identity, OUTPUT은 사용자가 요청한 외부 Write다. 해당 역할이 없으면 "
+        "기존 사실과 대상 범위, OUTPUT은 사용자가 요청한 외부 Write다. 해당 역할이 없으면 "
         "각 배열은 비워 둔다."
     ),
     "properties": {
@@ -241,14 +241,14 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
             "type": "array",
             "uniqueItems": True,
             "description": (
-                "기존 외부 자료에서 읽어야 할 사실이나 identity만 둔다. 새로 CREATE할 "
+                "기존 외부 자료에서 읽어야 할 사실과 대상 범위만 둔다. 새로 CREATE할 "
                 "output은 그 output의 기존 상태를 실제로 읽어야 하는 별도 요구가 없는 한 "
                 "source_reads에 반복하지 않는다."
             ),
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["resource_type", "required_information"],
+                "required": ["resource_type", "required_information", "target_scope"],
                 "properties": {
                     "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "required_information": {
@@ -256,6 +256,7 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                         "uniqueItems": True,
                         "items": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
                     },
+                    "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
                 },
             },
         },
@@ -507,6 +508,7 @@ def _normalize_source_read_responsibilities(
     for source in source_reads:
         resource_type = cast(str, source["resource_type"])
         information = list(cast(Sequence[str], source["required_information"]))
+        target_scope = cast(str, source["target_scope"])
         source_index = source_index_by_resource_type.get(resource_type)
         if source_index is None:
             source_index_by_resource_type[resource_type] = len(normalized_sources)
@@ -514,9 +516,14 @@ def _normalize_source_read_responsibilities(
                 {
                     "resource_type": resource_type,
                     "required_information": information,
+                    "target_scope": target_scope,
                 }
             )
             continue
+        if normalized_sources[source_index]["target_scope"] != target_scope:
+            raise ValueError(
+                "resource responsibility candidate is invalid: duplicate source scopes conflict"
+            )
         existing_information = cast(
             list[str], normalized_sources[source_index]["required_information"]
         )

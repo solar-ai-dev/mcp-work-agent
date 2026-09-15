@@ -57,7 +57,8 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
                     "source_reads": [
                         {
                             "resource_type": "GITHUB_ISSUE",
-                            "required_information": [],
+                            "required_information": ["state"],
+                            "target_scope": "CRITERIA",
                         }
                     ],
                     "outputs": [],
