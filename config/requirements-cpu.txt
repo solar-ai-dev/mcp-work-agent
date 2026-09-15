@@ -23,7 +23,7 @@ orjson==3.11.9
 
 # Workflow / persistence
 langgraph==1.2.9
-langgraph-checkpoint-sqlite==3.1.0
+langgraph-checkpoint-sqlite==3.1.1
 aiosqlite>=0.21,<1
 
 # MCP / Google / API LLM
