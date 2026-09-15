@@ -64,7 +64,7 @@ test("restores identical rows from Snapshot and isolates a new Run", async () =>
   expect(screen.getAllByTestId("run-event-progress")).toHaveLength(2);
   restored.rerender(<RunProgress snapshot={{ ...snapshot(0), run: { ...value.run, run_id: "new" } }} busy={null} onResume={vi.fn()} />);
   expect(screen.queryAllByTestId("run-event-progress")).toHaveLength(0);
-  expect(screen.getByText(/저장된 단계 이력이 없습니다/)).toBeVisible();
+  expect(screen.queryByText(/저장된 단계 이력이 없습니다/)).not.toBeInTheDocument();
 });
 
 test("partial results rely on the recorded cause instead of a generic disclaimer", () => {
