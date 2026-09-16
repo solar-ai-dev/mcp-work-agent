@@ -7,6 +7,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
+from .gmail_query import compile_gmail_query
+
 
 class StatefulSimulatedProvider:
     """Duck-typed Connector Port implementation with durable in-memory effects.
@@ -157,6 +159,14 @@ class StatefulSimulatedProvider:
             items = [item for item in items if _item_payload(item).get("status") != "completed"]
         if resource_type == "calendar_event":
             items = [item for item in items if _event_in_range(item, arguments)]
+        if resource_type in {"gmail_thread", "gmail_draft"}:
+            query = arguments.get("query")
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError(f"{resource_type} search requires query")
+            predicate = compile_gmail_query(query)
+            items = [item for item in items if predicate(_item_payload(item))]
+            if resource_type == "gmail_thread":
+                items = [_gmail_search_projection(item) for item in items]
         page_size = arguments.get("page_size", 100)
         if not isinstance(page_size, int) or page_size < 1:
             raise ValueError("page_size must be a positive integer")
@@ -366,6 +376,29 @@ def _project_item(item: Mapping[str, Any]) -> dict[str, Any]:
 def _item_payload(item: Mapping[str, Any]) -> Mapping[str, Any]:
     payload = item.get("payload")
     return payload if isinstance(payload, Mapping) else item
+
+
+def _gmail_search_projection(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Match the metadata-only shape returned by gmail_search_threads."""
+
+    projected = deepcopy(dict(item))
+    payload = _item_payload(item)
+    raw_messages = payload.get("messages", [])
+    messages = (
+        [message for message in raw_messages if isinstance(message, Mapping)]
+        if isinstance(raw_messages, list)
+        else []
+    )
+    first = messages[0] if messages else {}
+    latest = messages[-1] if messages else {}
+    projected["payload"] = {
+        "sender_name": first.get("sender_name"),
+        "sender_email": first.get("sender_email"),
+        "subject": payload.get("subject") or first.get("subject"),
+        "received_at": latest.get("received_at"),
+        "snippet": latest.get("body"),
+    }
+    return projected
 
 
 def _event_in_range(item: Mapping[str, Any], arguments: Mapping[str, Any]) -> bool:

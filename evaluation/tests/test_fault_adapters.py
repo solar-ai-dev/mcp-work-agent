@@ -422,6 +422,54 @@ def test_simulated_provider_lists_product_shaped_fixture_resources() -> None:
     assert threads["output"]["items"][0]["payload"]["subject"] == "Atlas 검토"
 
 
+def test_simulated_provider_gmail_search_applies_query_semantics() -> None:
+    provider = StatefulSimulatedProvider(
+        initial_resources=[
+            {
+                "resource_type": "gmail_thread",
+                "resource_id": "atlas-current",
+                "version": "1",
+                "payload": {
+                    "subject": "[Atlas] 출고 일정 확정",
+                    "messages": [
+                        {
+                            "body": "최종 출고는 8월 19일이며 지민이 맡습니다.",
+                            "sender_email": "owner@example.test",
+                            "recipients": ["team@example.test"],
+                            "received_at": "2026-09-07T11:40:33+09:00",
+                        }
+                    ],
+                },
+            },
+            {
+                "resource_type": "gmail_thread",
+                "resource_id": "other",
+                "version": "1",
+                "payload": {
+                    "subject": "다른 프로젝트 회고",
+                    "messages": [
+                        {
+                            "body": "과거 일정입니다.",
+                            "sender_email": "other@example.test",
+                            "recipients": ["team@example.test"],
+                            "received_at": "2026-09-07T10:00:00+09:00",
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+
+    result = provider.execute_read(
+        _Binding("gmail_search_threads"),
+        {"query": '"Atlas" {"출고" "배송"}', "page_size": 20},
+    )
+
+    assert [item["resource_id"] for item in result["output"]["items"]] == [
+        "atlas-current"
+    ]
+
+
 def test_simulated_provider_freebusy_reads_stored_event_state() -> None:
     provider = StatefulSimulatedProvider(
         initial_resources=[

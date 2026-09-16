@@ -400,11 +400,39 @@ def _calendar_boundary(value: Any) -> Any:
 
 def _gmail_thread_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     messages = payload.get("messages")
-    message_items = (
+    raw_message_items = (
         [dict(item) for item in messages if isinstance(item, Mapping)]
         if isinstance(messages, list)
         else []
     )
+    message_items = [
+        {
+            "message_id": str(item.get("message_id") or ""),
+            "thread_id": str(item.get("thread_id") or ""),
+            "sender_name": item.get("sender_name"),
+            "sender_email": item.get("sender_email"),
+            "recipients": [
+                str(value)
+                for value in item.get("recipients", [])
+                if isinstance(value, str)
+            ],
+            "received_at": item.get("received_at"),
+            "subject": item.get("subject"),
+            "body": item.get("body"),
+            "body_truncated": False,
+            **(
+                {"rfc822_message_id": item["rfc822_message_id"]}
+                if item.get("rfc822_message_id") is not None
+                else {}
+            ),
+            **(
+                {"references": item["references"]}
+                if item.get("references") is not None
+                else {}
+            ),
+        }
+        for item in raw_message_items
+    ]
     first = message_items[0] if message_items else {}
     bodies = [str(item["body"]) for item in message_items if item.get("body")]
     return {
