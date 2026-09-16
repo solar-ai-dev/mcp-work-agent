@@ -69,7 +69,7 @@ class RetrievalState:
 
 | 구분 | 처리 |
 | --- | --- |
-| Parent 입력 | `request_intent`, `input_route_ref`, `input_routes`는 read-only다. Raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. |
+| Parent 입력 | `request_intent`, `input_route_ref`, `input_routes`는 read-only다. 현재 Run의 `user_request`는 typed intent의 의미 손실을 보완하는 Prompt 입력으로 함께 읽되, 별도 State·장기 권위·정책 사실로 저장하거나 승격하지 않는다. |
 | Local 작업 상태 | Query 계획·시도, Source 상태, 조회·Segment handle, 가용 시간, RAG 후보, 사용자 조정 의무를 보존한다. |
 | Cache 참조 | `read_result_handles`는 현재 Run의 read-result entry를 가리킨다. Entry는 `run_id + route_id + query_identity_hash`, 제한된 `ConnectorReadResultV1`, continuation 소진 상태를 결합한다. |
 | 사용자 조정 | `07 Interface`가 검증한 `ContextAdjustmentV1` 한 개만 재진입 입력으로 받는다. 아래 §4.2~4.3의 같은 Run 의무로 처리하며 다른 Agent의 장기 업무 사실로 전파하지 않는다. |
@@ -168,9 +168,14 @@ Operation별 책임은 유지하되 검색 전략이나 Graph 세부 순서를 �
 
 ```
 # 모든 Round
+user_request
 request_intent
 input_routes
+required_user_anchors
 retrieval_budget
+
+# 검증된 Calendar 기간을 route에 결합할 수 있을 때만
+required_route_constraints
 
 # Follow-up Round에서만 추가되는 bounded Local Projection
 current_round_no
@@ -197,6 +202,16 @@ Follow-up의 prior attempt projection은 semantic constraint·operation·reason�
 | Gmail 상태 | 현재 지원하는 명시적 `ANY`, `DRAFT`, `SENT`만 사용한다. 다른 Resource의 `OPEN` 등으로 메일 상태 필터를 만들지 않는다. |
 
 **Exact anchor와 검색 가설**
+
+`required_user_anchors`는 `RequestIntentV2`의 명시 검색 필드 중 current-run
+`USER_REQUEST | CONFIRMATION_RESPONSE` provenance가 검증된 값과 이를 소비할 Gmail route만
+투영한다. `business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
+않는다. 이 projection은 새 요청 권위가 아니라 기존 typed 의미의 bounded 전달 형식이다.
+
+`required_route_constraints`는 검증된 단일 기간을 Calendar event/availability route에
+해석할 수 있을 때만 만든다. 해당 초기 route의 temporal constraint와 이미 존재하는 route
+policy의 required constraint를 동적 output schema에 결합하며, 값이 없으면 빈 projection을
+모든 호출에 추가하지 않는다.
 
 `CONCEPT(concept, manifestations)`는 사용자 `business_concepts`에 결합된 탐색 가설이다. 고정 동의어 목록이나 사용자 사실을 뜻하지 않는다.
 

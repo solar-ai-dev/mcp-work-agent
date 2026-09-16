@@ -22,6 +22,7 @@ def resolve_relative_period(
     *,
     now_ms: int,
     timezone: str,
+    default_axis: Literal["MESSAGE_TIME", "EVENT_TIME"] | None = None,
 ) -> ResolvedTemporalRange | None:
     """Resolve one supported relative period from current user-local time."""
 
@@ -46,6 +47,8 @@ def resolve_relative_period(
         axis: Literal["MESSAGE_TIME", "EVENT_TIME"] = "MESSAGE_TIME"
     elif axes == {"EVENT_TIME"}:
         axis = "EVENT_TIME"
+    elif not axes and default_axis is not None:
+        axis = default_axis
     else:
         # An older intent without an axis is not evidence of message-time meaning.
         return None
@@ -58,6 +61,8 @@ def resolve_relative_period(
     period = periods[0]
     if period == "오늘":
         start, end = today, today + timedelta(days=1)
+    elif period == "내일":
+        start, end = today + timedelta(days=1), today + timedelta(days=2)
     elif period == "어제":
         start, end = today - timedelta(days=1), today
     elif period == "그제":
@@ -78,6 +83,51 @@ def resolve_relative_period(
     elif period == "최근":
         start, end = today - timedelta(days=30), today + timedelta(days=1)
     else:
+        iso_date = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", period)
+        calendar_date = re.fullmatch(
+            r"(?:(\d{4})년)?(1[0-2]|[1-9])월(3[01]|[12]\d|[1-9])일",
+            period,
+        )
+        if iso_date is not None or calendar_date is not None:
+            parts = iso_date or calendar_date
+            assert parts is not None
+            explicit_year = parts[1]
+            month_number = int(parts[2])
+            day_number = int(parts[3])
+            if explicit_year:
+                year = int(explicit_year)
+            elif axis == "MESSAGE_TIME":
+                year = today.year - int((month_number, day_number) > (today.month, today.day))
+            else:
+                candidates = []
+                for candidate_year in (today.year - 1, today.year, today.year + 1):
+                    if not 1 <= candidate_year <= 9999:
+                        continue
+                    try:
+                        candidates.append(
+                            today.replace(
+                                year=candidate_year,
+                                month=month_number,
+                                day=day_number,
+                            )
+                        )
+                    except ValueError:
+                        continue
+                if not candidates:
+                    return None
+                year = min(candidates, key=lambda value: abs((value - today).days)).year
+            try:
+                start = today.replace(year=year, month=month_number, day=day_number)
+            except ValueError:
+                return None
+            end = start + timedelta(days=1)
+            return {
+                "kind": "TEMPORAL_RANGE",
+                "axis": axis,
+                "start_local": start.replace(tzinfo=None).isoformat(),
+                "end_local": end.replace(tzinfo=None).isoformat(),
+                "timezone": timezone,
+            }
         month = re.fullmatch(r"(?:(\d{4})년)?(1[0-2]|[1-9])월(첫째주)?", period)
         if month is None:
             return None
@@ -124,7 +174,7 @@ def resolve_relative_period(
 
 
 def _relative_periods(constraints: object) -> list[str]:
-    if not isinstance(constraints, Sequence) or isinstance(constraints, (str, bytes)):
+    if not isinstance(constraints, Sequence) or isinstance(constraints, str | bytes):
         return []
     result: list[str] = []
     for item in constraints:

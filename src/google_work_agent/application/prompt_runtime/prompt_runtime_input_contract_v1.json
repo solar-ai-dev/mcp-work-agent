@@ -109,9 +109,9 @@
     {
       "prompt_slot_id": "retrieval.plan_query",
       "runtime_node_id": "retrieval.plan_query",
-      "input_schema_version": 1,
-      "required_root_fields": ["request_intent", "input_routes", "retrieval_budget"],
-      "optional_root_fields": ["current_round_no", "prior_query_attempts", "unresolved_sufficiency_issues", "read_result_summaries", "confirmation_response"],
+      "input_schema_version": 4,
+      "required_root_fields": ["user_request", "request_intent", "input_routes", "required_user_anchors", "retrieval_budget"],
+      "optional_root_fields": ["required_route_constraints", "current_round_no", "prior_query_attempts", "unresolved_sufficiency_issues", "read_result_summaries", "confirmation_response"],
       "output_schema_version": 1
     },
     {

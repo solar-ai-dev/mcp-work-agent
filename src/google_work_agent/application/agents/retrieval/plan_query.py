@@ -48,6 +48,9 @@ from google_work_agent.application.agents.retrieval.plan_candidate_detail import
     plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
+from google_work_agent.application.agents.retrieval.resolve_calendar_query_periods import (
+    resolve_calendar_query_periods,
+)
 from google_work_agent.application.agents.retrieval.resolve_gmail_planner_constraint_kinds import (
     resolve_gmail_planner_constraint_kinds,
 )
@@ -500,6 +503,8 @@ def _exact_task_calendar_source_plan(
         RetrievalQueryPlanV2,
         {"schema_version": 2, "route_queries": route_queries},
     )
+
+
 def deterministic_query_plan(
     *,
     prompt_input: Mapping[str, object],
@@ -862,6 +867,31 @@ def plan_query(
         supported_kinds=planner_kinds,
         route_operations=route_operations,
     )
+    gmail_temporal_constraints = resolve_gmail_query_periods(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        now_ms=now_ms,
+        timezone=timezone,
+    )
+    calendar_temporal_constraints = resolve_calendar_query_periods(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        now_ms=now_ms,
+        timezone=timezone,
+    )
+    resolved_temporal_constraints = {
+        **gmail_temporal_constraints,
+        **calendar_temporal_constraints,
+    }
+    if calendar_temporal_constraints:
+        planner_input["required_route_constraints"] = [
+            {
+                "route_id": route_id,
+                "applies_to": "INITIAL_SEARCH",
+                "constraints": [constraint],
+            }
+            for route_id, constraint in calendar_temporal_constraints.items()
+        ]
     bounded_output_schema = bind_retrieval_query_plan_output_schema(
         base_schema=output_schema,
         route_ids=supported_kinds,
@@ -870,6 +900,11 @@ def plan_query(
             route["route_id"]: status_scope_values(route) for route in frozen_routes
         },
         supported_constraint_kinds=planner_kinds,
+        required_constraint_kinds={
+            route_id: route_policies[route_id].required_kinds
+            for route_id in calendar_temporal_constraints
+            if route_id in route_policies
+        },
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         detail_candidate_refs_by_route=_detail_candidate_refs_by_route(
@@ -889,12 +924,8 @@ def plan_query(
             if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
         },
         allowed_participant_identities=resolve_request_participants(prompt_input),
-        resolved_temporal_constraints=resolve_gmail_query_periods(
-            prompt_input=prompt_input,
-            frozen_routes=frozen_routes,
-            now_ms=now_ms,
-            timezone=timezone,
-        ),
+        resolved_temporal_constraints=resolved_temporal_constraints,
+        required_temporal_route_ids=calendar_temporal_constraints,
     )
     try:
         deterministic_plan = deterministic_query_plan(
@@ -1611,14 +1642,16 @@ def has_retrieval_followup_path(
 
 def initial_retrieval_planner_input(
     *,
+    user_request: str,
     request_intent: RequestIntentV2,
     input_routes: Sequence[InputToolRouteV1],
     retrieval_budget: RetrievalBudget,
     validated_resource_refs: Mapping[str, Sequence[str]] | None = None,
     validated_container_refs: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, object]:
-    """Project exactly the initial-round V2 input contract."""
+    """Project the initial-round planner input before route constraint binding."""
     return {
+        "user_request": user_request,
         "request_intent": request_intent,
         "input_routes": [
             _prompt_route(
@@ -1628,12 +1661,40 @@ def initial_retrieval_planner_input(
             )
             for route in input_routes
         ],
+        "required_user_anchors": _required_user_anchor_projection(
+            request_intent=request_intent,
+            input_routes=input_routes,
+        ),
         "retrieval_budget": retrieval_budget.as_remaining(),
+    }
+
+
+def _required_user_anchor_projection(
+    *,
+    request_intent: RequestIntentV2,
+    input_routes: Sequence[InputToolRouteV1],
+) -> dict[str, object]:
+    """Bind trusted exact user anchors to the Gmail routes that consume them."""
+
+    keyword_terms, participant_identities, _ = _trusted_query_anchors(
+        {"request_intent": request_intent}
+    )
+    route_ids = [
+        route["route_id"]
+        for route in input_routes
+        if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+    ]
+    return {
+        "applies_to": "INITIAL_GMAIL_SEARCH",
+        "route_ids": route_ids,
+        "keyword_terms": list(keyword_terms),
+        "participant_identities": sorted(participant_identities),
     }
 
 
 def followup_retrieval_planner_input(
     *,
+    user_request: str,
     request_intent: RequestIntentV2,
     input_routes: Sequence[InputToolRouteV1],
     retrieval_budget: RetrievalBudget,
@@ -1643,6 +1704,7 @@ def followup_retrieval_planner_input(
 ) -> dict[str, object]:
     """Add only the bounded follow-up metadata permitted by the V2 contract."""
     result = initial_retrieval_planner_input(
+        user_request=user_request,
         request_intent=request_intent,
         input_routes=input_routes,
         retrieval_budget=retrieval_budget,

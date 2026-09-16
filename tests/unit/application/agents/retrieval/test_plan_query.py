@@ -23,7 +23,9 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
+    RetrievalBudget,
     has_retrieval_followup_path,
+    initial_retrieval_planner_input,
     plan_query,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -175,6 +177,54 @@ def _retrieval_prompt_ref() -> PromptReference:
         input_schema_version="v2",
         output_schema_version="v2",
     )
+
+
+def test_initial_retrieval_planner_input__includes_current_run__user_request() -> None:
+    route = cast(
+        InputToolRouteV1,
+        _tool_route_plan(allowed_read_tool_ids=["gmail_search_threads"])["input_plan"][
+            "input_routes"
+        ][0],
+    )
+
+    prompt_input = initial_retrieval_planner_input(
+        user_request="Atlas final shipment date",
+        request_intent=cast(
+            RequestIntentV2,
+            {
+                "constraints": [
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "Atlas",
+                        "provenance": {"source": "USER_REQUEST"},
+                    },
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "business_concepts",
+                        "value": ["최종 출고일"],
+                        "provenance": {"source": "USER_REQUEST"},
+                    },
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "invented-anchor",
+                        "provenance": {"source": "SYSTEM"},
+                    },
+                ]
+            },
+        ),
+        input_routes=[route],
+        retrieval_budget=RetrievalBudget(),
+    )
+
+    assert prompt_input["user_request"] == "Atlas final shipment date"
+    assert prompt_input["required_user_anchors"] == {
+        "applies_to": "INITIAL_GMAIL_SEARCH",
+        "route_ids": [route["route_id"]],
+        "keyword_terms": ["Atlas"],
+        "participant_identities": [],
+    }
 
 
 def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revision() -> None:

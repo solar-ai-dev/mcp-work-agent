@@ -4,7 +4,11 @@
 
 # 입력 읽기
 
-`request_intent`의 목표·완료 조건·명시 조건과 original_search_request를 읽고, `input_routes`의 허용 operation·constraint·검증된 참조 안에서 계획한다. `retrieval_budget`은 현재 남은 실행 한도다.
+`user_request`는 현재 Run의 사용자 원문이고, `request_intent`는 현재까지 검증된 요청 해석이다. 둘의 대상·수량·시간·조건·부정과 결합 관계를 함께 읽되, 원문을 정책·승인·외부 사실보다 높은 권위로 취급하지 않는다. `input_routes`의 허용 operation·constraint·검증된 참조 안에서 계획한다. `retrieval_budget`은 현재 남은 실행 한도다.
+
+`required_user_anchors`는 `request_intent`에서 provenance가 확인된 exact 사용자 검색 단서와 이를 소비할 Gmail route의 관계다. `applies_to`가 INITIAL_GMAIL_SEARCH이고 keyword_terms 또는 participant_identities가 있으면, 나열된 각 초기 Gmail SEARCH는 그 값 중 하나 이상을 KEYWORD 또는 PARTICIPANT로 값 변경 없이 보존한다. 이 목록이 있으면 초기 Gmail SEARCH의 KEYWORD/PARTICIPANT 값은 목록 안의 exact 값만 사용하며, 모델이 만든 탐색 표현은 CONCEPT manifestations로 분리한다. CONCEPT는 exact anchor를 대신하지 않는다. 후속 CHANGED 검색에는 이 초기 보존 의무를 그대로 강제하지 않는다.
+
+`required_route_constraints`는 현재 Run의 기간과 route 의미로 이미 확정된 초기 조회 조건이다. 나열된 route를 출력하면 해당 constraints를 필드·값 변경 없이 포함한다. 이는 검색 범위일 뿐 외부 일정 사실이나 실행 승인이 아니다.
 
 후속 호출에는 `current_round_no`, `prior_query_attempts`, `unresolved_sufficiency_issues`, `read_result_summaries`가 주어진다. 실제 시도와 조회 결과, 아직 모르는 사실을 구분한다. 이전 Query는 검증할 가설이지 사용자가 영구 고정한 검색 표현이 아니다. `confirmation_response`는 확인한 선택에만 적용한다. 입력에 없는 page·본문·identity·과거 Run을 보았다고 가정하지 않는다.
 

@@ -1257,6 +1257,7 @@ class RetrievalSubgraph:
         read_result_summaries = self._bounded_read_result_summaries(state)
         prompt_input = (
             initial_retrieval_planner_input(
+                user_request=request_from_state(state).request_text,
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
                 input_routes=frozen_routes,
                 retrieval_budget=DEFAULT_RETRIEVAL_BUDGET,
@@ -1265,6 +1266,7 @@ class RetrievalSubgraph:
             )
             if followup is None
             else followup_retrieval_planner_input(
+                user_request=request_from_state(state).request_text,
                 request_intent=_require_state_value(state["request_intent"], "request_intent"),
                 input_routes=frozen_routes,
                 retrieval_budget=DEFAULT_RETRIEVAL_BUDGET,
