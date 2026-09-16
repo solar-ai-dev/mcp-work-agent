@@ -50,7 +50,10 @@ MODEL_ID = "qwen3.5:9b"
 
 
 def _candidate_manifest(
-    runtime_root: Path, *, optional_field: str = "run_reference_time"
+    runtime_root: Path,
+    *,
+    optional_field: str = "run_reference_time",
+    prompt_id: str = PROMPT_ID,
 ) -> Path:
     """Keep the rejected optional-input candidate isolated from product artifacts."""
     source = default_prompt_manifest_path().parent
@@ -62,10 +65,10 @@ def _candidate_manifest(
         (source / "prompt_runtime_input_contract_v1.json").read_text(encoding="utf-8")
     )
     manifest_entry = next(
-        item for item in manifest["slots"] if item["prompt_slot_id"] == PROMPT_ID
+        item for item in manifest["slots"] if item["prompt_slot_id"] == prompt_id
     )
     contract_entry = next(
-        item for item in contract["entries"] if item["prompt_slot_id"] == PROMPT_ID
+        item for item in contract["entries"] if item["prompt_slot_id"] == prompt_id
     )
     manifest_entry["input_schema_version"] = 2
     contract_entry["input_schema_version"] = 2
