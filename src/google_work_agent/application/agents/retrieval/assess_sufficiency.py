@@ -1446,19 +1446,31 @@ def _require_gmail_candidate_details(
             for item in request_intent["constraints"]
         )
     )
+    selected_preview_used_as_content = not metadata_collection_answer and any(
+        draft["resource_handle"].startswith("gmail_thread:")
+        and (draft["locator"] or {}).get("is_metadata_only") is True
+        and "SUPPORTS" in draft["reason_codes"]
+        for draft in evidence_drafts
+    )
     if (
         tool_route_plan is None
-        or not (read_requires_detail or thread_reply_requires_detail)
+        or not (
+            read_requires_detail
+            or thread_reply_requires_detail
+            or selected_preview_used_as_content
+        )
         or "GMAIL_THREAD" not in request_intent["requested_resource_hints"]
     ):
         return result
     routes = tool_route_plan["input_plan"]["input_routes"]
-    if not any(
-        route["resource_type"] == "GMAIL_THREAD"
+    gmail_detail_routes = [
+        route
+        for route in routes
+        if route["resource_type"] == "GMAIL_THREAD"
         and "gmail_get_thread" in route["allowed_read_tool_ids"]
         and "RESOURCE_SELECTED" not in route["reason_codes"]
-        for route in routes
-    ):
+    ]
+    if not gmail_detail_routes:
         return result
     attempted = set(attempted_detail_candidate_refs)
     selected_refs = {
@@ -1481,6 +1493,11 @@ def _require_gmail_candidate_details(
         "resolution_source": "GOOGLE",
         "safety_critical": False,
         "reason_codes": ["CANDIDATE_DETAIL_REQUIRED"],
+        **(
+            {"route_id": gmail_detail_routes[0]["route_id"]}
+            if len(gmail_detail_routes) == 1
+            else {}
+        ),
     }
     return {
         "schema_version": 2,

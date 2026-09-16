@@ -72,6 +72,91 @@ def test_search_candidate__unread_metadata__requires_detail_without_llm_guess() 
     assert runtime.calls == []
 
 
+def test_action_using_selected_gmail_preview_as_support_requires_detail() -> None:
+    intent = request_intent()
+    intent["requested_effect_hints"] = ["READ", "CREATE"]
+    intent["requested_resource_hints"] = ["GMAIL_THREAD", "CALENDAR_EVENT"]
+    intent["analysis_requirement"] = "REQUIRED"
+    runtime = FakeLLMRuntime(deque())
+    route_plan = tool_route_plan()
+    route = route_plan["input_plan"]["input_routes"][0]
+    route["resource_type"] = "GMAIL_THREAD"
+    route["allowed_read_tool_ids"] = ["gmail_search_threads", "gmail_get_thread"]
+    route_plan["input_plan"]["input_routes"].append(
+        {
+            **route,
+            "route_id": "calendar-route",
+            "resource_type": "CALENDAR_EVENT",
+            "allowed_read_tool_ids": ["calendar_list_events"],
+        }
+    )
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "subject-only preview",
+                "locator": {"is_metadata_only": True},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+    )
+
+    assert result["status"] == "NEEDS_MORE_DATA"
+    assert result["issues"][0]["reason_codes"] == ["CANDIDATE_DETAIL_REQUIRED"]
+    assert result["issues"][0]["route_id"] == route["route_id"]
+    assert runtime.calls == []
+
+
+def test_non_gmail_metadata_does_not_force_gmail_detail() -> None:
+    intent = request_intent()
+    intent["requested_effect_hints"] = ["READ", "CREATE"]
+    intent["requested_resource_hints"] = ["GMAIL_THREAD", "CALENDAR_EVENT"]
+    runtime = FakeLLMRuntime(deque([llm_result(sufficiency_result_fixture("SUFFICIENT"))]))
+    route_plan = tool_route_plan()
+    route = route_plan["input_plan"]["input_routes"][0]
+    route["resource_type"] = "GMAIL_THREAD"
+    route["allowed_read_tool_ids"] = ["gmail_search_threads", "gmail_get_thread"]
+
+    result = assess_sufficiency(
+        llm_runtime=runtime,
+        prompt_ref=SUFFICIENCY_PROMPT_REF,
+        requested_mode="LOCAL_GPU",
+        request_intent=intent,
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition_result(),
+        retry_budget=run_budget(used=0),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e1",
+                "resource_handle": "calendar_event:event-one",
+                "segment_id": "s1",
+                "kind": "excerpt",
+                "excerpt": "calendar preview",
+                "locator": {"is_metadata_only": True},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+    )
+
+    assert all(
+        "CANDIDATE_DETAIL_REQUIRED" not in issue["reason_codes"]
+        for issue in result["issues"]
+    )
+
+
 def test_assess_sufficiency__with_exhaustive_gmail_subject_collection__accepts_metadata() -> None:
     intent = request_intent()
     intent["analysis_requirement"] = "NONE"

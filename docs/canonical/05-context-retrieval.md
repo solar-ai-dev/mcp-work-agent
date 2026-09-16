@@ -553,6 +553,8 @@ class EvidenceSelectionResultV2:
 ### 5.8 `retrieval.assess_sufficiency`
 
 입력은 `request_intent + selected evidence`다. 조회 진행·coverage는 같은 Run의 제한된 read-result summary로 확인한다.
+`is_metadata_only=true` Gmail 검색 preview가 내용 기반 업무 근거(`SUPPORTS`)로 선택됐다면 READ 답변뿐 아니라 그 근거를 사용하는 후속 Action에서도 현재 Run의 같은 후보에 대한 bounded `DETAIL_FETCH` 전에는 `SUFFICIENT`로 확정하지 않는다. 제목·송신자 등 metadata 자체가 요청 대상인 수집 답변은 기존 예외를 유지한다. 이 검사는 새 Source를 선택하거나 모든 business Route의 조회를 강제하지 않는다.
+동일 frozen InputPlan 안에 Google Route가 여러 개여도 Gmail detail Need는 기존 `GMAIL_THREAD` Route ID에 결합한다. Source가 유일하지 않은 미결합 Google Need를 임의 Route로 보내지 않는다.
 
 ```python
 class SufficiencyResultV2:
