@@ -2,6 +2,10 @@ from typing import cast
 
 from scripts import evaluate_retrieval_plan_query_node as evaluator
 
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    InputToolRouteV1,
+)
+
 
 def _record(
     outcome: str,
@@ -102,3 +106,73 @@ def test_failure_family__duplicate_routes__classifies_over_selection() -> None:
     }
 
     assert evaluator._failure_family(record) == "OVER_SELECTION"
+
+
+def test_route_coverage_distinguishes_policy_business_and_access_dependencies() -> None:
+    routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "event",
+                "resource_type": "CALENDAR_EVENT",
+                "required": True,
+                "reason_codes": ["POLICY_CALENDAR_CONFLICT_CHECK"],
+            },
+            {
+                "route_id": "task",
+                "resource_type": "TASK",
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "task-list",
+                "resource_type": "TASK_LIST",
+                "required": True,
+                "reason_codes": ["RETRIEVAL_TASK_LIST_DISCOVERY"],
+            },
+        ],
+    )
+
+    summary = evaluator._route_coverage_summary(
+        routes, {"route_queries": [{"route_id": "task-list"}]}
+    )
+
+    assert summary == {
+        "selected_resource_types": ["TASK_LIST"],
+        "missing_policy_resource_types": ["CALENDAR_EVENT"],
+        "missing_business_resource_types": ["TASK"],
+    }
+
+
+def test_policy_composition_is_not_counted_as_first_inference_semantic_valid() -> None:
+    record = _record("FIRST_CALL_VALID", provider_calls=1, first_call="SEMANTIC_VALID")
+    record["first_inference_route_coverage"] = {
+        "missing_policy_resource_types": ["CALENDAR_EVENT"]
+    }
+    record["final_route_coverage"] = {"missing_policy_resource_types": []}
+
+    evaluator._classify_policy_coverage(record)
+    summary = evaluator._summarize_records(records=[record], split="CORE", duration_ms=1)
+
+    assert record["outcome"] == "POLICY_COMPOSITION_RECOVERED"
+    assert record["first_call_classification"] == "POLICY_ROUTE_OMITTED"
+    assert summary["first_call_valid_count"] == 0
+    assert summary["policy_composition_recovered_count"] == 1
+    assert summary["successful_case_count"] == 1
+
+
+def test_unresolved_policy_route_is_not_counted_as_success() -> None:
+    record = _record("FIRST_CALL_VALID", provider_calls=1, first_call="SEMANTIC_VALID")
+    record["first_inference_route_coverage"] = {
+        "missing_policy_resource_types": ["CALENDAR_EVENT"]
+    }
+    record["final_route_coverage"] = {
+        "missing_policy_resource_types": ["CALENDAR_EVENT"]
+    }
+
+    evaluator._classify_policy_coverage(record)
+    summary = evaluator._summarize_records(records=[record], split="CORE", duration_ms=1)
+
+    assert record["outcome"] == "POLICY_ROUTE_UNRESOLVED"
+    assert record["failure_family"] == "POLICY_ROUTE_OMISSION"
+    assert summary["successful_case_count"] == 0

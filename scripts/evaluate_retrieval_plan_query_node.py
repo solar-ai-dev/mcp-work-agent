@@ -54,6 +54,9 @@ from google_work_agent.application.agents.retrieval.plan_query import (
 from google_work_agent.application.agents.retrieval.resolve_route_container_scopes import (
     resolve_route_container_scopes,
 )
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    is_retrieval_dependency_route,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
@@ -239,6 +242,7 @@ def evaluate(
             record["outcome"] = "SCHEMA_REPAIR_RECOVERED"
         elif record["outcome"] == "VALID_AFTER_RETRY":
             record["outcome"] = "SEMANTIC_REVISION_RECOVERED"
+        _classify_policy_coverage(record)
         if record["outcome"] in {
             "FAILED",
             "SCHEMA_REPAIR_RECOVERED",
@@ -321,10 +325,11 @@ def _summarize_records(
             "FIRST_CALL_VALID",
             "SCHEMA_REPAIR_RECOVERED",
             "SEMANTIC_REVISION_RECOVERED",
+            "POLICY_COMPOSITION_RECOVERED",
         )
     )
     revision_still_failed = sum(
-        record["outcome"] == "FAILED"
+        record["outcome"] in {"FAILED", "POLICY_ROUTE_UNRESOLVED"}
         and _as_int(record.get("semantic_revision_count", 0)) > 0
         for record in records
     )
@@ -354,6 +359,7 @@ def _summarize_records(
         ),
         "first_call_classification_counts": dict(sorted(first_call_counts.items())),
         "schema_repair_recovered_count": outcome_counts["SCHEMA_REPAIR_RECOVERED"],
+        "policy_composition_recovered_count": outcome_counts["POLICY_COMPOSITION_RECOVERED"],
         "semantic_revision_recovered_count": outcome_counts["SEMANTIC_REVISION_RECOVERED"],
         "semantic_revision_attempted_count": revision_attempted,
         "semantic_revision_attempt_rate": (
@@ -460,6 +466,12 @@ def _evaluate_case(
                 timezone=timezone,
             )
         revision_count = sum(updated_budget["semantic_revisions_used_by_failure"].values())
+        inference_results = getattr(llm_runtime, "results", [])
+        first_candidate = (
+            inference_results[0].get("structured_output")
+            if isinstance(inference_results, list) and inference_results
+            else None
+        )
         return {
             "case_id": case.case_id,
             "outcome": (
@@ -472,6 +484,10 @@ def _evaluate_case(
             "llm_invoked": llm_invoked,
             "semantic_revision_count": revision_count,
             "route_query_count": len(query_plan["route_queries"]),
+            "first_inference_route_coverage": _route_coverage_summary(
+                typed_routes, first_candidate
+            ),
+            "final_route_coverage": _route_coverage_summary(typed_routes, query_plan),
             "input_route_ids": [route["route_id"] for route in typed_routes],
             "route_resource_types": [route["resource_type"] for route in typed_routes],
             "duration_ms": int((time.perf_counter() - started) * 1000),
@@ -479,6 +495,12 @@ def _evaluate_case(
     except Exception as error:
         error_code = getattr(getattr(error, "code", None), "value", None)
         revision_count = sum(run_budget["semantic_revisions_used_by_failure"].values())
+        inference_results = getattr(llm_runtime, "results", [])
+        first_candidate = (
+            inference_results[0].get("structured_output")
+            if isinstance(inference_results, list) and inference_results
+            else None
+        )
         return {
             "case_id": case.case_id,
             "outcome": "FAILED",
@@ -489,10 +511,74 @@ def _evaluate_case(
             "validation_stage": getattr(error, "validation_stage", None),
             "affected_field_paths": list(getattr(error, "affected_field_paths", ())),
             "semantic_revision_count": revision_count,
+            "first_inference_route_coverage": _route_coverage_summary(
+                typed_routes, first_candidate
+            ),
             "input_route_ids": [route["route_id"] for route in typed_routes],
             "route_resource_types": [route["resource_type"] for route in typed_routes],
             "duration_ms": int((time.perf_counter() - started) * 1000),
         }
+
+
+def _route_coverage_summary(
+    routes: list[InputToolRouteV1], candidate: object
+) -> dict[str, object] | None:
+    if not isinstance(candidate, dict):
+        return None
+    queries = candidate.get("route_queries")
+    if not isinstance(queries, list):
+        return None
+    selected = {
+        query.get("route_id")
+        for query in queries
+        if isinstance(query, dict) and isinstance(query.get("route_id"), str)
+    }
+    route_types = {
+        route["route_id"]: route["resource_type"] for route in routes
+    }
+    policy = {
+        route["route_id"]
+        for route in routes
+        if route["required"]
+        and any(
+            reason in {"POLICY_CALENDAR_CONFLICT_CHECK", "POLICY_TASK_DUPLICATE_CHECK"}
+            for reason in route["reason_codes"]
+        )
+    }
+    business = {
+        route["route_id"]
+        for route in routes
+        if route["required"]
+        and route["route_id"] not in policy
+        and not is_retrieval_dependency_route(route)
+    }
+    return {
+        "selected_resource_types": sorted(
+            route_types[route_id] for route_id in selected if route_id in route_types
+        ),
+        "missing_policy_resource_types": sorted(
+            route_types[route_id] for route_id in policy - selected
+        ),
+        "missing_business_resource_types": sorted(
+            route_types[route_id] for route_id in business - selected
+        ),
+    }
+
+
+def _classify_policy_coverage(record: dict[str, object]) -> None:
+    """Keep model completeness separate from deterministic policy recovery."""
+    if record.get("first_call_classification") != "SEMANTIC_VALID":
+        return
+    first = record.get("first_inference_route_coverage")
+    if not isinstance(first, dict) or not first.get("missing_policy_resource_types"):
+        return
+    record["first_call_classification"] = "POLICY_ROUTE_OMITTED"
+    final = record.get("final_route_coverage")
+    if isinstance(final, dict) and final.get("missing_policy_resource_types"):
+        record["outcome"] = "POLICY_ROUTE_UNRESOLVED"
+        record["failure_family"] = "POLICY_ROUTE_OMISSION"
+    elif record.get("outcome") in {"FIRST_CALL_VALID", "SCHEMA_REPAIR_RECOVERED"}:
+        record["outcome"] = "POLICY_COMPOSITION_RECOVERED"
 
 
 def _first_call_classification(
