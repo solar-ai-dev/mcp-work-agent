@@ -420,6 +420,8 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 ### 8.7 Analysis·Planning·Review
 
+- Work Analysis와 unresolved confirmation이 없는 ANSWER 경로는 현재 Run 사용자 원문과 현재 허용 Evidence ref만으로 request-scope outline을 결정적으로 만들고 `planning.outline_answer` LLM 호출은 0이어야 한다. Work Analysis 또는 실제 confirmation 판단이 있으면 기존 outline LLM을 유지한다.
+
 #### Local SLLM atomic decomposition
 
 Local SLLM의 다음 LLM 책임은 서로 다른 PromptRef와 최소 Typed Projection을 사용해야 한다. 한 Prompt가 다른 atomic responsibility의 출력까지 동시에 생성하면 실패다.

@@ -1,3 +1,5 @@
+from typing import cast
+
 from scripts import evaluate_retrieval_plan_query_node as evaluator
 
 
@@ -76,13 +78,16 @@ def test_node_summary__llm_path_and_dispatch__uses_distinct_denominators() -> No
     assert summary["first_call_valid_count"] == 13
     assert summary["first_call_valid_rate"] == 13 / 34
     assert summary["first_call_dispatched_valid_rate"] == 13 / 33
-    assert sum(summary["first_call_classification_counts"].values()) == 34
+    classification_counts = cast(
+        dict[str, int], summary["first_call_classification_counts"]
+    )
+    assert sum(classification_counts.values()) == 34
     assert summary["semantic_revision_attempted_count"] == 20
     assert summary["semantic_revision_still_failed_count"] == 18
 
 
 def test_failure_family__duplicate_routes__classifies_over_selection() -> None:
-    record = {
+    record: dict[str, object] = {
         "reason_code": "RETRIEVAL_QUERY_PLAN_SEMANTIC_INVALID",
         "affected_field_paths": [],
         "input_route_ids": ["gmail"],

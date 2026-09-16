@@ -196,7 +196,7 @@ def test_bound_temporal_constraint__initial_required_route__rejects_omission() -
         resolved_temporal_constraints={"availability": temporal},
         required_temporal_route_ids={"availability"},
     )
-    candidate = {
+    candidate: dict[str, Any] = {
         "schema_version": 2,
         "route_queries": [
             {

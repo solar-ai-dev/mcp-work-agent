@@ -1427,7 +1427,7 @@ Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
 | 현재 입력 | 적용 책임 |
 | --- | --- |
-| ANSWER Route | outline_answer · compose_answer |
+| ANSWER Route | Work Analysis·확인 필요가 없으면 현재 Run 원문과 허용 Evidence ref로 outline을 결정적으로 만들고 compose_answer만 호출. 그 외에는 outline_answer · compose_answer |
 | 모든 ACTION Route가 `NOT_REQUIRED` | 근거와 no-action reason을 답변으로 작성 |
 | 하나 이상의 ACTION Route가 `REQUIRED` | 필요한 Route만 action objective와 Tool Arguments 작성, 결정적 dependency 구성·Plan 조립·검증 |
 
@@ -1767,7 +1767,7 @@ Runtime Node ID는 이 문서가 소유하고, repository owner·naming·placeme
 | `analysis.assess_information_gaps` | work_analysis | LLM | missing information / retrieval needs only |
 | `analysis.assess_operational_risks` | work_analysis | LLM/conditional | operational risk only |
 | `analysis.finalize` | work_analysis | deterministic | `assemble_work_analysis` → `validate_work_analysis` → `WorkAnalysisResultV2`; 두 deterministic operation은 이 runtime node 안에서 연속 실행 |
-| `planning.outline_answer` | planning | LLM | answer evidence/conclusion outline only |
+| `planning.outline_answer` | planning | deterministic/LLM-conditional | Work Analysis·확인 필요가 없으면 현재 Run 원문 + 허용 Evidence ref의 request-scope outline. 그 외에는 answer evidence/conclusion outline LLM |
 | `planning.compose_answer` | planning | LLM | answer prose from approved outline/evidence |
 | `planning.draft_action_objective_per_output_route` | planning | LLM/per-route | business mutation objective/target/scope only |
 | `planning.compose_arguments_per_output_route` | planning | LLM/tool-schema/per-route | serialize one frozen route objective into Tool Arguments |

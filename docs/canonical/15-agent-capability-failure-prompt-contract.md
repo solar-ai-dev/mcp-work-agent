@@ -236,7 +236,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | Operation | 처리 | 범위 |
 | --- | --- | --- |
 | `planning.choose_answer_or_action_from_route` | deterministic | 공통 |
-| `planning.outline_answer` | LLM | ANSWER |
+| `planning.outline_answer` | deterministic/LLM-conditional | Work Analysis·확인 필요가 없는 ANSWER는 현재 Run 원문 + 허용 Evidence ref로 조립. 그 외 ANSWER만 LLM |
 | `planning.compose_answer` | LLM | ANSWER |
 
 **Evidence-backed READ answer composition**
@@ -244,6 +244,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | 항목 | 처리·제한 |
 | --- | --- |
 | 답변 생성 | `compose_answer`는 사람·시간 조건이나 `PARTIAL`이라는 이유만으로 생략하지 않는다. Evidence 원문을 최종 답변으로 대체하지 않는다. 기존 결정적 resource/empty-result projection은 유지하되 의미 요약이 필요한 답변은 기존 Prompt slot을 사용한다. |
+| 개요 생성 | Work Analysis와 unresolved confirmation이 모두 없으면 원문을 단일 section으로 보존하고 현재 Evidence ref만 순서대로 전달한다. 자연어 heuristic으로 section이나 ref를 재선택하지 않는다. Work Analysis 또는 confirmation 판단이 필요하면 기존 `planning.outline_answer` Prompt slot을 유지한다. |
 | 입력 | 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 필드가 없으면 확정 사실을 추측하지 않는다. |
 | 사실 표현 | 검색 기간은 행사 날짜의 사실 근거가 아니다. 미확정 연도·인물을 확정 표현으로 승격하지 않는다. 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. |
 | 실행 경로 | 기존 RunBudget와 `Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS` 경로를 유지한다. 별도 Review 호출이나 새로운 상태를 추가하지 않는다. |

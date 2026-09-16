@@ -87,3 +87,21 @@ Schema-valid이지만 semantic-invalid인 첫 출력은 6개이며, schema-valid
 - `langgraph-node-replay-retrieval-plan-c2-core60-20260916/result.json`
 - `langgraph-node-replay-retrieval-plan-e-bounded-required-constraints-20260916/result.json`
 - `langgraph-node-replay-retrieval-plan-e-remaining-affected-20260916/result.json`
+
+## Stress / Holdout 최종 후보 확인
+
+동일한 최종 후보를 저장된 Node 입력으로 별도 재생했다. 노출된 Holdout은 독립 검증으로
+주장하지 않는다.
+
+| Split | Node 입력 | deterministic | LLM 대상/dispatch | 첫 호출 semantic valid | revision 회복/실패 | 최종 valid | 호출 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Stress 20 | 14 | 0 | 14/14 | 12/14 | 1/1 | 13/14 | 16 |
+| Holdout 12 | 3 | 1 | 2/2 | 1/2 | 0/1 | 2/3 | 3 |
+
+Stress의 잔여 실패는 over-selection 1건, Holdout의 잔여 실패는 explicit anchor loss
+1건이다. Stress 관측량은 input `82,584`, output `5,418`, provider latency
+`164,657ms`; Holdout은 input `12,680`, output `645`, provider latency
+`20,470ms`다.
+
+- `langgraph-node-replay-retrieval-plan-final-stress20-20260916/result.json`
+- `langgraph-node-replay-retrieval-plan-final-holdout12-20260916/result.json`

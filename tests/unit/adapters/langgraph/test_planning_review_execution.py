@@ -91,6 +91,47 @@ def test_compiled_planning__answer_executes__canonical_operations() -> None:
     assert calls == ["planning.outline_answer", "planning.compose_answer"]
 
 
+def test_compiled_planning__answer_without_analysis__skips_outline_llm() -> None:
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        assert prompt_id == "planning.compose_answer"
+        assert prompt_input["answer_outline"] == {
+            "sections": ["Summarize the selected message"],
+            "evidence_refs": ["e1"],
+        }
+        return {"schema_version": 2, "answer": "done", "evidence_refs": ["e1"]}
+
+    graph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=cast(PlanningSemanticInvoker, invoke))
+    ).build()
+    result = graph.invoke(
+        {
+            "user_request": "Summarize the selected message",
+            "request_intent": {
+                "goal": "summary",
+                "ambiguity": {"requires_confirmation": False},
+            },
+            "tool_route_plan": {
+                "output_plan": {"output_mode": "ANSWER", "output_routes": []}
+            },
+            "evidence": [{"evidence_ref": "e1"}],
+        }
+    )
+
+    assert result["answer_outline"] == {
+        "sections": ["Summarize the selected message"],
+        "evidence_refs": ["e1"],
+    }
+    assert result["final_result"] == {
+        "schema_version": 2,
+        "answer": "done",
+        "evidence_refs": ["e1"],
+    }
+    assert calls == ["planning.compose_answer"]
+
+
 def test_compiled_planning__graph_has_exact__six_runtime_nodes() -> None:
     graph = PlanningSubgraph(
         dependencies=PlanningRuntimeDependencies(invoke=lambda _prompt_id, _input: {})

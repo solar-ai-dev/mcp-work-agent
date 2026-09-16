@@ -83,9 +83,9 @@ def test_answer_only__reaches_terminal_through__real_production_composition(
     }
     assert {
         "request_understanding.identify_goal",
-        "planning.outline_answer",
         "planning.compose_answer",
     }.issubset(invoked)
+    assert "planning.outline_answer" not in invoked
     assert "request_understanding.detect_ambiguity" in invoked
     assert not any(prompt_id.startswith("tool_routing.") for prompt_id in invoked)
     assert not any(prompt_id.startswith("retrieval.") for prompt_id in invoked)
@@ -267,7 +267,6 @@ def test_selected_gmail_resource__uses_exact_detail__without_routing_or_query_ll
         "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
-        "planning.outline_answer",
         "planning.compose_answer",
     ]
 

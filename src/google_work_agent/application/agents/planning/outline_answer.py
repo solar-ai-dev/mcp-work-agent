@@ -121,10 +121,12 @@ def outline_answer(
     if not user_request.strip():
         raise ValueError("user_request is required")
     allowed_refs: set[str] = set()
+    ordered_allowed_refs: list[str] = []
     for item in evidence:
         ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
-        if isinstance(ref, str) and ref:
+        if isinstance(ref, str) and ref and ref not in allowed_refs:
             allowed_refs.add(ref)
+            ordered_allowed_refs.append(ref)
     prompt_input: dict[str, object] = {
         "user_request": user_request,
         "request_intent": {
@@ -153,6 +155,13 @@ def outline_answer(
     )
     if task_projection is not None:
         return task_projection.outline
+    if work_analysis is None and not answer_confirmation_allowed(
+        request_intent, work_analysis
+    ):
+        return {
+            "sections": [user_request],
+            "evidence_refs": ordered_allowed_refs,
+        }
     candidate = invoke(PROMPT_ID, prompt_input)
     if candidate.get("disposition") == "NEEDS_CONFIRMATION":
         if not answer_confirmation_allowed(request_intent, work_analysis):
