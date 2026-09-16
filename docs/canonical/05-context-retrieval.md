@@ -163,6 +163,11 @@ Operation별 책임은 유지하되 검색 전략이나 Graph 세부 순서를 �
 ### 5.1 `retrieval.plan_query`
 
 허용된 IN Route 안에서 무엇을 찾고 어떤 Page·후보·상세 조회가 필요한지 제안한다. 사용자 제약과 Policy Precondition의 필수 조회 목적을 보존한다.
+초기 정책 pre-read가 frozen Route, 검증된 container와 route에 결합된 기간으로
+operation·scope까지 유일하게 확정될 때에만 Query 조립 경계가 모델 출력에서
+누락된 해당 정책 Route를 보충할 수 있다. 대상·기간·operation 중 하나라도
+불확실하면 보충하지 않고 기존 Sufficiency/실행 Guard에 맡긴다. 비정책 업무
+Route나 검색 literal을 이 경계에서 새로 선택하지 않는다.
 
 **입력**
 

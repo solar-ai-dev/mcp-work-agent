@@ -24,6 +24,8 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
     RetrievalBudget,
+    _compose_policy_pre_reads,
+    _resolved_policy_pre_reads,
     followup_retrieval_planner_input,
     has_retrieval_followup_path,
     initial_retrieval_planner_input,
@@ -259,6 +261,147 @@ def test_followup_retrieval_planner_input__preserves_observed__evidence_projecti
     )
 
     assert prompt_input["observed_evidence"] == observed
+
+
+def test_policy_pre_read_requires_frozen_scope_and_does_not_select_business_route() -> None:
+    routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "event-policy",
+                "resource_type": "CALENDAR_EVENT",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["calendar_list_events"],
+                "required": True,
+                "reason_codes": ["POLICY_CALENDAR_CONFLICT_CHECK"],
+            },
+            {
+                "route_id": "business",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+        ],
+    )
+    policies = {
+        "event-policy": RouteConstraintPolicy(
+            frozenset({"CONTAINER_REF", "TEMPORAL_RANGE"}),
+            frozenset({"CONTAINER_REF"}),
+        ),
+        "business": RouteConstraintPolicy(frozenset({"KEYWORD"}), frozenset()),
+    }
+    arguments = {
+        "frozen_routes": routes,
+        "route_operations": {"event-policy": ["SEARCH"], "business": ["SEARCH"]},
+        "route_policies": policies,
+        "validated_container_refs": {"event-policy": ["calendar:authorized"]},
+        "calendar_temporal_constraints": {
+            "event-policy": {
+                "kind": "TEMPORAL_RANGE",
+                "axis": "EVENT_TIME",
+                "start_local": "2026-08-14T00:00:00",
+                "end_local": "2026-08-15T00:00:00",
+                "timezone": "Asia/Seoul",
+            }
+        },
+        "is_followup": False,
+    }
+
+    queries = _resolved_policy_pre_reads(**cast(Any, arguments))
+
+    assert len(queries) == 1
+    assert queries[0]["route_id"] == "event-policy"
+    assert len(cast(dict[str, Any], queries[0]["search_spec"])["constraints"]) == 2
+    assert not _resolved_policy_pre_reads(
+        **cast(Any, {**arguments, "calendar_temporal_constraints": {}})
+    )
+    assert not _resolved_policy_pre_reads(**cast(Any, {**arguments, "is_followup": True}))
+    optional = cast(list[InputToolRouteV1], [{**routes[0], "required": False}])
+    assert not _resolved_policy_pre_reads(
+        **cast(Any, {**arguments, "frozen_routes": optional})
+    )
+    unknown_policy = cast(
+        list[InputToolRouteV1], [{**routes[0], "reason_codes": ["POLICY_FUTURE_CHECK"]}]
+    )
+    assert not _resolved_policy_pre_reads(
+        **cast(Any, {**arguments, "frozen_routes": unknown_policy})
+    )
+
+
+def test_initial_mixed_query_composes_only_missing_resolved_policy_pre_read() -> None:
+    routes = cast(
+        list[InputToolRouteV1],
+        [
+            {
+                "route_id": "mail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "task-policy",
+                "resource_type": "TASK",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["tasks_list_tasks"],
+                "required": True,
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+            },
+        ],
+    )
+    mail_query = {
+        "route_id": "mail",
+        "operation": "SEARCH",
+        "reason_codes": ["REQUESTED_INPUT"],
+        "search_spec": {
+            "mode": "INITIAL",
+            "constraints": [{"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ANY"}],
+        },
+        "detail_candidate_ref": None,
+    }
+    runtime = FakeStructuredInferencePort(
+        outputs=[{"schema_version": 2, "route_queries": [mail_query]}]
+    )
+
+    result, _, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": {"constraints": []}, "input_routes": routes},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=routes,
+        route_policies={
+            "mail": RouteConstraintPolicy(frozenset({"KEYWORD"}), frozenset()),
+            "task-policy": RouteConstraintPolicy(
+                frozenset({"CONTAINER_REF"}), frozenset({"CONTAINER_REF"})
+            ),
+        },
+        retry_budget=build_default_run_budget(),
+        validated_container_refs={"task-policy": ["task-list:authorized"]},
+    )
+
+    assert [query["route_id"] for query in result["route_queries"]] == [
+        "mail",
+        "task-policy",
+    ]
+    assert llm_invoked is True
+    assert len(runtime.calls) == 1
+    assert _compose_policy_pre_reads(
+        result,
+        policy_pre_reads=[
+            {
+                "route_id": "task-policy",
+                "operation": "SEARCH",
+                "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+                "search_spec": {"mode": "INITIAL", "constraints": []},
+                "detail_candidate_ref": None,
+            }
+        ],
+    ) is result
 
 
 def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revision() -> None:

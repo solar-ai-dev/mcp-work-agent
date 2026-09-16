@@ -906,6 +906,14 @@ def plan_query(
         **gmail_temporal_constraints,
         **calendar_temporal_constraints,
     }
+    policy_pre_reads = _resolved_policy_pre_reads(
+        frozen_routes=frozen_routes,
+        route_operations=route_operations,
+        route_policies=route_policies,
+        validated_container_refs=validated_container_refs,
+        calendar_temporal_constraints=calendar_temporal_constraints,
+        is_followup=is_followup,
+    )
     if calendar_temporal_constraints:
         planner_input["required_route_constraints"] = [
             {
@@ -980,13 +988,18 @@ def plan_query(
                 detail_candidate_refs=detail_candidate_refs,
             )
             validation_stage = "ROUND_VALIDATOR"
+            validated_deterministic = _validate_initial_user_anchor_preservation(
+                validated_deterministic,
+                prompt_input=prompt_input,
+                frozen_routes=frozen_routes,
+            )
             validated_deterministic = _validate_required_followup_route_coverage(
-                _validate_initial_user_anchor_preservation(
-                    validated_deterministic,
-                    prompt_input=prompt_input,
-                    frozen_routes=frozen_routes,
-                ),
+                validated_deterministic,
                 required_route_ids=required_followup_route_ids,
+            )
+            validated_deterministic = _compose_policy_pre_reads(
+                validated_deterministic,
+                policy_pre_reads=policy_pre_reads,
             )
             validation_stage = "BUILD_QUERY"
             build_query(
@@ -1024,6 +1037,7 @@ def plan_query(
                 retry_budget=retry_budget,
                 is_followup=is_followup,
                 required_followup_route_ids=required_followup_route_ids,
+                policy_pre_reads=policy_pre_reads,
                 now_ms=now_ms,
                 timezone=timezone,
                 prior_plans=prior_plans,
@@ -1083,6 +1097,10 @@ def plan_query(
             validated_round,
             required_route_ids=required_followup_route_ids,
         )
+        validated_round = _compose_policy_pre_reads(
+            validated_round,
+            policy_pre_reads=policy_pre_reads,
+        )
         validation_stage = "BUILD_QUERY"
         build_query(
             validated_round,
@@ -1124,6 +1142,7 @@ def plan_query(
             retry_budget=retry_budget,
             is_followup=is_followup,
             required_followup_route_ids=required_followup_route_ids,
+            policy_pre_reads=policy_pre_reads,
             now_ms=now_ms,
             timezone=timezone,
             prior_plans=prior_plans,
@@ -1366,6 +1385,87 @@ def _validate_required_followup_route_coverage(
     return plan
 
 
+def _resolved_policy_pre_reads(
+    *,
+    frozen_routes: Sequence[InputToolRouteV1],
+    route_operations: Mapping[str, Collection[RetrievalOperationV2]],
+    route_policies: Mapping[str, RouteConstraintPolicy],
+    validated_container_refs: Mapping[str, Collection[str]] | None,
+    calendar_temporal_constraints: Mapping[str, Mapping[str, object]],
+    is_followup: bool,
+) -> tuple[dict[str, object], ...]:
+    """Materialize only pre-reads with fully validated operation and scope."""
+    if is_followup:
+        return ()
+    queries: list[dict[str, object]] = []
+    for route in frozen_routes:
+        reasons = [
+            code
+            for code in route["reason_codes"]
+            if code in {"POLICY_CALENDAR_CONFLICT_CHECK", "POLICY_TASK_DUPLICATE_CHECK"}
+        ]
+        if not route["required"] or not reasons:
+            continue
+        if (
+            "POLICY_CALENDAR_CONFLICT_CHECK" in reasons
+            and route["resource_type"]
+            not in {"CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+        ) or (
+            "POLICY_TASK_DUPLICATE_CHECK" in reasons
+            and route["resource_type"] not in {"TASK", "TASK_LIST"}
+        ):
+            continue
+        route_id = route["route_id"]
+        policy = route_policies.get(route_id)
+        available = set(route_operations.get(route_id, ())).intersection({"SEARCH", "FREEBUSY"})
+        if policy is None or len(available) != 1:
+            continue
+        if not policy.required_kinds.issubset({"CONTAINER_REF", "TEMPORAL_RANGE"}):
+            continue
+        container_refs = list(dict.fromkeys((validated_container_refs or {}).get(route_id, ())))
+        if "CONTAINER_REF" not in policy.supported_kinds or not container_refs:
+            continue
+        constraints: list[dict[str, object]] = [
+            {"kind": "CONTAINER_REF", "container_refs": container_refs}
+        ]
+        temporal = calendar_temporal_constraints.get(route_id)
+        if (
+            "POLICY_CALENDAR_CONFLICT_CHECK" in reasons
+            and route["resource_type"] in {"CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+            and temporal is None
+        ):
+            continue
+        if "TEMPORAL_RANGE" in policy.required_kinds and temporal is None:
+            continue
+        if temporal is not None:
+            constraints.append(dict(temporal))
+        queries.append(
+            {
+                "route_id": route_id,
+                "operation": next(iter(available)),
+                "reason_codes": reasons,
+                "search_spec": {"mode": "INITIAL", "constraints": constraints},
+                "detail_candidate_ref": None,
+            }
+        )
+    return tuple(queries)
+
+
+def _compose_policy_pre_reads(
+    plan: RetrievalQueryPlanV2,
+    *,
+    policy_pre_reads: Sequence[dict[str, object]],
+) -> RetrievalQueryPlanV2:
+    existing = {query["route_id"] for query in plan["route_queries"]}
+    missing = [query for query in policy_pre_reads if query["route_id"] not in existing]
+    if not missing:
+        return plan
+    return cast(
+        RetrievalQueryPlanV2,
+        {**plan, "route_queries": [*plan["route_queries"], *deepcopy(missing)]},
+    )
+
+
 def _project_route_constraint_policies(
     prompt_input: Mapping[str, object],
     route_policies: Mapping[str, RouteConstraintPolicy],
@@ -1505,6 +1605,7 @@ def _revise_plan_once(
     retry_budget: RunBudgetV2,
     is_followup: bool,
     required_followup_route_ids: Collection[str],
+    policy_pre_reads: Sequence[dict[str, object]],
     now_ms: int | None,
     timezone: str | None,
     prior_plans: Mapping[str, SourceFetchPlanV1] | None,
@@ -1568,6 +1669,10 @@ def _revise_plan_once(
         validated_round = _validate_required_followup_route_coverage(
             validated_round,
             required_route_ids=required_followup_route_ids,
+        )
+        validated_round = _compose_policy_pre_reads(
+            validated_round,
+            policy_pre_reads=policy_pre_reads,
         )
         validation_stage = "BUILD_QUERY"
         build_query(
