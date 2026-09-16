@@ -126,3 +126,74 @@ item 사실이 반복 누락됐다. 후보는 비활성 평가 파일로만 남�
 표현, item/container 분리 책임, 후속 merge 보정의 실제 효과를 원문→후보→조립→
 Tool Route 입력에서 다시 진단해야 한다. 이 후보는 품질 중단 기준에 걸려 반복 Trial
 및 제품 활성화를 수행하지 않았다.
+
+## 다음 진단: 제품 Goal 조립 경계
+
+앞의 `1/6`은 Source 첫 출력의 판정이며 최종 RequestIntent 판정이 아니다.
+따라서 같은 저장 원문과 현재 production Prompt·Schema·merge를 사용하여
+`identify_goal_with_budget` 전체 조립 결과를 직렬로 관측한다. 먼저
+`015/021/024` 세 건에서 Source 첫 출력의 과잉·누락이 조립 뒤 Source/Output
+책임에 남는지 확인하고, 결과가 다르면 나머지 `011/014/028`로 넓힌다.
+원문 또는 LLM 출력은 결과 JSON에 저장하지 않고 Resource type, effect, 호출·토큰·
+지연만 남긴다. 이는 Product Graph·Connector 실행이 아니며 의미 검토는 원문과
+06의 사실 Owner를 기준으로 별도 수행한다. 어떤 결과가 나오든 Prompt 문구나
+필드 추가로 즉시 교정하지 않고 최초 손실·보정 경계를 먼저 확정한다.
+
+첫 실행에서 `024`가 Source Status 출처 불일치로 보정 호출 후 실패했다. 같은
+입력 1회를 원인 진단으로 재생하되, Status 후보의 원문 substring 일치 여부와
+Resource/Status 값만 기록한다. 성공으로 바뀌어도 원래 실패를 지우지 않는다.
+
+조립이 통과한 `014/015/021/028`에 대해서만 생산용
+`identify_temporal_scope → detect_ambiguity → finalize_intent →
+determine_io_resources`를 짧게 연결한다. Connector·후속 Node는 실행하지 않는다.
+첫 3건 `014/015/021`을 보고 Tool Route 입력이 Source/Output 역할을 그대로
+소비하는지 확인하며, 결과 해석에 필요한 경우 `028`을 추가한다. Route 유효와
+업무 의미 유효를 별개로 판정하고, 이미 실패한 `024`는 실패로 남긴다.
+
+### 관측·판정
+
+현재 production 조립 6건에서 Schema·의미 검증을 모두 통과한 Goal은 5건,
+`024`는 Source Status provenance에서 1회 수정 호출 후에도 실패했다. 조립 전
+Source 출력의 과잉 중 Task List와 Calendar container 일부는 merge에서 사라졌고,
+`015`의 Task는 이번 현재 호출에서 살아났다. 과거 checkpoint의 Task 누락을
+현재 버전의 고정 결과로 취급할 수 없다. 반면 다음 역할 경계는 남았다.
+
+| Case | 조립 Source → Output | 현재 판단 |
+| --- | --- | --- |
+| 011 | Gmail Thread/Message, Task, Event, FreeBusy → Draft CREATE | 요청하지 않은 Gmail·가용성 Source 과잉 |
+| 014 | Task, Event → Draft CREATE | 원문 역할과 부합하는 기존 성공 |
+| 015 | Task, Event, FreeBusy → Draft CREATE | 필수 Task·가용성 유지; Event 추가의 실제 유용성은 미검증 |
+| 021 | Gmail Thread, Task, Calendar, FreeBusy → Event CREATE | Calendar metadata를 업무 사실로 요구하지 않은 요청에서 container 과잉 |
+| 024 | Goal 조립 실패 | Status provenance 불일치 2회 |
+| 028 | Gmail Thread, Task, Calendar, FreeBusy → Event CREATE | 근무시간은 Calendar list가 아니라 설정 경계에서 공급; Calendar metadata 과잉 의심 |
+
+`024`를 같은 입력으로 원인 진단 1회 더 실행해도 동일 reason code로 실패했다.
+첫 Status 후보는 Gmail Thread의 `SENT`, 수정 후보는 `DRAFT`를 골랐고,
+두 후보의 `source_text` 모두 현재 Run 원문 부분 문자열이 아니었다. 인용 원문과
+completion은 저장하지 않았다. 이는 Schema 통과와 별개인 모델의 status/source
+binding 실패다. 기존 Quartz Draft production smoke에도 같은 reason code가 있어
+한 Case만의 현상으로 보지 않는다. validator가 허위 provenance를 막은 것이므로
+조건을 완화하거나 status를 임의 삭제하지 않는다.
+
+조립 통과 4건(`014/015/021/028`)을 실제
+`temporal scope → ambiguity → finalize_intent → determine_io_resources`에 연결했다.
+네 건 모두 확인 요구 없이 Tool Route는 Source type과 Output pair를 그대로 받았고
+`determine_io_resources`의 LLM 호출은 0이었다. `014/015`는 각 6 Provider 호출,
+`021/028`은 temporal axis 호출이 있어 각 7호출이었다. 따라서 여기서 Route
+정확도는 앞단 역할 품질에 종속된다. `021/028`의 Calendar 과잉이 후단 검색·
+Evidence에 미치는 영향은 Connector 결과를 연결해야 판단할 수 있다.
+
+두 차례의 3건 조립 Trial 합계는 31호출, 입력 60,305·출력 2,391 tokens,
+Provider 지연 85,671ms다. 4건 인접 연결 Trial 합계는 26호출, 입력 62,439·
+출력 2,005 tokens, Provider 지연 73,143ms다. 서로 다른 재생 Trial이므로
+호출·지연의 paired 후보 비교 수치가 아니다. 원시 결과는
+`evaluation/results/request-source-full-goal-boundary-core3-20260916/`,
+`request-source-full-goal-boundary-core3b-20260916/`,
+`request-source-full-goal-status-diagnostic-core024-20260916/`,
+`request-source-to-tool-route-core3-20260916/`,
+`request-source-to-tool-route-core028-20260916/`에 보관한다.
+
+**채택된 제품 변경 없음.** 두 기존 후보(원문만 남기기, 양성 Source만 출력)는
+기각을 유지한다. 다음 방법은 status의 추출 근거와 Source fact owner를
+입력·후속 consumer까지 함께 평가하는 것이다. 단일 문구 강화·새로운 원문 키워드
+분기·사후 status 삭제는 재시도 조건이 아니다.

@@ -27,6 +27,9 @@ from google_work_agent.application.agents.request_understanding import (
     identify_goal as goal_ops,
 )
 from google_work_agent.application.agents.request_understanding import (
+    identify_output_responsibilities as output_ops,
+)
+from google_work_agent.application.agents.request_understanding import (
     identify_source_dependencies as source_ops,
 )
 from google_work_agent.application.agents.request_understanding import (
@@ -34,6 +37,18 @@ from google_work_agent.application.agents.request_understanding import (
 )
 from google_work_agent.application.agents.request_understanding.contracts import (
     request_goal_candidate_schema,
+)
+from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
+    detect_ambiguity,
+)
+from google_work_agent.application.agents.request_understanding.finalize_intent import (
+    finalize_intent,
+)
+from google_work_agent.application.agents.request_understanding.identify_temporal_scope import (
+    identify_temporal_scope,
+)
+from google_work_agent.application.agents.tool_routing.determine_io_resources import (
+    determine_io_resources,
 )
 from google_work_agent.application.prompt_runtime.assemble_prompt import assemble_prompt
 from google_work_agent.application.prompt_runtime.prompt_registry import (
@@ -66,10 +81,13 @@ class _RecordingInferencePort:
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
         self.calls: list[dict[str, object]] = []
+        self.status_outputs: list[object] = []
 
     def infer(self, *args: Any, **kwargs: Any) -> Any:
         result = self.delegate.infer(*args, **kwargs)
         prompt_ref = args[1]
+        if prompt_ref.prompt_id == "request_understanding.identify_source_status":
+            self.status_outputs.append(result.structured_output)
         self.calls.append(
             {
                 "prompt_id": prompt_ref.prompt_id,
@@ -90,9 +108,17 @@ def main() -> None:
     parser.add_argument("--sampling-seed", type=int, default=1729)
     parser.add_argument("--compare-request-only", action="store_true")
     parser.add_argument("--compare-sparse", action="store_true")
+    parser.add_argument("--assemble-full-goal", action="store_true")
+    parser.add_argument("--connect-tool-route", action="store_true")
     arguments = parser.parse_args()
     if arguments.model != "qwen3.5:9b":
         raise ValueError("this diagnostic is bound to qwen3.5:9b")
+    if arguments.assemble_full_goal and (
+        arguments.compare_request_only or arguments.compare_sparse
+    ):
+        raise ValueError("full goal assembly cannot be combined with candidate comparisons")
+    if arguments.connect_tool_route and not arguments.assemble_full_goal:
+        raise ValueError("tool route connection requires full goal assembly")
 
     manifest_path = default_prompt_manifest_path()
     goal_ref = load_prompt_reference(
@@ -105,6 +131,20 @@ def main() -> None:
         manifest_path,
         execution_scope=DEVELOPMENT_SMOKE,
     )
+    full_goal_refs = {
+        prompt_id: load_prompt_reference(
+            prompt_id,
+            manifest_path,
+            execution_scope=DEVELOPMENT_SMOKE,
+        )
+        for prompt_id in (
+            "request_understanding.identify_effect_prohibitions",
+            "request_understanding.identify_output_responsibilities",
+            "request_understanding.identify_source_status",
+            "request_understanding.identify_temporal_scope",
+            "request_understanding.detect_ambiguity",
+        )
+    }
     model_digest = next(
         (
             model.digest
@@ -153,7 +193,11 @@ def main() -> None:
 
     runtime.before_provider_dispatch = count_dispatch
     recorder = _RecordingInferencePort(runtime)
-    candidates = source_ops.build_source_dependency_candidates(load_development_tool_registry())
+    tool_catalog = load_development_tool_registry()
+    candidates = source_ops.build_source_dependency_candidates(tool_catalog)
+    output_candidates = output_ops.build_output_responsibility_candidates(
+        tool_catalog
+    )
     cases = load_cases()
     records: list[dict[str, object]] = []
     for case_id in arguments.case:
@@ -171,8 +215,103 @@ def main() -> None:
         started = time.perf_counter()
         before = dispatch_count
         recorder.calls.clear()
+        recorder.status_outputs.clear()
         budget = build_default_run_budget(started_at_ms=int(time.time() * 1_000))
         try:
+            if arguments.assemble_full_goal:
+                with provider_dispatch_execution_scope(
+                    run_id=f"request-source-{case_id}-{uuid4()}",
+                    now_ms=lambda: int(time.time() * 1_000),
+                ):
+                    assembled, budget = goal_ops.identify_goal_with_budget(
+                        llm_runtime=recorder,
+                        request=replace(request, requested_mode="LOCAL_GPU"),
+                        retry_budget=budget,
+                        source_dependency_candidates=candidates,
+                        output_responsibility_candidates=output_candidates,
+                        prompt_ref=goal_ref,
+                        effect_prohibition_prompt_ref=full_goal_refs[
+                            "request_understanding.identify_effect_prohibitions"
+                        ],
+                        source_dependency_prompt_ref=source_ref,
+                        output_responsibility_prompt_ref=full_goal_refs[
+                            "request_understanding.identify_output_responsibilities"
+                        ],
+                        source_status_prompt_ref=full_goal_refs[
+                            "request_understanding.identify_source_status"
+                        ],
+                    )
+                responsibilities = assembled["resource_responsibilities"]
+                route_result: dict[str, object] | None = None
+                if arguments.connect_tool_route:
+                    with provider_dispatch_budget_scope(budget):
+                        scoped = identify_temporal_scope(
+                            llm_runtime=recorder,
+                            prompt_ref=full_goal_refs[
+                                "request_understanding.identify_temporal_scope"
+                            ],
+                            requested_mode="LOCAL_GPU",
+                            request_text=request.request_text,
+                            candidate=assembled,
+                        )
+                    ambiguity, budget = detect_ambiguity(
+                        llm_runtime=recorder,
+                        request=replace(request, requested_mode="LOCAL_GPU"),
+                        goal_candidate=scoped,
+                        prompt_ref=full_goal_refs["request_understanding.detect_ambiguity"],
+                        retry_budget=budget,
+                    )
+                    intent = finalize_intent(
+                        scoped,
+                        ambiguity,
+                        artifact_id=str(uuid4()),
+                        user_request=request.request_text,
+                        repository_default=request.default_github_repository,
+                    )
+                    route, _ = determine_io_resources(
+                        llm_runtime=recorder,
+                        tool_catalog=tool_catalog,
+                        request_intent=intent,
+                        request=replace(request, requested_mode="LOCAL_GPU"),
+                        retry_budget=budget,
+                    )
+                    route_result = {
+                        "requires_confirmation": ambiguity["requires_confirmation"],
+                        "input_resource_types": list(route.input_resource_types),
+                        "output_pairs": [list(pair) for pair in route.output_pairs],
+                        "output_mode": route.output_mode,
+                    }
+                records.append(
+                    {
+                        "case_id": case_id,
+                        "outcome": "SCHEMA_VALID_SEMANTICS_UNREVIEWED",
+                        "source_types": [
+                            item["resource_type"] for item in responsibilities["source_reads"]
+                        ],
+                        "output_effects": [
+                            [item["resource_type"], item["effect"]]
+                            for item in responsibilities["outputs"]
+                        ],
+                        "tool_route": route_result,
+                        "status_attempts": _status_attempt_summaries(
+                            recorder.status_outputs, request.request_text
+                        ),
+                        "provider_calls": dispatch_count - before,
+                        "prompt_calls": [call["prompt_id"] for call in recorder.calls],
+                        "input_tokens": sum(
+                            cast(int, call["input_tokens"]) for call in recorder.calls
+                        ),
+                        "output_tokens": sum(
+                            cast(int, call["output_tokens"]) for call in recorder.calls
+                        ),
+                        "latency_ms": sum(
+                            cast(int, call["latency_ms"]) for call in recorder.calls
+                        ),
+                        "duration_ms": int((time.perf_counter() - started) * 1_000),
+                    }
+                )
+                print(json.dumps(records[-1], ensure_ascii=False, sort_keys=True), flush=True)
+                continue
             with (
                 provider_dispatch_execution_scope(
                     run_id=f"request-source-{case_id}-{uuid4()}",
@@ -286,6 +425,10 @@ def main() -> None:
                     "reason_code": getattr(error, "reason_code", None),
                     "provider_calls": dispatch_count - before,
                     "duration_ms": int((time.perf_counter() - started) * 1_000),
+                    "status_attempts": (
+                        _status_attempt_summaries(recorder.status_outputs, request.request_text)
+                        if arguments.assemble_full_goal else None
+                    ),
                 }
             )
         print(json.dumps(records[-1], ensure_ascii=False, sort_keys=True), flush=True)
@@ -301,6 +444,8 @@ def main() -> None:
             "source_prompt_hash": source_ref.content_hash,
             "compare_request_only": arguments.compare_request_only,
             "compare_sparse": arguments.compare_sparse,
+            "assemble_full_goal": arguments.assemble_full_goal,
+            "connect_tool_route": arguments.connect_tool_route,
             "connector_dispatch_enabled": False,
             "product_graph_compiled": False,
         },
@@ -311,6 +456,31 @@ def main() -> None:
         json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _status_attempt_summaries(outputs: list[object], request_text: str) -> list[object]:
+    summaries: list[object] = []
+    for output in outputs:
+        if not isinstance(output, dict) or not isinstance(output.get("statuses"), list):
+            summaries.append({"shape": "INVALID"})
+            continue
+        statuses = output["statuses"]
+        summaries.append(
+            [
+                {
+                    "resource_type": item.get("source_resource_type"),
+                    "status": item.get("value"),
+                    "source": item.get("source"),
+                    "source_text_in_request": (
+                        isinstance(item.get("source_text"), str)
+                        and item["source_text"] in request_text
+                    ),
+                }
+                for item in statuses
+                if isinstance(item, dict)
+            ]
+        )
+    return summaries
 
 
 def _sparse_source_candidate(
