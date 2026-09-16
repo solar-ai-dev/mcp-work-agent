@@ -51,6 +51,12 @@ from google_work_agent.api.composition import (
     ProductionRuntimeConfig,
     build_production_runtime,
 )
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV2,
+)
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    ToolRoutePlanV2,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import DEVELOPMENT_SMOKE
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
@@ -159,6 +165,8 @@ def evaluate(
     model_id: str,
     sampling_temperature: float,
     sampling_seed: int,
+    input_overrides: Mapping[str, tuple[RequestIntentV2, ToolRoutePlanV2]] | None = None,
+    emit_case_records: bool = True,
 ) -> dict[str, object]:
     if model_id not in {"qwen3.5:9b", "qwen3.5:4b"}:
         raise ValueError(f"unsupported local model for connected replay: {model_id}")
@@ -166,6 +174,8 @@ def evaluate(
     unknown = sorted(set(case_ids) - set(cases))
     if unknown:
         raise ValueError(f"unknown Canonical cases: {', '.join(unknown)}")
+    if input_overrides is not None and set(input_overrides) != set(case_ids):
+        raise ValueError("current upstream overrides must cover exactly the replayed cases")
     installed_models = {
         model.model_id: model.digest for model in OllamaHTTPClient().list_installed_models()
     }
@@ -208,9 +218,11 @@ def evaluate(
             checkpoint_root=checkpoint_root,
             llm_runtime=runtime,
             model_id=model_id,
+            input_override=(input_overrides or {}).get(case_id),
         )
         records.append(record)
-        print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
+        if emit_case_records:
+            print(json.dumps(record, ensure_ascii=False, sort_keys=True), flush=True)
     task_achievable = sum(record.get("task_achievable") is True for record in records)
     node_correct = sum(record.get("node_processing_correct") is True for record in records)
     summary = {
@@ -247,6 +259,10 @@ def evaluate(
             "sampling_seed": sampling_seed,
             "execution_scope": "QUERY_TO_EVIDENCE_SYNTHETIC_PROVIDER",
             "request_understanding_executed": False,
+            "current_upstream_input_supplied": bool(input_overrides),
+            "input_source": (
+                "CURRENT_UPSTREAM_IN_MEMORY" if input_overrides else "SAVED_CHECKPOINT"
+            ),
             "planning_executed": False,
             "product_main_graph_compiled": False,
             "provider_write_enabled": False,
@@ -268,14 +284,14 @@ def _evaluate_case(
     checkpoint_root: Path,
     llm_runtime: Any,
     model_id: str,
+    input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None = None,
 ) -> dict[str, object]:
     database = checkpoint_root / case.case_id / "state" / "data" / "google_work_agent.db"
     if not database.is_file():
         return {"case_id": case.case_id, "outcome": "SKIP_CHECKPOINT_MISSING"}
     persisted = _load_latest_state(database)
     request = persisted.get("__request__")
-    request_intent = persisted.get("request_intent")
-    tool_route_plan = persisted.get("tool_route_plan")
+    request_intent, tool_route_plan = _select_replay_inputs(persisted, input_override)
     input_plan = tool_route_plan.get("input_plan") if isinstance(tool_route_plan, Mapping) else None
     routes = input_plan.get("input_routes") if isinstance(input_plan, Mapping) else None
     if (
@@ -288,8 +304,9 @@ def _evaluate_case(
     if not routes:
         return {"case_id": case.case_id, "outcome": "SKIP_NO_NODE_INPUT"}
 
-    started_at_ms = int(time.time() * 1_000)
-    run_budget = build_default_run_budget(started_at_ms=started_at_ms)
+    wall_started_at_ms = int(time.time() * 1_000)
+    original_started_at_ms = _original_started_at_ms(persisted, wall_started_at_ms)
+    run_budget = build_default_run_budget(started_at_ms=original_started_at_ms)
     replay_id = f"connected-{case.case_id.lower()}-{uuid4().hex[:8]}"
     replay_request = replace(
         request,
@@ -326,7 +343,7 @@ def _evaluate_case(
     recording_llm = _RecordingInferencePort(llm_runtime, [])
     evidence_store = RunScopedEvidenceStore()
     scope = case.google_resource_scope()
-    now_ms = _original_started_at_ms(persisted, started_at_ms)
+    now_ms = original_started_at_ms
     timezone = _case_timezone(case, checkpoint_path=database)
     retrieval = RetrievalSubgraph(
         llm_runtime=recording_llm,
@@ -357,7 +374,10 @@ def _evaluate_case(
         with (
             provider_dispatch_execution_scope(
                 run_id=replay_id,
-                now_ms=lambda: int(time.time() * 1_000),
+                now_ms=lambda: _replay_clock_ms(
+                    original_started_at_ms,
+                    int((time.perf_counter() - started) * 1_000),
+                ),
             ),
             provider_dispatch_budget_scope(run_budget),
         ):
@@ -436,6 +456,7 @@ def _evaluate_case(
             ),
             "next_target": output.get("__target__"),
             "workflow_phase": output.get("workflow_phase"),
+            "reference_started_at_ms": original_started_at_ms,
             "retrieval_result_present": isinstance(retrieval_result, Mapping),
             "user_interrupt_present": output.get("user_interrupt") is not None,
             "coverage": coverage,
@@ -449,6 +470,7 @@ def _evaluate_case(
             "task_achievable": task_achievable,
             "node_processing_correct": node_processing_correct,
             "node_processing_classification": node_processing_classification,
+            "state_diagnostics": _state_diagnostics(output),
             "semantic_review": semantic_review,
             "evaluation_limitations": (
                 ["DOWNSTREAM_OUTPUT_NOT_EXECUTED"] if has_downstream_output else []
@@ -494,6 +516,74 @@ def _read_result(
         next_page_token if isinstance(next_page_token, str) else None,
         total_count if isinstance(total_count, int) else None,
     )
+
+
+def _select_replay_inputs(
+    persisted: Mapping[str, object],
+    input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None,
+) -> tuple[object, object]:
+    if input_override is not None:
+        return input_override
+    return persisted.get("request_intent"), persisted.get("tool_route_plan")
+
+
+def _replay_clock_ms(original_started_at_ms: int, elapsed_ms: int) -> int:
+    """Advance the frozen semantic clock only by this replay's elapsed time."""
+    return original_started_at_ms + max(elapsed_ms, 0)
+
+
+def _state_diagnostics(state: Mapping[str, object]) -> dict[str, object]:
+    sufficiency = state.get("sufficiency")
+    if isinstance(sufficiency, tuple) and sufficiency:
+        sufficiency = sufficiency[0]
+    selection = state.get("evidence_selection")
+    workflow_signal = state.get("workflow_signal")
+    final_result = state.get("final_result")
+    acquisition = state.get("acquisition_result")
+    read_result_handles = state.get("read_result_handles")
+    finalize_intent = state.get("finalize_intent")
+    return {
+        "sufficiency_status": (
+            sufficiency.get("status") if isinstance(sufficiency, Mapping) else None
+        ),
+        "sufficiency_issue_slots": (
+            [
+                item.get("slot")
+                for item in sufficiency.get("issues", [])
+                if isinstance(item, Mapping)
+            ]
+            if isinstance(sufficiency, Mapping)
+            else []
+        ),
+        "selected_segment_count": (
+            len(selection.get("selected_segment_ids", []))
+            if isinstance(selection, Mapping)
+            else None
+        ),
+        "workflow_signal_kind": (
+            workflow_signal.get("kind") if isinstance(workflow_signal, Mapping) else None
+        ),
+        "final_result_status": (
+            final_result.get("status") if isinstance(final_result, Mapping) else None
+        ),
+        "final_result_kind": (
+            final_result.get("kind") if isinstance(final_result, Mapping) else None
+        ),
+        "acquisition_status": (
+            acquisition.get("status") if isinstance(acquisition, Mapping) else None
+        ),
+        "finalize_intent": (
+            finalize_intent.get("intent") if isinstance(finalize_intent, Mapping) else None
+        ),
+        "finalize_reason_code": (
+            finalize_intent.get("reason_code")
+            if isinstance(finalize_intent, Mapping)
+            else None
+        ),
+        "read_result_handle_count": (
+            len(read_result_handles) if isinstance(read_result_handles, list) else None
+        ),
+    }
 
 
 def _merge_decision(
