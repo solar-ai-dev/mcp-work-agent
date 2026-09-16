@@ -49,7 +49,9 @@ PROMPT_ID = "review.inspect_goal_and_evidence"
 MODEL_ID = "qwen3.5:9b"
 
 
-def _candidate_manifest(runtime_root: Path) -> Path:
+def _candidate_manifest(
+    runtime_root: Path, *, optional_field: str = "run_reference_time"
+) -> Path:
     """Keep the rejected optional-input candidate isolated from product artifacts."""
     source = default_prompt_manifest_path().parent
     target = runtime_root / "prompt-candidate"
@@ -67,7 +69,8 @@ def _candidate_manifest(runtime_root: Path) -> Path:
     )
     manifest_entry["input_schema_version"] = 2
     contract_entry["input_schema_version"] = 2
-    contract_entry["optional_root_fields"].append("run_reference_time")
+    if optional_field not in contract_entry["optional_root_fields"]:
+        contract_entry["optional_root_fields"].append(optional_field)
     (target / "prompt_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
     )
