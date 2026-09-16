@@ -40,11 +40,24 @@ Work Analysis 입력에 도달했다. 첫 Work Analysis provider dispatch에서
 동일 데이터의 Evidence JSON 길이는 021 약 2,820자, 028 약 2,778자로
 큰 입력 차이만으로 설명되지는 않는다. 실패를 모델 의미 오판이나
 Work Analysis Schema 실패로 분류하지 않는다. 후속 Trial에서는 typed error code와
-dispatch 발생 여부만 비민감하게 기록하도록 harness를 보완했다.
+dispatch 발생 여부, 첫 Prompt 입력 크기·지연만 비민감하게 기록하도록 harness를
+보완했다. 028 한 건을 같은 모델·seed로 한 번만 추가 재생해 실패의 반복 여부를
+확인한다. 이전 실패 Trial을 삭제하거나 PASS로 대체하지 않는다.
 
-이 결과의 denominator는 현재 연결상 Work Analysis 적용 2건이다.
+추가 028 Trial은 같은 상위 Route·모델·seed에서 성공했다. Retrieval Evidence
+4건을 소비했고, 첫 `extract_work_facts` 입력은 약 4,711자·40.4초였다.
+Work Analysis는 5회 LLM 호출·48,066/2,417 input/output token·83.8초로
+사실 11건, 관계 0건, route action necessity 1건을 만들고
+`SOLUTION_PLANNING`으로 전달했다. 따라서 180초 실패는 같은 입력 family에서
+고정 재현되지 않았다. 현재 관측은 028 **실패 1/성공 1**이며 모델·런타임
+지연 변동을 분리하지 못했다. 성공 Trial만 골라 first-call 안정화라고
+주장하지 않는다. 두 Trial 모두 실제 Provider·최종 업무 성공은 미검증이다.
+추가 원시 결과는
+`evaluation/results/request-to-work-analysis-repeat-core028-20260916/`에 있다.
+
+첫 Trial의 denominator는 현재 연결상 Work Analysis 적용 2건이다.
 021의 결과 생성 1건, 028의 첫 provider 실패 1건이며 first-call semantic-valid
-판정은 0건 완료(미평가)다. `WorkAnalysisResult`가 나왔다는 이유로 1/2 의미
+판정은 0건 완료(미평가)다. 반복 Trial은 028 한 건을 별도로 세며, `WorkAnalysisResult`가 나왔다는 이유로 1/2 의미
 성공이라고 세지 않는다. 실제 Provider·Planning·Review·WRITE는 미실행이다.
 원시 결과는 `evaluation/results/request-to-work-analysis-core021-20260916/`와
 `request-to-work-analysis-core028-20260916/`에 분리 보존했다.

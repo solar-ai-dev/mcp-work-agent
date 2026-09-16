@@ -13,7 +13,7 @@ import json
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from itertools import count
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -90,10 +90,36 @@ SupportedModelId = Literal["qwen3.5:9b", "qwen3.5:4b"]
 class _RecordingInferencePort:
     delegate: Any
     calls: list[dict[str, object]]
+    attempts: list[dict[str, object]] = field(default_factory=list)
 
     def infer(self, *args: Any, **kwargs: Any) -> Any:
-        result = self.delegate.infer(*args, **kwargs)
         prompt_ref = args[1] if len(args) > 1 else kwargs.get("prompt_ref")
+        prompt_input = args[2] if len(args) > 2 else kwargs.get("prompt_input")
+        attempt: dict[str, object] = {
+            "prompt_id": getattr(prompt_ref, "prompt_id", None),
+            "input_chars": len(str(prompt_input)),
+        }
+        self.attempts.append(attempt)
+        started = time.perf_counter()
+        try:
+            result = self.delegate.infer(*args, **kwargs)
+        except Exception as error:
+            code = getattr(error, "code", None)
+            attempt.update(
+                {
+                    "outcome": "FAILED",
+                    "error_type": type(error).__name__,
+                    "error_code": getattr(code, "value", None),
+                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
+            raise
+        attempt.update(
+            {
+                "outcome": "COMPLETED",
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+            }
+        )
         self.calls.append(
             {
                 "prompt_id": getattr(prompt_ref, "prompt_id", None),
@@ -616,6 +642,7 @@ def _evaluate_work_analysis(
 ) -> dict[str, object]:
     """Consume the in-memory Retrieval output without persisting raw evidence."""
     calls_before = len(llm_runtime.calls)
+    attempts_before = len(llm_runtime.attempts)
     dispatches_before = dispatch_count() if dispatch_count is not None else 0
     started = time.perf_counter()
     try:
@@ -677,6 +704,7 @@ def _evaluate_work_analysis(
                 {"prompt_id": call["prompt_id"], "summary": call["semantic_summary"]}
                 for call in calls
             ],
+            "inference_attempts": llm_runtime.attempts[attempts_before:],
             "provider_dispatch_count": (
                 dispatch_count() - dispatches_before if dispatch_count is not None else None
             ),

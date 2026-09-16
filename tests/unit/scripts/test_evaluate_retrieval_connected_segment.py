@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -193,3 +194,24 @@ def test_work_analysis_harness_records_typed_failure_without_private_message(
     assert result["error_code"] == "PROVIDER_UNAVAILABLE"
     assert result["provider_dispatch_occurred"] is True
     assert "private prompt" not in str(result)
+
+
+def test_inference_attempt_records_failure_size_without_prompt_content() -> None:
+    class _FailingDelegate:
+        def infer(self, *_: object) -> None:
+            raise RuntimeError("private source text")
+
+    recorder = _RecordingInferencePort(_FailingDelegate(), [])
+
+    with pytest.raises(RuntimeError):
+        recorder.infer(
+            "LOCAL_GPU",
+            SimpleNamespace(prompt_id="work_analysis.extract_work_facts"),
+            {"user_request": "private request"},
+            {},
+        )
+
+    assert recorder.calls == []
+    assert recorder.attempts[0]["outcome"] == "FAILED"
+    assert cast(int, recorder.attempts[0]["input_chars"]) > 0
+    assert "private" not in str(recorder.attempts)
