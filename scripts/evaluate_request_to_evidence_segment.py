@@ -85,6 +85,7 @@ def main() -> None:
     parser.add_argument("--result-path", type=Path, required=True)
     parser.add_argument("--retrieval-result-path", type=Path, required=True)
     parser.add_argument("--case", action="append", required=True)
+    parser.add_argument("--connect-work-analysis", action="store_true")
     arguments = parser.parse_args()
     cases = load_cases()
     if unknown := sorted(set(arguments.case) - set(cases)):
@@ -324,14 +325,20 @@ def main() -> None:
         sampling_seed=1729,
         input_overrides=overrides,
         emit_case_records=False,
+        connect_work_analysis=arguments.connect_work_analysis,
     )
     result: dict[str, Any] = {
         "binding": {
             "checkpoint_corpus": arguments.checkpoint_root.name,
-            "execution_scope": "CURRENT_RU_TO_SYNTHETIC_RETRIEVAL",
+            "execution_scope": (
+                "CURRENT_RU_TO_SYNTHETIC_WORK_ANALYSIS"
+                if arguments.connect_work_analysis
+                else "CURRENT_RU_TO_SYNTHETIC_RETRIEVAL"
+            ),
             "connector_read_type": "SYNTHETIC",
             "provider_write_enabled": False,
             "planning_executed": False,
+            "work_analysis_requested": arguments.connect_work_analysis,
         },
         "producer_cases": records,
         "retrieval_summary": retrieval_result["summary"],
@@ -344,6 +351,11 @@ def main() -> None:
                 "connector_read_count": len(cast(list[object], item.get("connector_reads", []))),
                 "llm_call_count": item.get("llm_call_count"),
                 "provider_dispatch_count": item.get("provider_dispatch_count"),
+                "work_analysis_outcome": (
+                    item["work_analysis"].get("outcome")
+                    if isinstance(item.get("work_analysis"), dict)
+                    else None
+                ),
             }
             for item in cast(list[dict[str, Any]], retrieval_result["cases"])
         ],

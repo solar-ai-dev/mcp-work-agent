@@ -37,6 +37,9 @@ from google_work_agent.adapters.langgraph.main.state import (
 )
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.graph import RetrievalSubgraph
+from google_work_agent.adapters.langgraph.subgraphs.work_analysis.graph import (
+    WorkAnalysisSubgraph,
+)
 from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
 from google_work_agent.adapters.llm.runtime.llm_credential_router import (
     SessionMemorySecretStore,
@@ -174,6 +177,7 @@ def evaluate(
     sampling_seed: int,
     input_overrides: Mapping[str, tuple[RequestIntentV2, ToolRoutePlanV2]] | None = None,
     emit_case_records: bool = True,
+    connect_work_analysis: bool = False,
 ) -> dict[str, object]:
     if model_id not in {"qwen3.5:9b", "qwen3.5:4b"}:
         raise ValueError(f"unsupported local model for connected replay: {model_id}")
@@ -236,6 +240,7 @@ def evaluate(
             model_id=model_id,
             input_override=(input_overrides or {}).get(case_id),
             dispatch_count=lambda: dispatch_count,
+            connect_work_analysis=connect_work_analysis,
         )
         records.append(record)
         if emit_case_records:
@@ -307,6 +312,7 @@ def _evaluate_case(
     model_id: str,
     input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None = None,
     dispatch_count: Callable[[], int] | None = None,
+    connect_work_analysis: bool = False,
 ) -> dict[str, object]:
     database = checkpoint_root / case.case_id / "state" / "data" / "google_work_agent.db"
     if not database.is_file():
@@ -393,6 +399,7 @@ def _evaluate_case(
     graph = wrapper.compile()
     started = time.perf_counter()
     dispatches_before = dispatch_count() if dispatch_count is not None else 0
+    analysis_record: dict[str, object] | None = None
     try:
         with (
             provider_dispatch_execution_scope(
@@ -405,6 +412,20 @@ def _evaluate_case(
             provider_dispatch_budget_scope(run_budget),
         ):
             output = graph.invoke(state, {"recursion_limit": 100})
+            retrieval_calls = list(recording_llm.calls)
+            retrieval_dispatches = (
+                dispatch_count() - dispatches_before if dispatch_count is not None else None
+            )
+            retrieval_duration_ms = int((time.perf_counter() - started) * 1000)
+            if connect_work_analysis and output.get("__target__") == "WORK_ANALYSIS":
+                analysis_record = _evaluate_work_analysis(
+                    state=cast(GraphState, output),
+                    llm_runtime=recording_llm,
+                    evidence_store=evidence_store,
+                    graph_profile=profile,
+                    replay_id=replay_id,
+                    dispatch_count=dispatch_count,
+                )
         retrieval_result = output.get("retrieval_result")
         evidence = (
             []
@@ -500,26 +521,37 @@ def _evaluate_case(
             ),
             "semantic_review": semantic_review,
             "evaluation_limitations": (
-                ["DOWNSTREAM_OUTPUT_NOT_EXECUTED"] if has_downstream_output else []
+                [
+                    "WORK_ANALYSIS_SEMANTIC_NOT_EVALUATED",
+                    "PLANNING_NOT_EXECUTED",
+                    *(
+                        ["WORK_ANALYSIS_INCOMPLETE"]
+                        if analysis_record["outcome"] != "COMPLETED"
+                        else []
+                    ),
+                ]
+                if analysis_record is not None
+                else ["DOWNSTREAM_OUTPUT_NOT_EXECUTED"]
+                if has_downstream_output
+                else []
             ),
+            "work_analysis": analysis_record,
             "connector_reads": recording_reader.calls,
             "query_attempts": output.get("__context_query_attempts__", []),
-            "llm_prompt_counts": _prompt_counts(recording_llm.calls),
-            "llm_call_count": len(recording_llm.calls),
-            "provider_dispatch_count": (
-                dispatch_count() - dispatches_before if dispatch_count is not None else None
-            ),
+            "llm_prompt_counts": _prompt_counts(retrieval_calls),
+            "llm_call_count": len(retrieval_calls),
+            "provider_dispatch_count": retrieval_dispatches,
             "llm_semantic_summaries": [
                 {"prompt_id": call["prompt_id"], "summary": call["semantic_summary"]}
-                for call in recording_llm.calls
+                for call in retrieval_calls
             ],
             "evaluation_judge_call_count": int(semantic_review is not None),
-            "input_tokens": sum(_metric(call["input_tokens"]) for call in recording_llm.calls),
-            "output_tokens": sum(_metric(call["output_tokens"]) for call in recording_llm.calls),
+            "input_tokens": sum(_metric(call["input_tokens"]) for call in retrieval_calls),
+            "output_tokens": sum(_metric(call["output_tokens"]) for call in retrieval_calls),
             "provider_latency_ms": sum(
-                _metric(call["latency_ms"]) for call in recording_llm.calls
+                _metric(call["latency_ms"]) for call in retrieval_calls
             ),
-            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "duration_ms": retrieval_duration_ms,
         }
     except Exception as error:
         return {
@@ -571,6 +603,90 @@ def _select_replay_inputs(
 def _replay_clock_ms(original_started_at_ms: int, elapsed_ms: int) -> int:
     """Advance the frozen semantic clock only by this replay's elapsed time."""
     return original_started_at_ms + max(elapsed_ms, 0)
+
+
+def _evaluate_work_analysis(
+    *,
+    state: GraphState,
+    llm_runtime: _RecordingInferencePort,
+    evidence_store: RunScopedEvidenceStore,
+    graph_profile: GraphProfile,
+    replay_id: str,
+    dispatch_count: Callable[[], int] | None,
+) -> dict[str, object]:
+    """Consume the in-memory Retrieval output without persisting raw evidence."""
+    calls_before = len(llm_runtime.calls)
+    dispatches_before = dispatch_count() if dispatch_count is not None else 0
+    started = time.perf_counter()
+    try:
+        analysis = WorkAnalysisSubgraph(
+            llm_runtime=llm_runtime,
+            prompt_manifest_path=None,
+            prompt_execution_scope=DEVELOPMENT_SMOKE,
+            id_factory=_IdFactory(f"{replay_id}-analysis"),
+            graph_profile=graph_profile,
+            transition_run=lambda *_: None,
+            merge_decision=cast(Any, _merge_decision),
+            evidence_store=evidence_store,
+            confirm_inline=lambda _: (_raise_confirmation_required(), None),
+        ).build()
+        wrapper = StateGraph(GraphState)
+        wrapper.add_node("work_analysis", analysis)
+        wrapper.add_edge(START, "work_analysis")
+        wrapper.add_edge("work_analysis", END)
+        output = wrapper.compile().invoke(state, {"recursion_limit": 100})
+        artifact = output.get("work_analysis_result")
+        artifact_summary = (
+            {
+                "fact_count": len(artifact.get("work_facts", [])),
+                "relation_count": len(artifact.get("relations", [])),
+                "ambiguity_count": len(artifact.get("ambiguities", [])),
+                "risk_count": len(artifact.get("risks", [])),
+                "route_action_necessity_count": len(
+                    artifact.get("route_action_necessities", [])
+                ),
+                "action_necessity": artifact.get("action_necessity"),
+            }
+            if isinstance(artifact, Mapping)
+            else None
+        )
+        result: dict[str, object] = {
+            "outcome": "COMPLETED" if artifact_summary is not None else "NO_RESULT",
+            "next_target": output.get("__target__"),
+            "workflow_phase": output.get("workflow_phase"),
+            "user_interrupt_present": output.get("user_interrupt") is not None,
+            "artifact": artifact_summary,
+        }
+    except Exception as error:
+        code = getattr(error, "code", None)
+        result = {
+            "outcome": "FAILED",
+            "error_type": type(error).__name__,
+            "error_code": getattr(code, "value", None),
+            "reason_code": getattr(error, "reason_code", None),
+            "provider_dispatch_occurred": getattr(
+                error, "provider_dispatch_occurred", None
+            ),
+        }
+    calls = llm_runtime.calls[calls_before:]
+    result.update(
+        {
+            "llm_prompt_counts": _prompt_counts(calls),
+            "llm_call_count": len(calls),
+            "llm_semantic_summaries": [
+                {"prompt_id": call["prompt_id"], "summary": call["semantic_summary"]}
+                for call in calls
+            ],
+            "provider_dispatch_count": (
+                dispatch_count() - dispatches_before if dispatch_count is not None else None
+            ),
+            "input_tokens": sum(_metric(call["input_tokens"]) for call in calls),
+            "output_tokens": sum(_metric(call["output_tokens"]) for call in calls),
+            "provider_latency_ms": sum(_metric(call["latency_ms"]) for call in calls),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+        }
+    )
+    return result
 
 
 def _summarize_llm_output(prompt_id: object, output: object) -> dict[str, object]:

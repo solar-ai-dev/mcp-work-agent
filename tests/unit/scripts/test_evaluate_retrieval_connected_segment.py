@@ -3,6 +3,8 @@ from typing import cast
 
 import pytest
 from scripts.evaluate_retrieval_connected_segment import (
+    _evaluate_work_analysis,
+    _RecordingInferencePort,
     _replay_clock_ms,
     _select_replay_inputs,
     _source_route_diagnostics,
@@ -11,6 +13,11 @@ from scripts.evaluate_retrieval_connected_segment import (
     evaluate,
 )
 
+from google_work_agent.adapters.langgraph.main.state import GraphState
+from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
+    RunScopedEvidenceStore,
+)
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
@@ -158,3 +165,31 @@ def test_source_route_diagnostics_separate_guard_policy_and_access_routes() -> N
     assert summary[2]["guard_required"] is True
     assert summary[2]["policy_required"] is True
     assert summary[2]["attempted"] is False
+
+
+def test_work_analysis_harness_records_typed_failure_without_private_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Failure(Exception):
+        code = type("Code", (), {"value": "PROVIDER_UNAVAILABLE"})()
+        provider_dispatch_occurred = True
+
+    def _fail(**_: object) -> None:
+        raise _Failure("private prompt and source text")
+
+    monkeypatch.setattr(
+        "scripts.evaluate_retrieval_connected_segment.WorkAnalysisSubgraph", _fail
+    )
+    result = _evaluate_work_analysis(
+        state=cast(GraphState, {}),
+        llm_runtime=_RecordingInferencePort(object(), []),
+        evidence_store=RunScopedEvidenceStore(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        replay_id="test",
+        dispatch_count=lambda: 1,
+    )
+
+    assert result["outcome"] == "FAILED"
+    assert result["error_code"] == "PROVIDER_UNAVAILABLE"
+    assert result["provider_dispatch_occurred"] is True
+    assert "private prompt" not in str(result)
