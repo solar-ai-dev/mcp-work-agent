@@ -374,6 +374,7 @@ def bind_retrieval_query_plan_output_schema(
     requested_concepts: Mapping[str, Collection[str]] | None = None,
     removable_constraint_kinds: Mapping[str, Collection[str]] | None = None,
     gmail_route_ids: Collection[str] = (),
+    initial_gmail_keyword_terms: Collection[str] | None = None,
     next_page_route_ids: Collection[str] | None = None,
 ) -> OutputSchemaDefinition:
     """Bind planner-generated identities to values validated in the current state."""
@@ -422,6 +423,11 @@ def bind_retrieval_query_plan_output_schema(
                     (removable_constraint_kinds or {}).get(route_id, ())
                 ),
                 gmail_keyword_literals=route_id in gmail_route_ids,
+                initial_gmail_keyword_terms=(
+                    initial_gmail_keyword_terms
+                    if route_id in gmail_route_ids and not is_followup
+                    else None
+                ),
             )
             if route_status_values is not None:
                 _bind_status_scope_values(operation_schema, route_status_values.get(route_id, ()))
@@ -518,6 +524,7 @@ def _bind_route_operation(
     allowed_participant_identities: Collection[str] | None,
     removable_constraint_kinds: set[str],
     gmail_keyword_literals: bool,
+    initial_gmail_keyword_terms: Collection[str] | None,
 ) -> None:
     operation_properties = cast(dict[str, object], operation_schema["properties"])
     if allowed_participant_identities is not None and not allowed_participant_identities:
@@ -562,6 +569,7 @@ def _bind_route_operation(
         temporal_constraint=temporal_constraint,
         allowed_participant_identities=allowed_participant_identities,
         gmail_keyword_literals=gmail_keyword_literals,
+        initial_gmail_keyword_terms=initial_gmail_keyword_terms,
     )
     if require_temporal_constraint and temporal_constraint is not None and not is_followup:
         _require_constraint_slot(operation_properties["search_spec"], "temporal_range")
@@ -600,6 +608,7 @@ def _bind_constraint_ref_values(
     temporal_constraint: TemporalRangeConstraintV1 | None,
     allowed_participant_identities: Collection[str] | None,
     gmail_keyword_literals: bool,
+    initial_gmail_keyword_terms: Collection[str] | None,
 ) -> None:
     if isinstance(value, list):
         for item in value:
@@ -611,6 +620,7 @@ def _bind_constraint_ref_values(
                 temporal_constraint=temporal_constraint,
                 allowed_participant_identities=allowed_participant_identities,
                 gmail_keyword_literals=gmail_keyword_literals,
+                initial_gmail_keyword_terms=initial_gmail_keyword_terms,
             )
         return
     if not isinstance(value, dict):
@@ -663,6 +673,11 @@ def _bind_constraint_ref_values(
                 "minLength": 1,
                 "pattern": GMAIL_KEYWORD_LITERAL_PATTERN,
             }
+            if initial_gmail_keyword_terms is not None:
+                cast(dict[str, object], terms["items"])["enum"] = sorted(
+                    set(initial_gmail_keyword_terms)
+                )
+                properties["match_mode"] = {"const": "ANY"}
         if declared_kind == "RESOURCE_REF" and allowed_resource_refs:
             refs = properties.get("resource_refs")
             if isinstance(refs, dict):
@@ -680,6 +695,7 @@ def _bind_constraint_ref_values(
             temporal_constraint=temporal_constraint,
             allowed_participant_identities=allowed_participant_identities,
             gmail_keyword_literals=gmail_keyword_literals,
+            initial_gmail_keyword_terms=initial_gmail_keyword_terms,
         )
 
 

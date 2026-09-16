@@ -331,7 +331,8 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 - `run_input.user_request`는 Main State의 읽기 전용 원문이다.
   - Request Understanding은 최초 입력으로 이를 소비하고, Work Analysis/Planning은 06/15가 명시한 최소 typed projection에서만 사용할 수 있다.
-  - **Retrieval Query/Evidence에는 raw `user_request` Projection이 0**이며 `RequestIntentV2 + frozen input_routes + retrieval_budget`를 소비한다.
+  - Retrieval Query Planner는 현재 Run raw `user_request + RequestIntentV2 + frozen input_routes + retrieval_budget`를 소비한다. 원문은 typed intent의 의미 손실을 보완할 뿐 별도 권위가 아니다.
+  - Retrieval Evidence Selector의 raw `user_request` Projection은 0이며 `RequestIntentV2 + ranked_segments`를 소비한다. 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection만 관계 문맥으로 추가할 수 있다.
   - 어떤 Subgraph도 raw request를 별도 장기 Memory나 owner-local authority field로 복제하지 않는다.
 
 - `workflow_phase`는 닫힌 Enum, `selected_resource_refs`는 `SelectedResourceRefV1`, Request constraint/ambiguity는 Typed Schema 사용
@@ -387,7 +388,7 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 - `NEXT_PAGE` 검증: prior handle의 `run_id + route_id + query identity/hash`가 현재 frozen IN Route와 일치하고 continuation이 미소진일 때만 결정적 Read Node가 raw continuation을 resolve해 `ConnectorReadPort`의 `page_token` 입력으로 주입한다.
   - unknown/cross-run/mismatched/exhausted handle은 Provider 호출 0건으로 fail-closed한다.
 
-- Follow-up `plan_query` Projection 검증: Round 1/2는 `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary`를 볼 수 있지만 raw Page Token·Provider-native query·MCP argument를 보지 않는다.
+- Follow-up `plan_query` Projection 검증: Round 1/2는 `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary + current-Run selected Evidence projection`을 볼 수 있지만 raw Provider payload·Page Token·Provider-native query·MCP argument를 보지 않는다. Evidence에서 확인된 별칭·변경 관계로 다음 Query를 교체할 수 있고, 발견용 이전 anchor를 근거 없이 AND로 유지하지 않는지 검증한다.
   - Round 0 입력과 follow-up 입력을 혼동하거나 Main State scratch로 승격하면 실패다.
 
 - 동일 Query + 동일 continuation state 재실행은 새 Additional Retrieval round로 인정하지 않는다. `NEXT_PAGE`, 필요한 `DETAIL_FETCH`, 또는 미해결 issue에 근거한 변경 Query처럼 새 정보 획득 가능성이 있어야 한다.
@@ -1434,7 +1435,7 @@ Experiment Runner는 Dataset·Projection 참조 오류, Holdout 누수, 의도 �
 | 검증 | 기대 조건 |
 | --- | --- |
 | operation authority | `NEXT_PAGE`는 raw continuation을 Run Retrieval Cache handle에서만 resolve하고, `DETAIL_FETCH`는 bounded candidate ref만 Planner가 지정하며 actual target/tool binding은 deterministic code가 수행한다. |
-| Prompt projection | Retrieval 초기 Query Planner 입력에는 raw `user_request`가 없고 `request_intent + input_routes + retrieval_budget`만 존재한다. Follow-up은 bounded semantic summary만 추가한다. |
+| Prompt projection | Retrieval 초기 Query Planner 입력에는 현재 Run `user_request + request_intent + input_routes + retrieval_budget`만 존재한다. Follow-up은 bounded semantic summary와 같은 Run의 selected Evidence projection만 추가하며 Evidence Selector에는 raw `user_request`가 없다. |
 | Local State version | Release Retrieval Local State는 `RetrievalState`이며 `query_plan: RetrievalQueryPlanV2 \| None`을 사용한다. `RetrievalStateV1`에 V2 field contract를 덮어쓰는 호환 구현은 금지한다. |
 | QueryAttempt 비권위 | `added_constraints/removed_constraints` 같은 QueryAttemptV1 summary만으로 다음 `SourceFetchPlanV1`을 재구성하지 않는다. |
 

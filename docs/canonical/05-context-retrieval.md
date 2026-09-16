@@ -182,9 +182,12 @@ current_round_no
 prior_query_attempts
 unresolved_sufficiency_issues
 read_result_summaries
+observed_evidence
 ```
 
 `read_result_summaries`에는 handle, Route·query identity/hash, 확인한 Resource 참조의 제한된 요약, `has_next_page`, continuation state hash만 포함한다. Raw `next_page_token`은 포함하지 않는다.
+
+`observed_evidence`는 같은 Run에서 Evidence Selector가 이미 선택·검증한 `evidence_ref + excerpt + role + resource_ref`의 bounded projection이다. Sufficiency가 추가 조회를 요구할 때 Evidence에서 확인된 별칭·변경·참조 관계를 다음 Query가 보존하는 데만 사용하며, raw Provider payload나 새 정책·권한·성공 사실로 승격하지 않는다.
 
 Follow-up의 prior attempt projection은 semantic constraint·operation·reason·결과 수·stop reason·query hash만 사용한다. 원본 `QueryAttemptV1.query_spec`는 Builder·관측용이며 LLM 입력이 아니다. 사용자 Context Adjustment 입력은 §4.3을 따른다.
 
@@ -507,7 +510,9 @@ Exact match, lexical retrieval, embedding, reranker 등 구체적인 조합과 �
 
 ### 5.7 `retrieval.select_evidence`
 
-입력은 `request_intent + top rag candidates`다. 요청을 뒷받침하거나 반박하는 Segment를 고르며 업무 사실의 최종 해석까지 수행하지 않는다.
+입력은 `request_intent + top rag candidates`다. 같은 Run의 detail 재평가에서는 내용이 바뀌지 않아 유지된 selected Evidence의 bounded projection도 관계 문맥으로 받는다. 요청을 뒷받침하거나 반박하는 Segment를 고르며 업무 사실의 최종 해석까지 수행하지 않는다.
+
+유지된 Evidence는 새 후보가 앞서 확인된 별칭·변경·참조 관계를 이어받는지 판단하는 데만 사용한다. 새 후보 집합에 포함하거나 재평가하지 않으며 raw Provider payload·정책·승인·실행 성공 authority로 승격하지 않는다.
 
 ```python
 class EvidenceDraftV1:
@@ -647,7 +652,7 @@ Registry에 exact direct-read Tool이 있으면 detail Route만 유지한다. �
 
 ### AGENT_SEARCH
 
-`RequestIntentV2 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. Raw `run_input.user_request`를 Local State/Prompt에 별도 투영하지 않는다.
+현재 Run `user_request + RequestIntentV2 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. 원문은 typed intent의 의미 손실을 보완하는 Query Planner 입력으로만 사용하며 Local State의 별도 권위로 복제하지 않는다.
 
 Metadata Page에서 후보를 좁히고 RAG로 관련 Segment를 고른다. 부족할 때만 같은 Route의 새 Query·Page·Detail을 선택한다. 검색 후 행동을 Round 번호별로 고정하지 않는다.
 

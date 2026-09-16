@@ -109,6 +109,15 @@ def select_evidence(
         retained = None
         reassessment = rag_candidates
         remaining = context_budget.max_evidence
+    retained_evidence = (
+        []
+        if retained is None
+        else _selected_evidence_projection(
+            retained,
+            segments=segments,
+            context_budget=context_budget,
+        )
+    )
     selected, revised_budget = _select_ranked_evidence(
         llm_runtime=llm_runtime,
         prompt_ref=prompt_ref,
@@ -122,6 +131,7 @@ def select_evidence(
         exclusion_obligation_segment_ids=exclusion_obligation_segment_ids,
         query_attempts=query_attempts,
         evidence_reassessment_issues=evidence_reassessment_issues,
+        retained_evidence=retained_evidence,
     )
     if retained is None:
         return selected, revised_budget
@@ -150,6 +160,7 @@ def _select_ranked_evidence(
     exclusion_obligation_segment_ids: Collection[str],
     query_attempts: Sequence[QueryAttemptV1],
     evidence_reassessment_issues: Sequence[SufficiencyIssueV2],
+    retained_evidence: Sequence[dict[str, object]],
 ) -> tuple[EvidenceSelectionResultV2, RunBudgetV2]:
     """Select evidence only from the bounded ranked segments supplied by RAG."""
     obligations = _stable_unique(exclusion_obligation_segment_ids)
@@ -259,6 +270,8 @@ def _select_ranked_evidence(
         "ranked_segments": projection,
         "temporal_constraints": temporal_constraints,
     }
+    if retained_evidence:
+        prompt_input["retained_evidence"] = list(retained_evidence)
     if evidence_reassessment_issues:
         prompt_input["sufficiency_feedback"] = list(evidence_reassessment_issues)
     result = llm_runtime.infer(
@@ -667,6 +680,28 @@ def materialize_evidence_drafts(
             )
         )
     return result
+
+
+def _selected_evidence_projection(
+    selection: EvidenceSelectionResultV2,
+    *,
+    segments: list[SourceSegment],
+    context_budget: ContextBudget,
+) -> list[dict[str, object]]:
+    """Expose unchanged current-Run evidence as bounded relation context."""
+    return [
+        {
+            "evidence_ref": draft["evidence_id"],
+            "excerpt": draft["excerpt"],
+            "role": draft["reason_codes"][0],
+            "resource_ref": draft["resource_handle"],
+        }
+        for draft in materialize_evidence_drafts(
+            selection,
+            segments=segments,
+            context_budget=context_budget,
+        )
+    ]
 
 
 __all__ = [

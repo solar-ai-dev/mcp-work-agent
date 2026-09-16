@@ -58,7 +58,14 @@ def test_retrieval_followup_projection__matches_the_canonical__plural_attempt_fi
     entry = load_prompt_input_contract().entry("retrieval.plan_query")
 
     assert "prior_query_attempts" in entry.optional_root_fields
+    assert "observed_evidence" in entry.optional_root_fields
     assert "prior_query_attempt" not in entry.optional_root_fields
+
+
+def test_retrieval_evidence__reassessment_accepts__retained_current_run_projection() -> None:
+    entry = load_prompt_input_contract().entry("retrieval.select_evidence")
+
+    assert "retained_evidence" in entry.optional_root_fields
 
 
 def test_review_contracts__accept_current_preview__user_modification_projection() -> None:

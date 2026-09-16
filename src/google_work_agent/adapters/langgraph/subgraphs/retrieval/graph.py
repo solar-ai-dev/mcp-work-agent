@@ -93,6 +93,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
     authorize_retrieval_followup,
     deterministic_sufficiency,
+    selected_evidence_prompt_projection,
 )
 from google_work_agent.application.agents.retrieval.authorize_evidence_reassessment import (
     authorize_evidence_reassessment,
@@ -120,6 +121,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
+    EvidenceDraftV1,
     PersonCandidateV1,
     RetrievalResultV1,
     SufficiencyIssueV2,
@@ -638,6 +640,9 @@ class RetrievalSubgraph:
                 prior_query_attempts=list(continuation["query_attempts"]),
                 unresolved_sufficiency_issues=route_sufficiency["issues"],
                 read_result_summaries=self._bounded_read_result_summaries(next_state),
+                observed_evidence=selected_evidence_prompt_projection(
+                    cast(list[EvidenceDraftV1], next_state.get("evidence_drafts", []))
+                ),
             )
         if retrieval_required is not None or pending_need is not None:
             next_state["workflow_signal"] = None
@@ -678,6 +683,7 @@ class RetrievalSubgraph:
                     prior_query_attempts=list(continuation["query_attempts"]),
                     unresolved_sufficiency_issues=sufficiency["issues"],
                     read_result_summaries=self._bounded_read_result_summaries(next_state),
+                    observed_evidence=selected_evidence_prompt_projection(evidence_drafts),
                 )
         return next_state
 
@@ -1029,6 +1035,9 @@ class RetrievalSubgraph:
                 list[dict[str, object]], list(sufficiency_result["issues"])
             ),
             read_result_summaries=read_result_summaries,
+            observed_evidence=selected_evidence_prompt_projection(
+                cast(list[EvidenceDraftV1], state.get("evidence_drafts", []))
+            ),
         )
         deterministic_followup = deterministic_query_plan(
             prompt_input={"request_intent": request_intent, **followup_projection},

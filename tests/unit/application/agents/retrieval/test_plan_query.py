@@ -24,6 +24,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
     RetrievalBudget,
+    followup_retrieval_planner_input,
     has_retrieval_followup_path,
     initial_retrieval_planner_input,
     plan_query,
@@ -227,6 +228,39 @@ def test_initial_retrieval_planner_input__includes_current_run__user_request() -
     }
 
 
+def test_followup_retrieval_planner_input__preserves_observed__evidence_projection() -> None:
+    route = cast(
+        InputToolRouteV1,
+        _tool_route_plan(allowed_read_tool_ids=["gmail_search_threads"])["input_plan"][
+            "input_routes"
+        ][0],
+    )
+    observed = [
+        {
+            "evidence_ref": "evidence-1",
+            "excerpt": "Lumen is now named Aurora Migration.",
+            "role": "CONTEXT",
+            "resource_ref": "gmail_thread:thread-1",
+        }
+    ]
+
+    prompt_input = followup_retrieval_planner_input(
+        user_request="Find the Lumen migration date",
+        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        input_routes=[route],
+        retrieval_budget=RetrievalBudget(),
+        followup={
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [],
+            "read_result_summaries": [],
+            "observed_evidence": observed,
+        },
+    )
+
+    assert prompt_input["observed_evidence"] == observed
+
+
 def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revision() -> None:
     route = cast(
         InputToolRouteV1,
@@ -371,6 +405,133 @@ def _run_gmail_initial_plan(
         retry_budget=build_default_run_budget(),
     )
     return cast(dict[str, object], result), cast(dict[str, object], budget), runtime
+
+
+def _run_gmail_context_pivot(
+    *outputs: object,
+) -> tuple[dict[str, object], dict[str, object], FakeStructuredInferencePort]:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policy = {
+        "route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))
+    }
+    prior = build_query(
+        cast(
+            Any,
+            _gmail_initial_candidate(
+                {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "ANY"}
+            ),
+        ),
+        frozen_routes=[route],
+        route_policies=policy,
+    )[0]
+    runtime = FakeStructuredInferencePort(outputs=list(outputs))
+    result, budget, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    _provenance_constraint(
+                        kind="USER_REQUIREMENT",
+                        field="search_terms",
+                        value="Lumen",
+                    )
+                ]
+            },
+            "input_routes": [route],
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "route-1",
+                }
+            ],
+            "read_result_summaries": [],
+            "observed_evidence": [
+                {
+                    "evidence_ref": "evidence-1",
+                    "excerpt": "Lumen is now named Aurora Migration.",
+                    "role": "CONTEXT",
+                    "resource_ref": "gmail_thread:thread-1",
+                }
+            ],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies=policy,
+        retry_budget=build_default_run_budget(),
+        prior_plans={"route-1": prior},
+        read_result_summaries=[],
+    )
+    return cast(dict[str, object], result), cast(dict[str, object], budget), runtime
+
+
+def test_followup_context_evidence__bounds_planner__to_grounded_keyword_pivot() -> None:
+    changed = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["CHANGED_HYPOTHESIS"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {
+                                "kind": "KEYWORD",
+                                "terms": ["Aurora Migration"],
+                                "match_mode": "ANY",
+                            }
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    result, _, runtime = _run_gmail_context_pivot(changed)
+
+    assert result == changed
+    schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    concept_candidate = {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                **changed["route_queries"][0],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": {
+                            "concept": {
+                                "kind": "CONCEPT",
+                                "concept": "migration date",
+                                "manifestations": ["migration"],
+                            }
+                        },
+                        "remove_constraint_kinds": [],
+                    },
+                },
+            }
+        ],
+    }
+    assert validate_output_schema(concept_candidate, schema.json_schema)
 
 
 @pytest.mark.parametrize(

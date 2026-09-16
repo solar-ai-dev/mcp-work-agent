@@ -109,17 +109,17 @@
     {
       "prompt_slot_id": "retrieval.plan_query",
       "runtime_node_id": "retrieval.plan_query",
-      "input_schema_version": 4,
+      "input_schema_version": 5,
       "required_root_fields": ["user_request", "request_intent", "input_routes", "required_user_anchors", "retrieval_budget"],
-      "optional_root_fields": ["required_route_constraints", "current_round_no", "prior_query_attempts", "unresolved_sufficiency_issues", "read_result_summaries", "confirmation_response"],
+      "optional_root_fields": ["required_route_constraints", "current_round_no", "prior_query_attempts", "unresolved_sufficiency_issues", "read_result_summaries", "observed_evidence", "confirmation_response"],
       "output_schema_version": 1
     },
     {
       "prompt_slot_id": "retrieval.select_evidence",
       "runtime_node_id": "retrieval.select_evidence",
-      "input_schema_version": 5,
+      "input_schema_version": 6,
       "required_root_fields": ["request_intent", "ranked_segments", "temporal_constraints"],
-      "optional_root_fields": ["sufficiency_feedback"],
+      "optional_root_fields": ["sufficiency_feedback", "retained_evidence"],
       "output_schema_version": 3
     },
     {

@@ -2332,6 +2332,17 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     assert second["retrieval_result"]["retrieval_rounds"] == 2
     assert connector.call_count == 2
     assert llm.calls.count("retrieval.plan_query") == 2
+    observed_evidence = cast(
+        list[dict[str, object]],
+        llm.inputs["retrieval.plan_query"][1]["observed_evidence"],
+    )
+    assert observed_evidence
+    assert set(observed_evidence[0]) == {
+        "evidence_ref",
+        "excerpt",
+        "role",
+        "resource_ref",
+    }
     attempts = cast(list[dict[str, Any]], second["__context_query_attempts__"])
     assert all(
         next(

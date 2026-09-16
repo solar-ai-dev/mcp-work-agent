@@ -833,6 +833,29 @@ def plan_query(
         }
     concepts_by_route = resolve_requested_gmail_concepts(prompt_input, frozen_routes)
     planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = dict(supported_kinds)
+    keyword_anchors, participant_anchors, _ = _trusted_query_anchors(prompt_input)
+    if not is_followup and (keyword_anchors or participant_anchors):
+        planner_kinds = {
+            route["route_id"]: (
+                frozenset(planner_kinds[route["route_id"]]) - {"CONCEPT"}
+                if route["resource_type"]
+                in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                else planner_kinds[route["route_id"]]
+            )
+            for route in frozen_routes
+        }
+    requires_evidence_pivot = _requires_observed_evidence_pivot(prompt_input)
+    if requires_evidence_pivot:
+        planner_kinds = {
+            route["route_id"]: (
+                frozenset(planner_kinds[route["route_id"]]) - {"CONCEPT"}
+                if route["resource_type"]
+                in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                and "KEYWORD" in planner_kinds[route["route_id"]]
+                else planner_kinds[route["route_id"]]
+            )
+            for route in frozen_routes
+        }
     next_page_route_ids = _next_page_route_ids(prompt_input)
     route_operations = _route_operations(
         frozen_routes,
@@ -923,6 +946,7 @@ def plan_query(
             for route in frozen_routes
             if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
         },
+        initial_gmail_keyword_terms=keyword_anchors or None,
         allowed_participant_identities=resolve_request_participants(prompt_input),
         resolved_temporal_constraints=resolved_temporal_constraints,
         required_temporal_route_ids=calendar_temporal_constraints,
@@ -1227,6 +1251,15 @@ def _validate_initial_user_anchor_preservation(
                 "Gmail search omits every explicit current-Run user anchor"
             )
     return plan
+
+
+def _requires_observed_evidence_pivot(prompt_input: Mapping[str, object]) -> bool:
+    observed = prompt_input.get("observed_evidence")
+    return (
+        isinstance(observed, list)
+        and bool(observed)
+        and all(isinstance(item, Mapping) and item.get("role") == "CONTEXT" for item in observed)
+    )
 
 
 def _trusted_query_anchors(
@@ -1716,7 +1749,10 @@ def followup_retrieval_planner_input(
         "prior_query_attempts",
         "unresolved_sufficiency_issues",
         "read_result_summaries",
+        "observed_evidence",
     ):
+        if field == "observed_evidence" and field not in followup:
+            continue
         if field not in followup:
             raise ValueError(f"follow-up retrieval planner input is missing {field}")
         result[field] = followup[field]

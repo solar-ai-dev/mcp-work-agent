@@ -113,3 +113,11 @@ def test_retain_evidence__detail_rejects_preview__keeps_other_sources(
     inputs = cast(dict[str, object], runtime.calls[0]["prompt_input"])
     ranked = cast(list[dict[str, object]], inputs["ranked_segments"])
     assert [item["segment_id"] for item in ranked] == ["preview", "body"]
+    if excluded:
+        assert "retained_evidence" not in inputs
+    else:
+        retained = cast(list[dict[str, object]], inputs["retained_evidence"])
+        assert len(retained) == 1
+        assert retained[0]["resource_ref"] == "gmail_thread:a"
+        assert retained[0]["excerpt"] == "실제 자료"
+        assert retained[0]["role"] == "CONTEXT"

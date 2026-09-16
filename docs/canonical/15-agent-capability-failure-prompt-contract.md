@@ -58,14 +58,14 @@ Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Produ
 
 | Node·호출 상황 | 입력 | 제한 |
 | --- | --- | --- |
-| Retrieval 초기 Round Query Planner | `request_intent + input_routes + retrieval_budget` | 이 초기 입력만 받는다. |
-| Retrieval follow-up Round Query Planner | 초기 입력 + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary` | 추가 입력은 이 범위로 제한한다. |
-| Evidence Selector | `request_intent + ranked_segments` | 이 입력만 받는다. |
+| Retrieval 초기 Round Query Planner | 현재 Run `user_request + request_intent + input_routes + retrieval_budget` | 원문은 typed intent의 의미 손실을 보완하는 입력이며 별도 State·장기 권위·정책 사실로 승격하지 않는다. |
+| Retrieval follow-up Round Query Planner | 초기 입력 + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary + current-Run selected Evidence projection` | Evidence projection은 `evidence_ref + excerpt + role + resource_ref`로 제한하며 raw Provider payload가 아니다. |
+| Evidence Selector | `request_intent + ranked_segments` | 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection을 관계 문맥으로 추가한다. |
 | Work Analysis atomic node | 각 책임에 필요한 최소 Projection | facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. |
 | Planning `draft_action_objective_per_output_route` | `user_request + OutputToolRouteV1 1개 + optional work_analysis + evidence_refs` | Tool Schema를 직렬화하지 않는다. |
 | Planning `compose_arguments_per_output_route` | 같은 frozen Output Route + validated action objective + 해당 Tool Schema | Arguments 표현만 작성한다. 현재 검증된 `request_intent` 제약의 소비는 Planning ACTION 절에 둔다. |
 
-Retrieval Product Prompt는 raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.
+Retrieval Query Planner는 현재 Run의 raw `user_request`를 의미 보존 입력으로 받지만 별도 권위로 복제하지 않는다. Evidence Selector에는 raw `user_request`를 전달하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.
 
 ## 1. 기준 문서와 우선순위
 

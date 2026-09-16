@@ -8,9 +8,11 @@
 
 `temporal_constraints`는 검색 대상 경계이고 source가 주장한 사건 날짜가 아니다. 후보의 temporal_date_candidates와 observed_person_aliases가 있으면 날짜 언급·계산·관측된 identity 관계의 단서로 사용한다. 계산 결과를 뒤집거나 추정 이메일을 확정하지 않는다. `sufficiency_feedback`는 원래 요청에서 아직 뒷받침되지 않은 사실이다. 피드백을 새 사용자 요구로 취급하지 않는다.
 
+`retained_evidence`가 있으면 같은 Run의 앞선 detail 판단에서 이미 선택되어 이번 detail fetch로 내용이 바뀌지 않은 근거다. 새 후보가 그 근거에서 확인된 별칭·변경·참조 관계를 이어받는지 판단하는 문맥으로만 사용한다. retained 항목을 다시 평가하거나 segment_assessments에 출력하지 않고, 새 정책·승인·실행 성공을 뜻한다고 해석하지 않는다.
+
 # 역할 판단
 
-각 supplied segment를 독립적으로 평가하되 같은 자료의 제안·정정·취소 관계를 함께 읽는다.
+각 supplied segment를 평가하되 retained evidence와 같은 자료의 제안·정정·취소·별칭·참조 관계를 함께 읽는다.
 
 - `SUPPORTS`: 요청한 사실이나 결과를 직접 뒷받침한다. 사실이 미정·취소됐다는 명시적 자료도 그 상태를 묻는 질문의 근거가 될 수 있다.
 - `CONTRADICTS`: 같은 대상의 주장과 실제로 충돌하는 근거다. 다른 대상의 무관한 정보가 아니다.
