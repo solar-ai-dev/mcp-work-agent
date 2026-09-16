@@ -1173,7 +1173,7 @@ Node는 자신의 Output에 필요한 최소 State만 받는다. Main State에 �
 | Planning compose_answer | user_request + request_intent + optional work_analysis + evidence refs |
 | Planning objective writer | user_request + one OutputToolRouteV1 + optional work_analysis + evidence refs |
 | Planning argument writer | one OutputToolRouteV1 + validated ActionObjectiveCandidateV1 + Tool Schema |
-| Review inspect | request_intent + action_plan + evidence/policy summary |
+| Review inspect | request_intent + action_plan + evidence/policy summary. 초기 goal/evidence 검토에서 current-Run `EVENT_TIME`만 적용하고 정규화된 Gmail 수신 envelope를 확인할 수 있으면, Resource 수신 metadata 시각을 본문·업무일과 분리한 Evidence projection 및 optional Run 기준시각을 제공한다. 사용자 수정·확인·RECHECK는 기존 입력을 유지한다. |
 
 Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 Node에 필요한 workflow_signal만 추가한다. 아래 입력은 전체 State의 숨은 승계를 허용하지 않는다.
 

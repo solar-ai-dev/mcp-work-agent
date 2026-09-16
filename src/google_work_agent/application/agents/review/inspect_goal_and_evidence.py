@@ -35,6 +35,7 @@ def inspect_goal_and_evidence(
     work_analysis: Mapping[str, object] | None = None,
     confirmation_response: Mapping[str, object] | None = None,
     user_action_modifications: Sequence[Mapping[str, object]] = (),
+    run_reference_time: Mapping[str, object] | None = None,
 ) -> ReviewInspectorResultV1:
     if confirmation_response is None and (
         is_exact_calendar_create_plan(
@@ -69,6 +70,8 @@ def inspect_goal_and_evidence(
         prompt_input["user_action_modifications"] = [
             dict(item) for item in user_action_modifications
         ]
+    if run_reference_time is not None:
+        prompt_input["run_reference_time"] = dict(run_reference_time)
     return validate_review_inspector_result(
         invoke(PROMPT_ID, prompt_input), expected_dimension=DIMENSION
     )

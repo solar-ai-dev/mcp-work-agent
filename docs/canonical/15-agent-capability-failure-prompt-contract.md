@@ -63,6 +63,7 @@ Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Produ
 | Evidence Selector | `request_intent + ranked_segments` | 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection을 관계 문맥으로 추가한다. |
 | Work Analysis atomic node | 각 책임에 필요한 최소 Projection | facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. |
 | Planning `draft_action_objective_per_output_route` | `user_request + OutputToolRouteV1 1개 + optional work_analysis + evidence_refs` | Tool Schema를 직렬화하지 않는다. |
+| Review `inspect_goal_and_evidence` | `request_intent + planning_result + evidence + optional work_analysis` | 초기 `EVENT_TIME` 검토에 필요한 Gmail 수신시각과 본문·요청 기준시각은 다른 역할이다. 정규화 envelope가 확인된 경우에만 수신시각을 이 inspector의 Evidence 입력에서 제외하고 current-Run 기준시각을 optional로 제공한다. State 원본·다른 시각축·사용자 수정/확인 입력은 변경하지 않는다. |
 | Planning `compose_arguments_per_output_route` | 같은 frozen Output Route + validated action objective + 해당 Tool Schema | Arguments 표현만 작성한다. 현재 검증된 `request_intent` 제약의 소비는 Planning ACTION 절에 둔다. |
 
 Retrieval Query Planner는 현재 Run의 raw `user_request`를 의미 보존 입력으로 받지만 별도 권위로 복제하지 않는다. Evidence Selector에는 raw `user_request`를 전달하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.

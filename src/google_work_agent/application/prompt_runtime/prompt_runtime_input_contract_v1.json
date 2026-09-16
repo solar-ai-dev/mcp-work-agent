@@ -229,9 +229,9 @@
     {
       "prompt_slot_id": "review.inspect_goal_and_evidence",
       "runtime_node_id": "review.inspect_goal_and_evidence",
-      "input_schema_version": 1,
+      "input_schema_version": 2,
       "required_root_fields": ["request_intent", "planning_result", "evidence"],
-      "optional_root_fields": ["work_analysis", "confirmation_response", "user_action_modifications"],
+      "optional_root_fields": ["work_analysis", "confirmation_response", "user_action_modifications", "run_reference_time"],
       "output_schema_version": 1
     },
     {

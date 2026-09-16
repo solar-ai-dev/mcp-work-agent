@@ -59,6 +59,31 @@ def test_inspect_goal_and__evidence_uses_only__its_minimum_projection() -> None:
     assert "status" not in result
 
 
+def test_inspect_goal_and_evidence_passes_optional_run_reference_time() -> None:
+    calls: list[dict[str, object]] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        assert prompt_id == DIMENSION
+        calls.append(dict(prompt_input))
+        return {"schema_version": 1, "dimension": DIMENSION, "findings": []}
+
+    inspect_goal_and_evidence(
+        request_intent={"goal": "create event"},
+        planning_result={"schema_version": 2, "actions": []},
+        evidence=[],
+        run_reference_time={
+            "reference_time": "2026-08-07T09:00:03+09:00",
+            "timezone": "Asia/Seoul",
+        },
+        invoke=invoke,
+    )
+
+    assert calls[0]["run_reference_time"] == {
+        "reference_time": "2026-08-07T09:00:03+09:00",
+        "timezone": "Asia/Seoul",
+    }
+
+
 def test_inspect_goal_and_evidence__passes_current_preview_edit__as_user_authority() -> None:
     calls: list[dict[str, object]] = []
 
