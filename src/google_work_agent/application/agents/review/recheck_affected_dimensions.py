@@ -78,15 +78,20 @@ def recheck_affected_dimensions(
     returned_dimensions = _normalize_dimensions(_sequence(raw.get("affected_dimensions")))
     if returned_dimensions != dimensions:
         raise ValueError("Review recheck cannot broaden or narrow affected_dimensions")
-    _validate_issue_assessments(_sequence(raw.get("issue_assessments")), issue_count)
+    has_open_issue = _validate_issue_assessments(
+        _sequence(raw.get("issue_assessments")), issue_count
+    )
     findings = tuple(_validate_findings(_sequence(raw.get("findings")), dimensions))
+    if has_open_issue and not findings:
+        raise ValueError("Review recheck open issue requires a current finding")
     return {"schema_version": 1, "affected_dimensions": dimensions, "findings": findings}
 
 
-def _validate_issue_assessments(values: Sequence[object], issue_count: int) -> None:
+def _validate_issue_assessments(values: Sequence[object], issue_count: int) -> bool:
     if len(values) != issue_count:
         raise ValueError("Review recheck must assess each historical issue once")
     seen: set[int] = set()
+    has_open_issue = False
     for value in values:
         if not isinstance(value, Mapping) or set(value) != {
             "issue_index", "state", "current_reason"
@@ -100,8 +105,10 @@ def _validate_issue_assessments(values: Sequence[object], issue_count: int) -> N
         seen.add(index)
         if value["state"] not in {"RESOLVED", "UNRESOLVED", "UNCERTAIN"}:
             raise ValueError("Review recheck assessment state is invalid")
+        has_open_issue = has_open_issue or value["state"] != "RESOLVED"
         if not isinstance(value["current_reason"], str) or not value["current_reason"].strip():
             raise ValueError("Review recheck current_reason is required")
+    return has_open_issue
 
 
 def _validate_findings(

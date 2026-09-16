@@ -123,6 +123,20 @@ def review_recheck_output_schema(
             "type": "object",
             "additionalProperties": False,
             "required": ["schema_version", "affected_dimensions", "issue_assessments", "findings"],
+            "if": {
+                "properties": {
+                    "issue_assessments": {
+                        "contains": {
+                            "properties": {
+                                "state": {"enum": ["UNRESOLVED", "UNCERTAIN"]}
+                            },
+                            "required": ["state"],
+                        }
+                    }
+                },
+                "required": ["issue_assessments"],
+            },
+            "then": {"properties": {"findings": {"minItems": 1}}},
             "properties": {
                 "schema_version": {"const": 2},
                 "affected_dimensions": {

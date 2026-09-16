@@ -1539,6 +1539,7 @@ class ReviewInspectorResultV1:
 | 조건 미충족·Confirmation/Policy 판단 남음 | 해당 inspector LLM을 유지한다. 위 최적화로 Domain Validation·Approval·Verification을 생략하지 않는다. |
 | aggregate_review_findings | 세 결과를 deterministic severity/disposition precedence로 합성한다. LLM이 최종 routing authority를 갖지 않는다. |
 | recheck_affected_dimensions | REVISE가 표시한 affected_dimensions만 재검사한다. action/route IDs가 있으면 해당 dimension의 bounded context로만 사용한다. 동일 frozen route의 전후 Action이 일대일로 확인되는 경우에만 변경된 argument path와 이전 issue를 낮은 권위의 제안 이력으로 전달한다. 이전 issue의 해결 상태와 현재의 새 finding을 별도로 출력하고, 현재 finding만 집계한다. |
+| RECHECK 출력 정합성 | 이전 issue 중 `UNRESOLVED` 또는 `UNCERTAIN`이 있으면 현재 finding이 하나 이상 있어야 한다. 빈 findings와 열린 assessment의 모순은 Schema repair 또는 실패 경계로 보내고 PASS로 집계하지 않는다. 한 finding이 여러 이전 issue를 설명할 수 있으며 `RESOLVED`와 별개의 새 finding도 허용한다. 상태만으로 disposition을 만들거나 과거 finding을 복사하지 않는다. |
 | dimension-only RECHECK | action/route ID가 없어도 가능해야 한다. 원문의 `null` 표기와 타입의 빈 list 허용은 임의로 치환하지 않는다. Finding 문자열·전체 Plan은 selector가 아니다. 전후 대응이 불명확하면 변경 관계를 만들지 않는다. |
 | RECHECK 후 반환 | aggregate_review_findings → validate_review를 다시 통과한 뒤 최종 disposition을 반환한다. |
 | Function/Tool Calling | Adapter는 name + arguments의 일반 계약만 알고 Domain Result 매핑은 Application이 수행한다. |

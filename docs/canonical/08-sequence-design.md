@@ -1004,6 +1004,7 @@ Review
 - `affected_dimensions`가 비어 있지 않다면 `affected_action_ids=[]`, `affected_route_ids=[]`인 **dimension-only REVISE**도 유효하다. Action/Route ID를 임의 생성해 selector를 보충하지 않는다.
 - Finding 문장이나 전체 Plan을 RECHECK selector로 사용하지 않는다.
 - 직전 REVISE 제안의 affected route에 Action이 전후 정확히 하나씩 있으면 변경 인자와 과거 issue를 검토 이력으로 전달할 수 있다. 이전 issue의 해결 여부는 현재 finding과 분리하며, 과거 finding 자체를 현재 결함 또는 사용자 요구로 승격하지 않는다. 일대일 대응이 불명확하면 임의로 Action을 연결하지 않는다.
+- 열린 과거 issue 평가(`UNRESOLVED`/`UNCERTAIN`)와 `findings=[]`가 동시에 나오면 출력 계약 오류로 처리한다. Schema repair도 실패하면 현재 수정안을 PASS로 간주하지 않는다. 현재 finding의 분류와 최종 disposition은 기존 aggregate 책임이며 이전 issue 수만큼 finding을 강제하지 않는다.
 - Planning Back-edge는 `ReviewReviseV2.issues`를 bounded revision context로 소비한다. 별도 장기 `WorkflowSignal` authority를 만들지 않는다.
 - Review 재진입은 새 `planning_result` revision과 직전 REVISE의 affected-dimension context를 함께 사용한다. 이미 PASS한 dimension의 Product LLM inspector를 무조건 재호출하지 않는다.
 - Review `REVISE`로 Run이 이미 `PLANNING`인 bounded revision에서는 `BeginPlanning`을 반복 적용하지 않는다.
