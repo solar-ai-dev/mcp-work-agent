@@ -57,6 +57,7 @@ def test_paused_accounting__counts_failure_and_retry__then_blocks_exhausted_disp
         with pytest.raises(LLMInvocationError):
             _invoke_structured(guarded)
         assert current_provider_dispatch_run_id() == "run"
+        assert current_provider_dispatch_budget() == budget
     assert provider.structured_dispatches == 2
     assert len(calls) == 2
     with pytest.raises(TimeoutError):

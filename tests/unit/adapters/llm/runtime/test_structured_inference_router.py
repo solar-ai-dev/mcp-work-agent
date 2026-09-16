@@ -182,9 +182,7 @@ class _ExternalCallTrace:
         default_factory=list
     )
 
-    def begin_external_call(
-        self, command: ExternalCallTraceStartV1
-    ) -> ExternalCallTraceHandleV1:
+    def begin_external_call(self, command: ExternalCallTraceStartV1) -> ExternalCallTraceHandleV1:
         self.starts.append(command)
         return ExternalCallTraceHandleV1(1, f"trace-{len(self.starts)}")
 
@@ -647,9 +645,7 @@ def test_valid_first_output__without_schema_error__skips_repair() -> None:
     assert repairer.calls == 0
 
 
-def test_actual_provider_and_repair_dispatches__with_trace_port__emit_separate_safe_spans() -> (
-    None
-):
+def test_actual_provider_and_repair_dispatches__with_trace_port__emit_separate_safe_spans() -> None:
     checkpoint = ExternalScopeCheckpoint(scope=_scope())
     provider = _Provider(runtime=ActualRuntime.LOCAL_GPU, content='{"answer":"unterminated')
     trace = _ExternalCallTrace()
@@ -882,3 +878,65 @@ def test_auto_fallback_does__not_call_api__without_published_scope() -> None:
         )
     assert local.calls == 1
     assert api.calls == 0
+
+
+def test_terminal_response__auto_mode__does_not_cross_to_api_fallback() -> None:
+    checkpoint = ExternalScopeCheckpoint(scope=_scope())
+    api = _Provider()
+    local = _Provider(
+        runtime=ActualRuntime.LOCAL_GPU,
+        failure=LLMInvocationError(LLMErrorCode.GPU_OOM, "oom"),
+    )
+    prompt = replace(PROMPT, prompt_id="run.compose_terminal_response")
+
+    with pytest.raises(LLMInvocationError) as raised:
+        _router(checkpoint=checkpoint, api=api, local=local).infer(
+            "AUTO",
+            prompt,
+            {
+                "schema_version": 1,
+                "user_request": "수정해 줘",
+                "result_kind": "SUCCESS",
+                "action_results": [],
+                "effect_observations": [],
+                "limitations": [],
+            },
+            SCHEMA,
+        )
+
+    assert raised.value.code is LLMErrorCode.GPU_OOM
+    assert local.calls == 1
+    assert api.calls == 0
+
+
+def test_terminal_response__external_scope__includes_result_data_classes() -> None:
+    scope = _scope()
+    checkpoint = ExternalScopeCheckpoint(scope=scope)
+    router = _router(checkpoint=checkpoint, api=_Provider())
+    captured: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+
+    def project(
+        _run_id: str,
+        source_kinds: tuple[str, ...],
+        data_classes: tuple[str, ...],
+    ) -> ExternalLlmTransferScopeV1:
+        captured.append((source_kinds, data_classes))
+        return scope
+
+    router.external_scope_projector = project
+    router.infer(
+        "API_LLM",
+        replace(PROMPT, prompt_id="run.compose_terminal_response"),
+        {
+            "schema_version": 1,
+            "user_request": "수정해 줘",
+            "result_kind": "SUCCESS",
+            "action_results": [{"verified_fields": []}],
+            "effect_observations": [{"effect_type": "SEND", "dispatched": False}],
+            "limitations": [],
+        },
+        SCHEMA,
+    )
+
+    assert captured
+    assert set(captured[0][1]) == {"USER_REQUEST", "RESOURCE_METADATA", "PLAN_CONTEXT"}

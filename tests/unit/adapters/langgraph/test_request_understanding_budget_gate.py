@@ -130,7 +130,11 @@ class _RepairingAgent:
             },
             "resource_responsibilities": {
                 "source_reads": [
-                    {"resource_type": "TASK", "required_information": ["task_identity"]}
+                    {
+                        "resource_type": "TASK",
+                        "required_information": ["task_identity"],
+                        "target_scope": "SINGULAR",
+                    }
                 ],
                 "outputs": [],
             },
@@ -163,6 +167,7 @@ class _RepairingAgent:
                             "resource_type": candidate["resource_type"],
                             "dependency": "SOURCE_REQUIRED",
                             "required_information": task_source["required_information"],
+                            "target_scope": task_source["target_scope"],
                         }
                         if candidate["resource_type"] == "TASK"
                         else {

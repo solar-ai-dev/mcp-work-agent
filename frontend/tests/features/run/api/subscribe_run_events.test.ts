@@ -44,7 +44,11 @@ class FakeEventSource {
 
 function setup() {
   let current: FakeEventSource | null = null;
-  Object.defineProperty(globalThis, "EventSource", { configurable: true, value: vi.fn((url: string, init?: EventSourceInit) => (current = new FakeEventSource(url, init))) });
+  const EventSourceMock = vi.fn(function (url: string, init?: EventSourceInit) {
+    current = new FakeEventSource(url, init);
+    return current;
+  });
+  Object.defineProperty(globalThis, "EventSource", { configurable: true, value: EventSourceMock });
   const onEvent = vi.fn();
   const onSnapshotRequired = vi.fn();
   const onStateChange = vi.fn();

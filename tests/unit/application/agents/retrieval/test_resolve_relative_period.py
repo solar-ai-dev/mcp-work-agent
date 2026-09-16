@@ -105,6 +105,30 @@ def test_legacy_period__missing_axis__does_not_assume_message_time() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("period", "start", "end"),
+    [
+        ("내일", "2026-09-06", "2026-09-07"),
+        ("2026-08-08", "2026-08-08", "2026-08-09"),
+        ("9월 14일", "2026-09-14", "2026-09-15"),
+    ],
+)
+def test_calendar_period__default_event_axis__resolves_one_day(
+    period: str, start: str, end: str
+) -> None:
+    result = resolve_relative_period(
+        [{"kind": "DATE", "field": "period", "value": period}],
+        now_ms=_now_ms(),
+        timezone="Asia/Seoul",
+        default_axis="EVENT_TIME",
+    )
+
+    assert result is not None
+    assert result["axis"] == "EVENT_TIME"
+    assert result["start_local"] == start + "T00:00:00"
+    assert result["end_local"] == end + "T00:00:00"
+
+
 @pytest.mark.parametrize(("axis", "now", "period", "expected"), [
     ("MESSAGE_TIME", "2026-01-05", "12월", "2025-12-01"),
     ("EVENT_TIME", "2026-12-25", "1월 첫째주", "2027-01-01"),

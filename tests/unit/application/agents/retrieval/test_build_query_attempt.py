@@ -67,6 +67,14 @@ def test_query_attempt__uses_bounded_query__and_page_identities() -> None:
         current_round_no=1, prior_query_attempts=[attempt, changed],
         unresolved_sufficiency_issues=[{"required": True, "description": "missing event date"}],
         read_result_summaries=[{"route_id": "route-1", "result_count": 1}],
+        observed_evidence=[
+            {
+                "evidence_ref": "evidence-1",
+                "excerpt": "Lumen is now named Aurora Migration.",
+                "role": "CONTEXT",
+                "resource_ref": "gmail_thread:thread-1",
+            }
+        ],
     )
     for original, projected in zip(
         [attempt, changed], projection["prior_query_attempts"], strict=True,
@@ -77,3 +85,11 @@ def test_query_attempt__uses_bounded_query__and_page_identities() -> None:
                 == original["normalized_intent_constraints"])
         assert projected["candidate_count"] == original["candidate_count"]
         assert projected["stop_reason"] == original["stop_reason"]
+    assert projection["observed_evidence"] == [
+        {
+            "evidence_ref": "evidence-1",
+            "excerpt": "Lumen is now named Aurora Migration.",
+            "role": "CONTEXT",
+            "resource_ref": "gmail_thread:thread-1",
+        }
+    ]

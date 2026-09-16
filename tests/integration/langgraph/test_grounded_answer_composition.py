@@ -122,7 +122,7 @@ def test_grounded_answer__production_graph__composes_instead_of_dumping_source(c
     )
     nodes = [event["node"] for event in recorder.path]
     assert nodes == ["__start__", "outline_answer", "compose_answer"]
-    assert calls == ["planning.outline_answer", "planning.compose_answer"]
+    assert calls == ["planning.compose_answer"]
     final = result["final_result"]
     assert final["schema_version"] == 2
     assert final["evidence_refs"] == ["e1"]
@@ -185,7 +185,6 @@ def test_grounded_answer__production_graph__rejects_schema_shaped_answer_string(
             }
         )
     assert calls == [
-        "planning.outline_answer",
         "planning.compose_answer",
         "planning.compose_answer",
     ]
@@ -244,7 +243,6 @@ def test_grounded_answer__production_graph__repairs_prose_once_and_completes() -
     )
 
     assert calls == [
-        "planning.outline_answer",
         "planning.compose_answer",
         "planning.compose_answer",
     ]

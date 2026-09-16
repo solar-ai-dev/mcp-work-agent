@@ -103,6 +103,7 @@ def create_app(
                     production_config.development_sampling_temperature
                 ),
                 development_sampling_seed=production_config.development_sampling_seed,
+                development_runtime_bindings=production_config.development_runtime_bindings,
                 verified_release_files=production_config.verified_release_files,
                 code_signature_verified_paths=(production_config.code_signature_verified_paths),
                 request_process_exit=request_process_exit,

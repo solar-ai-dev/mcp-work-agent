@@ -471,12 +471,15 @@ def validate_resource_responsibilities(
     for index, item in enumerate(source_reads):
         path = f"$.resource_responsibilities.source_reads[{index}]"
         source = _mapping(item, path)
-        if set(source) != {"resource_type", "required_information"}:
+        if set(source) != {"resource_type", "required_information", "target_scope"}:
             raise RequestUnderstandingValidationError(f"{path} fields are invalid")
         resource_type = _string(source, "resource_type", path)
         information = _string_list(
             source.get("required_information"), f"{path}.required_information"
         )
+        target_scope = _string(source, "target_scope", path)
+        if target_scope not in {"SINGULAR", "CRITERIA"}:
+            raise RequestUnderstandingValidationError(f"{path}.target_scope is invalid")
         if resource_type in source_resources:
             raise RequestUnderstandingValidationError(
                 "$.resource_responsibilities contains a duplicate source read"
@@ -484,7 +487,11 @@ def validate_resource_responsibilities(
         source_resources.add(resource_type)
         source_information.extend(information)
         normalized_sources.append(
-            {"resource_type": resource_type, "required_information": information}
+            {
+                "resource_type": resource_type,
+                "required_information": information,
+                "target_scope": target_scope,
+            }
         )
     normalized_outputs = []
     output_resources: set[str] = set()

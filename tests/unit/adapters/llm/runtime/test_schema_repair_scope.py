@@ -37,6 +37,7 @@ def _required(resource_type: str, information: str) -> dict[str, object]:
         "resource_type": resource_type,
         "dependency": "SOURCE_REQUIRED",
         "required_information": [information],
+        "target_scope": "CRITERIA",
     }
 
 
@@ -94,6 +95,7 @@ def test_array_shape_repair__unaffected_semantic_decision__is_rejected() -> None
     ) == (
         "$.source_dependencies[2].dependency",
         "$.source_dependencies[2].required_information",
+        "$.source_dependencies[2].target_scope",
     )
 
 
@@ -105,6 +107,7 @@ def test_source_dependency_reorder__resource_type_identity__is_stable() -> None:
                 "resource_type": "CALENDAR_EVENT",
                 "dependency": "SOURCE_REQUIRED",
                 "required_information": "start",
+                "target_scope": "CRITERIA",
             },
             _required("GMAIL_DRAFT", "body"),
         ]

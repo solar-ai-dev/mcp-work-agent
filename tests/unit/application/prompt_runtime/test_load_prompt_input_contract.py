@@ -109,6 +109,7 @@ def test_select_evidence_contract__matches_the__live_typed_projection() -> None:
         "ranked_segments": [],
         "temporal_constraints": [],
         "sufficiency_feedback": [],
+        "retained_evidence": [],
     }
     contract.validate_projection("retrieval.select_evidence", projection)
 

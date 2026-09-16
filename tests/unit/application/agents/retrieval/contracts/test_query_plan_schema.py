@@ -139,6 +139,49 @@ def test_gmail_search_schema__empty_constraints__allows_only_gmail_route() -> No
     assert validate_output_schema(candidate, non_gmail_schema.json_schema)
 
 
+def test_initial_gmail_exact_anchors__bind_keyword_values__and_recall_mode() -> None:
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["KEYWORD"]},
+        gmail_route_ids=["gmail"],
+        initial_gmail_keyword_terms=["Atlas", "출고일"],
+    )
+    candidate: dict[str, Any] = {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": {
+                        "keyword": {
+                            "kind": "KEYWORD",
+                            "terms": ["Atlas", "출고일"],
+                            "match_mode": "ANY",
+                        }
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    candidate["route_queries"][0]["search_spec"]["constraints"]["keyword"][
+        "match_mode"
+    ] = "ALL"
+    assert validate_output_schema(candidate, schema.json_schema)
+    candidate["route_queries"][0]["search_spec"]["constraints"]["keyword"] = {
+        "kind": "KEYWORD",
+        "terms": ["invented"],
+        "match_mode": "ANY",
+    }
+    assert validate_output_schema(candidate, schema.json_schema)
+
+
 def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
     temporal: TemporalRangeConstraintV1 = {
         "kind": "TEMPORAL_RANGE",
@@ -177,6 +220,79 @@ def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:
         {"kind": "KEYWORD", "terms": ["일정"], "match_mode": "ANY"},
     ]
     assert validate_output_schema(candidate, schema.json_schema)
+
+
+def test_bound_temporal_constraint__initial_required_route__rejects_omission() -> None:
+    temporal: TemporalRangeConstraintV1 = {
+        "kind": "TEMPORAL_RANGE",
+        "axis": "AVAILABILITY_WINDOW",
+        "start_local": "2026-09-06T00:00:00",
+        "end_local": "2026-09-07T00:00:00",
+        "timezone": "Asia/Seoul",
+    }
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["availability"],
+        route_operations={"availability": ["FREEBUSY"]},
+        supported_constraint_kinds={"availability": ["TEMPORAL_RANGE", "CONTAINER_REF"]},
+        required_constraint_kinds={"availability": ["CONTAINER_REF"]},
+        validated_container_refs={"availability": ["primary"]},
+        resolved_temporal_constraints={"availability": temporal},
+        required_temporal_route_ids={"availability"},
+    )
+    candidate: dict[str, Any] = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "availability",
+                "operation": "FREEBUSY",
+                "reason_codes": ["POLICY_CALENDAR_CONFLICT_CHECK"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "CONTAINER_REF", "container_refs": ["primary"]}],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert validate_output_schema(candidate, schema.json_schema)
+    candidate["route_queries"][0]["search_spec"]["constraints"].append(dict(temporal))
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    candidate["route_queries"][0]["search_spec"]["constraints"] = [dict(temporal)]
+    assert validate_output_schema(candidate, schema.json_schema)
+
+
+def test_bound_temporal_constraint__without_required_route__remains_optional() -> None:
+    temporal: TemporalRangeConstraintV1 = {
+        "kind": "TEMPORAL_RANGE",
+        "axis": "MESSAGE_TIME",
+        "start_local": "2026-09-06T00:00:00",
+        "end_local": "2026-09-07T00:00:00",
+        "timezone": "Asia/Seoul",
+    }
+    schema = bind_retrieval_query_plan_output_schema(
+        route_ids=["gmail"],
+        route_operations={"gmail": ["SEARCH"]},
+        supported_constraint_kinds={"gmail": ["TEMPORAL_RANGE", "KEYWORD"]},
+        resolved_temporal_constraints={"gmail": temporal},
+    )
+    candidate = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "gmail",
+                "operation": "SEARCH",
+                "reason_codes": ["REQUESTED_INPUT"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [{"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "ANY"}],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    assert validate_output_schema(candidate, schema.json_schema) == []
 
 
 @pytest.mark.parametrize("changed", [False, True])

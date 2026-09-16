@@ -363,15 +363,18 @@ def bind_retrieval_query_plan_output_schema(
     route_operations: Mapping[str, Collection[RetrievalOperationV2]],
     route_status_values: Mapping[str, Collection[str]] | None = None,
     supported_constraint_kinds: Mapping[str, Collection[str]] | None = None,
+    required_constraint_kinds: Mapping[str, Collection[str]] | None = None,
     validated_resource_refs: Mapping[str, Collection[str]] | None = None,
     validated_container_refs: Mapping[str, Collection[str]] | None = None,
     detail_candidate_refs_by_route: Mapping[str, Collection[str]] | None = None,
     is_followup: bool = False,
     resolved_temporal_constraints: Mapping[str, TemporalRangeConstraintV1] | None = None,
+    required_temporal_route_ids: Collection[str] = (),
     allowed_participant_identities: Collection[str] | None = None,
     requested_concepts: Mapping[str, Collection[str]] | None = None,
     removable_constraint_kinds: Mapping[str, Collection[str]] | None = None,
     gmail_route_ids: Collection[str] = (),
+    initial_gmail_keyword_terms: Collection[str] | None = None,
     next_page_route_ids: Collection[str] | None = None,
 ) -> OutputSchemaDefinition:
     """Bind planner-generated identities to values validated in the current state."""
@@ -381,6 +384,7 @@ def bind_retrieval_query_plan_output_schema(
     properties["schema_version"] = {"type": "integer", "enum": [3]}
     route_queries = cast(dict[str, object], properties["route_queries"])
     allowed_route_ids = sorted(set(route_ids))
+    required_temporal_routes = set(required_temporal_route_ids)
 
     operation_templates = cast(
         list[dict[str, object]], cast(dict[str, object], route_queries["items"])["oneOf"]
@@ -409,14 +413,21 @@ def bind_retrieval_query_plan_output_schema(
                 allowed_constraint_kinds=set(
                     (supported_constraint_kinds or {}).get(route_id, _CONSTRAINT_KINDS)
                 ),
+                required_constraint_kinds=set((required_constraint_kinds or {}).get(route_id, ())),
                 allowed_resource_refs=sorted((validated_resource_refs or {}).get(route_id, ())),
                 allowed_container_refs=sorted((validated_container_refs or {}).get(route_id, ())),
                 temporal_constraint=(resolved_temporal_constraints or {}).get(route_id),
+                require_temporal_constraint=route_id in required_temporal_routes,
                 allowed_participant_identities=allowed_participant_identities,
                 removable_constraint_kinds=set(
                     (removable_constraint_kinds or {}).get(route_id, ())
                 ),
                 gmail_keyword_literals=route_id in gmail_route_ids,
+                initial_gmail_keyword_terms=(
+                    initial_gmail_keyword_terms
+                    if route_id in gmail_route_ids and not is_followup
+                    else None
+                ),
             )
             if route_status_values is not None:
                 _bind_status_scope_values(operation_schema, route_status_values.get(route_id, ()))
@@ -505,12 +516,15 @@ def _bind_route_operation(
     is_followup: bool,
     detail_candidate_refs: Collection[str],
     allowed_constraint_kinds: set[str],
+    required_constraint_kinds: set[str],
     allowed_resource_refs: list[str],
     allowed_container_refs: list[str],
     temporal_constraint: TemporalRangeConstraintV1 | None,
+    require_temporal_constraint: bool,
     allowed_participant_identities: Collection[str] | None,
     removable_constraint_kinds: set[str],
     gmail_keyword_literals: bool,
+    initial_gmail_keyword_terms: Collection[str] | None,
 ) -> None:
     operation_properties = cast(dict[str, object], operation_schema["properties"])
     if allowed_participant_identities is not None and not allowed_participant_identities:
@@ -555,7 +569,34 @@ def _bind_route_operation(
         temporal_constraint=temporal_constraint,
         allowed_participant_identities=allowed_participant_identities,
         gmail_keyword_literals=gmail_keyword_literals,
+        initial_gmail_keyword_terms=initial_gmail_keyword_terms,
     )
+    if require_temporal_constraint and temporal_constraint is not None and not is_followup:
+        _require_constraint_slot(operation_properties["search_spec"], "temporal_range")
+    if operation in {"SEARCH", "FREEBUSY"} and not is_followup:
+        for kind in required_constraint_kinds.intersection(allowed_constraint_kinds):
+            _require_constraint_slot(
+                operation_properties["search_spec"],
+                _CONSTRAINT_SLOT_BY_KIND[kind],
+            )
+
+
+def _require_constraint_slot(value: object, slot: str) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _require_constraint_slot(item, slot)
+        return
+    if not isinstance(value, dict):
+        return
+    properties = value.get("properties")
+    if isinstance(properties, dict):
+        declared_slots = set(properties).intersection(_CONSTRAINT_SLOT_BY_KIND.values())
+        if declared_slots and declared_slots == set(properties) and slot in properties:
+            required = value.setdefault("required", [])
+            if isinstance(required, list) and slot not in required:
+                required.append(slot)
+    for child in value.values():
+        _require_constraint_slot(child, slot)
 
 
 def _bind_constraint_ref_values(
@@ -567,6 +608,7 @@ def _bind_constraint_ref_values(
     temporal_constraint: TemporalRangeConstraintV1 | None,
     allowed_participant_identities: Collection[str] | None,
     gmail_keyword_literals: bool,
+    initial_gmail_keyword_terms: Collection[str] | None,
 ) -> None:
     if isinstance(value, list):
         for item in value:
@@ -578,6 +620,7 @@ def _bind_constraint_ref_values(
                 temporal_constraint=temporal_constraint,
                 allowed_participant_identities=allowed_participant_identities,
                 gmail_keyword_literals=gmail_keyword_literals,
+                initial_gmail_keyword_terms=initial_gmail_keyword_terms,
             )
         return
     if not isinstance(value, dict):
@@ -630,6 +673,11 @@ def _bind_constraint_ref_values(
                 "minLength": 1,
                 "pattern": GMAIL_KEYWORD_LITERAL_PATTERN,
             }
+            if initial_gmail_keyword_terms is not None:
+                cast(dict[str, object], terms["items"])["enum"] = sorted(
+                    set(initial_gmail_keyword_terms)
+                )
+                properties["match_mode"] = {"const": "ANY"}
         if declared_kind == "RESOURCE_REF" and allowed_resource_refs:
             refs = properties.get("resource_refs")
             if isinstance(refs, dict):
@@ -647,6 +695,7 @@ def _bind_constraint_ref_values(
             temporal_constraint=temporal_constraint,
             allowed_participant_identities=allowed_participant_identities,
             gmail_keyword_literals=gmail_keyword_literals,
+            initial_gmail_keyword_terms=initial_gmail_keyword_terms,
         )
 
 

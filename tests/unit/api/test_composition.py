@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,14 @@ from tests.support.checkpoint import sqlite_checkpoint
 
 from google_work_agent.adapters.persistence.connection import connect_sqlite
 from google_work_agent.adapters.persistence.migration import apply_migrations
-from google_work_agent.adapters.persistence.sqlite.unit_of_work import sqlite_unit_of_work_factory
-from google_work_agent.api.composition import drain_workflow_handoffs_to_quiescence
+from google_work_agent.adapters.persistence.sqlite.unit_of_work import (
+    sqlite_unit_of_work_factory,
+)
+from google_work_agent.api.composition import (
+    DevelopmentRuntimeBindings,
+    ProductionRuntimeConfig,
+    drain_workflow_handoffs_to_quiescence,
+)
 from google_work_agent.application.use_cases.recovery.require_recovery import (
     RequireRecoveryHandler,
 )
@@ -30,6 +37,27 @@ from google_work_agent.ports.system.contracts.workflow_handoff import (
 )
 
 _UnitOfWorkFactory = Callable[[], UnitOfWork]
+
+
+class _FixedClock:
+    def now_ms(self) -> int:
+        return 123
+
+
+def test_development_runtime_bindings__remain_explicit__outside_signed_mode(
+    tmp_path: Path,
+) -> None:
+    bindings = DevelopmentRuntimeBindings(clock=_FixedClock())
+    config = ProductionRuntimeConfig.development(
+        runtime_root=tmp_path / "runtime",
+        working_directory=tmp_path,
+        mcp_manifest_version="test",
+        runtime_bindings=bindings,
+    )
+
+    assert config.development_runtime_bindings is bindings
+    with pytest.raises(ValueError, match="development-only controls"):
+        replace(config, configuration_source="SIGNED_RELEASE_MANIFEST")
 
 
 def test_inactive_prompt__keeps_settings_and_modify_boundary__available(

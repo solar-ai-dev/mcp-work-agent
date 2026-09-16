@@ -255,6 +255,7 @@ def compose_answer(
         user_request=user_request,
         request_intent=request_intent,
         evidence=evidence,
+        retrieval_result=retrieval_result,
     )
     if calendar_projection is not None:
         if not set(calendar_projection.draft["evidence_refs"]).issubset(approved_refs):

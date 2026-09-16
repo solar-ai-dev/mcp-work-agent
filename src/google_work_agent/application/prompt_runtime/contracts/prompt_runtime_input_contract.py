@@ -44,6 +44,7 @@ REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
     "review.inspect_action_scope_and_route": "review.inspect_action_scope_route",
     "review.inspect_constraints_and_policy_summary": "review.inspect_constraints_policy",
     "review.recheck_affected_dimensions": "review.recheck",
+    "run.compose_terminal_response": "run.compose_terminal_response",
 }
 
 REQUIRED_PROMPT_SLOT_IDS: Final[frozenset[str]] = frozenset(REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT)
@@ -68,7 +69,7 @@ class PromptRuntimeInputContractEntryV1:
         output_version = {
             "retrieval.select_evidence": 3,
             "request_understanding.identify_goal": 16,
-            "request_understanding.identify_source_dependencies": 2,
+            "request_understanding.identify_source_dependencies": 3,
             "request_understanding.identify_output_responsibilities": 2,
             "request_understanding.identify_source_status": 2,
             "request_understanding.detect_ambiguity": 2,
@@ -77,7 +78,9 @@ class PromptRuntimeInputContractEntryV1:
             "work_analysis.assess_operational_risks": 2,
         }.get(self.prompt_slot_id, 1)
         if self.prompt_slot_id == "retrieval.select_evidence":
-            input_versions = {3, 4, 5}
+            input_versions = {3, 4, 5, 6}
+        elif self.prompt_slot_id == "retrieval.plan_query":
+            input_versions = {1, 2, 3, 4, 5}
         elif self.prompt_slot_id == "request_understanding.identify_source_status":
             input_versions = {1}
         else:

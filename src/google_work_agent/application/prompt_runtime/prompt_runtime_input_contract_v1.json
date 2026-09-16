@@ -56,7 +56,7 @@
       "input_schema_version": 2,
       "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "source_candidates"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
-      "output_schema_version": 2
+      "output_schema_version": 3
     },
     {
       "prompt_slot_id": "request_understanding.identify_output_responsibilities",
@@ -109,17 +109,17 @@
     {
       "prompt_slot_id": "retrieval.plan_query",
       "runtime_node_id": "retrieval.plan_query",
-      "input_schema_version": 1,
-      "required_root_fields": ["request_intent", "input_routes", "retrieval_budget"],
-      "optional_root_fields": ["current_round_no", "prior_query_attempts", "unresolved_sufficiency_issues", "read_result_summaries", "confirmation_response"],
+      "input_schema_version": 5,
+      "required_root_fields": ["user_request", "request_intent", "input_routes", "required_user_anchors", "retrieval_budget"],
+      "optional_root_fields": ["required_route_constraints", "current_round_no", "prior_query_attempts", "unresolved_sufficiency_issues", "read_result_summaries", "observed_evidence", "confirmation_response"],
       "output_schema_version": 1
     },
     {
       "prompt_slot_id": "retrieval.select_evidence",
       "runtime_node_id": "retrieval.select_evidence",
-      "input_schema_version": 5,
+      "input_schema_version": 6,
       "required_root_fields": ["request_intent", "ranked_segments", "temporal_constraints"],
-      "optional_root_fields": ["sufficiency_feedback"],
+      "optional_root_fields": ["sufficiency_feedback", "retained_evidence"],
       "output_schema_version": 3
     },
     {
@@ -256,6 +256,14 @@
       "input_schema_version": 1,
       "required_root_fields": ["affected_dimensions", "request_intent", "planning_result"],
       "optional_root_fields": ["affected_action_ids", "affected_route_ids", "tool_route_plan", "work_analysis", "evidence", "policy_summary", "confirmation_response", "user_action_modifications"],
+      "output_schema_version": 1
+    },
+    {
+      "prompt_slot_id": "run.compose_terminal_response",
+      "runtime_node_id": "run.compose_terminal_response",
+      "input_schema_version": 1,
+      "required_root_fields": ["schema_version", "user_request", "result_kind", "action_results", "effect_observations", "limitations"],
+      "optional_root_fields": [],
       "output_schema_version": 1
     }
   ]

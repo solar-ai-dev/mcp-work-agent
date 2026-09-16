@@ -253,19 +253,23 @@ class _ComponentInferencePort:
                 return _source_dependency_decisions(
                     projection,
                     source_types={
-                        "TASK": ["work status"],
-                        "CALENDAR_EVENT": ["schedule"],
+                        "TASK": (["work status"], "CRITERIA"),
+                        "CALENDAR_EVENT": (["schedule"], "CRITERIA"),
                     },
                 )
             if self.searchable_target:
                 return _source_dependency_decisions(
                     projection,
-                    source_types={"GMAIL_THREAD": ["shipment criteria", "owner"]},
+                    source_types={
+                        "GMAIL_THREAD": (["shipment criteria", "owner"], "CRITERIA")
+                    },
                 )
             if self.unresolved_calendar_identity:
                 return _source_dependency_decisions(
                     projection,
-                    source_types={"CALENDAR_EVENT": ["event_identity", "start"]},
+                    source_types={
+                        "CALENDAR_EVENT": (["event_identity", "start"], "SINGULAR")
+                    },
                 )
             needs_action = self.request_confirmation or has_confirmation
             return (
@@ -273,7 +277,9 @@ class _ComponentInferencePort:
                 if needs_action
                 else _source_dependency_decisions(
                     projection,
-                    source_types={"GITHUB_ISSUE": []} if self.github_retrieval else {},
+                    source_types={"GITHUB_ISSUE": (["state"], "CRITERIA")}
+                    if self.github_retrieval
+                    else {},
                 )
             )
         if prompt_id == "request_understanding.identify_output_responsibilities":
@@ -296,8 +302,8 @@ class _ComponentInferencePort:
                 }
             if self.searchable_target:
                 return {
-                    "missing_information_owner": "CONNECTOR",
-                    "missing_fields": ["shipment criteria and owner"],
+                    "missing_information_owner": "USER",
+                    "missing_fields": ["target_resource"],
                 }
             needs_confirmation = self.request_confirmation and not has_confirmation
             return {
@@ -1018,20 +1024,21 @@ def _merge_decision(
 def _source_dependency_decisions(
     projection: Mapping[str, object],
     *,
-    source_types: Mapping[str, list[str]] | None = None,
+    source_types: Mapping[str, tuple[list[str], str]] | None = None,
 ) -> dict[str, object]:
     sources = source_types or {}
     decisions: list[dict[str, object]] = []
     candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
     for candidate in candidates:
         resource_type = cast(str, candidate["resource_type"])
-        information = sources.get(resource_type)
-        if information is not None:
+        source = sources.get(resource_type)
+        if source is not None:
             decisions.append(
                 {
                     "resource_type": resource_type,
                     "dependency": "SOURCE_REQUIRED",
-                    "required_information": information,
+                    "required_information": source[0],
+                    "target_scope": source[1],
                 }
             )
         else:
@@ -1089,13 +1096,12 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
         "request_understanding.identify_output_responsibilities",
-        "request_understanding.identify_source_status",
         "request_understanding.detect_ambiguity",
     ]
     assert ("finalize_intent", "identify_goal") in _edge_set(graph)
 
 
-def test_request_understanding__compiled_searchable_target__keeps_semantic_connector_owner() -> (
+def test_request_understanding__compiled_searchable_target__resolves_semantic_user_owner() -> (
     None
 ):
     llm = _ComponentInferencePort(searchable_target=True)
@@ -1124,7 +1130,7 @@ def test_request_understanding__compiled_searchable_target__keeps_semantic_conne
         Mapping[str, object],
         llm.inputs["request_understanding.detect_ambiguity"][0]["resolution_responsibilities"],
     )
-    assert resolution["searchable_target_anchor_count"] == 1
+    assert resolution["searchable_target_anchor_count"] == 2
     assert resolution["connector_owned_source_count"] == 1
 
 
@@ -1181,10 +1187,15 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
 
     assert result["request_intent"]["resource_responsibilities"] == {
         "source_reads": [
-            {"resource_type": "TASK", "required_information": ["work status"]},
+            {
+                "resource_type": "TASK",
+                "required_information": ["work status"],
+                "target_scope": "CRITERIA",
+            },
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["schedule"],
+                "target_scope": "CRITERIA",
             },
         ],
         "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
@@ -2108,6 +2119,7 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
             if prompt_id == "retrieval.plan_query":
                 result = super()._response(prompt_id, projection)
                 constraints = cast(Any, result)["route_queries"][0]["search_spec"]["constraints"]
+                constraints.pop("keyword", None)
                 constraints["concept"] = {
                     "kind": "CONCEPT",
                     "concept": "일정",
@@ -2320,6 +2332,17 @@ def test_retrieval__main_back_edge__extends_checkpointed_prior_query() -> None:
     assert second["retrieval_result"]["retrieval_rounds"] == 2
     assert connector.call_count == 2
     assert llm.calls.count("retrieval.plan_query") == 2
+    observed_evidence = cast(
+        list[dict[str, object]],
+        llm.inputs["retrieval.plan_query"][1]["observed_evidence"],
+    )
+    assert observed_evidence
+    assert set(observed_evidence[0]) == {
+        "evidence_ref",
+        "excerpt",
+        "role",
+        "resource_ref",
+    }
     attempts = cast(list[dict[str, Any]], second["__context_query_attempts__"])
     assert all(
         next(

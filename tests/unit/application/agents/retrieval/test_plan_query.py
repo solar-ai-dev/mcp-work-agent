@@ -23,7 +23,10 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
     RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
+    RetrievalBudget,
+    followup_retrieval_planner_input,
     has_retrieval_followup_path,
+    initial_retrieval_planner_input,
     plan_query,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -177,6 +180,87 @@ def _retrieval_prompt_ref() -> PromptReference:
     )
 
 
+def test_initial_retrieval_planner_input__includes_current_run__user_request() -> None:
+    route = cast(
+        InputToolRouteV1,
+        _tool_route_plan(allowed_read_tool_ids=["gmail_search_threads"])["input_plan"][
+            "input_routes"
+        ][0],
+    )
+
+    prompt_input = initial_retrieval_planner_input(
+        user_request="Atlas final shipment date",
+        request_intent=cast(
+            RequestIntentV2,
+            {
+                "constraints": [
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "Atlas",
+                        "provenance": {"source": "USER_REQUEST"},
+                    },
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "business_concepts",
+                        "value": ["최종 출고일"],
+                        "provenance": {"source": "USER_REQUEST"},
+                    },
+                    {
+                        "kind": "USER_REQUIREMENT",
+                        "field": "search_terms",
+                        "value": "invented-anchor",
+                        "provenance": {"source": "SYSTEM"},
+                    },
+                ]
+            },
+        ),
+        input_routes=[route],
+        retrieval_budget=RetrievalBudget(),
+    )
+
+    assert prompt_input["user_request"] == "Atlas final shipment date"
+    assert prompt_input["required_user_anchors"] == {
+        "applies_to": "INITIAL_GMAIL_SEARCH",
+        "route_ids": [route["route_id"]],
+        "keyword_terms": ["Atlas"],
+        "participant_identities": [],
+    }
+
+
+def test_followup_retrieval_planner_input__preserves_observed__evidence_projection() -> None:
+    route = cast(
+        InputToolRouteV1,
+        _tool_route_plan(allowed_read_tool_ids=["gmail_search_threads"])["input_plan"][
+            "input_routes"
+        ][0],
+    )
+    observed = [
+        {
+            "evidence_ref": "evidence-1",
+            "excerpt": "Lumen is now named Aurora Migration.",
+            "role": "CONTEXT",
+            "resource_ref": "gmail_thread:thread-1",
+        }
+    ]
+
+    prompt_input = followup_retrieval_planner_input(
+        user_request="Find the Lumen migration date",
+        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        input_routes=[route],
+        retrieval_budget=RetrievalBudget(),
+        followup={
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [],
+            "read_result_summaries": [],
+            "observed_evidence": observed,
+        },
+    )
+
+    assert prompt_input["observed_evidence"] == observed
+
+
 def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revision() -> None:
     route = cast(
         InputToolRouteV1,
@@ -249,6 +333,379 @@ def test_plan_query__gmail_unfiltered_candidate__does_not_force_semantic_revisio
     assert llm_invoked is True
     assert len(runtime.calls) == 1
     assert runtime.calls[0]["output_schema"].schema_version == ("retrieval-query-plan-candidate-v3")
+    assert budget["semantic_revisions_used_by_failure"] == {}
+
+
+def _provenance_constraint(
+    *, kind: str, field: str, value: str
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "field": field,
+        "value": value,
+        "provenance": {
+            "source": "USER_REQUEST",
+            "start_offset": 0,
+            "end_offset": len(value),
+        },
+    }
+
+
+def _gmail_initial_candidate(*constraints: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": list(constraints),
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+
+def _run_gmail_initial_plan(
+    *,
+    constraints: list[dict[str, object]],
+    outputs: list[object],
+) -> tuple[dict[str, object], dict[str, object], FakeStructuredInferencePort]:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    runtime = FakeStructuredInferencePort(outputs=outputs)
+    result, budget, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {"constraints": constraints},
+            "input_routes": [route],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={
+            "route-1": RouteConstraintPolicy(
+                frozenset({"KEYWORD", "CONCEPT", "PARTICIPANT"})
+            )
+        },
+        retry_budget=build_default_run_budget(),
+    )
+    return cast(dict[str, object], result), cast(dict[str, object], budget), runtime
+
+
+def _run_gmail_context_pivot(
+    *outputs: object,
+) -> tuple[dict[str, object], dict[str, object], FakeStructuredInferencePort]:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "route-1",
+            "resource_type": "GMAIL_THREAD",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["gmail_search_threads"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    policy = {
+        "route-1": RouteConstraintPolicy(frozenset({"KEYWORD", "CONCEPT"}))
+    }
+    prior = build_query(
+        cast(
+            Any,
+            _gmail_initial_candidate(
+                {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "ANY"}
+            ),
+        ),
+        frozen_routes=[route],
+        route_policies=policy,
+    )[0]
+    runtime = FakeStructuredInferencePort(outputs=list(outputs))
+    result, budget, _ = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    _provenance_constraint(
+                        kind="USER_REQUIREMENT",
+                        field="search_terms",
+                        value="Lumen",
+                    )
+                ]
+            },
+            "input_routes": [route],
+            "current_round_no": 1,
+            "prior_query_attempts": [],
+            "unresolved_sufficiency_issues": [
+                {
+                    "required": True,
+                    "resolution_source": "GOOGLE",
+                    "route_id": "route-1",
+                }
+            ],
+            "read_result_summaries": [],
+            "observed_evidence": [
+                {
+                    "evidence_ref": "evidence-1",
+                    "excerpt": "Lumen is now named Aurora Migration.",
+                    "role": "CONTEXT",
+                    "resource_ref": "gmail_thread:thread-1",
+                }
+            ],
+        },
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies=policy,
+        retry_budget=build_default_run_budget(),
+        prior_plans={"route-1": prior},
+        read_result_summaries=[],
+    )
+    return cast(dict[str, object], result), cast(dict[str, object], budget), runtime
+
+
+def test_followup_context_evidence__bounds_planner__to_grounded_keyword_pivot() -> None:
+    changed = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "route-1",
+                "operation": "SEARCH",
+                "reason_codes": ["CHANGED_HYPOTHESIS"],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": [
+                            {
+                                "kind": "KEYWORD",
+                                "terms": ["Aurora Migration"],
+                                "match_mode": "ANY",
+                            }
+                        ],
+                        "remove_constraint_kinds": [],
+                    },
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    result, _, runtime = _run_gmail_context_pivot(changed)
+
+    assert result == changed
+    schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    concept_candidate = {
+        "schema_version": 3,
+        "route_queries": [
+            {
+                **changed["route_queries"][0],
+                "search_spec": {
+                    "mode": "CHANGED",
+                    "constraint_delta": {
+                        "upsert_constraints": {
+                            "concept": {
+                                "kind": "CONCEPT",
+                                "concept": "migration date",
+                                "manifestations": ["migration"],
+                            }
+                        },
+                        "remove_constraint_kinds": [],
+                    },
+                },
+            }
+        ],
+    }
+    assert validate_output_schema(concept_candidate, schema.json_schema)
+
+
+@pytest.mark.parametrize(
+    ("intent_constraint", "query_constraint"),
+    [
+        (
+            _provenance_constraint(
+                kind="USER_REQUIREMENT",
+                field="search_terms",
+                value="Lumen 마이그레이션 승인 메일",
+            ),
+            {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "PHRASE"},
+        ),
+        (
+            _provenance_constraint(
+                kind="RESOURCE", field="subject", value="Atlas 납품 확정"
+            ),
+            {
+                "kind": "KEYWORD",
+                "terms": ["Atlas 납품 확정"],
+                "match_mode": "PHRASE",
+            },
+        ),
+        (
+            _provenance_constraint(kind="PERSON", field="person", value="수민"),
+            {"kind": "KEYWORD", "terms": ["수민"], "match_mode": "PHRASE"},
+        ),
+        (
+            _provenance_constraint(
+                kind="EMAIL", field="sender_email", value="sumin@example.com"
+            ),
+            {
+                "kind": "PARTICIPANT",
+                "participants": [{"role": "SENDER", "identity": "sumin@example.com"}],
+                "match_mode": "ALL",
+            },
+        ),
+    ],
+)
+def test_plan_query__explicit_user_anchor__is_preserved(
+    intent_constraint: dict[str, object], query_constraint: dict[str, object]
+) -> None:
+    candidate = _gmail_initial_candidate(query_constraint)
+
+    result, budget, runtime = _run_gmail_initial_plan(
+        constraints=[intent_constraint],
+        outputs=[candidate],
+    )
+
+    assert result == candidate
+    assert budget["semantic_revisions_used_by_failure"] == {}
+    assert len(runtime.calls) == 1
+
+
+def test_plan_query__anchor_and_planner_manifestations__are_both_allowed() -> None:
+    intent_constraints: list[dict[str, object]] = [
+        _provenance_constraint(
+            kind="USER_REQUIREMENT",
+            field="search_terms",
+            value="Lumen 마이그레이션 승인 메일",
+        ),
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": "데이터 이전 시작 시간",
+        },
+    ]
+    candidate = _gmail_initial_candidate(
+        {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "PHRASE"},
+        {
+            "kind": "CONCEPT",
+            "concept": "데이터 이전 시작 시간",
+            "manifestations": ["시작 예정 시간", "이전 시작일"],
+        },
+    )
+
+    result, budget, _ = _run_gmail_initial_plan(
+        constraints=intent_constraints,
+        outputs=[candidate],
+    )
+
+    assert result == candidate
+    assert budget["semantic_revisions_used_by_failure"] == {}
+
+
+def test_plan_query__omitted_user_anchor__uses_existing_semantic_revision() -> None:
+    intent_constraints: list[dict[str, object]] = [
+        _provenance_constraint(
+            kind="USER_REQUIREMENT",
+            field="search_terms",
+            value="Lumen 마이그레이션 승인 메일",
+        ),
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": "데이터 이전 시작 시간",
+        },
+    ]
+    omitted = _gmail_initial_candidate(
+        {
+            "kind": "CONCEPT",
+            "concept": "데이터 이전 시작 시간",
+            "manifestations": ["시작 예정 시간", "이전 시작일"],
+        }
+    )
+    revised = _gmail_initial_candidate(
+        {"kind": "KEYWORD", "terms": ["Lumen"], "match_mode": "PHRASE"}
+    )
+
+    result, budget, runtime = _run_gmail_initial_plan(
+        constraints=intent_constraints,
+        outputs=[omitted, revised],
+    )
+
+    assert result == revised
+    assert sum(cast(dict[str, int], budget["semantic_revisions_used_by_failure"]).values()) == 1
+    revision_input = cast(dict[str, object], runtime.calls[1]["prompt_input"])
+    assert revision_input["candidate_output"] == omitted
+    failure = cast(dict[str, object], revision_input["failure_record"])
+    assert failure["failure_reason_code"] == "QUERY_USER_CONSTRAINT_MISSING"
+
+
+def test_plan_query__concept_only__cannot_invent_exact_keyword_anchor() -> None:
+    constraints: list[dict[str, object]] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": "업무 일정",
+        }
+    ]
+    invented = _gmail_initial_candidate(
+        {"kind": "KEYWORD", "terms": ["Atlas"], "match_mode": "PHRASE"}
+    )
+    concept = _gmail_initial_candidate(
+        {
+            "kind": "CONCEPT",
+            "concept": "업무 일정",
+            "manifestations": ["일정"],
+        }
+    )
+
+    result, budget, runtime = _run_gmail_initial_plan(
+        constraints=constraints,
+        outputs=[invented, concept],
+    )
+
+    assert result == concept
+    assert sum(cast(dict[str, int], budget["semantic_revisions_used_by_failure"]).values()) == 1
+    assert cast(dict[str, object], runtime.calls[1]["prompt_input"])[
+        "candidate_output"
+    ] == invented
+
+
+def test_plan_query__multiple_user_anchors__does_not_force_all_match_mode() -> None:
+    constraints = [
+        _provenance_constraint(
+            kind="USER_REQUIREMENT", field="search_terms", value=value
+        )
+        for value in ("Atlas", "Lumen")
+    ]
+    candidate = _gmail_initial_candidate(
+        {
+            "kind": "KEYWORD",
+            "terms": ["Atlas", "Lumen"],
+            "match_mode": "ANY",
+        }
+    )
+
+    result, budget, _ = _run_gmail_initial_plan(
+        constraints=constraints,
+        outputs=[candidate],
+    )
+
+    assert result == candidate
     assert budget["semantic_revisions_used_by_failure"] == {}
 
 
@@ -2120,6 +2577,97 @@ def test_calendar_route__projects_existing__route_constraint_policy() -> None:
         "TEMPORAL_RANGE",
     ]
     assert projected_routes[0]["required_constraint_kinds"] == []
+
+
+def test_plan_query__freebusy_without_temporal_range__uses_semantic_revision() -> None:
+    missing_temporal = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "calendar-availability",
+                "operation": "FREEBUSY",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["calendar-1"],
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    repaired = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "calendar-availability",
+                "operation": "FREEBUSY",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["calendar-1"],
+                        },
+                        {
+                            "kind": "TEMPORAL_RANGE",
+                            "axis": "AVAILABILITY_WINDOW",
+                            "start_local": "2026-09-15T09:00:00",
+                            "end_local": "2026-09-15T18:00:00",
+                            "timezone": "Asia/Seoul",
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+    runtime = FakeStructuredInferencePort(outputs=[missing_temporal, repaired])
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "calendar-availability",
+            "resource_type": "CALENDAR_FREEBUSY",
+            "connector_id": "google_workspace",
+            "allowed_read_tool_ids": ["calendar_query_freebusy"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+
+    result, budget, llm_invoked = plan_query(
+        llm_runtime=runtime,
+        prompt_ref=_retrieval_prompt_ref(),
+        revision_prompt_ref=_retrieval_prompt_ref(),
+        output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
+        prompt_input={"request_intent": {"constraints": []}, "input_routes": [route]},
+        requested_mode="LOCAL_GPU",
+        frozen_routes=[route],
+        route_policies={
+            "calendar-availability": RouteConstraintPolicy(
+                frozenset({"CONTAINER_REF", "TEMPORAL_RANGE"}),
+                frozenset({"CONTAINER_REF"}),
+            )
+        },
+        retry_budget=build_default_run_budget(),
+        validated_container_refs={"calendar-availability": ["calendar-1"]},
+    )
+
+    assert llm_invoked is True
+    assert len(runtime.calls) == 2
+    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+    search_spec = result["route_queries"][0]["search_spec"]
+    assert search_spec is not None
+    assert search_spec["mode"] == "INITIAL"
+    assert {constraint["kind"] for constraint in search_spec["constraints"]} == {
+        "CONTAINER_REF",
+        "TEMPORAL_RANGE",
+    }
 
 
 def test_exact_calendar_create_precondition__materializes_all_policy_reads__without_llm() -> None:

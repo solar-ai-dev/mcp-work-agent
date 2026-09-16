@@ -14,7 +14,10 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 
-from .contracts.request_intent import REQUEST_RESOURCE_TYPES
+from .contracts.request_intent import (
+    REQUEST_RESOURCE_TYPES,
+    RequestGoalSemanticValidationError,
+)
 from .contracts.source_dependency_decision import (
     SourceDependencyCandidateV1,
     SourceDependencyDecisionCandidateV1,
@@ -86,6 +89,18 @@ _OWNED_FACT_KINDS_BY_RESOURCE: dict[str, tuple[str, ...]] = {
 }
 
 
+class SourceDependencyContradictionError(RequestGoalSemanticValidationError):
+    """Carry one all-not-required contradiction into semantic revision."""
+
+    def __init__(self, *, candidate_output: object) -> None:
+        super().__init__(
+            "answer goal with explicit source-search meaning cannot omit every source",
+            reason_code="INTENT_SOURCE_DEPENDENCY_CONTRADICTION",
+            affected_field_paths=("$.source_dependencies",),
+        )
+        self.candidate_output = deepcopy(candidate_output)
+
+
 def resource_identity_fact_kind(resource_type: str) -> str | None:
     """Return the existing candidate metadata's own-Resource identity fact."""
 
@@ -147,7 +162,12 @@ def build_source_dependency_output_schema(
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["resource_type", "dependency", "required_information"],
+            "required": [
+                "resource_type",
+                "dependency",
+                "required_information",
+                "target_scope",
+            ],
             "properties": {
                 "resource_type": {"enum": resource_types},
                 "dependency": {"const": "SOURCE_REQUIRED"},
@@ -158,6 +178,7 @@ def build_source_dependency_output_schema(
                     "uniqueItems": True,
                     "items": dict(_NONEMPTY_INFORMATION_SCHEMA),
                 },
+                "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
             },
         },
     ]
@@ -193,7 +214,7 @@ def build_source_dependency_output_schema(
         "allOf": exact_resource_constraints,
     }
     return OutputSchemaDefinition(
-        schema_version="request-source-dependency-decision-v2",
+        schema_version="request-source-dependency-decision-v3",
         json_schema={
             "type": "object",
             "additionalProperties": False,
@@ -281,10 +302,36 @@ def validate_source_dependency_candidate(
     return cast(SourceDependencyDecisionCandidateV1, deepcopy(value))
 
 
+def validate_source_dependency_semantics(
+    value: SourceDependencyDecisionCandidateV1,
+    *,
+    goal_candidate: Mapping[str, object],
+    has_output_responsibilities: bool,
+) -> SourceDependencyDecisionCandidateV1:
+    """Reject an answer-only source decision that contradicts typed search meaning."""
+
+    if has_output_responsibilities or any(
+        decision["dependency"] == "SOURCE_REQUIRED"
+        for decision in value["source_dependencies"]
+    ):
+        return value
+    constraints = goal_candidate.get("constraints")
+    if not isinstance(constraints, Mapping):
+        return value
+    if not any(
+        isinstance(constraints.get(field), list) and bool(constraints[field])
+        for field in ("search_terms", "business_concepts")
+    ):
+        return value
+    raise SourceDependencyContradictionError(candidate_output=value)
+
+
 __all__ = [
+    "SourceDependencyContradictionError",
     "build_source_dependency_candidates",
     "build_source_dependency_output_schema",
     "identify_source_dependencies",
     "resource_identity_fact_kind",
     "validate_source_dependency_candidate",
+    "validate_source_dependency_semantics",
 ]

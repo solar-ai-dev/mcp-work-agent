@@ -41,11 +41,11 @@ _INSTALLER_GENERATED_FILES = {"unins000.dat", "unins000.exe"}
 # Canonical production trust root. The matching private key is release-operator
 # owned and must never be stored in the repository or distributed application.
 EMBEDDED_RELEASE_PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEACI9ODzz4QkGyhUSdKFFeVRWvlq9tT5h6segP6i07dog=
+MCowBQYDK2VwAyEAzufMX8fOtlBO+QK9WFzpDnnfPGYoCU/C3FVQ47tcG4Q=
 -----END PUBLIC KEY-----
 """
 EMBEDDED_RELEASE_PUBLIC_KEY_SHA256 = (
-    "a38089529f535f281192edaad5d528fa87f031c6ab2756dadac9bf7ba0a0b300"
+    "7fdadc5b87b168a5ad3e1ac13fd53b51f051b7ea67aa0883824aa20a9fbef2ec"
 )
 
 

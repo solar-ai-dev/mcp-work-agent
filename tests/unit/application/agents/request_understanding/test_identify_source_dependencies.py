@@ -17,7 +17,10 @@ from google_work_agent.ports.llm.output_schema_validation import validate_output
 _CANDIDATES = source_dependencies.build_source_dependency_candidates(load_signed_tool_registry())
 
 
-def _decisions(*, sources: dict[str, list[str]] | None = None) -> dict[str, object]:
+def _decisions(
+    *,
+    sources: dict[str, tuple[list[str], str]] | None = None,
+) -> dict[str, object]:
     sources = sources or {}
     return {
         "source_dependencies": [
@@ -25,7 +28,8 @@ def _decisions(*, sources: dict[str, list[str]] | None = None) -> dict[str, obje
                 {
                     "resource_type": candidate["resource_type"],
                     "dependency": "SOURCE_REQUIRED",
-                    "required_information": sources[candidate["resource_type"]],
+                    "required_information": sources[candidate["resource_type"]][0],
+                    "target_scope": sources[candidate["resource_type"]][1],
                 }
                 if candidate["resource_type"] in sources
                 else {
@@ -98,7 +102,12 @@ def test_source_schema__with_non_exact_or_invalid_decisions__rejects_candidate(
 
 
 def test_source_validation__with_cross_resource_request__preserves_dependencies() -> None:
-    candidate = _decisions(sources={"TASK": ["준비 상황"], "CALENDAR_EVENT": ["인쇄소 일정"]})
+    candidate = _decisions(
+        sources={
+            "TASK": (["준비 상황"], "CRITERIA"),
+            "CALENDAR_EVENT": (["인쇄소 일정"], "CRITERIA"),
+        }
+    )
 
     assert (
         source_dependencies.validate_source_dependency_candidate(
@@ -109,8 +118,48 @@ def test_source_validation__with_cross_resource_request__preserves_dependencies(
     )
 
 
+def test_source_validation__singular_event__preserves_requested_facts_without_identity() -> None:
+    candidate = _decisions(
+        sources={"CALENDAR_EVENT": (["start", "end"], "SINGULAR")}
+    )
+
+    assert not validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+    validated = source_dependencies.validate_source_dependency_candidate(
+        candidate,
+        source_candidates=_CANDIDATES,
+    )
+    by_resource = {
+        decision["resource_type"]: decision for decision in validated["source_dependencies"]
+    }
+    assert by_resource["CALENDAR_EVENT"]["required_information"] == [
+        "start",
+        "end",
+    ]
+    assert by_resource["CALENDAR_EVENT"]["target_scope"] == "SINGULAR"
+    assert by_resource["CALENDAR"]["dependency"] == "SOURCE_NOT_REQUIRED"
+
+
+def test_source_validation__criteria_event__allows_fact_without_identity() -> None:
+    candidate = _decisions(sources={"CALENDAR_EVENT": (["status"], "CRITERIA")})
+
+    assert not validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+    assert (
+        source_dependencies.validate_source_dependency_candidate(
+            candidate,
+            source_candidates=_CANDIDATES,
+        )
+        == candidate
+    )
+
+
 def test_source_schema__source_required__requires_non_empty_information() -> None:
-    candidate = _decisions(sources={"TASK": []})
+    candidate = _decisions(sources={"TASK": ([], "CRITERIA")})
 
     assert validate_output_schema(
         candidate,
@@ -127,6 +176,56 @@ def test_source_schema__general_request__allows_no_existing_source() -> None:
     )
 
 
+def test_source_semantics__source_free_answer__allows_all_not_required() -> None:
+    candidate = source_dependencies.validate_source_dependency_candidate(
+        _decisions(),
+        source_candidates=_CANDIDATES,
+    )
+
+    assert source_dependencies.validate_source_dependency_semantics(
+        candidate,
+        goal_candidate={"constraints": {"search_terms": [], "business_concepts": []}},
+        has_output_responsibilities=False,
+    ) == _decisions()
+
+
+def test_source_semantics__standalone_output__does_not_force_retrieval() -> None:
+    candidate = source_dependencies.validate_source_dependency_candidate(
+        _decisions(),
+        source_candidates=_CANDIDATES,
+    )
+
+    assert source_dependencies.validate_source_dependency_semantics(
+        candidate,
+        goal_candidate={"constraints": {"search_terms": ["Project Anchor"]}},
+        has_output_responsibilities=True,
+    ) == _decisions()
+
+
+def test_source_semantics__external_answer_facts__reject_all_not_required() -> None:
+    candidate = source_dependencies.validate_source_dependency_candidate(
+        _decisions(),
+        source_candidates=_CANDIDATES,
+    )
+
+    with pytest.raises(
+        source_dependencies.SourceDependencyContradictionError
+    ) as raised:
+        source_dependencies.validate_source_dependency_semantics(
+            candidate,
+            goal_candidate={
+                "constraints": {
+                    "search_terms": ["Atlas"],
+                    "business_concepts": ["최종 출고일", "담당자"],
+                }
+            },
+            has_output_responsibilities=False,
+        )
+
+    assert raised.value.reason_code == "INTENT_SOURCE_DEPENDENCY_CONTRADICTION"
+    assert raised.value.candidate_output == _decisions()
+
+
 def test_source_schema__confirmed_target__requires_a_source_without_choosing_its_type() -> None:
     schema = source_dependencies.build_source_dependency_output_schema(
         _CANDIDATES,
@@ -135,10 +234,10 @@ def test_source_schema__confirmed_target__requires_a_source_without_choosing_its
 
     assert validate_output_schema(_decisions(), schema)
     assert not validate_output_schema(
-        _decisions(sources={"CALENDAR_EVENT": ["event_identity"]}), schema
+        _decisions(sources={"CALENDAR_EVENT": (["start", "end"], "SINGULAR")}), schema
     )
     assert not validate_output_schema(
-        _decisions(sources={"TASK": ["task_identity"]}), schema
+        _decisions(sources={"TASK": (["completion_status"], "SINGULAR")}), schema
     )
 
 
@@ -158,7 +257,9 @@ def test_source_validation__distinct_resource_fact_owner__is_preserved(
     excluded_related_resource: str,
     required_information: str,
 ) -> None:
-    candidate = _decisions(sources={required_resource: [required_information]})
+    candidate = _decisions(
+        sources={required_resource: ([required_information], "CRITERIA")}
+    )
 
     validated = source_dependencies.validate_source_dependency_candidate(
         candidate,
@@ -170,3 +271,38 @@ def test_source_validation__distinct_resource_fact_owner__is_preserved(
 
     assert by_resource[required_resource]["dependency"] == "SOURCE_REQUIRED"
     assert by_resource[excluded_related_resource]["dependency"] == "SOURCE_NOT_REQUIRED"
+
+
+@pytest.mark.parametrize("target_scope", ["SINGULAR", "CRITERIA"])
+def test_source_schema__source_required__accepts_known_target_scope(
+    target_scope: str,
+) -> None:
+    candidate = _decisions(sources={"TASK": (["completion_status"], target_scope)})
+
+    assert not validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )
+
+
+def test_source_schema__source_required__rejects_missing_or_unknown_target_scope() -> None:
+    candidate = _decisions(sources={"TASK": (["completion_status"], "SINGULAR")})
+    decisions = cast(list[dict[str, object]], candidate["source_dependencies"])
+    required = next(item for item in decisions if item["dependency"] == "SOURCE_REQUIRED")
+    required.pop("target_scope")
+    schema = source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema
+    assert validate_output_schema(candidate, schema)
+
+    required["target_scope"] = "UNKNOWN"
+    assert validate_output_schema(candidate, schema)
+
+
+def test_source_schema__source_not_required__rejects_target_scope() -> None:
+    candidate = _decisions()
+    decisions = cast(list[dict[str, object]], candidate["source_dependencies"])
+    decisions[0]["target_scope"] = "CRITERIA"
+
+    assert validate_output_schema(
+        candidate,
+        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+    )

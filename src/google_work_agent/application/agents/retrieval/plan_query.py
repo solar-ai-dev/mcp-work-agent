@@ -34,6 +34,7 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
     SourceFetchPlanV1,
     route_operation_tool_id,
     status_scope_values,
+    validate_participant_identity,
     validate_retrieval_query_plan_v2,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan_schema import (
@@ -47,6 +48,9 @@ from google_work_agent.application.agents.retrieval.plan_candidate_detail import
     plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
+from google_work_agent.application.agents.retrieval.resolve_calendar_query_periods import (
+    resolve_calendar_query_periods,
+)
 from google_work_agent.application.agents.retrieval.resolve_gmail_planner_constraint_kinds import (
     resolve_gmail_planner_constraint_kinds,
 )
@@ -499,6 +503,8 @@ def _exact_task_calendar_source_plan(
         RetrievalQueryPlanV2,
         {"schema_version": 2, "route_queries": route_queries},
     )
+
+
 def deterministic_query_plan(
     *,
     prompt_input: Mapping[str, object],
@@ -827,6 +833,29 @@ def plan_query(
         }
     concepts_by_route = resolve_requested_gmail_concepts(prompt_input, frozen_routes)
     planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = dict(supported_kinds)
+    keyword_anchors, participant_anchors, _ = _trusted_query_anchors(prompt_input)
+    if not is_followup and (keyword_anchors or participant_anchors):
+        planner_kinds = {
+            route["route_id"]: (
+                frozenset(planner_kinds[route["route_id"]]) - {"CONCEPT"}
+                if route["resource_type"]
+                in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                else planner_kinds[route["route_id"]]
+            )
+            for route in frozen_routes
+        }
+    requires_evidence_pivot = _requires_observed_evidence_pivot(prompt_input)
+    if requires_evidence_pivot:
+        planner_kinds = {
+            route["route_id"]: (
+                frozenset(planner_kinds[route["route_id"]]) - {"CONCEPT"}
+                if route["resource_type"]
+                in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                and "KEYWORD" in planner_kinds[route["route_id"]]
+                else planner_kinds[route["route_id"]]
+            )
+            for route in frozen_routes
+        }
     next_page_route_ids = _next_page_route_ids(prompt_input)
     route_operations = _route_operations(
         frozen_routes,
@@ -861,6 +890,31 @@ def plan_query(
         supported_kinds=planner_kinds,
         route_operations=route_operations,
     )
+    gmail_temporal_constraints = resolve_gmail_query_periods(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        now_ms=now_ms,
+        timezone=timezone,
+    )
+    calendar_temporal_constraints = resolve_calendar_query_periods(
+        prompt_input=prompt_input,
+        frozen_routes=frozen_routes,
+        now_ms=now_ms,
+        timezone=timezone,
+    )
+    resolved_temporal_constraints = {
+        **gmail_temporal_constraints,
+        **calendar_temporal_constraints,
+    }
+    if calendar_temporal_constraints:
+        planner_input["required_route_constraints"] = [
+            {
+                "route_id": route_id,
+                "applies_to": "INITIAL_SEARCH",
+                "constraints": [constraint],
+            }
+            for route_id, constraint in calendar_temporal_constraints.items()
+        ]
     bounded_output_schema = bind_retrieval_query_plan_output_schema(
         base_schema=output_schema,
         route_ids=supported_kinds,
@@ -869,6 +923,11 @@ def plan_query(
             route["route_id"]: status_scope_values(route) for route in frozen_routes
         },
         supported_constraint_kinds=planner_kinds,
+        required_constraint_kinds={
+            route_id: route_policies[route_id].required_kinds
+            for route_id in calendar_temporal_constraints
+            if route_id in route_policies
+        },
         validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         detail_candidate_refs_by_route=_detail_candidate_refs_by_route(
@@ -887,13 +946,10 @@ def plan_query(
             for route in frozen_routes
             if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
         },
+        initial_gmail_keyword_terms=keyword_anchors or None,
         allowed_participant_identities=resolve_request_participants(prompt_input),
-        resolved_temporal_constraints=resolve_gmail_query_periods(
-            prompt_input=prompt_input,
-            frozen_routes=frozen_routes,
-            now_ms=now_ms,
-            timezone=timezone,
-        ),
+        resolved_temporal_constraints=resolved_temporal_constraints,
+        required_temporal_route_ids=calendar_temporal_constraints,
     )
     try:
         deterministic_plan = deterministic_query_plan(
@@ -925,7 +981,11 @@ def plan_query(
             )
             validation_stage = "ROUND_VALIDATOR"
             validated_deterministic = _validate_required_followup_route_coverage(
-                validated_deterministic,
+                _validate_initial_user_anchor_preservation(
+                    validated_deterministic,
+                    prompt_input=prompt_input,
+                    frozen_routes=frozen_routes,
+                ),
                 required_route_ids=required_followup_route_ids,
             )
             validation_stage = "BUILD_QUERY"
@@ -1014,7 +1074,11 @@ def plan_query(
             detail_candidate_refs=detail_candidate_refs,
         )
         validation_stage = "ROUND_VALIDATOR"
-        validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        validated_round = _validate_initial_user_anchor_preservation(
+            _validate_query_plan_round(validated, is_followup=is_followup),
+            prompt_input=prompt_input,
+            frozen_routes=frozen_routes,
+        )
         validated_round = _validate_required_followup_route_coverage(
             validated_round,
             required_route_ids=required_followup_route_ids,
@@ -1110,6 +1174,144 @@ def _validate_query_plan_round(
                 "one search hypothesis allows at most 3 manifestations"
             )
     return plan
+
+
+_USER_QUERY_ANCHOR_FIELDS = frozenset(
+    {
+        "search_terms",
+        "subject",
+        "search_criteria_subject",
+        "sender",
+        "sender_email",
+        "from",
+        "search_criteria_sender",
+        "recipient",
+        "recipient_email",
+        "to",
+        "search_criteria_recipient",
+        "person",
+    }
+)
+
+
+def _validate_initial_user_anchor_preservation(
+    plan: RetrievalQueryPlanV2,
+    *,
+    prompt_input: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+) -> RetrievalQueryPlanV2:
+    """Keep current-Run user anchors distinct from planner manifestations."""
+
+    if "current_round_no" in prompt_input:
+        return plan
+    keyword_anchors, participant_anchors, has_business_concept = _trusted_query_anchors(
+        prompt_input
+    )
+    route_resources = {route["route_id"]: route["resource_type"] for route in frozen_routes}
+    for query in plan["route_queries"]:
+        if (
+            query["operation"] != "SEARCH"
+            or route_resources.get(query["route_id"])
+            not in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+            or query["search_spec"] is None
+            or query["search_spec"]["mode"] != "INITIAL"
+        ):
+            continue
+        constraints = query["search_spec"]["constraints"]
+        keyword_terms = [
+            term
+            for constraint in constraints
+            if constraint["kind"] == "KEYWORD"
+            for term in constraint["terms"]
+        ]
+        participant_identities = [
+            participant["identity"]
+            for constraint in constraints
+            if constraint["kind"] == "PARTICIPANT"
+            for participant in constraint["participants"]
+        ]
+        if not keyword_anchors and not participant_anchors:
+            if has_business_concept and (keyword_terms or participant_identities):
+                raise _missing_user_query_anchor(
+                    "concept-only Gmail search invents an exact user anchor"
+                )
+            continue
+        if any(
+            not any(_source_contains_term(anchor, term) for anchor in keyword_anchors)
+            for term in keyword_terms
+        ) or any(
+            identity.casefold() not in participant_anchors
+            for identity in participant_identities
+        ):
+            raise _missing_user_query_anchor(
+                "Gmail search contains an exact anchor absent from current-Run provenance"
+            )
+        if not keyword_terms and not participant_identities:
+            raise _missing_user_query_anchor(
+                "Gmail search omits every explicit current-Run user anchor"
+            )
+    return plan
+
+
+def _requires_observed_evidence_pivot(prompt_input: Mapping[str, object]) -> bool:
+    observed = prompt_input.get("observed_evidence")
+    return (
+        isinstance(observed, list)
+        and bool(observed)
+        and all(isinstance(item, Mapping) and item.get("role") == "CONTEXT" for item in observed)
+    )
+
+
+def _trusted_query_anchors(
+    prompt_input: Mapping[str, object],
+) -> tuple[tuple[str, ...], frozenset[str], bool]:
+    intent = prompt_input.get("request_intent")
+    constraints = intent.get("constraints") if isinstance(intent, Mapping) else None
+    if not isinstance(constraints, list):
+        return (), frozenset(), False
+    keywords: list[str] = []
+    participants: set[str] = set()
+    has_business_concept = False
+    for constraint in constraints:
+        if not isinstance(constraint, Mapping):
+            continue
+        field = str(constraint.get("field", "")).strip().lower()
+        if field == "business_concepts" and constraint.get("value"):
+            has_business_concept = True
+        if field not in _USER_QUERY_ANCHOR_FIELDS:
+            continue
+        provenance = constraint.get("provenance")
+        if not isinstance(provenance, Mapping) or provenance.get("source") not in {
+            "USER_REQUEST",
+            "CONFIRMATION_RESPONSE",
+        }:
+            continue
+        raw_value = constraint.get("value")
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                continue
+            try:
+                participants.add(validate_participant_identity(value).casefold())
+            except RetrievalV2ValidationError:
+                keywords.append(value.strip())
+    return tuple(dict.fromkeys(keywords)), frozenset(participants), has_business_concept
+
+
+def _source_contains_term(source: str, term: str) -> bool:
+    normalized_source = " ".join(source.split()).casefold()
+    normalized_term = " ".join(term.split()).casefold()
+    return bool(normalized_term) and normalized_term in normalized_source
+
+
+def _missing_user_query_anchor(message: str) -> RetrievalV2ValidationError:
+    return RetrievalV2ValidationError(
+        message,
+        reason_code="QUERY_USER_CONSTRAINT_MISSING",
+        affected_field_paths=(
+            "$.route_queries[].search_spec.constraints",
+        ),
+    )
 
 
 def _required_followup_route_ids(
@@ -1358,6 +1560,11 @@ def _revise_plan_once(
         )
         validation_stage = "ROUND_VALIDATOR"
         validated_round = _validate_query_plan_round(validated, is_followup=is_followup)
+        validated_round = _validate_initial_user_anchor_preservation(
+            validated_round,
+            prompt_input=prompt_input,
+            frozen_routes=frozen_routes,
+        )
         validated_round = _validate_required_followup_route_coverage(
             validated_round,
             required_route_ids=required_followup_route_ids,
@@ -1468,14 +1675,16 @@ def has_retrieval_followup_path(
 
 def initial_retrieval_planner_input(
     *,
+    user_request: str,
     request_intent: RequestIntentV2,
     input_routes: Sequence[InputToolRouteV1],
     retrieval_budget: RetrievalBudget,
     validated_resource_refs: Mapping[str, Sequence[str]] | None = None,
     validated_container_refs: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, object]:
-    """Project exactly the initial-round V2 input contract."""
+    """Project the initial-round planner input before route constraint binding."""
     return {
+        "user_request": user_request,
         "request_intent": request_intent,
         "input_routes": [
             _prompt_route(
@@ -1485,12 +1694,40 @@ def initial_retrieval_planner_input(
             )
             for route in input_routes
         ],
+        "required_user_anchors": _required_user_anchor_projection(
+            request_intent=request_intent,
+            input_routes=input_routes,
+        ),
         "retrieval_budget": retrieval_budget.as_remaining(),
+    }
+
+
+def _required_user_anchor_projection(
+    *,
+    request_intent: RequestIntentV2,
+    input_routes: Sequence[InputToolRouteV1],
+) -> dict[str, object]:
+    """Bind trusted exact user anchors to the Gmail routes that consume them."""
+
+    keyword_terms, participant_identities, _ = _trusted_query_anchors(
+        {"request_intent": request_intent}
+    )
+    route_ids = [
+        route["route_id"]
+        for route in input_routes
+        if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+    ]
+    return {
+        "applies_to": "INITIAL_GMAIL_SEARCH",
+        "route_ids": route_ids,
+        "keyword_terms": list(keyword_terms),
+        "participant_identities": sorted(participant_identities),
     }
 
 
 def followup_retrieval_planner_input(
     *,
+    user_request: str,
     request_intent: RequestIntentV2,
     input_routes: Sequence[InputToolRouteV1],
     retrieval_budget: RetrievalBudget,
@@ -1500,6 +1737,7 @@ def followup_retrieval_planner_input(
 ) -> dict[str, object]:
     """Add only the bounded follow-up metadata permitted by the V2 contract."""
     result = initial_retrieval_planner_input(
+        user_request=user_request,
         request_intent=request_intent,
         input_routes=input_routes,
         retrieval_budget=retrieval_budget,
@@ -1511,7 +1749,10 @@ def followup_retrieval_planner_input(
         "prior_query_attempts",
         "unresolved_sufficiency_issues",
         "read_result_summaries",
+        "observed_evidence",
     ):
+        if field == "observed_evidence" and field not in followup:
+            continue
         if field not in followup:
             raise ValueError(f"follow-up retrieval planner input is missing {field}")
         result[field] = followup[field]

@@ -509,6 +509,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMErrorCode,
     LLMInvocationError,
     RuntimePolicy,
+    StructuredLLMProvider,
 )
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
@@ -1081,6 +1082,7 @@ class ProductionRuntimeConfig:
     langsmith_trace_binding: tuple[tuple[str, str], ...] = ()
     development_sampling_temperature: float | None = None
     development_sampling_seed: int | None = None
+    development_runtime_bindings: DevelopmentRuntimeBindings | None = None
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = ()
     code_signature_verified_paths: frozenset[str] = frozenset()
 
@@ -1105,6 +1107,7 @@ class ProductionRuntimeConfig:
                 or self.langsmith_trace_binding
                 or self.development_sampling_temperature is not None
                 or self.development_sampling_seed is not None
+                or self.development_runtime_bindings is not None
             ):
                 raise ValueError("signed runtime cannot enable development-only controls")
             if self.github_oauth_client_id is None or not self.github_oauth_client_id.strip():
@@ -1158,6 +1161,7 @@ class ProductionRuntimeConfig:
         langsmith_trace_binding: Mapping[str, str] | None = None,
         sampling_temperature: float | None = None,
         sampling_seed: int | None = None,
+        runtime_bindings: DevelopmentRuntimeBindings | None = None,
     ) -> ProductionRuntimeConfig:
         """Create the only explicit non-installed configuration mode."""
 
@@ -1186,6 +1190,7 @@ class ProductionRuntimeConfig:
             langsmith_trace_binding=tuple(sorted((langsmith_trace_binding or {}).items())),
             development_sampling_temperature=sampling_temperature,
             development_sampling_seed=sampling_seed,
+            development_runtime_bindings=runtime_bindings,
         )
 
     @classmethod
@@ -1808,6 +1813,17 @@ class CoreInitializationError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class DevelopmentRuntimeBindings:
+    """Generic development-only dependency seams around real Product ports."""
+
+    clock: ClockPort | None = None
+    connector_read_decorator: Callable[[ConnectorReadPort], ConnectorReadPort] | None = None
+    connector_write_decorator: Callable[[ConnectorWritePort], ConnectorWritePort] | None = None
+    mcp_client_decorator: Callable[[MCPClientPort], MCPClientPort] | None = None
+    llm_provider_decorator: Callable[[StructuredLLMProvider], StructuredLLMProvider] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SafeModeRecoveryBindings:
     """Bounded operational handlers available while the Product core is offline."""
 
@@ -2294,6 +2310,7 @@ def build_production_runtime(
     langsmith_trace_binding: tuple[tuple[str, str], ...] = (),
     development_sampling_temperature: float | None = None,
     development_sampling_seed: int | None = None,
+    development_runtime_bindings: DevelopmentRuntimeBindings | None = None,
     verified_release_files: tuple[_VerifiedReleaseFile, ...] = (),
     code_signature_verified_paths: frozenset[str] = frozenset(),
     request_process_exit: Callable[[], None] | None = None,
@@ -2308,6 +2325,7 @@ def build_production_runtime(
         or langsmith_trace_binding
         or development_sampling_temperature is not None
         or development_sampling_seed is not None
+        or development_runtime_bindings is not None
     ):
         raise CoreInitializationError("EXTERNAL_DEVELOPMENT_OBSERVABILITY_FORBIDDEN")
     langsmith_callback: LangSmithWorkflowTraceCallback | None = None
@@ -2399,7 +2417,12 @@ def build_production_runtime(
             install_root=install_root,
             release_files=release_files,
         )
-    clock = SystemClockAdapter()
+    clock = (
+        development_runtime_bindings.clock
+        if development_runtime_bindings is not None
+        and development_runtime_bindings.clock is not None
+        else SystemClockAdapter()
+    )
     id_generator = Uuid4Adapter()
     service_instance_id = service_instance_id or f"dev-{uuid.uuid4()}"
     attachment_staging_dir = root / "cache" / "attachments"
@@ -2539,6 +2562,11 @@ def build_production_runtime(
             prompt_execution_scope=prompt_execution_scope,
             sampling_temperature=development_sampling_temperature,
             sampling_seed=development_sampling_seed,
+            provider_decorator=(
+                None
+                if development_runtime_bindings is None
+                else development_runtime_bindings.llm_provider_decorator
+            ),
         )
     except RuntimeError as error:
         connector_registry.close_all()
@@ -2566,24 +2594,46 @@ def build_production_runtime(
     )
     prompt_active = prompt_registry.product_release_ready
     workflow_runtime: Any
-    connector_reader = CircuitProtectedConnectorReadPort(
-        delegate=McpConnectorReadAdapter(
-            runtime_registry=connector_bundle.runtime_registry,
-            mcp_client=google_connector.client,
-            external_call_trace=langsmith_callback,
-            run_context_provider=current_provider_dispatch_run_id,
-            internal_bindings=(
-                google_workspace_internal_read_binding("search_by_recovery_fingerprint"),
-                github_internal_read_binding("search_by_recovery_fingerprint"),
-                github_internal_read_binding("github.repositories.list"),
-            ),
+    mcp_client: MCPClientPort = google_connector.client
+    if (
+        development_runtime_bindings is not None
+        and development_runtime_bindings.mcp_client_decorator is not None
+    ):
+        mcp_client = development_runtime_bindings.mcp_client_decorator(mcp_client)
+    connector_read_delegate: ConnectorReadPort = McpConnectorReadAdapter(
+        runtime_registry=connector_bundle.runtime_registry,
+        mcp_client=mcp_client,
+        external_call_trace=langsmith_callback,
+        run_context_provider=current_provider_dispatch_run_id,
+        internal_bindings=(
+            google_workspace_internal_read_binding("search_by_recovery_fingerprint"),
+            github_internal_read_binding("search_by_recovery_fingerprint"),
+            github_internal_read_binding("github.repositories.list"),
         ),
+    )
+    if (
+        development_runtime_bindings is not None
+        and development_runtime_bindings.connector_read_decorator is not None
+    ):
+        connector_read_delegate = development_runtime_bindings.connector_read_decorator(
+            connector_read_delegate
+        )
+    connector_reader = CircuitProtectedConnectorReadPort(
+        delegate=connector_read_delegate,
         check=check_component_circuit,
         record=record_component_call_result,
         now_ms=clock.now_ms,
     )
+    connector_write_delegate: ConnectorWritePort = google_connector.write_port
+    if (
+        development_runtime_bindings is not None
+        and development_runtime_bindings.connector_write_decorator is not None
+    ):
+        connector_write_delegate = development_runtime_bindings.connector_write_decorator(
+            connector_write_delegate
+        )
     connector_writer = CircuitProtectedConnectorWritePort(
-        delegate=google_connector.write_port,
+        delegate=connector_write_delegate,
         check=check_component_circuit,
         record=record_component_call_result,
         now_ms=clock.now_ms,
@@ -3551,6 +3601,7 @@ def _build_llm_runtime(
     prompt_execution_scope: PromptExecutionScope,
     sampling_temperature: float | None = None,
     sampling_seed: int | None = None,
+    provider_decorator: Callable[[StructuredLLMProvider], StructuredLLMProvider] | None = None,
     keyring_store: SecretStorePort | None = None,
 ) -> tuple[
     StructuredInferenceRuntimeRouter,
@@ -3609,27 +3660,20 @@ def _build_llm_runtime(
         api_provider_name="gemini",
         local_model_selection=local_model_selection,
     )
-    structured_inference = StructuredInferenceRuntimeRouter(
-        before_provider_dispatch=account_provider_dispatch,
-        run_context_provider=current_provider_dispatch_run_id,
-        settings_service=settings_service.get_settings,
-        runtime_selection=runtime_selection,
-        status_service=status_service,
-        credential_service=credential_service,
-        hardware_probe=hardware_probe,
-        api_provider_name="gemini",
-        api_provider=GeminiStructuredInferenceAdapter(
-            provider_name="gemini",
-            transport=gemini_transport,
-            model=DEFAULT_GEMINI_MODEL_ID,
-            assemble_instruction_text=lambda prompt_ref, prompt_input: assemble_prompt(
-                prompt_ref,
-                prompt_input,
-                registry=prompt_registry,
-                execution_scope=prompt_execution_scope,
-            ),
+    api_provider: StructuredLLMProvider = GeminiStructuredInferenceAdapter(
+        provider_name="gemini",
+        transport=gemini_transport,
+        model=DEFAULT_GEMINI_MODEL_ID,
+        assemble_instruction_text=lambda prompt_ref, prompt_input: assemble_prompt(
+            prompt_ref,
+            prompt_input,
+            registry=prompt_registry,
+            execution_scope=prompt_execution_scope,
         ),
-        ollama_provider_factory=lambda model: OllamaStructuredInferenceAdapter(
+    )
+
+    def ollama_provider_factory(model: ApprovedModelInfo) -> StructuredLLMProvider:
+        provider: StructuredLLMProvider = OllamaStructuredInferenceAdapter(
             provider_name="ollama",
             transport=ollama_transport,
             endpoint=runtime_selection.ollama_endpoint,
@@ -3640,7 +3684,23 @@ def _build_llm_runtime(
                 registry=prompt_registry,
                 execution_scope=prompt_execution_scope,
             ),
-        ),
+        )
+        return provider if provider_decorator is None else provider_decorator(provider)
+
+    if provider_decorator is not None:
+        api_provider = provider_decorator(api_provider)
+
+    structured_inference = StructuredInferenceRuntimeRouter(
+        before_provider_dispatch=account_provider_dispatch,
+        run_context_provider=current_provider_dispatch_run_id,
+        settings_service=settings_service.get_settings,
+        runtime_selection=runtime_selection,
+        status_service=status_service,
+        credential_service=credential_service,
+        hardware_probe=hardware_probe,
+        api_provider_name="gemini",
+        api_provider=api_provider,
+        ollama_provider_factory=ollama_provider_factory,
         runtime_policy=runtime_policy,
         schema_repairer=PromptRepairSchemaRepairer(
             manifest_path=prompt_manifest_path,

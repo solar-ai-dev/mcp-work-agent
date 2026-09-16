@@ -16,7 +16,6 @@ export function RunProgress({ snapshot, busy, interactive = true, onResume }: {
   return (
     <section className="agent-progress" aria-label="에이전트 진행">
       <div className="agent-progress-lines" aria-live="polite" key={snapshot.run.run_id}>
-        {rows.length === 0 ? <p>저장된 단계 이력이 없습니다. 현재 상태와 최종 답변을 확인해 주세요.</p> : null}
         {rows.map((row) => {
           const visibleDetails = row.details.filter((detail) => detail.display_text);
           return <details className={`agent-activity-row${row.state === "RUNNING" ? " agent-status-line--active" : ""}`} key={row.execution_id}>

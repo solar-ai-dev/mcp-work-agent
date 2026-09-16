@@ -65,6 +65,7 @@ _ALLOWED_PROJECTION_KEYS = frozenset(
         "effect_prohibitions",
         "prohibition",
         "dependency",
+        "target_scope",
         "read_tool_ids",
         "owned_fact_kinds",
         "allowed_output_effects",
@@ -345,7 +346,7 @@ def _project_source_dependency_candidate(
         projected: dict[str, object] = {
             "required_information_count": _count(decision.get("required_information"))
         }
-        for name in ("resource_type", "dependency"):
+        for name in ("resource_type", "dependency", "target_scope"):
             _copy_safe_scalar(decision, projected, name)
         items.append(projected)
     return {
@@ -767,7 +768,8 @@ def _project_source_reads(value: object) -> dict[str, object]:
         projected: dict[str, object] = {
             "required_information_count": _count(item.get("required_information"))
         }
-        _copy_safe_scalar(item, projected, "resource_type")
+        for name in ("resource_type", "target_scope"):
+            _copy_safe_scalar(item, projected, name)
         items.append(projected)
     return {"count": len(sequence), "items": items}
 

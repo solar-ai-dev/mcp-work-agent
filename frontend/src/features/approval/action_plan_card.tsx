@@ -361,11 +361,18 @@ function formatCalendarSchedule(start: string, end: string): string {
   const date = new Intl.DateTimeFormat("ko-KR", {
     timeZone: "Asia/Seoul", year: "numeric", month: "long", day: "numeric", weekday: "short",
   }).format(startDate);
-  const time = new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul", hour: "numeric", minute: "2-digit", hour12: true,
-  });
-  if (!endDate || Number.isNaN(endDate.getTime())) return `${date} ${time.format(startDate)}`;
-  return `${date} ${time.format(startDate)} ~ ${time.format(endDate)}`;
+  if (!endDate || Number.isNaN(endDate.getTime())) return `${date} ${formatCalendarTime(startDate)}`;
+  return `${date} ${formatCalendarTime(startDate)} ~ ${formatCalendarTime(endDate)}`;
+}
+
+function formatCalendarTime(value: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(value);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  if (!Number.isInteger(hour) || minute === undefined) return "";
+  return `${hour < 12 ? "오전" : "오후"} ${hour % 12 || 12}:${minute}`;
 }
 
 function formatCalendarDate(value: string): string {

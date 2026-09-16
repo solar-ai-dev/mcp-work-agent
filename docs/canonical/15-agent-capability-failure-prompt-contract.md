@@ -58,14 +58,14 @@ Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Produ
 
 | Node·호출 상황 | 입력 | 제한 |
 | --- | --- | --- |
-| Retrieval 초기 Round Query Planner | `request_intent + input_routes + retrieval_budget` | 이 초기 입력만 받는다. |
-| Retrieval follow-up Round Query Planner | 초기 입력 + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary` | 추가 입력은 이 범위로 제한한다. |
-| Evidence Selector | `request_intent + ranked_segments` | 이 입력만 받는다. |
+| Retrieval 초기 Round Query Planner | 현재 Run `user_request + request_intent + input_routes + retrieval_budget` | 원문은 typed intent의 의미 손실을 보완하는 입력이며 별도 State·장기 권위·정책 사실로 승격하지 않는다. |
+| Retrieval follow-up Round Query Planner | 초기 입력 + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary + current-Run selected Evidence projection` | Evidence projection은 `evidence_ref + excerpt + role + resource_ref`로 제한하며 raw Provider payload가 아니다. |
+| Evidence Selector | `request_intent + ranked_segments` | 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection을 관계 문맥으로 추가한다. |
 | Work Analysis atomic node | 각 책임에 필요한 최소 Projection | facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. |
 | Planning `draft_action_objective_per_output_route` | `user_request + OutputToolRouteV1 1개 + optional work_analysis + evidence_refs` | Tool Schema를 직렬화하지 않는다. |
 | Planning `compose_arguments_per_output_route` | 같은 frozen Output Route + validated action objective + 해당 Tool Schema | Arguments 표현만 작성한다. 현재 검증된 `request_intent` 제약의 소비는 Planning ACTION 절에 둔다. |
 
-Retrieval Product Prompt는 raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.
+Retrieval Query Planner는 현재 Run의 raw `user_request`를 의미 보존 입력으로 받지만 별도 권위로 복제하지 않는다. Evidence Selector에는 raw `user_request`를 전달하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.
 
 ## 1. 기준 문서와 우선순위
 
@@ -236,7 +236,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | Operation | 처리 | 범위 |
 | --- | --- | --- |
 | `planning.choose_answer_or_action_from_route` | deterministic | 공통 |
-| `planning.outline_answer` | LLM | ANSWER |
+| `planning.outline_answer` | deterministic/LLM-conditional | Work Analysis·확인 필요가 없는 ANSWER는 현재 Run 원문 + 허용 Evidence ref로 조립. 그 외 ANSWER만 LLM |
 | `planning.compose_answer` | LLM | ANSWER |
 
 **Evidence-backed READ answer composition**
@@ -244,6 +244,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | 항목 | 처리·제한 |
 | --- | --- |
 | 답변 생성 | `compose_answer`는 사람·시간 조건이나 `PARTIAL`이라는 이유만으로 생략하지 않는다. Evidence 원문을 최종 답변으로 대체하지 않는다. 기존 결정적 resource/empty-result projection은 유지하되 의미 요약이 필요한 답변은 기존 Prompt slot을 사용한다. |
+| 개요 생성 | Work Analysis와 unresolved confirmation이 모두 없으면 원문을 단일 section으로 보존하고 현재 Evidence ref만 순서대로 전달한다. 자연어 heuristic으로 section이나 ref를 재선택하지 않는다. Work Analysis 또는 confirmation 판단이 필요하면 기존 `planning.outline_answer` Prompt slot을 유지한다. |
 | 입력 | 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 필드가 없으면 확정 사실을 추측하지 않는다. |
 | 사실 표현 | 검색 기간은 행사 날짜의 사실 근거가 아니다. 미확정 연도·인물을 확정 표현으로 승격하지 않는다. 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. |
 | 실행 경로 | 기존 RunBudget와 `Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS` 경로를 유지한다. 별도 Review 호출이나 새로운 상태를 추가하지 않는다. |
@@ -443,6 +444,7 @@ INTENT_ENTRY_MODE_WRONG
 INTENT_AMBIGUITY_MISSED
 INTENT_OVER_CONFIRMATION
 INTENT_UNSUPPORTED_SCOPE
+INTENT_SOURCE_DEPENDENCY_CONTRADICTION
 ```
 
 ### 6.3 Tool Route 실패
@@ -706,7 +708,7 @@ Current Prompt Runtime의 exact-set equality는 **`prompt_slot_id`를 set identi
 
 `SCHEMA_REPAIR`·`SEMANTIC_REVISION`은 별도 전체 Prompt source를 복제하지 않고 같은 Base Slot에 Failure/Allowed-Change block을 조립한다.
 
-Current required Product-LLM Prompt Slot set은 아래 28개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
+Current required Product-LLM Prompt Slot set은 아래 29개다. 각 slot에서 `prompt_id == prompt_slot_id`이며, 왼쪽 runtime caller mapping은 `06`의 Node Registry를 소비한다.
 
 | Runtime Node | `prompt_slot_id` (= `prompt_id`) |
 | --- | --- |
@@ -738,6 +740,7 @@ Current required Product-LLM Prompt Slot set은 아래 28개다. 각 slot에서 
 | `review.inspect_action_scope_route` | `review.inspect_action_scope_and_route` |
 | `review.inspect_constraints_policy` | `review.inspect_constraints_and_policy_summary` |
 | `review.recheck` | `review.recheck_affected_dimensions` |
+| `run.compose_terminal_response` | `run.compose_terminal_response` |
 
 Current PromptRef 집합은 current LLM responsibility에 실제 caller가 있는 Slot에서 파생한다. Active Slot 수를 별도 설계 상수로 두거나 broad predecessor ID의 수를 보존하기 위해 current 집합을 만들지 않는다. manifest/source/caller/input-contract의 exact-set equality로 계산한다.
 
@@ -756,7 +759,7 @@ review.recheck
 
 이 세 값의 **구체 Release 값은 canonical prompt source identity가 아니며** repository/source filename set을 늘리지 않는다. Current manifest는 각 required slot에 정확히 하나의 selected current version row를 가져야 한다.
 
-`prompt-runtime-input-contract-v1`은 위 28개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
+`prompt-runtime-input-contract-v1`은 위 29개 `prompt_slot_id`와 exact-set equality를 이루며, 각 row가 06/15가 허용한 current Typed Projection의 `input_schema_version`, allowlisted root fields, output schema version을 참조한다.
 
 Conversation history, previous-run artifact, raw Provider/MCP continuation, Gold/Grader metadata를 새 field로 추가할 수 없다. Repository path/loader/test realization은 16 Repository Architecture가 소유한다.
 
@@ -774,7 +777,9 @@ prompt_runtime_input_contract:
       output_schema_version: integer
 ```
 
-`entries[].prompt_slot_id`는 위 28개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+`entries[].prompt_slot_id`는 위 29개 exact set과 같고 `runtime_node_id`는 위 caller mapping과 exact match한다. Field allowlist의 semantic 내용은 06/15 current projection contract를 소비하며, 이 JSON artifact가 새로운 Product Prompt 입력 field를 발명할 수 없다.
+
+`run.compose_terminal_response`는 Main Application caller가 종료 가능한 WRITE의 `TerminalResponseInputV1`만 전달한다. 출력은 `{answer}` exact object이며 LLM이 result kind, terminal kind, 실행 여부, 승인·정책을 다시 출력하거나 판정하지 않는다. Planning ANSWER에는 이 슬롯을 호출하지 않는다. 응답 실패는 기존 결정적 formatter로 fallback하고 Local→API 자동 fallback은 허용하지 않는다.
 
 ### 9.3-B Tool Routing 선택 Prompt 입력
 
@@ -848,7 +853,7 @@ Offline candidate evaluation 전용이다. Product user runtime과 분리하고 
 | 검증 결과 | Node DEV/HOLDOUT/Safety 결과 artifact path/hash |
 | 승인 | Manifest Approval artifact path/hash |
 
-모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 28개 exact Slot의 source hash와 이 evidence chain을 검증한다.
+모든 path는 Prompt bundle 내부 상대 경로이며, manifest가 고정한 SHA-256과 실제 bytes가 일치해야 한다. Flag나 status 문자열만으로 release evidence를 주장할 수 없다. Signed Release bundle은 packaging 전에 29개 exact Slot의 source hash와 이 evidence chain을 검증한다.
 
 #### Gate Sampling
 

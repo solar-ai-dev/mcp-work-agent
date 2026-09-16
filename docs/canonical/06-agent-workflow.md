@@ -95,8 +95,8 @@ RESPONSE_SYNTHESIS
 
 | 단계 | 책임 | 하지 않는 일 |
 | --- | --- | --- |
-| `RESPONSE_SYNTHESIS` | terminal command 전에 `TerminalAssistantMessageInputV1`을 결정적으로 작성한다. | 추가 LLM 호출, 상태·정책·승인·실행·검증 결과 변경 |
-| `TERMINAL_COMMIT` | `TerminalCommitIntentV1.kind`에 맞는 기존 lifecycle handler 하나를 호출한다. Receipt·Run terminal mutation·final ASSISTANT Message·required Audit는 같은 UoW에 Commit한다. | 새 Domain 전이 발명, unknown kind/status/version 추측 |
+| `RESPONSE_SYNTHESIS` | terminal command 전에 `TerminalAssistantMessageInputV1`을 작성한다. 종료 가능한 `COMPLETE_WRITE`의 `SUCCESS | PARTIAL`만 검증된 최소 실행 결과를 `run.compose_terminal_response`에 전달해 설명 문장을 만들고, 나머지 종료 종류와 응답 실패는 기존 결정적 formatter를 사용한다. | 상태·정책·승인·실행·검증 결과 변경, Connector/Tool 호출, Planning ANSWER 재작성 |
+| `TERMINAL_COMMIT` | `TerminalCommitIntentV1.kind`에 맞는 기존 lifecycle handler를 호출한다. Receipt·Run terminal mutation·final ASSISTANT Message·required Audit는 같은 UoW에 Commit한다. `applied=false`이면 최신 terminal/cancel/recovery 사실을 우선하고, 여전히 종료 가능한 stale snapshot만 최신 사실의 결정적 문장으로 한 번 재조정한다. | 새 Domain 전이 발명, unknown kind/status/version 추측, stale LLM 문장 version만 갱신해 재사용 |
 | `FINALIZE` | terminal snapshot 확인 후 `trace_event.emit_trace_event`와 `sse_event.project_run_event`를 호출하고 END로 간다. | Message 재삽입, Domain status 변경, 관측 실패에 따른 rollback·Connector 재실행 |
 
 #### 응답 입력
@@ -104,10 +104,12 @@ RESPONSE_SYNTHESIS
 | 결과 | 사용 입력 |
 | --- | --- |
 | Answer-only | Planning이 검증한 `AnswerDraftV2` |
-| Write | persisted Plan·Action·Verification Result |
+| Write | persisted Plan·Action·Attempt·Verification Result의 display-safe 최소 projection. LLM은 `answer`만 작성하며 result kind와 terminal kind는 기존 코드가 고정한다. |
 | Recovery / Cancel / Block | typed reason/result |
 
 `BLOCKED | CANCELLED | FAILED`의 result kind와 reason code는 결정적 입력에서 고정한다. 최종 `content`는 현재 Run의 요청 언어와 durable outcome을 반영하며, generic 완료 문장·raw state·reason code만으로 답변을 대신하지 않는다.
+
+결과 설명 LLM은 UoW 밖에서 호출한다. `UNKNOWN_RESULT`, 미검증 `EXECUTED`, 미해결 `MISMATCH`, 실패 결정 대기 상태는 이 경로로 종료하지 않는다. Local 응답 호출은 기존 schema repair 1회까지만 허용하며 이 슬롯에서 Local→API 자동 fallback은 하지 않는다.
 
 #### 종료 종류별 handler
 
@@ -1425,7 +1427,7 @@ Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
 | 현재 입력 | 적용 책임 |
 | --- | --- |
-| ANSWER Route | outline_answer · compose_answer |
+| ANSWER Route | Work Analysis·확인 필요가 없으면 현재 Run 원문과 허용 Evidence ref로 outline을 결정적으로 만들고 compose_answer만 호출. 그 외에는 outline_answer · compose_answer |
 | 모든 ACTION Route가 `NOT_REQUIRED` | 근거와 no-action reason을 답변으로 작성 |
 | 하나 이상의 ACTION Route가 `REQUIRED` | 필요한 Route만 action objective와 Tool Arguments 작성, 결정적 dependency 구성·Plan 조립·검증 |
 
@@ -1765,7 +1767,7 @@ Runtime Node ID는 이 문서가 소유하고, repository owner·naming·placeme
 | `analysis.assess_information_gaps` | work_analysis | LLM | missing information / retrieval needs only |
 | `analysis.assess_operational_risks` | work_analysis | LLM/conditional | operational risk only |
 | `analysis.finalize` | work_analysis | deterministic | `assemble_work_analysis` → `validate_work_analysis` → `WorkAnalysisResultV2`; 두 deterministic operation은 이 runtime node 안에서 연속 실행 |
-| `planning.outline_answer` | planning | LLM | answer evidence/conclusion outline only |
+| `planning.outline_answer` | planning | deterministic/LLM-conditional | Work Analysis·확인 필요가 없으면 현재 Run 원문 + 허용 Evidence ref의 request-scope outline. 그 외에는 answer evidence/conclusion outline LLM |
 | `planning.compose_answer` | planning | LLM | answer prose from approved outline/evidence |
 | `planning.draft_action_objective_per_output_route` | planning | LLM/per-route | business mutation objective/target/scope only |
 | `planning.compose_arguments_per_output_route` | planning | LLM/tool-schema/per-route | serialize one frozen route objective into Tool Arguments |

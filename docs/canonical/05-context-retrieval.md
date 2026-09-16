@@ -69,7 +69,7 @@ class RetrievalState:
 
 | 구분 | 처리 |
 | --- | --- |
-| Parent 입력 | `request_intent`, `input_route_ref`, `input_routes`는 read-only다. Raw `user_request`를 별도 권위 입력으로 재주입하지 않는다. |
+| Parent 입력 | `request_intent`, `input_route_ref`, `input_routes`는 read-only다. 현재 Run의 `user_request`는 typed intent의 의미 손실을 보완하는 Prompt 입력으로 함께 읽되, 별도 State·장기 권위·정책 사실로 저장하거나 승격하지 않는다. |
 | Local 작업 상태 | Query 계획·시도, Source 상태, 조회·Segment handle, 가용 시간, RAG 후보, 사용자 조정 의무를 보존한다. |
 | Cache 참조 | `read_result_handles`는 현재 Run의 read-result entry를 가리킨다. Entry는 `run_id + route_id + query_identity_hash`, 제한된 `ConnectorReadResultV1`, continuation 소진 상태를 결합한다. |
 | 사용자 조정 | `07 Interface`가 검증한 `ContextAdjustmentV1` 한 개만 재진입 입력으로 받는다. 아래 §4.2~4.3의 같은 Run 의무로 처리하며 다른 Agent의 장기 업무 사실로 전파하지 않는다. |
@@ -168,18 +168,26 @@ Operation별 책임은 유지하되 검색 전략이나 Graph 세부 순서를 �
 
 ```
 # 모든 Round
+user_request
 request_intent
 input_routes
+required_user_anchors
 retrieval_budget
+
+# 검증된 Calendar 기간을 route에 결합할 수 있을 때만
+required_route_constraints
 
 # Follow-up Round에서만 추가되는 bounded Local Projection
 current_round_no
 prior_query_attempts
 unresolved_sufficiency_issues
 read_result_summaries
+observed_evidence
 ```
 
 `read_result_summaries`에는 handle, Route·query identity/hash, 확인한 Resource 참조의 제한된 요약, `has_next_page`, continuation state hash만 포함한다. Raw `next_page_token`은 포함하지 않는다.
+
+`observed_evidence`는 같은 Run에서 Evidence Selector가 이미 선택·검증한 `evidence_ref + excerpt + role + resource_ref`의 bounded projection이다. Sufficiency가 추가 조회를 요구할 때 Evidence에서 확인된 별칭·변경·참조 관계를 다음 Query가 보존하는 데만 사용하며, raw Provider payload나 새 정책·권한·성공 사실로 승격하지 않는다.
 
 Follow-up의 prior attempt projection은 semantic constraint·operation·reason·결과 수·stop reason·query hash만 사용한다. 원본 `QueryAttemptV1.query_spec`는 Builder·관측용이며 LLM 입력이 아니다. 사용자 Context Adjustment 입력은 §4.3을 따른다.
 
@@ -197,6 +205,16 @@ Follow-up의 prior attempt projection은 semantic constraint·operation·reason�
 | Gmail 상태 | 현재 지원하는 명시적 `ANY`, `DRAFT`, `SENT`만 사용한다. 다른 Resource의 `OPEN` 등으로 메일 상태 필터를 만들지 않는다. |
 
 **Exact anchor와 검색 가설**
+
+`required_user_anchors`는 `RequestIntentV2`의 명시 검색 필드 중 current-run
+`USER_REQUEST | CONFIRMATION_RESPONSE` provenance가 검증된 값과 이를 소비할 Gmail route만
+투영한다. `business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
+않는다. 이 projection은 새 요청 권위가 아니라 기존 typed 의미의 bounded 전달 형식이다.
+
+`required_route_constraints`는 검증된 단일 기간을 Calendar event/availability route에
+해석할 수 있을 때만 만든다. 해당 초기 route의 temporal constraint와 이미 존재하는 route
+policy의 required constraint를 동적 output schema에 결합하며, 값이 없으면 빈 projection을
+모든 호출에 추가하지 않는다.
 
 `CONCEPT(concept, manifestations)`는 사용자 `business_concepts`에 결합된 탐색 가설이다. 고정 동의어 목록이나 사용자 사실을 뜻하지 않는다.
 
@@ -492,7 +510,9 @@ Exact match, lexical retrieval, embedding, reranker 등 구체적인 조합과 �
 
 ### 5.7 `retrieval.select_evidence`
 
-입력은 `request_intent + top rag candidates`다. 요청을 뒷받침하거나 반박하는 Segment를 고르며 업무 사실의 최종 해석까지 수행하지 않는다.
+입력은 `request_intent + top rag candidates`다. 같은 Run의 detail 재평가에서는 내용이 바뀌지 않아 유지된 selected Evidence의 bounded projection도 관계 문맥으로 받는다. 요청을 뒷받침하거나 반박하는 Segment를 고르며 업무 사실의 최종 해석까지 수행하지 않는다.
+
+유지된 Evidence는 새 후보가 앞서 확인된 별칭·변경·참조 관계를 이어받는지 판단하는 데만 사용한다. 새 후보 집합에 포함하거나 재평가하지 않으며 raw Provider payload·정책·승인·실행 성공 authority로 승격하지 않는다.
 
 ```python
 class EvidenceDraftV1:
@@ -632,7 +652,7 @@ Registry에 exact direct-read Tool이 있으면 detail Route만 유지한다. �
 
 ### AGENT_SEARCH
 
-`RequestIntentV2 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. Raw `run_input.user_request`를 Local State/Prompt에 별도 투영하지 않는다.
+현재 Run `user_request + RequestIntentV2 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. 원문은 typed intent의 의미 손실을 보완하는 Query Planner 입력으로만 사용하며 Local State의 별도 권위로 복제하지 않는다.
 
 Metadata Page에서 후보를 좁히고 RAG로 관련 Segment를 고른다. 부족할 때만 같은 Route의 새 Query·Page·Detail을 선택한다. 검색 후 행동을 Round 번호별로 고정하지 않는다.
 

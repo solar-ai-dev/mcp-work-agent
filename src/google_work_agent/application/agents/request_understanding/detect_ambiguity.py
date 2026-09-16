@@ -37,7 +37,9 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 
 from .identify_source_dependencies import resource_identity_fact_kind
 
-_SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset({"search_terms", "subject", "search_criteria_subject"})
+_SEARCHABLE_TARGET_ANCHOR_FIELDS = frozenset(
+    {"search_terms", "business_concepts", "subject", "search_criteria_subject"}
+)
 
 
 class AmbiguityCandidateV2(TypedDict):
@@ -151,6 +153,10 @@ def detect_ambiguity(
             goal_candidate=goal_candidate,
             selected_resources=request.selected_resources,
         )
+        candidate = _resolve_searchable_target_ownership(
+            candidate,
+            goal_candidate=goal_candidate,
+        )
         retry_budget = merge_provider_dispatch_usage(retry_budget)
     return _finalize_ambiguity_candidate(candidate), retry_budget
 
@@ -170,6 +176,7 @@ def _ambiguity_goal_candidate_projection(
                 {
                     "resource_type": item["resource_type"],
                     "required_information": list(item["required_information"]),
+                    "target_scope": item["target_scope"],
                 }
                 for item in resource_responsibilities["source_reads"]
             ],
@@ -265,6 +272,26 @@ def _finalize_ambiguity_candidate(candidate: AmbiguityCandidateV2) -> AmbiguityV
         "requires_confirmation": False,
         "reason_codes": [],
         "missing_fields": [],
+    }
+
+
+def _resolve_searchable_target_ownership(
+    candidate: AmbiguityCandidateV2,
+    *,
+    goal_candidate: RequestGoalCandidateV1,
+) -> AmbiguityCandidateV2:
+    """Keep a bounded Connector lookup from becoming a user-owned target choice."""
+
+    if (
+        candidate["missing_information_owner"] != "USER"
+        or candidate["missing_fields"] != ["target_resource"]
+        or _searchable_target_anchor_count(goal_candidate) == 0
+        or _connector_owned_source_count(goal_candidate) == 0
+    ):
+        return candidate
+    return {
+        "missing_information_owner": "CONNECTOR",
+        "missing_fields": ["target_resource"],
     }
 
 

@@ -3259,11 +3259,12 @@ test("simple Gmail focus prioritizes the viewer and only shows the run header fo
   expect(screen.queryByText("메인 에이전트 · 작업을 처리하고 있습니다.")).not.toBeInTheDocument();
 });
 
-test("TST-UI-213 hides raw runtime status and has no native window controls", async () => {
+test("TST-UI-213 hides empty activity guidance, raw runtime status, and native window controls", async () => {
   installUiContractFetch({ status: "SINGLE" });
   render(<App />);
 
-  await screen.findByText("저장된 단계 이력이 없습니다. 현재 상태와 최종 답변을 확인해 주세요.");
+  await screen.findByRole("textbox", { name: "선택한 메일에 대해 질문하거나 업무를 요청하세요..." });
+  expect(screen.queryByText(/저장된 단계 이력이 없습니다/)).not.toBeInTheDocument();
   expect(screen.queryByText("SINGLE")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /최소화|최대화|닫기/ })).not.toBeInTheDocument();
 });

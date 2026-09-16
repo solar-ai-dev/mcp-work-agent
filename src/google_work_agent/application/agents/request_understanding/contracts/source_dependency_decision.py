@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal, NotRequired, TypedDict
 
+from .request_intent import TargetScopeValue
+
 SourceDependencyValue = Literal["SOURCE_REQUIRED", "SOURCE_NOT_REQUIRED"]
 
 
@@ -17,6 +19,7 @@ class SourceDependencyDecisionV1(TypedDict):
     resource_type: str
     dependency: SourceDependencyValue
     required_information: NotRequired[list[str]]
+    target_scope: NotRequired[TargetScopeValue]
 
 
 class SourceDependencyDecisionCandidateV1(TypedDict):

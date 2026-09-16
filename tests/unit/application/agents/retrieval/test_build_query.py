@@ -306,6 +306,53 @@ def test_build_query__preserves_exact__frozen_resource_type() -> None:
         )
 
 
+def test_build_query__freebusy_without_temporal_range__stays_before_provider_boundary() -> None:
+    route = cast(
+        InputToolRouteV1,
+        {
+            "route_id": "calendar-availability",
+            "connector_id": "google_workspace",
+            "resource_type": "CALENDAR_FREEBUSY",
+            "allowed_read_tool_ids": ["calendar_query_freebusy"],
+            "required": True,
+            "reason_codes": ["USER_REQUEST"],
+        },
+    )
+    plan = {
+        "schema_version": 2,
+        "route_queries": [
+            {
+                "route_id": "calendar-availability",
+                "operation": "FREEBUSY",
+                "reason_codes": ["USER_REQUEST"],
+                "search_spec": {
+                    "mode": "INITIAL",
+                    "constraints": [
+                        {
+                            "kind": "CONTAINER_REF",
+                            "container_refs": ["calendar-1"],
+                        }
+                    ],
+                },
+                "detail_candidate_ref": None,
+            }
+        ],
+    }
+
+    with pytest.raises(RetrievalV2ValidationError, match="temporal range"):
+        build_query(
+            cast(RetrievalQueryPlanV2, plan),
+            frozen_routes=[route],
+            route_policies={
+                "calendar-availability": RouteConstraintPolicy(
+                    frozenset({"CONTAINER_REF", "TEMPORAL_RANGE"}),
+                    frozenset({"CONTAINER_REF"}),
+                )
+            },
+            validated_container_refs={"calendar-availability": ["calendar-1"]},
+        )
+
+
 @pytest.mark.parametrize(
     ("resource_type", "tool_id"),
     [("TASK", "tasks_list_tasks"), ("CALENDAR_EVENT", "calendar_list_events")],

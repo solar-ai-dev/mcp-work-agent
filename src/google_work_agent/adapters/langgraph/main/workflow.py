@@ -57,6 +57,7 @@ from google_work_agent.adapters.langgraph.main.nodes.preflight_node import prefl
 from google_work_agent.adapters.langgraph.main.nodes.recovery_node import recovery_node
 from google_work_agent.adapters.langgraph.main.nodes.response_synthesis_node import (
     TerminalCommitIntentV1,
+    build_terminal_commit_intent,
     response_synthesis_node,
 )
 from google_work_agent.adapters.langgraph.main.nodes.retrieval_entry_node import (
@@ -170,6 +171,7 @@ from google_work_agent.application.agents.review.contracts.plan_review_result im
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
     PromptExecutionScope,
+    load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.signed_tool_registry import SignedToolRegistry
 from google_work_agent.application.use_cases.action.calendar_conflict_policy import (
@@ -199,6 +201,9 @@ from google_work_agent.application.use_cases.execution_attempt.connector_write_p
 )
 from google_work_agent.application.use_cases.execution_attempt.persistence_projection import (
     latest_attempt_for_action,
+)
+from google_work_agent.application.use_cases.execution_attempt.project_delivery_certainty import (
+    project_latest_delivery_certainty,
 )
 from google_work_agent.application.use_cases.plan.persistence_projection import (
     current_plan_tuple,
@@ -249,6 +254,12 @@ from google_work_agent.application.use_cases.run.complete_read_only_run import (
 from google_work_agent.application.use_cases.run.complete_write_run import (
     CompleteWriteRunCommand,
 )
+from google_work_agent.application.use_cases.run.compose_terminal_response import (
+    PROMPT_ID as TERMINAL_RESPONSE_PROMPT_ID,
+)
+from google_work_agent.application.use_cases.run.compose_terminal_response import (
+    ComposeTerminalResponseHandler,
+)
 from google_work_agent.application.use_cases.run.continue_cancel_resolution import (
     ContinueCancelResolutionCommandV1,
     ContinueCancelResolutionResultV1,
@@ -266,6 +277,9 @@ from google_work_agent.application.use_cases.run.get_supervisor_observation impo
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     BudgetDecision,
     approve_planning_revision,
+)
+from google_work_agent.application.use_cases.run.project_action_target_display import (
+    project_action_target_display,
 )
 from google_work_agent.application.use_cases.run.start_analysis import (
     StartAnalysisCommand,
@@ -305,6 +319,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMErrorCode,
     LLMInvocationError,
 )
+from google_work_agent.ports.persistence.audit_event_repository import AuditEventCursor
 from google_work_agent.ports.persistence.execution_attempt_repository import active_attempt_tuple
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork
 from google_work_agent.ports.persistence.unit_of_work import UnitOfWork as CanonicalUnitOfWork
@@ -427,6 +442,14 @@ class _WorkflowRuntimeComposition:
         self._unit_of_work_factory = unit_of_work_factory
         self._tool_catalog = tool_catalog
         self._llm_runtime = llm_runtime
+        self._compose_terminal_response = ComposeTerminalResponseHandler(
+            llm_runtime=llm_runtime,
+            prompt_ref=load_prompt_reference(
+                TERMINAL_RESPONSE_PROMPT_ID,
+                prompt_manifest_path,
+                execution_scope=prompt_execution_scope,
+            ),
+        )
         self._now_ms = now_ms
         self._id_factory = id_factory
         del signing_secret
@@ -1016,6 +1039,7 @@ class _WorkflowRuntimeComposition:
                 response_synthesis_node,
                 read_terminal_facts=self._read_terminal_facts,
                 build_terminal_message=self._build_terminal_message,
+                compose_terminal_response=self._compose_terminal_response,
             ),
             terminal_commit=partial(
                 terminal_commit_node,
@@ -1026,6 +1050,11 @@ class _WorkflowRuntimeComposition:
                 block_run=self._terminal_block_run,
                 finalize_cancel=self._terminal_finalize_cancel,
                 resolve_recovery=self._terminal_resolve_recovery,
+                rebuild_terminal_intent=lambda state, facts: build_terminal_commit_intent(
+                    state,
+                    facts=facts,
+                    build_terminal_message=self._build_terminal_message,
+                ),
             ),
             finalize=partial(
                 finalize_node,
@@ -1066,13 +1095,26 @@ class _WorkflowRuntimeComposition:
         if snapshot is None:
             raise LookupError(f"run not found: {run_id}")
         with self._unit_of_work_factory() as unit_of_work:
-            evidence_by_action = {
-                action.action_id: [
-                    evidence.excerpt
-                    for evidence in unit_of_work.evidence.list_for_action(action.action_id)
-                ]
-                for action in snapshot.actions
-            }
+            current_action_ids = tuple(action.action_id for action in snapshot.actions)
+            audited_action_ids, audit_history_complete = self._terminal_audit_action_ids(
+                unit_of_work,
+                run_id,
+            )
+            ordered_action_ids = tuple(dict.fromkeys((*current_action_ids, *audited_action_ids)))
+            all_action_facts = tuple(
+                self._terminal_action_fact(unit_of_work, action_id)
+                for action_id in ordered_action_ids
+            )
+            response_actions = tuple(
+                fact
+                for fact in all_action_facts
+                if fact["action_id"] in current_action_ids or fact["status"] == "VERIFIED"
+            )
+            send_not_dispatched = (
+                audit_history_complete
+                and any(fact["resource_type"] == "gmail_draft" for fact in response_actions)
+                and self._send_actions_are_proven_not_dispatched(all_action_facts)
+            )
         return {
             "run_id": run_id,
             "conversation_id": snapshot.run.conversation_id,
@@ -1092,17 +1134,86 @@ class _WorkflowRuntimeComposition:
             ),
             "action_statuses": [action.status for action in snapshot.actions],
             "action_effect_types": [action.effect_type for action in snapshot.actions],
-            "actions": [
-                {
-                    "tool_name": action.tool_name,
-                    "effect_type": action.effect_type,
-                    "status": action.status,
-                    "arguments": action.arguments,
-                    "evidence_excerpts": evidence_by_action[action.action_id],
-                }
-                for action in snapshot.actions
-            ],
+            "actions": list(response_actions),
+            "send_not_dispatched_current_run": send_not_dispatched,
         }
+
+    @staticmethod
+    def _terminal_audit_action_ids(
+        unit_of_work: UnitOfWork,
+        run_id: str,
+    ) -> tuple[tuple[str, ...], bool]:
+        action_ids: list[str] = []
+        cursor = AuditEventCursor(run_id=run_id)
+        for _ in range(20):
+            records = unit_of_work.audits.list_page(cursor, 100)
+            action_ids.extend(
+                record.action_id for record in records if record.action_id is not None
+            )
+            if len(records) < 100:
+                return tuple(dict.fromkeys(action_ids)), True
+            cursor = AuditEventCursor(run_id=run_id, after_id=records[-1].id)
+        return tuple(dict.fromkeys(action_ids)), False
+
+    def _terminal_action_fact(
+        self,
+        unit_of_work: UnitOfWork,
+        action_id: str,
+    ) -> dict[str, object]:
+        action = unit_of_work.actions.get(action_id)
+        if action is None:
+            raise LookupError(f"terminal Action not found: {action_id}")
+        registry_entry = self._tool_catalog.get_required(action.connector_id, action.tool_name)
+        arguments = loads(action.arguments_json)
+        if not isinstance(arguments, dict):
+            raise ValueError("persisted Action arguments must be an object")
+        evidence = unit_of_work.evidence.list_for_action(action.id)
+        verifications = unit_of_work.verifications.list_for_action(action.id)
+        latest_verification = max(
+            verifications,
+            key=lambda item: (item.verification_no, item.verified_at_ms),
+            default=None,
+        )
+        verification_actual: dict[str, object] | None = None
+        if latest_verification is not None and latest_verification.actual_json is not None:
+            raw_actual = loads(latest_verification.actual_json)
+            if not isinstance(raw_actual, dict):
+                raise ValueError("persisted Verification actual_json must be an object")
+            verification_actual = raw_actual
+        return {
+            "action_id": action.id,
+            "connector_id": action.connector_id,
+            "resource_type": registry_entry.resource_type,
+            "tool_name": action.tool_name,
+            "effect_type": action.effect_type,
+            "status": action.status,
+            "arguments": arguments,
+            "evidence_excerpts": [item.excerpt for item in evidence],
+            "target_display": project_action_target_display(
+                resource_ref=(
+                    None
+                    if action.target_resource_ref_id is None
+                    else unit_of_work.resource_refs.get(action.target_resource_ref_id)
+                ),
+                evidence=evidence,
+            ),
+            "verification_actual": verification_actual,
+            "delivery_certainty": project_latest_delivery_certainty(
+                unit_of_work,
+                action.id,
+            ),
+        }
+
+    @staticmethod
+    def _send_actions_are_proven_not_dispatched(
+        actions: Sequence[Mapping[str, object]],
+    ) -> bool:
+        send_actions = [item for item in actions if item.get("effect_type") == "SEND"]
+        return all(
+            item.get("status") in {"REJECTED", "CANCELLED", "BLOCKED", "DEPENDENCY_BLOCKED"}
+            or (item.get("status") == "FAILED" and item.get("delivery_certainty") == "NOT_SENT")
+            for item in send_actions
+        )
 
     def _terminal_complete_answer_only(
         self, state: Mapping[str, object], intent: TerminalCommitIntentV1

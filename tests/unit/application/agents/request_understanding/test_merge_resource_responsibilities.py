@@ -28,7 +28,7 @@ _OUTPUT_CANDIDATES = output_responsibilities.build_output_responsibility_candida
 
 
 def _source(
-    *, values: dict[str, list[str]] | None = None
+    *, values: dict[str, tuple[list[str], str]] | None = None
 ) -> source_dependency_decision.SourceDependencyDecisionCandidateV1:
     values = values or {}
     return {
@@ -37,7 +37,8 @@ def _source(
                 {
                     "resource_type": candidate["resource_type"],
                     "dependency": "SOURCE_REQUIRED",
-                    "required_information": values[candidate["resource_type"]],
+                    "required_information": values[candidate["resource_type"]][0],
+                    "target_scope": values[candidate["resource_type"]][1],
                 }
                 if candidate["resource_type"] in values
                 else {
@@ -70,21 +71,24 @@ def _output(
     ("sources", "outputs", "expected_sources", "expected_outputs"),
     [
         (
-            {"TASK": ["준비 상황"], "CALENDAR_EVENT": ["인쇄소 일정"]},
+            {
+                "TASK": (["준비 상황"], "CRITERIA"),
+                "CALENDAR_EVENT": (["인쇄소 일정"], "CRITERIA"),
+            },
             {"GMAIL_DRAFT": "CREATE"},
             ["TASK", "CALENDAR_EVENT"],
             [("GMAIL_DRAFT", "CREATE")],
         ),
         (
-            {"GMAIL_DRAFT": ["기존 identity와 본문"]},
+            {"GMAIL_DRAFT": (["기존 본문"], "SINGULAR")},
             {"GMAIL_DRAFT": "UPDATE"},
             ["GMAIL_DRAFT"],
             [("GMAIL_DRAFT", "UPDATE")],
         ),
-        ({"GMAIL_THREAD": ["최종 일정"]}, {}, ["GMAIL_THREAD"], []),
+        ({"GMAIL_THREAD": (["최종 일정"], "CRITERIA")}, {}, ["GMAIL_THREAD"], []),
         ({}, {"TASK": "CREATE"}, [], [("TASK", "CREATE")]),
         (
-            {"TASK": ["기존 identity"]},
+            {"TASK": (["기존 상태"], "SINGULAR")},
             {"TASK": "UPDATE"},
             ["TASK"],
             [("TASK", "UPDATE")],
@@ -92,7 +96,7 @@ def _output(
     ],
 )
 def test_atomic_decisions__after_validation__merge_to_canonical_contract(
-    sources: dict[str, list[str]],
+    sources: dict[str, tuple[list[str], str]],
     outputs: dict[str, WriteEffectValue],
     expected_sources: list[str],
     expected_outputs: list[tuple[str, str]],
@@ -115,10 +119,11 @@ def test_merge_resource_responsibilities__with_explicit_item_sources__restores_c
     merged = responsibility_merge.merge_resource_responsibilities(
         source_decisions=_source(
             values={
-                "GMAIL_DRAFT": ["body"],
-                "TASK_LIST": ["task_list_title"],
-                "CALENDAR": ["calendar_identity"],
-                "CALENDAR_EVENT": ["start", "end"],
+                "GMAIL_DRAFT": (["body"], "SINGULAR"),
+                "TASK_LIST": (["task_list_title"], "CRITERIA"),
+                "TASK": (["completion_status"], "CRITERIA"),
+                "CALENDAR": (["calendar_metadata"], "CRITERIA"),
+                "CALENDAR_EVENT": (["start", "end"], "CRITERIA"),
             }
         ),
         output_decisions=_output(values={"GMAIL_DRAFT": "CREATE"}),
@@ -137,10 +142,17 @@ def test_merge_resource_responsibilities__with_explicit_item_sources__restores_c
     assert merged["outputs"] == [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]
 
 
-def test_merge_resource_responsibilities__with_explicit_mail_fact_source__preserves_source(
+def test_merge_resource_responsibilities__with_typed_mail_fact_source__preserves_source(
 ) -> None:
     merged = responsibility_merge.merge_resource_responsibilities(
-        source_decisions=_source(),
+        source_decisions=_source(
+            values={
+                "GMAIL_THREAD": (
+                    ["subject", "participants", "message_history", "timestamps"],
+                    "CRITERIA",
+                )
+            }
+        ),
         output_decisions=_output(),
         source_candidates=_SOURCE_CANDIDATES,
         output_candidates=_OUTPUT_CANDIDATES,
@@ -151,11 +163,32 @@ def test_merge_resource_responsibilities__with_explicit_mail_fact_source__preser
         {
             "resource_type": "GMAIL_THREAD",
             "required_information": [
-                "thread_identity",
                 "subject",
                 "participants",
                 "message_history",
                 "timestamps",
             ],
+            "target_scope": "CRITERIA",
+        }
+    ]
+
+
+def test_merge_resource_responsibilities__with_singular_source__preserves_scope_and_facts() -> (
+    None
+):
+    merged = responsibility_merge.merge_resource_responsibilities(
+        source_decisions=_source(
+            values={"CALENDAR_EVENT": (["start", "end"], "SINGULAR")}
+        ),
+        output_decisions=_output(),
+        source_candidates=_SOURCE_CANDIDATES,
+        output_candidates=_OUTPUT_CANDIDATES,
+    )
+
+    assert merged["source_reads"] == [
+        {
+            "resource_type": "CALENDAR_EVENT",
+            "required_information": ["start", "end"],
+            "target_scope": "SINGULAR",
         }
     ]

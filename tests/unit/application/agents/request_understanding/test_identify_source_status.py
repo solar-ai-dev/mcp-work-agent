@@ -119,3 +119,41 @@ def test_identify_source_status_schema__with_output_only_draft__rejects_source_s
 
     assert validate_output_schema(invalid, schema.json_schema)
     assert validate_output_schema(valid, schema.json_schema) == []
+
+
+def test_identify_source_status__draft_source_only__skips_tautological_inference() -> None:
+    runtime = FakeStructuredInferencePort(outputs=[], validate_schema=True)
+    responsibilities = cast(
+        ResourceResponsibilitiesV1,
+        {
+            "source_reads": [
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "required_information": ["current body"],
+                }
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        },
+    )
+
+    result = identify_source_status(
+        llm_runtime=runtime,
+        requested_mode="LOCAL_GPU",
+        prompt_ref=_prompt_ref(),
+        prompt_input={"user_request": "update the draft", "selected_resource_refs": []},
+        goal_candidate={
+            "goal": "update the existing draft",
+            "completion_conditions": ["preserve existing fields"],
+            "constraints": {},
+            "analysis_requirement": "NONE",
+        },
+        responsibilities=responsibilities,
+    )
+
+    schema = build_identify_source_status_output_schema(responsibilities)
+    assert result == {"statuses": []}
+    assert runtime.calls == []
+    assert validate_output_schema(
+        {"statuses": [_source_status("DRAFT", "GMAIL_DRAFT", "draft")]},
+        schema.json_schema,
+    )

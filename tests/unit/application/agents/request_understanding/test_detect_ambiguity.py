@@ -230,6 +230,7 @@ def test_detect_ambiguity__with_searchable_target__keeps_connector_owner_from_se
                 {
                     "resource_type": "GMAIL_THREAD",
                     "required_information": ["final shipment criteria", "owner"],
+                    "target_scope": "CRITERIA",
                 }
             ],
             "outputs": [],
@@ -258,10 +259,108 @@ def test_detect_ambiguity__with_searchable_target__keeps_connector_owner_from_se
     assert projected_candidate["resource_responsibilities"] == candidate[
         "resource_responsibilities"
     ]
+    assert projected_candidate["resource_responsibilities"]["source_reads"][0][
+        "target_scope"
+    ] == "CRITERIA"
     assert "requested_effect_hints" not in projected_candidate
     assert "requested_resource_hints" not in projected_candidate
     assert "analysis_requirement" not in projected_candidate
     assert budget["semantic_revisions_used_by_failure"] == {}
+
+
+def test_searchable_connector_target__misclassified_as_user__proceeds_to_bounded_read() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["target_resource"],
+            }
+        ]
+    )
+    candidate: RequestGoalCandidateV1 = {
+        "goal": "법무 작업과 일정 상태를 확인해 초안을 준비한다",
+        "completion_conditions": ["근거를 조회하고 초안을 준비한다"],
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "business_concepts",
+                "value": ["법무 작업", "오늘 일정"],
+            },
+            {
+                "kind": "PERSON",
+                "field": "recipient",
+                "value": "recipient@example.com",
+            },
+        ],
+        "requested_effect_hints": ["READ", "CREATE"],
+        "requested_resource_hints": ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "TASK",
+                    "required_information": ["completion_status"],
+                    "target_scope": "CRITERIA",
+                },
+                {
+                    "resource_type": "CALENDAR_EVENT",
+                    "required_information": ["status"],
+                    "target_scope": "CRITERIA",
+                },
+            ],
+            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        },
+        "analysis_requirement": "NONE",
+    }
+
+    ambiguity = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request(
+            "법무 작업과 오늘 일정 상태를 보고 recipient@example.com에 초안을 만들어줘."
+        ),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert ambiguity == {
+        "requires_confirmation": False,
+        "reason_codes": [],
+        "missing_fields": [],
+    }
+    resolution = _call_input(runtime, 0)["resolution_responsibilities"]
+    assert resolution["searchable_target_anchor_count"] == 1
+    assert resolution["connector_owned_source_count"] == 2
+
+
+def test_searchable_connector_source__with_user_choice__preserves_confirmation() -> None:
+    runtime = FakeStructuredInferencePort(
+        outputs=[
+            {
+                "missing_information_owner": "USER",
+                "missing_fields": ["analysis_scope"],
+            }
+        ]
+    )
+    candidate = _calendar_event_identity_candidate(searchable=True)
+    candidate["constraints"].append(
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "business_concepts",
+            "value": ["일정 검토"],
+        }
+    )
+
+    ambiguity = detect_ambiguity(
+        llm_runtime=runtime,
+        request=_request("Nimbus 일정에서 어떤 관점을 볼지 정해줘."),
+        goal_candidate=candidate,
+        prompt_ref=_prompt_ref(),
+    )
+
+    assert ambiguity == {
+        "requires_confirmation": True,
+        "reason_codes": ["REQUEST_UNDERSTANDING_NEEDS_CONFIRMATION"],
+        "missing_fields": ["analysis_scope"],
+    }
 
 
 def test_detect_ambiguity__rejects_fields__without_owner() -> None:
@@ -641,6 +740,7 @@ def test_unselected_read__target_identity_named_as_connector_need__still_asks_us
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["target_resource", "event_time"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],
@@ -810,6 +910,7 @@ def test_unselected_task_identity__without_target_anchor__uses_user_owner() -> N
                 {
                     "resource_type": "TASK",
                     "required_information": ["task_identity", "title"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],
@@ -1221,6 +1322,7 @@ def _calendar_event_identity_candidate(
                 {
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["event_identity", "start"],
+                    "target_scope": "SINGULAR",
                 }
             ],
             "outputs": [],

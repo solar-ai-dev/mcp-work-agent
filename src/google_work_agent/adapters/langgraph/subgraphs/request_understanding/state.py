@@ -59,9 +59,6 @@ class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
     prerequisite_message: str | None
     finalize_intent: FinalizeIntentV1 | None
 
-    request_intent: RequestIntentV2 | None
-    request_reconsideration: RequestReconsiderationRequiredV1 | None
-
 
 class RequestUnderstandingParentOutputState(AgentSubgraphInputEnvelope, total=False):
     """Only fields that Request Understanding may project back to Main."""

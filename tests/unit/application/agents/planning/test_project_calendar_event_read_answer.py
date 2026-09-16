@@ -36,6 +36,31 @@ def _evidence() -> list[dict[str, object]]:
     ]
 
 
+def _confirmed_search_intent() -> dict[str, object]:
+    return {
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["CALENDAR_EVENT"],
+        "analysis_requirement": "NONE",
+        "constraints": [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["start", "end"],
+            },
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "search_terms",
+                "value": "프로젝트 검토 회의",
+                "provenance": {
+                    "source": "CONFIRMATION_RESPONSE",
+                    "start_offset": 0,
+                    "end_offset": 10,
+                },
+            },
+        ],
+    }
+
+
 def test_calendar_event_read_answer__selected_event__preserves_exact_interval() -> None:
     result = project_calendar_event_read_answer(
         user_request="그 일정 언제야?",
@@ -53,6 +78,58 @@ def test_calendar_event_read_answer__selected_event__preserves_exact_interval() 
         ),
         "evidence_refs": ["e-event"],
     }
+
+
+def test_calendar_event_read_answer__confirmed_exact_event__preserves_exact_interval() -> None:
+    evidence = _evidence()
+    evidence.append({**evidence[0], "evidence_id": "e-event-copy"})
+
+    result = project_calendar_event_read_answer(
+        user_request="그 일정 언제야?",
+        request_intent=_confirmed_search_intent(),
+        evidence=evidence,
+        retrieval_result={
+            "coverage": "SUFFICIENT",
+            "source_resource_refs": ["calendar_event:event-42"],
+        },
+    )
+
+    assert result is not None
+    assert result.draft == {
+        "schema_version": 2,
+        "answer": (
+            "프로젝트 검토 회의 일정은 2026년 8월 18일 오전 10시부터 "
+            "오전 11시까지입니다. (Asia/Seoul)"
+        ),
+        "evidence_refs": ["e-event", "e-event-copy"],
+    }
+
+
+def test_calendar_event_read_answer__confirmed_ambiguous_event__falls_back() -> None:
+    evidence = _evidence()
+    evidence.append(
+        {
+            **evidence[0],
+            "evidence_id": "e-event-conflict",
+            "excerpt": str(evidence[0]["excerpt"]).replace(
+                "end: 2026-08-18T11:00:00+09:00",
+                "end: 2026-08-18T12:00:00+09:00",
+            ),
+        }
+    )
+
+    assert (
+        project_calendar_event_read_answer(
+            user_request="그 일정 언제야?",
+            request_intent=_confirmed_search_intent(),
+            evidence=evidence,
+            retrieval_result={
+                "coverage": "SUFFICIENT",
+                "source_resource_refs": ["calendar_event:event-42"],
+            },
+        )
+        is None
+    )
 
 
 def test_calendar_event_read_answer__different_or_ambiguous_scope__falls_back() -> None:

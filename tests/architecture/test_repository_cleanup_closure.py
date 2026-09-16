@@ -10,6 +10,7 @@ ROOT = Path(__file__).parents[2]
 
 ALLOWED_TOP_LEVEL_DIRECTORIES = {
     ".claude",
+    ".github",
     ".vscode",
     "config",
     "docs",
@@ -47,6 +48,7 @@ def test_tracked_repository__has_only_owned_roots__and_no_generated_artifacts() 
     directories = {path.split("/", 1)[0] for path in tracked if "/" in path}
 
     assert directories <= ALLOWED_TOP_LEVEL_DIRECTORIES
+    assert {path for path in tracked if path.startswith(".github/")} == {".github/SECURITY.md"}
     assert not any(path.split("/", 1)[0] in FORBIDDEN_TRACKED_ROOTS for path in tracked)
     assert not any("__pycache__" in path.split("/") for path in tracked)
     assert not any(path.endswith((".pyc", ".pyo")) for path in tracked)

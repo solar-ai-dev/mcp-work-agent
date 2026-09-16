@@ -128,7 +128,7 @@ def _controls(initial_target: str) -> MainControlNodeBindings:
         recovery=no_update,
         cancel_resolution=no_update,
         response_synthesis=no_update,
-        terminal_commit=no_update,
+        terminal_commit=_target_node("finalize"),
         finalize=no_update,
     )
 
@@ -181,7 +181,7 @@ def test_main_graph_profile__compiles_and_invokes__normal_path(
     result = graph.invoke(_state(profile, initial_target=initial_target))
 
     assert tuple(composition.native_subgraphs()) == topology
-    assert result["__target__"] == "response_synthesis"
+    assert result["__target__"] == "finalize"
     assert graph.get_graph().nodes.keys() >= {
         "initialize",
         "response_synthesis",
@@ -251,9 +251,7 @@ def test_main_graph__physical_back_edge__is_bounded_and_reaches_terminal() -> No
         nonlocal visits
         del state
         visits += 1
-        return {
-            "__target__": "single_workflow" if visits == 1 else "response_synthesis"
-        }
+        return {"__target__": "single_workflow" if visits == 1 else "response_synthesis"}
 
     composition = _composition(
         GraphProfile.SINGLE_BASELINE,
@@ -265,7 +263,7 @@ def test_main_graph__physical_back_edge__is_bounded_and_reaches_terminal() -> No
     )
 
     assert visits == 2
-    assert result["__target__"] == "response_synthesis"
+    assert result["__target__"] == "finalize"
 
 
 def test_main_graph__unknown_successor__fails_closed() -> None:

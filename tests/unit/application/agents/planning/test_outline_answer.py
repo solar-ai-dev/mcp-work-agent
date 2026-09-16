@@ -7,6 +7,7 @@ import pytest
 
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     PlanningAnswerConfirmationV1,
+    PlanningSemanticInvoker,
 )
 from google_work_agent.application.agents.planning.outline_answer import (
     answer_outline_output_schema,
@@ -45,7 +46,7 @@ def test_outline_rejects__confirmation__for_actionable_intent() -> None:
                 "goal": "summary",
                 "ambiguity": {"requires_confirmation": False},
             },
-            work_analysis=None,
+            work_analysis={"ambiguities": []},
             evidence=[{"evidence_id": "e1", "excerpt": "fact"}],
             invoke=lambda _prompt_id, _prompt_input: {
                 "disposition": "NEEDS_CONFIRMATION",
@@ -123,7 +124,7 @@ def test_outline_rejects__evidence_outside__current_projection() -> None:
         outline_answer(
             user_request="Summarize.",
             request_intent={"goal": "summary"},
-            work_analysis=None,
+            work_analysis={},
             evidence=[],
             invoke=lambda _prompt_id, _prompt_input: {
                 "sections": ["Conclusion"],
@@ -142,7 +143,7 @@ def test_outline_collection__allows_relevant_subset_and_order__without_rewriting
     result = outline_answer(
         user_request="관련된 제목만 중요도순으로 알려줘.",
         request_intent={"requested_effect_hints": ["READ"]},
-        work_analysis=None,
+        work_analysis={},
         evidence=[
             {
                 "evidence_id": "e-c",
@@ -164,7 +165,7 @@ def test_outline_collection__allows_relevant_subset_and_order__without_rewriting
                 }
             ]
         },
-        invoke=invoke,
+        invoke=cast(PlanningSemanticInvoker, invoke),
     )
 
     projection = cast(dict[str, object], captured["prompt_input"])
@@ -182,7 +183,7 @@ def test_outline__does_not_replace__invalid_evidence_identity() -> None:
         outline_answer(
             user_request="Summarize.",
             request_intent={"goal": "summary"},
-            work_analysis=None,
+            work_analysis={},
             evidence=[{"evidence_id": "evidence-only", "excerpt": "fact"}],
             invoke=lambda _prompt_id, _prompt_input: {
                 "sections": ["Conclusion"],
@@ -251,7 +252,7 @@ def test_outline_gmail_read__empty_evidence__passes_observed_state_to_answer_age
                 },
             ],
         },
-        work_analysis=None,
+        work_analysis={"ambiguities": []},
         evidence=[],
         retrieval_result={
             "coverage": "PARTIAL",
@@ -362,6 +363,15 @@ def test_gmail_read__with_required_information__uses_semantic_outline() -> None:
 
 
 def test_gmail_lookup__unrequested_timeline__does_not_require_analysis() -> None:
+    invoked = False
+
+    def invoke(
+        _prompt_id: str, _prompt_input: Mapping[str, object]
+    ) -> Mapping[str, object]:
+        nonlocal invoked
+        invoked = True
+        return {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]}
+
     result = outline_answer(
         user_request="김대리 일정 관련 메일 찾아줘.",
         request_intent={
@@ -372,6 +382,10 @@ def test_gmail_lookup__unrequested_timeline__does_not_require_analysis() -> None
         },
         work_analysis=None,
         evidence=[{"evidence_id": "e-mail", "excerpt": "김철수 대리의 박람회 참석 안내"}],
-        invoke=lambda *_args: {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]},
+        invoke=cast(PlanningSemanticInvoker, invoke),
     )
-    assert result == {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]}
+    assert invoked is False
+    assert result == {
+        "sections": ["김대리 일정 관련 메일 찾아줘."],
+        "evidence_refs": ["e-mail"],
+    }
