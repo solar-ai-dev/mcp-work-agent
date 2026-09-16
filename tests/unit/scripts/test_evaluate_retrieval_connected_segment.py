@@ -5,7 +5,9 @@ import pytest
 from scripts.evaluate_retrieval_connected_segment import (
     _replay_clock_ms,
     _select_replay_inputs,
+    _source_route_diagnostics,
     _state_diagnostics,
+    _summarize_llm_output,
     evaluate,
 )
 
@@ -73,3 +75,86 @@ def test_current_upstream_override_must_cover_every_case(tmp_path: Path) -> None
             sampling_seed=1729,
             input_overrides={},
         )
+
+
+def test_llm_summary_keeps_issue_binding_without_private_description() -> None:
+    candidate = {
+        "status": "BLOCKED",
+        "issues": [
+            {
+                "slot": "task_status",
+                "issue_type": "MISSING",
+                "resolution_source": "GOOGLE",
+                "description": "private source text",
+            }
+        ],
+    }
+
+    summary = _summarize_llm_output("retrieval.assess_sufficiency", candidate)
+
+    assert summary["status"] == "BLOCKED"
+    assert summary["issue_bindings"] == [
+        {
+            "slot": "task_status",
+            "issue_type": "MISSING",
+            "resolution_source": "GOOGLE",
+        }
+    ]
+    assert "private source text" not in str(summary)
+
+
+def test_llm_summary_records_query_operations_and_selection_count() -> None:
+    assert _summarize_llm_output(
+        "retrieval.plan_query",
+        {"route_queries": [{"operation": "SEARCH"}, {"operation": "FREEBUSY"}]},
+    )["operation_kinds"] == ["SEARCH", "FREEBUSY"]
+    assert _summarize_llm_output(
+        "retrieval.select_evidence", {"segment_assessments": [{"private": "text"}]}
+    )["segment_assessments_count"] == 1
+
+
+def test_source_route_diagnostics_separate_guard_policy_and_access_routes() -> None:
+    plan = {
+        "input_plan": {
+            "input_routes": [
+                {
+                    "route_id": "calendar",
+                    "resource_type": "CALENDAR",
+                    "required": True,
+                    "reason_codes": ["REQUESTED_INPUT"],
+                },
+                {
+                    "route_id": "task_list",
+                    "resource_type": "TASK_LIST",
+                    "required": True,
+                    "reason_codes": ["RETRIEVAL_TASK_LIST_DISCOVERY"],
+                },
+                {
+                    "route_id": "event",
+                    "resource_type": "CALENDAR_EVENT",
+                    "required": True,
+                    "reason_codes": ["POLICY_CALENDAR_CONFLICT_CHECK"],
+                },
+            ]
+        }
+    }
+    acquisition = {
+        "source_summaries": [
+            {
+                "route_id": "task_list",
+                "status": "COMPLETE",
+                "resource_count": 1,
+            }
+        ]
+    }
+
+    summary = _source_route_diagnostics(plan, acquisition)
+
+    assert summary[0]["guard_required"] is True
+    assert summary[0]["policy_required"] is False
+    assert summary[0]["attempted"] is False
+    assert summary[1]["guard_required"] is False
+    assert summary[1]["attempted"] is True
+    assert summary[2]["guard_required"] is True
+    assert summary[2]["policy_required"] is True
+    assert summary[2]["attempted"] is False

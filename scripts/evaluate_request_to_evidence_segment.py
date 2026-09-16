@@ -343,6 +343,7 @@ def main() -> None:
                 "evidence_count": item.get("evidence_count"),
                 "connector_read_count": len(cast(list[object], item.get("connector_reads", []))),
                 "llm_call_count": item.get("llm_call_count"),
+                "provider_dispatch_count": item.get("provider_dispatch_count"),
             }
             for item in cast(list[dict[str, Any]], retrieval_result["cases"])
         ],

@@ -12,7 +12,7 @@ import argparse
 import json
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from itertools import count
 from pathlib import Path
@@ -54,7 +54,11 @@ from google_work_agent.api.composition import (
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV2,
 )
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    is_retrieval_dependency_route,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    InputToolRouteV1,
     ToolRoutePlanV2,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import DEVELOPMENT_SMOKE
@@ -93,6 +97,9 @@ class _RecordingInferencePort:
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "latency_ms": result.latency_ms,
+                "semantic_summary": _summarize_llm_output(
+                    getattr(prompt_ref, "prompt_id", None), result.structured_output
+                ),
             }
         )
         return result
@@ -198,6 +205,15 @@ def evaluate(
     if runtime is None or update_settings is None:
         raise RuntimeError("production LLM runtime is unavailable")
     runtime.run_context_provider = lambda: None
+    dispatch_count = 0
+    before_dispatch = runtime.before_provider_dispatch
+
+    def count_dispatch() -> None:
+        nonlocal dispatch_count
+        before_dispatch()
+        dispatch_count += 1
+
+    runtime.before_provider_dispatch = count_dispatch
     update_settings(
         UpdateSettingsCommand(
             str(uuid4()),
@@ -219,6 +235,7 @@ def evaluate(
             llm_runtime=runtime,
             model_id=model_id,
             input_override=(input_overrides or {}).get(case_id),
+            dispatch_count=lambda: dispatch_count,
         )
         records.append(record)
         if emit_case_records:
@@ -238,6 +255,10 @@ def evaluate(
         ),
         "llm_call_count": sum(
             int(cast(int, record.get("llm_call_count", 0))) for record in records
+        ),
+        "provider_dispatch_count": sum(
+            int(cast(int, record.get("provider_dispatch_count", 0)))
+            for record in records
         ),
         "evaluation_judge_call_count": sum(
             int(cast(int, record.get("evaluation_judge_call_count", 0)))
@@ -285,6 +306,7 @@ def _evaluate_case(
     llm_runtime: Any,
     model_id: str,
     input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None = None,
+    dispatch_count: Callable[[], int] | None = None,
 ) -> dict[str, object]:
     database = checkpoint_root / case.case_id / "state" / "data" / "google_work_agent.db"
     if not database.is_file():
@@ -370,6 +392,7 @@ def _evaluate_case(
     wrapper.add_edge("retrieval", END)
     graph = wrapper.compile()
     started = time.perf_counter()
+    dispatches_before = dispatch_count() if dispatch_count is not None else 0
     try:
         with (
             provider_dispatch_execution_scope(
@@ -471,6 +494,10 @@ def _evaluate_case(
             "node_processing_correct": node_processing_correct,
             "node_processing_classification": node_processing_classification,
             "state_diagnostics": _state_diagnostics(output),
+            "source_route_diagnostics": _source_route_diagnostics(
+                tool_route_plan,
+                output.get("acquisition_result"),
+            ),
             "semantic_review": semantic_review,
             "evaluation_limitations": (
                 ["DOWNSTREAM_OUTPUT_NOT_EXECUTED"] if has_downstream_output else []
@@ -479,6 +506,13 @@ def _evaluate_case(
             "query_attempts": output.get("__context_query_attempts__", []),
             "llm_prompt_counts": _prompt_counts(recording_llm.calls),
             "llm_call_count": len(recording_llm.calls),
+            "provider_dispatch_count": (
+                dispatch_count() - dispatches_before if dispatch_count is not None else None
+            ),
+            "llm_semantic_summaries": [
+                {"prompt_id": call["prompt_id"], "summary": call["semantic_summary"]}
+                for call in recording_llm.calls
+            ],
             "evaluation_judge_call_count": int(semantic_review is not None),
             "input_tokens": sum(_metric(call["input_tokens"]) for call in recording_llm.calls),
             "output_tokens": sum(_metric(call["output_tokens"]) for call in recording_llm.calls),
@@ -497,6 +531,13 @@ def _evaluate_case(
             "connector_reads": recording_reader.calls,
             "llm_prompt_counts": _prompt_counts(recording_llm.calls),
             "llm_call_count": len(recording_llm.calls),
+            "provider_dispatch_count": (
+                dispatch_count() - dispatches_before if dispatch_count is not None else None
+            ),
+            "llm_semantic_summaries": [
+                {"prompt_id": call["prompt_id"], "summary": call["semantic_summary"]}
+                for call in recording_llm.calls
+            ],
             "duration_ms": int((time.perf_counter() - started) * 1000),
         }
 
@@ -530,6 +571,48 @@ def _select_replay_inputs(
 def _replay_clock_ms(original_started_at_ms: int, elapsed_ms: int) -> int:
     """Advance the frozen semantic clock only by this replay's elapsed time."""
     return original_started_at_ms + max(elapsed_ms, 0)
+
+
+def _summarize_llm_output(prompt_id: object, output: object) -> dict[str, object]:
+    """Keep first-call shape and decisions without source text or completions."""
+    if not isinstance(output, Mapping):
+        return {"shape": "NON_OBJECT"}
+    summary: dict[str, object] = {"field_names": sorted(str(key) for key in output)}
+    if prompt_id == "retrieval.assess_sufficiency":
+        summary["status"] = output.get("status")
+        issues = output.get("issues")
+        summary["issue_bindings"] = (
+            [
+                {
+                    "slot": item.get("slot"),
+                    "issue_type": item.get("issue_type"),
+                    "resolution_source": item.get("resolution_source"),
+                }
+                for item in issues
+                if isinstance(item, Mapping)
+            ]
+            if isinstance(issues, list)
+            else []
+        )
+    elif prompt_id == "retrieval.plan_query":
+        queries = output.get("route_queries")
+        summary["route_query_count"] = len(queries) if isinstance(queries, list) else None
+        summary["operation_kinds"] = (
+            [item.get("operation") for item in queries if isinstance(item, Mapping)]
+            if isinstance(queries, list)
+            else []
+        )
+    elif prompt_id == "retrieval.select_evidence":
+        for field_name in (
+            "segment_assessments",
+            "assessments",
+            "selected_segment_ids",
+            "evidence_drafts",
+        ):
+            value = output.get(field_name)
+            if isinstance(value, list):
+                summary[f"{field_name}_count"] = len(value)
+    return summary
 
 
 def _state_diagnostics(state: Mapping[str, object]) -> dict[str, object]:
@@ -584,6 +667,42 @@ def _state_diagnostics(state: Mapping[str, object]) -> dict[str, object]:
             len(read_result_handles) if isinstance(read_result_handles, list) else None
         ),
     }
+
+
+def _source_route_diagnostics(plan: object, acquisition: object) -> list[dict[str, object]]:
+    if not isinstance(plan, Mapping) or not isinstance(acquisition, Mapping):
+        return []
+    input_plan = plan.get("input_plan")
+    routes = input_plan.get("input_routes") if isinstance(input_plan, Mapping) else None
+    summaries = acquisition.get("source_summaries")
+    if not isinstance(routes, list) or not isinstance(summaries, list):
+        return []
+    result: list[dict[str, object]] = []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        matched = [
+            item
+            for item in summaries
+            if isinstance(item, Mapping) and item.get("route_id") == route.get("route_id")
+        ]
+        result.append(
+            {
+                "resource_type": route.get("resource_type"),
+                "guard_required": bool(route.get("required"))
+                and not is_retrieval_dependency_route(cast(InputToolRouteV1, route)),
+                "policy_required": bool(route.get("required"))
+                and any(
+                    isinstance(code, str) and code.startswith("POLICY_")
+                    for code in route.get("reason_codes", [])
+                ),
+                "reason_codes": list(route.get("reason_codes", [])),
+                "attempted": bool(matched),
+                "source_statuses": [item.get("status") for item in matched],
+                "resource_counts": [item.get("resource_count") for item in matched],
+            }
+        )
+    return result
 
 
 def _merge_decision(
