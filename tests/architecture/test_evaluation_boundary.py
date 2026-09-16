@@ -25,6 +25,7 @@ EXPECTED_EVALUATION_CODE = {
     "evaluation/harness/case_runtime.py",
     "evaluation/harness/fault_adapters.py",
     "evaluation/harness/fault_profiles.py",
+    "evaluation/harness/gmail_query.py",
     "evaluation/harness/stateful_provider.py",
     "evaluation/harness/temporal_bindings.py",
     "evaluation/prompt_candidate.py",
