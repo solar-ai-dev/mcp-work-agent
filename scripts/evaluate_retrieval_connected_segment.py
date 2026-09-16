@@ -9,10 +9,12 @@ Understanding, Planning, and the Main Product Graph are intentionally not run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, fields, replace
 from itertools import count
 from pathlib import Path
@@ -30,13 +32,22 @@ from scripts.evaluate_retrieval_plan_query_node import (
 )
 from scripts.serve_canonical_v8_product import _case_resources
 
+from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
+    RESUME_CONTRACT_VERSION,
+)
 from google_work_agent.adapters.langgraph.main.state import (
     GraphState,
     WorkflowPhase,
     initial_graph_state,
 )
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+from google_work_agent.adapters.langgraph.registry.node_registry import NodeRegistry
+from google_work_agent.adapters.langgraph.registry.resume_target_registry import (
+    ResumeTargetRegistry,
+)
+from google_work_agent.adapters.langgraph.subgraphs.planning.graph import PlanningSubgraph
 from google_work_agent.adapters.langgraph.subgraphs.retrieval.graph import RetrievalSubgraph
+from google_work_agent.adapters.langgraph.subgraphs.review.graph import ReviewSubgraph
 from google_work_agent.adapters.langgraph.subgraphs.work_analysis.graph import (
     WorkAnalysisSubgraph,
 )
@@ -64,7 +75,17 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     InputToolRouteV1,
     ToolRoutePlanV2,
 )
-from google_work_agent.application.prompt_runtime.prompt_registry import DEVELOPMENT_SMOKE
+from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
+    WorkAnalysisSemanticInputV1,
+)
+from google_work_agent.application.agents.work_analysis.extract_work_facts import (
+    extract_work_facts,
+)
+from google_work_agent.application.prompt_runtime.prompt_registry import (
+    DEVELOPMENT_SMOKE,
+    default_prompt_manifest_path,
+    load_prompt_reference,
+)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
 )
@@ -91,6 +112,7 @@ class _RecordingInferencePort:
     delegate: Any
     calls: list[dict[str, object]]
     attempts: list[dict[str, object]] = field(default_factory=list)
+    capture_structured_output: bool = False
 
     def infer(self, *args: Any, **kwargs: Any) -> Any:
         prompt_ref = args[1] if len(args) > 1 else kwargs.get("prompt_ref")
@@ -128,6 +150,14 @@ class _RecordingInferencePort:
                 "latency_ms": result.latency_ms,
                 "semantic_summary": _summarize_llm_output(
                     getattr(prompt_ref, "prompt_id", None), result.structured_output
+                ),
+                **(
+                    {
+                        "prompt_input": prompt_input,
+                        "structured_output": result.structured_output,
+                    }
+                    if self.capture_structured_output
+                    else {}
                 ),
             }
         )
@@ -204,7 +234,19 @@ def evaluate(
     input_overrides: Mapping[str, tuple[RequestIntentV2, ToolRoutePlanV2]] | None = None,
     emit_case_records: bool = True,
     connect_work_analysis: bool = False,
+    work_analysis_trials: int = 1,
+    capture_work_analysis_detail: bool = False,
+    compare_compact_fact_projection: bool = False,
+    connect_planning_review: bool = False,
 ) -> dict[str, object]:
+    if work_analysis_trials < 1 or (work_analysis_trials > 1 and not connect_work_analysis):
+        raise ValueError("work analysis trials require a connected analysis and count >= 1")
+    if capture_work_analysis_detail and not connect_work_analysis:
+        raise ValueError("work analysis detail requires a connected analysis")
+    if compare_compact_fact_projection and not capture_work_analysis_detail:
+        raise ValueError("compact comparison requires captured work analysis detail")
+    if connect_planning_review and (not connect_work_analysis or work_analysis_trials != 1):
+        raise ValueError("planning/review connection requires one work analysis trial")
     if model_id not in {"qwen3.5:9b", "qwen3.5:4b"}:
         raise ValueError(f"unsupported local model for connected replay: {model_id}")
     cases = load_cases()
@@ -267,6 +309,10 @@ def evaluate(
             input_override=(input_overrides or {}).get(case_id),
             dispatch_count=lambda: dispatch_count,
             connect_work_analysis=connect_work_analysis,
+            work_analysis_trials=work_analysis_trials,
+            capture_work_analysis_detail=capture_work_analysis_detail,
+            compare_compact_fact_projection=compare_compact_fact_projection,
+            connect_planning_review=connect_planning_review,
         )
         records.append(record)
         if emit_case_records:
@@ -315,7 +361,10 @@ def evaluate(
             "input_source": (
                 "CURRENT_UPSTREAM_IN_MEMORY" if input_overrides else "SAVED_CHECKPOINT"
             ),
-            "planning_executed": False,
+            "planning_requested": connect_planning_review,
+            "work_analysis_trials_per_input": work_analysis_trials if connect_work_analysis else 0,
+            "work_analysis_detail_in_local_result": capture_work_analysis_detail,
+            "compact_fact_projection_compared": compare_compact_fact_projection,
             "product_main_graph_compiled": False,
             "provider_write_enabled": False,
         },
@@ -339,6 +388,10 @@ def _evaluate_case(
     input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None = None,
     dispatch_count: Callable[[], int] | None = None,
     connect_work_analysis: bool = False,
+    work_analysis_trials: int = 1,
+    capture_work_analysis_detail: bool = False,
+    compare_compact_fact_projection: bool = False,
+    connect_planning_review: bool = False,
 ) -> dict[str, object]:
     database = checkpoint_root / case.case_id / "state" / "data" / "google_work_agent.db"
     if not database.is_file():
@@ -426,6 +479,8 @@ def _evaluate_case(
     started = time.perf_counter()
     dispatches_before = dispatch_count() if dispatch_count is not None else 0
     analysis_record: dict[str, object] | None = None
+    analysis_trials: list[dict[str, object]] = []
+    compact_fact_comparison: dict[str, object] | None = None
     try:
         with (
             provider_dispatch_execution_scope(
@@ -438,20 +493,72 @@ def _evaluate_case(
             provider_dispatch_budget_scope(run_budget),
         ):
             output = graph.invoke(state, {"recursion_limit": 100})
-            retrieval_calls = list(recording_llm.calls)
-            retrieval_dispatches = (
-                dispatch_count() - dispatches_before if dispatch_count is not None else None
+        retrieval_calls = list(recording_llm.calls)
+        retrieval_dispatches = (
+            dispatch_count() - dispatches_before if dispatch_count is not None else None
+        )
+        retrieval_duration_ms = int((time.perf_counter() - started) * 1000)
+        if connect_work_analysis and output.get("__target__") == "WORK_ANALYSIS":
+            frozen_input = deepcopy(output)
+            input_fingerprint = _work_analysis_input_fingerprint(
+                frozen_input, evidence_store=evidence_store, replay_id=replay_id
             )
-            retrieval_duration_ms = int((time.perf_counter() - started) * 1000)
-            if connect_work_analysis and output.get("__target__") == "WORK_ANALYSIS":
-                analysis_record = _evaluate_work_analysis(
-                    state=cast(GraphState, output),
-                    llm_runtime=recording_llm,
-                    evidence_store=evidence_store,
-                    graph_profile=profile,
-                    replay_id=replay_id,
-                    dispatch_count=dispatch_count,
+            for trial_index in range(work_analysis_trials):
+                trial_input_fingerprint = _work_analysis_input_fingerprint(
+                    frozen_input, evidence_store=evidence_store, replay_id=replay_id
                 )
+                if trial_input_fingerprint != input_fingerprint:
+                    raise RuntimeError("frozen work analysis input changed between trials")
+                trial_started = time.perf_counter()
+                trial_budget = deepcopy(frozen_input.get("retry_budget", run_budget))
+                with (
+                    provider_dispatch_execution_scope(
+                        run_id=replay_id,
+                        now_ms=lambda trial_started=trial_started: _replay_clock_ms(
+                            original_started_at_ms,
+                            retrieval_duration_ms
+                            + int((time.perf_counter() - trial_started) * 1_000),
+                        ),
+                    ),
+                    provider_dispatch_budget_scope(trial_budget),
+                ):
+                    analysis_trials.append(
+                        _evaluate_work_analysis(
+                            state=deepcopy(frozen_input),
+                            llm_runtime=recording_llm,
+                            evidence_store=evidence_store,
+                            graph_profile=profile,
+                            replay_id=replay_id,
+                            dispatch_count=dispatch_count,
+                            capture_detail=capture_work_analysis_detail,
+                            connect_planning_review=connect_planning_review,
+                            scope=scope,
+                        )
+                    )
+                analysis_trials[-1]["trial_index"] = trial_index + 1
+                analysis_trials[-1]["input_fingerprint"] = trial_input_fingerprint
+            analysis_record = analysis_trials[0]
+            if compare_compact_fact_projection:
+                candidate_started = time.perf_counter()
+                with (
+                    provider_dispatch_execution_scope(
+                        run_id=replay_id,
+                        now_ms=lambda: _replay_clock_ms(
+                            original_started_at_ms,
+                            retrieval_duration_ms
+                            + int((time.perf_counter() - candidate_started) * 1_000),
+                        ),
+                    ),
+                    provider_dispatch_budget_scope(
+                        deepcopy(frozen_input.get("retry_budget", run_budget))
+                    ),
+                ):
+                    compact_fact_comparison = _evaluate_compact_fact_projection(
+                        baseline_trial=analysis_record,
+                        llm_runtime=recording_llm,
+                        dispatch_count=dispatch_count,
+                    )
+                compact_fact_comparison["input_fingerprint"] = input_fingerprint
         retrieval_result = output.get("retrieval_result")
         evidence = (
             []
@@ -549,7 +656,7 @@ def _evaluate_case(
             "evaluation_limitations": (
                 [
                     "WORK_ANALYSIS_SEMANTIC_NOT_EVALUATED",
-                    "PLANNING_NOT_EXECUTED",
+                    *([] if connect_planning_review else ["PLANNING_NOT_EXECUTED"]),
                     *(
                         ["WORK_ANALYSIS_INCOMPLETE"]
                         if analysis_record["outcome"] != "COMPLETED"
@@ -562,6 +669,8 @@ def _evaluate_case(
                 else []
             ),
             "work_analysis": analysis_record,
+            "work_analysis_trials": analysis_trials,
+            "compact_fact_projection": compact_fact_comparison,
             "connector_reads": recording_reader.calls,
             "query_attempts": output.get("__context_query_attempts__", []),
             "llm_prompt_counts": _prompt_counts(retrieval_calls),
@@ -587,6 +696,7 @@ def _evaluate_case(
             "error_message": str(error),
             "reason_code": getattr(error, "reason_code", None),
             "connector_reads": recording_reader.calls,
+            "source_route_diagnostics": _source_route_diagnostics(tool_route_plan, None),
             "llm_prompt_counts": _prompt_counts(recording_llm.calls),
             "llm_call_count": len(recording_llm.calls),
             "provider_dispatch_count": (
@@ -639,12 +749,17 @@ def _evaluate_work_analysis(
     graph_profile: GraphProfile,
     replay_id: str,
     dispatch_count: Callable[[], int] | None,
+    capture_detail: bool = False,
+    connect_planning_review: bool = False,
+    scope: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Consume the in-memory Retrieval output without persisting raw evidence."""
     calls_before = len(llm_runtime.calls)
     attempts_before = len(llm_runtime.attempts)
     dispatches_before = dispatch_count() if dispatch_count is not None else 0
     started = time.perf_counter()
+    previous_capture = llm_runtime.capture_structured_output
+    llm_runtime.capture_structured_output = capture_detail
     try:
         analysis = WorkAnalysisSubgraph(
             llm_runtime=llm_runtime,
@@ -683,6 +798,7 @@ def _evaluate_work_analysis(
             "workflow_phase": output.get("workflow_phase"),
             "user_interrupt_present": output.get("user_interrupt") is not None,
             "artifact": artifact_summary,
+            **({"artifact_detail": artifact} if capture_detail else {}),
         }
     except Exception as error:
         code = getattr(error, "code", None)
@@ -695,6 +811,8 @@ def _evaluate_work_analysis(
                 error, "provider_dispatch_occurred", None
             ),
         }
+    finally:
+        llm_runtime.capture_structured_output = previous_capture
     calls = llm_runtime.calls[calls_before:]
     result.update(
         {
@@ -705,12 +823,309 @@ def _evaluate_work_analysis(
                 for call in calls
             ],
             "inference_attempts": llm_runtime.attempts[attempts_before:],
+            **(
+                {"structured_inference_outputs": [
+                    {
+                        "prompt_id": call["prompt_id"],
+                        "prompt_input": call["prompt_input"],
+                        "structured_output": call["structured_output"],
+                    }
+                    for call in calls
+                    if "structured_output" in call
+                ]}
+                if capture_detail
+                else {}
+            ),
             "provider_dispatch_count": (
                 dispatch_count() - dispatches_before if dispatch_count is not None else None
             ),
             "input_tokens": sum(_metric(call["input_tokens"]) for call in calls),
             "output_tokens": sum(_metric(call["output_tokens"]) for call in calls),
             "provider_latency_ms": sum(_metric(call["latency_ms"]) for call in calls),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+        }
+    )
+    if (
+        connect_planning_review
+        and result["outcome"] == "COMPLETED"
+        and output.get("__target__") == "SOLUTION_PLANNING"
+    ):
+        result["downstream"] = _evaluate_planning_review(
+            state=cast(GraphState, output),
+            llm_runtime=llm_runtime,
+            evidence_store=evidence_store,
+            graph_profile=graph_profile,
+            replay_id=replay_id,
+            scope=scope or {},
+            dispatch_count=dispatch_count,
+            capture_detail=capture_detail,
+        )
+    return result
+
+
+def _work_analysis_input_fingerprint(
+    state: GraphState, *, evidence_store: RunScopedEvidenceStore, replay_id: str
+) -> str:
+    """Identify an exact frozen semantic handoff without logging its contents."""
+    retrieval = state.get("retrieval_result")
+    refs = retrieval.get("evidence_refs", []) if isinstance(retrieval, Mapping) else []
+    projection = {
+        "full_graph_state": state,
+        "evidence": evidence_store.resolve(run_id=replay_id, evidence_refs=list(refs)),
+    }
+    serialized = json.dumps(projection, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _compact_fact_evidence(evidence: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Candidate-only LLM projection; keep citation and resource provenance."""
+    compact: list[dict[str, object]] = []
+    for item in evidence:
+        locator = item.get("locator")
+        compact.append(
+            {
+                "evidence_id": item.get("evidence_id"),
+                "resource_handle": item.get("resource_handle"),
+                "excerpt": item.get("excerpt"),
+                "is_metadata_only": bool(
+                    locator.get("is_metadata_only")
+                    if isinstance(locator, Mapping)
+                    else False
+                ),
+            }
+        )
+    return compact
+
+
+def _evaluate_compact_fact_projection(
+    *,
+    baseline_trial: Mapping[str, object],
+    llm_runtime: _RecordingInferencePort,
+    dispatch_count: Callable[[], int] | None,
+) -> dict[str, object]:
+    details = baseline_trial.get("structured_inference_outputs")
+    first = next(
+        (
+            item
+            for item in details
+            if isinstance(item, Mapping)
+            and item.get("prompt_id") == "work_analysis.extract_work_facts"
+        ),
+        None,
+    ) if isinstance(details, list) else None
+    baseline_input = first.get("prompt_input") if isinstance(first, Mapping) else None
+    if not isinstance(baseline_input, Mapping):
+        return {"outcome": "SKIP_NO_BASELINE_EXTRACT_INPUT"}
+    evidence = baseline_input.get("evidence")
+    if not isinstance(evidence, list) or not all(isinstance(item, Mapping) for item in evidence):
+        return {"outcome": "SKIP_INVALID_BASELINE_EVIDENCE"}
+    semantic_input = cast(
+        WorkAnalysisSemanticInputV1,
+        {
+            **baseline_input,
+            "evidence": _compact_fact_evidence(cast(list[Mapping[str, object]], evidence)),
+        },
+    )
+    refs = {
+        str(item["evidence_id"])
+        for item in evidence
+        if isinstance(item.get("evidence_id"), str)
+    }
+    prompt_ref = load_prompt_reference(
+        "work_analysis.extract_work_facts",
+        default_prompt_manifest_path(),
+        execution_scope=DEVELOPMENT_SMOKE,
+    )
+    calls_before = len(llm_runtime.calls)
+    attempts_before = len(llm_runtime.attempts)
+    dispatches_before = dispatch_count() if dispatch_count is not None else 0
+    previous_capture = llm_runtime.capture_structured_output
+    llm_runtime.capture_structured_output = True
+    started = time.perf_counter()
+    try:
+        facts = extract_work_facts(
+            semantic_input=semantic_input,
+            llm_runtime=llm_runtime,
+            prompt_ref=prompt_ref,
+            allowed_evidence_refs=refs,
+            requested_mode="LOCAL_GPU",
+        )
+        result: dict[str, object] = {
+            "outcome": "COMPLETED",
+            "fact_candidates": facts,
+        }
+    except Exception as error:
+        code = getattr(error, "code", None)
+        result = {
+            "outcome": "FAILED",
+            "error_type": type(error).__name__,
+            "error_code": getattr(code, "value", None),
+            "reason_code": getattr(error, "reason_code", None),
+        }
+    finally:
+        llm_runtime.capture_structured_output = previous_capture
+    calls = llm_runtime.calls[calls_before:]
+    result.update(
+        {
+            "inference_outputs": [
+                call.get("structured_output") for call in calls
+            ],
+            "inference_attempts": llm_runtime.attempts[attempts_before:],
+            "provider_dispatch_count": (
+                dispatch_count() - dispatches_before if dispatch_count is not None else None
+            ),
+            "llm_call_count": len(calls),
+            "input_tokens": sum(_metric(call["input_tokens"]) for call in calls),
+            "output_tokens": sum(_metric(call["output_tokens"]) for call in calls),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+        }
+    )
+    return result
+
+
+def _evaluate_planning_review(
+    *,
+    state: GraphState,
+    llm_runtime: _RecordingInferencePort,
+    evidence_store: RunScopedEvidenceStore,
+    graph_profile: GraphProfile,
+    replay_id: str,
+    scope: Mapping[str, object],
+    dispatch_count: Callable[[], int] | None,
+    capture_detail: bool,
+) -> dict[str, object]:
+    """Run adjacent consumers only; never enter Domain Validation or WRITE."""
+    calls_before = len(llm_runtime.calls)
+    attempts_before = len(llm_runtime.attempts)
+    dispatches_before = dispatch_count() if dispatch_count is not None else 0
+    previous_capture = llm_runtime.capture_structured_output
+    llm_runtime.capture_structured_output = capture_detail
+    started = time.perf_counter()
+    result: dict[str, object]
+    try:
+        calendar_ids = scope.get("calendar_ids")
+        tasklist_ids = scope.get("tasklist_ids")
+        default_calendar = (
+            calendar_ids[0]
+            if isinstance(calendar_ids, (list, tuple)) and len(calendar_ids) == 1
+            else None
+        )
+        default_tasklist = (
+            tasklist_ids[0]
+            if isinstance(tasklist_ids, (list, tuple)) and len(tasklist_ids) == 1
+            else None
+        )
+        planning = PlanningSubgraph(
+            llm_runtime=llm_runtime,
+            prompt_manifest_path=None,
+            prompt_execution_scope=DEVELOPMENT_SMOKE,
+            id_factory=_IdFactory(f"{replay_id}-planning"),
+            graph_profile=graph_profile,
+            merge_decision=cast(Any, _merge_decision),
+            evidence_store=evidence_store,
+            confirm_inline=lambda _: (_raise_confirmation_required(), None),
+            default_tasklist_id_provider=lambda: default_tasklist,
+            default_calendar_id_provider=lambda: default_calendar,
+        ).build()
+        wrapper = StateGraph(GraphState)
+        wrapper.add_node("planning", planning)
+        wrapper.add_edge(START, "planning")
+        wrapper.add_edge("planning", END)
+        planned = wrapper.compile().invoke(state, {"recursion_limit": 100})
+        planning_result = planned.get("planning_result")
+        result = {
+            "planning_outcome": (
+                "COMPLETED" if isinstance(planning_result, Mapping) else "NO_RESULT"
+            ),
+            "planning_next_target": planned.get("__target__"),
+            "planning_artifact_kind": (
+                "ACTION_PLAN"
+                if isinstance(planning_result, Mapping) and "actions" in planning_result
+                else "ANSWER"
+                if isinstance(planning_result, Mapping) and "answer" in planning_result
+                else None
+            ),
+            "planning_action_count": (
+                len(planning_result.get("actions", []))
+                if isinstance(planning_result, Mapping)
+                and isinstance(planning_result.get("actions"), list)
+                else None
+            ),
+            **({"planning_artifact_detail": planning_result} if capture_detail else {}),
+            "review_outcome": "NOT_APPLICABLE",
+        }
+        if planned.get("__target__") == "PLAN_REVIEW_INSPECT":
+            registry = ResumeTargetRegistry(
+                node_registry=NodeRegistry(graph_version=RESUME_CONTRACT_VERSION),
+                graph_version=RESUME_CONTRACT_VERSION,
+            )
+            review = ReviewSubgraph(
+                llm_runtime=llm_runtime,
+                prompt_manifest_path=None,
+                prompt_execution_scope=DEVELOPMENT_SMOKE,
+                id_factory=_IdFactory(f"{replay_id}-review"),
+                graph_profile=graph_profile,
+                merge_decision=cast(Any, _merge_decision),
+                evidence_store=evidence_store,
+                load_persisted_evidence=lambda _: [],
+                confirm_inline=lambda _: (_raise_confirmation_required(), None),
+                resume_target_registry=registry,
+            ).build()
+            review_wrapper = StateGraph(GraphState)
+            review_wrapper.add_node("review", review)
+            review_wrapper.add_edge(START, "review")
+            review_wrapper.add_edge("review", END)
+            reviewed = review_wrapper.compile().invoke(planned, {"recursion_limit": 100})
+            review_result = reviewed.get("plan_review")
+            result.update(
+                {
+                    "review_outcome": (
+                        "COMPLETED" if isinstance(review_result, Mapping) else "NO_RESULT"
+                    ),
+                    "review_status": (
+                        review_result.get("status")
+                        if isinstance(review_result, Mapping)
+                        else None
+                    ),
+                    "review_next_target": reviewed.get("__target__"),
+                    **({"review_artifact_detail": review_result} if capture_detail else {}),
+                }
+            )
+    except Exception as error:
+        code = getattr(error, "code", None)
+        result = {
+            "planning_outcome": "FAILED",
+            "error_type": type(error).__name__,
+            "error_code": getattr(code, "value", None),
+            "reason_code": getattr(error, "reason_code", None),
+        }
+    finally:
+        llm_runtime.capture_structured_output = previous_capture
+    calls = llm_runtime.calls[calls_before:]
+    result.update(
+        {
+            "inference_attempts": llm_runtime.attempts[attempts_before:],
+            **(
+                {
+                    "inference_details": [
+                        {
+                            "prompt_id": call["prompt_id"],
+                            "prompt_input": call["prompt_input"],
+                            "structured_output": call["structured_output"],
+                        }
+                        for call in calls
+                        if "structured_output" in call
+                    ]
+                }
+                if capture_detail
+                else {}
+            ),
+            "llm_call_count": len(calls),
+            "provider_dispatch_count": (
+                dispatch_count() - dispatches_before if dispatch_count is not None else None
+            ),
+            "input_tokens": sum(_metric(call["input_tokens"]) for call in calls),
+            "output_tokens": sum(_metric(call["output_tokens"]) for call in calls),
             "duration_ms": int((time.perf_counter() - started) * 1000),
         }
     )
@@ -741,6 +1156,11 @@ def _summarize_llm_output(prompt_id: object, output: object) -> dict[str, object
     elif prompt_id == "retrieval.plan_query":
         queries = output.get("route_queries")
         summary["route_query_count"] = len(queries) if isinstance(queries, list) else None
+        summary["route_ids"] = (
+            [item.get("route_id") for item in queries if isinstance(item, Mapping)]
+            if isinstance(queries, list)
+            else []
+        )
         summary["operation_kinds"] = (
             [item.get("operation") for item in queries if isinstance(item, Mapping)]
             if isinstance(queries, list)
@@ -814,11 +1234,11 @@ def _state_diagnostics(state: Mapping[str, object]) -> dict[str, object]:
 
 
 def _source_route_diagnostics(plan: object, acquisition: object) -> list[dict[str, object]]:
-    if not isinstance(plan, Mapping) or not isinstance(acquisition, Mapping):
+    if not isinstance(plan, Mapping):
         return []
     input_plan = plan.get("input_plan")
     routes = input_plan.get("input_routes") if isinstance(input_plan, Mapping) else None
-    summaries = acquisition.get("source_summaries")
+    summaries = acquisition.get("source_summaries") if isinstance(acquisition, Mapping) else []
     if not isinstance(routes, list) or not isinstance(summaries, list):
         return []
     result: list[dict[str, object]] = []
@@ -832,6 +1252,7 @@ def _source_route_diagnostics(plan: object, acquisition: object) -> list[dict[st
         ]
         result.append(
             {
+                "route_id": route.get("route_id"),
                 "resource_type": route.get("resource_type"),
                 "guard_required": bool(route.get("required"))
                 and not is_retrieval_dependency_route(cast(InputToolRouteV1, route)),
@@ -841,7 +1262,7 @@ def _source_route_diagnostics(plan: object, acquisition: object) -> list[dict[st
                     for code in route.get("reason_codes", [])
                 ),
                 "reason_codes": list(route.get("reason_codes", [])),
-                "attempted": bool(matched),
+                "attempted": bool(matched) if isinstance(acquisition, Mapping) else None,
                 "source_statuses": [item.get("status") for item in matched],
                 "resource_counts": [item.get("resource_count") for item in matched],
             }

@@ -86,6 +86,10 @@ def main() -> None:
     parser.add_argument("--retrieval-result-path", type=Path, required=True)
     parser.add_argument("--case", action="append", required=True)
     parser.add_argument("--connect-work-analysis", action="store_true")
+    parser.add_argument("--work-analysis-trials", type=int, default=1)
+    parser.add_argument("--capture-work-analysis-detail", action="store_true")
+    parser.add_argument("--compare-compact-fact-projection", action="store_true")
+    parser.add_argument("--connect-planning-review", action="store_true")
     arguments = parser.parse_args()
     cases = load_cases()
     if unknown := sorted(set(arguments.case) - set(cases)):
@@ -326,6 +330,10 @@ def main() -> None:
         input_overrides=overrides,
         emit_case_records=False,
         connect_work_analysis=arguments.connect_work_analysis,
+        work_analysis_trials=arguments.work_analysis_trials,
+        capture_work_analysis_detail=arguments.capture_work_analysis_detail,
+        compare_compact_fact_projection=arguments.compare_compact_fact_projection,
+        connect_planning_review=arguments.connect_planning_review,
     )
     result: dict[str, Any] = {
         "binding": {
@@ -339,6 +347,11 @@ def main() -> None:
             "provider_write_enabled": False,
             "planning_executed": False,
             "work_analysis_requested": arguments.connect_work_analysis,
+            "work_analysis_trials_per_input": (
+                arguments.work_analysis_trials if arguments.connect_work_analysis else 0
+            ),
+            "compact_fact_projection_compared": arguments.compare_compact_fact_projection,
+            "planning_review_requested": arguments.connect_planning_review,
         },
         "producer_cases": records,
         "retrieval_summary": retrieval_result["summary"],

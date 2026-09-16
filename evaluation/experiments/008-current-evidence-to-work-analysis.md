@@ -48,10 +48,11 @@ dispatch 발생 여부, 첫 Prompt 입력 크기·지연만 비민감하게 기�
 4건을 소비했고, 첫 `extract_work_facts` 입력은 약 4,711자·40.4초였다.
 Work Analysis는 5회 LLM 호출·48,066/2,417 input/output token·83.8초로
 사실 11건, 관계 0건, route action necessity 1건을 만들고
-`SOLUTION_PLANNING`으로 전달했다. 따라서 180초 실패는 같은 입력 family에서
-고정 재현되지 않았다. 현재 관측은 028 **실패 1/성공 1**이며 모델·런타임
-지연 변동을 분리하지 못했다. 성공 Trial만 골라 first-call 안정화라고
-주장하지 않는다. 두 Trial 모두 실제 Provider·최종 업무 성공은 미검증이다.
+`SOLUTION_PLANNING`으로 전달했다. 그러나 첫 Trial의 Evidence는 5건,
+추가 Trial은 4건이므로 **동일 Work Analysis 입력 반복이 아니다**. 두 결과는
+028이라는 요청 family의 별개 연결 관측일 뿐, 시간초과 재현율이나 모델·런타임
+변동의 비교가 아니다. 성공 Trial만 골라 first-call 안정화라고 주장하지 않는다.
+두 Trial 모두 실제 Provider·최종 업무 성공은 미검증이다.
 추가 원시 결과는
 `evaluation/results/request-to-work-analysis-repeat-core028-20260916/`에 있다.
 

@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 from scripts.evaluate_retrieval_connected_segment import (
+    _compact_fact_evidence,
     _evaluate_work_analysis,
     _RecordingInferencePort,
     _replay_clock_ms,
@@ -11,6 +12,7 @@ from scripts.evaluate_retrieval_connected_segment import (
     _source_route_diagnostics,
     _state_diagnostics,
     _summarize_llm_output,
+    _work_analysis_input_fingerprint,
     evaluate,
 )
 
@@ -166,6 +168,7 @@ def test_source_route_diagnostics_separate_guard_policy_and_access_routes() -> N
     assert summary[2]["guard_required"] is True
     assert summary[2]["policy_required"] is True
     assert summary[2]["attempted"] is False
+    assert _source_route_diagnostics(plan, None)[1]["attempted"] is None
 
 
 def test_work_analysis_harness_records_typed_failure_without_private_message(
@@ -215,3 +218,67 @@ def test_inference_attempt_records_failure_size_without_prompt_content() -> None
     assert recorder.attempts[0]["outcome"] == "FAILED"
     assert cast(int, recorder.attempts[0]["input_chars"]) > 0
     assert "private" not in str(recorder.attempts)
+
+
+def test_work_analysis_input_fingerprint_includes_evidence_without_revealing_it() -> None:
+    class _EvidenceStore:
+        evidence = [{"text": "private evidence"}]
+
+        def resolve(self, *, run_id: str, evidence_refs: list[str]) -> list[dict[str, str]]:
+            assert run_id == "test"
+            assert evidence_refs == ["e1"]
+            return self.evidence
+
+    store = _EvidenceStore()
+    state = cast(GraphState, {"retrieval_result": {"evidence_refs": ["e1"]}})
+    first = _work_analysis_input_fingerprint(
+        state, evidence_store=cast(RunScopedEvidenceStore, store), replay_id="test"
+    )
+    assert len(first) == 64
+    assert "private" not in first
+    store.evidence = [{"text": "different private evidence"}]
+    second = _work_analysis_input_fingerprint(
+        state, evidence_store=cast(RunScopedEvidenceStore, store), replay_id="test"
+    )
+    assert first != second
+
+
+def test_inference_detail_is_opt_in() -> None:
+    class _Delegate:
+        def infer(self, *_: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                input_tokens=10,
+                output_tokens=2,
+                latency_ms=3,
+                structured_output={"private": "source text"},
+            )
+
+    recorder = _RecordingInferencePort(_Delegate(), [])
+    recorder.infer("LOCAL_GPU", SimpleNamespace(prompt_id="test"), {})
+    assert "structured_output" not in recorder.calls[0]
+    recorder.capture_structured_output = True
+    recorder.infer("LOCAL_GPU", SimpleNamespace(prompt_id="test"), {})
+    assert recorder.calls[1]["structured_output"] == {"private": "source text"}
+    assert recorder.calls[1]["prompt_input"] == {}
+
+
+def test_compact_fact_projection_retains_content_and_citation_not_wrapper() -> None:
+    evidence = [
+        {
+            "evidence_id": "e1",
+            "resource_handle": "gmail_thread:t1",
+            "excerpt": "Subject: delay",
+            "locator": {"is_metadata_only": True, "position": 8},
+            "segment_id": "seg1",
+            "reason_codes": ["SUPPORTS"],
+        }
+    ]
+
+    assert _compact_fact_evidence(evidence) == [
+        {
+            "evidence_id": "e1",
+            "resource_handle": "gmail_thread:t1",
+            "excerpt": "Subject: delay",
+            "is_metadata_only": True,
+        }
+    ]
