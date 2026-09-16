@@ -139,13 +139,14 @@ def test_gmail_search_schema__empty_constraints__allows_only_gmail_route() -> No
     assert validate_output_schema(candidate, non_gmail_schema.json_schema)
 
 
-def test_initial_gmail_exact_anchors__bind_keyword_values__and_recall_mode() -> None:
+def test_initial_gmail_exact_anchors__leave_search_relation_to_planner() -> None:
     schema = bind_retrieval_query_plan_output_schema(
         route_ids=["gmail"],
         route_operations={"gmail": ["SEARCH"]},
-        supported_constraint_kinds={"gmail": ["KEYWORD"]},
+        supported_constraint_kinds={"gmail": ["KEYWORD", "CONCEPT"]},
         gmail_route_ids=["gmail"],
         initial_gmail_keyword_terms=["Atlas", "출고일"],
+        requested_concepts={"gmail": ["출고 일정"]},
     )
     candidate: dict[str, Any] = {
         "schema_version": 3,
@@ -173,13 +174,28 @@ def test_initial_gmail_exact_anchors__bind_keyword_values__and_recall_mode() -> 
     candidate["route_queries"][0]["search_spec"]["constraints"]["keyword"][
         "match_mode"
     ] = "ALL"
-    assert validate_output_schema(candidate, schema.json_schema)
+    assert validate_output_schema(candidate, schema.json_schema) == []
+    candidate["route_queries"][0]["search_spec"]["constraints"]["keyword"][
+        "match_mode"
+    ] = "PHRASE"
+    assert validate_output_schema(candidate, schema.json_schema) == []
     candidate["route_queries"][0]["search_spec"]["constraints"]["keyword"] = {
         "kind": "KEYWORD",
         "terms": ["invented"],
         "match_mode": "ANY",
     }
     assert validate_output_schema(candidate, schema.json_schema)
+    candidate["route_queries"][0]["search_spec"]["constraints"]["keyword"] = {
+        "kind": "KEYWORD",
+        "terms": ["Atlas"],
+        "match_mode": "ALL",
+    }
+    candidate["route_queries"][0]["search_spec"]["constraints"]["concept"] = {
+        "kind": "CONCEPT",
+        "concept": "출고 일정",
+        "manifestations": ["출고 예약"],
+    }
+    assert validate_output_schema(candidate, schema.json_schema) == []
 
 
 def test_run_relative_period__mixed_routes__binds_only_own_route() -> None:

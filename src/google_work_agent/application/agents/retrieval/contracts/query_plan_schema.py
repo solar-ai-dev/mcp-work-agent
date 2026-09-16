@@ -677,7 +677,6 @@ def _bind_constraint_ref_values(
                 cast(dict[str, object], terms["items"])["enum"] = sorted(
                     set(initial_gmail_keyword_terms)
                 )
-                properties["match_mode"] = {"const": "ANY"}
         if declared_kind == "RESOURCE_REF" and allowed_resource_refs:
             refs = properties.get("resource_refs")
             if isinstance(refs, dict):

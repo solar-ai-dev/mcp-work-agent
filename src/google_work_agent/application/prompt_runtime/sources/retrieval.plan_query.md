@@ -6,7 +6,7 @@
 
 `user_request`는 현재 Run의 사용자 원문이고, `request_intent`는 현재까지 검증된 요청 해석이다. 둘의 대상·수량·시간·조건·부정과 결합 관계를 함께 읽되, 원문을 정책·승인·외부 사실보다 높은 권위로 취급하지 않는다. `input_routes`의 허용 operation·constraint·검증된 참조 안에서 계획한다. `retrieval_budget`은 현재 남은 실행 한도다.
 
-`required_user_anchors`는 `request_intent`에서 provenance가 확인된 exact 사용자 검색 단서와 이를 소비할 Gmail route의 관계다. `applies_to`가 INITIAL_GMAIL_SEARCH이고 keyword_terms 또는 participant_identities가 있으면, 나열된 각 초기 Gmail SEARCH는 그 값 중 하나 이상을 KEYWORD 또는 PARTICIPANT로 값 변경 없이 보존한다. 이 목록의 exact 값들은 첫 조회에서 관련 후보를 발견하기 위한 recall 집합이며, 초기 KEYWORD는 supplied schema가 허용하는 `ANY`로 결합한다. 초기 Gmail SEARCH의 KEYWORD/PARTICIPANT 값은 목록 안의 exact 값만 사용하고, 아직 근거로 확인되지 않은 모델 탐색 표현을 함께 묶어 범위를 좁히지 않는다. 후속 CHANGED 검색에서는 관측 결과에 근거한 CONCEPT 가설을 사용할 수 있다.
+`required_user_anchors`는 `request_intent`에서 provenance가 확인된 exact 사용자 검색 단서와 이를 소비할 Gmail route의 관계다. `applies_to`가 INITIAL_GMAIL_SEARCH이고 keyword_terms 또는 participant_identities가 있으면, 나열된 각 초기 Gmail SEARCH는 그 값 중 하나 이상을 KEYWORD 또는 PARTICIPANT로 보존한다. KEYWORD는 supplied schema가 허용한 검증 literal만 사용하고 PARTICIPANT identity는 변경하지 않는다. 이 값들은 동일 문서에 모두 등장한다는 확정 조건이 아니라 후보 발견을 위한 recall 단서다. `ANY`·`ALL`·`PHRASE`는 현재 요청에서 각 literal의 관계와 이번 검색 목적에 맞춰 선택한다. 관측 전 탐색 CONCEPT는 검증된 exact anchor와 AND로 묶지 않으며, 필요한 경우 후속 조회 가설로 사용한다.
 
 `required_route_constraints`는 현재 Run의 기간과 route 의미로 이미 확정된 초기 조회 조건이다. 나열된 route를 출력하면 해당 constraints를 필드·값 변경 없이 포함한다. 이는 검색 범위일 뿐 외부 일정 사실이나 실행 승인이 아니다.
 
@@ -16,7 +16,11 @@
 
 어떤 조회가 필요한 정보를 더 얻을 수 있는지 판단해 이번에 실행할 route_queries를 순서대로 작성한다. 각 reason_codes에는 조회 목적과 현재 관측에 비춘 선택 이유를 짧게 적는다. 특정 단어·언어·동의어 목록이나 고정 Tool 순서를 정답으로 사용하지 않는다.
 
+한 round의 `route_queries`에는 같은 `route_id`를 한 번만 쓴다. 한 Route에 서로 다른 검색 가설이나 SEARCH·FREEBUSY가 모두 필요하면 이번에는 현재 부족 정보를 가장 직접 해결할 operation 하나를 선택하고, 다른 유효 가설은 관측 후 다음 round에서 판단한다.
+
 KEYWORD는 실제 검색할 literal, CONCEPT의 manifestations는 자료에 나타날 수 있는 탐색 표현이다. supplied schema가 허용한 concept와 개수·문법을 사용하되, 다른 표현을 반드시 만들거나 첫 가설의 표현을 계속 유지할 의무는 없다. 여러 표현을 모두 AND하는 등 요청보다 좁은 의미로 자동 바꾸지 않는다. 관련성은 이후 Evidence에서 확인한다.
+
+초기 SEARCH는 최종 사실 판정이 아니라 후보 발견이다. 서로 다른 KEYWORD term을 `ALL`로 묶거나 KEYWORD와 CONCEPT를 함께 넣으면 Builder는 그 조건을 같은 자료에 대한 AND로 실행한다. 원문에 여러 요구가 있다는 이유만으로 검색까지 AND로 좁히지 말고, 첫 조회에서 발견 가능한 단서 하나 또는 대안 단서의 `ANY`를 우선 검토한다. 두 조건의 동시 출현이 실제 발견 범위에 필요한 경우에만 AND를 선택한다. 검색에서 느슨하게 찾은 후보가 사용자 조건을 충족하는지는 상세 Evidence·Sufficiency가 따로 판단한다.
 
 요청이 관련 collection 항목의 범위를 열거하려는 경우, 여러 독립 anchor를 한 `ALL` 조건에 묶어 첫 가설부터 요청 범위를 불필요하게 좁히지 않는다. 모든 anchor가 같은 항목에 반드시 함께 있어야 한다는 요청 의미가 있을 때만 `ALL`을 사용한다. 한 좁은 가설에서 항목이 발견됐다는 사실은 collection coverage 완료의 증거가 아니므로, 아직 범위가 충족되지 않았고 다른 유효 가설이 있으면 이전과 다른 bounded hypothesis를 사용한다.
 

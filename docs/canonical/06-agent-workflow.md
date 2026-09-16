@@ -1165,7 +1165,7 @@ Node는 자신의 Output에 필요한 최소 State만 받는다. Main State에 �
 | 책임 | 입력 Projection 예 |
 | --- | --- |
 | Tool Route determine resources | request_intent |
-| Retrieval plan_query | request_intent + input_routes + retrieval_budget (follow-up은 bounded prior QueryAttemptV1·SufficiencyIssue·read-result summary 추가) |
+| Retrieval plan_query | 현재 Run user_request + request_intent + input_routes + retrieval_budget (follow-up은 bounded prior QueryAttemptV1·SufficiencyIssue·read-result summary·selected Evidence projection 추가) |
 | Retrieval availability | user time constraints + normalized busy intervals (deterministic) |
 | Retrieval RAG select | request_intent + ranked/fetched segment handles |
 | Retrieval sufficiency | request_intent + selected evidence + retrieval_budget |
@@ -1319,7 +1319,7 @@ raw user_request를 Local State/Prompt의 독립 semantic authority로 추가하
 
 | 책임 | 입력 |
 | --- | --- |
-| `plan_query` · 최초 | request_intent + input_routes + retrieval_budget |
+| `plan_query` · 최초 | 현재 Run user_request + request_intent + input_routes + retrieval_budget |
 | `plan_query` · 후속 | 최초 입력 + current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary |
 | `plan_query` · 사용자 추가 검색 | checkpointed pending_user_retrieval_need. raw UI request나 이미 clear한 handoff payload를 다시 읽지 않음 |
 | `build_query` | query_plan + input_routes. 결정적 처리 |

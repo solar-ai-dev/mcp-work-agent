@@ -396,7 +396,7 @@ def _gmail_search_projection(item: Mapping[str, Any]) -> dict[str, Any]:
         "sender_email": first.get("sender_email"),
         "subject": payload.get("subject") or first.get("subject"),
         "received_at": latest.get("received_at"),
-        "snippet": latest.get("body"),
+        "snippet": payload.get("snippet") or latest.get("snippet") or "",
     }
     return projected
 

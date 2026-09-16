@@ -159,3 +159,112 @@ def test_calendar_period__multiple_periods_without_binding__does_not_guess_route
     )
 
     assert result == {}
+
+
+def test_calendar_period__event_and_freebusy__does_not_guess_time_owner() -> None:
+    result = resolve_calendar_query_periods(
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    {"kind": "DATE", "field": "period", "value": "오늘"},
+                    {"kind": "TIME", "field": "start_time", "value": "10:00"},
+                    {"kind": "TIME", "field": "end_time", "value": "11:00"},
+                ]
+            }
+        },
+        frozen_routes=[
+            {
+                "route_id": "event",
+                "connector_id": "google_workspace",
+                "resource_type": "CALENDAR_EVENT",
+                "allowed_read_tool_ids": ["calendar_search_events"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "availability",
+                "connector_id": "google_workspace",
+                "resource_type": "CALENDAR_FREEBUSY",
+                "allowed_read_tool_ids": ["calendar_query_freebusy"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+        ],
+        now_ms=int(datetime(2026, 9, 5, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1_000),
+        timezone="Asia/Seoul",
+    )
+
+    assert result["event"]["start_local"] == "2026-09-05T00:00:00"
+    assert result["availability"]["end_local"] == "2026-09-06T00:00:00"
+
+
+def test_calendar_period__distinct_mail_and_calendar_dates__does_not_cross_bind() -> None:
+    result = resolve_calendar_query_periods(
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    {"kind": "DATE", "field": "period", "value": "지난주"},
+                    {"kind": "DATE", "field": "period", "value": "내일"},
+                ]
+            }
+        },
+        frozen_routes=[
+            {
+                "route_id": "mail",
+                "connector_id": "google_workspace",
+                "resource_type": "GMAIL_THREAD",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "availability",
+                "connector_id": "google_workspace",
+                "resource_type": "CALENDAR_FREEBUSY",
+                "allowed_read_tool_ids": ["calendar_query_freebusy"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+        ],
+        now_ms=int(datetime(2026, 9, 5, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1_000),
+        timezone="Asia/Seoul",
+    )
+
+    assert result == {}
+
+
+def test_calendar_period__mail_plus_availability__keeps_time_unbound() -> None:
+    result = resolve_calendar_query_periods(
+        prompt_input={
+            "request_intent": {
+                "constraints": [
+                    {"kind": "DATE", "field": "period", "value": "오늘"},
+                    {"kind": "TIME", "field": "start_time", "value": "10:00"},
+                    {"kind": "TIME", "field": "end_time", "value": "11:00"},
+                ]
+            }
+        },
+        frozen_routes=[
+            {
+                "route_id": "mail",
+                "connector_id": "google_workspace",
+                "resource_type": "GMAIL_THREAD",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+            {
+                "route_id": "availability",
+                "connector_id": "google_workspace",
+                "resource_type": "CALENDAR_FREEBUSY",
+                "allowed_read_tool_ids": ["calendar_query_freebusy"],
+                "required": True,
+                "reason_codes": ["REQUESTED_INPUT"],
+            },
+        ],
+        now_ms=int(datetime(2026, 9, 5, tzinfo=ZoneInfo("Asia/Seoul")).timestamp() * 1_000),
+        timezone="Asia/Seoul",
+    )
+
+    assert result["availability"]["start_local"] == "2026-09-05T00:00:00"
+    assert result["availability"]["end_local"] == "2026-09-06T00:00:00"

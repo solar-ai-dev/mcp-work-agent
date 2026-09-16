@@ -210,9 +210,16 @@ Follow-up의 prior attempt projection은 semantic constraint·operation·reason�
 `USER_REQUEST | CONFIRMATION_RESPONSE` provenance가 검증된 값과 이를 소비할 Gmail route만
 투영한다. `business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
 않는다. 이 projection은 새 요청 권위가 아니라 기존 typed 의미의 bounded 전달 형식이다.
+초기 Gmail KEYWORD의 `ANY | ALL | PHRASE`는 원문 의미와 후보 발견 목적에 맞춰 선택하며
+Anchor 존재만으로 `ANY`를 강제하지 않는다. 검증된 exact anchor와 관측 전 CONCEPT 가설을
+한 초기 Query에 AND로 묶어 발견 범위를 좁히지 않는다. 개념 조건은 Evidence·Sufficiency
+의무로 유지하고 필요한 후속 조회에서 검토한다.
 
 `required_route_constraints`는 검증된 단일 기간을 Calendar event/availability route에
-해석할 수 있을 때만 만든다. 해당 초기 route의 temporal constraint와 이미 존재하는 route
+해석할 수 있을 때만 만든다. 복수 기간이나 시간축이 충돌해 소유 관계를 확정할 수 없으면
+결정적으로 결합하지 않는다. Event와 FreeBusy가 함께 있거나 비-Calendar 조회 route가
+함께 있으면 명시 시각의 소유 관계가 없는 한 날짜 범위만 고정한다. 해당 초기 route의
+temporal constraint와 이미 존재하는 route
 policy의 required constraint를 동적 output schema에 결합하며, 값이 없으면 빈 projection을
 모든 호출에 추가하지 않는다.
 

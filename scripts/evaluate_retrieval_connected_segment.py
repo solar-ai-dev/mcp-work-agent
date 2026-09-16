@@ -371,50 +371,73 @@ def _evaluate_case(
                 evidence_refs=cast(list[str], retrieval_result.get("evidence_refs", [])),
             )
         )
-        semantic_review = review_semantics(
-            required_semantics=cast(str, case.gold["required_semantics"]),
-            forbidden_semantics=cast(str, case.gold["forbidden_semantics"]),
-            observation={
-                "public_status": None,
-                "terminal_result_kind": None,
-                "assistant_final_message": None,
-                "actions": [],
-                "context_preview": {
-                    "items": evidence,
-                    "coverage": (
-                        retrieval_result.get("coverage")
-                        if isinstance(retrieval_result, Mapping)
-                        else None
-                    ),
-                    "missing_information": (
-                        retrieval_result.get("missing_information", [])
-                        if isinstance(retrieval_result, Mapping)
-                        else []
-                    ),
+        responsibilities = request_intent.get("resource_responsibilities")
+        requested_outputs = (
+            responsibilities.get("outputs", [])
+            if isinstance(responsibilities, Mapping)
+            else []
+        )
+        has_downstream_output = bool(requested_outputs)
+        semantic_review = None
+        task_achievable = None
+        if not has_downstream_output and isinstance(retrieval_result, Mapping):
+            semantic_review = review_semantics(
+                required_semantics=cast(str, case.gold["required_semantics"]),
+                forbidden_semantics=cast(str, case.gold["forbidden_semantics"]),
+                observation={
+                    "public_status": None,
+                    "terminal_result_kind": None,
+                    "assistant_final_message": None,
+                    "actions": [],
+                    "context_preview": {
+                        "items": evidence,
+                        "coverage": (
+                            retrieval_result.get("coverage")
+                            if isinstance(retrieval_result, Mapping)
+                            else None
+                        ),
+                        "missing_information": (
+                            retrieval_result.get("missing_information", [])
+                            if isinstance(retrieval_result, Mapping)
+                            else []
+                        ),
+                    },
+                    "error": None,
                 },
-                "error": None,
-            },
-            model=model_id,
-        )
-        task_achievable = (
-            semantic_review["required_semantics_satisfied"] is True
-            and semantic_review["forbidden_semantics_observed"] is False
-        )
+                model=model_id,
+            )
+            task_achievable = (
+                semantic_review["required_semantics_satisfied"] is True
+                and semantic_review["forbidden_semantics_observed"] is False
+            )
         coverage = (
             retrieval_result.get("coverage")
             if isinstance(retrieval_result, Mapping)
             else None
         )
-        node_processing_correct = (
-            True
-            if task_achievable
-            else False
-            if coverage == "SUFFICIENT"
-            else None
-        )
+        node_processing_correct = None
+        node_processing_classification = "OWNER_REVIEW_REQUIRED"
+        if not isinstance(retrieval_result, Mapping):
+            node_processing_classification = "NO_RETRIEVAL_RESULT"
+        elif has_downstream_output:
+            node_processing_classification = "DOWNSTREAM_OUTPUT_NOT_EVALUATED"
+        elif task_achievable is True:
+            node_processing_correct = True
+            node_processing_classification = "VALID_TASK_EVIDENCE"
+        elif coverage == "SUFFICIENT":
+            node_processing_correct = False
+            node_processing_classification = "FALSE_SUFFICIENT"
         return {
             "case_id": case.case_id,
-            "outcome": "COMPLETED",
+            "outcome": (
+                "COMPLETED"
+                if isinstance(retrieval_result, Mapping)
+                else "NO_RETRIEVAL_RESULT"
+            ),
+            "next_target": output.get("__target__"),
+            "workflow_phase": output.get("workflow_phase"),
+            "retrieval_result_present": isinstance(retrieval_result, Mapping),
+            "user_interrupt_present": output.get("user_interrupt") is not None,
             "coverage": coverage,
             "missing_information": (
                 retrieval_result.get("missing_information", [])
@@ -425,19 +448,16 @@ def _evaluate_case(
             "evidence": evidence,
             "task_achievable": task_achievable,
             "node_processing_correct": node_processing_correct,
-            "node_processing_classification": (
-                "VALID_TASK_EVIDENCE"
-                if task_achievable
-                else "FALSE_SUFFICIENT"
-                if coverage == "SUFFICIENT"
-                else "OWNER_REVIEW_REQUIRED"
-            ),
+            "node_processing_classification": node_processing_classification,
             "semantic_review": semantic_review,
+            "evaluation_limitations": (
+                ["DOWNSTREAM_OUTPUT_NOT_EXECUTED"] if has_downstream_output else []
+            ),
             "connector_reads": recording_reader.calls,
             "query_attempts": output.get("__context_query_attempts__", []),
             "llm_prompt_counts": _prompt_counts(recording_llm.calls),
             "llm_call_count": len(recording_llm.calls),
-            "evaluation_judge_call_count": 1,
+            "evaluation_judge_call_count": int(semantic_review is not None),
             "input_tokens": sum(_metric(call["input_tokens"]) for call in recording_llm.calls),
             "output_tokens": sum(_metric(call["output_tokens"]) for call in recording_llm.calls),
             "provider_latency_ms": sum(

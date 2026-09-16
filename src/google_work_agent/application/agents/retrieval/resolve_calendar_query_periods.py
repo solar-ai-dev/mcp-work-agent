@@ -37,7 +37,12 @@ def resolve_calendar_query_periods(
     )
     if temporal is None or temporal["axis"] == "MESSAGE_TIME":
         return {}
-    temporal = _bind_explicit_time_window(intent.get("constraints"), temporal)
+    route_types = {route["resource_type"] for route in frozen_routes}
+    if (
+        len(route_types & {"CALENDAR_EVENT", "CALENDAR_FREEBUSY"}) == 1
+        and route_types <= {"CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
+    ):
+        temporal = _bind_explicit_time_window(intent.get("constraints"), temporal)
     if temporal is None:
         return {}
     result: dict[str, TemporalRangeConstraintV1] = {}
