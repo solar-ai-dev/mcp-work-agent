@@ -47,6 +47,9 @@ def recheck_affected_dimensions_node(
             projected.get("user_action_modifications", ()),
             "user_action_modifications",
         ),
+        proposal_transition=_optional_mapping(
+            projected.get("proposal_transition"), "proposal_transition"
+        ),
         invoke=invoke,
     )
     return {
@@ -56,7 +59,7 @@ def recheck_affected_dimensions_node(
 
 
 def _dimensions(value: object) -> tuple[ReviewDimensionIdV1, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         raise ValueError("affected_dimensions must be a sequence")
     requested = set(value)
     if not requested or requested - set(_DIMENSIONS):
@@ -65,7 +68,7 @@ def _dimensions(value: object) -> tuple[ReviewDimensionIdV1, ...]:
 
 
 def _strings(value: object, label: str) -> Sequence[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         raise ValueError(f"{label} must be a sequence")
     if not all(isinstance(item, str) and item for item in value):
         raise ValueError(f"{label} must contain strings")
@@ -85,7 +88,7 @@ def _optional_mapping(value: object, label: str) -> Mapping[str, object] | None:
 
 
 def _mapping_sequence(value: object, label: str) -> Sequence[Mapping[str, object]]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         raise ValueError(f"{label} must be a sequence")
     if not all(isinstance(item, Mapping) for item in value):
         raise ValueError(f"{label} must contain objects")

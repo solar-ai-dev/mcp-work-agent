@@ -253,10 +253,10 @@
     {
       "prompt_slot_id": "review.recheck_affected_dimensions",
       "runtime_node_id": "review.recheck",
-      "input_schema_version": 1,
+      "input_schema_version": 2,
       "required_root_fields": ["affected_dimensions", "request_intent", "planning_result"],
-      "optional_root_fields": ["affected_action_ids", "affected_route_ids", "tool_route_plan", "work_analysis", "evidence", "policy_summary", "confirmation_response", "user_action_modifications"],
-      "output_schema_version": 1
+      "optional_root_fields": ["affected_action_ids", "affected_route_ids", "tool_route_plan", "work_analysis", "evidence", "policy_summary", "confirmation_response", "user_action_modifications", "proposal_transition"],
+      "output_schema_version": 2
     },
     {
       "prompt_slot_id": "run.compose_terminal_response",

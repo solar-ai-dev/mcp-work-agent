@@ -429,9 +429,19 @@ def test_compiled_review__recheck_refreshes__only_affected_dimensions() -> None:
     def invoke(prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         calls.append(prompt_id)
         if prompt_id == "review.recheck_affected_dimensions":
+            transition = _prompt_input.get("proposal_transition")
+            historical = (
+                transition.get("historical_review_issues")
+                if isinstance(transition, Mapping)
+                else None
+            )
             return {
-                "schema_version": 1,
+                "schema_version": 2,
                 "affected_dimensions": ["review.inspect_action_scope_and_route"],
+                "issue_assessments": [
+                    {"issue_index": index, "state": "UNRESOLVED", "current_reason": "fixture"}
+                    for index in range(len(historical) if isinstance(historical, list) else 0)
+                ],
                 "findings": [
                     _finding(
                         "review.inspect_action_scope_and_route",

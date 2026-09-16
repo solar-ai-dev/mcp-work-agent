@@ -105,6 +105,7 @@ class ReviewState(GraphState, total=False):
     review_revision: NotRequired[int]
     review_based_on: NotRequired[list[StateArtifactRefV1]]
     prior_review_findings: NotRequired[list[ReviewInspectorFindingV1]]
+    proposal_transition: NotRequired[dict[str, object]]
     affected_dimensions: NotRequired[list[ReviewDimensionIdV1]]
     affected_action_ids: NotRequired[list[str]]
     affected_route_ids: NotRequired[list[str]]

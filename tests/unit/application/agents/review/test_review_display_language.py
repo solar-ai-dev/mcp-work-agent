@@ -29,9 +29,10 @@ def test_review_output__initial_and_repair_schema__requires_korean_description(
         "required_information": ["sender"],
     }
     output = {
-        "schema_version": 1,
+        "schema_version": 2 if recheck else 1,
         "findings": [finding],
         **({"affected_dimensions": [dimension]} if recheck else {"dimension": dimension}),
+        **({"issue_assessments": []} if recheck else {}),
     }
     assert validate_output_schema(output, schema.json_schema)
     finding["description"] = "보낸 사람의 이름이나 이메일 주소를 알려 주시겠어요?"

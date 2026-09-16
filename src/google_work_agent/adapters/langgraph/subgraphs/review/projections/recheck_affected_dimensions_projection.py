@@ -16,6 +16,7 @@ _FIELDS = (
     "policy_summary",
     "confirmation_response",
     "user_action_modifications",
+    "proposal_transition",
 )
 
 

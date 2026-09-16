@@ -36,6 +36,7 @@ def recheck_affected_dimensions(
     policy_summary: Mapping[str, object] | None = None,
     confirmation_response: Mapping[str, object] | None = None,
     user_action_modifications: Sequence[Mapping[str, object]] = (),
+    proposal_transition: Mapping[str, object] | None = None,
 ) -> RecheckAffectedDimensionsResultV1:
     """Return fresh replacement findings for exactly the supplied closed dimension set."""
     dimensions = _normalize_dimensions(affected_dimensions)
@@ -61,17 +62,46 @@ def recheck_affected_dimensions(
         prompt_input["user_action_modifications"] = [
             dict(item) for item in user_action_modifications
         ]
+    issue_count = 0
+    if proposal_transition is not None:
+        historical = proposal_transition.get("historical_review_issues")
+        if not isinstance(historical, list) or not historical:
+            raise ValueError("Review proposal_transition requires historical issues")
+        issue_count = len(historical)
+        prompt_input["proposal_transition"] = dict(proposal_transition)
 
     raw = invoke(PROMPT_ID, prompt_input)
-    if set(raw) != {"schema_version", "affected_dimensions", "findings"}:
+    if set(raw) != {"schema_version", "affected_dimensions", "issue_assessments", "findings"}:
         raise ValueError("Review recheck result keys do not match contract")
-    if raw.get("schema_version") != 1 or isinstance(raw.get("schema_version"), bool):
-        raise ValueError("Review recheck schema_version must be 1")
+    if raw.get("schema_version") != 2 or isinstance(raw.get("schema_version"), bool):
+        raise ValueError("Review recheck schema_version must be 2")
     returned_dimensions = _normalize_dimensions(_sequence(raw.get("affected_dimensions")))
     if returned_dimensions != dimensions:
         raise ValueError("Review recheck cannot broaden or narrow affected_dimensions")
+    _validate_issue_assessments(_sequence(raw.get("issue_assessments")), issue_count)
     findings = tuple(_validate_findings(_sequence(raw.get("findings")), dimensions))
     return {"schema_version": 1, "affected_dimensions": dimensions, "findings": findings}
+
+
+def _validate_issue_assessments(values: Sequence[object], issue_count: int) -> None:
+    if len(values) != issue_count:
+        raise ValueError("Review recheck must assess each historical issue once")
+    seen: set[int] = set()
+    for value in values:
+        if not isinstance(value, Mapping) or set(value) != {
+            "issue_index", "state", "current_reason"
+        }:
+            raise ValueError("Review recheck issue assessment keys do not match contract")
+        index = value["issue_index"]
+        if not isinstance(index, int) or isinstance(index, bool) or index not in range(issue_count):
+            raise ValueError("Review recheck issue_index is invalid")
+        if index in seen:
+            raise ValueError("Review recheck issue_index is duplicated")
+        seen.add(index)
+        if value["state"] not in {"RESOLVED", "UNRESOLVED", "UNCERTAIN"}:
+            raise ValueError("Review recheck assessment state is invalid")
+        if not isinstance(value["current_reason"], str) or not value["current_reason"].strip():
+            raise ValueError("Review recheck current_reason is required")
 
 
 def _validate_findings(
@@ -129,7 +159,7 @@ def _stable_ids(values: Iterable[object], label: str) -> list[str]:
 
 
 def _sequence(value: object) -> Sequence[object]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         raise ValueError("Review recheck arrays are required")
     return value
 

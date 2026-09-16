@@ -105,6 +105,10 @@ from .nodes.recheck_affected_dimensions_node import (
 from .projections.project_review_signals_projection import (
     project_review_workflow_signal_v2,
 )
+from .projections.proposal_transition_projection import (
+    capture_reviewed_proposal,
+    project_proposal_transition,
+)
 from .routing.route_after_aggregate_review_findings import (
     route_after_aggregate_review_findings,
 )
@@ -335,6 +339,13 @@ class ReviewSubgraph:
             dict(finding)
             for finding in cast(Sequence[Mapping[str, object]], patch["prior_review_findings"])
         ]
+        reviewed_proposal = capture_reviewed_proposal(
+            cast(Mapping[str, object], state["planning_result"]), result
+        )
+        if reviewed_proposal is None:
+            prompt_context.pop("review_previous_proposal", None)
+        else:
+            prompt_context["review_previous_proposal"] = reviewed_proposal
         if signal is not None:
             decision_update["workflow_signal"] = signal
         if result["status"] == "CONFIRM":
@@ -483,6 +494,15 @@ class ReviewSubgraph:
             )
             working["affected_action_ids"] = self._affected_ids(findings, "affected_action_ids")
             working["affected_route_ids"] = self._affected_ids(findings, "affected_route_ids")
+            previous_proposal = context.get("review_previous_proposal")
+            if (
+                isinstance(previous_proposal, Mapping)
+                and isinstance(prior, Mapping)
+                and prior.get("status") == "REVISE"
+            ):
+                transition = project_proposal_transition(previous_proposal, planning_result)
+                if transition is not None:
+                    working["proposal_transition"] = transition
         return working
 
     def _evidence(self, state: ReviewState) -> list[Any]:
@@ -651,8 +671,15 @@ class ReviewSubgraph:
                 raw_dimensions = prompt_input.get("affected_dimensions")
                 if not isinstance(raw_dimensions, list):
                     raise ValueError("Review recheck affected_dimensions are required")
+                transition = prompt_input.get("proposal_transition")
+                historical = (
+                    transition.get("historical_review_issues")
+                    if isinstance(transition, Mapping)
+                    else None
+                )
+                issue_count = len(historical) if isinstance(historical, list) else 0
                 output_schema = review_recheck_output_schema(
-                    cast(tuple[ReviewDimensionIdV1, ...], tuple(raw_dimensions))
+                    cast(tuple[ReviewDimensionIdV1, ...], tuple(raw_dimensions)), issue_count
                 )
             if output_schema is None:
                 raise ValueError(f"unsupported Review Prompt slot: {prompt_id}")

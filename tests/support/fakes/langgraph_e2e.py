@@ -496,9 +496,19 @@ def _respond(
         return {"schema_version": 1, "dimension": prompt_id, "findings": findings}
     if prompt_id == "review.recheck_affected_dimensions":
         dimensions = cast(list[str], base["affected_dimensions"])
+        transition = base.get("proposal_transition")
+        historical = (
+            transition.get("historical_review_issues")
+            if isinstance(transition, Mapping)
+            else None
+        )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "affected_dimensions": dimensions,
+            "issue_assessments": [
+                {"issue_index": index, "state": "RESOLVED", "current_reason": "fixture resolved"}
+                for index in range(len(historical) if isinstance(historical, list) else 0)
+            ],
             "findings": [],
         }
     raise AssertionError(f"unhandled E2E Product Prompt: {prompt_id}")

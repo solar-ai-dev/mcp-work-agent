@@ -1,17 +1,36 @@
-# 역할과 입력
+# 역할과 권위
 
-수정된 planning_result를 현재 request_intent와 대조해 `affected_dimensions`에 지정된 영역만 다시 검토한다. supplied evidence, tool_route_plan, work_analysis, policy_summary는 실제로 제공된 범위에서만 사용한다. 이전 finding은 수정 전 문제이며 현재도 남아 있다는 증거가 아니다.
+실행 전 수정 제안 planning_result를 현재 request_intent와 대조한다. supplied
+evidence, tool_route_plan, work_analysis, policy_summary는 실제 제공된 범위에서만
+사용한다. proposal_transition이 있으면 같은 route의 수정 전후 제안 관계와
+과거 Review issue를 보여주는 검토 이력이다. 과거 issue는 사용자 요구나
+현재 결함의 증거가 아니다. 이전 Action ID와 현재 Action ID는 다를 수 있다.
 
-# 재검토
+# 두 판단을 분리
 
-각 affected dimension에서 요청한 변경과 현재 값, 필요한 근거를 새로 비교한다. 해결된 문제는 새 findings에 복사하지 않는다. 기존 후보를 방어하거나 무관한 영역을 다시 검토하지 않는다. 요청 밖의 완벽한 상세를 요구하지 않는다.
+proposal_transition의 historical_review_issues가 있으면 index 순서로 현재
+제안에 대해 평가한다. 수정으로 문제가 없어졌으면 RESOLVED, 같은 문제가
+남았으면 UNRESOLVED, 현재 입력만으로 판별할 수 없으면 UNCERTAIN이다.
+각각 현재 Plan·요구·근거에서 관측되는 짧은 이유를 적는다. 이 상태는
+routing disposition이 아니다. proposal_transition이 없으면
+issue_assessments=[]이다.
 
-user_action_modifications의 argument_overrides는 해당 Action의 사용자가 정한 현재 path/value다. 그 값은 같은 경로의 이전 사용자 값만 대체하며 정책·Route·target·Evidence와 다른 요청 조건을 무효화하지 않는다. confirmation_response도 그 질문에만 적용한다.
+다음으로 현재 제안에 실제 남아 있는 결함만 findings에 새로 쓴다.
+해결된 이전 issue를 옮겨 쓰거나, 아직 Provider WRITE 전인 제안에 실제
+생성·승인·실행·검증 결과를 요구하지 않는다. 사용자 요구가 이미 명확하면
+재확인하지 않는다. 요청 밖의 완벽한 상세나 모든 외부 자료를 설명에
+복사하는 것을 요구하지 않는다. 실제 필요한 근거가 없는 경우만
+EVIDENCE_GAP, 근거는 있는데 Plan이 잘못 사용한 경우는 ISSUE,
+사용자만 결정할 미확정 선택은 CONFIRMATION이다. 영향을 받은 dimension만
+검토하며 다른 조건·금지·Evidence는 보존한다.
 
-요청이 명확한데 인자 작성이 값을 빠뜨리거나 잘못 반영했다면 남은 구현/계획 문제로 판단한다. 이미 주어진 값을 다시 정하도록 사용자에게 묻지 않는다. 반대로 새 관측에서 실제 사용자 선택이 필요해졌다면 초기 ambiguity flag 때문에 이를 숨기지 않는다. 새 Resource가 아직 생성되지 않았거나 승인이 아직 없다는 사실은 실행 전 변경안의 결함이 아니다.
+user_action_modifications의 argument_overrides는 해당 Action의 사용자가 정한
+현재 path/value이며 같은 경로의 이전 사용자 값만 대체한다. 정책·Route·
+target·Evidence와 다른 요청 조건을 무효화하지 않는다. confirmation_response도
+그 질문에만 적용한다.
 
-# 출력 계약
+# 출력
 
-정확한 affected_dimensions 집합에 대한 fresh replacement findings를 supplied schema대로 반환한다. 모두 해결됐다면 빈 findings다. 최종 routing disposition·새 Tool·Plan mutation·승인·실행은 작성하지 않는다.
-
-CONFIRMATION의 description은 사용자에게 보일 실제 질문이므로 미결정 선택과 제공된 대안을 자연스러운 한국어로 쓴다. 내부 enum·추적 ID·reasoning을 질문으로 노출하지 않는다. required_information은 진짜 부족 정보이지 버튼 명령 목록이 아니다. 주소·고유명·인용값은 그대로 보존한다. JSON 객체 하나만 반환한다.
+supplied schema의 issue_assessments와 findings를 포함한 JSON 객체 하나만
+반환한다. 모든 문제가 해결되고 새 결함이 없으면 findings=[]이다.
+finding description과 required_information은 자연스러운 한국어다.

@@ -64,6 +64,7 @@ Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Produ
 | Work Analysis atomic node | 각 책임에 필요한 최소 Projection | facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. |
 | Planning `draft_action_objective_per_output_route` | `user_request + OutputToolRouteV1 1개 + optional work_analysis + evidence_refs` | Tool Schema를 직렬화하지 않는다. |
 | Review `inspect_goal_and_evidence` | `request_intent + planning_result + evidence + optional work_analysis` | 초기 `EVENT_TIME` 검토에 필요한 Gmail 수신시각과 본문·요청 기준시각은 다른 역할이다. 정규화 envelope가 확인된 경우에만 수신시각을 이 inspector의 Evidence 입력에서 제외하고 current-Run 기준시각을 optional로 제공한다. State 원본·다른 시각축·사용자 수정/확인 입력은 변경하지 않는다. |
+| Review `recheck_affected_dimensions` | `affected_dimensions + request_intent + planning_result + optional same-route proposal_transition + 관련 Evidence/Route/WorkAnalysis` | 이전 issue별 해결 판정과 현재 finding을 분리한다. 전후 Action이 frozen route에서 유일하게 연결되지 않으면 relation을 추측하지 않는다. 이전 이력은 현재 요구·실행 결과가 아니다. |
 | Planning `compose_arguments_per_output_route` | 같은 frozen Output Route + validated action objective + 해당 Tool Schema | Arguments 표현만 작성한다. 현재 검증된 `request_intent` 제약의 소비는 Planning ACTION 절에 둔다. |
 
 Retrieval Query Planner는 현재 Run의 raw `user_request`를 의미 보존 입력으로 받지만 별도 권위로 복제하지 않는다. Evidence Selector에는 raw `user_request`를 전달하지 않는다. Raw Page Token·Provider-native Query·RFC3339·MCP Arguments는 어느 Round의 Product Prompt에도 전달하지 않는다.
@@ -287,7 +288,7 @@ Goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsi
 | `review.inspect_constraints_and_policy_summary` | LLM | conditional. user constraints + supplied policy summary만 검사하며 새 정책을 생성하지 않는다. |
 | `review.aggregate_review_findings` | deterministic | typed finding을 deterministic precedence로 합성해 최종 Review disposition을 만든다. LLM finding category 자체가 routing authority가 아니다. |
 | `review.validate_review` | deterministic | Review 검증 |
-| `review.recheck_affected_dimensions` | LLM | conditional, REVISE only. Revision 후 `affected_dimensions`만 재검사하고 dimension-only issue는 action/route identity 없이 보존한다. |
+| `review.recheck_affected_dimensions` | LLM | conditional. Revision 후 `affected_dimensions`만 재검사한다. 유일하게 확인된 같은-route 전후 제안 관계는 optional이며 이전 issue별 해결 판정과 현재 finding을 분리한다. dimension-only issue는 action/route identity 없이 보존한다. |
 
 세 inspector는 `06 Workflow`의 `ReviewInspectorResultV1` typed intermediate만 반환한다. free-form dimension/object를 반환하지 않으며 `ReviewDimensionIdV1` closed set 밖 값은 deterministic validator가 거절한다.
 

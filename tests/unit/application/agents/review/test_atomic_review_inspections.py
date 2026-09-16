@@ -45,8 +45,9 @@ def test_recheck_genuinely__reinspects_only__affected_dimensions() -> None:
         prompt_calls.append(prompt_id)
         if prompt_id == "review.recheck_affected_dimensions":
             return {
-                "schema_version": 1,
+                "schema_version": 2,
                 "affected_dimensions": ["review.inspect_action_scope_and_route"],
+                "issue_assessments": [],
                 "findings": [
                     {
                         "dimension": "review.inspect_action_scope_and_route",

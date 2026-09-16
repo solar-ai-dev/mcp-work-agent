@@ -108,25 +108,47 @@ def review_inspector_output_schema(
 
 def review_recheck_output_schema(
     affected_dimensions: tuple[ReviewDimensionIdV1, ...],
+    issue_count: int = 0,
 ) -> OutputSchemaDefinition:
-    """Return the closed replacement-finding schema for one bounded recheck."""
+    """Separate historical issue resolution from current replacement findings."""
     if not affected_dimensions:
         raise ValueError("Review recheck requires affected dimensions")
+    if issue_count < 0:
+        raise ValueError("Review recheck issue_count cannot be negative")
     string_array = {"type": "array", "items": {"type": "string"}}
     dimension_schema = {"enum": list(affected_dimensions)}
     return OutputSchemaDefinition(
-        schema_version="review-recheck-affected-dimensions-result-v1",
+        schema_version="review-recheck-resolution-result-v2",
         json_schema={
             "type": "object",
             "additionalProperties": False,
-            "required": ["schema_version", "affected_dimensions", "findings"],
+            "required": ["schema_version", "affected_dimensions", "issue_assessments", "findings"],
             "properties": {
-                "schema_version": {"const": 1},
+                "schema_version": {"const": 2},
                 "affected_dimensions": {
                     "type": "array",
                     "minItems": 1,
                     "uniqueItems": True,
                     "items": dimension_schema,
+                },
+                "issue_assessments": {
+                    "type": "array",
+                    "minItems": issue_count,
+                    "maxItems": issue_count,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["issue_index", "state", "current_reason"],
+                        "properties": {
+                            "issue_index": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": max(0, issue_count - 1),
+                            },
+                            "state": {"enum": ["RESOLVED", "UNRESOLVED", "UNCERTAIN"]},
+                            "current_reason": {"type": "string", "minLength": 1},
+                        },
+                    },
                 },
                 "findings": {
                     "type": "array",
