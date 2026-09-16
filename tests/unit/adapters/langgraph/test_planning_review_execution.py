@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+import pytest
+
 from google_work_agent.adapters.langgraph.subgraphs.planning.graph import (
     PlanningRuntimeDependencies,
     PlanningSubgraph,
@@ -421,6 +423,45 @@ def test_compiled_review_pass__does_not_emit__planning_revision_signal() -> None
         "review.inspect_goal_and_evidence",
         "review.inspect_constraints_and_policy_summary",
     ]
+
+
+@pytest.mark.parametrize("assessment_state", ["UNRESOLVED", "UNCERTAIN"])
+def test_compiled_recheck__open_issue_without_finding_never_aggregates_pass(
+    assessment_state: str,
+) -> None:
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        return {
+            "schema_version": 2,
+            "affected_dimensions": ["review.inspect_goal_and_evidence"],
+            "issue_assessments": [
+                {
+                    "issue_index": 0,
+                    "state": assessment_state,
+                    "current_reason": "current proposal remains uncertain",
+                }
+            ],
+            "findings": [],
+        }
+
+    graph = ReviewSubgraph(
+        dependencies=ReviewRuntimeDependencies(invoke=cast(ReviewSemanticInvoker, invoke))
+    ).build()
+    with pytest.raises(ValueError, match="current finding"):
+        graph.invoke(
+            {
+                "review_phase": "RECHECK",
+                "request_intent": {},
+                "planning_result": {"actions": []},
+                "evidence": [],
+                "proposal_transition": {"historical_review_issues": [{}]},
+                "affected_dimensions": ["review.inspect_goal_and_evidence"],
+                "affected_action_ids": [],
+                "affected_route_ids": [],
+                "review_artifact_id": "rv2",
+                "review_revision": 2,
+                "review_based_on": [],
+            }
+        )
 
 
 def test_compiled_review__recheck_refreshes__only_affected_dimensions() -> None:

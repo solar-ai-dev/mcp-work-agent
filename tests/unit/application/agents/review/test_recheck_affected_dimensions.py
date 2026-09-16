@@ -151,3 +151,44 @@ def test_recheck_multiple_prior_issues_can_share_one_finding() -> None:
         invoke=lambda *_: output,
     )
     assert len(result["findings"]) == 1
+
+
+def test_recheck_confirmation_without_transition_keeps_dimension_only_scope() -> None:
+    dimension = "review.inspect_goal_and_evidence"
+    confirmation = {"selected_value": "current choice"}
+    calls: list[Mapping[str, object]] = []
+
+    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_input)
+        return {
+            "schema_version": 2,
+            "affected_dimensions": [dimension],
+            "issue_assessments": [],
+            "findings": [
+                {
+                    "dimension": dimension,
+                    "code": "new",
+                    "finding_kind": "ISSUE",
+                    "description": "현재 제안에 별도 오류가 있음",
+                    "evidence_refs": [],
+                    "affected_action_ids": [],
+                    "affected_route_ids": [],
+                    "required_information": [],
+                }
+            ],
+        }
+
+    result = recheck_affected_dimensions(
+        affected_dimensions=[dimension],
+        affected_action_ids=[],
+        affected_route_ids=[],
+        request_intent={},
+        planning_result={"actions": [{"action_id": "a1"}, {"action_id": "a2"}]},
+        confirmation_response=confirmation,
+        invoke=invoke,
+    )
+    schema = review_recheck_output_schema((dimension,))
+    assert validate_output_schema(invoke("", calls[0]), schema.json_schema) == []
+    assert calls[0]["confirmation_response"] == confirmation
+    assert calls[0]["affected_action_ids"] == []
+    assert len(result["findings"]) == 1

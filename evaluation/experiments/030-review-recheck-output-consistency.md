@@ -14,7 +14,10 @@ bounded schema repair에 맡기고, Application 소비 경계에서도 같은 �
 
 실행: 변경 전 단위 테스트 2건이 예상대로 실패(기존 Schema의 오류 목록 `[]`).
 변경 후 69개 직접 영향 unit/architecture 테스트 PASS, `ruff`/diff check는
-커밋 전 확인. 실제 모델이 모순을 얼마나 내는지, repair 비용·Live 성공률은
+커밋 전 확인했다. 후속 compiled Review 직접 테스트에서 열린 assessment
+두 유형 모두 aggregate/PASS 이전에 ValueError로 중단하는 것과,
+Confirmation/no-transition·dimension-only·다중 Action 입력에서 새
+finding을 정상 보존하는 것을 확인했다. 실제 모델이 모순을 얼마나 내는지, repair 비용·Live 성공률은
 이 계약 테스트로 증명하지 않는다. Prompt source/input manifest는 바꾸지
 않았고 기존 출력 v2의 유효 결과 집합만 좁혔다. Canonical 06/08에 같은
 불변식을 기재했다.
