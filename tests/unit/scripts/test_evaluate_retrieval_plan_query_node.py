@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import cast
 
 from scripts import evaluate_retrieval_plan_query_node as evaluator
@@ -5,6 +7,21 @@ from scripts import evaluate_retrieval_plan_query_node as evaluator
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
+
+
+def test_result_recording_preflight_and_incremental_write(tmp_path: Path) -> None:
+    path = tmp_path / "node" / "result.json"
+    records: list[dict[str, object]] = []
+    result: dict[str, object] = {
+        "binding": {"candidate_id": "fixture"},
+        "summary": None,
+        "cases": records,
+    }
+    evaluator._write_result(path, result)
+    assert json.loads(path.read_text(encoding="utf-8"))["cases"] == []
+    records.append({"case_id": "fixture", "outcome": "FAILED", "provider_call_count": 1})
+    evaluator._write_result(path, result)
+    assert json.loads(path.read_text(encoding="utf-8"))["cases"] == records
 
 
 def _record(
@@ -82,9 +99,7 @@ def test_node_summary__llm_path_and_dispatch__uses_distinct_denominators() -> No
     assert summary["first_call_valid_count"] == 13
     assert summary["first_call_valid_rate"] == 13 / 34
     assert summary["first_call_dispatched_valid_rate"] == 13 / 33
-    classification_counts = cast(
-        dict[str, int], summary["first_call_classification_counts"]
-    )
+    classification_counts = cast(dict[str, int], summary["first_call_classification_counts"])
     assert sum(classification_counts.values()) == 34
     assert summary["semantic_revision_attempted_count"] == 20
     assert summary["semantic_revision_still_failed_count"] == 18
@@ -146,9 +161,7 @@ def test_route_coverage_distinguishes_policy_business_and_access_dependencies() 
 
 def test_policy_composition_is_not_counted_as_first_inference_semantic_valid() -> None:
     record = _record("FIRST_CALL_VALID", provider_calls=1, first_call="SEMANTIC_VALID")
-    record["first_inference_route_coverage"] = {
-        "missing_policy_resource_types": ["CALENDAR_EVENT"]
-    }
+    record["first_inference_route_coverage"] = {"missing_policy_resource_types": ["CALENDAR_EVENT"]}
     record["final_route_coverage"] = {"missing_policy_resource_types": []}
 
     evaluator._classify_policy_coverage(record)
@@ -163,12 +176,8 @@ def test_policy_composition_is_not_counted_as_first_inference_semantic_valid() -
 
 def test_unresolved_policy_route_is_not_counted_as_success() -> None:
     record = _record("FIRST_CALL_VALID", provider_calls=1, first_call="SEMANTIC_VALID")
-    record["first_inference_route_coverage"] = {
-        "missing_policy_resource_types": ["CALENDAR_EVENT"]
-    }
-    record["final_route_coverage"] = {
-        "missing_policy_resource_types": ["CALENDAR_EVENT"]
-    }
+    record["first_inference_route_coverage"] = {"missing_policy_resource_types": ["CALENDAR_EVENT"]}
+    record["final_route_coverage"] = {"missing_policy_resource_types": ["CALENDAR_EVENT"]}
 
     evaluator._classify_policy_coverage(record)
     summary = evaluator._summarize_records(records=[record], split="CORE", duration_ms=1)

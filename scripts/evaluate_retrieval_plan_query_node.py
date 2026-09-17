@@ -207,6 +207,25 @@ def evaluate(
     runtime.before_provider_dispatch = count_provider_dispatch
     recording_runtime = _RecordingInferencePort(runtime, [])
     records: list[dict[str, object]] = []
+    result: dict[str, object] = {
+        "binding": {
+            "schema_version": 1,
+            "checkpoint_corpus": checkpoint_root.name,
+            "prompt_id": prompt_ref.prompt_id,
+            "prompt_version": prompt_ref.prompt_version,
+            "prompt_hash": prompt_ref.content_hash,
+            "model_id": model_id,
+            "model_digest": installed_models.get(model_id),
+            "sampling_temperature": sampling_temperature,
+            "sampling_seed": sampling_seed,
+            "candidate_id": candidate_id,
+            "connector_dispatch_enabled": False,
+            "product_graph_compiled": False,
+        },
+        "summary": None,
+        "cases": records,
+    }
+    _write_result(result_path, result)
     started = time.perf_counter()
     for case in selected:
         before = provider_dispatch_count
@@ -254,38 +273,25 @@ def evaluate(
         if record["outcome"] == "FAILED":
             record["failure_family"] = _failure_family(record)
         records.append(record)
+        _write_result(result_path, result)
         public_record = {key: value for key, value in record.items() if key != "candidate_outputs"}
         print(json.dumps(public_record, ensure_ascii=False, sort_keys=True), flush=True)
 
-    summary = _summarize_records(
+    result["summary"] = _summarize_records(
         records=records,
         split=split,
         duration_ms=int((time.perf_counter() - started) * 1000),
     )
-    result: dict[str, object] = {
-        "binding": {
-            "schema_version": 1,
-            "checkpoint_corpus": checkpoint_root.name,
-            "prompt_id": prompt_ref.prompt_id,
-            "prompt_version": prompt_ref.prompt_version,
-            "prompt_hash": prompt_ref.content_hash,
-            "model_id": model_id,
-            "model_digest": installed_models.get(model_id),
-            "sampling_temperature": sampling_temperature,
-            "sampling_seed": sampling_seed,
-            "candidate_id": candidate_id,
-            "connector_dispatch_enabled": False,
-            "product_graph_compiled": False,
-        },
-        "summary": summary,
-        "cases": records,
-    }
+    _write_result(result_path, result)
+    return result
+
+
+def _write_result(result_path: Path, result: dict[str, object]) -> None:
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
         json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return result
 
 
 def _summarize_records(
@@ -299,9 +305,7 @@ def _summarize_records(
     )
     deterministic_count = outcome_counts["DETERMINISTIC_VALID"]
     llm_path_count = eligible - deterministic_count
-    llm_dispatched_count = sum(
-        _as_int(record["provider_call_count"]) > 0 for record in records
-    )
+    llm_dispatched_count = sum(_as_int(record["provider_call_count"]) > 0 for record in records)
     first_call_counts = Counter(
         str(record.get("first_call_classification", "OTHER_FAILED"))
         for record in records
@@ -367,9 +371,7 @@ def _summarize_records(
         ),
         "semantic_revision_still_failed_count": revision_still_failed,
         "failure_family_counts": dict(sorted(failure_family_counts.items())),
-        "provider_call_count": sum(
-            _as_int(record["provider_call_count"]) for record in records
-        ),
+        "provider_call_count": sum(_as_int(record["provider_call_count"]) for record in records),
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
         "mean_input_tokens_per_dispatched_case": (
@@ -533,9 +535,7 @@ def _route_coverage_summary(
         for query in queries
         if isinstance(query, dict) and isinstance(query.get("route_id"), str)
     }
-    route_types = {
-        route["route_id"]: route["resource_type"] for route in routes
-    }
+    route_types = {route["route_id"]: route["resource_type"] for route in routes}
     policy = {
         route["route_id"]
         for route in routes
@@ -614,11 +614,7 @@ def _first_call_classification(
 def _failure_family(record: dict[str, object]) -> str:
     reason = str(record.get("reason_code") or record.get("error_code") or "")
     raw_paths = record.get("affected_field_paths")
-    paths = (
-        tuple(str(path) for path in raw_paths)
-        if isinstance(raw_paths, list | tuple)
-        else ()
-    )
+    paths = tuple(str(path) for path in raw_paths) if isinstance(raw_paths, list | tuple) else ()
     candidate_outputs = record.get("candidate_outputs")
     first_output = (
         candidate_outputs[0] if isinstance(candidate_outputs, list) and candidate_outputs else None
