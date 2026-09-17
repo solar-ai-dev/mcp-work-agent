@@ -262,14 +262,9 @@ def evaluate(
         elif record["outcome"] == "VALID_AFTER_RETRY":
             record["outcome"] = "SEMANTIC_REVISION_RECOVERED"
         _classify_policy_coverage(record)
-        if record["outcome"] in {
-            "FAILED",
-            "SCHEMA_REPAIR_RECOVERED",
-            "SEMANTIC_REVISION_RECOVERED",
-        }:
-            record["candidate_outputs"] = [
-                result["structured_output"] for result in recording_runtime.results
-            ]
+        record["candidate_outputs"] = [
+            result["structured_output"] for result in recording_runtime.results
+        ]
         if record["outcome"] == "FAILED":
             record["failure_family"] = _failure_family(record)
         records.append(record)
