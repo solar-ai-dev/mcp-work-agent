@@ -24,3 +24,10 @@ finding을 정상 보존하는 것을 확인했다. 실제 모델이 모순을 �
 
 잔여 Preview 수정·외부 근거 부족 분류는 별도 비교에서 원인과 효과를
 확인하기 전 제품에 추가하지 않는다. 전체 92, 실제 Provider WRITE 0.
+
+후속 runtime-router 단위 테스트는 `UNRESOLVED + findings=[]` 첫
+Provider 출력을 conditional Schema가 거부하고 기존 bounded repair가
+`$.findings`만 보충한 뒤 통과하는 경로를 확인했다(1+1 fake dispatch).
+이것은 실제 모델 repair율이나 비용 측정이 아니다. 033에서는 이전에
+성공했던 두 수정 사례가 현 Schema로 실제 첫 호출 1회씩 유효한 출력을
+내고 Application consumer를 통과했다.

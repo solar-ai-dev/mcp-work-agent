@@ -10,6 +10,9 @@ from tests.support.llm_runtime import runtime_selection, settings_view
 from google_work_agent.adapters.llm.runtime.structured_inference_router import (
     StructuredInferenceRuntimeRouter,
 )
+from google_work_agent.application.agents.review.contracts.review_findings import (
+    review_recheck_output_schema,
+)
 from google_work_agent.ports.llm.llm_credential_port import LlmCredentialStatus
 from google_work_agent.ports.llm.llm_runtime_status_port import LlmProviderRuntimeStatus
 from google_work_agent.ports.llm.local_model_profile import LocalInferenceClass, LocalModelProfileV1
@@ -601,6 +604,51 @@ def test_schema_repair__reported_field_only__is_accepted() -> None:
 
     assert result.structured_output == {"answer": "fixed", "semantic_decision": "KEEP"}
     assert repairer.calls == 1
+
+
+def test_recheck_open_assessment_with_no_finding__enters_bounded_schema_repair() -> None:
+    dimension = "review.inspect_goal_and_evidence"
+    invalid = {
+        "schema_version": 2,
+        "affected_dimensions": [dimension],
+        "issue_assessments": [
+            {"issue_index": 0, "state": "UNRESOLVED", "current_reason": "현재에도 위반"}
+        ],
+        "findings": [],
+    }
+    corrected = {
+        **invalid,
+        "findings": [
+            {
+                "dimension": dimension,
+                "code": "current-issue",
+                "finding_kind": "ISSUE",
+                "description": "현재에도 위반이 남음",
+                "evidence_refs": [],
+                "affected_action_ids": [],
+                "affected_route_ids": [],
+                "required_information": [],
+            }
+        ],
+    }
+    provider = _Provider(runtime=ActualRuntime.LOCAL_GPU, content=invalid)
+    repairer = _Repairer(repaired=corrected)
+    result = _router(
+        checkpoint=ExternalScopeCheckpoint(scope=_scope()),
+        api=_Provider(),
+        local=provider,
+        repairer=repairer,
+    ).infer(
+        "LOCAL_GPU",
+        PROMPT,
+        {"user_request": "hello"},
+        review_recheck_output_schema((dimension,), 1),
+    )
+
+    assert result.structured_output == corrected
+    assert provider.calls == 1
+    assert repairer.calls == 1
+    assert repairer.failed_outputs == [invalid]
 
 
 def test_schema_repair__unaffected_semantic_change__is_rejected() -> None:
