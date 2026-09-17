@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "dataset_id": "ru_quality_dev",
+  "dataset_version": "v2",
+  "suite": "RU",
+  "purpose": "development / tuning",
+  "status": "FREEZE_READY_STATIC_VALIDATED",
+  "baseline_code_sha": "3f748207665f666cecbd221dded1efaaec764ce4",
+  "contract_baseline": {
+    "name": "canonical92",
+    "source_sha": "8b342b21faab469069ca3f3eef75fa4c9664b73b",
+    "execution_merge_sha": "3f748207665f666cecbd221dded1efaaec764ce4"
+  },
+  "grader": "ru-quality-dev-grader-v2",
+  "intended_model": "qwen3.5:9b",
+  "intended_runtime": "LOCAL_GPU",
+  "creation_date": "2026-09-15",
+  "case_count": 24,
+  "dataset_path": "ru_quality_dev_v2.jsonl",
+  "dataset_sha256": "db1e86c80f67db113baa28626bbd14f014ed3d18c26c7452077547ed6dd6d59d",
+  "semantic_family_counts": {
+    "AMBIGUITY_CONFIRMATION": 3,
+    "READ_VS_WRITE": 3,
+    "CREATE_VS_UPDATE": 3,
+    "SOURCE_OUTPUT_RESPONSIBILITY": 3,
+    "SELECTED_RESOURCE_HANDLING": 3,
+    "EFFECT_PROHIBITION": 3,
+    "MULTI_SOURCE_RESPONSIBILITY": 3,
+    "SOURCE_OVER_SELECTION": 3
+  },
+  "difficulty_counts": {
+    "EASY": 8,
+    "COMPOSITE": 8,
+    "HARD": 8
+  },
+  "canonical_relation": {
+    "relationship": "INDEPENDENT_DEVELOPMENT_DATASET",
+    "canonical_dataset": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+    "policy": "Canonical Core, Stress, and Holdout cases are neither copied nor used as tuning data."
+  },
+  "production_contract": {
+    "intent_type": "RequestIntentV2",
+    "intent_schema_version": 2,
+    "owner": "src/google_work_agent/application/agents/request_understanding/contracts/request_intent.py",
+    "goal_schema": "src/google_work_agent/application/agents/request_understanding/contracts/request_goal_candidate_schema.py",
+    "validator": "src/google_work_agent/application/agents/request_understanding/validate_intent.py",
+    "graph": "src/google_work_agent/adapters/langgraph/subgraphs/request_understanding/graph.py",
+    "operations": [
+      "identify_goal",
+      "identify_effect_prohibitions",
+      "identify_source_dependencies",
+      "identify_output_responsibilities",
+      "identify_source_status",
+      "identify_temporal_scope",
+      "detect_ambiguity",
+      "finalize_intent"
+    ]
+  },
+  "input_mapping": {
+    "user_request": "WorkflowStartRequest.request_text",
+    "entry_mode": "WorkflowStartRequest.entry_mode",
+    "selected_resource_refs": "WorkflowStartRequest.selected_resources",
+    "fixture_conditions": "evaluation-only precondition metadata; not a Product field"
+  },
+  "gold_mapping": {
+    "expected_typed_semantic_outcome.goal_semantics": "human-review diagnostic over RequestIntentV2.goal and completion_conditions; deterministic PASS/FAIL is owned by the structured typed fields below",
+    "expected_typed_semantic_outcome.requested_effect_hints": "unordered exact set of RequestIntentV2.requested_effect_hints",
+    "expected_typed_semantic_outcome.requested_resource_hints": "unordered exact set of RequestIntentV2.requested_resource_hints",
+    "expected_typed_semantic_outcome.resource_responsibilities.source_reads": "unordered exact resource_type set mapped to RequestIntentV2.resource_responsibilities.source_reads; required_information_semantics uses semantic containment",
+    "expected_typed_semantic_outcome.resource_responsibilities.outputs": "unordered exact (resource_type, effect) set mapped to RequestIntentV2.resource_responsibilities.outputs",
+    "expected_typed_semantic_outcome.analysis_requirement": "exact RequestIntentV2.analysis_requirement",
+    "expected_typed_semantic_outcome.ambiguity": "exact RequestIntentV2.ambiguity typed values",
+    "expected_typed_semantic_outcome.constraints": "required semantic subset of RequestIntentV2.constraints; value_semantics is semantic containment unless an enum or opaque identity requires exact value",
+    "forbidden_semantic_outcome": "structured effect, resource, source/output responsibility, and ambiguity values are directly graded; semantic_failures are human-readable labels for those typed rules and are not lexical-match rules"
+  },
+  "gold_policy": {
+    "must_match": "Typed effects, resources, source/output roles, analysis requirement, and ambiguity ownership consequences.",
+    "must_not_exist": "Forbidden effects, resources, source/output roles, invented targets, or unrequested responsibilities.",
+    "allowed_variation": "Meaning-preserving goal, completion, reason, and required-information wording plus field/list ordering.",
+    "retrieval_excluded": [
+      "resource identity search success",
+      "query quality",
+      "pagination",
+      "evidence sufficiency",
+      "ranking",
+      "detail fetch"
+    ]
+  },
+  "fixture_policy": {
+    "data": "SYNTHETIC_ONLY",
+    "selected_resource_refs": "Minimal synthetic SelectedResourceRef values are embedded only in RESOURCE_SELECTED cases.",
+    "retrieval_fixtures": "NONE"
+  },
+  "freeze_policy": {
+    "same_round": "After review and freeze, baseline and candidates use the same 24 cases without Gold edits.",
+    "forbidden_changes": [
+      "adapt Gold to model output",
+      "delete failures to improve pass rate",
+      "add immediate paraphrase duplicates",
+      "change difficulty or expectations after candidate results"
+    ],
+    "next_version_condition": "Create v3 only for a newly discovered, generalizable failure class absent from v2; re-evaluate baseline and candidate on the same v3 when comparing performance."
+  },
+  "execution": {
+    "baseline_runs": 0,
+    "model_runs": 0,
+    "batch_runs": 0,
+    "product_e2e_runs": 0,
+    "pass_rate_reported": false
+  }
+}

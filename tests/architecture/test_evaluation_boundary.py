@@ -31,6 +31,7 @@ EXPECTED_EVALUATION_CODE = {
     "evaluation/observation_v8.py",
     "evaluation/public_client_v8.py",
     "evaluation/public_runner_v8.py",
+    "evaluation/ru_quality_dev_grader.py",
     "evaluation/semantic_judge_v8.py",
     "evaluation/prompt_candidates/mcp-tool-use-2026-v1/materialize_prompt_candidate.py",
     "evaluation/tests/test_canonical_dataset.py",

@@ -80,6 +80,7 @@ config.local.*
 *.log
 *.jsonl
 !/evaluation/datasets/**/*.jsonl
+!/evaluation/development_datasets/**/*.jsonl
 *.dmp
 *.dump
 crash-*.txt
