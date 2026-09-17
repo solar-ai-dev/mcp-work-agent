@@ -241,3 +241,26 @@ provider 지연이다. 이는 034의 이전 저장 Run과 다른 새 upstream �
 뒷받침하지 않지만 RU Source 안정성을 증명하지도 않는다. `CALENDAR`
 container 과잉 가능성은 003의 기존 관측과 일치하며, 이번 결과를
 Retrieval 확보·후단 성공으로 계산하지 않는다.
+
+## Source 결속 영향의 paired 확인 (사전 조건)
+
+앞서 저장한 owner 교정 합성 입력과 **동일 fingerprint**에서 기존 coarse
+Query를 1회 Query→합성 READ→Evidence까지 연결한다. 이미 수행한 D exact
+Query Trial과 분리된 순차 paired 비교로, provider/model 조건은 동일하다.
+기준 Query도 Task item 근거를 확보하면 D의 `034` 조회 이득이 exact type
+단독 효과가 아니라 Source 결속에 의존한다고 판단한다. 새 upstream/Gold
+Evidence를 끼워 넣지 않고, 실제 업무 성공률로 계산하지 않는다.
+
+동일 owner 교정 합성 upstream fingerprint `6fc3cbdf…`에서 기존 coarse
+Query도 Task item Evidence 1건을 확보하고 `SUFFICIENT`로 Work Analysis에
+전달했다. 기준/D 모두 Retrieval LLM 4회였고, 기준은 합성 READ 6회·
+provider 지연 48.3초, D는 READ 7회·52.2초였다. D의 추가 READ는 TaskList
+discovery로, 이 비교에서 근거 확보 이득이 없었다. 따라서 034의 최종
+근거 확보 차이는 Resource type 단독 투영보다 **RU의 item fact owner
+결속에 더 민감**하다. 단, 이는 실제 RU가 아닌 owner를 바꾼 합성 입력이며
+현행 RU의 여러 Trial 안정성이나 실제 Provider 결과를 증명하지 않는다.
+
+제품 코드·Prompt·Canonical은 기준과 동일하게 유지했다. 평가기/인접 구간
+직접 영향 테스트는 Retrieval 597개, RECHECK·Preview 10개 통과했고,
+ruff 검사와 세 비교기의 post-revert fixture/preflight 기록을 확인했다.
+이 테스트는 새 제품 개선의 의미 검증이 아니라 기존 계약 비회귀 확인이다.
