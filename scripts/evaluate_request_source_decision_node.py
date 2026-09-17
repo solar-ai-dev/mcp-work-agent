@@ -111,7 +111,20 @@ def main() -> None:
     parser.add_argument("--compare-fact-bound", action="store_true")
     parser.add_argument("--assemble-full-goal", action="store_true")
     parser.add_argument("--connect-tool-route", action="store_true")
+    parser.add_argument("--derived-manifest", type=Path)
+    parser.add_argument("--variant", choices=("A", "B", "C", "D"))
+    parser.add_argument("--goal-only", action="store_true")
     arguments = parser.parse_args()
+    if bool(arguments.derived_manifest) != bool(arguments.variant):
+        raise ValueError("derived manifest and variant must be provided together")
+    if arguments.goal_only and (
+        arguments.assemble_full_goal
+        or arguments.connect_tool_route
+        or arguments.compare_request_only
+        or arguments.compare_sparse
+        or arguments.compare_fact_bound
+    ):
+        raise ValueError("goal-only diagnostic cannot be combined with downstream comparisons")
     if arguments.model != "qwen3.5:9b":
         raise ValueError("this diagnostic is bound to qwen3.5:9b")
     if arguments.assemble_full_goal and (
@@ -202,6 +215,16 @@ def main() -> None:
     candidates = source_ops.build_source_dependency_candidates(tool_catalog)
     output_candidates = output_ops.build_output_responsibility_candidates(tool_catalog)
     cases = load_cases()
+    derived_requests: dict[str, str] = {}
+    if arguments.derived_manifest is not None:
+        derived = json.loads(arguments.derived_manifest.read_text(encoding="utf-8"))
+        derived_requests = {
+            item["origin_case_id"]: item["request"]
+            for item in derived["cases"]
+            if item["variant"] == arguments.variant
+        }
+        if set(arguments.case) - set(derived_requests):
+            raise ValueError("derived manifest does not cover every requested case")
     records: list[dict[str, object]] = []
     result: dict[str, object] = {
         "binding": {
@@ -217,6 +240,11 @@ def main() -> None:
             "compare_fact_bound": arguments.compare_fact_bound,
             "assemble_full_goal": arguments.assemble_full_goal,
             "connect_tool_route": arguments.connect_tool_route,
+            "derived_manifest": (
+                str(arguments.derived_manifest) if arguments.derived_manifest else None
+            ),
+            "variant": arguments.variant,
+            "goal_only": arguments.goal_only,
             "connector_dispatch_enabled": False,
             "product_graph_compiled": False,
         },
@@ -232,6 +260,10 @@ def main() -> None:
             records.append({"case_id": case_id, "outcome": "SKIP_NO_REQUEST"})
             _write_result(arguments.result_path, result)
             continue
+        if arguments.derived_manifest is not None:
+            if arguments.variant == "A" and derived_requests[case_id] != request.request_text:
+                raise ValueError(f"{case_id}: derived A request differs from checkpoint")
+            request = replace(request, request_text=derived_requests[case_id])
         prompt_input = goal_ops._prompt_input(
             request=request,
             confirmation_response=None,
@@ -353,6 +385,40 @@ def main() -> None:
                     goal_output,
                     request_text=request.request_text,
                 )
+                if arguments.goal_only:
+                    raw_constraints = cast(dict[str, object], goal_output["constraints"])
+                    projected_constraints = cast(dict[str, object], source_goal["constraints"])
+                    records.append(
+                        {
+                            "case_id": case_id,
+                            "variant": arguments.variant,
+                            "outcome": "SCHEMA_VALID_SEMANTICS_UNREVIEWED",
+                            "request_hash": hashlib.sha256(
+                                request.request_text.encode("utf-8")
+                            ).hexdigest(),
+                            "goal_output": goal_output,
+                            "raw_search_terms": raw_constraints.get("search_terms", []),
+                            "projected_search_terms": projected_constraints.get("search_terms", []),
+                            "raw_business_concepts": raw_constraints.get("business_concepts", []),
+                            "provider_calls": goal_dispatches,
+                            "input_tokens": sum(
+                                cast(int, call["input_tokens"]) for call in recorder.calls
+                            ),
+                            "output_tokens": sum(
+                                cast(int, call["output_tokens"]) for call in recorder.calls
+                            ),
+                            "latency_ms": sum(
+                                cast(int, call["latency_ms"]) for call in recorder.calls
+                            ),
+                            "duration_ms": int((time.perf_counter() - started) * 1_000),
+                        }
+                    )
+                    public = {
+                        key: value for key, value in records[-1].items() if key != "goal_output"
+                    }
+                    print(json.dumps(public, ensure_ascii=False, sort_keys=True), flush=True)
+                    _write_result(arguments.result_path, result)
+                    continue
                 source_output = source_ops.identify_source_dependencies(
                     llm_runtime=recorder,
                     requested_mode="LOCAL_GPU",

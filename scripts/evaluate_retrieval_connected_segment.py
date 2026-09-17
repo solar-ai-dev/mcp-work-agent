@@ -232,6 +232,7 @@ def evaluate(
     sampling_temperature: float,
     sampling_seed: int,
     input_overrides: Mapping[str, tuple[RequestIntentV2, ToolRoutePlanV2]] | None = None,
+    request_text_overrides: Mapping[str, str] | None = None,
     emit_case_records: bool = True,
     connect_work_analysis: bool = False,
     work_analysis_trials: int = 1,
@@ -255,6 +256,13 @@ def evaluate(
         raise ValueError(f"unknown Canonical cases: {', '.join(unknown)}")
     if input_overrides is not None and set(input_overrides) != set(case_ids):
         raise ValueError("current upstream overrides must cover exactly the replayed cases")
+    if request_text_overrides is not None and set(request_text_overrides) != set(case_ids):
+        raise ValueError("request text overrides must cover exactly the replayed cases")
+    if request_text_overrides is not None and any(
+        not isinstance(value, str) or not value.strip()
+        for value in request_text_overrides.values()
+    ):
+        raise ValueError("request text overrides must be nonempty strings")
     installed_models = {
         model.model_id: model.digest for model in OllamaHTTPClient().list_installed_models()
     }
@@ -307,6 +315,7 @@ def evaluate(
             llm_runtime=runtime,
             model_id=model_id,
             input_override=(input_overrides or {}).get(case_id),
+            request_text_override=(request_text_overrides or {}).get(case_id),
             dispatch_count=lambda: dispatch_count,
             connect_work_analysis=connect_work_analysis,
             work_analysis_trials=work_analysis_trials,
@@ -386,6 +395,7 @@ def _evaluate_case(
     llm_runtime: Any,
     model_id: str,
     input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None = None,
+    request_text_override: str | None = None,
     dispatch_count: Callable[[], int] | None = None,
     connect_work_analysis: bool = False,
     work_analysis_trials: int = 1,
@@ -417,6 +427,7 @@ def _evaluate_case(
     replay_id = f"connected-{case.case_id.lower()}-{uuid4().hex[:8]}"
     replay_request = replace(
         request,
+        request_text=request_text_override or request.request_text,
         run_id=replay_id,
         workflow_key=replay_id,
         requested_mode="LOCAL_GPU",

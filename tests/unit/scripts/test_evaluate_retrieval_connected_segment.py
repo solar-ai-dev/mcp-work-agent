@@ -87,6 +87,32 @@ def test_current_upstream_override_must_cover_every_case(tmp_path: Path) -> None
         )
 
 
+def test_derived_request_override_must_cover_every_case(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="request text overrides must cover exactly"):
+        evaluate(
+            checkpoint_root=tmp_path,
+            result_path=tmp_path / "result.json",
+            case_ids=("CASE-CORE-014",),
+            model_id="qwen3.5:9b",
+            sampling_temperature=0.0,
+            sampling_seed=1729,
+            request_text_overrides={},
+        )
+
+
+def test_derived_request_override_cannot_be_empty(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="nonempty strings"):
+        evaluate(
+            checkpoint_root=tmp_path,
+            result_path=tmp_path / "result.json",
+            case_ids=("CASE-CORE-014",),
+            model_id="qwen3.5:9b",
+            sampling_temperature=0.0,
+            sampling_seed=1729,
+            request_text_overrides={"CASE-CORE-014": " "},
+        )
+
+
 def test_llm_summary_keeps_issue_binding_without_private_description() -> None:
     candidate = {
         "status": "BLOCKED",

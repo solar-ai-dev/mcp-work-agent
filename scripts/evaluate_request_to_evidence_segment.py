@@ -90,10 +90,24 @@ def main() -> None:
     parser.add_argument("--capture-work-analysis-detail", action="store_true")
     parser.add_argument("--compare-compact-fact-projection", action="store_true")
     parser.add_argument("--connect-planning-review", action="store_true")
+    parser.add_argument("--derived-manifest", type=Path)
+    parser.add_argument("--variant", choices=("A", "B", "C", "D"))
     arguments = parser.parse_args()
+    if bool(arguments.derived_manifest) != bool(arguments.variant):
+        raise ValueError("derived manifest and variant must be provided together")
     cases = load_cases()
     if unknown := sorted(set(arguments.case) - set(cases)):
         raise ValueError(f"unknown cases: {unknown}")
+    derived_requests: dict[str, str] = {}
+    if arguments.derived_manifest is not None:
+        derived = json.loads(arguments.derived_manifest.read_text(encoding="utf-8"))
+        derived_requests = {
+            item["origin_case_id"]: item["request"]
+            for item in derived["cases"]
+            if item["variant"] == arguments.variant
+        }
+        if set(arguments.case) - set(derived_requests):
+            raise ValueError("derived manifest does not cover every requested case")
 
     config = ProductionRuntimeConfig.development(
         runtime_root=Path(tempfile.mkdtemp(prefix="gwa-request-evidence-")),
@@ -163,6 +177,10 @@ def main() -> None:
         if not isinstance(request, WorkflowStartRequest):
             records.append({"case_id": case_id, "outcome": "NO_REQUEST"})
             continue
+        if arguments.derived_manifest is not None:
+            if arguments.variant == "A" and derived_requests[case_id] != request.request_text:
+                raise ValueError(f"{case_id}: derived A request differs from checkpoint")
+            request = replace(request, request_text=derived_requests[case_id])
         local_request = replace(request, requested_mode="LOCAL_GPU")
         recorder.calls.clear()
         recorder.status_outputs.clear()
@@ -328,6 +346,9 @@ def main() -> None:
         sampling_temperature=0.0,
         sampling_seed=1729,
         input_overrides=overrides,
+        request_text_overrides={case_id: derived_requests[case_id] for case_id in overrides}
+        if arguments.derived_manifest is not None
+        else None,
         emit_case_records=False,
         connect_work_analysis=arguments.connect_work_analysis,
         work_analysis_trials=arguments.work_analysis_trials,
@@ -352,6 +373,10 @@ def main() -> None:
             ),
             "compact_fact_projection_compared": arguments.compare_compact_fact_projection,
             "planning_review_requested": arguments.connect_planning_review,
+            "variant": arguments.variant,
+            "derived_manifest": (
+                str(arguments.derived_manifest) if arguments.derived_manifest else None
+            ),
         },
         "producer_cases": records,
         "retrieval_summary": retrieval_result["summary"],
