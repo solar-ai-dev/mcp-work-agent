@@ -108,15 +108,20 @@ def main() -> None:
     parser.add_argument("--sampling-seed", type=int, default=1729)
     parser.add_argument("--compare-request-only", action="store_true")
     parser.add_argument("--compare-sparse", action="store_true")
+    parser.add_argument("--compare-fact-bound", action="store_true")
     parser.add_argument("--assemble-full-goal", action="store_true")
     parser.add_argument("--connect-tool-route", action="store_true")
     arguments = parser.parse_args()
     if arguments.model != "qwen3.5:9b":
         raise ValueError("this diagnostic is bound to qwen3.5:9b")
     if arguments.assemble_full_goal and (
-        arguments.compare_request_only or arguments.compare_sparse
+        arguments.compare_request_only or arguments.compare_sparse or arguments.compare_fact_bound
     ):
         raise ValueError("full goal assembly cannot be combined with candidate comparisons")
+    if arguments.compare_fact_bound and (
+        arguments.compare_request_only or arguments.compare_sparse
+    ):
+        raise ValueError("fact-bound candidate must be compared with the baseline alone")
     if arguments.connect_tool_route and not arguments.assemble_full_goal:
         raise ValueError("tool route connection requires full goal assembly")
 
@@ -195,11 +200,29 @@ def main() -> None:
     recorder = _RecordingInferencePort(runtime)
     tool_catalog = load_development_tool_registry()
     candidates = source_ops.build_source_dependency_candidates(tool_catalog)
-    output_candidates = output_ops.build_output_responsibility_candidates(
-        tool_catalog
-    )
+    output_candidates = output_ops.build_output_responsibility_candidates(tool_catalog)
     cases = load_cases()
     records: list[dict[str, object]] = []
+    result: dict[str, object] = {
+        "binding": {
+            "checkpoint_corpus": arguments.checkpoint_root.name,
+            "model_id": arguments.model,
+            "model_digest": model_digest,
+            "sampling_temperature": 0.0,
+            "sampling_seed": arguments.sampling_seed,
+            "goal_prompt_hash": goal_ref.content_hash,
+            "source_prompt_hash": source_ref.content_hash,
+            "compare_request_only": arguments.compare_request_only,
+            "compare_sparse": arguments.compare_sparse,
+            "compare_fact_bound": arguments.compare_fact_bound,
+            "assemble_full_goal": arguments.assemble_full_goal,
+            "connect_tool_route": arguments.connect_tool_route,
+            "connector_dispatch_enabled": False,
+            "product_graph_compiled": False,
+        },
+        "cases": records,
+    }
+    _write_result(arguments.result_path, result)
     for case_id in arguments.case:
         case = cases[case_id]
         database = arguments.checkpoint_root / case_id / "state" / "data" / "google_work_agent.db"
@@ -207,6 +230,7 @@ def main() -> None:
         request = state.get("__request__")
         if not isinstance(request, WorkflowStartRequest):
             records.append({"case_id": case_id, "outcome": "SKIP_NO_REQUEST"})
+            _write_result(arguments.result_path, result)
             continue
         prompt_input = goal_ops._prompt_input(
             request=request,
@@ -304,13 +328,12 @@ def main() -> None:
                         "output_tokens": sum(
                             cast(int, call["output_tokens"]) for call in recorder.calls
                         ),
-                        "latency_ms": sum(
-                            cast(int, call["latency_ms"]) for call in recorder.calls
-                        ),
+                        "latency_ms": sum(cast(int, call["latency_ms"]) for call in recorder.calls),
                         "duration_ms": int((time.perf_counter() - started) * 1_000),
                     }
                 )
                 print(json.dumps(records[-1], ensure_ascii=False, sort_keys=True), flush=True)
+                _write_result(arguments.result_path, result)
                 continue
             with (
                 provider_dispatch_execution_scope(
@@ -368,6 +391,16 @@ def main() -> None:
                         model_id=arguments.model,
                         sampling_seed=arguments.sampling_seed,
                     )
+                fact_bound_result = None
+                if arguments.compare_fact_bound:
+                    fact_bound_result = _fact_bound_source_candidate(
+                        prompt_ref=source_ref,
+                        prompt_input=prompt_input,
+                        source_goal=source_goal,
+                        source_candidates=candidates,
+                        model_id=arguments.model,
+                        sampling_seed=arguments.sampling_seed,
+                    )
             source_types = [
                 decision["resource_type"]
                 for decision in source_output["source_dependencies"]
@@ -405,6 +438,7 @@ def main() -> None:
                     "source_provider_calls": source_dispatches,
                     "request_only_provider_calls": candidate_dispatches,
                     "sparse_candidate": sparse_result,
+                    "fact_bound_candidate": fact_bound_result,
                     "goal_output_hash": hashlib.sha256(
                         json.dumps(goal_output, ensure_ascii=False, sort_keys=True).encode("utf-8")
                     ).hexdigest(),
@@ -427,32 +461,18 @@ def main() -> None:
                     "duration_ms": int((time.perf_counter() - started) * 1_000),
                     "status_attempts": (
                         _status_attempt_summaries(recorder.status_outputs, request.request_text)
-                        if arguments.assemble_full_goal else None
+                        if arguments.assemble_full_goal
+                        else None
                     ),
                 }
             )
         print(json.dumps(records[-1], ensure_ascii=False, sort_keys=True), flush=True)
+        _write_result(arguments.result_path, result)
 
-    result = {
-        "binding": {
-            "checkpoint_corpus": arguments.checkpoint_root.name,
-            "model_id": arguments.model,
-            "model_digest": model_digest,
-            "sampling_temperature": 0.0,
-            "sampling_seed": arguments.sampling_seed,
-            "goal_prompt_hash": goal_ref.content_hash,
-            "source_prompt_hash": source_ref.content_hash,
-            "compare_request_only": arguments.compare_request_only,
-            "compare_sparse": arguments.compare_sparse,
-            "assemble_full_goal": arguments.assemble_full_goal,
-            "connect_tool_route": arguments.connect_tool_route,
-            "connector_dispatch_enabled": False,
-            "product_graph_compiled": False,
-        },
-        "cases": records,
-    }
-    arguments.result_path.parent.mkdir(parents=True, exist_ok=True)
-    arguments.result_path.write_text(
+
+def _write_result(path: Path, result: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
@@ -594,6 +614,151 @@ def _sparse_output_schema(source_candidates: tuple[Any, ...]) -> OutputSchemaDef
                             "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
                         },
                     },
+                }
+            },
+        },
+    )
+
+
+def _fact_bound_source_candidate(
+    *,
+    prompt_ref: Any,
+    prompt_input: dict[str, object],
+    source_goal: dict[str, object],
+    source_candidates: tuple[Any, ...],
+    model_id: str,
+    sampling_seed: int,
+) -> dict[str, object]:
+    candidate_path = (
+        Path(__file__).resolve().parents[1]
+        / "evaluation"
+        / "prompt_candidates"
+        / "request-source-fact-bound-v1"
+        / "sources"
+        / "request_understanding.identify_source_dependencies.md"
+    )
+    candidate_bytes = candidate_path.read_bytes()
+    candidate_source = candidate_bytes.decode("utf-8").rstrip()
+    base_projection = {
+        **prompt_input,
+        "goal_candidate": source_goal,
+        "source_candidates": [dict(candidate) for candidate in source_candidates],
+    }
+    baseline_source = PromptRegistry().source_text(prompt_ref.prompt_id).rstrip()
+    baseline_instruction = assemble_prompt(
+        prompt_ref,
+        base_projection,
+        execution_scope=DEVELOPMENT_SMOKE,
+    )
+    if not baseline_instruction.startswith(baseline_source):
+        raise ValueError("source Prompt assembly did not preserve the registered base")
+    instruction_text = candidate_source + baseline_instruction[len(baseline_source) :]
+    candidate_ref = replace(
+        prompt_ref,
+        prompt_version="fact-bound-v1-dev",
+        content_hash=hashlib.sha256(candidate_bytes).hexdigest(),
+    )
+    schema = _fact_bound_output_schema(source_candidates)
+    started = time.perf_counter()
+    try:
+        response = OllamaHTTPClient().invoke_structured(
+            endpoint=OLLAMA_FIXED_LOOPBACK_ENDPOINT,
+            model_id=model_id,
+            prompt_ref=candidate_ref,
+            prompt_input=base_projection,
+            output_schema=schema,
+            timeout_seconds=180,
+            instruction_text=instruction_text,
+            sampling_temperature=0.0,
+            sampling_seed=sampling_seed,
+        )
+    except Exception as error:
+        return {
+            "outcome": "CALL_FAILED",
+            "error_type": type(error).__name__,
+            "provider_calls": 1,
+            "elapsed_ms": int((time.perf_counter() - started) * 1_000),
+            "prompt_hash": candidate_ref.content_hash,
+            "schema_hash": hashlib.sha256(
+                json.dumps(schema.json_schema, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+        }
+    metrics = {
+        "provider_calls": 1,
+        "input_tokens": response.input_tokens,
+        "output_tokens": response.output_tokens,
+        "latency_ms": response.latency_ms,
+        "elapsed_ms": int((time.perf_counter() - started) * 1_000),
+        "prompt_hash": candidate_ref.content_hash,
+        "schema_hash": hashlib.sha256(
+            json.dumps(schema.json_schema, sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+    }
+    try:
+        payload = json.loads(response.content if isinstance(response.content, str) else "")
+    except json.JSONDecodeError:
+        return {**metrics, "outcome": "JSON_INVALID"}
+    errors = validate_output_schema(payload, schema.json_schema)
+    if errors:
+        return {**metrics, "outcome": "SCHEMA_INVALID", "error_count": len(errors)}
+    selected = payload["source_reads"]
+    source_types = [item["resource_type"] for item in selected]
+    return {
+        **metrics,
+        "outcome": (
+            "SCHEMA_VALID_SEMANTICS_UNREVIEWED"
+            if len(source_types) == len(set(source_types))
+            else "DUPLICATE_SOURCE_TYPE"
+        ),
+        "source_types": source_types,
+        "fact_bindings": [
+            [item["resource_type"], list(item["required_fact_kinds"])] for item in selected
+        ],
+    }
+
+
+def _fact_bound_output_schema(source_candidates: tuple[Any, ...]) -> OutputSchemaDefinition:
+    variants = [
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "resource_type",
+                "required_fact_kinds",
+                "required_information",
+                "target_scope",
+            ],
+            "properties": {
+                "resource_type": {"const": candidate["resource_type"]},
+                "required_fact_kinds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {"enum": candidate["owned_fact_kinds"]},
+                },
+                "required_information": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
+            },
+        }
+        for candidate in source_candidates
+    ]
+    return OutputSchemaDefinition(
+        schema_version="request-source-fact-bound-dev-v1",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["source_reads"],
+            "properties": {
+                "source_reads": {
+                    "type": "array",
+                    "maxItems": len(source_candidates),
+                    "items": {"oneOf": variants},
                 }
             },
         },
