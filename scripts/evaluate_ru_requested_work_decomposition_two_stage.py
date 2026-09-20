@@ -55,8 +55,21 @@ SEMANTIC_CARRY_IDENTIFY_PROMPT = (
 SEMANTIC_CARRY_RELATION_PROMPT = (
     SEMANTIC_CARRY_PROMPT_ROOT / "request_understanding.identify_work_relations.md"
 )
+SPAN_BOUND_PROMPT_ROOT = Path(
+    "evaluation/prompt_candidates/ru-requested-work-decomposition-two-stage-span-bound-v3/sources"
+)
+SPAN_BOUND_IDENTIFY_PROMPT = (
+    SPAN_BOUND_PROMPT_ROOT / "request_understanding.identify_independent_results.md"
+)
+SPAN_BOUND_RELATION_PROMPT = (
+    SPAN_BOUND_PROMPT_ROOT / "request_understanding.identify_work_relations.md"
+)
 
 REQUESTED_EFFECTS = ["ANSWER", "DRAFT", "SEND", "CREATE", "UPDATE", "DELETE"]
+TYPED_RELATION_KINDS = [
+    "CONSUMES_WORK_PRODUCT",
+    "CONSUMES_PLANNED_SPECIFICATION",
+]
 
 
 def _optional_semantic_properties(*, include_requested_effects: bool = True) -> dict[str, object]:
@@ -251,6 +264,129 @@ SEMANTIC_CARRY_DECOMPOSITION_SCHEMA = OutputSchemaDefinition(
     },
 )
 
+SPAN_BOUND_IDENTIFIED_RESULTS_SCHEMA = OutputSchemaDefinition(
+    schema_version="requested-independent-results-span-bound-v3-eval",
+    json_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["identified_results"],
+        "properties": {
+            "identified_results": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["result_id", "request_spans"],
+                    "properties": {
+                        "result_id": {"type": "string", "minLength": 1},
+                        "request_spans": {
+                            "type": "array",
+                            "minItems": 1,
+                            "uniqueItems": True,
+                            "description": (
+                                "Exact contiguous substrings of the user request that define "
+                                "this independently observable result."
+                            ),
+                            "items": {"type": "string", "minLength": 1},
+                        },
+                        **_optional_semantic_properties(include_requested_effects=False),
+                    },
+                },
+            }
+        },
+    },
+)
+
+SPAN_BOUND_RELATION_SCHEMA_VERSION = "requested-work-relations-span-bound-v3-eval"
+SPAN_BOUND_DECOMPOSITION_SCHEMA_VERSION = "requested-work-decomposition-span-bound-v3-eval"
+
+
+def _closed_typed_relations_schema(result_ids: list[str]) -> OutputSchemaDefinition:
+    relation_array = _closed_typed_relation_array_schema(result_ids)
+    return OutputSchemaDefinition(
+        schema_version=SPAN_BOUND_RELATION_SCHEMA_VERSION,
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["work_relations"],
+            "properties": {"work_relations": relation_array},
+        },
+    )
+
+
+def _span_bound_decomposition_schema(result_ids: list[str]) -> OutputSchemaDefinition:
+    return OutputSchemaDefinition(
+        schema_version=SPAN_BOUND_DECOMPOSITION_SCHEMA_VERSION,
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["work_units", "work_relations"],
+            "properties": {
+                "work_units": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["unit_id", "objective", "request_spans"],
+                        "properties": {
+                            "unit_id": {"type": "string", "minLength": 1},
+                            "objective": {"type": "string", "minLength": 1},
+                            "request_spans": {
+                                "type": "array",
+                                "minItems": 1,
+                                "uniqueItems": True,
+                                "items": {"type": "string", "minLength": 1},
+                            },
+                            **_optional_semantic_properties(include_requested_effects=False),
+                        },
+                    },
+                },
+                "work_relations": _closed_typed_relation_array_schema(result_ids),
+            },
+        },
+    )
+
+
+def _closed_typed_relation_array_schema(result_ids: list[str]) -> dict[str, object]:
+    unique_ids = list(dict.fromkeys(result_ids))
+    allowed_pairs = [
+        (source_id, target_id)
+        for source_id in unique_ids
+        for target_id in unique_ids
+        if source_id != target_id
+    ]
+    relation_array: dict[str, object] = {
+        "type": "array",
+        "maxItems": min(12, len(allowed_pairs)),
+        "uniqueItems": True,
+    }
+    if not allowed_pairs:
+        relation_array["items"] = {
+            "type": "object",
+            "additionalProperties": False,
+        }
+        return relation_array
+    relation_array["items"] = {
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source_unit_id", "target_unit_id", "kind"],
+                "properties": {
+                    "source_unit_id": {"const": source_id},
+                    "target_unit_id": {"const": target_id},
+                    "kind": {"enum": TYPED_RELATION_KINDS},
+                },
+            }
+            for source_id, target_id in allowed_pairs
+        ]
+    }
+    return relation_array
+
 
 def main() -> None:
     parser = ArgumentParser()
@@ -259,6 +395,7 @@ def main() -> None:
     parser.add_argument("--sampling-seed", type=int, default=20260920)
     parser.add_argument("--semantic-state", action="store_true")
     parser.add_argument("--deterministic-semantic-carry", action="store_true")
+    parser.add_argument("--span-bound-typed-relations", action="store_true")
     arguments = parser.parse_args()
     if arguments.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
@@ -268,16 +405,34 @@ def main() -> None:
         raise ValueError("duplicate Case ID")
     if any(case_id not in CORE24_CASE_IDS for case_id in case_ids):
         raise ValueError("requested Case is not in the fixed Core comparison set")
-    if arguments.semantic_state and arguments.deterministic_semantic_carry:
+    selected_candidates = sum(
+        (
+            arguments.semantic_state,
+            arguments.deterministic_semantic_carry,
+            arguments.span_bound_typed_relations,
+        )
+    )
+    if selected_candidates > 1:
         raise ValueError("select only one two-stage candidate")
 
     cases = load_cases()
-    if arguments.deterministic_semantic_carry:
+    if arguments.span_bound_typed_relations:
+        identify_prompt_path = SPAN_BOUND_IDENTIFY_PROMPT
+        materialize_prompt_path = SPAN_BOUND_RELATION_PROMPT
+        identify_schema = SPAN_BOUND_IDENTIFIED_RESULTS_SCHEMA
+        materialize_schema = None
+        decomposition_schema = None
+        materialize_output_schema_version = SPAN_BOUND_RELATION_SCHEMA_VERSION
+        candidate_id = "ru-requested-work-decomposition-two-stage-span-bound-v3"
+        prompt_version = "requested-work-decomposition-two-stage-span-bound-v3-eval"
+        materialize_prompt_id = "request_understanding.identify_work_relations"
+    elif arguments.deterministic_semantic_carry:
         identify_prompt_path = SEMANTIC_CARRY_IDENTIFY_PROMPT
         materialize_prompt_path = SEMANTIC_CARRY_RELATION_PROMPT
         identify_schema = SEMANTIC_CARRY_IDENTIFIED_RESULTS_SCHEMA
         materialize_schema = SEMANTIC_CARRY_RELATIONS_SCHEMA
         decomposition_schema = SEMANTIC_CARRY_DECOMPOSITION_SCHEMA
+        materialize_output_schema_version = materialize_schema.schema_version
         candidate_id = "ru-requested-work-decomposition-two-stage-semantic-carry-v2"
         prompt_version = "requested-work-decomposition-two-stage-semantic-carry-v2-eval"
         materialize_prompt_id = "request_understanding.identify_work_relations"
@@ -287,6 +442,7 @@ def main() -> None:
         identify_schema = SEMANTIC_STATE_IDENTIFIED_RESULTS_SCHEMA
         materialize_schema = SEMANTIC_STATE_DECOMPOSITION_SCHEMA
         decomposition_schema = SEMANTIC_STATE_DECOMPOSITION_SCHEMA
+        materialize_output_schema_version = materialize_schema.schema_version
         candidate_id = "ru-requested-work-decomposition-two-stage-semantic-state-v1"
         prompt_version = "requested-work-decomposition-two-stage-semantic-state-v1-eval"
         materialize_prompt_id = "request_understanding.materialize_work_units"
@@ -296,6 +452,7 @@ def main() -> None:
         identify_schema = IDENTIFIED_RESULTS_SCHEMA
         materialize_schema = DECOMPOSITION_SCHEMA
         decomposition_schema = DECOMPOSITION_SCHEMA
+        materialize_output_schema_version = materialize_schema.schema_version
         candidate_id = "ru-requested-work-decomposition-two-stage-v1"
         prompt_version = "requested-work-decomposition-two-stage-v1-eval"
         materialize_prompt_id = "request_understanding.materialize_work_units"
@@ -334,7 +491,7 @@ def main() -> None:
         prompt_hash=materialize_hash,
         prompt_version=prompt_version,
         input_schema_version="user-request-plus-identified-results-v1",
-        output_schema_version=materialize_schema.schema_version,
+        output_schema_version=materialize_output_schema_version,
     )
     result: dict[str, object] = {
         "binding": {
@@ -387,10 +544,22 @@ def main() -> None:
             *validate_output_schema(identified, identify_schema.json_schema),
             *_validate_identified_results(identified),
         ]
+        if arguments.span_bound_typed_relations:
+            identify_errors.extend(_validate_request_span_bindings(identified, request))
         identified_results = (
             identified.get("identified_results", []) if isinstance(identified, dict) else []
         )
         identify_wall_ms = int((time.perf_counter() - identify_started) * 1_000)
+
+        if arguments.span_bound_typed_relations:
+            result_ids = _identified_result_ids(identified_results)
+            case_materialize_schema = _closed_typed_relations_schema(result_ids)
+            case_decomposition_schema = _span_bound_decomposition_schema(result_ids)
+        else:
+            if materialize_schema is None or decomposition_schema is None:
+                raise AssertionError("static two-stage candidate schema is missing")
+            case_materialize_schema = materialize_schema
+            case_decomposition_schema = decomposition_schema
 
         materialize_started = time.perf_counter()
         materialize_response = client.invoke_structured(
@@ -401,14 +570,23 @@ def main() -> None:
                 "user_request": request,
                 "identified_results": identified_results,
             },
-            output_schema=materialize_schema,
+            output_schema=case_materialize_schema,
             timeout_seconds=180,
             instruction_text=materialize_prompt,
             sampling_temperature=0.0,
             sampling_seed=arguments.sampling_seed,
         )
         llm_candidate = json.loads(cast(str, materialize_response.content))
-        if arguments.deterministic_semantic_carry:
+        if arguments.span_bound_typed_relations:
+            candidate = {
+                "work_units": _project_span_bound_results(identified_results),
+                "work_relations": (
+                    llm_candidate.get("work_relations", [])
+                    if isinstance(llm_candidate, dict)
+                    else []
+                ),
+            }
+        elif arguments.deterministic_semantic_carry:
             candidate = {
                 "work_units": _project_identified_results(identified_results),
                 "work_relations": (
@@ -419,15 +597,21 @@ def main() -> None:
             }
         else:
             candidate = llm_candidate
-        materialize_errors = validate_output_schema(llm_candidate, materialize_schema.json_schema)
-        if arguments.deterministic_semantic_carry:
+        materialize_errors = validate_output_schema(
+            llm_candidate, case_materialize_schema.json_schema
+        )
+        if arguments.deterministic_semantic_carry or arguments.span_bound_typed_relations:
             materialize_errors.extend(
-                validate_output_schema(candidate, decomposition_schema.json_schema)
+                validate_output_schema(candidate, case_decomposition_schema.json_schema)
             )
         materialize_errors.extend(_validate_decomposition(candidate))
         units = candidate.get("work_units", []) if isinstance(candidate, dict) else []
         relations = candidate.get("work_relations", []) if isinstance(candidate, dict) else []
-        carry_matches = _has_exact_carry(identified_results, units)
+        carry_matches = (
+            _project_span_bound_results(identified_results) == units
+            if arguments.span_bound_typed_relations
+            else _has_exact_carry(identified_results, units)
+        )
         materialize_wall_ms = int((time.perf_counter() - materialize_started) * 1_000)
 
         records.append(
@@ -525,6 +709,38 @@ def _validate_identified_results(value: object) -> list[str]:
     return []
 
 
+def _validate_request_span_bindings(value: object, user_request: str) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    identified_results = value.get("identified_results")
+    if not isinstance(identified_results, list):
+        return []
+    errors: list[str] = []
+    for result_index, item in enumerate(identified_results):
+        if not isinstance(item, dict):
+            continue
+        spans = item.get("request_spans")
+        if not isinstance(spans, list):
+            continue
+        for span_index, span in enumerate(spans):
+            if isinstance(span, str) and span not in user_request:
+                errors.append(
+                    f"$.identified_results[{result_index}].request_spans[{span_index}] "
+                    "must be an exact user-request substring"
+                )
+    return errors
+
+
+def _identified_result_ids(identified_results: object) -> list[str]:
+    if not isinstance(identified_results, list):
+        return []
+    return [
+        str(item["result_id"])
+        for item in identified_results
+        if isinstance(item, dict) and isinstance(item.get("result_id"), str)
+    ]
+
+
 def _has_exact_carry(identified_results: object, work_units: object) -> bool:
     if not isinstance(identified_results, list) or not isinstance(work_units, list):
         return False
@@ -548,6 +764,24 @@ def _project_identified_results(identified_results: object) -> list[dict[str, ob
             continue
         work_unit = dict(item)
         work_unit["unit_id"] = work_unit.pop("result_id", None)
+        work_units.append(work_unit)
+    return work_units
+
+
+def _project_span_bound_results(identified_results: object) -> list[dict[str, object]]:
+    if not isinstance(identified_results, list):
+        return []
+    work_units: list[dict[str, object]] = []
+    for item in identified_results:
+        if not isinstance(item, dict):
+            continue
+        work_unit = dict(item)
+        work_unit["unit_id"] = work_unit.pop("result_id", None)
+        spans = work_unit.get("request_spans")
+        exact_spans = (
+            [span for span in spans if isinstance(span, str)] if isinstance(spans, list) else []
+        )
+        work_unit["objective"] = " ".join(exact_spans)
         work_units.append(work_unit)
     return work_units
 

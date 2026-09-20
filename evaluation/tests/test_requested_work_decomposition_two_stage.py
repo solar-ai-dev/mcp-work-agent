@@ -18,10 +18,18 @@ from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
     SEMANTIC_STATE_IDENTIFIED_RESULTS_SCHEMA,
     SEMANTIC_STATE_IDENTIFY_PROMPT,
     SEMANTIC_STATE_MATERIALIZE_PROMPT,
+    SPAN_BOUND_IDENTIFIED_RESULTS_SCHEMA,
+    SPAN_BOUND_IDENTIFY_PROMPT,
+    SPAN_BOUND_RELATION_PROMPT,
+    _closed_typed_relations_schema,
     _has_exact_carry,
     _project_identified_results,
+    _project_span_bound_results,
     _validate_identified_results,
+    _validate_request_span_bindings,
 )
+
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
 def test_stage_one_schema_contains_only_independent_results() -> None:
@@ -40,6 +48,8 @@ def test_two_stage_prompts_do_not_add_few_shots() -> None:
         SEMANTIC_CARRY_RELATION_PROMPT,
         SEMANTIC_STATE_IDENTIFY_PROMPT,
         SEMANTIC_STATE_MATERIALIZE_PROMPT,
+        SPAN_BOUND_IDENTIFY_PROMPT,
+        SPAN_BOUND_RELATION_PROMPT,
     ):
         assert "few-shot" not in prompt.read_text(encoding="utf-8").lower()
 
@@ -108,6 +118,133 @@ def test_semantic_carry_stage_two_only_generates_relations() -> None:
 
     assert set(properties) == {"work_relations"}
     assert SEMANTIC_CARRY_RELATIONS_SCHEMA.json_schema["required"] == ["work_relations"]
+
+
+def test_span_bound_state_uses_exact_request_spans_without_effect_authority() -> None:
+    result_item = SPAN_BOUND_IDENTIFIED_RESULTS_SCHEMA.json_schema["properties"][
+        "identified_results"
+    ]["items"]
+
+    assert set(result_item["required"]) == {"result_id", "request_spans"}
+    assert "objective" not in result_item["properties"]
+    assert "requested_effects" not in json.dumps(SPAN_BOUND_IDENTIFIED_RESULTS_SCHEMA.json_schema)
+
+
+def test_span_validator_requires_verbatim_user_request_substrings() -> None:
+    request = "메일을 확인해서 요약하고 그 요약으로 이슈 초안을 만들어줘."
+
+    assert not _validate_request_span_bindings(
+        {
+            "identified_results": [
+                {"result_id": "summary", "request_spans": ["메일을 확인해서 요약하고"]},
+                {
+                    "result_id": "issue",
+                    "request_spans": ["그 요약으로 이슈 초안을 만들어줘"],
+                },
+            ]
+        },
+        request,
+    )
+    assert _validate_request_span_bindings(
+        {
+            "identified_results": [
+                {"result_id": "summary", "request_spans": ["메일을 읽고 요약한다"]}
+            ]
+        },
+        request,
+    ) == ["$.identified_results[0].request_spans[0] must be an exact user-request substring"]
+
+
+def test_span_bound_projection_derives_objective_from_exact_spans() -> None:
+    identified = [
+        {
+            "result_id": "issue",
+            "request_spans": ["그 요약으로", "이슈 초안을 만들어줘"],
+            "source_scopes": ["그 요약"],
+        }
+    ]
+
+    assert _project_span_bound_results(identified) == [
+        {
+            "unit_id": "issue",
+            "objective": "그 요약으로 이슈 초안을 만들어줘",
+            "request_spans": ["그 요약으로", "이슈 초안을 만들어줘"],
+            "source_scopes": ["그 요약"],
+        }
+    ]
+
+
+def test_closed_typed_relation_schema_rejects_unknown_self_and_legacy_edges() -> None:
+    schema = _closed_typed_relations_schema(["summary", "issue"]).json_schema
+    valid = {
+        "work_relations": [
+            {
+                "source_unit_id": "summary",
+                "target_unit_id": "issue",
+                "kind": "CONSUMES_WORK_PRODUCT",
+            }
+        ]
+    }
+
+    assert not validate_output_schema(valid, schema)
+    planned = {
+        "work_relations": [
+            {
+                "source_unit_id": "summary",
+                "target_unit_id": "issue",
+                "kind": "CONSUMES_PLANNED_SPECIFICATION",
+            }
+        ]
+    }
+    assert not validate_output_schema(planned, schema)
+    for invalid in (
+        {
+            "work_relations": [
+                {
+                    "source_unit_id": "summary",
+                    "target_unit_id": "summary",
+                    "kind": "CONSUMES_WORK_PRODUCT",
+                }
+            ]
+        },
+        {
+            "work_relations": [
+                {
+                    "source_unit_id": "summary",
+                    "target_unit_id": "recipient@example.com",
+                    "kind": "CONSUMES_WORK_PRODUCT",
+                }
+            ]
+        },
+        {
+            "work_relations": [
+                {
+                    "source_unit_id": "summary",
+                    "target_unit_id": "issue",
+                    "kind": "PROVIDES_INPUT_TO",
+                }
+            ]
+        },
+    ):
+        assert validate_output_schema(invalid, schema)
+
+
+def test_closed_relation_schema_only_allows_empty_for_one_work_unit() -> None:
+    schema = _closed_typed_relations_schema(["only"]).json_schema
+
+    assert not validate_output_schema({"work_relations": []}, schema)
+    assert validate_output_schema(
+        {
+            "work_relations": [
+                {
+                    "source_unit_id": "only",
+                    "target_unit_id": "only",
+                    "kind": "CONSUMES_WORK_PRODUCT",
+                }
+            ]
+        },
+        schema,
+    )
 
 
 def test_exact_carry_requires_ids_and_objectives_to_be_unchanged() -> None:
@@ -203,3 +340,9 @@ def test_prompt_paths_are_evaluation_candidates() -> None:
     )
     assert SEMANTIC_CARRY_IDENTIFY_PROMPT.parent == carry_parent
     assert SEMANTIC_CARRY_RELATION_PROMPT.parent == carry_parent
+    span_parent = Path(
+        "evaluation/prompt_candidates/"
+        "ru-requested-work-decomposition-two-stage-span-bound-v3/sources"
+    )
+    assert SPAN_BOUND_IDENTIFY_PROMPT.parent == span_parent
+    assert SPAN_BOUND_RELATION_PROMPT.parent == span_parent

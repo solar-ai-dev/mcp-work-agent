@@ -1,0 +1,173 @@
+{
+  "version": "ru287-requested-work-span-relation-review-v3",
+  "authority": {
+    "dataset": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+    "fields": [
+      "canonical_user_prompt",
+      "evaluation_gold.required_semantics",
+      "evaluation_gold.forbidden_semantics"
+    ],
+    "exact_work_unit_count_is_authority": false,
+    "exact_relation_count_is_authority": false,
+    "alternative_decompositions_are_allowed": true
+  },
+  "relation_semantics": {
+    "internal_derived_product": "CONSUMES_WORK_PRODUCT",
+    "preapproval_external_action": "CONSUMES_PLANNED_SPECIFICATION",
+    "legacy_provides_input_to_is_typed": false
+  },
+  "issue_severity": {
+    "REQUEST_SPAN_INVALID": "PARTIAL",
+    "SOURCE_SCOPE_DROPPED": "PARTIAL",
+    "EXPLICIT_PROHIBITION_DROPPED": "PARTIAL",
+    "INTERNAL_STEP_PROMOTED": "PARTIAL",
+    "TYPED_SEMANTIC_CARRY_DROPPED": "PARTIAL",
+    "TYPED_SEMANTIC_FIELD_POLLUTION": "PARTIAL",
+    "RELATION_INVALID": "PARTIAL",
+    "RELATION_MISSING": "PARTIAL",
+    "RELATION_UNTYPED": "PARTIAL",
+    "TARGET_DROPPED": "PARTIAL",
+    "DISTINCT_OUTCOMES_COMBINED": "INFO",
+    "REQUESTED_OUTCOME_MISSING": "FAIL",
+    "EFFECT_CHANGED": "FAIL",
+    "FACT_OVERCLAIMED": "FAIL",
+    "PLANNED_EFFECT_STATUS_AMBIGUOUS": "PARTIAL",
+    "UNSUPPORTED_SEMANTIC": "FAIL"
+  },
+  "candidates": {
+    "span_bound_v3": {
+      "path": "evaluation/results/ru287-requested-work-two-stage-span-bound-v3-core24-20260921/result.json",
+      "sha256": "cce6460c3cfd5c80755d6202c0798c258b35a41cd2aa28f115fff02275f635a3"
+    }
+  },
+  "cases": {
+    "CASE-CORE-001": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "요청과 검색 금지는 exact span으로 보존했지만 '다시 확인해서'를 temporal constraint로 잘못 배치했다."}
+      }
+    },
+    "CASE-CORE-006": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Atlas 출고일·담당자 결과와 다른 준비 업무 분석 금지를 exact span으로 보존했다."}
+      }
+    },
+    "CASE-CORE-009": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "메일과 Task를 근거로 현재 진행 상황을 답하는 하나의 사용자 결과를 보존했다."}
+      }
+    },
+    "CASE-CORE-010": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Harbor 메일 요약과 본문 지시를 따르지 않는다는 금지를 원문에 결속했다."}
+      }
+    },
+    "CASE-CORE-011": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Draft 요청을 SEND로 바꾸지 않고 수신자와 준비 상태 요청을 exact span으로 보존했다."}
+      }
+    },
+    "CASE-CORE-012": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Task·Calendar를 확인한 진행 상태 Draft라는 사용자 결과를 그대로 보존했다."}
+      }
+    },
+    "CASE-CORE-019": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {
+        "span_bound_v3": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "RELATION_MISSING"], "reason": "Event와 안내 Draft 및 미확정 소요시간을 원문 그대로 보존했지만 두 산출물을 한 WorkUnit으로 합쳐 planned specification 관계를 표현하지 못했다."}
+      }
+    },
+    "CASE-CORE-020": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "확인 요청을 완료 사실로 과장하지 않고 Ion Task·Calendar 기반 Draft 요청을 그대로 보존했다."}
+      }
+    },
+    "CASE-CORE-021": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["REQUEST_SPAN_INVALID"], "reason": "하나의 Event 업무와 모든 의미는 유지했지만 날짜·시간 내부에 공백을 추가해 exact substring 계약을 위반했다."}
+      }
+    },
+    "CASE-CORE-026": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["REQUEST_SPAN_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "가용 슬롯 제안 의미는 유지했지만 날짜·시간 띄어쓰기를 바꿨고 원문에 없는 prohibition='없음'을 추가했다."}
+      }
+    },
+    "CASE-CORE-027": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "가용시간 답변과 일정 생성 금지를 exact span으로 보존했다."}
+      }
+    },
+    "CASE-CORE-028": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Kestrel 메일·Task와 내일 30분 Event라는 사용자 업무를 원문 그대로 보존했다."}
+      }
+    },
+    "CASE-CORE-031": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "새 Task CREATE 요청을 인계 확정으로 바꾸지 않고 Source·target·기한과 함께 보존했다."}
+      }
+    },
+    "CASE-CORE-036": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "메일·Calendar Source와 다음 주 월요일까지의 체크리스트 업무를 보존했다."}
+      }
+    },
+    "CASE-CORE-037": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["REQUEST_SPAN_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "기존 QR Task UPDATE 의미는 유지했지만 날짜 띄어쓰기를 바꾸고 원문에 없는 담당자 또는 시스템 target을 추가했다."}
+      }
+    },
+    "CASE-CORE-040": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["REQUEST_SPAN_INVALID"], "reason": "기존 Task 메모에 지연을 추가하는 의미는 유지했지만 '2일'을 '2 일'로 바꿔 exact substring 계약을 위반했다."}
+      }
+    },
+    "CASE-CORE-041": {
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "세 Source 대조 답변과 새 항목 생성 금지를 하나의 exact span에 보존했다."}
+      }
+    },
+    "CASE-CORE-046": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {
+        "span_bound_v3": {"issues": ["REQUEST_SPAN_INVALID", "DISTINCT_OUTCOMES_COMBINED", "RELATION_MISSING"], "reason": "Event와 안내 Draft를 한 WorkUnit으로 합치고 날짜·이메일 띄어쓰기를 바꿔 exact span에 실패했으며 planned specification 관계도 표현하지 못했다."}
+      }
+    },
+    "CASE-CORE-048": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SOURCE_SCOPE_DROPPED"], "reason": "Task와 Event+Draft 두 WorkUnit으로 나눴지만 공통 메일·Task·Calendar 범위를 뒤 WorkUnit에 결속하지 않아 세 출력의 공통 Source 의미가 약해졌다."}
+      }
+    },
+    "CASE-CORE-050": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SOURCE_SCOPE_DROPPED"], "reason": "Task와 Event+Draft 두 WorkUnit으로 나눴지만 공통 Echo 메일·Task·Calendar 범위를 뒤 WorkUnit에 전달하지 못했다."}
+      }
+    },
+    "CASE-CORE-051": {
+      "reviews": {
+        "span_bound_v3": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "박민수 메일 기반 준비 내용 정리는 보존했지만 원문에 없는 '사용자 (명시적 대상 미지정)' target을 추가했다."}
+      }
+    },
+    "CASE-CORE-054": {
+      "allowed_shapes": ["single_reply_draft", "derived_summary_then_reply_draft"],
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Grove 결과를 반영한 지정 수신자 Reply Draft를 하나의 exact span으로 보존했다."}
+      }
+    },
+    "CASE-CORE-056": {
+      "allowed_shapes": ["single_answer", "summary_and_action_sections"],
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Harbor 사고 요약과 사용자 대응 정리 및 실행 금지를 원문 그대로 보존했다."}
+      }
+    },
+    "CASE-CORE-059": {
+      "allowed_shapes": ["single_reply_send", "confirmation_work_product_then_reply_send"],
+      "reviews": {
+        "span_bound_v3": {"issues": [], "reason": "Quartz 확인 사실에 근거한 즉시 Reply SEND 요청을 effect 재해석 없이 보존했다."}
+      }
+    }
+  },
+  "decisions": {
+    "span_bound_v3": "HOLD"
+  }
+}
