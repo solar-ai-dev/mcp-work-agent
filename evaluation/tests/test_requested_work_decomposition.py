@@ -7,25 +7,28 @@ from typing import cast
 
 from evaluation.dataset_v8 import load_cases
 from scripts.evaluate_ru_requested_work_decomposition import (
-    CORE24_EXPECTATIONS,
+    CORE24_CASE_IDS,
     COUNTED_DECOMPOSITION_SCHEMA,
     DECOMPOSITION_SCHEMA,
     _validate_decomposition,
 )
 
 
-def test_core_projection_has_24_unique_core_cases() -> None:
-    assert len(CORE24_EXPECTATIONS) == 24
-    assert all(case_id.startswith("CASE-CORE-") for case_id in CORE24_EXPECTATIONS)
+def test_core_comparison_set_has_24_unique_core_cases() -> None:
+    assert len(CORE24_CASE_IDS) == 24
+    assert len(set(CORE24_CASE_IDS)) == 24
+    assert all(case_id.startswith("CASE-CORE-") for case_id in CORE24_CASE_IDS)
 
 
-def test_core_projection_is_balanced_across_canonical_categories() -> None:
+def test_core_comparison_set_is_balanced_across_canonical_categories() -> None:
     cases = load_cases()
-    categories = Counter(cases[case_id].raw["category"] for case_id in CORE24_EXPECTATIONS)
+    categories = Counter(cases[case_id].raw["category"] for case_id in CORE24_CASE_IDS)
     assert len(categories) == 6
     assert set(categories.values()) == {4}
-    assert sum(len(item.expected_units) == 1 for item in CORE24_EXPECTATIONS.values()) == 17
-    assert sum(bool(item.expected_relations) for item in CORE24_EXPECTATIONS.values()) == 4
+    for case_id in CORE24_CASE_IDS:
+        gold = cases[case_id].raw["evaluation_gold"]
+        assert gold["required_semantics"]
+        assert gold["forbidden_semantics"]
 
 
 def test_candidate_schema_contains_only_requested_work_structure() -> None:
@@ -49,9 +52,7 @@ def test_candidate_schema_contains_only_requested_work_structure() -> None:
 
 
 def test_counted_candidate_adds_only_work_count() -> None:
-    properties = cast(
-        dict[str, object], COUNTED_DECOMPOSITION_SCHEMA.json_schema["properties"]
-    )
+    properties = cast(dict[str, object], COUNTED_DECOMPOSITION_SCHEMA.json_schema["properties"])
     assert set(properties) == {"work_count", "work_units", "work_relations"}
     assert COUNTED_DECOMPOSITION_SCHEMA.json_schema["required"] == [
         "work_count",

@@ -1,5 +1,11 @@
 # 049 — Bounded two-stage requested-work decomposition
 
+> **Corrected evaluator notice (2026-09-20):** 이 문서의 `19/24`, Stage 1 exact
+> count, relation count 판정은 Canonical에 없는 단일 분해 모양을 Gold로 사용해
+> 폐기했다. 의미 보존 재채점 결과는 `PASS 10 / PARTIAL 12 / FAIL 2`, 전체 판단은
+> `REJECT`에서 `HOLD`로 정정했다. 근거는
+> `050-requested-work-semantic-regrade.md`다.
+
 Issue: #287
 
 ## 범위와 구조

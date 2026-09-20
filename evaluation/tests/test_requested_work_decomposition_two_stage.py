@@ -8,16 +8,13 @@ from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
     IDENTIFIED_RESULTS_SCHEMA,
     IDENTIFY_PROMPT,
     MATERIALIZE_PROMPT,
-    _first_divergence,
     _has_exact_carry,
     _validate_identified_results,
 )
 
 
 def test_stage_one_schema_contains_only_independent_results() -> None:
-    properties = cast(
-        dict[str, object], IDENTIFIED_RESULTS_SCHEMA.json_schema["properties"]
-    )
+    properties = cast(dict[str, object], IDENTIFIED_RESULTS_SCHEMA.json_schema["properties"])
     encoded = json.dumps(IDENTIFIED_RESULTS_SCHEMA.json_schema, sort_keys=True)
     assert set(properties) == {"identified_results"}
     for forbidden in ("relation", "tool", "query", "evidence", "approval", "execution"):
@@ -56,20 +53,6 @@ def test_exact_carry_requires_ids_and_objectives_to_be_unchanged() -> None:
     assert not _has_exact_carry(
         identified,
         [{"unit_id": "result-1", "objective": "다르게 쓴 결과"}],
-    )
-
-
-def test_first_divergence_prefers_stage_one_boundary_before_relation() -> None:
-    assert (
-        _first_divergence(
-            identify_errors=[],
-            identify_boundary_matches=False,
-            materialize_errors=[],
-            carry_matches=True,
-            actual_relation_count=0,
-            expected_relation_count=1,
-        )
-        == "STAGE1_RESULT_BOUNDARY"
     )
 
 

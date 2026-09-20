@@ -1,5 +1,11 @@
 # 046 — Requested Work decomposition
 
+> **Corrected evaluator notice (2026-09-20):** 이 문서의 exact WorkUnit/Relation
+> 개수와 `12/24`·`9/24` 판정은 Canonical에 없는 단일 분해 모양을 Gold로 사용해
+> 폐기했다. minimal v1은 의미 보존 재채점에서 `HOLD`로 정정됐고 v2의 기존 구조
+> 점수는 최종 판단에 사용하지 않는다. 근거는
+> `050-requested-work-semantic-regrade.md`다.
+
 Issue: #287
 
 ## 범위

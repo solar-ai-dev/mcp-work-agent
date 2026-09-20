@@ -6,13 +6,12 @@ import hashlib
 import json
 import time
 from argparse import ArgumentParser
-from collections import Counter
 from pathlib import Path
 from typing import cast
 
 from evaluation.dataset_v8 import load_cases, normalized_sha256
 from scripts.evaluate_ru_requested_work_decomposition import (
-    CORE24_EXPECTATIONS,
+    CORE24_CASE_IDS,
     DATASET,
     DECOMPOSITION_SCHEMA,
     EXPECTED_MODEL_DIGEST,
@@ -72,24 +71,25 @@ def main() -> None:
     if arguments.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
 
-    case_ids = arguments.case or list(CORE24_EXPECTATIONS)
+    case_ids = arguments.case or list(CORE24_CASE_IDS)
     if len(case_ids) != len(set(case_ids)):
         raise ValueError("duplicate Case ID")
-    if any(case_id not in CORE24_EXPECTATIONS for case_id in case_ids):
-        raise ValueError("requested Case is not in the preregistered Core projection")
+    if any(case_id not in CORE24_CASE_IDS for case_id in case_ids):
+        raise ValueError("requested Case is not in the fixed Core comparison set")
 
     cases = load_cases()
     identify_prompt = IDENTIFY_PROMPT.read_text(encoding="utf-8").rstrip()
     materialize_prompt = MATERIALIZE_PROMPT.read_text(encoding="utf-8").rstrip()
     identify_hash = hashlib.sha256(IDENTIFY_PROMPT.read_bytes()).hexdigest()
     materialize_hash = hashlib.sha256(MATERIALIZE_PROMPT.read_bytes()).hexdigest()
-    expectation_hash = _sha256(
+    canonical_authority_hash = _sha256(
         {
             case_id: {
-                "expected_units": expectation.expected_units,
-                "expected_relations": expectation.expected_relations,
+                "canonical_user_prompt": cases[case_id].raw["canonical_user_prompt"],
+                "required_semantics": cases[case_id].raw["evaluation_gold"]["required_semantics"],
+                "forbidden_semantics": cases[case_id].raw["evaluation_gold"]["forbidden_semantics"],
             }
-            for case_id, expectation in CORE24_EXPECTATIONS.items()
+            for case_id in CORE24_CASE_IDS
         }
     )
 
@@ -117,7 +117,7 @@ def main() -> None:
         "binding": {
             "product_sha": _git_head(),
             "dataset_sha256": normalized_sha256(DATASET),
-            "expectation_sha256": expectation_hash,
+            "canonical_authority_sha256": canonical_authority_hash,
             "identify_prompt_sha256": identify_hash,
             "materialize_prompt_sha256": materialize_hash,
             "candidate_id": "ru-requested-work-decomposition-two-stage-v1",
@@ -133,25 +133,18 @@ def main() -> None:
         "summary": {
             "case_count": len(case_ids),
             "identify_schema_valid": 0,
-            "identify_boundary_matches": 0,
             "materialize_schema_valid": 0,
             "materialize_exact_carry_matches": 0,
-            "candidate_structure_matches": 0,
-            "relation_required_matches": 0,
-            "first_divergence_counts": {},
         },
         "cases": [],
     }
     _write(arguments.result_path, result)
     records = cast(list[dict[str, object]], result["cases"])
     summary = cast(dict[str, object], result["summary"])
-    divergence_counts: Counter[str] = Counter()
-
     for case_id in case_ids:
         raw = cases[case_id].raw
         if raw.get("split") != "CORE":
             raise ValueError(f"{case_id}: Holdout/Stress is not allowed for tuning")
-        expectation = CORE24_EXPECTATIONS[case_id]
         request = str(raw["canonical_user_prompt"])
 
         identify_started = time.perf_counter()
@@ -172,13 +165,7 @@ def main() -> None:
             *_validate_identified_results(identified),
         ]
         identified_results = (
-            identified.get("identified_results", [])
-            if isinstance(identified, dict)
-            else []
-        )
-        identify_boundary_matches = (
-            not identify_errors
-            and len(identified_results) == len(expectation.expected_units)
+            identified.get("identified_results", []) if isinstance(identified, dict) else []
         )
         identify_wall_ms = int((time.perf_counter() - identify_started) * 1_000)
 
@@ -203,25 +190,8 @@ def main() -> None:
             *_validate_decomposition(candidate),
         ]
         units = candidate.get("work_units", []) if isinstance(candidate, dict) else []
-        relations = (
-            candidate.get("work_relations", []) if isinstance(candidate, dict) else []
-        )
+        relations = candidate.get("work_relations", []) if isinstance(candidate, dict) else []
         carry_matches = _has_exact_carry(identified_results, units)
-        structure_matches = (
-            not materialize_errors
-            and len(units) == len(expectation.expected_units)
-            and len(relations) == len(expectation.expected_relations)
-        )
-        relation_required_match = bool(expectation.expected_relations) and structure_matches
-        first_divergence = _first_divergence(
-            identify_errors=identify_errors,
-            identify_boundary_matches=identify_boundary_matches,
-            materialize_errors=materialize_errors,
-            carry_matches=carry_matches,
-            actual_relation_count=len(relations),
-            expected_relation_count=len(expectation.expected_relations),
-        )
-        divergence_counts[first_divergence] += 1
         materialize_wall_ms = int((time.perf_counter() - materialize_started) * 1_000)
 
         records.append(
@@ -229,16 +199,13 @@ def main() -> None:
                 "case_id": case_id,
                 "category": raw["category"],
                 "user_request": request,
-                "expectation": {
-                    "units": list(expectation.expected_units),
-                    "relations_by_unit_index": [
-                        list(item) for item in expectation.expected_relations
-                    ],
+                "canonical_authority": {
+                    "required_semantics": raw["evaluation_gold"]["required_semantics"],
+                    "forbidden_semantics": raw["evaluation_gold"]["forbidden_semantics"],
                 },
                 "identify": {
                     "candidate": identified,
                     "schema_errors": identify_errors,
-                    "boundary_matches": identify_boundary_matches,
                     "input_tokens": identify_response.input_tokens,
                     "output_tokens": identify_response.output_tokens,
                     "latency_ms": identify_response.latency_ms,
@@ -248,45 +215,33 @@ def main() -> None:
                     "candidate": candidate,
                     "schema_errors": materialize_errors,
                     "exact_carry_matches": carry_matches,
-                    "structure_matches": structure_matches,
                     "input_tokens": materialize_response.input_tokens,
                     "output_tokens": materialize_response.output_tokens,
                     "latency_ms": materialize_response.latency_ms,
                     "wall_ms": materialize_wall_ms,
                 },
-                "first_divergence": first_divergence,
             }
         )
-        summary["identify_schema_valid"] = cast(
-            int, summary["identify_schema_valid"]
-        ) + int(not identify_errors)
-        summary["identify_boundary_matches"] = cast(
-            int, summary["identify_boundary_matches"]
-        ) + int(identify_boundary_matches)
-        summary["materialize_schema_valid"] = cast(
-            int, summary["materialize_schema_valid"]
-        ) + int(not materialize_errors)
+        summary["identify_schema_valid"] = cast(int, summary["identify_schema_valid"]) + int(
+            not identify_errors
+        )
+        summary["materialize_schema_valid"] = cast(int, summary["materialize_schema_valid"]) + int(
+            not materialize_errors
+        )
         summary["materialize_exact_carry_matches"] = cast(
             int, summary["materialize_exact_carry_matches"]
         ) + int(carry_matches)
-        summary["candidate_structure_matches"] = cast(
-            int, summary["candidate_structure_matches"]
-        ) + int(structure_matches)
-        summary["relation_required_matches"] = cast(
-            int, summary["relation_required_matches"]
-        ) + int(relation_required_match)
-        summary["first_divergence_counts"] = dict(sorted(divergence_counts.items()))
         _write(arguments.result_path, result)
         print(
             json.dumps(
                 {
                     "case_id": case_id,
-                    "expected_units": len(expectation.expected_units),
                     "identified_results": len(identified_results),
                     "actual_units": len(units),
-                    "expected_relations": len(expectation.expected_relations),
                     "actual_relations": len(relations),
-                    "first_divergence": first_divergence,
+                    "identify_schema_valid": not identify_errors,
+                    "materialize_schema_valid": not materialize_errors,
+                    "exact_carry_matches": carry_matches,
                 },
                 ensure_ascii=False,
             ),
@@ -346,28 +301,6 @@ def _has_exact_carry(identified_results: object, work_units: object) -> bool:
         if isinstance(item, dict)
     ]
     return len(expected) == len(identified_results) and expected == actual
-
-
-def _first_divergence(
-    *,
-    identify_errors: list[str],
-    identify_boundary_matches: bool,
-    materialize_errors: list[str],
-    carry_matches: bool,
-    actual_relation_count: int,
-    expected_relation_count: int,
-) -> str:
-    if identify_errors:
-        return "STAGE1_SCHEMA"
-    if not identify_boundary_matches:
-        return "STAGE1_RESULT_BOUNDARY"
-    if materialize_errors:
-        return "STAGE2_SCHEMA"
-    if not carry_matches:
-        return "STAGE2_RESULT_CARRY"
-    if actual_relation_count != expected_relation_count:
-        return "STAGE2_RELATION"
-    return "NONE"
 
 
 if __name__ == "__main__":

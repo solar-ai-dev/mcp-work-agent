@@ -1,5 +1,10 @@
 # 047 — Counted one-call requested-work decomposition
 
+> **Corrected evaluator notice (2026-09-20):** 이 문서의 exact WorkUnit/Relation
+> 개수와 `13/24`는 최종 semantic 점수가 아니다. Canonical 의미 재채점 결과는
+> `PASS 10 / PARTIAL 12 / FAIL 2`, 판단은 `REJECT`다. 근거는
+> `050-requested-work-semantic-regrade.md`다.
+
 Issue: #287
 
 ## 범위

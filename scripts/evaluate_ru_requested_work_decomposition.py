@@ -11,7 +11,6 @@ import json
 import subprocess
 import time
 from argparse import ArgumentParser
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -26,9 +25,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 
 MODEL_ID = "qwen3.5:9b"
-EXPECTED_MODEL_DIGEST = (
-    "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7"
-)
+EXPECTED_MODEL_DIGEST = "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7"
 DATASET = Path("evaluation/datasets/e2e/canonical_cases_v8.jsonl")
 CANDIDATE_PROMPT = Path(
     "evaluation/prompt_candidates/ru-requested-work-decomposition-v1/sources/"
@@ -36,117 +33,37 @@ CANDIDATE_PROMPT = Path(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class DecompositionExpectation:
-    expected_units: tuple[str, ...]
-    expected_relations: tuple[tuple[int, int], ...] = ()
+CORE24_CASE_IDS = (
+    "CASE-CORE-001",
+    "CASE-CORE-006",
+    "CASE-CORE-009",
+    "CASE-CORE-010",
+    "CASE-CORE-011",
+    "CASE-CORE-012",
+    "CASE-CORE-019",
+    "CASE-CORE-020",
+    "CASE-CORE-021",
+    "CASE-CORE-026",
+    "CASE-CORE-027",
+    "CASE-CORE-028",
+    "CASE-CORE-031",
+    "CASE-CORE-036",
+    "CASE-CORE-037",
+    "CASE-CORE-040",
+    "CASE-CORE-041",
+    "CASE-CORE-046",
+    "CASE-CORE-048",
+    "CASE-CORE-050",
+    "CASE-CORE-051",
+    "CASE-CORE-054",
+    "CASE-CORE-056",
+    "CASE-CORE-059",
+)
 
 
-# Preregistered semantic projection from Canonical Core.  The descriptions are
-# grader-only expectations and are never sent to the candidate model.
-CORE24_EXPECTATIONS: dict[str, DecompositionExpectation] = {
-    "CASE-CORE-001": DecompositionExpectation(
-        ("선택한 Boreal 메일에서 최종 서명 기한과 법무 담당을 답한다",)
-    ),
-    "CASE-CORE-006": DecompositionExpectation(
-        ("Atlas 최종 출고일과 담당자를 찾아 답한다",)
-    ),
-    "CASE-CORE-009": DecompositionExpectation(
-        ("메일과 작업을 근거로 Kestrel 공급 지연의 현재 상태를 답한다",)
-    ),
-    "CASE-CORE-010": DecompositionExpectation(
-        ("Harbor 메일의 실제 업무만 안전하게 요약한다",)
-    ),
-    "CASE-CORE-011": DecompositionExpectation(
-        ("Atlas 작업과 슬롯을 반영한 현재 준비 상태 회신 초안을 만든다",)
-    ),
-    "CASE-CORE-012": DecompositionExpectation(
-        ("Echo 작업과 오늘 일정을 반영한 진행 상황 메일 초안을 만든다",)
-    ),
-    "CASE-CORE-019": DecompositionExpectation(
-        (
-            "다음 주 화요일 오후에 Fjord 고객 워크숍 일정을 잡는다",
-            "그 워크숍 일정의 고객 안내 메일 초안을 만든다",
-        ),
-        ((0, 1),),
-    ),
-    "CASE-CORE-020": DecompositionExpectation(
-        ("Ion 작업과 이번 주 일정을 반영한 준비 상태 메일 초안을 만든다",)
-    ),
-    "CASE-CORE-021": DecompositionExpectation(
-        ("Atlas 메일과 작업을 반영해 지정 시각의 내부 점검 일정을 만든다",)
-    ),
-    "CASE-CORE-026": DecompositionExpectation(
-        ("Atlas 자료에서 가능한 시간을 골라 내부 점검 일정을 제안한다",)
-    ),
-    "CASE-CORE-027": DecompositionExpectation(
-        ("Echo 마감 전 오늘 한 시간의 가용 여부만 답하고 일정은 만들지 않는다",)
-    ),
-    "CASE-CORE-028": DecompositionExpectation(
-        ("Kestrel 자료를 반영해 내일 가능한 30분 슬롯에 점검 일정을 잡는다",)
-    ),
-    "CASE-CORE-031": DecompositionExpectation(
-        ("Atlas 자료를 반영해 지정 기한의 인쇄소 인계 확인 작업을 만든다",)
-    ),
-    "CASE-CORE-036": DecompositionExpectation(
-        ("Ion 자료를 반영해 다음 주 월요일까지 온보딩 체크리스트를 만든다",)
-    ),
-    "CASE-CORE-037": DecompositionExpectation(
-        ("Atlas 자료를 반영해 기존 QR 작업 기한을 8월 15일로 변경한다",)
-    ),
-    "CASE-CORE-040": DecompositionExpectation(
-        ("Kestrel 자료를 반영해 기존 작업 메모에 선적 2일 지연을 추가한다",)
-    ),
-    "CASE-CORE-041": DecompositionExpectation(
-        ("Atlas 메일·작업·슬롯을 대조해 준비 순서 위험을 답한다",)
-    ),
-    "CASE-CORE-046": DecompositionExpectation(
-        (
-            "Atlas 자료를 반영해 지정 시각의 점검 일정을 만든다",
-            "그 점검 일정의 안내 메일 초안을 만든다",
-        ),
-        ((0, 1),),
-    ),
-    "CASE-CORE-048": DecompositionExpectation(
-        (
-            "기존 Kestrel 작업 메모에 2일 지연을 추가한다",
-            "지정 시각의 Kestrel 점검 일정을 만든다",
-            "Kestrel 회신 메일 초안을 만든다",
-        )
-    ),
-    "CASE-CORE-050": DecompositionExpectation(
-        (
-            "Echo 최종 의견 전달 작업을 지정 기한까지 만든다",
-            "지정 시각의 Echo 정리 일정을 만든다",
-            "Echo 메일 초안을 만든다",
-        )
-    ),
-    "CASE-CORE-051": DecompositionExpectation(
-        ("박민수 메일을 근거로 다음 주 웨비나 검토 회의 준비 내용을 정리한다",)
-    ),
-    "CASE-CORE-054": DecompositionExpectation(
-        (
-            "Grove 결과를 정리한다",
-            "정리한 Grove 결과를 반영한 답장 초안을 만든다",
-        ),
-        ((0, 1),),
-    ),
-    "CASE-CORE-056": DecompositionExpectation(
-        (
-            "Harbor 보안 사고 메일을 요약한다",
-            "사용자가 해야 할 대응만 정리한다",
-        )
-    ),
-    "CASE-CORE-059": DecompositionExpectation(
-        (
-            "Quartz 납품 일정이 확인됐는지 확인한다",
-            "확인 결과를 바탕으로 답장을 보낸다",
-        ),
-        ((0, 1),),
-    ),
-}
-
-
+# Historical v1 candidate contract retained only so the 046~049 raw trials can
+# be reproduced.  Its generic relation is not a typed semantic authority for a
+# new candidate; the corrected grader treats it as untyped.
 DECOMPOSITION_SCHEMA = OutputSchemaDefinition(
     schema_version="requested-work-decomposition-v1-eval",
     json_schema={
@@ -211,23 +128,24 @@ def main() -> None:
     if arguments.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
 
-    case_ids = arguments.case or list(CORE24_EXPECTATIONS)
+    case_ids = arguments.case or list(CORE24_CASE_IDS)
     if len(case_ids) != len(set(case_ids)):
         raise ValueError("duplicate Case ID")
-    if any(case_id not in CORE24_EXPECTATIONS for case_id in case_ids):
-        raise ValueError("requested Case is not in the preregistered Core projection")
+    if any(case_id not in CORE24_CASE_IDS for case_id in case_ids):
+        raise ValueError("requested Case is not in the fixed Core comparison set")
 
     cases = load_cases()
     prompt_bytes = arguments.candidate_path.read_bytes()
     prompt_text = prompt_bytes.decode("utf-8").rstrip()
     prompt_hash = hashlib.sha256(prompt_bytes).hexdigest()
-    expectation_hash = _sha256(
+    canonical_authority_hash = _sha256(
         {
             case_id: {
-                "expected_units": expectation.expected_units,
-                "expected_relations": expectation.expected_relations,
+                "canonical_user_prompt": cases[case_id].raw["canonical_user_prompt"],
+                "required_semantics": cases[case_id].raw["evaluation_gold"]["required_semantics"],
+                "forbidden_semantics": cases[case_id].raw["evaluation_gold"]["forbidden_semantics"],
             }
-            for case_id, expectation in CORE24_EXPECTATIONS.items()
+            for case_id in CORE24_CASE_IDS
         }
     )
     client = OllamaHTTPClient()
@@ -256,15 +174,13 @@ def main() -> None:
         ),
     )
     output_schema = (
-        COUNTED_DECOMPOSITION_SCHEMA
-        if arguments.include_work_count
-        else DECOMPOSITION_SCHEMA
+        COUNTED_DECOMPOSITION_SCHEMA if arguments.include_work_count else DECOMPOSITION_SCHEMA
     )
     result: dict[str, object] = {
         "binding": {
             "product_sha": _git_head(),
             "dataset_sha256": normalized_sha256(DATASET),
-            "expectation_sha256": expectation_hash,
+            "canonical_authority_sha256": canonical_authority_hash,
             "prompt_sha256": prompt_hash,
             "candidate_id": arguments.candidate_id,
             "model_id": MODEL_ID,
@@ -279,8 +195,6 @@ def main() -> None:
         },
         "summary": {
             "case_count": len(case_ids),
-            "baseline_structure_matches": 0,
-            "candidate_structure_matches": 0,
             "candidate_count_matches": 0,
             "schema_valid": 0,
         },
@@ -294,14 +208,7 @@ def main() -> None:
         raw = cases[case_id].raw
         if raw.get("split") != "CORE":
             raise ValueError(f"{case_id}: Holdout/Stress is not allowed for tuning")
-        expectation = CORE24_EXPECTATIONS[case_id]
         request = str(raw["canonical_user_prompt"])
-        baseline_units = 1
-        baseline_relations = 0
-        baseline_matches = (
-            len(expectation.expected_units) == baseline_units
-            and len(expectation.expected_relations) == baseline_relations
-        )
 
         started = time.perf_counter()
         response = client.invoke_structured(
@@ -321,67 +228,39 @@ def main() -> None:
             *_validate_decomposition(candidate, require_work_count=arguments.include_work_count),
         ]
         units = candidate.get("work_units", []) if isinstance(candidate, dict) else []
-        relations = (
-            candidate.get("work_relations", []) if isinstance(candidate, dict) else []
-        )
-        structure_matches = (
-            not validation_errors
-            and len(units) == len(expectation.expected_units)
-            and len(relations) == len(expectation.expected_relations)
-        )
-        count_matches = (
-            not arguments.include_work_count
-            or (
-                isinstance(candidate, dict)
-                and candidate.get("work_count") == len(units)
-            )
+        relations = candidate.get("work_relations", []) if isinstance(candidate, dict) else []
+        count_matches = not arguments.include_work_count or (
+            isinstance(candidate, dict) and candidate.get("work_count") == len(units)
         )
         record = {
             "case_id": case_id,
             "category": raw["category"],
             "user_request": request,
-            "expectation": {
-                "units": list(expectation.expected_units),
-                "relations_by_unit_index": [list(item) for item in expectation.expected_relations],
-            },
-            "baseline": {
-                "representation": "FLAT_REQUEST_INTENT_V2",
-                "unit_count": baseline_units,
-                "relation_count": baseline_relations,
-                "structure_matches": baseline_matches,
+            "canonical_authority": {
+                "required_semantics": raw["evaluation_gold"]["required_semantics"],
+                "forbidden_semantics": raw["evaluation_gold"]["forbidden_semantics"],
             },
             "candidate": candidate,
             "candidate_schema_errors": validation_errors,
             "candidate_count_matches": count_matches,
-            "candidate_structure_matches": structure_matches,
             "candidate_input_tokens": response.input_tokens,
             "candidate_output_tokens": response.output_tokens,
             "candidate_latency_ms": response.latency_ms,
             "wall_ms": int((time.perf_counter() - started) * 1_000),
         }
         records.append(record)
-        summary["baseline_structure_matches"] = cast(
-            int, summary["baseline_structure_matches"]
-        ) + int(baseline_matches)
-        summary["candidate_structure_matches"] = cast(
-            int, summary["candidate_structure_matches"]
-        ) + int(structure_matches)
-        summary["candidate_count_matches"] = cast(
-            int, summary["candidate_count_matches"]
-        ) + int(count_matches)
-        summary["schema_valid"] = cast(int, summary["schema_valid"]) + int(
-            not validation_errors
+        summary["candidate_count_matches"] = cast(int, summary["candidate_count_matches"]) + int(
+            count_matches
         )
+        summary["schema_valid"] = cast(int, summary["schema_valid"]) + int(not validation_errors)
         _write(arguments.result_path, result)
         print(
             json.dumps(
                 {
                     "case_id": case_id,
-                    "expected_units": len(expectation.expected_units),
                     "actual_units": len(units),
-                    "expected_relations": len(expectation.expected_relations),
                     "actual_relations": len(relations),
-                    "structure_matches": structure_matches,
+                    "schema_valid": not validation_errors,
                 },
                 ensure_ascii=False,
             ),
