@@ -8,6 +8,8 @@ from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
     IDENTIFIED_RESULTS_SCHEMA,
     IDENTIFY_PROMPT,
     MATERIALIZE_PROMPT,
+    REQUEST_REF_IDENTIFY_PROMPT,
+    REQUEST_REF_RELATION_PROMPT,
     REQUESTED_EFFECTS,
     SEMANTIC_CARRY_DECOMPOSITION_SCHEMA,
     SEMANTIC_CARRY_IDENTIFIED_RESULTS_SCHEMA,
@@ -24,8 +26,12 @@ from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
     _closed_typed_relations_schema,
     _has_exact_carry,
     _project_identified_results,
+    _project_request_ref_candidate,
     _project_span_bound_results,
+    _request_ref_identified_results_schema,
+    _request_token_catalog,
     _validate_identified_results,
+    _validate_request_refs,
     _validate_request_span_bindings,
 )
 
@@ -50,6 +56,8 @@ def test_two_stage_prompts_do_not_add_few_shots() -> None:
         SEMANTIC_STATE_MATERIALIZE_PROMPT,
         SPAN_BOUND_IDENTIFY_PROMPT,
         SPAN_BOUND_RELATION_PROMPT,
+        REQUEST_REF_IDENTIFY_PROMPT,
+        REQUEST_REF_RELATION_PROMPT,
     ):
         assert "few-shot" not in prompt.read_text(encoding="utf-8").lower()
 
@@ -247,6 +255,104 @@ def test_closed_relation_schema_only_allows_empty_for_one_work_unit() -> None:
     )
 
 
+def test_request_token_catalog_preserves_exact_original_text_offsets() -> None:
+    request = "8월 14일 오전 10시에 일정을 만들어줘."
+
+    tokens = _request_token_catalog(request)
+
+    assert [token["text"] for token in tokens] == [
+        "8월",
+        "14일",
+        "오전",
+        "10시에",
+        "일정을",
+        "만들어줘.",
+    ]
+    for token in tokens:
+        assert request[cast(int, token["start"]) : cast(int, token["end"])] == token["text"]
+
+
+def test_request_ref_schema_is_closed_to_catalog_and_has_shared_state() -> None:
+    schema = _request_ref_identified_results_schema(["T001", "T002"]).json_schema
+    valid = {
+        "shared_semantics": {
+            "source_scope_refs": [{"start_token_id": "T001", "end_token_id": "T001"}]
+        },
+        "identified_results": [
+            {
+                "result_id": "result-1",
+                "request_span_refs": [{"start_token_id": "T001", "end_token_id": "T002"}],
+            }
+        ],
+    }
+
+    assert not validate_output_schema(valid, schema)
+    assert "objective" not in json.dumps(schema)
+    assert "requested_effects" not in json.dumps(schema)
+    invalid = json.loads(json.dumps(valid))
+    invalid["identified_results"][0]["request_span_refs"][0]["end_token_id"] = "T999"
+    assert validate_output_schema(invalid, schema)
+
+
+def test_request_ref_validator_rejects_reversed_ranges() -> None:
+    tokens = _request_token_catalog("첫 업무와 둘째 업무")
+    candidate = {
+        "shared_semantics": {},
+        "identified_results": [
+            {
+                "result_id": "result-1",
+                "request_span_refs": [{"start_token_id": "T003", "end_token_id": "T001"}],
+            }
+        ],
+    }
+
+    assert _validate_request_refs(candidate, tokens) == [
+        "$.identified_results[0].request_span_refs[0] start token must not follow end token"
+    ]
+
+
+def test_request_ref_projection_resolves_shared_and_local_meaning_once() -> None:
+    request = "메일·작업·캘린더를 보고 Task를 만들고, Event와 Draft를 준비해줘."
+    tokens = _request_token_catalog(request)
+    identified = [
+        {
+            "result_id": "task",
+            "request_span_refs": [{"start_token_id": "T003", "end_token_id": "T004"}],
+        },
+        {
+            "result_id": "event-draft",
+            "request_span_refs": [{"start_token_id": "T005", "end_token_id": "T007"}],
+        },
+    ]
+    shared = {"source_scope_refs": [{"start_token_id": "T001", "end_token_id": "T001"}]}
+
+    projected = _project_request_ref_candidate(
+        shared_semantics=shared,
+        identified_results=identified,
+        request=request,
+        request_tokens=tokens,
+        work_relations=[],
+    )
+
+    assert projected == {
+        "shared_semantics": {"source_scopes": ["메일·작업·캘린더를"]},
+        "work_units": [
+            {
+                "unit_id": "task",
+                "objective": "Task를 만들고,",
+                "request_spans": ["Task를 만들고,"],
+            },
+            {
+                "unit_id": "event-draft",
+                "objective": "Event와 Draft를 준비해줘.",
+                "request_spans": ["Event와 Draft를 준비해줘."],
+            },
+        ],
+        "work_relations": [],
+    }
+    assert all("source_scopes" not in unit for unit in projected["work_units"])
+
+
 def test_exact_carry_requires_ids_and_objectives_to_be_unchanged() -> None:
     identified = [
         {"result_id": "result-1", "objective": "첫 결과"},
@@ -346,3 +452,9 @@ def test_prompt_paths_are_evaluation_candidates() -> None:
     )
     assert SPAN_BOUND_IDENTIFY_PROMPT.parent == span_parent
     assert SPAN_BOUND_RELATION_PROMPT.parent == span_parent
+    request_ref_parent = Path(
+        "evaluation/prompt_candidates/"
+        "ru-requested-work-decomposition-two-stage-request-ref-v4/sources"
+    )
+    assert REQUEST_REF_IDENTIFY_PROMPT.parent == request_ref_parent
+    assert REQUEST_REF_RELATION_PROMPT.parent == request_ref_parent

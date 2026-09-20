@@ -1,0 +1,112 @@
+{
+  "version": "ru287-requested-work-request-ref-shared-review-v4",
+  "authority": {
+    "dataset": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+    "fields": [
+      "canonical_user_prompt",
+      "evaluation_gold.required_semantics",
+      "evaluation_gold.forbidden_semantics"
+    ],
+    "exact_work_unit_count_is_authority": false,
+    "exact_relation_count_is_authority": false,
+    "alternative_decompositions_are_allowed": true
+  },
+  "relation_semantics": {
+    "not_scored_in_this_candidate": true
+  },
+  "issue_severity": {
+    "REQUEST_REF_INVALID": "PARTIAL",
+    "SEMANTIC_REF_FIELD_POLLUTION": "PARTIAL",
+    "SHARED_LOCAL_DUPLICATED": "PARTIAL",
+    "SHARED_CONDITION_SCOPE_OVEREXPANDED": "PARTIAL",
+    "TARGET_DROPPED": "PARTIAL",
+    "DISTINCT_OUTCOMES_COMBINED": "INFO",
+    "REQUESTED_OUTCOME_MISSING": "FAIL",
+    "EFFECT_CHANGED": "FAIL",
+    "FACT_OVERCLAIMED": "FAIL",
+    "UNSUPPORTED_SEMANTIC": "FAIL"
+  },
+  "candidates": {
+    "request_ref_shared_v4": {
+      "path": "evaluation/results/ru287-requested-work-two-stage-request-ref-v4-core24-20260921/result.json",
+      "sha256": "61d5b853accf94218cb0f6f32eb6b5be955702471352208a7263b74c1ea4faf4"
+    }
+  },
+  "cases": {
+    "CASE-CORE-001": {
+      "reviews": {"request_ref_shared_v4": {"issues": [], "reason": "Boreal 조회 업무와 검색 금지를 원문 token ref로 정확히 결속했다."}}
+    },
+    "CASE-CORE-006": {
+      "reviews": {"request_ref_shared_v4": {"issues": [], "reason": "Atlas 조회 결과와 다른 준비 업무 분석 금지를 정확히 보존했다."}}
+    },
+    "CASE-CORE-009": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "요청 전체를 source·target뿐 아니라 존재하지 않는 prohibition과 quantity로도 중복 분류했다."}}
+    },
+    "CASE-CORE-010": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "요약 요청 전체를 source와 target 양쪽에 넣어 typed 의미 경계를 흐렸다."}}
+    },
+    "CASE-CORE-011": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Draft 원문은 보존했지만 수신자·현재 상태를 source로, 초안 작성 동작을 target으로 잘못 분류했다."}}
+    },
+    "CASE-CORE-012": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "원문 전체를 존재하지 않는 prohibition과 source로 중복 배치했다."}}
+    },
+    "CASE-CORE-019": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Event와 Draft 원문은 보존했지만 한 WorkUnit으로 합쳤고 Event 생성 동작을 prohibition으로, Draft를 quantity로 오분류했다."}}
+    },
+    "CASE-CORE-020": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Draft 요청 전체를 prohibition·source로 중복 배치하고 초안 작성 동작을 quantity와 target으로 잘못 분류했다."}}
+    },
+    "CASE-CORE-021": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "exact ref는 유효하지만 메일·준비 표현을 prohibition으로, 일정 잡기 동작을 target으로 분류했다."}}
+    },
+    "CASE-CORE-026": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "슬롯 제안 원문은 보존했지만 제안 동작을 prohibition으로 배치했다."}}
+    },
+    "CASE-CORE-027": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Event 생성 금지는 정확하지만 비는 시간이라는 업무 대상을 quantity로 오분류했다."}}
+    },
+    "CASE-CORE-028": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "업무시간·슬롯 표현을 prohibition과 quantity·temporal에 중복 배치했다."}}
+    },
+    "CASE-CORE-031": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Task CREATE 원문은 보존했지만 source와 target을 의미 없는 단일 토큰 조각들로 분할했다."}}
+    },
+    "CASE-CORE-036": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "요청 전체를 source와 존재하지 않는 prohibition에 동시에 배치했다."}}
+    },
+    "CASE-CORE-037": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION", "SHARED_LOCAL_DUPLICATED"], "reason": "QR Task UPDATE 원문은 보존했지만 Atlas·인쇄소를 target으로 오분류하고 같은 target/time을 shared와 local에 중복했다."}}
+    },
+    "CASE-CORE-040": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "기존 Task를 prohibition으로, 지연 내용을 quantity로 오분류하고 요청 전체를 source로 사용했다."}}
+    },
+    "CASE-CORE-041": {
+      "reviews": {"request_ref_shared_v4": {"issues": [], "reason": "세 Source 대조 업무와 새 항목 생성 금지를 정확한 token ref로 보존했다."}}
+    },
+    "CASE-CORE-046": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Event와 Draft 원문은 한 WorkUnit에 보존했지만 요청 전체를 prohibition으로, Draft 표현을 quantity로 오분류했다."}}
+    },
+    "CASE-CORE-048": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION", "SHARED_CONDITION_SCOPE_OVEREXPANDED", "REQUESTED_OUTCOME_MISSING"], "reason": "공통 Source는 shared State에 한 번 보존했지만 Task/Event WorkUnit span에서 동작 술어가 빠졌고 업무별 지연·시간·target을 모두 shared로 과확장했다."}}
+    },
+    "CASE-CORE-050": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SEMANTIC_REF_FIELD_POLLUTION", "TARGET_DROPPED"], "reason": "세 출력의 동작은 한 WorkUnit에 남았지만 '최종 의견 전달' Task target을 objective에서 누락하고 그 표현을 prohibition으로 잘못 배치했다."}}
+    },
+    "CASE-CORE-051": {
+      "reviews": {"request_ref_shared_v4": {"issues": [], "reason": "박민수 메일 source, 다음 주 시간, 웨비나 준비 내용 정리 업무를 정확한 ref로 보존했다."}}
+    },
+    "CASE-CORE-054": {
+      "reviews": {"request_ref_shared_v4": {"issues": [], "reason": "Grove 결과와 지정 수신자 Reply Draft 업무를 정확히 보존했다."}}
+    },
+    "CASE-CORE-056": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION", "SHARED_LOCAL_DUPLICATED"], "reason": "실행 금지는 보존했지만 source를 target으로 오분류하고 동일 target·금지를 shared와 local에 중복했다."}}
+    },
+    "CASE-CORE-059": {
+      "reviews": {"request_ref_shared_v4": {"issues": ["SEMANTIC_REF_FIELD_POLLUTION"], "reason": "Reply SEND 원문은 보존했지만 요청 전체를 source와 존재하지 않는 prohibition으로 중복 분류했다."}}
+    }
+  },
+  "decisions": {
+    "request_ref_shared_v4": "REJECT"
+  }
+}
