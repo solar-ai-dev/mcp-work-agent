@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from pathlib import Path
 from typing import cast
 
 from evaluation.dataset_v8 import load_cases
@@ -57,6 +58,24 @@ def test_counted_candidate_adds_only_work_count() -> None:
         "work_units",
         "work_relations",
     ]
+
+
+def test_fewshot_candidate_keeps_minimal_v1_rules_unchanged() -> None:
+    prompt_root = Path("evaluation/prompt_candidates")
+    baseline = (
+        prompt_root
+        / "ru-requested-work-decomposition-v1"
+        / "sources"
+        / "request_understanding.decompose_requested_work.md"
+    ).read_text(encoding="utf-8")
+    candidate = (
+        prompt_root
+        / "ru-requested-work-decomposition-fewshot-v1"
+        / "sources"
+        / "request_understanding.decompose_requested_work.md"
+    ).read_text(encoding="utf-8")
+
+    assert candidate.startswith(baseline.rstrip() + "\n\n# Contrastive few-shot\n")
 
 
 def test_decomposition_validator_accepts_minimal_acyclic_graph() -> None:
