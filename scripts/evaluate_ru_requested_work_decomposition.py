@@ -186,6 +186,18 @@ DECOMPOSITION_SCHEMA = OutputSchemaDefinition(
     },
 )
 
+COUNTED_DECOMPOSITION_SCHEMA = OutputSchemaDefinition(
+    schema_version="requested-work-counted-decomposition-v1-eval",
+    json_schema={
+        **DECOMPOSITION_SCHEMA.json_schema,
+        "required": ["work_count", "work_units", "work_relations"],
+        "properties": {
+            "work_count": {"type": "integer", "minimum": 1, "maximum": 8},
+            **cast(dict[str, object], DECOMPOSITION_SCHEMA.json_schema["properties"]),
+        },
+    },
+)
+
 
 def main() -> None:
     parser = ArgumentParser()
@@ -194,6 +206,7 @@ def main() -> None:
     parser.add_argument("--sampling-seed", type=int, default=20260920)
     parser.add_argument("--candidate-path", type=Path, default=CANDIDATE_PROMPT)
     parser.add_argument("--candidate-id", default="ru-requested-work-decomposition-v1")
+    parser.add_argument("--include-work-count", action="store_true")
     arguments = parser.parse_args()
     if arguments.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
@@ -236,7 +249,16 @@ def main() -> None:
         node_state="INITIAL",
         purpose="EVALUATION_ONLY_REQUESTED_WORK_DECOMPOSITION",
         input_schema_version="user-request-only-v1",
-        output_schema_version=DECOMPOSITION_SCHEMA.schema_version,
+        output_schema_version=(
+            COUNTED_DECOMPOSITION_SCHEMA.schema_version
+            if arguments.include_work_count
+            else DECOMPOSITION_SCHEMA.schema_version
+        ),
+    )
+    output_schema = (
+        COUNTED_DECOMPOSITION_SCHEMA
+        if arguments.include_work_count
+        else DECOMPOSITION_SCHEMA
     )
     result: dict[str, object] = {
         "binding": {
@@ -251,6 +273,7 @@ def main() -> None:
             "seed": arguments.sampling_seed,
             "scope": "EVALUATION_ONLY_RU_REQUESTED_WORK_DECOMPOSITION",
             "candidate_calls_per_case": 1,
+            "includes_work_count": arguments.include_work_count,
             "provider_read_count": 0,
             "provider_write_count": 0,
         },
@@ -258,6 +281,7 @@ def main() -> None:
             "case_count": len(case_ids),
             "baseline_structure_matches": 0,
             "candidate_structure_matches": 0,
+            "candidate_count_matches": 0,
             "schema_valid": 0,
         },
         "cases": [],
@@ -285,7 +309,7 @@ def main() -> None:
             model_id=MODEL_ID,
             prompt_ref=prompt_ref,
             prompt_input={"user_request": request},
-            output_schema=DECOMPOSITION_SCHEMA,
+            output_schema=output_schema,
             timeout_seconds=180,
             instruction_text=prompt_text,
             sampling_temperature=0.0,
@@ -293,8 +317,8 @@ def main() -> None:
         )
         candidate = json.loads(cast(str, response.content))
         validation_errors = [
-            *validate_output_schema(candidate, DECOMPOSITION_SCHEMA.json_schema),
-            *_validate_decomposition(candidate),
+            *validate_output_schema(candidate, output_schema.json_schema),
+            *_validate_decomposition(candidate, require_work_count=arguments.include_work_count),
         ]
         units = candidate.get("work_units", []) if isinstance(candidate, dict) else []
         relations = (
@@ -304,6 +328,13 @@ def main() -> None:
             not validation_errors
             and len(units) == len(expectation.expected_units)
             and len(relations) == len(expectation.expected_relations)
+        )
+        count_matches = (
+            not arguments.include_work_count
+            or (
+                isinstance(candidate, dict)
+                and candidate.get("work_count") == len(units)
+            )
         )
         record = {
             "case_id": case_id,
@@ -321,6 +352,7 @@ def main() -> None:
             },
             "candidate": candidate,
             "candidate_schema_errors": validation_errors,
+            "candidate_count_matches": count_matches,
             "candidate_structure_matches": structure_matches,
             "candidate_input_tokens": response.input_tokens,
             "candidate_output_tokens": response.output_tokens,
@@ -334,6 +366,9 @@ def main() -> None:
         summary["candidate_structure_matches"] = cast(
             int, summary["candidate_structure_matches"]
         ) + int(structure_matches)
+        summary["candidate_count_matches"] = cast(
+            int, summary["candidate_count_matches"]
+        ) + int(count_matches)
         summary["schema_valid"] = cast(int, summary["schema_valid"]) + int(
             not validation_errors
         )
@@ -354,7 +389,11 @@ def main() -> None:
         )
 
 
-def _validate_decomposition(value: object) -> list[str]:
+def _validate_decomposition(
+    value: object,
+    *,
+    require_work_count: bool = False,
+) -> list[str]:
     if not isinstance(value, dict):
         return ["candidate is not an object"]
     units = value.get("work_units")
@@ -367,6 +406,8 @@ def _validate_decomposition(value: object) -> list[str]:
         if isinstance(unit, dict) and isinstance(unit.get("unit_id"), str)
     ]
     errors: list[str] = []
+    if require_work_count and value.get("work_count") != len(units):
+        errors.append("work_count must match the number of work_units")
     if len(unit_ids) != len(set(unit_ids)):
         errors.append("work unit ids must be unique")
     known_ids = set(unit_ids)

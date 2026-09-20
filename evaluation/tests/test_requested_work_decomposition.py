@@ -7,6 +7,7 @@ from typing import cast
 from evaluation.dataset_v8 import load_cases
 from scripts.evaluate_ru_requested_work_decomposition import (
     CORE24_EXPECTATIONS,
+    COUNTED_DECOMPOSITION_SCHEMA,
     DECOMPOSITION_SCHEMA,
     _validate_decomposition,
 )
@@ -44,6 +45,18 @@ def test_candidate_schema_contains_only_requested_work_structure() -> None:
         "execution",
     ):
         assert forbidden not in encoded.lower()
+
+
+def test_counted_candidate_adds_only_work_count() -> None:
+    properties = cast(
+        dict[str, object], COUNTED_DECOMPOSITION_SCHEMA.json_schema["properties"]
+    )
+    assert set(properties) == {"work_count", "work_units", "work_relations"}
+    assert COUNTED_DECOMPOSITION_SCHEMA.json_schema["required"] == [
+        "work_count",
+        "work_units",
+        "work_relations",
+    ]
 
 
 def test_decomposition_validator_accepts_minimal_acyclic_graph() -> None:
@@ -98,3 +111,18 @@ def test_decomposition_validator_rejects_relation_cycle() -> None:
         }
     )
     assert "work relations must be acyclic" in errors
+
+
+def test_counted_decomposition_requires_matching_unit_count() -> None:
+    errors = _validate_decomposition(
+        {
+            "work_count": 1,
+            "work_units": [
+                {"unit_id": "a", "objective": "첫 업무"},
+                {"unit_id": "b", "objective": "둘째 업무"},
+            ],
+            "work_relations": [],
+        },
+        require_work_count=True,
+    )
+    assert "work_count must match the number of work_units" in errors
