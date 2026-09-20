@@ -8,6 +8,11 @@ from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
     IDENTIFIED_RESULTS_SCHEMA,
     IDENTIFY_PROMPT,
     MATERIALIZE_PROMPT,
+    REQUESTED_EFFECTS,
+    SEMANTIC_STATE_DECOMPOSITION_SCHEMA,
+    SEMANTIC_STATE_IDENTIFIED_RESULTS_SCHEMA,
+    SEMANTIC_STATE_IDENTIFY_PROMPT,
+    SEMANTIC_STATE_MATERIALIZE_PROMPT,
     _has_exact_carry,
     _validate_identified_results,
 )
@@ -22,8 +27,37 @@ def test_stage_one_schema_contains_only_independent_results() -> None:
 
 
 def test_two_stage_prompts_do_not_add_few_shots() -> None:
-    assert "few-shot" not in IDENTIFY_PROMPT.read_text(encoding="utf-8").lower()
-    assert "few-shot" not in MATERIALIZE_PROMPT.read_text(encoding="utf-8").lower()
+    for prompt in (
+        IDENTIFY_PROMPT,
+        MATERIALIZE_PROMPT,
+        SEMANTIC_STATE_IDENTIFY_PROMPT,
+        SEMANTIC_STATE_MATERIALIZE_PROMPT,
+    ):
+        assert "few-shot" not in prompt.read_text(encoding="utf-8").lower()
+
+
+def test_semantic_state_fields_are_optional_and_owner_local() -> None:
+    result_item = SEMANTIC_STATE_IDENTIFIED_RESULTS_SCHEMA.json_schema["properties"][
+        "identified_results"
+    ]["items"]
+    unit_item = SEMANTIC_STATE_DECOMPOSITION_SCHEMA.json_schema["properties"]["work_units"]["items"]
+    expected_fields = {
+        "source_scopes",
+        "targets",
+        "temporal_constraints",
+        "quantity_constraints",
+        "prohibitions",
+        "requested_effects",
+    }
+
+    assert set(result_item["required"]) == {"result_id", "objective"}
+    assert set(unit_item["required"]) == {"unit_id", "objective"}
+    assert expected_fields == set(result_item["properties"]) - {"result_id", "objective"}
+    assert expected_fields == set(unit_item["properties"]) - {"unit_id", "objective"}
+    assert result_item["properties"]["requested_effects"]["items"]["enum"] == (REQUESTED_EFFECTS)
+    encoded = json.dumps(result_item, sort_keys=True)
+    for forbidden_bucket in ("metadata", "hints", "extra_context", "semantic_flags"):
+        assert forbidden_bucket not in encoded
 
 
 def test_stage_one_validator_rejects_duplicate_result_ids() -> None:
@@ -56,9 +90,42 @@ def test_exact_carry_requires_ids_and_objectives_to_be_unchanged() -> None:
     )
 
 
+def test_exact_carry_includes_optional_semantic_fields() -> None:
+    identified = [
+        {
+            "result_id": "result-1",
+            "objective": "초안을 준비한다",
+            "source_scopes": ["Atlas 메일", "Atlas 작업"],
+            "targets": ["qhdrbdhkdwks@naver.com"],
+            "prohibitions": ["보내지 않는다"],
+            "requested_effects": ["DRAFT"],
+        }
+    ]
+    carried = [
+        {
+            "unit_id": "result-1",
+            "objective": "초안을 준비한다",
+            "source_scopes": ["Atlas 메일", "Atlas 작업"],
+            "targets": ["qhdrbdhkdwks@naver.com"],
+            "prohibitions": ["보내지 않는다"],
+            "requested_effects": ["DRAFT"],
+        }
+    ]
+
+    assert _has_exact_carry(identified, carried)
+    carried[0]["prohibitions"] = []
+    assert not _has_exact_carry(identified, carried)
+
+
 def test_prompt_paths_are_evaluation_candidates() -> None:
     expected_parent = Path(
         "evaluation/prompt_candidates/ru-requested-work-decomposition-two-stage-v1/sources"
     )
     assert IDENTIFY_PROMPT.parent == expected_parent
     assert MATERIALIZE_PROMPT.parent == expected_parent
+    semantic_parent = Path(
+        "evaluation/prompt_candidates/"
+        "ru-requested-work-decomposition-two-stage-semantic-state-v1/sources"
+    )
+    assert SEMANTIC_STATE_IDENTIFY_PROMPT.parent == semantic_parent
+    assert SEMANTIC_STATE_MATERIALIZE_PROMPT.parent == semantic_parent

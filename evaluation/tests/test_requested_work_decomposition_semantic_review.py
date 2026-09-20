@@ -10,6 +10,10 @@ from scripts.regrade_ru_requested_work_decomposition import (
     regrade,
 )
 
+SEMANTIC_STATE_REVIEW = Path(
+    "evaluation/experiments/051-requested-work-semantic-state-review-v1.json"
+)
+
 
 def test_semantic_review_regrades_all_existing_outputs_without_exact_shape_gold() -> None:
     review = json.loads(DEFAULT_REVIEW.read_text(encoding="utf-8"))
@@ -74,3 +78,36 @@ def test_issue_severity_controls_status_without_count_comparison() -> None:
     assert _status_for_issues(["alternative"], severity) == "PASS"
     assert _status_for_issues(["boundary"], severity) == "PARTIAL"
     assert _status_for_issues(["boundary", "fatal"], severity) == "FAIL"
+
+
+def test_semantic_state_review_compares_fixed_core24_without_new_model_calls() -> None:
+    review = json.loads(SEMANTIC_STATE_REVIEW.read_text(encoding="utf-8"))
+
+    result = regrade(review, repository_root=Path.cwd())
+
+    assert result["binding"]["llm_calls"] == 0
+    assert result["binding"]["case_count"] == 24
+    assert set(result["summary"]) == {
+        "minimal_v1",
+        "two_stage_v1",
+        "semantic_state_v1",
+    }
+    assert result["summary"]["semantic_state_v1"] == {
+        "PASS": 7,
+        "PARTIAL": 9,
+        "FAIL": 8,
+        "decision": "REJECT",
+        "issue_counts": {
+            "EFFECT_CHANGED": 6,
+            "EXPLICIT_PROHIBITION_DROPPED": 3,
+            "FACT_OVERCLAIMED": 2,
+            "INTERNAL_STEP_PROMOTED": 1,
+            "PLANNED_EFFECT_STATUS_AMBIGUOUS": 1,
+            "RELATION_MISSING": 2,
+            "RELATION_UNTYPED": 1,
+            "REQUESTED_OUTCOME_MISSING": 2,
+            "SOURCE_SCOPE_DROPPED": 3,
+            "TEMPORAL_CONSTRAINT_DROPPED": 1,
+            "TYPED_SEMANTIC_CARRY_DROPPED": 14,
+        },
+    }

@@ -1,0 +1,229 @@
+{
+  "version": "ru287-requested-work-semantic-state-review-v1",
+  "authority": {
+    "dataset": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+    "fields": [
+      "canonical_user_prompt",
+      "evaluation_gold.required_semantics",
+      "evaluation_gold.forbidden_semantics"
+    ],
+    "exact_work_unit_count_is_authority": false,
+    "exact_relation_count_is_authority": false,
+    "alternative_decompositions_are_allowed": true
+  },
+  "relation_semantics": {
+    "internal_derived_product": "CONSUMES_WORK_PRODUCT",
+    "preapproval_external_action": "CONSUMES_PLANNED_SPECIFICATION",
+    "legacy_provides_input_to_is_typed": false
+  },
+  "issue_severity": {
+    "SOURCE_SCOPE_DROPPED": "PARTIAL",
+    "TEMPORAL_CONSTRAINT_DROPPED": "PARTIAL",
+    "TYPED_SEMANTIC_CARRY_DROPPED": "PARTIAL",
+    "EXPLICIT_PROHIBITION_DROPPED": "PARTIAL",
+    "INTERNAL_STEP_PROMOTED": "PARTIAL",
+    "RELATION_MISSING": "PARTIAL",
+    "RELATION_UNTYPED": "PARTIAL",
+    "TARGET_DROPPED": "PARTIAL",
+    "DISTINCT_OUTCOMES_COMBINED": "INFO",
+    "REQUESTED_OUTCOME_MISSING": "FAIL",
+    "EFFECT_CHANGED": "FAIL",
+    "FACT_OVERCLAIMED": "FAIL",
+    "PLANNED_EFFECT_STATUS_AMBIGUOUS": "PARTIAL",
+    "UNSUPPORTED_SEMANTIC": "FAIL"
+  },
+  "candidates": {
+    "minimal_v1": {
+      "path": "evaluation/results/ru287-requested-work-decomposition-core24-20260920/result.json",
+      "sha256": "d21a5429f9fa9faf2a070e863502bbce0b60a31a9fed5edd8047c4fce9e71c6c"
+    },
+    "two_stage_v1": {
+      "path": "evaluation/results/ru287-requested-work-decomposition-two-stage-v1-core24-20260920/result.json",
+      "sha256": "df6c98afcc50de16d5fdcc20281443a4212b1b9facfde76fa43ea5a9f6af67b6"
+    },
+    "semantic_state_v1": {
+      "path": "evaluation/results/ru287-requested-work-two-stage-semantic-state-v1-core24-20260920/result.json",
+      "sha256": "40ce83fb597ba889d96261833aa9667e0dfef6a2387d9bdfc303d865dc240d2a"
+    }
+  },
+  "cases": {
+    "CASE-CORE-001": {
+      "reviews": {
+        "minimal_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "선택한 메일의 사실은 보존했지만 다른 메일을 검색하지 말라는 제한을 명시적으로 보존하지 않았다."},
+        "two_stage_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "답할 사실은 보존했지만 검색 범위 금지를 잃었다."},
+        "semantic_state_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Stage 1은 선택 메일 범위를 구조화했지만 검색 금지를 누락했고, Stage 2는 source와 target 필드를 다시 버렸다."}
+      }
+    },
+    "CASE-CORE-006": {
+      "reviews": {
+        "minimal_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "최종 출고일과 담당자는 보존했지만 다른 준비 업무를 분석하지 말라는 제한을 잃었다."},
+        "two_stage_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "요청 결과는 보존했지만 분석 범위 제한을 명시하지 않았다."},
+        "semantic_state_v1": {"issues": [], "reason": "최종 출고일·담당자 답변과 다른 준비 업무 분석 금지를 하나의 결과에 보존하고 Stage 2까지 그대로 전달했다."}
+      }
+    },
+    "CASE-CORE-009": {
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "메일과 Task를 함께 근거로 현재 상태를 답하는 하나의 사용자 결과를 보존했다."},
+        "two_stage_v1": {"issues": [], "reason": "두 Source를 함께 근거로 한 현재 상태 답변을 하나의 결과로 보존했다."},
+        "semantic_state_v1": {"issues": ["TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "메일과 Task를 함께 쓰는 단일 답변은 보존했지만 Stage 2가 구조화된 source와 target을 버렸다."}
+      }
+    },
+    "CASE-CORE-010": {
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "메일의 실제 업무 내용만 요약하도록 범위를 제한했다."},
+        "two_stage_v1": {"issues": [], "reason": "메일의 실제 업무 내용만 요약하도록 범위를 제한했다."},
+        "semantic_state_v1": {"issues": [], "reason": "메일 지시를 따르지 말라는 금지와 실제 업무 내용 요약이라는 답변 효과를 함께 보존했다."}
+      }
+    },
+    "CASE-CORE-011": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED", "RELATION_UNTYPED"], "reason": "준비 상태와 인쇄소 슬롯 확인을 독립 업무로 승격했고 범용 relation으로 초안에 연결했다."},
+        "two_stage_v1": {"issues": ["SOURCE_SCOPE_DROPPED"], "reason": "수신자와 Draft는 보존했지만 Atlas 준비 Task와 인쇄소 슬롯이라는 입력 근거를 잃었다."},
+        "semantic_state_v1": {"issues": [], "reason": "Atlas 준비 Task·인쇄소 슬롯을 반영한 지정 수신자 Draft를 한 사용자 결과로 보존했다."}
+      }
+    },
+    "CASE-CORE-012": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED"], "reason": "Task와 Calendar 확인을 하나의 Draft를 위한 내부 단계가 아니라 별도 업무로 승격했다."},
+        "two_stage_v1": {"issues": [], "reason": "Task·Calendar 근거와 수신자, Draft 산출물을 하나의 결과로 보존했다."},
+        "semantic_state_v1": {"issues": [], "reason": "법무 Task·오늘 일정 상태를 반영한 지정 수신자 Draft를 한 사용자 결과로 보존했다."}
+      }
+    },
+    "CASE-CORE-019": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {
+        "minimal_v1": {"issues": ["RELATION_UNTYPED"], "reason": "Event와 그 안내 Draft는 보존했지만 승인 전 Event 결과가 아니라 planned specification을 참조해야 한다는 관계를 표현하지 못했다."},
+        "two_stage_v1": {"issues": ["RELATION_MISSING"], "reason": "두 산출물은 보존했지만 Draft가 승인 전 Event specification을 참조하는 관계를 누락했다."},
+        "semantic_state_v1": {"issues": ["REQUESTED_OUTCOME_MISSING", "FACT_OVERCLAIMED", "RELATION_MISSING"], "reason": "Event CREATE와 Draft를 한 결과로 합치면서 effect를 DRAFT 하나로 축소했고, 아직 확정할 수 없는 일정을 확정한다고 표현했으며 planned specification 관계도 없다."}
+      }
+    },
+    "CASE-CORE-020": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED"], "reason": "Task와 Calendar 확인을 Draft 작성을 위한 내부 입력 처리와 분리해 별도 업무로 만들었다."},
+        "two_stage_v1": {"issues": ["FACT_OVERCLAIMED"], "reason": "끝났는지 확인하라는 요청을 온보딩 작업 완료로 과확정했다."},
+        "semantic_state_v1": {"issues": ["TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "완료 여부를 과확정하지 않고 상태 기반 Draft로 보존했지만 Stage 2가 source와 target 필드를 버렸다."}
+      }
+    },
+    "CASE-CORE-021": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED"], "reason": "메일·Task 확인을 Event 생성과 별도 사용자 업무로 승격했다."},
+        "two_stage_v1": {"issues": [], "reason": "메일·Task 근거와 지정 시각 Event 생성을 하나의 사용자 결과로 보존했다."},
+        "semantic_state_v1": {"issues": ["INTERNAL_STEP_PROMOTED", "EFFECT_CHANGED", "RELATION_UNTYPED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Source 확인을 별도 업무로 다시 승격하고 이를 DRAFT로 오분류했으며, 범용 relation을 만들고 Stage 2 전달에서도 typed 의미를 잃었다."}
+      }
+    },
+    "CASE-CORE-026": {
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "Atlas 자료와 제한 시간창을 근거로 하나의 슬롯을 제안하는 결과를 보존했다."},
+        "two_stage_v1": {"issues": ["SOURCE_SCOPE_DROPPED"], "reason": "슬롯 제안은 보존했지만 Atlas 출고와 준비 Task라는 입력 근거를 잃었다."},
+        "semantic_state_v1": {"issues": ["EFFECT_CHANGED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "슬롯 제안 답변을 Gmail Draft로 오분류했고 Stage 2가 source와 시간 조건 필드를 버렸다."}
+      }
+    },
+    "CASE-CORE-027": {
+      "reviews": {
+        "minimal_v1": {"issues": ["UNSUPPORTED_SEMANTIC", "EXPLICIT_PROHIBITION_DROPPED", "INTERNAL_STEP_PROMOTED"], "reason": "휴가·병가라는 원문에 없는 의미를 추가했고 일정 생성 금지를 잃은 채 입력 확인을 분리했다."},
+        "two_stage_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "가용 여부 답변은 보존했지만 일정을 만들지 말라는 금지를 잃었다."},
+        "semantic_state_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "가용 여부 답변은 보존했지만 일정 생성 금지를 누락했고 Stage 2가 source와 target을 버렸다."}
+      }
+    },
+    "CASE-CORE-028": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED"], "reason": "메일·Task 확인을 Event 생성을 위한 내부 처리 대신 별도 업무로 승격했다."},
+        "two_stage_v1": {"issues": [], "reason": "Kestrel 근거, 내일 업무시간, 30분 Event라는 의미를 한 결과에 보존했다."},
+        "semantic_state_v1": {"issues": ["EFFECT_CHANGED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Event 생성 목적을 DRAFT로 오분류했고 Stage 2가 source·target·시간 조건을 버렸다."}
+      }
+    },
+    "CASE-CORE-031": {
+      "reviews": {
+        "minimal_v1": {"issues": ["EFFECT_CHANGED", "INTERNAL_STEP_PROMOTED", "RELATION_UNTYPED"], "reason": "Task CREATE 요청을 작업 완료로 바꾸고 Source 확인을 별도 업무로 만들었다."},
+        "two_stage_v1": {"issues": ["EFFECT_CHANGED"], "reason": "Task를 만들어 달라는 요청을 인계 작업 완료로 바꿨다."},
+        "semantic_state_v1": {"issues": ["EFFECT_CHANGED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Task CREATE를 기존 Task UPDATE로 바꾸었고 Stage 2가 source·target·시간 조건을 버렸다."}
+      }
+    },
+    "CASE-CORE-036": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED", "RELATION_UNTYPED"], "reason": "메일·Calendar 확인을 체크리스트 작성과 별도 업무로 승격하고 범용 relation으로 연결했다."},
+        "two_stage_v1": {"issues": [], "reason": "메일·Calendar 근거와 기한, 체크리스트 작성 결과를 한 업무로 보존했다."},
+        "semantic_state_v1": {"issues": ["SOURCE_SCOPE_DROPPED", "TEMPORAL_CONSTRAINT_DROPPED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Stage 1은 메일·Calendar와 기한을 구조화했지만 Stage 2는 CREATE만 남기고 source와 기한을 버렸다."}
+      }
+    },
+    "CASE-CORE-037": {
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "두 입력 근거와 기존 Task UPDATE, 변경 기한을 보존했다."},
+        "two_stage_v1": {"issues": ["SOURCE_SCOPE_DROPPED"], "reason": "Task UPDATE와 기한은 보존했지만 Atlas 메일·인쇄소 슬롯 근거를 잃었다."},
+        "semantic_state_v1": {"issues": ["SOURCE_SCOPE_DROPPED"], "reason": "Task UPDATE와 변경 기한은 보존했지만 Stage 1부터 Atlas 메일·인쇄소 슬롯 근거를 구조화하지 않았다."}
+      }
+    },
+    "CASE-CORE-040": {
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED", "RELATION_UNTYPED"], "reason": "Source 확인을 Task 메모 UPDATE와 별도 업무로 만들고 범용 relation으로 연결했다."},
+        "two_stage_v1": {"issues": ["SOURCE_SCOPE_DROPPED"], "reason": "Task 메모 UPDATE는 보존했지만 Kestrel 메일·Calendar 근거를 잃었다."},
+        "semantic_state_v1": {"issues": [], "reason": "Kestrel 메일·Calendar를 근거로 지정 Task 메모를 UPDATE한다는 의미를 typed field로 보존하고 그대로 전달했다."}
+      }
+    },
+    "CASE-CORE-041": {
+      "reviews": {
+        "minimal_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "세 Source 비교와 위험 정리는 보존했지만 새 항목 생성 금지를 잃었다."},
+        "two_stage_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "세 Source 비교와 위험 정리는 보존했지만 새 항목 생성 금지를 잃었다."},
+        "semantic_state_v1": {"issues": [], "reason": "세 Source 비교 답변과 새 항목을 만들지 말라는 금지를 함께 보존하고 전달했다."}
+      }
+    },
+    "CASE-CORE-046": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {
+        "minimal_v1": {"issues": ["RELATION_MISSING"], "reason": "Event와 안내 Draft는 보존했지만 Draft가 승인 전 Event specification을 참조하는 관계를 누락했다."},
+        "two_stage_v1": {"issues": ["SOURCE_SCOPE_DROPPED", "RELATION_MISSING"], "reason": "Event와 Draft는 보존했지만 입력 Source와 planned specification 관계를 잃었다."},
+        "semantic_state_v1": {"issues": ["SOURCE_SCOPE_DROPPED", "RELATION_MISSING", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Stage 1은 두 산출물의 source·target·시간을 구조화했지만 Stage 2가 이를 버렸고 planned specification 관계도 만들지 않았다."}
+      }
+    },
+    "CASE-CORE-048": {
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "Task 메모 UPDATE, Event CREATE, Draft CREATE와 각 제약을 보존했다."},
+        "two_stage_v1": {"issues": ["PLANNED_EFFECT_STATUS_AMBIGUOUS"], "reason": "세 외부 효과는 보존했지만 승인 전 계획임을 밝히지 않고 업무 완료라고 표현했다."},
+        "semantic_state_v1": {"issues": ["PLANNED_EFFECT_STATUS_AMBIGUOUS", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "세 외부 효과는 보존했지만 실행한 것으로 표현했고, Stage 2가 source·target·시간 필드를 버렸다."}
+      }
+    },
+    "CASE-CORE-050": {
+      "reviews": {
+        "minimal_v1": {"issues": ["EFFECT_CHANGED"], "reason": "Task CREATE 요청을 최종 의견 전달 작업 완료로 바꿨다."},
+        "two_stage_v1": {"issues": [], "reason": "Task, Event, Draft라는 세 독립 산출물과 시간·수신자 제약을 보존했다."},
+        "semantic_state_v1": {"issues": ["REQUESTED_OUTCOME_MISSING", "FACT_OVERCLAIMED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Event CREATE와 Draft를 한 결과로 합치면서 CREATE effect를 잃었고 Task를 기한까지 완료한다고 과확정했으며 Stage 2도 typed 의미를 버렸다."}
+      }
+    },
+    "CASE-CORE-051": {
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "박민수 메일을 근거로 회의 준비 내용을 정리하는 한 결과를 보존했다."},
+        "two_stage_v1": {"issues": [], "reason": "박민수 메일을 근거로 회의 준비 내용을 정리하는 한 결과를 보존했다."},
+        "semantic_state_v1": {"issues": ["EFFECT_CHANGED", "TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "준비 내용 정리 답변을 Gmail Draft로 오분류했고 Stage 2가 source와 target을 버렸다."}
+      }
+    },
+    "CASE-CORE-054": {
+      "allowed_shapes": ["single_reply_draft", "derived_summary_then_reply_draft"],
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "Grove 결과를 반영한 지정 수신자 Reply Draft라는 Canonical 결과를 한 WorkUnit으로 보존했다."},
+        "two_stage_v1": {"issues": [], "reason": "Grove 결과를 반영한 지정 수신자 Reply Draft라는 Canonical 결과를 한 WorkUnit으로 보존했다."},
+        "semantic_state_v1": {"issues": [], "reason": "Grove 결과를 반영한 지정 수신자 Reply Draft를 한 사용자 결과로 보존했다."}
+      }
+    },
+    "CASE-CORE-056": {
+      "allowed_shapes": ["single_answer", "summary_and_action_sections"],
+      "reviews": {
+        "minimal_v1": {"issues": ["INTERNAL_STEP_PROMOTED", "EXPLICIT_PROHIBITION_DROPPED"], "reason": "한 답변의 요약·대응 섹션을 별도 업무로 만들었고 실행 금지를 보존하지 않았다."},
+        "two_stage_v1": {"issues": ["EXPLICIT_PROHIBITION_DROPPED"], "reason": "요약과 대응 정리는 한 결과로 보존했지만 실제 실행 금지를 명시적으로 유지하지 않았다."},
+        "semantic_state_v1": {"issues": ["EFFECT_CHANGED", "EXPLICIT_PROHIBITION_DROPPED"], "reason": "사고 요약과 대응 정리 답변을 Gmail Draft로 오분류했고 실제 실행 금지도 누락했다."}
+      }
+    },
+    "CASE-CORE-059": {
+      "allowed_shapes": ["single_reply_send", "confirmation_work_product_then_reply_send"],
+      "reviews": {
+        "minimal_v1": {"issues": [], "reason": "납품 일정 확인 결과를 근거로 Reply를 보내는 최종 효과를 한 WorkUnit으로 보존했다."},
+        "two_stage_v1": {"issues": [], "reason": "납품 일정 확인 결과를 근거로 Reply를 보내는 최종 효과를 한 WorkUnit으로 보존했다."},
+        "semantic_state_v1": {"issues": ["TYPED_SEMANTIC_CARRY_DROPPED"], "reason": "Stage 1은 Reply SEND를 정확히 구조화했지만 Stage 2가 requested_effects 필드를 버렸다."}
+      }
+    }
+  },
+  "decisions": {
+    "minimal_v1": "HOLD",
+    "two_stage_v1": "HOLD",
+    "semantic_state_v1": "REJECT"
+  }
+}
