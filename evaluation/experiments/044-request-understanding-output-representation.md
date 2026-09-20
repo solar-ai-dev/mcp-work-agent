@@ -1,5 +1,10 @@
 # 044. Request Understanding Output representation 비교
 
+> 범위 정정: 이 실험은 WorkUnit 후보를 Output Resource/effect pair로 투영해
+> 채점했다. 따라서 #287의 최소 `WorkUnit[] + WorkRelation[]` 업무 분해 가설을
+> 채택·기각하는 근거로 사용하지 않는다. 아래 결과는 Output 표현 실험 기록으로만
+> 보존한다.
+
 기준 Product commit은 `938bee091473d13139ec58bc24e16f66538ff4d0`이고
 Canonical v8 dataset SHA-256은
 `f92603216a7f0a214bc72ce1f0301b64299e1ed2dbc59c6d20359ee053daa9d8`다.

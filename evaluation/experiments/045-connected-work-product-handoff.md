@@ -1,5 +1,10 @@
 # 045 — connected work product handoff
 
+> 범위 정정: 이 실험은 실제 중간 산출물 materialization과 consumer handoff까지
+> 결합한 downstream 계약 실험이다. #287의 첫 단계인 사용자 원문 업무 분해 후보를
+> 채택·기각하는 근거로 사용하지 않는다. 아래 결과와 `REJECT`는 결합 후보에만
+> 적용하며 최소 decomposition 가설에는 적용하지 않는다.
+
 Issue: #287 (구조 실험), #288 (채택 시 공유 계약), #294 (구조 채택 후 Prompt 최적화)
 
 ## 결론
