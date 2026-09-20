@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import pytest
 from evaluation.harness.connected_work_candidate import (
     EvidenceProjectionV1,
     IntermediateWorkProductV1,
@@ -368,3 +369,253 @@ def test_two_stage_definition_assembly_keeps_condition_refs_and_product_relation
         "target_unit_id": "issue",
         "artifact_ref": "work-product:summary",
     }
+
+
+def test_unknown_constraint_ref_is_rejected_before_execution() -> None:
+    definition = {
+        "schema_version": 1,
+        "common_condition_refs": [{"constraint_ref": "constraint:missing"}],
+        "work_units": [
+            {
+                "unit_id": "answer",
+                "objective": "답한다",
+                "operation": "ANSWER",
+                "input_bindings": [],
+                "condition_refs": [],
+                "output": {"kind": "USER_RESPONSE"},
+            }
+        ],
+        "relations": [],
+    }
+    graph = compile_connected_work_candidate(
+        define_work=lambda _request: definition,
+        materialize_product=lambda *_args: {},
+        consume_work=lambda *_args: {},
+    )
+
+    with pytest.raises(ValueError, match="current constraint catalog"):
+        graph.invoke({"user_request": "답해줘", "constraint_catalog": []})
+
+
+def test_relation_must_match_product_input_binding() -> None:
+    definition = {
+        "schema_version": 1,
+        "common_condition_refs": [],
+        "work_units": [
+            {
+                "unit_id": "summary",
+                "objective": "요약한다",
+                "operation": "SUMMARIZE",
+                "input_bindings": [],
+                "condition_refs": [],
+                "output": {
+                    "kind": "INTERMEDIATE_WORK_PRODUCT",
+                    "product_ref": "product:summary",
+                    "product_kind": "SUMMARY",
+                },
+            },
+            {
+                "unit_id": "answer",
+                "objective": "요약을 답한다",
+                "operation": "ANSWER",
+                "input_bindings": [{"kind": "WORK_PRODUCT", "product_ref": "product:summary"}],
+                "condition_refs": [],
+                "output": {"kind": "USER_RESPONSE"},
+            },
+        ],
+        "relations": [],
+    }
+    graph = compile_connected_work_candidate(
+        define_work=lambda _request: definition,
+        materialize_product=lambda *_args: {},
+        consume_work=lambda *_args: {},
+    )
+
+    with pytest.raises(ValueError, match="exactly match artifact input bindings"):
+        graph.invoke({"user_request": "요약해서 답해줘"})
+
+
+def test_cyclic_work_product_relations_are_rejected() -> None:
+    definition = {
+        "schema_version": 1,
+        "common_condition_refs": [],
+        "work_units": [
+            {
+                "unit_id": unit_id,
+                "objective": f"{unit_id} 산출물을 만든다",
+                "operation": "COMPOSE",
+                "input_bindings": [
+                    {
+                        "kind": "WORK_PRODUCT",
+                        "product_ref": f"product:{dependency_id}",
+                    }
+                ],
+                "condition_refs": [],
+                "output": {
+                    "kind": "INTERMEDIATE_WORK_PRODUCT",
+                    "product_ref": f"product:{unit_id}",
+                    "product_kind": "CONTENT",
+                },
+            }
+            for unit_id, dependency_id in (("a", "b"), ("b", "a"))
+        ],
+        "relations": [
+            {
+                "relation_id": "relation-a-b",
+                "kind": "CONSUMES_WORK_PRODUCT",
+                "source_unit_id": "a",
+                "target_unit_id": "b",
+                "artifact_ref": "product:a",
+            },
+            {
+                "relation_id": "relation-b-a",
+                "kind": "CONSUMES_WORK_PRODUCT",
+                "source_unit_id": "b",
+                "target_unit_id": "a",
+                "artifact_ref": "product:b",
+            },
+        ],
+    }
+    graph = compile_connected_work_candidate(
+        define_work=lambda _request: definition,
+        materialize_product=lambda *_args: {},
+        consume_work=lambda *_args: {},
+    )
+
+    with pytest.raises(ValueError, match="acyclic"):
+        graph.invoke({"user_request": "두 결과를 서로 사용해줘"})
+
+
+def test_intermediate_product_requires_matching_evidence() -> None:
+    definition = {
+        "schema_version": 1,
+        "common_condition_refs": [],
+        "work_units": [
+            {
+                "unit_id": "summary",
+                "objective": "메일을 요약한다",
+                "operation": "SUMMARIZE",
+                "input_bindings": [
+                    {
+                        "kind": "RESOURCE",
+                        "resource_type": "GMAIL_THREAD",
+                        "required_information": ["본문"],
+                    }
+                ],
+                "condition_refs": [],
+                "output": {
+                    "kind": "INTERMEDIATE_WORK_PRODUCT",
+                    "product_ref": "product:summary",
+                    "product_kind": "SUMMARY",
+                },
+            }
+        ],
+        "relations": [],
+    }
+    graph = compile_connected_work_candidate(
+        define_work=lambda _request: definition,
+        materialize_product=lambda *_args: {},
+        consume_work=lambda *_args: {},
+    )
+
+    with pytest.raises(ValueError, match="no evidence matches"):
+        graph.invoke(
+            {
+                "user_request": "메일을 요약해줘",
+                "evidence": [
+                    {
+                        "evidence_ref": "evidence:task",
+                        "resource_type": "TASK",
+                        "content": "무관한 작업",
+                    }
+                ],
+            }
+        )
+
+
+def test_intermediate_product_rejects_forged_lineage() -> None:
+    definition = {
+        "schema_version": 1,
+        "common_condition_refs": [],
+        "work_units": [
+            {
+                "unit_id": "summary",
+                "objective": "메일을 요약한다",
+                "operation": "SUMMARIZE",
+                "input_bindings": [],
+                "condition_refs": [],
+                "output": {
+                    "kind": "INTERMEDIATE_WORK_PRODUCT",
+                    "product_ref": "product:summary",
+                    "product_kind": "SUMMARY",
+                },
+            }
+        ],
+        "relations": [],
+    }
+
+    def materialize(*_args: object) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "product_ref": "product:summary",
+            "producer_work_unit_id": "summary",
+            "producer_boundary": "INTERMEDIATE_WORK_PRODUCT_MATERIALIZER",
+            "product_kind": "SUMMARY",
+            "content": "요약",
+            "evidence_refs": [],
+            "consumed_product_refs": ["product:not-bound"],
+        }
+
+    graph = compile_connected_work_candidate(
+        define_work=lambda _request: definition,
+        materialize_product=materialize,
+        consume_work=lambda *_args: {},
+    )
+
+    with pytest.raises(ValueError, match="lineage"):
+        graph.invoke({"user_request": "요약해줘"})
+
+
+def test_pre_execution_specification_cannot_claim_execution() -> None:
+    definition = {
+        "schema_version": 1,
+        "common_condition_refs": [],
+        "work_units": [
+            {
+                "unit_id": "issue",
+                "objective": "이슈 작성안을 준비한다",
+                "operation": "PREPARE_ACTION",
+                "input_bindings": [],
+                "condition_refs": [],
+                "output": {
+                    "kind": "EXTERNAL_ACTION_SPECIFICATION",
+                    "specification_ref": "spec:issue",
+                    "resource_type": "GITHUB_ISSUE",
+                    "effect": "CREATE",
+                },
+            }
+        ],
+        "relations": [],
+    }
+
+    def consume(*_args: object) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "specification_ref": "spec:issue",
+            "producer_work_unit_id": "issue",
+            "resource_type": "GITHUB_ISSUE",
+            "effect": "CREATE",
+            "status": "EXECUTED",
+            "content": {"title": "작성됨"},
+            "consumed_product_refs": [],
+            "consumed_specification_refs": [],
+        }
+
+    graph = compile_connected_work_candidate(
+        define_work=lambda _request: definition,
+        materialize_product=lambda *_args: {},
+        consume_work=consume,
+    )
+
+    with pytest.raises(ValueError, match="invalid planned action specification"):
+        graph.invoke({"user_request": "이슈를 만들어줘"})

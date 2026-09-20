@@ -68,7 +68,8 @@ Validator로 의미를 보정하지 않았으며 잘못된 정의는 거절했�
 
 ## Bounded compiled gate
 
-직접 component test는 다음을 고정한다.
+직접 component test 10개와 기존 Request Understanding 인접 unit suite를 함께 실행해
+총 251개가 통과했다. 직접 gate는 다음을 고정한다.
 
 - `decomposition → actual IntermediateWorkProduct → product_ref → consumer` 연결
 - consumer가 raw user request를 받지 않고 결속된 product를 소비
@@ -76,6 +77,9 @@ Validator로 의미를 보정하지 않았으며 잘못된 정의는 거절했�
 - 외부 Action 전에는 `PLANNED_NOT_EXECUTED` specification만 전달
 - Provider result는 승인 전 존재한다고 가정하지 않음
 - external write count `0`
+- 미등록 constraint ref, relation/binding 불일치, relation cycle 거절
+- 일치하는 Evidence 없는 product materialization 거절
+- 위조된 product lineage와 승인 전 `EXECUTED` 주장 거절
 
 ## 결정
 
