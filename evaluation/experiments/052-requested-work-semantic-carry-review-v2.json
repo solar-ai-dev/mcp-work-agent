@@ -1,0 +1,171 @@
+{
+  "version": "ru287-requested-work-semantic-carry-review-v2",
+  "authority": {
+    "dataset": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+    "fields": [
+      "canonical_user_prompt",
+      "evaluation_gold.required_semantics",
+      "evaluation_gold.forbidden_semantics"
+    ],
+    "exact_work_unit_count_is_authority": false,
+    "exact_relation_count_is_authority": false,
+    "alternative_decompositions_are_allowed": true
+  },
+  "relation_semantics": {
+    "internal_derived_product": "CONSUMES_WORK_PRODUCT",
+    "preapproval_external_action": "CONSUMES_PLANNED_SPECIFICATION",
+    "legacy_provides_input_to_is_typed": false
+  },
+  "issue_severity": {
+    "SOURCE_SCOPE_DROPPED": "PARTIAL",
+    "EXPLICIT_PROHIBITION_DROPPED": "PARTIAL",
+    "INTERNAL_STEP_PROMOTED": "PARTIAL",
+    "TYPED_SEMANTIC_CARRY_DROPPED": "PARTIAL",
+    "TYPED_SEMANTIC_FIELD_POLLUTION": "PARTIAL",
+    "RELATION_INVALID": "PARTIAL",
+    "RELATION_MISSING": "PARTIAL",
+    "RELATION_UNTYPED": "PARTIAL",
+    "TARGET_DROPPED": "PARTIAL",
+    "REQUESTED_OUTCOME_MISSING": "FAIL",
+    "EFFECT_CHANGED": "FAIL",
+    "FACT_OVERCLAIMED": "FAIL",
+    "PLANNED_EFFECT_STATUS_AMBIGUOUS": "PARTIAL",
+    "UNSUPPORTED_SEMANTIC": "FAIL"
+  },
+  "candidates": {
+    "semantic_carry_v2": {
+      "path": "evaluation/results/ru287-requested-work-two-stage-semantic-carry-v2-core24-20260920/result.json",
+      "sha256": "50b4d0defd6e03c1a35445894d0394561b05b3d479f9e78aa13bb0ef341a80c6"
+    }
+  },
+  "cases": {
+    "CASE-CORE-001": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "선택 메일 범위와 다른 메일 검색 금지는 보존했지만 금지 문장을 temporal field에도 중복 배치했고 단일 WorkUnit에 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-006": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "Atlas 최종 출고일·담당자 답변과 다른 준비 업무 분석 금지를 하나의 결과에 보존했다."}
+      }
+    },
+    "CASE-CORE-009": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "메일과 Task를 함께 근거로 현재 상태를 답하는 하나의 사용자 결과를 보존했다."}
+      }
+    },
+    "CASE-CORE-010": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "Harbor 메일의 실제 업무 내용만 요약하고 본문 지시를 따르지 않는다는 금지를 보존했다."}
+      }
+    },
+    "CASE-CORE-011": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["EFFECT_CHANGED"], "reason": "Draft 작성 요청을 초안 작성 후 발송하는 SEND 의미로 바꾸었다."}
+      }
+    },
+    "CASE-CORE-012": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID"], "reason": "Task·Calendar 근거와 수신자 Draft는 보존했지만 단일 WorkUnit에 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-019": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["FACT_OVERCLAIMED", "RELATION_MISSING", "RELATION_INVALID"], "reason": "소요시간 확인 없이 워크숍 일정을 확정한다고 과장했고 Event planned specification 관계 대신 단일 WorkUnit self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-020": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["FACT_OVERCLAIMED", "RELATION_INVALID"], "reason": "미완료 여부를 확인해야 하는 Ion Task를 완료로 과확정했고 relation endpoint를 WorkUnit이 아닌 수신자 주소로 만들었다."}
+      }
+    },
+    "CASE-CORE-021": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "Source 확인을 내부 단계로 유지한 단일 Event 결과는 보존했지만 원문에 없는 포괄 금지를 추가하고 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-026": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "Atlas 메일·Task와 시간 제약을 근거로 하나의 가용 슬롯을 제안하는 답변을 보존했다."}
+      }
+    },
+    "CASE-CORE-027": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID"], "reason": "가용시간 답변과 일정 생성 금지를 보존했지만 단일 WorkUnit에 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-028": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "Kestrel 메일·Task와 내일 업무시간의 30분 Event라는 사용자 업무를 한 결과로 보존했다."}
+      }
+    },
+    "CASE-CORE-031": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["EFFECT_CHANGED", "RELATION_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "새 Task CREATE를 인계 작업 확정으로 바꾸고 원문에 없는 금지 없음 표식을 추가했으며 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-036": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID"], "reason": "메일·Calendar 근거와 월요일 기한의 체크리스트 요청은 보존했지만 단일 WorkUnit에 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-037": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "기존 QR Task UPDATE와 Source·기한은 보존했지만 불필요한 금지 없음 표식과 self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-040": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID"], "reason": "Kestrel 메일·Calendar를 근거로 기존 Task 메모에 지연을 추가하는 의미는 보존했지만 Source와 target 문자열을 WorkUnit endpoint처럼 사용했다."}
+      }
+    },
+    "CASE-CORE-041": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "세 Source 대조 답변과 새 항목 생성 금지는 보존했지만 한 번에 대조한다는 표현을 temporal constraint로 잘못 배치했다."}
+      }
+    },
+    "CASE-CORE-046": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_UNTYPED", "PLANNED_EFFECT_STATUS_AMBIGUOUS"], "reason": "Event와 Draft 및 source·target·시간은 보존했지만 범용 relation이 planned specification 의미를 구분하지 못하고 후속 Draft가 생성된 일정 내용을 쓴다고 표현했다."}
+      }
+    },
+    "CASE-CORE-048": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "Task 메모 UPDATE, Event, Draft와 Source·시간·수신자는 보존했지만 원문에 없는 금지 없음 표식을 추가했다."}
+      }
+    },
+    "CASE-CORE-050": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID", "TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "Task·Event·Draft와 시간·수신자 의미는 보존했지만 원문에 없는 금지 없음 표식과 단일 WorkUnit self-relation을 만들었다."}
+      }
+    },
+    "CASE-CORE-051": {
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "박민수 메일 기반 준비 내용 정리라는 사용자 결과는 보존했지만 원문에 없는 금지 없음 표식을 추가했다."}
+      }
+    },
+    "CASE-CORE-054": {
+      "allowed_shapes": ["single_reply_draft", "derived_summary_then_reply_draft"],
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "Grove 결과를 반영한 지정 수신자 Reply Draft를 하나의 사용자 결과로 보존했다."}
+      }
+    },
+    "CASE-CORE-056": {
+      "allowed_shapes": ["single_answer", "summary_and_action_sections"],
+      "reviews": {
+        "semantic_carry_v2": {"issues": [], "reason": "Harbor 사고 요약과 사용자가 할 대응을 한 답변으로 보존하고 실제 실행 금지를 명시적으로 유지했다."}
+      }
+    },
+    "CASE-CORE-059": {
+      "allowed_shapes": ["single_reply_send", "confirmation_work_product_then_reply_send"],
+      "reviews": {
+        "semantic_carry_v2": {"issues": ["RELATION_INVALID"], "reason": "Quartz 확인 결과에 근거한 Reply SEND 의미는 보존했지만 단일 WorkUnit에 self-relation을 만들었다."}
+      }
+    }
+  },
+  "decisions": {
+    "semantic_carry_v2": "HOLD"
+  }
+}
