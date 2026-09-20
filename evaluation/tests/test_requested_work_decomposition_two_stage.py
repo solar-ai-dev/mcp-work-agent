@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import cast
 
 from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
+    EXACT_SPAN_REF_IDENTIFY_PROMPT,
+    EXACT_SPAN_REF_RELATION_PROMPT,
     IDENTIFIED_RESULTS_SCHEMA,
     IDENTIFY_PROMPT,
     MATERIALIZE_PROMPT,
@@ -24,7 +26,9 @@ from scripts.evaluate_ru_requested_work_decomposition_two_stage import (
     SPAN_BOUND_IDENTIFY_PROMPT,
     SPAN_BOUND_RELATION_PROMPT,
     _closed_typed_relations_schema,
+    _exact_span_ref_identified_results_schema,
     _has_exact_carry,
+    _project_exact_span_ref_results,
     _project_identified_results,
     _project_request_ref_candidate,
     _project_span_bound_results,
@@ -58,6 +62,8 @@ def test_two_stage_prompts_do_not_add_few_shots() -> None:
         SPAN_BOUND_RELATION_PROMPT,
         REQUEST_REF_IDENTIFY_PROMPT,
         REQUEST_REF_RELATION_PROMPT,
+        EXACT_SPAN_REF_IDENTIFY_PROMPT,
+        EXACT_SPAN_REF_RELATION_PROMPT,
     ):
         assert "few-shot" not in prompt.read_text(encoding="utf-8").lower()
 
@@ -294,6 +300,50 @@ def test_request_ref_schema_is_closed_to_catalog_and_has_shared_state() -> None:
     assert validate_output_schema(invalid, schema)
 
 
+def test_exact_span_ref_schema_changes_only_request_span_representation() -> None:
+    schema = _exact_span_ref_identified_results_schema(["T001", "T002"]).json_schema
+    item = schema["properties"]["identified_results"]["items"]
+    span_bound_item = SPAN_BOUND_IDENTIFIED_RESULTS_SCHEMA.json_schema["properties"][
+        "identified_results"
+    ]["items"]
+
+    assert set(schema["properties"]) == {"identified_results"}
+    assert set(item["required"]) == {"result_id", "request_span_refs"}
+    assert "shared_semantics" not in schema["properties"]
+    assert "request_spans" not in item["properties"]
+    assert set(item["properties"]) - {"request_span_refs"} == set(span_bound_item["properties"]) - {
+        "request_spans"
+    }
+    assert "requested_effects" not in item["properties"]
+
+
+def test_exact_span_ref_projection_preserves_v3_semantic_fields() -> None:
+    request = "선택한 메일을 확인하고 다른 메일은 검색하지 마."
+    tokens = _request_token_catalog(request)
+    identified = [
+        {
+            "result_id": "result-1",
+            "request_span_refs": [{"start_token_id": "T001", "end_token_id": "T003"}],
+            "source_scopes": ["선택한 메일"],
+            "prohibitions": ["다른 메일은 검색하지 마"],
+        }
+    ]
+
+    assert _project_exact_span_ref_results(
+        identified,
+        request=request,
+        request_tokens=tokens,
+    ) == [
+        {
+            "unit_id": "result-1",
+            "objective": "선택한 메일을 확인하고",
+            "request_spans": ["선택한 메일을 확인하고"],
+            "source_scopes": ["선택한 메일"],
+            "prohibitions": ["다른 메일은 검색하지 마"],
+        }
+    ]
+
+
 def test_request_ref_validator_rejects_reversed_ranges() -> None:
     tokens = _request_token_catalog("첫 업무와 둘째 업무")
     candidate = {
@@ -458,3 +508,9 @@ def test_prompt_paths_are_evaluation_candidates() -> None:
     )
     assert REQUEST_REF_IDENTIFY_PROMPT.parent == request_ref_parent
     assert REQUEST_REF_RELATION_PROMPT.parent == request_ref_parent
+    exact_span_ref_parent = Path(
+        "evaluation/prompt_candidates/"
+        "ru-requested-work-decomposition-two-stage-exact-span-ref-v5/sources"
+    )
+    assert EXACT_SPAN_REF_IDENTIFY_PROMPT.parent == exact_span_ref_parent
+    assert EXACT_SPAN_REF_RELATION_PROMPT.parent == exact_span_ref_parent

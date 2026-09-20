@@ -74,6 +74,15 @@ REQUEST_REF_IDENTIFY_PROMPT = (
 REQUEST_REF_RELATION_PROMPT = (
     REQUEST_REF_PROMPT_ROOT / "request_understanding.identify_work_relations.md"
 )
+EXACT_SPAN_REF_PROMPT_ROOT = Path(
+    "evaluation/prompt_candidates/ru-requested-work-decomposition-two-stage-exact-span-ref-v5/sources"
+)
+EXACT_SPAN_REF_IDENTIFY_PROMPT = (
+    EXACT_SPAN_REF_PROMPT_ROOT / "request_understanding.identify_independent_results.md"
+)
+EXACT_SPAN_REF_RELATION_PROMPT = (
+    EXACT_SPAN_REF_PROMPT_ROOT / "request_understanding.identify_work_relations.md"
+)
 
 REQUESTED_EFFECTS = ["ANSWER", "DRAFT", "SEND", "CREATE", "UPDATE", "DELETE"]
 TYPED_RELATION_KINDS = [
@@ -313,6 +322,7 @@ SPAN_BOUND_RELATION_SCHEMA_VERSION = "requested-work-relations-span-bound-v3-eva
 SPAN_BOUND_DECOMPOSITION_SCHEMA_VERSION = "requested-work-decomposition-span-bound-v3-eval"
 REQUEST_REF_IDENTIFY_SCHEMA_VERSION = "requested-independent-results-request-ref-v4-eval"
 REQUEST_REF_DECOMPOSITION_SCHEMA_VERSION = "requested-work-decomposition-request-ref-v4-eval"
+EXACT_SPAN_REF_IDENTIFY_SCHEMA_VERSION = "requested-independent-results-exact-span-ref-v5-eval"
 
 SEMANTIC_REF_FIELDS = {
     "source_scope_refs": "source_scopes",
@@ -358,6 +368,39 @@ def _request_ref_identified_results_schema(token_ids: list[str]) -> OutputSchema
                         },
                     },
                 },
+            },
+        },
+    )
+
+
+def _exact_span_ref_identified_results_schema(token_ids: list[str]) -> OutputSchemaDefinition:
+    return OutputSchemaDefinition(
+        schema_version=EXACT_SPAN_REF_IDENTIFY_SCHEMA_VERSION,
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["identified_results"],
+            "properties": {
+                "identified_results": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["result_id", "request_span_refs"],
+                        "properties": {
+                            "result_id": {"type": "string", "minLength": 1},
+                            "request_span_refs": {
+                                "type": "array",
+                                "minItems": 1,
+                                "uniqueItems": True,
+                                "items": _request_span_ref_schema(token_ids),
+                            },
+                            **_optional_semantic_properties(include_requested_effects=False),
+                        },
+                    },
+                }
             },
         },
     )
@@ -534,6 +577,7 @@ def main() -> None:
     parser.add_argument("--deterministic-semantic-carry", action="store_true")
     parser.add_argument("--span-bound-typed-relations", action="store_true")
     parser.add_argument("--request-ref-shared-state", action="store_true")
+    parser.add_argument("--exact-span-ref", action="store_true")
     arguments = parser.parse_args()
     if arguments.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
@@ -549,13 +593,27 @@ def main() -> None:
             arguments.deterministic_semantic_carry,
             arguments.span_bound_typed_relations,
             arguments.request_ref_shared_state,
+            arguments.exact_span_ref,
         )
     )
     if selected_candidates > 1:
         raise ValueError("select only one two-stage candidate")
 
     cases = load_cases()
-    if arguments.request_ref_shared_state:
+    if arguments.exact_span_ref:
+        identify_prompt_path = EXACT_SPAN_REF_IDENTIFY_PROMPT
+        materialize_prompt_path = EXACT_SPAN_REF_RELATION_PROMPT
+        identify_schema = None
+        materialize_schema = None
+        decomposition_schema = None
+        identify_input_schema_version = "user-request-plus-token-catalog-v1"
+        identify_output_schema_version = EXACT_SPAN_REF_IDENTIFY_SCHEMA_VERSION
+        materialize_output_schema_version = SPAN_BOUND_RELATION_SCHEMA_VERSION
+        materialize_input_schema_version = "user-request-plus-identified-results-v1"
+        candidate_id = "ru-requested-work-decomposition-two-stage-exact-span-ref-v5"
+        prompt_version = "requested-work-decomposition-two-stage-exact-span-ref-v5-eval"
+        materialize_prompt_id = "request_understanding.identify_work_relations"
+    elif arguments.request_ref_shared_state:
         identify_prompt_path = REQUEST_REF_IDENTIFY_PROMPT
         materialize_prompt_path = REQUEST_REF_RELATION_PROMPT
         identify_schema = None
@@ -691,9 +749,12 @@ def main() -> None:
             raise ValueError(f"{case_id}: Holdout/Stress is not allowed for tuning")
         request = str(raw["canonical_user_prompt"])
         request_tokens = _request_token_catalog(request)
-        if arguments.request_ref_shared_state:
-            case_identify_schema = _request_ref_identified_results_schema(
-                [str(token["token_id"]) for token in request_tokens]
+        if arguments.request_ref_shared_state or arguments.exact_span_ref:
+            token_ids = [str(token["token_id"]) for token in request_tokens]
+            case_identify_schema = (
+                _exact_span_ref_identified_results_schema(token_ids)
+                if arguments.exact_span_ref
+                else _request_ref_identified_results_schema(token_ids)
             )
             identify_input = {
                 "user_request": request,
@@ -725,7 +786,7 @@ def main() -> None:
             *validate_output_schema(identified, case_identify_schema.json_schema),
             *_validate_identified_results(identified),
         ]
-        if arguments.request_ref_shared_state:
+        if arguments.request_ref_shared_state or arguments.exact_span_ref:
             identify_errors.extend(_validate_request_refs(identified, request_tokens))
         elif arguments.span_bound_typed_relations:
             identify_errors.extend(_validate_request_span_bindings(identified, request))
@@ -741,7 +802,7 @@ def main() -> None:
             result_ids = _identified_result_ids(identified_results)
             case_materialize_schema = _closed_typed_relations_schema(result_ids)
             case_decomposition_schema = _request_ref_decomposition_schema(result_ids)
-        elif arguments.span_bound_typed_relations:
+        elif arguments.exact_span_ref or arguments.span_bound_typed_relations:
             result_ids = _identified_result_ids(identified_results)
             case_materialize_schema = _closed_typed_relations_schema(result_ids)
             case_decomposition_schema = _span_bound_decomposition_schema(result_ids)
@@ -782,6 +843,19 @@ def main() -> None:
                     else []
                 ),
             )
+        elif arguments.exact_span_ref:
+            candidate = {
+                "work_units": _project_exact_span_ref_results(
+                    identified_results,
+                    request=request,
+                    request_tokens=request_tokens,
+                ),
+                "work_relations": (
+                    llm_candidate.get("work_relations", [])
+                    if isinstance(llm_candidate, dict)
+                    else []
+                ),
+            }
         elif arguments.span_bound_typed_relations:
             candidate = {
                 "work_units": _project_span_bound_results(identified_results),
@@ -809,6 +883,7 @@ def main() -> None:
             arguments.deterministic_semantic_carry
             or arguments.span_bound_typed_relations
             or arguments.request_ref_shared_state
+            or arguments.exact_span_ref
         ):
             materialize_errors.extend(
                 validate_output_schema(candidate, case_decomposition_schema.json_schema)
@@ -823,6 +898,15 @@ def main() -> None:
                 request=request,
                 request_tokens=request_tokens,
                 work_relations=relations,
+            )
+        elif arguments.exact_span_ref:
+            carry_matches = (
+                _project_exact_span_ref_results(
+                    identified_results,
+                    request=request,
+                    request_tokens=request_tokens,
+                )
+                == units
             )
         elif arguments.span_bound_typed_relations:
             carry_matches = _project_span_bound_results(identified_results) == units
@@ -841,7 +925,11 @@ def main() -> None:
                 },
                 "identify": {
                     "candidate": identified,
-                    "request_tokens": request_tokens if arguments.request_ref_shared_state else [],
+                    "request_tokens": (
+                        request_tokens
+                        if arguments.request_ref_shared_state or arguments.exact_span_ref
+                        else []
+                    ),
                     "schema_errors": identify_errors,
                     "input_tokens": identify_response.input_tokens,
                     "output_tokens": identify_response.output_tokens,
@@ -1066,6 +1154,38 @@ def _project_span_bound_results(identified_results: object) -> list[dict[str, ob
             [span for span in spans if isinstance(span, str)] if isinstance(spans, list) else []
         )
         work_unit["objective"] = " ".join(exact_spans)
+        work_units.append(work_unit)
+    return work_units
+
+
+def _project_exact_span_ref_results(
+    identified_results: object,
+    *,
+    request: str,
+    request_tokens: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not isinstance(identified_results, list):
+        return []
+    token_positions = {
+        str(token["token_id"]): (int(token["start"]), int(token["end"])) for token in request_tokens
+    }
+    work_units: list[dict[str, object]] = []
+    for item in identified_results:
+        if not isinstance(item, dict):
+            continue
+        request_spans = _resolve_ref_list(
+            item.get("request_span_refs"),
+            request=request,
+            token_positions=token_positions,
+        )
+        work_unit: dict[str, object] = {
+            "unit_id": item.get("result_id"),
+            "objective": " ".join(request_spans),
+            "request_spans": request_spans,
+        }
+        for field in _optional_semantic_properties(include_requested_effects=False):
+            if field in item:
+                work_unit[field] = item[field]
         work_units.append(work_unit)
     return work_units
 

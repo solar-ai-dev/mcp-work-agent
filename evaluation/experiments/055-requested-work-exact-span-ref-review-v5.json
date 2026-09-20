@@ -1,0 +1,126 @@
+{
+  "version": "ru287-requested-work-exact-span-ref-review-v5",
+  "authority": {
+    "dataset": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+    "fields": [
+      "canonical_user_prompt",
+      "evaluation_gold.required_semantics",
+      "evaluation_gold.forbidden_semantics"
+    ],
+    "exact_work_unit_count_is_authority": false,
+    "exact_relation_count_is_authority": false,
+    "alternative_decompositions_are_allowed": true
+  },
+  "relation_semantics": {
+    "internal_derived_product": "CONSUMES_WORK_PRODUCT",
+    "preapproval_external_action": "CONSUMES_PLANNED_SPECIFICATION",
+    "legacy_provides_input_to_is_typed": false,
+    "not_optimized_in_this_candidate": true
+  },
+  "issue_severity": {
+    "REQUEST_SPAN_INVALID": "PARTIAL",
+    "SOURCE_SCOPE_DROPPED": "PARTIAL",
+    "EXPLICIT_PROHIBITION_DROPPED": "PARTIAL",
+    "INTERNAL_STEP_PROMOTED": "PARTIAL",
+    "TYPED_SEMANTIC_CARRY_DROPPED": "PARTIAL",
+    "TYPED_SEMANTIC_FIELD_POLLUTION": "PARTIAL",
+    "RELATION_INVALID": "PARTIAL",
+    "RELATION_MISSING": "PARTIAL",
+    "RELATION_UNTYPED": "PARTIAL",
+    "TARGET_DROPPED": "PARTIAL",
+    "DISTINCT_OUTCOMES_COMBINED": "INFO",
+    "REQUESTED_OUTCOME_MISSING": "FAIL",
+    "EFFECT_CHANGED": "FAIL",
+    "FACT_OVERCLAIMED": "FAIL",
+    "PLANNED_EFFECT_STATUS_AMBIGUOUS": "PARTIAL",
+    "UNSUPPORTED_SEMANTIC": "FAIL"
+  },
+  "candidates": {
+    "exact_span_ref_v5": {
+      "path": "evaluation/results/ru287-requested-work-two-stage-exact-span-ref-v5-core24-20260921/result.json",
+      "sha256": "9ce397c3d1cad0ea5c6783aae77f4e7388229c96ed47dc32cd550a0a7dc466f0"
+    }
+  },
+  "cases": {
+    "CASE-CORE-001": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["INTERNAL_STEP_PROMOTED"], "reason": "조회 결과와 검색 금지를 exact ref로 보존했지만 금지 조건을 독립 WorkUnit으로 승격했다."}}
+    },
+    "CASE-CORE-006": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "업무와 금지는 보존했지만 요청 사실인 최종 출고일을 temporal constraint로, 담당자만을 quantity로 오분류했다."}}
+    },
+    "CASE-CORE-009": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Kestrel 메일과 작업을 근거로 현재 진행 상황을 답하는 하나의 결과를 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-010": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Harbor 메일 요약과 본문 지시를 따르지 않는다는 금지를 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-011": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Atlas 준비 상태 Reply Draft와 지정 수신자를 effect 변경 없이 보존했다."}}
+    },
+    "CASE-CORE-012": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Echo Task·Calendar 기반 진행 상황 Draft와 수신자·오늘 조건을 보존했다."}}
+    },
+    "CASE-CORE-019": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {"exact_span_ref_v5": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "RELATION_MISSING"], "reason": "Event와 안내 Draft를 한 WorkUnit에 보존했지만 planned specification relation을 표현하지 못했다."}}
+    },
+    "CASE-CORE-020": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "Ion Draft 업무는 보존했지만 Source 확인 구절 전체를 temporal constraint로 오분류했다."}}
+    },
+    "CASE-CORE-021": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "날짜·시간을 포함한 Event 결과는 exact ref로 보존했지만 Atlas를 action target으로 잘못 분류했다."}}
+    },
+    "CASE-CORE-026": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "가용 슬롯 제안과 시간·수량은 보존했지만 원문에 없는 '내부 점검 일정 제안 대상' target을 추가했다."}}
+    },
+    "CASE-CORE-027": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "가용시간 답변과 Event 생성 금지는 보존했지만 응답 구절을 quantity로, 요청자를 target으로 오분류했다."}}
+    },
+    "CASE-CORE-028": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "Kestrel 점검 Event 결과와 시간은 보존했지만 원문에 없는 prohibition='없음'을 추가했다."}}
+    },
+    "CASE-CORE-031": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Task CREATE 요청과 Source·target·기한을 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-036": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Ion 메일·Calendar 기반 체크리스트와 기한을 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-037": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "QR Task UPDATE와 날짜는 exact ref로 보존했지만 원문에 없는 담당자 또는 시스템 target을 유지했다."}}
+    },
+    "CASE-CORE-040": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "Task memo UPDATE는 exact ref로 보존했지만 target인 기존 작업·메모를 source scope에도 섞었다."}}
+    },
+    "CASE-CORE-041": {
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "세 Source 대조 결과와 새 항목 생성 금지를 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-046": {
+      "relation_authority": "CONSUMES_PLANNED_SPECIFICATION",
+      "reviews": {"exact_span_ref_v5": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "RELATION_MISSING"], "reason": "Event와 Draft를 한 WorkUnit에 exact하게 보존했지만 planned specification relation을 표현하지 못했다."}}
+    },
+    "CASE-CORE-048": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SOURCE_SCOPE_DROPPED", "RELATION_INVALID", "REQUESTED_OUTCOME_MISSING"], "reason": "Kestrel identity를 두 WorkUnit에서 잃었고 Event 구절에는 준비 동작이 결속되지 않았으며 Task/Event 묶음과 Draft 사이에 근거 없는 work-product relation을 추가했다."}}
+    },
+    "CASE-CORE-050": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["DISTINCT_OUTCOMES_COMBINED", "SOURCE_SCOPE_DROPPED"], "reason": "세 출력은 한 WorkUnit에 남았지만 Echo identity가 objective와 source scope에서 빠졌다."}}
+    },
+    "CASE-CORE-051": {
+      "reviews": {"exact_span_ref_v5": {"issues": ["TYPED_SEMANTIC_FIELD_POLLUTION"], "reason": "메일 기반 정리 결과와 다음 주는 보존했지만 Source 사람을 target으로, 정리 동작을 quantity로 오분류했다."}}
+    },
+    "CASE-CORE-054": {
+      "allowed_shapes": ["single_reply_draft", "derived_summary_then_reply_draft"],
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Grove 결과 기반 지정 수신자 Reply Draft를 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-056": {
+      "allowed_shapes": ["single_answer", "summary_and_action_sections"],
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Harbor 사고 요약·대응 정리와 실행 금지를 exact ref로 보존했다."}}
+    },
+    "CASE-CORE-059": {
+      "allowed_shapes": ["single_reply_send", "confirmation_work_product_then_reply_send"],
+      "reviews": {"exact_span_ref_v5": {"issues": [], "reason": "Quartz 확인 사실에 근거한 즉시 Reply SEND 요청을 exact ref로 보존했다."}}
+    }
+  },
+  "decisions": {
+    "exact_span_ref_v5": "REJECT"
+  }
+}
