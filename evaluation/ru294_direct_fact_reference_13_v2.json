@@ -1,0 +1,156 @@
+{
+  "schema_version": 2,
+  "scope": "REQUESTED_FACT_PRODUCER_DIAGNOSTIC_ONLY",
+  "definition": "Include facts from an existing source that the user directly requests as results, and existing current values that must be checked before changing a Resource.",
+  "semantic_categories": {
+    "included": ["USER_RESULT_FACT", "CURRENT_STATE_PREREQUISITE"],
+    "excluded": [
+      "SEARCH_OR_RESOURCE_IDENTITY",
+      "RETRIEVAL_PREREQUISITE",
+      "BUSINESS_DERIVED_FACT",
+      "NEW_WRITE_VALUE",
+      "PROHIBITION_OR_CONSTRAINT",
+      "OUTPUT_CONSTRUCTION_VALUE"
+    ],
+    "identity_note": "Separating source-binding identity from user-result facts is a derived evaluation contract. Identity remains a diagnostic and is not a user-result fact unless the user directly requests it."
+  },
+  "applicability_states": ["SCORABLE", "NOT_APPLICABLE", "UNSCORABLE"],
+  "cases": {
+    "RU-A-002": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Tests separation of Calendar search anchors from the requested start time.",
+      "intended_failure_signature": "SEARCH_IDENTITY_AS_RESULT_FACT",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["start|RESULT_FACT"]],
+      "identity_pairs": ["event_identity|RESULT_FACT", "event_identity|CURRENT_STATE"],
+      "rationale": "Event identity is a search anchor; the requested result is the start time."
+    },
+    "RU-B-001": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Positive direct-result control for a Task due date.",
+      "intended_failure_signature": "DIRECT_RESULT_OMISSION_OR_IDENTITY_SUBSTITUTION",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["due|RESULT_FACT"]],
+      "identity_pairs": ["task_identity|RESULT_FACT", "task_identity|CURRENT_STATE"],
+      "rationale": "The task due date is directly requested."
+    },
+    "RU-D-001": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Tests that source data used to construct a new Draft is not promoted to a returned fact.",
+      "intended_failure_signature": "OUTPUT_CONSTRUCTION_VALUE_AS_RESULT_FACT",
+      "applicability": "NOT_APPLICABLE",
+      "accepted_pair_sets": [],
+      "identity_pairs": ["task_identity|RESULT_FACT", "task_identity|CURRENT_STATE"],
+      "exclusion_reason": "Task title, notes, and due are inputs to constructing a new Draft; no existing fact is requested for return."
+    },
+    "RU-E-002": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Tests existing current value versus a supplied new value and send prohibition.",
+      "intended_failure_signature": "NEW_WRITE_VALUE_OR_PROHIBITION_AS_FACT",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["subject|CURRENT_STATE"]],
+      "identity_pairs": ["draft_identity|RESULT_FACT", "draft_identity|CURRENT_STATE"],
+      "rationale": "The existing subject is the current value checked before the draft update."
+    },
+    "RU-E-003": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Tests that selected-thread input for a new Task remains outside direct-result scoring.",
+      "intended_failure_signature": "RETRIEVAL_INPUT_AS_RESULT_FACT",
+      "applicability": "NOT_APPLICABLE",
+      "accepted_pair_sets": [],
+      "identity_pairs": ["thread_identity|RESULT_FACT", "thread_identity|CURRENT_STATE"],
+      "exclusion_reason": "Selected-thread content and follow-up context are inputs to constructing a new Task, not facts requested for return."
+    },
+    "RU-G-003": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Tests the boundary between multi-source inputs, derived analysis, and a new Draft output.",
+      "intended_failure_signature": "WORK_ANALYSIS_INPUT_AS_DIRECT_FACT",
+      "applicability": "NOT_APPLICABLE",
+      "accepted_pair_sets": [],
+      "identity_pairs": [
+        "thread_identity|RESULT_FACT",
+        "thread_identity|CURRENT_STATE",
+        "task_identity|RESULT_FACT",
+        "task_identity|CURRENT_STATE",
+        "event_identity|RESULT_FACT",
+        "event_identity|CURRENT_STATE"
+      ],
+      "exclusion_reason": "Source fields are analysis inputs, the missing follow-up is derived business meaning, and the requested output is a new Draft."
+    },
+    "RU-H-001": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Positive direct-result case with one Gmail source and one requested subject.",
+      "intended_failure_signature": "SOURCE_OVER_SELECTION_OR_WRONG_FACT_KIND",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["subject|RESULT_FACT"]],
+      "identity_pairs": ["thread_identity|RESULT_FACT", "thread_identity|CURRENT_STATE"],
+      "rationale": "The mail subject is directly requested."
+    },
+    "RU-H-002": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Positive multi-fact Task result with search-anchor overlap in valid source spans.",
+      "intended_failure_signature": "OMISSION_OR_CONSTRAINT_OVERLAP_FALSE_REJECT",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["completion_status|RESULT_FACT", "notes|RESULT_FACT"]],
+      "identity_pairs": [
+        "task_identity|RESULT_FACT",
+        "task_identity|CURRENT_STATE",
+        "task_list_identity|RESULT_FACT",
+        "task_list_identity|CURRENT_STATE",
+        "task_list_title|RESULT_FACT",
+        "task_list_title|CURRENT_STATE"
+      ],
+      "rationale": "Completion status and notes are the exact Task-owned facts directly requested. Natural-language variation does not authorize a different resource owner's fact kind."
+    },
+    "RU-H-003": {
+      "subset_role": "TARGET",
+      "inclusion_reason": "Positive GitHub result with repository, OPEN, and exhaustive selection constraints.",
+      "intended_failure_signature": "SELECTION_CONSTRAINT_OR_IDENTITY_AS_RESULT_FACT",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["title|RESULT_FACT"]],
+      "identity_pairs": [
+        "issue_identity|RESULT_FACT",
+        "issue_identity|CURRENT_STATE",
+        "repository_identity|RESULT_FACT",
+        "repository_identity|CURRENT_STATE"
+      ],
+      "rationale": "Open issue titles are directly requested; repository and OPEN are selection constraints."
+    },
+    "RU-F-001": {
+      "subset_role": "CONTROL",
+      "inclusion_reason": "No-fact control for output creation plus a send prohibition.",
+      "intended_failure_signature": "OUTPUT_OR_PROHIBITION_AS_FACT",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [[]],
+      "identity_pairs": [],
+      "rationale": "The request creates a new Draft and prohibits sending; no existing fact is requested."
+    },
+    "RU-A-003": {
+      "subset_role": "CONTROL",
+      "inclusion_reason": "Current-state update control whose original Gold requires the full current schedule.",
+      "intended_failure_signature": "PARTIAL_CURRENT_SCHEDULE_OR_NEW_VALUE_AS_FACT",
+      "applicability": "UNSCORABLE",
+      "accepted_pair_sets": [],
+      "identity_pairs": ["event_identity|RESULT_FACT", "event_identity|CURRENT_STATE"],
+      "exclusion_reason": "The original Gold requires current schedule, which the current closed fact-kind schema cannot represent without imposing an unapproved start/end decomposition."
+    },
+    "RU-B-002": {
+      "subset_role": "CONTROL",
+      "inclusion_reason": "High-level direct-result control for responsible person and approval deadline.",
+      "intended_failure_signature": "HIGH_LEVEL_RESULT_FORCED_TO_RAW_FACT_KIND",
+      "applicability": "UNSCORABLE",
+      "accepted_pair_sets": [],
+      "identity_pairs": ["thread_identity|RESULT_FACT", "thread_identity|CURRENT_STATE"],
+      "exclusion_reason": "Responsible person and approval deadline are user-result meanings without an authoritative mapping to the current closed fact kinds."
+    },
+    "RU-E-001": {
+      "subset_role": "CONTROL",
+      "inclusion_reason": "Positive selected-resource control with two directly requested Calendar facts.",
+      "intended_failure_signature": "MULTI_FACT_OMISSION",
+      "applicability": "SCORABLE",
+      "accepted_pair_sets": [["end|RESULT_FACT", "start|RESULT_FACT"]],
+      "identity_pairs": [],
+      "rationale": "Start and end are the exact Calendar-owned facts directly requested."
+    }
+  }
+}
